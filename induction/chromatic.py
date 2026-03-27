@@ -5,7 +5,7 @@ Generates chromatic intervals.
 from collections import defaultdict
 import string
 from typing import TypeAlias
-from typing import Collection, Set, Tuple, Callable
+from typing import Collection, Set, Tuple, Iterable, Callable
 import numpy as np
 
 # A color in the mathematical sense of some label.
@@ -97,7 +97,7 @@ def _assign_colors(
         # Return bookkeeping.
         label_to_intervals[color] = assignment
         for interval in assignment:
-            intervals_to_label[interval] += (color,)
+            intervals_to_label[tuple(interval.tolist())] += (color,)
         
         # Cleanses assignable intervals.
         intervals = cleanser(intervals, assignment)
@@ -105,7 +105,7 @@ def _assign_colors(
     return label_to_intervals, intervals_to_label
 
 
-def _get_random_exclusive_intervals(n: int, intervaler: Callable[[], int]) -> Interval:
+def _get_random_exclusive_intervals(n: int, intervaler: Iterable[int]) -> Interval:
     """
     Generates intervals from [0, n) where each interval does not overlap the
     previous.
@@ -133,7 +133,7 @@ def _get_random_exclusive_intervals(n: int, intervaler: Callable[[], int]) -> In
 def _get_exclusive_chromatic_intervals(
     n: int,
     colors: Collection[Color],
-    intervaler: Callable[[], int], 
+    intervaler: Iterable[int], 
     labeler: Callable[[Color, Intervals],Intervals],
     cleanser: Callable[[Color]]
 ) -> Tuple[Dict[Color, Intervals], Dict[Interval, Color]]:
@@ -173,12 +173,7 @@ def get_random_exclusive_chromatic_intervals(
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(seed)
     markers: np.ndarray[int] = rng.choice(range(n+1), intervals, replace=False)
-    
-    def intervaler() -> int:
-        """Yields the markers in order to generate intervals."""
-        markers = sorted(markers)
-        for marker in markers:
-            yield marker
+    markers.sort()
     
     # Generates the colors if needed.
     if isinstance(colors, int):
@@ -201,7 +196,7 @@ def get_random_exclusive_chromatic_intervals(
         """Does not prune anything due to how the labeler works."""
         return original
     
-    return _get_exclusive_chromatic_intervals(n, colors, intervaler, labeler, cleanser)
+    return _get_exclusive_chromatic_intervals(n, colors, iter(markers), labeler, cleanser)
 
 
 if __name__ == "__main__":
