@@ -43,14 +43,25 @@ def _get_random_colors(
     ----------
     ValueError if l < ceil(log_{len(charset)}(n)) as cannot generate n unique colors.
     """
-    min_len: int = np.ceil(np.emath.logn(len(charset), n))
+    charset = tuple(charset)
+    base: int = len(charset)
+    min_len: int = np.ceil(np.emath.logn(base, n))
     if l < min_len:
         raise ValueError(
             f"l < {min_len} = "
-            f"ceil(log_{{{len(charset)}}}({n}))\n"
+            f"ceil(log_{{{base}}}({n}))\n"
             f"Insufficient expressivity for labels in charset for the given length."
         )
-    raise NotImplementedError()
+    
+    # Colors represented as an integer so it could be quickly exhaustively generated.
+    colors: np.ndarray[int] = rng.choice(base ** l, size=n, replace=False)
+    digits: np.ndarray[int] = np.empty((n, l), dtype=np.int64)
+    for idx in range(l - 1, -1, -1):
+        colors, digits[:, idx] = np.divmod(colors, base)
+
+    charset_array: np.ndarray[str] = np.asarray(charset)
+    return {"".join(color) for color in charset_array[digits]}
+
 
 
 def _assign_colors(
@@ -147,7 +158,7 @@ def _get_exclusive_chromatic_intervals(
     -------
     A dictionary of every color to its intervals and every interval to its color.
     """
-    intervals: Set[Interval] = np.array(tuple(_get_exclusive_intervals(n, intervaler)))
+    intervals: Set[Interval] = np.array(tuple(_get_random_exclusive_intervals(n, intervaler)))
     return _assign_colors(intervals, colors, labeler, cleanser)
 
 
@@ -161,7 +172,7 @@ def get_random_exclusive_chromatic_intervals(
 
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(seed)
-    markers: np.ndarray[int] = rng.choice(range(n), intervals, replace=False)
+    markers: np.ndarray[int] = rng.choice(range(n+1), intervals, replace=False)
     
     def intervaler() -> int:
         """Yields the markers in order to generate intervals."""
@@ -180,7 +191,7 @@ def get_random_exclusive_chromatic_intervals(
     
     # Defines a uniform labeler.
     num_colors: int = len(colors)
-    labels = rng.randint(num_colors, size=intervals)
+    labels = rng.integers(num_colors, size=intervals)
     def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
         color_idx: int = colors.index(color)
         return intervals[labels[labels == color_idx]]
