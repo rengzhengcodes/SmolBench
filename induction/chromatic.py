@@ -188,6 +188,7 @@ def get_random_exclusive_chromatic_intervals(
     labels = rng.integers(num_colors, size=intervals)
 
     def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
+        """Returns the intervals associated with a given color."""
         color_idx: int = colors.index(color)
         return intervals[labels[labels == color_idx]]
 
