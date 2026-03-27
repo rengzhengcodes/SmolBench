@@ -4,8 +4,7 @@ Generates chromatic intervals.
 
 from collections import defaultdict
 import string
-from typing import TypeAlias
-from typing import Collection, Set, Tuple, Iterable, Callable
+from typing import TypeAlias, Collection, Iterable, Sequence, Tuple, Dict, Set, Callable
 import numpy as np
 
 # A color in the mathematical sense of some label.
@@ -16,10 +15,11 @@ Interval: TypeAlias = Tuple[int, int]
 Intervals: TypeAlias = Collection[Interval]
 
 
-
 def _get_random_colors(
-    n: int, l: int, rng: np.random.Generator,
-    charset: Collection[str] = string.ascii_letters
+    n: int,
+    l: int,
+    rng: np.random.Generator,
+    charset: Collection[str] = string.ascii_letters,
 ) -> Set[Color]:
     """
     Generates n unique random colors of l length.
@@ -52,9 +52,9 @@ def _get_random_colors(
             f"ceil(log_{{{base}}}({n}))\n"
             f"Insufficient expressivity for labels in charset for the given length."
         )
-    
+
     # Colors represented as an integer so it could be quickly exhaustively generated.
-    colors: np.ndarray[int] = rng.choice(base ** l, size=n, replace=False)
+    colors: np.ndarray[int] = rng.choice(base**l, size=n, replace=False)
     digits: np.ndarray[int] = np.empty((n, l), dtype=np.int64)
     for idx in range(l - 1, -1, -1):
         colors, digits[:, idx] = np.divmod(colors, base)
@@ -63,12 +63,11 @@ def _get_random_colors(
     return {"".join(color) for color in charset_array[digits]}
 
 
-
 def _assign_colors(
     intervals: Collection[Interval],
     colors: Collection[Color],
     labeler: Callable[[Color, Intervals], Intervals],
-    cleanser: Callable[[Intervals, Intervals], Intervals]
+    cleanser: Callable[[Intervals, Intervals], Intervals],
 ) -> Tuple[Dict[Color, Intervals], Dict[Interval, Color]]:
     """
     Given a set of intervals, assign colors to each interval.
@@ -83,7 +82,7 @@ def _assign_colors(
         The arbitrator of which intervals get assigned for a color.
     cleanser:
         Cleans up what the labeler has access to on the next iteration of assignment.
-    
+
     Returns
     -------
     A dictionary of every color to its intervals and every interval to its color.
@@ -98,7 +97,7 @@ def _assign_colors(
         label_to_intervals[color] = assignment
         for interval in assignment:
             intervals_to_label[tuple(interval.tolist())] += (color,)
-        
+
         # Cleanses assignable intervals.
         intervals = cleanser(intervals, assignment)
 
@@ -116,7 +115,7 @@ def _get_random_exclusive_intervals(n: int, intervaler: Iterable[int]) -> Interv
         The total length of intervals to generate.
     intervaler:
         The structure used to generate the next element of an interval.
-    
+
     Yields
     ------
     A series of intervals from [0, n) generated off rng.
@@ -133,9 +132,9 @@ def _get_random_exclusive_intervals(n: int, intervaler: Iterable[int]) -> Interv
 def _get_exclusive_chromatic_intervals(
     n: int,
     colors: Collection[Color],
-    intervaler: Iterable[int], 
-    labeler: Callable[[Color, Intervals],Intervals],
-    cleanser: Callable[[Color]]
+    intervaler: Iterable[int],
+    labeler: Callable[[Color, Intervals], Intervals],
+    cleanser: Callable[[Color]],
 ) -> Tuple[Dict[Color, Intervals], Dict[Interval, Color]]:
     """
     Generates chromatic intervals from [0, n), where each i in [0, n) has exactly
@@ -153,12 +152,14 @@ def _get_exclusive_chromatic_intervals(
         Assigns colors to each interval.
     cleanser:
         Cleans up what the labeler has access to between colors.
-    
+
     Returns
     -------
     A dictionary of every color to its intervals and every interval to its color.
     """
-    intervals: Set[Interval] = np.array(tuple(_get_random_exclusive_intervals(n, intervaler)))
+    intervals: Set[Interval] = np.array(
+        tuple(_get_random_exclusive_intervals(n, intervaler))
+    )
     return _assign_colors(intervals, colors, labeler, cleanser)
 
 
@@ -172,31 +173,32 @@ def get_random_exclusive_chromatic_intervals(
 
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(seed)
-    markers: np.ndarray[int] = rng.choice(range(n+1), intervals, replace=False)
+    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals, replace=False)
     markers.sort()
-    
+
     # Generates the colors if needed.
     if isinstance(colors, int):
-        length: int = int(
-            np.ceil(np.emath.logn(len(string.ascii_letters), colors))
-        ) * 2
-        colors: Sequence[Color] = tuple(_get_random_colors(
-            colors, length, np.random.default_rng(seed)
-        ))
-    
+        length: int = int(np.ceil(np.emath.logn(len(string.ascii_letters), colors))) * 2
+        colors: Sequence[Color] = tuple(
+            _get_random_colors(colors, length, np.random.default_rng(seed))
+        )
+
     # Defines a uniform labeler.
     num_colors: int = len(colors)
     labels = rng.integers(num_colors, size=intervals)
+
     def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
         color_idx: int = colors.index(color)
         return intervals[labels[labels == color_idx]]
 
     # Defines a null cleanser.
-    def cleanser(original: Intervals, prune: Intervals) -> Intervals:
+    def cleanser(original: Intervals, _: Intervals) -> Intervals:
         """Does not prune anything due to how the labeler works."""
         return original
-    
-    return _get_exclusive_chromatic_intervals(n, colors, iter(markers), labeler, cleanser)
+
+    return _get_exclusive_chromatic_intervals(
+        n, colors, iter(markers), labeler, cleanser
+    )
 
 
 if __name__ == "__main__":
