@@ -4,7 +4,7 @@ Generates chromatic intervals.
 
 from collections import defaultdict
 import string
-from typing import TypeAlias, Collection, Iterable, Sequence, Tuple, Dict, Set, Callable
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Set, Callable
 import numpy as np
 
 # A color in the mathematical sense of some label.
@@ -68,7 +68,7 @@ def _assign_colors(
     colors: Collection[Color],
     labeler: Callable[[Color, Intervals], Intervals],
     cleanser: Callable[[Intervals, Intervals], Intervals],
-) -> Tuple[Dict[Color, Intervals], Dict[Interval, Color]]:
+) -> Tuple[Dict[Color, Intervals], Dict[Interval, Set[Color]]]:
     """
     Given a set of intervals, assign colors to each interval.
 
@@ -88,7 +88,7 @@ def _assign_colors(
     A dictionary of every color to its intervals and every interval to its color.
     """
     label_to_intervals: Dict[Color, Intervals] = {}
-    intervals_to_label: Dict[Interval, Color] = defaultdict(tuple)
+    intervals_to_label: Dict[Interval, Color] = defaultdict(set)
     for color in colors:
         # Assigns to remaining intervals.
         assignment: Intervals = labeler(color, intervals)
@@ -96,7 +96,7 @@ def _assign_colors(
         # Return bookkeeping.
         label_to_intervals[color] = assignment
         for interval in assignment:
-            intervals_to_label[tuple(interval.tolist())] += (color,)
+            intervals_to_label[tuple(interval.tolist())].add(color)
 
         # Cleanses assignable intervals.
         intervals = cleanser(intervals, assignment)
@@ -169,19 +169,38 @@ def get_random_exclusive_chromatic_intervals(
     """
     Generates a number of intervals from [0, n) and each interval has equal
     probability of being any color.
+
+    Parameters
+    ----------
+    n:
+        Number of discrete units in the interval.
+    intervals:
+        Number of intervals.
+    colors:
+        Number of colors or Collection of colors to assign.
+    seed:
+        rng seed for reproducibility.
+    
+    
+    Returns
+    -------
+    A dictionary mapping colors to intervals and a dictionary mapping intervals to
+    colors.
     """
 
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(seed)
-    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals, replace=False)
+    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals-1, replace=False)
     markers.sort()
 
     # Generates the colors if needed.
     if isinstance(colors, int):
         length: int = int(np.ceil(np.emath.logn(len(string.ascii_letters), colors))) * 2
-        colors: Sequence[Color] = tuple(
+        colors: Tuple[Color] = tuple(
             _get_random_colors(colors, length, np.random.default_rng(seed))
         )
+    else:
+        colors = tuple(colors)
 
     # Defines a uniform labeler.
     num_colors: int = len(colors)
@@ -190,17 +209,93 @@ def get_random_exclusive_chromatic_intervals(
     def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
         """Returns the intervals associated with a given color."""
         color_idx: int = colors.index(color)
-        return intervals[labels[labels == color_idx]]
+        return intervals[labels == color_idx]
 
     # Defines a null cleanser.
     def cleanser(original: Intervals, _: Intervals) -> Intervals:
         """Does not prune anything due to how the labeler works."""
         return original
 
-    return _get_exclusive_chromatic_intervals(
+    label_to_intervals, intervals_to_labels = _get_exclusive_chromatic_intervals(
         n, colors, iter(markers), labeler, cleanser
     )
+    flat_intervals_to_labels: Dict[Interval, Color] = {}
+    for interval, labels in intervals_to_labels.items():
+        assert len(labels) == 1, f"{interval}:{labels}"
+        flat_intervals_to_labels[interval] = labels.pop()
+    
+    return label_to_intervals, flat_intervals_to_labels
 
+
+
+def _anneal_intervals(intervals: Intervals) -> Intervals:
+    "Combines intervals that are next to each other."
+    # Sorts intervals by start.
+    intervals = sorted(intervals, key=lambda interval: interval[0])
+    
+    # Anneals consecutive and overlapping intervals together.
+    proposed_start, proposed_end = intervals[0]
+    for i, (cur_start, cur_end) in enumerate(intervals):
+        if cur_start <= proposed_end:
+            proposed_end = cur_end
+        else:
+            yield proposed_start, proposed_end
+            proposed_start = cur_start
+            proposed_end = cur_end
+    yield proposed_start, proposed_end
+            
+
+def _prompt_intervals(intervals: Iterable[Interval]) -> str:
+    """Given an iterable of intervals, turn it into a prompt."""
+    *left, terminus = intervals
+    for start, end in left:
+        yield f"{start} to {end}, "
+    start, end = terminus
+    yield f"and {start} to {end}" if left else f"{start} to {end}"
+
+def get_random_exclusive_prompts(
+    n: int, intervals: int, colors: Collection[Color] | int, seed: int, 
+    template: string.Template
+) -> Tuple[str, str]:
+    """
+    Generates an intensional and extensional prompt for the LLM.
+    """
+    label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
+        n, intervals, colors, seed
+    )
+    role: str = "Twislax"
+
+    # Creates the intensional representation.
+    intension: str = ""
+    for color, intervals in label_to_intervals.items():
+        if intervals.any():
+            intension += f"{color} was {role} from {
+                "".join(_prompt_intervals(_anneal_intervals(intervals)))}.\n"
+    print(type(template))
+    return template.safe_substitute({
+        'positive_info': intension
+    })
 
 if __name__ == "__main__":
-    print(get_random_exclusive_chromatic_intervals(250, 250 // 4, 46, 1776))
+    role = "role"
+    parade = "parade"
+    positive_info = "positive_info"
+    start = "start"
+    end = "end"
+    color = "color"
+
+    template = (
+        t"Context:\n"
+        t"---\n"
+        t"There is a ceremonial role called the {role}, whose job it is to"
+        t" head the {parade} parade. No one else besides the {role} is able to head"
+        t" the {parade} parade. The following lists the people who were {role} and"
+        t" the years they were {role}:\n"
+        t"{positive_info}\n"
+        t"\n"
+        t"Query:\n"
+        t"Between the years {start} and {end}, inclusive of the end, could {color}"
+        t" have headed the Twislax parade?"
+    )
+    print(type(template))
+    print(get_random_exclusive_prompts(250, 250 // 4, 46, 1776, template))
