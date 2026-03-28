@@ -218,9 +218,11 @@ def get_random_exclusive_chromatic_intervals(
         """Does not prune anything due to how the labeler works."""
         return original
 
+    # Generates the chromatic intervals.
     label_to_intervals, intervals_to_labels = _get_exclusive_chromatic_intervals(
         n, colors, iter(markers), labeler, cleanser
     )
+    # Flattens intervals to labels due to exclusive property.
     flat_intervals_to_labels: Dict[Interval, Color] = {}
     for interval, labels in intervals_to_labels.items():
         assert len(labels) == 1, f"{interval}:{labels}"
@@ -244,6 +246,7 @@ def _anneal_intervals(intervals: Intervals) -> Intervals:
             yield proposed_start, proposed_end
             proposed_start = cur_start
             proposed_end = cur_end
+
     yield proposed_start, proposed_end
             
 
@@ -283,7 +286,8 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> str:
 
 def get_random_exclusive_prompts(
     n: int, intervals: int, colors: Collection[Color] | int, seed: int, 
-    template: string.Template
+    template: string.Template, substitution: Dict[str, str],
+    query_gen: Callable[[Dict[Color, Intervals], Dict[Interval, Color]], Iterable[Dict[str, str]]]
 ) -> Tuple[str, str]:
     """
     Generates an intensional and extensional prompt for the LLM.
@@ -305,18 +309,17 @@ def get_random_exclusive_prompts(
         extension += f"{color} was {role} on {
             "".join(_prompt_extensional(anneal))}.\n"
 
-    intension = template.safe_substitute(
-        {
-            "positive_info": intension
-        }
-    )
-    # Creates the extensional represnetation.
-    extension = template.safe_substitute(
-        {
-            "positive_info": extension
-        }
-    )
-    return intension, extension
+    # Creates different types of queries.
+    for query, answer in query_gen(intension, extension):
+        substitution_dict = query | substitution
+        # Creates the intensional prompt.
+        substitution_dict["positive_info"] = intension
+        intension = template.safe_substitute(substitution_dict)
+        # Creates the extensional prompt.
+        substitution_dict["positive_info"] = extension
+        extension = template.safe_substitute(substitution_dict)
+
+        yield intension, extension, answer
 
 if __name__ == "__main__":
     role = "role"
@@ -336,9 +339,22 @@ if __name__ == "__main__":
         "$positive_info\n"
         "\n"
         "Query:\n"
-        "Between the years $start and $end, inclusive of the end, could $color"
-        " have headed the Twislax parade?"
+        "Between the years $start and $end, exclusive of the end, could $color"
+        " have headed the $parade parade every year?"
     )
-    intension, extension = get_random_exclusive_prompts(250, 250 // 4, 46, 1776, template)
+
+    def query_gen(
+        labels_to_intervals: Dict[Color, Intervals],
+        intervals_to_labels: Dict[Interval, Color]
+    ) -> Dict[str, str]:
+        """Generates a series of queries """
+        yield {}, True
+
+    intension, extension, answer = list(get_random_exclusive_prompts(
+        250, 250 // 4, 46, 1776, template, {
+        "role": role,
+        "parade": "Gildane",
+    }, query_gen))[0]
     print(intension)
     print(extension)
+    print(answer)
