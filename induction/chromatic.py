@@ -357,13 +357,22 @@ if __name__ == "__main__":
     ) -> Dict[str, str]:
         """Generates a series of queries"""
         rng: np.random.Generator = np.random.default_rng(seed)
-        # Generates a series of true items.
         for color, intervals in labels_to_intervals.items():
+            # Generates a series of true items.
             for start, end in intervals:
                 start, end = np.sort(
                     rng.choice(range(start, end + 1), size=2, replace=False)
                 )
                 yield {"color": color, "start": start, "end": end}, True
+            # Generates a false proposition.
+            invalid_range: Intervals = _anneal_intervals(itertools.chain((
+                set(interval_to_label.keys()) - set(itertools.chain(*intervals))
+            )))
+            for start, end in invalid_range:
+                start, end = np.sort(
+                    rng.choice(range(start, end + 1), size=2, replace=False)
+                )
+                yield {"color": color, "start": start, "end": end}, False
 
     for inte, exte, ans in get_random_exclusive_prompts(
         250,
@@ -380,3 +389,5 @@ if __name__ == "__main__":
         ),
     ):
         print(inte)
+        print(exte)
+        print(ans)
