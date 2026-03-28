@@ -367,19 +367,23 @@ if __name__ == "__main__":
                 )
                 yield {"color": color, "start": start, "end": end}, True
             # Generates a false proposition.
-            invalid_range: Intervals = _anneal_intervals(itertools.chain((
-                set(interval_to_label.keys()) - set(itertools.chain(*intervals))
-            )))
+            invalid_range: Intervals = _anneal_intervals(
+                itertools.chain(
+                    (set(interval_to_label.keys()) - set(itertools.chain(*intervals)))
+                )
+            )
             for start, end in invalid_range:
                 start = rng.choice(range(start, end))
                 # Binom with p = intervals / n capped at end for a similar-ish
                 # distr. to positive accounts.
                 end = min(
-                    end, start + rng.binomial(
-                        end - start + 1, np.mean([
-                            len(interval) for interval in interval_to_label
-                        ])/n
-                    ) + 1
+                    end,
+                    start
+                    + rng.binomial(
+                        end - start + 1,
+                        np.mean([len(interval) for interval in interval_to_label]) / n,
+                    )
+                    + 1,
                 )
                 yield {"color": color, "start": start, "end": end}, False
 
