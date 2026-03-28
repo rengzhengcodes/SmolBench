@@ -2,9 +2,11 @@
 Generates chromatic intervals.
 """
 
-from collections import defaultdict
 import string
+import itertools
+from collections import defaultdict
 from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Set, Callable
+
 import numpy as np
 
 # A color in the mathematical sense of some label.
@@ -246,12 +248,38 @@ def _anneal_intervals(intervals: Intervals) -> Intervals:
             
 
 def _prompt_intervals(intervals: Iterable[Interval]) -> str:
-    """Given an iterable of intervals, turn it into a prompt."""
+    """Given an iterable of intervals, turn it into a prompt of intervals."""
+    # Picks off end for "and" handling.
     *left, terminus = intervals
-    for start, end in left:
-        yield f"{start} to {end}, "
+    # Two interval handling.
+    if len(left) == 1:
+        start, end = left[0]
+        yield f"{start} to {end-1} "
+    # 3 or more interval handling.
+    else:
+        for start, end in left:
+            yield f"{start} to {end-1}, "
+    # Terminating sentence handling.
     start, end = terminus
-    yield f"and {start} to {end}" if left else f"{start} to {end}"
+    yield f"and {start} to {end-1}" if left else f"{start} to {end-1}"
+
+
+def _prompt_extensional(intervals: Iterable[Interval]) -> str:
+    """Given an iterable of intervals, turn it into an extensional prompt of intervals."""
+    # Picks off end for "and" handling.
+    times: Iterable = itertools.chain(*[range(start, end) for start, end in intervals])
+    *left, terminus = times
+    # Two times handling.
+    if len(left) == 1:
+        yield f"{left[0]} "
+    # 3 or more interval handling.
+    else:
+        for time in left:
+            yield f"{time}, "
+    # Terminating sentence handling.
+    yield f"and {terminus}" if left else f"{terminus}"
+
+    
 
 def get_random_exclusive_prompts(
     n: int, intervals: int, colors: Collection[Color] | int, seed: int, 
@@ -265,16 +293,30 @@ def get_random_exclusive_prompts(
     )
     role: str = "Twislax"
 
-    # Creates the intensional representation.
+    # Creates the intensional and extensional representation.
     intension: str = ""
+    extension: str = ""
     for color, intervals in label_to_intervals.items():
-        if intervals.any():
-            intension += f"{color} was {role} from {
-                "".join(_prompt_intervals(_anneal_intervals(intervals)))}.\n"
-    print(type(template))
-    return template.safe_substitute({
-        'positive_info': intension
-    })
+        if not intervals.any():
+            continue
+        anneal: Intervals = tuple(_anneal_intervals(intervals))
+        intension += f"{color} was {role} on {
+            "".join(_prompt_intervals(iter(anneal)))}.\n"
+        extension += f"{color} was {role} on {
+            "".join(_prompt_extensional(anneal))}.\n"
+
+    intension = template.safe_substitute(
+        {
+            "positive_info": intension
+        }
+    )
+    # Creates the extensional represnetation.
+    extension = template.safe_substitute(
+        {
+            "positive_info": extension
+        }
+    )
+    return intension, extension
 
 if __name__ == "__main__":
     role = "role"
@@ -284,18 +326,19 @@ if __name__ == "__main__":
     end = "end"
     color = "color"
 
-    template = (
-        t"Context:\n"
-        t"---\n"
-        t"There is a ceremonial role called the {role}, whose job it is to"
-        t" head the {parade} parade. No one else besides the {role} is able to head"
-        t" the {parade} parade. The following lists the people who were {role} and"
-        t" the years they were {role}:\n"
-        t"{positive_info}\n"
-        t"\n"
-        t"Query:\n"
-        t"Between the years {start} and {end}, inclusive of the end, could {color}"
-        t" have headed the Twislax parade?"
+    template = string.Template(
+        "Context:\n"
+        "---\n"
+        "There is a ceremonial role called the $role, whose job it is to"
+        " head the $parade parade. No one else besides the $role is able to head"
+        " the $parade parade. The following lists the people who were $role and"
+        " the years they were $role:\n"
+        "$positive_info\n"
+        "\n"
+        "Query:\n"
+        "Between the years $start and $end, inclusive of the end, could $color"
+        " have headed the Twislax parade?"
     )
-    print(type(template))
-    print(get_random_exclusive_prompts(250, 250 // 4, 46, 1776, template))
+    intension, extension = get_random_exclusive_prompts(250, 250 // 4, 46, 1776, template)
+    print(intension)
+    print(extension)
