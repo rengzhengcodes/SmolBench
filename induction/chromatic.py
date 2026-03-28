@@ -290,7 +290,7 @@ class Prompter:
     template: string.Template
     substitution: Dict[str, str]
     query_gen: Callable[
-        [Dict[Color, Intervals], Dict[Interval, Color]], Iterable[Dict[str, str]]
+        [Dict[Color, Intervals], Dict[Interval, Color], int], Iterable[Dict[str, str]]
     ]
 
 
@@ -321,16 +321,18 @@ def get_random_exclusive_prompts(
             "".join(_prompt_extensional(anneal))}.\n"
 
     # Creates different types of queries.
-    for query, answer in prompter.query_gen(label_to_intervals, intervals_to_labels):
+    for query, answer in prompter.query_gen(
+        label_to_intervals, intervals_to_labels, seed
+    ):
         substitution = query | prompter.substitution
         # Creates the intensional prompt.
         substitution["positive_info"] = intension
-        intension = prompter.template.safe_substitute(substitution)
+        intens = prompter.template.safe_substitute(substitution)
         # Creates the extensional prompt.
         substitution["positive_info"] = extension
-        extension = prompter.template.safe_substitute(substitution)
+        extens = prompter.template.safe_substitute(substitution)
 
-        yield intension, extension, answer
+        yield intens, extens, answer
 
 
 if __name__ == "__main__":
@@ -350,27 +352,31 @@ if __name__ == "__main__":
 
     def query_gen(
         labels_to_intervals: Dict[Color, Intervals],
-        intervals_to_labels: Dict[Interval, Color],
+        interval_to_label: Dict[Intervals, Color],
+        seed: int,
     ) -> Dict[str, str]:
         """Generates a series of queries"""
-        yield {}, True
+        rng: np.random.Generator = np.random.default_rng(seed)
+        # Generates a series of true items.
+        for color, intervals in labels_to_intervals.items():
+            for start, end in intervals:
+                start, end = np.sort(
+                    rng.choice(range(start, end + 1), size=2, replace=False)
+                )
+                yield {"color": color, "start": start, "end": end}, True
 
-    inte, exte, ans = list(
-        get_random_exclusive_prompts(
-            250,
-            250 // 4,
-            46,
-            1776,
-            Prompter(
-                template,
-                {
-                    "role": "Twislax",
-                    "parade": "Gildane",
-                },
-                query_gen,
-            ),
-        )
-    )[0]
-    print(inte)
-    print(exte)
-    print(ans)
+    for inte, exte, ans in get_random_exclusive_prompts(
+        250,
+        250 // 4,
+        45,
+        1776,
+        Prompter(
+            template,
+            {
+                "role": "Twislax",
+                "parade": "Gildane",
+            },
+            query_gen,
+        ),
+    ):
+        print(inte)
