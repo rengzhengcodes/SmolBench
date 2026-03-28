@@ -5,6 +5,7 @@ Generates chromatic intervals.
 import string
 import itertools
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Set, Callable
 
 import numpy as np
@@ -182,8 +183,8 @@ def get_random_exclusive_chromatic_intervals(
         Number of colors or Collection of colors to assign.
     seed:
         rng seed for reproducibility.
-    
-    
+
+
     Returns
     -------
     A dictionary mapping colors to intervals and a dictionary mapping intervals to
@@ -192,7 +193,7 @@ def get_random_exclusive_chromatic_intervals(
 
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(seed)
-    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals-1, replace=False)
+    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals - 1, replace=False)
     markers.sort()
 
     # Generates the colors if needed.
@@ -227,19 +228,18 @@ def get_random_exclusive_chromatic_intervals(
     for interval, labels in intervals_to_labels.items():
         assert len(labels) == 1, f"{interval}:{labels}"
         flat_intervals_to_labels[interval] = labels.pop()
-    
-    return label_to_intervals, flat_intervals_to_labels
 
+    return label_to_intervals, flat_intervals_to_labels
 
 
 def _anneal_intervals(intervals: Intervals) -> Intervals:
     "Combines intervals that are next to each other."
     # Sorts intervals by start.
     intervals = sorted(intervals, key=lambda interval: interval[0])
-    
+
     # Anneals consecutive and overlapping intervals together.
     proposed_start, proposed_end = intervals[0]
-    for i, (cur_start, cur_end) in enumerate(intervals):
+    for cur_start, cur_end in intervals:
         if cur_start <= proposed_end:
             proposed_end = cur_end
         else:
@@ -248,7 +248,7 @@ def _anneal_intervals(intervals: Intervals) -> Intervals:
             proposed_end = cur_end
 
     yield proposed_start, proposed_end
-            
+
 
 def _prompt_intervals(intervals: Iterable[Interval]) -> str:
     """Given an iterable of intervals, turn it into a prompt of intervals."""
@@ -282,12 +282,24 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> str:
     # Terminating sentence handling.
     yield f"and {terminus}" if left else f"{terminus}"
 
-    
+
+@dataclass(frozen=True, slots=True)
+class Prompter:
+    """Everything needed to prompt an LLM given the context."""
+
+    template: string.Template
+    substitution: Dict[str, str]
+    query_gen: Callable[
+        [Dict[Color, Intervals], Dict[Interval, Color]], Iterable[Dict[str, str]]
+    ]
+
 
 def get_random_exclusive_prompts(
-    n: int, intervals: int, colors: Collection[Color] | int, seed: int, 
-    template: string.Template, substitution: Dict[str, str],
-    query_gen: Callable[[Dict[Color, Intervals], Dict[Interval, Color]], Iterable[Dict[str, str]]]
+    n: int,
+    intervals: int,
+    colors: Collection[Color] | int,
+    seed: int,
+    prompter: Prompter,
 ) -> Tuple[str, str]:
     """
     Generates an intensional and extensional prompt for the LLM.
@@ -295,40 +307,33 @@ def get_random_exclusive_prompts(
     label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
         n, intervals, colors, seed
     )
-    role: str = "Twislax"
 
     # Creates the intensional and extensional representation.
     intension: str = ""
     extension: str = ""
-    for color, intervals in label_to_intervals.items():
-        if not intervals.any():
+    for color, inters in label_to_intervals.items():
+        if not inters.any():
             continue
-        anneal: Intervals = tuple(_anneal_intervals(intervals))
-        intension += f"{color} was {role} on {
+        anneal: Intervals = tuple(_anneal_intervals(inters))
+        intension += f"{color} was {prompter.substitution["role"]} on {
             "".join(_prompt_intervals(iter(anneal)))}.\n"
-        extension += f"{color} was {role} on {
+        extension += f"{color} was {prompter.substitution["role"]} on {
             "".join(_prompt_extensional(anneal))}.\n"
 
     # Creates different types of queries.
-    for query, answer in query_gen(intension, extension):
-        substitution_dict = query | substitution
+    for query, answer in prompter.query_gen(label_to_intervals, intervals_to_labels):
+        substitution = query | prompter.substitution
         # Creates the intensional prompt.
-        substitution_dict["positive_info"] = intension
-        intension = template.safe_substitute(substitution_dict)
+        substitution["positive_info"] = intension
+        intension = prompter.template.safe_substitute(substitution)
         # Creates the extensional prompt.
-        substitution_dict["positive_info"] = extension
-        extension = template.safe_substitute(substitution_dict)
+        substitution["positive_info"] = extension
+        extension = prompter.template.safe_substitute(substitution)
 
         yield intension, extension, answer
 
-if __name__ == "__main__":
-    role = "role"
-    parade = "parade"
-    positive_info = "positive_info"
-    start = "start"
-    end = "end"
-    color = "color"
 
+if __name__ == "__main__":
     template = string.Template(
         "Context:\n"
         "---\n"
@@ -345,16 +350,27 @@ if __name__ == "__main__":
 
     def query_gen(
         labels_to_intervals: Dict[Color, Intervals],
-        intervals_to_labels: Dict[Interval, Color]
+        intervals_to_labels: Dict[Interval, Color],
     ) -> Dict[str, str]:
-        """Generates a series of queries """
+        """Generates a series of queries"""
         yield {}, True
 
-    intension, extension, answer = list(get_random_exclusive_prompts(
-        250, 250 // 4, 46, 1776, template, {
-        "role": role,
-        "parade": "Gildane",
-    }, query_gen))[0]
-    print(intension)
-    print(extension)
-    print(answer)
+    inte, exte, ans = list(
+        get_random_exclusive_prompts(
+            250,
+            250 // 4,
+            46,
+            1776,
+            Prompter(
+                template,
+                {
+                    "role": "Twislax",
+                    "parade": "Gildane",
+                },
+                query_gen,
+            ),
+        )
+    )[0]
+    print(inte)
+    print(exte)
+    print(ans)
