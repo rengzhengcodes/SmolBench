@@ -371,7 +371,6 @@ if __name__ == "__main__":
                 set(interval_to_label.keys()) - set(itertools.chain(*intervals))
             )))
             for start, end in invalid_range:
-                # TODO: Renormalize the distribution of generated ranges to be the same as for true items.
                 start = rng.choice(range(start, end))
                 # Binom with p = intervals / n capped at end for a similar-ish
                 # distr. to positive accounts.
