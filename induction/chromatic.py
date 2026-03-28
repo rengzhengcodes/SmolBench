@@ -357,6 +357,8 @@ if __name__ == "__main__":
     ) -> Dict[str, str]:
         """Generates a series of queries"""
         rng: np.random.Generator = np.random.default_rng(seed)
+        # Finds max interval.
+        n: int = max(interval[1] for interval in interval_to_label)
         for color, intervals in labels_to_intervals.items():
             # Generates a series of true items.
             for start, end in intervals:
@@ -369,8 +371,16 @@ if __name__ == "__main__":
                 set(interval_to_label.keys()) - set(itertools.chain(*intervals))
             )))
             for start, end in invalid_range:
-                start, end = np.sort(
-                    rng.choice(range(start, end + 1), size=2, replace=False)
+                # TODO: Renormalize the distribution of generated ranges to be the same as for true items.
+                start = rng.choice(range(start, end))
+                # Binom with p = intervals / n capped at end for a similar-ish
+                # distr. to positive accounts.
+                end = min(
+                    end, start + rng.binomial(
+                        end - start + 1, np.mean([
+                            len(interval) for interval in interval_to_label
+                        ])/n
+                    ) + 1
                 )
                 yield {"color": color, "start": start, "end": end}, False
 
