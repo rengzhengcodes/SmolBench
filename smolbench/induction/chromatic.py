@@ -401,10 +401,10 @@ if __name__ == "__main__":
 
     for inte, exte, ans in get_random_exclusive_prompts(
         ChromaticIntervalsConfig(
-            n = 250,
-            intervals = 250 // 4,
-            colors = 45,
-            seed = 1776,
+            n=250,
+            intervals=250 // 4,
+            colors=45,
+            seed=1776,
         ),
         Prompter(
             template,
