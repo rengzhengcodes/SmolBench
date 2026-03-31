@@ -356,13 +356,20 @@ def get_random_exclusive_prompts(
 def get_random_exclusive_quiz(
     config: ChromaticIntervalsConfig,
     prompter: Prompter,
-) -> Quiz:
+) -> Tuple[Quiz, Quiz]:
     """
     Wraps get_random_exclusive_prompts to produce a QnA format.
+
+    Returns
+    -------
+    intensional Quiz, extensional Quiz
     """
+    intens_quiz: Quiz = []
+    extens_quiz: Quiz = []
     for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
-        yield ToF(prompt=intens, answer=answer)
-        yield ToF(prompt=extens, answer=answer)
+        intens_quiz,append(ToF(prompt=intens, answer=answer))
+        extens_quiz.append(ToF(prompt=extens, answer=answer))
+    return tuple(intens_quiz), tuple(extens_quiz)
 
 
 if __name__ == "__main__":
