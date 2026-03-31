@@ -10,6 +10,8 @@ from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Set, Callable
 
 import numpy as np
 
+from smolbench.evals import Quiz, ToF
+
 # A color in the mathematical sense of some label.
 Color: TypeAlias = str
 # Interval of the form [start, end) as indices of some Sequence.
@@ -351,6 +353,22 @@ def get_random_exclusive_prompts(
         yield intens, extens, answer
 
 
+def get_random_exclusive_quiz(
+    config: ChromaticIntervalsConfig,
+    prompter: Prompter,
+) -> Quiz:
+    """
+    Wraps get_random_exclusive_prompts to produce a QnA format.
+    """
+    quiz: Quiz = []
+    for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
+        quiz.extend(
+            (ToF(prompt=intens, answer=answer), ToF(prompt=extens, answer=answer))
+        )
+
+    return quiz
+
+
 if __name__ == "__main__":
     template = string.Template(
         "Context:\n"
@@ -363,7 +381,8 @@ if __name__ == "__main__":
         "\n"
         "Query:\n"
         "Between the years $start and $end, exclusive of the end, could $color"
-        " have headed the $parade parade every year?"
+        " have headed the $parade parade every year? Answer with only one word:"
+        " 'True' or 'False'."
     )
 
     def query_gen(
