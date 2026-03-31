@@ -8,7 +8,7 @@ import json
 import requests
 from smolbench.evals import Answer, QnA, Quiz, Marks
 
-OPENROUTER_API_KEY: str = os.environ["OPENROUTER_API_KEY"]
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
 URL: str = "https://openrouter.ai/api/v1/chat/completion"
 
 
@@ -36,7 +36,7 @@ def query(prompt: str, model: str) -> str:
             {"model": model, "messages": [{"role": "user", "content": prompt}]}
         ),
         timeout=5,
-    )
+    ).text
 
 
 def evaluate(quiz: Quiz, model: str) -> Marks:

@@ -367,7 +367,7 @@ def get_random_exclusive_quiz(
     intens_quiz: Quiz = []
     extens_quiz: Quiz = []
     for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
-        intens_quiz,append(ToF(prompt=intens, answer=answer))
+        intens_quiz.append(ToF(prompt=intens, answer=answer))
         extens_quiz.append(ToF(prompt=extens, answer=answer))
     return tuple(intens_quiz), tuple(extens_quiz)
 

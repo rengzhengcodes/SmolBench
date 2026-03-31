@@ -45,7 +45,7 @@ class ToF(QnA):
     @staticmethod
     def condition(ans: str) -> bool:
         """Conditions response to be a bool."""
-        match ans.lower:
+        match ans.lower():
             case "false":
                 return False
             case "true":
