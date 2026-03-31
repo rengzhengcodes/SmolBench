@@ -65,11 +65,11 @@ class Marks:
     quiz: Quiz
     #: The model answering the quiz.
     model: str
-    #: Date the quiz was generated.
-    date: datetime = datetime.now(timezone.utc)
     #: Number of responses correct.
     correct: int
     #: Number of responses incorrect.
     incorrect: int
     #: Number of responses excluded due to incorrect LLM formatting.
     invalid: int
+    #: Date the quiz was generated.
+    date: datetime = datetime.now(timezone.utc)

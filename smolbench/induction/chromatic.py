@@ -264,7 +264,7 @@ def get_random_exclusive_chromatic_intervals(
     return label_to_intervals, flat_intervals_to_labels
 
 
-def _anneal_intervals(intervals: Intervals) -> Intervals:
+def anneal_intervals(intervals: Intervals) -> Intervals:
     "Combines intervals that are next to each other."
     # Sorts intervals by start.
     intervals = sorted(intervals, key=lambda interval: interval[0])
@@ -332,7 +332,7 @@ def get_random_exclusive_prompts(
     for color, inters in label_to_intervals.items():
         if not inters.any():
             continue
-        anneal: Intervals = tuple(_anneal_intervals(inters))
+        anneal: Intervals = tuple(anneal_intervals(inters))
         intension += f"{color} was {prompter.substitution["role"]} on {
             "".join(_prompt_intervals(iter(anneal)))}.\n"
         extension += f"{color} was {prompter.substitution["role"]} on {
@@ -398,7 +398,7 @@ if __name__ == "__main__":
                 )
                 yield {"color": color, "start": start, "end": end}, True
             # Generates a false proposition.
-            invalid_range: Intervals = _anneal_intervals(
+            invalid_range: Intervals = anneal_intervals(
                 itertools.chain(
                     (set(interval_to_label.keys()) - set(itertools.chain(*intervals)))
                 )
