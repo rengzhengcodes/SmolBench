@@ -3,13 +3,15 @@ Interfacing directly with the OpenRouter API.
 """
 
 import os
-import json
 
 import requests
+from dotenv import load_dotenv
+
 from smolbench.evals import Answer, QnA, Quiz, Marks
 
+load_dotenv(verbose=True)
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
-URL: str = "https://openrouter.ai/api/v1/chat/completion"
+URL: str = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def query(prompt: str, model: str) -> str:
@@ -27,16 +29,23 @@ def query(prompt: str, model: str) -> str:
     -------
     The model's output.
     """
-    return requests.post(
+    response = requests.post(
         url=URL,
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application.json",
         },
-        data=json.dumps(
-            {"model": model, "messages": [{"role": "user", "content": prompt}]}
-        ),
+        data={
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": prompt
+            }]
+        },
         timeout=5,
-    ).text
+    )
+    print(response)
+    return response.text
 
 
 def evaluate(quiz: Quiz, model: str) -> Marks:
