@@ -1,0 +1,50 @@
+# Use setuptools as the build backend so the project can be installed with
+# standard Python tooling without adding another packaging dependency.
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Keep the distribution name aligned with the import package directory.
+name = "smolbench"
+
+# No release process exists in the repository yet, so use a simple manual
+# version for now.
+version = "0.1.0"
+
+# Mirror the repository README at a high level.
+description = "A benchmark for smol manipulation of language."
+readme = "README.md"
+
+# The checked-in pyenv for this repository is `smolbench`, currently resolving
+# to Python 3.14.3. Using >=3.14 avoids claiming support for older interpreters
+# that have not been validated in this repo.
+requires-python = ">=3.14"
+
+# These are the direct runtime dependencies observed from the repository's
+# import graph and confirmed by the `smolbench` pyenv `pip freeze`.
+# They are expressed as lower bounds at the currently installed versions,
+# meaning "known working here" rather than "minimum version ever supported".
+dependencies = [
+    "numpy>=2.4.3",
+    "requests>=2.33.1",
+]
+
+[project.optional-dependencies]
+# The active pyenv also contains formatting and linting tools. They are useful
+# for development, but they are not required to import or run the package.
+dev = [
+    "black>=26.3.1",
+    "isort>=8.0.1",
+    "pylint>=4.0.5",
+]
+
+[tool.setuptools]
+# This project is pure Python and ships only the package source under
+# `smolbench/`.
+include-package-data = false
+
+[tool.setuptools.packages.find]
+# Pick up the top-level package and any subpackages below it.
+where = ["."]
+include = ["smolbench*"]
