@@ -29,7 +29,7 @@ class QnA:
         -------
         Correct Score, Incorrect Score
         """
-        return 1, 0 if ans == self.answer else 0, 1
+        return (1, 0) if ans == self.answer else (0, 1)
 
 
 @dataclass(frozen=True)
@@ -46,8 +46,8 @@ class ToF(QnA):
     def condition(ans: str) -> bool:
         """Conditions response to be a bool."""
         # Prepossesses answer to isolate only letters.
-        ans = "".join([char for char in ans if char.isalpha()])
-        match ans.lower():
+        cleaned_ans = "".join([char for char in ans if char.isalpha()])
+        match cleaned_ans.lower():
             case "false":
                 return False
             case "true":
