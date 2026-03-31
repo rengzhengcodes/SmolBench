@@ -12,8 +12,8 @@ from smolbench.evals import Answer, QnA, Quiz, Marks
 load_dotenv(verbose=True)
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", None)
 URL: str = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_DEBUG: bool = bool(int(os.getenv("OPENROUTER_DEBUG", 0)))
-OPENROUTER_DEBUG_RESPONSE: bool = bool(int(os.getenv("OPENROUTER_DEBUG_RESPONSE", 0)))
+OPENROUTER_DEBUG: bool = bool(int(os.getenv("OPENROUTER_DEBUG", "0")))
+OPENROUTER_DEBUG_RESPONSE: bool = bool(int(os.getenv("OPENROUTER_DEBUG_RESPONSE", "0")))
 
 
 def query(prompt: str, model: str) -> str:
@@ -37,19 +37,13 @@ def query(prompt: str, model: str) -> str:
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": model,
-            "messages": [{
-                "role": "user",
-                "content": prompt
-            }]
-        },
-        timeout=5,
+        json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+        timeout=120,
     )
 
     if not response.ok:
-        print(response.text)  
-  
+        print(response.text)
+
     response.raise_for_status()
     body = response.json()
     if OPENROUTER_DEBUG and OPENROUTER_DEBUG_RESPONSE:
@@ -74,6 +68,9 @@ def evaluate(quiz: Quiz, model: str) -> Marks:
     # Asks all questions in the quiz.
     q: QnA
     for q in quiz:
+        # Tracking for progress.
+        if OPENROUTER_DEBUG:
+            print(correct, incorrect, invalid)
         # Gets the response from the LLM.
         response: str = query(q.prompt, model)
         # Tracks if the response given is "nonsensical."
