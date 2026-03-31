@@ -6,7 +6,7 @@ import os
 import json
 
 import requests
-from evals import Answer, QnA, Quiz, Marks
+from smolbench.evals import Answer, QnA, Quiz, Marks
 
 OPENROUTER_API_KEY: str = os.environ["OPENROUTER_API_KEY"]
 URL: str = "https://openrouter.ai/api/v1/chat/completion"
@@ -60,16 +60,14 @@ def evaluate(quiz: Quiz, model: str) -> Marks:
         # Tracks if the response given is "nonsensical."
         try:
             response: Answer = q.condition(response)
-        except Exception:
+        except ValueError:
             invalid += 1
             continue
 
-        # Marks any sensical answers.
-        # TODO: Figure out how to do such a system for open-ended response.
-        if response == q.answer:
-            correct += 1
-        else:
-            incorrect += 1
+        # Marks any sensical answers and updates scoring.
+        part_correct, part_incorrect = q.score()
+        correct += part_correct
+        incorrect += part_incorrect
 
     return Marks(
         quiz=quiz, model=model, correct=correct, incorrect=incorrect, invalid=invalid
