@@ -45,6 +45,8 @@ class ToF(QnA):
     @staticmethod
     def condition(ans: str) -> bool:
         """Conditions response to be a bool."""
+        # Prepossesses answer to isolate only letters.
+        ans = "".join([char for char in ans if char.isalpha()])
         match ans.lower():
             case "false":
                 return False
