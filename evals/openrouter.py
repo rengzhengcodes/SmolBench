@@ -2,17 +2,25 @@
 Interfacing directly with the OpenRouter API.
 """
 
+import os
+import json
+import requests
+
 from typing import Sequence
 from evals import QnA
 
-def prompt(query: str, model: str) -> str:
+OPENROUTER_API_KEY: str = os.environ["OPENROUTER_API_KEY"]
+URL: str = "https://openrouter.ai/api/v1/chat/completion"
+
+
+def query(prompt: str, model: str) -> str:
     """
-    Prompts a model using openrouter.
+    Queries a model using openrouter.
 
     Parameters
     ----------
-    qna:
-        The question and expected answer from the LLM.
+    prompt:
+        The content posed to the LLM we expect an answer from.
     model:
         The model to evaluate on OpenRouter.
     
@@ -20,7 +28,20 @@ def prompt(query: str, model: str) -> str:
     -------
     The model's output.
     """
-    pass
+    return requests.post(
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        },
+        data = json.dumps({
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        })
+    )
 
 
 def eval(quiz: Sequence[QnA], model: str) -> str:
