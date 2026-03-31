@@ -186,13 +186,17 @@ class ChromaticIntervalsConfig:
             length: int = (
                 int(np.ceil(np.emath.logn(len(string.ascii_letters), self.colors))) * 2
             )
-            self.colors: Tuple[Color] = tuple(
-                _get_random_colors(
-                    self.colors, length, np.random.default_rng(self.seed)
-                )
+            object.__setattr__(
+                self,
+                "colors",
+                tuple(
+                    _get_random_colors(
+                        self.colors, length, np.random.default_rng(self.seed)
+                    )
+                ),
             )
         else:
-            self.colors = tuple(self.colors)
+            object.__setattr__(self, "colors", tuple(self.colors))
 
 
 def get_random_exclusive_chromatic_intervals(
