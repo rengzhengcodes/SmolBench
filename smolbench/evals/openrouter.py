@@ -33,9 +33,9 @@ def query(prompt: str, model: str) -> str:
         url=URL,
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application.json",
+            "Content-Type": "application/json",
         },
-        data={
+        json={
             "model": model,
             "messages": [{
                 "role": "user",
@@ -44,7 +44,8 @@ def query(prompt: str, model: str) -> str:
         },
         timeout=5,
     )
-    print(response)
+    response.raise_for_status()
+    print(response.text)
     return response.text
 
 
