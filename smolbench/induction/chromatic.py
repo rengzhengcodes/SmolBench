@@ -18,6 +18,50 @@ Interval: TypeAlias = Tuple[int, int]
 Intervals: TypeAlias = Collection[Interval]
 
 
+@dataclass(frozen=True)
+class ChromaticIntervalsConfig:
+    """Config for generating some chromatic intervals."""
+
+    #: Number of discrete units in the interval.
+    n: int
+    #: Number of intervals.
+    intervals: int
+    #: Number of colors or Collection of colors to assign.
+    colors: Collection[Color] | int
+    #: rng seed for reproducibility.
+    seed: int
+
+    def __post_init__(self):
+        """Turns colors into a Collection."""
+        # Generates the colors if needed.
+        if isinstance(self.colors, int):
+            length: int = (
+                int(np.ceil(np.emath.logn(len(string.ascii_letters), self.colors))) * 2
+            )
+            object.__setattr__(
+                self,
+                "colors",
+                tuple(
+                    _get_random_colors(
+                        self.colors, length, np.random.default_rng(self.seed)
+                    )
+                ),
+            )
+        else:
+            object.__setattr__(self, "colors", tuple(self.colors))
+
+
+@dataclass(frozen=True, slots=True)
+class Prompter:
+    """Everything needed to prompt an LLM given the context."""
+
+    template: string.Template
+    substitution: Dict[str, str]
+    query_gen: Callable[
+        [Dict[Color, Intervals], Dict[Interval, Color], int], Iterable[Dict[str, str]]
+    ]
+
+
 def _get_random_colors(
     n: int,
     l: int,
@@ -166,39 +210,6 @@ def _get_exclusive_chromatic_intervals(
     return _assign_colors(intervals, colors, labeler, cleanser)
 
 
-@dataclass(frozen=True)
-class ChromaticIntervalsConfig:
-    """Config for generating some chromatic intervals."""
-
-    #: Number of discrete units in the interval.
-    n: int
-    #: Number of intervals.
-    intervals: int
-    #: Number of colors or Collection of colors to assign.
-    colors: Collection[Color] | int
-    #: rng seed for reproducibility.
-    seed: int
-
-    def __post_init__(self):
-        """Turns colors into a Collection."""
-        # Generates the colors if needed.
-        if isinstance(self.colors, int):
-            length: int = (
-                int(np.ceil(np.emath.logn(len(string.ascii_letters), self.colors))) * 2
-            )
-            object.__setattr__(
-                self,
-                "colors",
-                tuple(
-                    _get_random_colors(
-                        self.colors, length, np.random.default_rng(self.seed)
-                    )
-                ),
-            )
-        else:
-            object.__setattr__(self, "colors", tuple(self.colors))
-
-
 def get_random_exclusive_chromatic_intervals(
     config: ChromaticIntervalsConfig,
 ) -> Tuple[Dict[Color, Collection[Interval]], Dict[Interval, Color]]:
@@ -300,17 +311,6 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> str:
             yield f"{time}, "
     # Terminating sentence handling.
     yield f"and {terminus}" if left else f"{terminus}"
-
-
-@dataclass(frozen=True, slots=True)
-class Prompter:
-    """Everything needed to prompt an LLM given the context."""
-
-    template: string.Template
-    substitution: Dict[str, str]
-    query_gen: Callable[
-        [Dict[Color, Intervals], Dict[Interval, Color], int], Iterable[Dict[str, str]]
-    ]
 
 
 def get_random_exclusive_prompts(
