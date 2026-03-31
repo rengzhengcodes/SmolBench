@@ -166,8 +166,37 @@ def _get_exclusive_chromatic_intervals(
     return _assign_colors(intervals, colors, labeler, cleanser)
 
 
+@dataclass(frozen=True)
+class ChromaticIntervalsConfig:
+    """Config for generating some chromatic intervals."""
+
+    #: Number of discrete units in the interval.
+    n: int
+    #: Number of intervals.
+    intervals: int
+    #: Number of colors or Collection of colors to assign.
+    colors: Collection[Color] | int
+    #: rng seed for reproducibility.
+    seed: int
+
+    def __post_init__(self):
+        """Turns colors into a Collection."""
+        # Generates the colors if needed.
+        if isinstance(self.colors, int):
+            length: int = (
+                int(np.ceil(np.emath.logn(len(string.ascii_letters), self.colors))) * 2
+            )
+            self.colors: Tuple[Color] = tuple(
+                _get_random_colors(
+                    self.colors, length, np.random.default_rng(self.seed)
+                )
+            )
+        else:
+            self.colors = tuple(self.colors)
+
+
 def get_random_exclusive_chromatic_intervals(
-    n: int, intervals: int, colors: Collection[Color] | int, seed: int
+    config: ChromaticIntervalsConfig,
 ) -> Tuple[Dict[Color, Collection[Interval]], Dict[Interval, Color]]:
     """
     Generates a number of intervals from [0, n) and each interval has equal
@@ -175,15 +204,8 @@ def get_random_exclusive_chromatic_intervals(
 
     Parameters
     ----------
-    n:
-        Number of discrete units in the interval.
-    intervals:
-        Number of intervals.
-    colors:
-        Number of colors or Collection of colors to assign.
-    seed:
-        rng seed for reproducibility.
-
+    config:
+        Generator config.
 
     Returns
     -------
@@ -192,26 +214,19 @@ def get_random_exclusive_chromatic_intervals(
     """
 
     # Seeds and generates the interval demarcations.
-    rng: np.random.Generator = np.random.default_rng(seed)
-    markers: np.ndarray[int] = rng.choice(range(n + 1), intervals - 1, replace=False)
+    rng: np.random.Generator = np.random.default_rng(config.seed)
+    markers: np.ndarray[int] = rng.choice(
+        range(config.n + 1), config.intervals - 1, replace=False
+    )
     markers.sort()
 
-    # Generates the colors if needed.
-    if isinstance(colors, int):
-        length: int = int(np.ceil(np.emath.logn(len(string.ascii_letters), colors))) * 2
-        colors: Tuple[Color] = tuple(
-            _get_random_colors(colors, length, np.random.default_rng(seed))
-        )
-    else:
-        colors = tuple(colors)
-
     # Defines a uniform labeler.
-    num_colors: int = len(colors)
-    labels = rng.integers(num_colors, size=intervals)
+    num_colors: int = len(config.colors)
+    labels = rng.integers(num_colors, size=config.intervals)
 
     def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
         """Returns the intervals associated with a given color."""
-        color_idx: int = colors.index(color)
+        color_idx: int = config.colors.index(color)
         return intervals[labels == color_idx]
 
     # Defines a null cleanser.
@@ -221,7 +236,7 @@ def get_random_exclusive_chromatic_intervals(
 
     # Generates the chromatic intervals.
     label_to_intervals, intervals_to_labels = _get_exclusive_chromatic_intervals(
-        n, colors, iter(markers), labeler, cleanser
+        config.n, config.colors, iter(markers), labeler, cleanser
     )
     # Flattens intervals to labels due to exclusive property.
     flat_intervals_to_labels: Dict[Interval, Color] = {}
@@ -295,17 +310,14 @@ class Prompter:
 
 
 def get_random_exclusive_prompts(
-    n: int,
-    intervals: int,
-    colors: Collection[Color] | int,
-    seed: int,
+    config: ChromaticIntervalsConfig,
     prompter: Prompter,
 ) -> Tuple[str, str]:
     """
     Generates an intensional and extensional prompt for the LLM.
     """
     label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
-        n, intervals, colors, seed
+        config
     )
 
     # Creates the intensional and extensional representation.
@@ -322,7 +334,7 @@ def get_random_exclusive_prompts(
 
     # Creates different types of queries.
     for query, answer in prompter.query_gen(
-        label_to_intervals, intervals_to_labels, seed
+        label_to_intervals, intervals_to_labels, config.seed
     ):
         substitution = query | prompter.substitution
         # Creates the intensional prompt.
@@ -388,10 +400,12 @@ if __name__ == "__main__":
                 yield {"color": color, "start": start, "end": end}, False
 
     for inte, exte, ans in get_random_exclusive_prompts(
-        250,
-        250 // 4,
-        45,
-        1776,
+        ChromaticIntervalsConfig(
+            n = 250,
+            intervals = 250 // 4,
+            colors = 45,
+            seed = 1776,
+        ),
         Prompter(
             template,
             {
