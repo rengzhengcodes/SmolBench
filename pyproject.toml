@@ -39,6 +39,14 @@ dev = [
     "pylint>=4.0.5",
 ]
 
+# The repository now includes a checked-in notebook under `notebooks/`.
+# The active `smolbench` pyenv uses VS Code/Jupyter kernel support via
+# `ipykernel`, so expose that as a separate extra without pulling in a full
+# notebook server stack that is not currently part of the environment.
+notebook = [
+    "ipykernel>=7.2.0",
+]
+
 [tool.setuptools]
 # This project is pure Python and ships only the package source under
 # `smolbench/`.
