@@ -360,13 +360,9 @@ def get_random_exclusive_quiz(
     """
     Wraps get_random_exclusive_prompts to produce a QnA format.
     """
-    quiz: Quiz = []
     for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
-        quiz.extend(
-            (ToF(prompt=intens, answer=answer), ToF(prompt=extens, answer=answer))
-        )
-
-    return quiz
+        yield ToF(prompt=intens, answer=answer)
+        yield ToF(prompt=extens, answer=answer)
 
 
 if __name__ == "__main__":
