@@ -3,9 +3,11 @@ Interfacing directly with the OpenRouter API.
 """
 
 import os
+import time
 
 import requests
 from dotenv import load_dotenv
+from joblib import Parallel, delayed
 
 from smolbench.evals import Answer, QnA, Quiz, Marks
 
@@ -14,6 +16,24 @@ OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", None)
 URL: str = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEBUG: bool = bool(int(os.getenv("OPENROUTER_DEBUG", "0")))
 OPENROUTER_DEBUG_RESPONSE: bool = bool(int(os.getenv("OPENROUTER_DEBUG_RESPONSE", "0")))
+OPENROUTER_MAX_PARALLEL_REQUESTS: int = int(
+    os.getenv("OPENROUTER_MAX_PARALLEL_REQUESTS", "8")
+)
+OPENROUTER_RETRY_BACKOFF_SECONDS: int = 60
+
+
+def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
+    """
+    Returns whether an OpenRouter request error should be retried.
+    """
+    if isinstance(err, requests.exceptions.HTTPError):
+        response = err.response
+        if response is None:
+            return True
+
+        return response.status_code == 429 or 500 <= response.status_code < 600
+
+    return True
 
 
 def query(prompt: str, model: str, seed: int) -> str:
@@ -31,28 +51,44 @@ def query(prompt: str, model: str, seed: int) -> str:
     -------
     The model's output.
     """
-    response = requests.post(
-        url=URL,
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt, "seed": seed}],
-        },
-        timeout=120,
-    )
+    attempt: int = 0
+    # Keep attempting to get a result until one is provisioned.
+    while True:
+        attempt += 1
+        # Tries to get a non-error code response from OpenRouter.
+        try:
+            response = requests.post(
+                url=URL,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt, "seed": seed}],
+                },
+                timeout=120,
+            )
 
-    if not response.ok:
-        print(response.text)
+            if not response.ok:
+                print(response.text)
 
-    response.raise_for_status()
-    body = response.json()
-    if OPENROUTER_DEBUG and OPENROUTER_DEBUG_RESPONSE:
-        print(body)
+            response.raise_for_status()
+            body = response.json()
+            if OPENROUTER_DEBUG and OPENROUTER_DEBUG_RESPONSE:
+                print(body)
 
-    return body["choices"][0]["message"]["content"]
+            return body["choices"][0]["message"]["content"]
+        
+        # Attempts to retry exceptions if possible.
+        except requests.exceptions.RequestException as err:
+            if not _is_retryable_request_error(err):
+                raise
+            print(
+                f"OpenRouter request failed on attempt {attempt}: {err}. "
+                f"Retrying in {OPENROUTER_RETRY_BACKOFF_SECONDS} seconds."
+            )
+            time.sleep(OPENROUTER_RETRY_BACKOFF_SECONDS)
 
 
 def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
@@ -68,14 +104,18 @@ def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
     incorrect: int = 0
     invalid: int = 0
 
-    # Asks all questions in the quiz.
+    # Batches the requests across workers.
+    max_workers: int = max(1, min(len(quiz), OPENROUTER_MAX_PARALLEL_REQUESTS))
+    responses: list[str] = Parallel(n_jobs=max_workers, prefer="threads")(
+        delayed(query)(q.prompt, model, seed) for q in quiz
+    )
+
+    # Marks the responses after all requests complete.
     q: QnA
-    for q in quiz:
-        # Tracking for progress.
+    response: str
+    for q, response in zip(quiz, responses):
         if OPENROUTER_DEBUG:
             print(correct, incorrect, invalid)
-        # Gets the response from the LLM.
-        response: str = query(q.prompt, model, seed)
         # Tracks if the response given is "nonsensical."
         try:
             response: Answer = q.condition(response)

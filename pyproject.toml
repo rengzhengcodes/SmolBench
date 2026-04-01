@@ -26,6 +26,7 @@ requires-python = ">=3.14"
 # They are expressed as lower bounds at the currently installed versions,
 # meaning "known working here" rather than "minimum version ever supported".
 dependencies = [
+    "joblib>=1.0",
     "numpy>=2.4.3",
     "requests>=2.33.1",
 ]
