@@ -5,6 +5,7 @@ Interfacing directly with the OpenRouter API.
 import logging
 import os
 import time
+from typing import Any, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -12,7 +13,6 @@ from joblib import Parallel, delayed
 
 from smolbench.evals import Answer, QnA, Quiz, Marks
 
-load_dotenv(verbose=True)
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", None)
 URL: str = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEBUG: bool = bool(int(os.getenv("OPENROUTER_DEBUG", "0")))
@@ -37,7 +37,9 @@ def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bo
     return True
 
 
-def query(prompt: str, model: str, seed: int) -> str:
+def query(
+    prompt: str, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = {}
+) -> str:
     """
     Queries a model using openrouter.
 
@@ -68,7 +70,7 @@ def query(prompt: str, model: str, seed: int) -> str:
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "seed": seed
-                },
+                } | extra_args,
                 timeout=120,
             )
 
@@ -81,10 +83,7 @@ def query(prompt: str, model: str, seed: int) -> str:
                 logging.debug(body)
 
             if body["choices"][0]["message"]["content"] is None:
-                logging.warning(
-                    "Body returned none value: \n"
-                    f"{body}"
-                )
+                logging.warning("Body returned none value: \n" f"{body}")
                 return ""
             else:
                 return body["choices"][0]["message"]["content"]
@@ -100,7 +99,9 @@ def query(prompt: str, model: str, seed: int) -> str:
             time.sleep(OPENROUTER_RETRY_BACKOFF_SECONDS)
 
 
-def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
+def evaluate(
+    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = {}
+) -> Marks:
     """
     Evaluates a model given a sequence of quizzes.
 
@@ -116,7 +117,7 @@ def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
     # Batches the requests across workers.
     max_workers: int = max(1, min(len(quiz), OPENROUTER_MAX_PARALLEL_REQUESTS))
     responses: list[str] = Parallel(n_jobs=max_workers, prefer="threads")(
-        delayed(query)(q.prompt, model, seed) for q in quiz
+        delayed(query)(q.prompt, model, seed, extra_args) for q in quiz
     )
 
     # Marks the responses after all requests complete.
