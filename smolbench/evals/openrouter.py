@@ -69,8 +69,9 @@ def query(
                 json={
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "seed": seed
-                } | extra_args,
+                    "seed": seed,
+                }
+                | extra_args,
                 timeout=120,
             )
 
