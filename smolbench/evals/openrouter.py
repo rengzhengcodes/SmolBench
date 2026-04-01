@@ -5,10 +5,9 @@ Interfacing directly with the OpenRouter API.
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 import requests
-from dotenv import load_dotenv
 from joblib import Parallel, delayed
 
 from smolbench.evals import Answer, QnA, Quiz, Marks
@@ -38,7 +37,7 @@ def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bo
 
 
 def query(
-    prompt: str, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = {}
+    prompt: str, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Queries a model using openrouter.
@@ -66,12 +65,16 @@ def query(
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "seed": seed,
-                }
-                | extra_args,
+                json=(
+                    {
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "seed": seed,
+                    }
+                    | extra_args
+                    if extra_args
+                    else {}
+                ),
                 timeout=120,
             )
 
@@ -86,8 +89,7 @@ def query(
             if body["choices"][0]["message"]["content"] is None:
                 logging.warning("Body returned none value: \n" f"{body}")
                 return ""
-            else:
-                return body["choices"][0]["message"]["content"]
+            return body["choices"][0]["message"]["content"]
 
         # Attempts to retry exceptions if possible.
         except requests.exceptions.RequestException as err:
@@ -101,7 +103,7 @@ def query(
 
 
 def evaluate(
-    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = {}
+    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
 ) -> Marks:
     """
     Evaluates a model given a sequence of quizzes.
