@@ -110,7 +110,7 @@ def _get_random_colors(
         colors, digits[:, idx] = np.divmod(colors, base)
 
     charset_array: np.ndarray[str] = np.asarray(charset)
-    return {"".join(color) for color in charset_array[digits]}
+    return OrderedSet("".join(color) for color in charset_array[digits])
 
 
 def _assign_colors(
@@ -408,7 +408,10 @@ if __name__ == "__main__":
             # Generates a false proposition.
             invalid_range: Intervals = anneal_intervals(
                 itertools.chain(
-                    (OrderedSet(interval_to_label.keys()) - OrderedSet(itertools.chain(*intervals)))
+                    (
+                        OrderedSet(interval_to_label.keys())
+                        - OrderedSet(itertools.chain(*intervals))
+                    )
                 )
             )
             for start, end in invalid_range:
