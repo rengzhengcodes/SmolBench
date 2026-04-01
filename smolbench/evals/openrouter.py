@@ -66,7 +66,8 @@ def query(prompt: str, model: str, seed: int) -> str:
                 },
                 json={
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt, "seed": seed}],
+                    "messages": [{"role": "user", "content": prompt}],
+                    "seed": seed
                 },
                 timeout=120,
             )
