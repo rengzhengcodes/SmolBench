@@ -79,7 +79,7 @@ def query(prompt: str, model: str, seed: int) -> str:
                 print(body)
 
             return body["choices"][0]["message"]["content"]
-        
+
         # Attempts to retry exceptions if possible.
         except requests.exceptions.RequestException as err:
             if not _is_retryable_request_error(err):
