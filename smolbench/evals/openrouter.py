@@ -38,7 +38,6 @@ def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bo
 
 def get_model_context_length(model: str) -> int:
     """Fetches the model context window from segments."""
-    #TODO: implement this fn
     response: Dict[str, Any] = requests.get(
         url=f"https://openrouter.ai/api/v1/models/{model}/endpoints",
         headers={
@@ -51,9 +50,13 @@ def get_model_context_length(model: str) -> int:
     ctx: int = response["data"]["endpoints"][0]["context_length"]
     return ctx
 
+
 def query(
-    prompt: str, model: str, seed: int, context_length: int = 0,
-    extra_args: Optional[Dict[str, Any]] = None
+    prompt: str,
+    model: str,
+    seed: int,
+    context_length: int = 0,
+    extra_args: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Queries a model using openrouter.
@@ -110,9 +113,7 @@ def query(
                 logging.warning("Body returned none value: \n" f"{body}")
                 return ""
             if (tokens := body["usage"]["total_tokens"]) > context_length:
-                raise ValueError(
-                    f"Response:\n{body}\n was {tokens} > {context_length}"
-                )
+                raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
             if OPENROUTER_INFO:
                 logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
             return body["choices"][0]["message"]["content"]
@@ -148,9 +149,8 @@ def evaluate(
     # Batches the requests across workers.
     max_workers: int = max(1, min(len(quiz), OPENROUTER_MAX_PARALLEL_REQUESTS))
     responses: list[str] = Parallel(n_jobs=max_workers, prefer="threads")(
-        delayed(query)(
-            q.prompt, model, seed, ctx_len, extra_args=extra_args
-        ) for q in quiz
+        delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
+        for q in quiz
     )
 
     # Marks the responses after all requests complete.
