@@ -71,9 +71,7 @@ def query(
                         "messages": [{"role": "user", "content": prompt}],
                         "seed": seed,
                     }
-                    | extra_args
-                    if extra_args
-                    else {}
+                    | (extra_args if extra_args else {})
                 ),
                 timeout=120,
             )

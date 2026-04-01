@@ -36,6 +36,15 @@ class ChromaticIntervalsConfig:
 
     def __post_init__(self):
         """Turns colors into a Collection."""
+        if self.n < 1:
+            raise ValueError("n must be positive.")
+        if self.intervals < 1:
+            raise ValueError("intervals must be positive.")
+        if self.intervals > self.n:
+            raise ValueError(
+                "intervals cannot exceed n for exclusive interval generation."
+            )
+
         # Generates the colors if needed.
         if isinstance(self.colors, int):
             length: int = (
@@ -234,7 +243,7 @@ def get_random_exclusive_chromatic_intervals(
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(config.seed)
     markers: np.ndarray[int] = rng.choice(
-        range(config.n + 1), config.intervals - 1, replace=False
+        np.arange(config.n), config.intervals - 1, replace=False
     )
     markers.sort()
 
@@ -256,6 +265,10 @@ def get_random_exclusive_chromatic_intervals(
     label_to_intervals, intervals_to_labels = _get_exclusive_chromatic_intervals(
         config.n, config.colors, iter(markers), labeler, cleanser
     )
+    if len(intervals_to_labels) != config.intervals:
+        raise AssertionError(
+            "Generated interval count does not match the requested interval count."
+        )
     # Flattens intervals to labels due to exclusive property.
     flat_intervals_to_labels: Dict[Interval, Color] = {}
     for interval, labels in intervals_to_labels.items():
