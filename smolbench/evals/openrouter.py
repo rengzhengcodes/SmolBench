@@ -16,7 +16,7 @@ OPENROUTER_DEBUG: bool = bool(int(os.getenv("OPENROUTER_DEBUG", "0")))
 OPENROUTER_DEBUG_RESPONSE: bool = bool(int(os.getenv("OPENROUTER_DEBUG_RESPONSE", "0")))
 
 
-def query(prompt: str, model: str) -> str:
+def query(prompt: str, model: str, seed: int) -> str:
     """
     Queries a model using openrouter.
 
@@ -37,7 +37,10 @@ def query(prompt: str, model: str) -> str:
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
         },
-        json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt, "seed": seed}],
+        },
         timeout=120,
     )
 
@@ -52,7 +55,7 @@ def query(prompt: str, model: str) -> str:
     return body["choices"][0]["message"]["content"]
 
 
-def evaluate(quiz: Quiz, model: str) -> Marks:
+def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
     """
     Evaluates a model given a sequence of quizzes.
 
@@ -72,7 +75,7 @@ def evaluate(quiz: Quiz, model: str) -> Marks:
         if OPENROUTER_DEBUG:
             print(correct, incorrect, invalid)
         # Gets the response from the LLM.
-        response: str = query(q.prompt, model)
+        response: str = query(q.prompt, model, seed)
         # Tracks if the response given is "nonsensical."
         try:
             response: Answer = q.condition(response)
