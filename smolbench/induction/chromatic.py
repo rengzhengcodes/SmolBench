@@ -6,7 +6,8 @@ import string
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Set, Callable
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable
+from ordered_set import OrderedSet
 
 import numpy as np
 
@@ -69,7 +70,7 @@ def _get_random_colors(
     l: int,
     rng: np.random.Generator,
     charset: Collection[str] = string.ascii_letters,
-) -> Set[Color]:
+) -> OrderedSet[Color]:
     """
     Generates n unique random colors of l length.
 
@@ -86,7 +87,7 @@ def _get_random_colors(
 
     Return
     ------
-    Set of unique colors.
+    OrderedSet of unique colors.
 
     Exceptions
     ----------
@@ -117,9 +118,9 @@ def _assign_colors(
     colors: Collection[Color],
     labeler: Callable[[Color, Intervals], Intervals],
     cleanser: Callable[[Intervals, Intervals], Intervals],
-) -> Tuple[Dict[Color, Intervals], Dict[Interval, Set[Color]]]:
+) -> Tuple[Dict[Color, Intervals], Dict[Interval, OrderedSet[Color]]]:
     """
-    Given a set of intervals, assign colors to each interval.
+    Given an ordered collection of intervals, assign colors to each interval.
 
     Parameters
     ----------
@@ -137,7 +138,7 @@ def _assign_colors(
     A dictionary of every color to its intervals and every interval to its color.
     """
     label_to_intervals: Dict[Color, Intervals] = {}
-    intervals_to_label: Dict[Interval, Color] = defaultdict(set)
+    intervals_to_label: Dict[Interval, Color] = defaultdict(OrderedSet)
     for color in colors:
         # Assigns to remaining intervals.
         assignment: Intervals = labeler(color, intervals)
@@ -206,7 +207,7 @@ def _get_exclusive_chromatic_intervals(
     -------
     A dictionary of every color to its intervals and every interval to its color.
     """
-    intervals: Set[Interval] = np.array(
+    intervals: OrderedSet[Interval] = np.array(
         tuple(_get_random_exclusive_intervals(n, intervaler))
     )
     return _assign_colors(intervals, colors, labeler, cleanser)
@@ -407,7 +408,7 @@ if __name__ == "__main__":
             # Generates a false proposition.
             invalid_range: Intervals = anneal_intervals(
                 itertools.chain(
-                    (set(interval_to_label.keys()) - set(itertools.chain(*intervals)))
+                    (OrderedSet(interval_to_label.keys()) - OrderedSet(itertools.chain(*intervals)))
                 )
             )
             for start, end in invalid_range:
