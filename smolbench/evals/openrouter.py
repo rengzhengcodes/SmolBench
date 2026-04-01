@@ -79,7 +79,14 @@ def query(prompt: str, model: str, seed: int) -> str:
             if OPENROUTER_DEBUG and OPENROUTER_DEBUG_RESPONSE:
                 logging.debug(body)
 
-            return body["choices"][0]["message"]["content"]
+            if body["choices"][0]["message"]["content"] is None:
+                logging.warning(
+                    "Body returned none value: \n"
+                    f"{body}"
+                )
+                return ""
+            else:
+                return body["choices"][0]["message"]["content"]
 
         # Attempts to retry exceptions if possible.
         except requests.exceptions.RequestException as err:
