@@ -2,6 +2,7 @@
 Interfacing directly with the OpenRouter API.
 """
 
+import logging
 import os
 import time
 
@@ -71,12 +72,12 @@ def query(prompt: str, model: str, seed: int) -> str:
             )
 
             if not response.ok:
-                print(response.text)
+                logging.info(response.text)
 
             response.raise_for_status()
             body = response.json()
             if OPENROUTER_DEBUG and OPENROUTER_DEBUG_RESPONSE:
-                print(body)
+                logging.debug(body)
 
             return body["choices"][0]["message"]["content"]
 
@@ -84,7 +85,7 @@ def query(prompt: str, model: str, seed: int) -> str:
         except requests.exceptions.RequestException as err:
             if not _is_retryable_request_error(err):
                 raise
-            print(
+            logging.info(
                 f"OpenRouter request failed on attempt {attempt}: {err}. "
                 f"Retrying in {OPENROUTER_RETRY_BACKOFF_SECONDS} seconds."
             )
@@ -115,14 +116,14 @@ def evaluate(quiz: Quiz, model: str, seed: int) -> Marks:
     response: str
     for q, response in zip(quiz, responses):
         if OPENROUTER_DEBUG:
-            print(correct, incorrect, invalid)
+            logging.debug(correct, incorrect, invalid)
         # Tracks if the response given is "nonsensical."
         try:
             response: Answer = q.condition(response)
         except ValueError as e:
             invalid += 1
             if OPENROUTER_DEBUG:
-                print(e)
+                logging.debug(e)
             continue
 
         # Marks any sensical answers and updates scoring.
