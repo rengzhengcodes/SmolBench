@@ -30,7 +30,7 @@ def main() -> None:
     test = json.load((BENCHMARK_DIR / "random" / "test.json").open())
 
     # Prefer a target we already know replays cleanly.
-    replay_cache = json.load((Path(__file__).resolve().parent.parent / "data" / "replay_filter.json").open())
+    replay_cache = json.load((Path(__file__).resolve().parent.parent.parent / "data" / "replay_filter.json").open())
     passing_names = {name for name, r in replay_cache.items() if r["ok"]}
 
     candidates = pick_well_connected(test, corpus, traced_lookup, n=50)

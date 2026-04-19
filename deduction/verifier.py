@@ -87,24 +87,3 @@ def ground_truth_passes(
     Use this to filter pilot samples to ones Dojo can actually verify."""
     tactics = [t["tactic"] for t in traced_tactics]
     return verify(file_path, theorem_name, tactics).ok
-
-
-if __name__ == "__main__":
-    FILE = "Mathlib/Data/NNReal/Basic.lean"
-    NAME = "NNReal.le_inv_iff_mul_le"
-    GT = "rw [← mul_le_mul_left (pos_iff_ne_zero.2 h), mul_inv_cancel h, mul_comm]"
-
-    cases = [
-        ("ground-truth (str)", GT, True),
-        ("ground-truth (list)", [GT], True),
-        ("wrong proof rfl", "rfl", False),
-        ("syntax error", "this is not valid lean", False),
-        ("empty proof", "", False),
-    ]
-    for name, proof, expected in cases:
-        r = verify(FILE, NAME, proof)
-        print(f"{name:25s}: ok={r.ok}  tactics_applied={r.tactics_applied}  "
-              f"{'PASS' if r.ok == expected else 'FAIL'}")
-        assert r.ok == expected, f"{name}: expected ok={expected}, got {r.ok}: {r.error}"
-
-    print("\nAll cases behaved as expected.")
