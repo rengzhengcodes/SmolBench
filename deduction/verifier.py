@@ -28,8 +28,24 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Union
 
 ROOT = Path(__file__).resolve().parent.parent
-os.environ.setdefault("SSL_CERT_FILE", "/etc/ssl/certs/ca-bundle.crt")
-os.environ.setdefault("CACHE_DIR", str(ROOT / "data" / "lean_dojo_cache"))
+# Point urllib/openssl at a CA bundle that actually exists on this host. NixOS
+# puts its bundle at `ca-bundle.crt`; Ubuntu ships `ca-certificates.crt`. Only
+# set `SSL_CERT_FILE` if the chosen file exists — otherwise httpx/openai blow
+# up at import time trying to load a nonexistent cafile.
+_SSL_CERT_CANDIDATES = [
+    "/etc/ssl/certs/ca-certificates.crt",  # Ubuntu/Debian
+    "/etc/ssl/certs/ca-bundle.crt",        # NixOS, Fedora
+    "/etc/pki/tls/certs/ca-bundle.crt",    # RHEL-ish
+]
+if "SSL_CERT_FILE" not in os.environ:
+    for _p in _SSL_CERT_CANDIDATES:
+        if Path(_p).exists():
+            os.environ["SSL_CERT_FILE"] = _p
+            break
+
+# `.resolve()` chases symlinks so Dojo's internal path comparisons line up when
+# data/ is symlinked (e.g., to ephemeral nvme on EC2).
+os.environ.setdefault("CACHE_DIR", str((ROOT / "data" / "lean_dojo_cache").resolve()))
 
 from lean_dojo import LeanGitRepo, Theorem, Dojo, ProofFinished, LeanError  # noqa: E402
 
