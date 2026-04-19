@@ -15,6 +15,7 @@ parallelized with multiprocessing later; for now serial is fine and keeps the
 code simple.
 """
 
+import argparse
 import json
 from pathlib import Path
 from typing import Dict, List
@@ -83,12 +84,19 @@ def summarize(results: List[dict]) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--n", type=int, default=N_SAMPLES,
+        help=f"number of well-connected samples to check (default {N_SAMPLES})",
+    )
+    args = parser.parse_args()
+
     print("Loading corpus and traced_tactics lookup...")
     corpus = load_corpus(BENCHMARK_DIR / "corpus.jsonl")
     traced_lookup = load_traced_lookup()
     test = json.load((BENCHMARK_DIR / "random" / "test.json").open())
 
-    samples = pick_well_connected(test, corpus, traced_lookup, N_SAMPLES)
+    samples = pick_well_connected(test, corpus, traced_lookup, args.n)
     print(f"Picked {len(samples)} well-connected samples; checking each in Dojo...\n")
 
     results = replay_filter(samples)
