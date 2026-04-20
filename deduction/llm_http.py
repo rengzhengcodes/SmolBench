@@ -30,7 +30,8 @@ Then from Python:
 """
 
 import os
-from typing import Optional, Tuple
+import random
+from typing import List, Optional, Tuple
 
 from deduction.harness import LLMFn
 from deduction.prompt import extract_proof
@@ -38,12 +39,17 @@ from deduction.prompt import extract_proof
 
 def openai_compat_llm(
     base_url: str = "http://localhost:8000/v1",
+    base_urls: Optional[List[str]] = None,
     model: str = "Qwen/Qwen2.5-1.5B-Instruct",
     api_key: Optional[str] = None,
     max_tokens: int = 1024,
     extract=None,
 ) -> LLMFn:
-    """Build an `LLMFn` that hits `base_url` with OpenAI chat-completions.
+    """Build an `LLMFn` that hits an OpenAI-compatible chat-completions endpoint.
+
+    If `base_urls` is given (list of endpoints), each call picks one at random
+    — useful when running several vLLM replicas on separate GPUs to get more
+    aggregate throughput. Otherwise `base_url` is used.
 
     `api_key` falls back to `OPENAI_API_KEY` env var or the string `"dummy"`
     for unauthenticated local servers like vLLM defaults.
@@ -58,10 +64,14 @@ def openai_compat_llm(
     if extract is None:
         extract = extract_proof
 
+    if not base_urls:
+        base_urls = [base_url]
+
     key = api_key or os.environ.get("OPENAI_API_KEY", "dummy")
-    client = OpenAI(base_url=base_url, api_key=key)
+    clients = [OpenAI(base_url=u, api_key=key) for u in base_urls]
 
     def fn(prompt: str, temperature: float) -> Tuple[str, Optional[int], Optional[int]]:
+        client = random.choice(clients)
         resp = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],

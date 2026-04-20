@@ -44,6 +44,10 @@ MAX_WORKERS = int(os.environ.get("SB_MAX_WORKERS", "16"))
 BUDGET_TOKENS = int(os.environ.get("SB_BUDGET_TOKENS", "14000"))
 MAX_TOKENS_OUT = int(os.environ.get("SB_MAX_TOKENS_OUT", "1024"))
 PROMPT_TYPE = os.environ.get("SB_PROMPT_TYPE", "tactics_only")
+# Comma-separated list of OpenAI-compatible endpoints. If multiple, the LLMFn
+# round-robins requests across them — useful for N vLLM replicas on N GPUs.
+_SB_BASE_URLS = os.environ.get("SB_BASE_URLS", "").strip()
+BASE_URLS = [u.strip() for u in _SB_BASE_URLS.split(",") if u.strip()] or ["http://localhost:8000/v1"]
 S3_DEST = "s3://training-runs-us-east-2-414266451290/runs/dev-fisher/"
 
 
@@ -96,10 +100,13 @@ def main() -> None:
     print(f"Model: {MODEL}")
     print(f"Prompt type: {PROMPT_TYPE}")
     print(f"Log path: {LOG_PATH}")
+    print(f"LLM endpoints: {BASE_URLS}")
     if PROMPT_TYPE not in _PROMPTS:
         raise ValueError(f"unknown SB_PROMPT_TYPE={PROMPT_TYPE!r}; expected one of {list(_PROMPTS)}")
     prompt_template, extract_fn = _PROMPTS[PROMPT_TYPE]
-    llm = openai_compat_llm(model=MODEL, max_tokens=MAX_TOKENS_OUT, extract=extract_fn)
+    llm = openai_compat_llm(
+        base_urls=BASE_URLS, model=MODEL, max_tokens=MAX_TOKENS_OUT, extract=extract_fn,
+    )
 
     print(f"Loading tokenizer for {MODEL} ...")
     tokenizer = hf_tokenizer(MODEL)
