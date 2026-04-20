@@ -22,7 +22,12 @@ from deduction.inspect import (
 )
 from deduction.llm_http import openai_compat_llm
 from deduction.pool_runner import DEFAULT_CONDITIONS, pilot_pool, run_pool
-from deduction.prompt import tactics_only_prompt
+from deduction.prompt import (
+    dsprover_prompt,
+    extract_proof,
+    extract_proof_dsprover,
+    tactics_only_prompt,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,7 +43,14 @@ TEMPERATURE = float(os.environ.get("SB_TEMPERATURE", "0.7"))
 MAX_WORKERS = int(os.environ.get("SB_MAX_WORKERS", "16"))
 BUDGET_TOKENS = int(os.environ.get("SB_BUDGET_TOKENS", "14000"))
 MAX_TOKENS_OUT = int(os.environ.get("SB_MAX_TOKENS_OUT", "1024"))
+PROMPT_TYPE = os.environ.get("SB_PROMPT_TYPE", "tactics_only")
 S3_DEST = "s3://training-runs-us-east-2-414266451290/runs/dev-fisher/"
+
+
+_PROMPTS = {
+    "tactics_only": (tactics_only_prompt, extract_proof),
+    "dsprover":     (dsprover_prompt,    extract_proof_dsprover),
+}
 
 
 def sync_to_s3(log_path: Path) -> None:
@@ -82,8 +94,12 @@ def main() -> None:
     print(f"Pool: {len(targets)} replay-passing well-connected targets")
 
     print(f"Model: {MODEL}")
+    print(f"Prompt type: {PROMPT_TYPE}")
     print(f"Log path: {LOG_PATH}")
-    llm = openai_compat_llm(model=MODEL, max_tokens=MAX_TOKENS_OUT)
+    if PROMPT_TYPE not in _PROMPTS:
+        raise ValueError(f"unknown SB_PROMPT_TYPE={PROMPT_TYPE!r}; expected one of {list(_PROMPTS)}")
+    prompt_template, extract_fn = _PROMPTS[PROMPT_TYPE]
+    llm = openai_compat_llm(model=MODEL, max_tokens=MAX_TOKENS_OUT, extract=extract_fn)
 
     print(f"Loading tokenizer for {MODEL} ...")
     tokenizer = hf_tokenizer(MODEL)
@@ -92,7 +108,7 @@ def main() -> None:
         targets=targets,
         conditions=DEFAULT_CONDITIONS,
         llm_fn=llm,
-        prompt_template=tactics_only_prompt,
+        prompt_template=prompt_template,
         log_path=LOG_PATH,
         k=K,
         temperature=TEMPERATURE,

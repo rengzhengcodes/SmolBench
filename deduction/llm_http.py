@@ -41,17 +41,22 @@ def openai_compat_llm(
     model: str = "Qwen/Qwen2.5-1.5B-Instruct",
     api_key: Optional[str] = None,
     max_tokens: int = 1024,
-    extract: bool = True,
+    extract=None,
 ) -> LLMFn:
     """Build an `LLMFn` that hits `base_url` with OpenAI chat-completions.
 
     `api_key` falls back to `OPENAI_API_KEY` env var or the string `"dummy"`
-    for unauthenticated local servers like vLLM defaults. When `extract` is
-    True the returned proof text is pre-processed by `deduction.prompt.extract_proof`
-    (strips markdown fences, leading `by`); set False for debugging raw
-    model output.
+    for unauthenticated local servers like vLLM defaults.
+
+    `extract` is a callable `str -> str` applied to the raw completion before
+    returning. Defaults to `deduction.prompt.extract_proof` (generic: strips
+    code fences + leading `by`). Pass e.g. `extract_proof_dsprover` for the
+    DeepSeek-Prover family. Pass `lambda s: s` to disable extraction.
     """
     from openai import OpenAI  # deferred import so the module is light if unused
+
+    if extract is None:
+        extract = extract_proof
 
     key = api_key or os.environ.get("OPENAI_API_KEY", "dummy")
     client = OpenAI(base_url=base_url, api_key=key)
@@ -64,7 +69,7 @@ def openai_compat_llm(
             max_tokens=max_tokens,
         )
         content = resp.choices[0].message.content or ""
-        proof_text = extract_proof(content) if extract else content
+        proof_text = extract(content)
         u = resp.usage
         return (
             proof_text,
