@@ -22,7 +22,23 @@ MAIN_LOG="$LOG_DIR/overnight_main.log"
 ts() { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
 log() { echo "[$(ts)] $*" | tee -a "$MAIN_LOG"; }
 
+cleanup_vllm() {
+    # `kill -9` on the vllm launcher doesn't reliably reap EngineCore subprocesses;
+    # they survive and hold VRAM, which blocks the next vllm launch with an OOM-ish
+    # "free memory less than desired utilization" error. Nuke anything vllm-flavored
+    # and give the driver a beat to reclaim the memory.
+    pkill -9 -f "vllm serve" 2>/dev/null || true
+    pkill -9 -f "VLLM::" 2>/dev/null || true
+    pkill -9 -f "EngineCore" 2>/dev/null || true
+    pkill -9 -f "vllm.*worker" 2>/dev/null || true
+    sleep 20
+    # Best-effort assertion: log VRAM state so a stuck GPU is visible in the log.
+    nvidia-smi --query-gpu=index,memory.free --format=csv,noheader 2>&1 | tee -a "$MAIN_LOG"
+}
+
 log "=== OVERNIGHT RUN START ==="
+log "--- pre-run cleanup ---"
+cleanup_vllm
 
 run_one() {
     local label="$1"     # short tag for filenames
@@ -59,15 +75,13 @@ run_one() {
             log "  [${label}] ABORT — vLLM didn't listen within ${timeout}s; see ${vllm_log}"
             aws s3 cp "$vllm_log" "${S3_DEST}vllm_${label}.log" --only-show-errors || true
             kill -9 "$vllm_pid" 2>/dev/null || true
-            pkill -9 -f "vllm serve" 2>/dev/null || true
-            sleep 30
+            cleanup_vllm
             return 1
         fi
         if ! kill -0 "$vllm_pid" 2>/dev/null; then
             log "  [${label}] ABORT — vllm process died before serving; see ${vllm_log}"
             aws s3 cp "$vllm_log" "${S3_DEST}vllm_${label}.log" --only-show-errors || true
-            pkill -9 -f "vllm serve" 2>/dev/null || true
-            sleep 30
+            cleanup_vllm
             return 1
         fi
     done
@@ -83,8 +97,7 @@ run_one() {
         if [ "$tries" -gt 10 ]; then
             log "  [${label}] ABORT — server not answering after warmup"
             kill -9 "$vllm_pid" 2>/dev/null || true
-            pkill -9 -f "vllm serve" 2>/dev/null || true
-            sleep 30
+            cleanup_vllm
             return 1
         fi
         sleep 10
@@ -104,8 +117,7 @@ run_one() {
 
     # Tear down vLLM and give VRAM time to free before the next model
     kill -9 "$vllm_pid" 2>/dev/null || true
-    pkill -9 -f "vllm serve" 2>/dev/null || true
-    sleep 30
+    cleanup_vllm
     log "--- [${label}] END ---"
 }
 
