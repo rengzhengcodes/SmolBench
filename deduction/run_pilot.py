@@ -10,6 +10,7 @@ Parallelizes Dojo across many (target × condition) pairs — tune
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -24,14 +25,19 @@ from deduction.pool_runner import DEFAULT_CONDITIONS, pilot_pool, run_pool
 from deduction.prompt import tactics_only_prompt
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG_PATH = ROOT / "data" / "pilot_qwen7b.jsonl"
 
-MODEL = "Qwen/Qwen2.5-7B-Instruct"
-MAX_TARGETS = 200  # pilot_pool caps at however many replay-passing are cached
-K = 10
-TEMPERATURE = 0.7
-MAX_WORKERS = 16
-BUDGET_TOKENS = 14000   # leave headroom for model's own output (max_model_len=16384)
+# Configuration via env vars so a single script can iterate over models without
+# code edits. Defaults are the first-pilot Qwen 7B run.
+MODEL = os.environ.get("SB_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+LOG_NAME = os.environ.get("SB_LOG_NAME", "pilot.jsonl")
+LOG_PATH = ROOT / "data" / LOG_NAME
+
+MAX_TARGETS = int(os.environ.get("SB_MAX_TARGETS", "200"))
+K = int(os.environ.get("SB_K", "10"))
+TEMPERATURE = float(os.environ.get("SB_TEMPERATURE", "0.7"))
+MAX_WORKERS = int(os.environ.get("SB_MAX_WORKERS", "16"))
+BUDGET_TOKENS = int(os.environ.get("SB_BUDGET_TOKENS", "14000"))
+MAX_TOKENS_OUT = int(os.environ.get("SB_MAX_TOKENS_OUT", "1024"))
 S3_DEST = "s3://training-runs-us-east-2-414266451290/runs/dev-fisher/"
 
 
@@ -75,7 +81,9 @@ def main() -> None:
     targets = pilot_pool(corpus, traced_lookup, max_n=MAX_TARGETS)
     print(f"Pool: {len(targets)} replay-passing well-connected targets")
 
-    llm = openai_compat_llm(model=MODEL, max_tokens=1024)
+    print(f"Model: {MODEL}")
+    print(f"Log path: {LOG_PATH}")
+    llm = openai_compat_llm(model=MODEL, max_tokens=MAX_TOKENS_OUT)
 
     print(f"Loading tokenizer for {MODEL} ...")
     tokenizer = hf_tokenizer(MODEL)
