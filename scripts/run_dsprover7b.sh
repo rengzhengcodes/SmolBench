@@ -19,7 +19,14 @@ cleanup_vllm() {
     pkill -9 -f "VLLM::" 2>/dev/null || true
     pkill -9 -f EngineCore 2>/dev/null || true
     pkill -9 -f "vllm.*worker" 2>/dev/null || true
-    sleep 20
+    sleep 10
+    # Belt-and-suspenders: kill anything still holding GPU memory. pkill by
+    # command-line pattern misses some vllm subprocesses (they show up as
+    # `VLLM::EngineCore` in nvidia-smi but carry a different argv).
+    for pid in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 15
 }
 
 log "=== DS-Prover 7B v2 RUN START ==="

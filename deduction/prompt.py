@@ -79,6 +79,13 @@ def dsprover_prompt(target_sig: str, context_text: str) -> str:
     )
 
 
+def _unbpe(s: str) -> str:
+    """DeepSeek-Prover's chat endpoint returns byte-BPE-encoded text: spaces
+    come back as U+0120 'Ġ' and newlines as U+010A 'Ċ'. Normalize those before
+    running regex that assumes ASCII whitespace."""
+    return s.replace("\u0120", " ").replace("\u010a", "\n").replace("\u010b", "\t")
+
+
 def extract_proof_dsprover(raw: str) -> str:
     """Pull the tactic body from a DS-Prover output.
 
@@ -87,18 +94,16 @@ def extract_proof_dsprover(raw: str) -> str:
     the LAST such block (the model's final answer after any intermediate
     sketches), find `:= by`, and return everything after it.
 
-    Falls back to the generic `extract_proof` if no `:= by` pattern is found
-    — that handles term-mode completions (`:= <expression>`) by yielding the
-    whole block for the verifier to reject rather than silently dropping.
+    Returns empty on term-mode (no `:= by`) so the verifier reports parse
+    error on an empty tactic list rather than trying to run `:= <term>` as a
+    tactic. Raw output is normalized from byte-BPE encoding first.
     """
+    raw = _unbpe(raw)
     fences = _LEAN4_FENCE_RE.findall(raw)
     if not fences:
-        # No lean4-tagged fence — fall back to generic extraction
         return extract_proof(raw)
-    block = fences[-1]  # prefer the final answer over intermediate sketches
+    block = fences[-1]
     m = _BY_RE.search(block)
     if m is None:
-        # Term-mode proof — return empty so verifier reports parse error on
-        # an empty tactic list rather than trying to run `:= <term>` as a tactic
         return ""
     return block[m.end():].strip("\n").strip()

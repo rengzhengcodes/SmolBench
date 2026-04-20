@@ -31,6 +31,10 @@ cleanup_vllm() {
     pkill -9 -f "VLLM::" 2>/dev/null || true
     pkill -9 -f EngineCore 2>/dev/null || true
     pkill -9 -f "vllm.*worker" 2>/dev/null || true
+    sleep 15
+    for pid in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
     sleep 30  # big model needs more time for driver to reclaim VRAM
 }
 
