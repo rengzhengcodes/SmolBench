@@ -15,6 +15,10 @@ export HF_HOME=/opt/dlami/nvme/sb/hf_cache
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
 export NCCL_IB_DISABLE=1
+# NCCL reports `P2P is disabled between NVLINK connected GPUs 4 and 0` on
+# this DLAMI AMI — likely a stale topology probe. Bypass with IGNORE_P2P=1
+# so vLLM falls back to its own P2P path over NVLink.
+export NCCL_IGNORE_DISABLED_P2P=1
 export NCCL_SHM_DISABLE=0
 export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=INIT
