@@ -182,6 +182,74 @@ def extract_proof_body_source(
     return body.rstrip()
 
 
+def split_top_level_tactics(proof_body_source: str) -> List[str]:
+    """Split a proof body into its top-level tactics by indentation.
+
+    The first non-blank line's leading-whitespace count is the body's
+    "base indent"; each line at exactly that indent starts a new top-
+    level tactic, and lines indented further are continuations of the
+    current tactic. Blank lines attach to the preceding tactic.
+
+    Each returned tactic has the base indent stripped from every line so
+    callers can re-indent uniformly when splicing into a generated
+    `theorem ... := by\\n` site.
+
+    Correctly handles:
+      - linear sequential proofs (one line per tactic)
+      - bullet-focused proofs (`· tac`) — each bullet is its own top-level
+      - inner-`by` blocks (`exact f fun h => by tac`) — kept as part of
+        the outer tactic, not split out
+      - multi-line tactics (`have h : T := by\\n  tac1\\n  tac2`) — kept
+        grouped via continuation indentation
+      - `<;>` chains on one line — single tactic
+    """
+    lines = proof_body_source.splitlines()
+    if not lines:
+        return []
+    base_indent: Optional[int] = None
+    for line in lines:
+        if line.strip():
+            base_indent = len(line) - len(line.lstrip())
+            break
+    if base_indent is None:
+        return []
+
+    groups: List[List[str]] = []
+    current: List[str] = []
+    for line in lines:
+        if not line.strip():
+            if current:
+                current.append(line)
+            continue
+        line_indent = len(line) - len(line.lstrip())
+        if line_indent <= base_indent:
+            if current:
+                groups.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        groups.append(current)
+
+    out: List[str] = []
+    for group in groups:
+        dedented: List[str] = []
+        for line in group:
+            if line.strip():
+                # Strip up to base_indent leading spaces (no more — preserves
+                # relative indentation of continuation lines).
+                idx = 0
+                while idx < base_indent and idx < len(line) and line[idx] == " ":
+                    idx += 1
+                dedented.append(line[idx:])
+            else:
+                dedented.append(line)
+        joined = "\n".join(dedented).rstrip()
+        if joined:
+            out.append(joined)
+    return out
+
+
 _DOC_BLOCK_RE = re.compile(r"/--[\s\S]*?-/")
 
 

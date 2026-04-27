@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 from deduction.corpus import (
     MATHLIB_DIR,
@@ -24,6 +24,7 @@ from deduction.corpus import (
     is_tactic_mode_proof,
     local_name,
     parse_imports,
+    split_top_level_tactics,
 )
 
 
@@ -78,6 +79,34 @@ def _split_at_top_level_assign(code: str) -> str:
             return code[:i]
         i += 1
     return code
+
+
+def _map_traced_to_source_tactics(
+    source_tactics: Tuple[str, ...],
+    raw_traced: list,
+) -> Tuple[Tuple[str, ...], ...]:
+    """For each source-text top-level tactic, collect the set of premise
+    full_names referenced inside it. We do this by matching each flat
+    LeanDojo `traced_tactic`'s `tactic` text as a substring of the
+    source-tactic — first-match wins, so inner-`by` annotations roll
+    up into the surrounding outer tactic and bullet tactics get their
+    own annotations directly.
+
+    Premises within a bucket are deduped preserving first-seen order."""
+    buckets: List[List[str]] = [[] for _ in source_tactics]
+    for tr in raw_traced:
+        text = (tr.get("tactic") or "").strip()
+        if not text:
+            continue
+        for i, src in enumerate(source_tactics):
+            if text in src:
+                refs = tr.get("annotated_tactic", [None, []])[1]
+                for ref in refs:
+                    fn = ref.get("full_name") if isinstance(ref, dict) else None
+                    if fn and fn not in buckets[i]:
+                        buckets[i].append(fn)
+                break
+    return tuple(tuple(b) for b in buckets)
 
 
 def extract_signature(corpus_code: str, local_decl_name: str) -> str:
@@ -136,39 +165,23 @@ def build_target(
     ln = local_name(full_name, f_path, L)
     sig = extract_signature(p.corpus_code, ln)
 
-    # Filter the flat `traced_tactics` to top-level only. LeanDojo records
-    # every tactic invocation including those inside nested `by` blocks
-    # (e.g., `exact f fun h => by tac1` records both `exact ...` and
-    # `tac1`). Replaying inner-`by` tactics at the outer level triggers
-    # "no goals to be solved" errors. We keep only the sequential chain:
-    # tactic[i+1] is top-level iff state_before == tactic[i].state_after.
+    # We previously chain-filtered LeanDojo's flat `traced_tactics`
+    # (state_before == prev.state_after) to drop inner-`by` duplicates.
+    # That worked for inner-by but rejected bullets (`· tac`), whose
+    # state_before is a focused subset of the previous state_after, not
+    # a literal match. The only filter that's right for both cases is to
+    # parse top-level tactics from the source text by indentation.
     raw_traced = traced_lookup.get(full_name, [])
-    traced: list = []
-    if raw_traced:
-        traced.append(raw_traced[0])
-        last_after = raw_traced[0].get("state_after")
-        for t in raw_traced[1:]:
-            if t.get("state_before") == last_after:
-                traced.append(t)
-                last_after = t.get("state_after")
-            # else: tactic was applied to a nested goal — skip
-    tactics = tuple(t["tactic"] for t in traced)
-    premise_refs_per_tactic = tuple(
-        tuple(
-            ref["full_name"]
-            for ref in t.get("annotated_tactic", [None, []])[1]
-            if ref.get("full_name")
-        )
-        for t in traced
-    )
-
-    imports, _ = parse_imports(f_path)
-    f_prefix_full = extract_prefix_full(f_path, L)
-    f_prefix_scope_only = extract_prefix_scope_only(f_path, L)
     tactic_mode = is_tactic_mode_proof(f_path, p.start, p.end)
     proof_body_source = (
         extract_proof_body_source(f_path, p.start, p.end) if tactic_mode else ""
     )
+    tactics = tuple(split_top_level_tactics(proof_body_source))
+    premise_refs_per_tactic = _map_traced_to_source_tactics(tactics, raw_traced)
+
+    imports, _ = parse_imports(f_path)
+    f_prefix_full = extract_prefix_full(f_path, L)
+    f_prefix_scope_only = extract_prefix_scope_only(f_path, L)
 
     return Target(
         full_name=full_name,
