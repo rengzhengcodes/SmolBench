@@ -178,19 +178,43 @@ Rendering:
 
 Before any model evaluation, every candidate target is replay-tested:
 
-1. Build the **Lean view** with `<model continuation>` = the canonical tactics
-   `t_1..t_N` (i.e., the full canonical proof, K=0 form).
+1. Build the **Lean view** with `<model continuation>` = the **literal source
+   text** of the canonical proof body (everything after `:= by` in F).
 2. Submit to local Kimina.
 3. Pass ⇒ admit T to the pool.
 4. Fail ⇒ log + drop. Record the error class.
 
-The K split does not change the total proof, only the prefix/continuation
-boundary. One replay per target is sufficient. Targets that fail replay are
-excluded from all (K, B) cells — we refuse to measure the model against a
-ceiling our verifier cannot reach.
+Using the literal source body for replay (rather than rejoining LeanDojo's
+`traced_tactics`) handles bullets (`·`), `<;>` combinators, inner-`by`
+blocks, and other multi-goal-focusing structures verbatim — it's exactly
+what Lean originally accepted, so it must replay clean modulo our own
+renderer bugs.
 
-`data/replay_filter.json` is **discarded**. It was built against a different
-toolchain and import scope. The pool is rebuilt against our exact Lean view.
+LeanDojo's `traced_tactics` is still used to seed knob B's premise BFS
+(via `annotated_tactic[1]`'s premise refs) and may be used for knob A
+slicing where the flat tactic list lines up with top-level proof structure.
+
+Targets that fail replay are excluded from all (K, B) cells — we refuse to
+measure the model against a ceiling our verifier cannot reach. `data/
+replay_filter.json` from the legacy plan is **discarded**.
+
+### Candidate filters
+
+Targets are filtered before replay:
+
+- **Tactic-mode only.** `corpus.is_tactic_mode_proof` checks that the
+  declaration body starts with `by` after the first top-level `:=`. Term-
+  mode proofs (`:= ⟨...⟩`, `:= rfl`, etc.) are dropped. LeanDojo records
+  inner-`by` tactics from term-mode bodies, but those fragments don't
+  compose into a tactic-mode replay — they fail with `unknown identifier`
+  or `unsolved goals`. Empirically this is ~25% of the corpus.
+- **Mathlib-resident.** Targets must live in a `Mathlib/...` source path
+  so the prefix and proof body can be read locally.
+- **Tactic-count window.** Configurable per-run; pilot uses
+  `min_tactics=1, max_tactics=6` to keep prompts tractable.
+
+With these filters the replay pass rate is **98%** on the first 100
+candidates (vs. 78% without).
 
 ## Module layout
 

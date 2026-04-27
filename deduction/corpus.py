@@ -110,6 +110,78 @@ def read_source_with_attrs(file_path: Path, start: Tuple[int, int], end: Tuple[i
     return "\n".join(lines[actual_start - 1:el])
 
 
+def _find_top_level_assign(text: str) -> int:
+    """Return the index of the first top-level `:=` (outside `[...]` brackets)
+    in `text`, or -1 if not found."""
+    depth = 0
+    i = 0
+    while i < len(text) - 1:
+        c = text[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+        elif depth == 0 and c == ":" and text[i + 1] == "=":
+            return i
+        i += 1
+    return -1
+
+
+def is_tactic_mode_proof(file_path: Path, start: Tuple[int, int], end: Tuple[int, int]) -> bool:
+    """True iff the declaration body (the text after the first top-level
+    `:=`) starts with `by` — meaning the canonical proof is genuinely
+    tactic-mode and LeanDojo's `traced_tactics` reconstructs into a
+    complete proof.
+
+    Returns False for term-mode proofs (`:= ⟨...⟩`, `:= rfl`, `:= some_term`),
+    and for declarations with no `:=` body (structures, inductives,
+    pattern-matching defs). LeanDojo may still record `traced_tactics`
+    for inner `by` blocks inside term-mode proofs, but those are proof
+    fragments that don't compose into a tactic-mode replay — replays
+    would fail with `unknown identifier` or `unsolved goals`.
+    """
+    text = read_source(file_path, start, end)
+    idx = _find_top_level_assign(text)
+    if idx < 0:
+        return False
+    after = text[idx + 2:].lstrip()
+    if not after:
+        return False
+    return after.startswith("by\n") or after.startswith("by ") or after == "by"
+
+
+def extract_proof_body_source(
+    file_path: Path, start: Tuple[int, int], end: Tuple[int, int]
+) -> str:
+    """Return the literal source text of the proof body — everything after
+    `:= by` in the declaration at corpus `[start, end]`. Trailing
+    whitespace stripped; leading-tactic indentation preserved verbatim
+    so the body can be spliced back into a `theorem ... := by\\n` site
+    without re-indentation.
+
+    Returns empty string for non-tactic-mode declarations or when
+    parsing fails."""
+    text = read_source(file_path, start, end)
+    idx = _find_top_level_assign(text)
+    if idx < 0:
+        return ""
+    after = text[idx + 2:].lstrip()
+    if after.startswith("by\n"):
+        body = after[3:]  # strip "by\n"
+    elif after.startswith("by "):
+        body = after[3:]  # strip "by "
+        # Inline-by case: body lacks indentation. Add 2 spaces if it doesn't
+        # already have leading whitespace, so it sits cleanly under our
+        # generated `theorem ... := by\n`.
+        if body and not body[0].isspace():
+            body = "  " + body
+    elif after == "by":
+        return ""
+    else:
+        return ""
+    return body.rstrip()
+
+
 _DOC_BLOCK_RE = re.compile(r"/--[\s\S]*?-/")
 
 
@@ -390,38 +462,47 @@ def extract_prefix_scope_only(file_path: Path, L: int) -> str:
 # ---------- namespace stack + local-name resolution ----------
 
 _NAMESPACE_RE = re.compile(r"^\s*namespace\s+(\S+)")
+_SECTION_RE = re.compile(r"^\s*section(?:\s+(\S+))?\s*$")
 _END_RE = re.compile(r"^\s*end(?:\s+(\S+))?\s*$")
 
+# Stack entry: (kind, segment). kind ∈ {"ns", "sec"}. Sections don't
+# contribute to qualified names but DO consume `end` directives, so we
+# track them so an anonymous `end` doesn't accidentally close a namespace.
 
-def _push_namespace(stack: List[str], dotted: str) -> None:
-    """`namespace A.B` is equivalent to `namespace A; namespace B`. Push each
-    segment so `end B` closes only the inner one."""
+
+def _push_namespace(stack: List[Tuple[str, str]], dotted: str) -> None:
+    """`namespace A.B` ≡ `namespace A; namespace B`. Push each segment
+    so `end B` closes only the inner one."""
     for segment in dotted.split("."):
-        stack.append(segment)
+        stack.append(("ns", segment))
 
 
-def _pop_end(stack: List[str], name: Optional[str]) -> None:
-    """`end` (no name) pops the top of the stack. `end A.B` pops segments
-    matching from right to left (inner-first)."""
+def _pop_end(stack: List[Tuple[str, str]], name: Optional[str]) -> None:
+    """`end` (no name) pops the top, regardless of kind. `end A.B` pops
+    matching `ns` segments right-to-left."""
     if name is None:
         if stack:
             stack.pop()
         return
     segments = name.split(".")
     for seg in reversed(segments):
-        if stack and stack[-1] == seg:
+        if stack and stack[-1] == ("ns", seg):
+            stack.pop()
+        elif stack and stack[-1][0] == "sec" and stack[-1][1] == seg:
             stack.pop()
         else:
             return  # mismatch — bail
 
 
 def namespace_stack_at(file_path: Path, L: int) -> List[str]:
-    """Active namespace stack at line L (1-indexed). Each entry is one
-    namespace segment."""
+    """Active *namespace* stack at line L (1-indexed). Each entry is one
+    namespace segment. Sections are tracked internally so `end` doesn't
+    accidentally pop a namespace, but section names are not returned —
+    they don't contribute to qualified declaration names."""
     if L <= 1:
         return []
     lines = file_path.read_text().splitlines()
-    stack: List[str] = []
+    stack: List[Tuple[str, str]] = []
     in_block_comment = False
     for line in lines[:L - 1]:
         if in_block_comment:
@@ -440,11 +521,15 @@ def namespace_stack_at(file_path: Path, L: int) -> List[str]:
         if m:
             _push_namespace(stack, m.group(1))
             continue
+        m = _SECTION_RE.match(line)
+        if m:
+            stack.append(("sec", m.group(1) or ""))
+            continue
         m = _END_RE.match(line)
         if m:
             _pop_end(stack, m.group(1))
             continue
-    return stack
+    return [seg for (kind, seg) in stack if kind == "ns"]
 
 
 def local_name(full_name: str, file_path: Path, L: int) -> str:

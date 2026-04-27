@@ -35,8 +35,15 @@ def _indent(text: str) -> str:
 
 
 def replay_continuation(target: Target, K: int) -> str:
-    """Indented canonical tactics t_{K+1}..t_N, ready to splice into
-    `build_lean_view`. Returns "" when K >= N."""
+    """Continuation for the replay test. When K=0, return the literal
+    proof body source from F — preserves bullets, `<;>` combinators, and
+    inner-`by` blocks exactly as Lean originally accepted them.
+
+    For K > 0, fall back to joining `target.tactics[K:]`. (LeanDojo's
+    flat traced_tactics may misrepresent multi-goal/bullet structure for
+    some targets; correct slicing for non-K=0 cases is downstream work.)"""
+    if K == 0 and target.proof_body_source:
+        return target.proof_body_source
     rest = target.tactics[K:]
     if not rest:
         return ""

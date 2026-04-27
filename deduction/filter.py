@@ -81,22 +81,42 @@ def iter_targets(
 
 
 def candidate_iter(*, min_tactics: int, max_tactics: int, limit: Optional[int]):
-    """Stream Targets that pass the tractability filter."""
+    """Stream Targets that pass the tractability filter.
+
+    Skips term-mode proofs: LeanDojo records inner-`by` tactics from
+    term-mode bodies, but those are proof fragments that don't compose
+    into a tactic-mode replay. They would fail with `unknown identifier`
+    or `unsolved goals` when our renderer assembles them as
+    `theorem T sig := by <traced_tactics>`."""
     corpus = load_corpus()
     traced = load_traced_lookup()
     n_emitted = 0
+    n_skipped_term_mode = 0
+    n_skipped_tactic_count = 0
+    n_build_error = 0
     for name in candidate_full_names(corpus, traced):
         try:
             t = build_target(name, corpus, traced)
         except Exception:
+            n_build_error += 1
+            continue
+        if not t.is_tactic_mode:
+            n_skipped_term_mode += 1
             continue
         n = len(t.tactics)
         if not (min_tactics <= n <= max_tactics):
+            n_skipped_tactic_count += 1
             continue
         yield t
         n_emitted += 1
         if limit is not None and n_emitted >= limit:
+            print(f"  filtered: term-mode skipped={n_skipped_term_mode}, "
+                  f"tactic-count skipped={n_skipped_tactic_count}, "
+                  f"build errors={n_build_error}", flush=True)
             return
+    print(f"  filtered: term-mode skipped={n_skipped_term_mode}, "
+          f"tactic-count skipped={n_skipped_tactic_count}, "
+          f"build errors={n_build_error}", flush=True)
 
 
 def main():
@@ -132,9 +152,14 @@ def main():
                 print(f"  skip {name}: not in corpus", file=sys.stderr)
                 continue
             try:
-                targets.append(build_target(name, corpus, traced))
+                t = build_target(name, corpus, traced)
             except Exception as e:
                 print(f"  skip {name}: build failed: {e}", file=sys.stderr)
+                continue
+            if not t.is_tactic_mode:
+                print(f"  skip {name}: term-mode proof", file=sys.stderr)
+                continue
+            targets.append(t)
     else:
         targets = list(candidate_iter(
             min_tactics=args.min_tactics,

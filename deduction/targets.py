@@ -20,6 +20,8 @@ from deduction.corpus import (
     Premise,
     extract_prefix_full,
     extract_prefix_scope_only,
+    extract_proof_body_source,
+    is_tactic_mode_proof,
     local_name,
     parse_imports,
 )
@@ -37,6 +39,8 @@ class Target:
     imports: Tuple[str, ...]              # F's literal `import ...` lines verbatim
     f_prefix_full: str                    # F lines 1..L-1 with leading imports stripped
     f_prefix_scope_only: str              # scope-affecting subset of f_prefix_full
+    is_tactic_mode: bool                  # True iff canonical proof body starts with `by`
+    proof_body_source: str                # literal text after `:= by` from F (used for replay)
 
 
 # ---------- signature extraction ----------
@@ -132,7 +136,22 @@ def build_target(
     ln = local_name(full_name, f_path, L)
     sig = extract_signature(p.corpus_code, ln)
 
-    traced = traced_lookup.get(full_name, [])
+    # Filter the flat `traced_tactics` to top-level only. LeanDojo records
+    # every tactic invocation including those inside nested `by` blocks
+    # (e.g., `exact f fun h => by tac1` records both `exact ...` and
+    # `tac1`). Replaying inner-`by` tactics at the outer level triggers
+    # "no goals to be solved" errors. We keep only the sequential chain:
+    # tactic[i+1] is top-level iff state_before == tactic[i].state_after.
+    raw_traced = traced_lookup.get(full_name, [])
+    traced: list = []
+    if raw_traced:
+        traced.append(raw_traced[0])
+        last_after = raw_traced[0].get("state_after")
+        for t in raw_traced[1:]:
+            if t.get("state_before") == last_after:
+                traced.append(t)
+                last_after = t.get("state_after")
+            # else: tactic was applied to a nested goal — skip
     tactics = tuple(t["tactic"] for t in traced)
     premise_refs_per_tactic = tuple(
         tuple(
@@ -146,6 +165,10 @@ def build_target(
     imports, _ = parse_imports(f_path)
     f_prefix_full = extract_prefix_full(f_path, L)
     f_prefix_scope_only = extract_prefix_scope_only(f_path, L)
+    tactic_mode = is_tactic_mode_proof(f_path, p.start, p.end)
+    proof_body_source = (
+        extract_proof_body_source(f_path, p.start, p.end) if tactic_mode else ""
+    )
 
     return Target(
         full_name=full_name,
@@ -158,4 +181,6 @@ def build_target(
         imports=tuple(imports),
         f_prefix_full=f_prefix_full,
         f_prefix_scope_only=f_prefix_scope_only,
+        is_tactic_mode=tactic_mode,
+        proof_body_source=proof_body_source,
     )
