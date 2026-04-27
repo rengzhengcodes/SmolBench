@@ -1,0 +1,458 @@
+"""LeanDojo corpus loader and Mathlib source readers.
+
+Read-only access layer. All functions take pure inputs and return pure data
+(no I/O side effects beyond reading files at well-defined paths).
+
+The "transitive-import resolver" the legacy plan called for is intentionally
+absent — DESIGN.md commits to using F's literal direct imports verbatim and
+letting Lean's import resolution handle the transitive closure.
+
+Public API
+----------
+    Premise                   — frozen dataclass for a corpus entry
+    load_corpus()             — full_name -> Premise dict from corpus.jsonl
+    load_traced_lookup()      — full_name -> list[traced_tactic dict]
+    read_source()             — declaration text at corpus [start, end]
+    read_source_with_attrs()  — same, expanded backward through @[...]
+    strip_docstring()         — remove /-- ... -/ blocks
+    parse_imports()           — F's literal import block (lines + end_index)
+    extract_prefix_full()     — F lines 1..L-1, leading import block stripped
+    extract_prefix_scope_only() — scope-affecting subset of the full prefix
+    namespace_stack_at()      — active namespace stack at line L
+    local_name()              — strip the deepest namespace prefix from full_name
+"""
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+ROOT = Path(__file__).resolve().parent.parent
+BENCHMARK_DIR = ROOT / "data" / "leandojo_benchmark_4"
+MATHLIB_DIR = ROOT / "data" / "mathlib4"
+
+
+@dataclass(frozen=True, slots=True)
+class Premise:
+    full_name: str
+    file_path: str        # repo-relative, e.g. "Mathlib/Algebra/.../Foo.lean"
+    corpus_code: str      # `code` field from corpus.jsonl (signature only for theorems)
+    kind: str             # "commanddeclaration", "lemma", "def", ...
+    start: Tuple[int, int]  # (line, col) 1-indexed line, 0-indexed col
+    end: Tuple[int, int]
+
+
+# ---------- corpus + splits I/O ----------
+
+def load_corpus(corpus_path: Path = BENCHMARK_DIR / "corpus.jsonl") -> Dict[str, Premise]:
+    """full_name -> Premise. Last-write-wins on collisions across files."""
+    out: Dict[str, Premise] = {}
+    with corpus_path.open() as f:
+        for line in f:
+            entry = json.loads(line)
+            for p in entry["premises"]:
+                out[p["full_name"]] = Premise(
+                    full_name=p["full_name"],
+                    file_path=entry["path"],
+                    corpus_code=p["code"],
+                    kind=p["kind"],
+                    start=tuple(p["start"]),
+                    end=tuple(p["end"]),
+                )
+    return out
+
+
+def load_traced_lookup(benchmark_dir: Path = BENCHMARK_DIR) -> Dict[str, list]:
+    """Union of traced_tactics across every split, keyed by theorem full_name.
+    Used as the premise-graph source for BFS expansion in elaborate.py."""
+    out: Dict[str, list] = {}
+    for schema in ("random", "novel_premises"):
+        for split in ("train", "val", "test"):
+            path = benchmark_dir / schema / f"{split}.json"
+            if not path.exists():
+                continue
+            for t in json.load(path.open()):
+                tactics = t.get("traced_tactics")
+                if tactics and t["full_name"] not in out:
+                    out[t["full_name"]] = tactics
+    return out
+
+
+# ---------- source reading ----------
+
+_ATTR_LINE_RE = re.compile(r"^\s*@\[")
+
+
+def read_source(file_path: Path, start: Tuple[int, int], end: Tuple[int, int]) -> str:
+    """Read the declaration text at corpus [start, end] from a Mathlib file.
+    `start`/`end` are (line, col) 1-indexed line, 0-indexed col, matching the
+    LeanDojo corpus convention."""
+    lines = file_path.read_text().splitlines()
+    sl, _ = start
+    el, _ = end
+    return "\n".join(lines[sl - 1:el])
+
+
+def read_source_with_attrs(file_path: Path, start: Tuple[int, int], end: Tuple[int, int]) -> str:
+    """Same as read_source but expands `start` upward through any contiguous
+    `@[...]` attribute lines. The corpus is inconsistent about whether
+    attribute decoration is included in [start, end]; this normalizes it."""
+    lines = file_path.read_text().splitlines()
+    sl, _ = start
+    el, _ = end
+    # Walk upward from sl-2 (0-indexed) while preceding lines are @[...]
+    i = sl - 2  # index of the line ABOVE the start
+    while i >= 0 and _ATTR_LINE_RE.match(lines[i]):
+        i -= 1
+    actual_start = i + 1 + 1  # back to 1-indexed line of first @[ (or sl)
+    return "\n".join(lines[actual_start - 1:el])
+
+
+_DOC_BLOCK_RE = re.compile(r"/--[\s\S]*?-/")
+
+
+def strip_docstring(text: str) -> str:
+    """Remove `/-- ... -/` doc-comment blocks. Non-doc `/- ... -/` blocks and
+    `--` line comments are preserved."""
+    return _DOC_BLOCK_RE.sub("", text)
+
+
+# ---------- F's import block + prefix extraction ----------
+
+_IMPORT_RE = re.compile(r"^\s*import\s+\S")
+_BLANK_RE = re.compile(r"^\s*$")
+_LINE_COMMENT_RE = re.compile(r"^\s*--")
+_BLOCK_COMMENT_OPEN_RE = re.compile(r"^\s*/-")
+_BLOCK_COMMENT_CLOSE_TOKEN = "-/"
+
+
+def _scan_skipping_comments(lines: List[str], i: int) -> int:
+    """Advance i past blank lines, line comments, and well-formed block
+    comments. Returns the new index. Conservative: a malformed unterminated
+    block comment terminates the scan at the same line."""
+    while i < len(lines):
+        line = lines[i]
+        if _BLANK_RE.match(line) or _LINE_COMMENT_RE.match(line):
+            i += 1
+            continue
+        if _BLOCK_COMMENT_OPEN_RE.match(line):
+            # Find matching -/
+            if _BLOCK_COMMENT_CLOSE_TOKEN in line[line.index("/-") + 2:]:
+                i += 1
+                continue
+            j = i + 1
+            while j < len(lines) and _BLOCK_COMMENT_CLOSE_TOKEN not in lines[j]:
+                j += 1
+            if j == len(lines):
+                return i  # unterminated; bail
+            i = j + 1
+            continue
+        return i
+    return i
+
+
+def parse_imports(file_path: Path) -> Tuple[List[str], int]:
+    """Return (import_lines, line_after_imports_1indexed).
+
+    Reads from the top of `file_path`, skipping leading blank/comment lines,
+    then collects the contiguous `import ...` block. Stops at the first
+    non-import non-blank-non-comment line. Assumes Mathlib convention: imports
+    are contiguous at the file head (after copyright)."""
+    lines = file_path.read_text().splitlines()
+    i = _scan_skipping_comments(lines, 0)
+    imports: List[str] = []
+    while i < len(lines):
+        if _IMPORT_RE.match(lines[i]):
+            imports.append(lines[i])
+            i += 1
+            continue
+        # Blank lines or comments interleaved with imports are tolerated
+        if _BLANK_RE.match(lines[i]) or _LINE_COMMENT_RE.match(lines[i]):
+            i += 1
+            continue
+        break
+    return imports, i + 1  # 1-indexed line number after the import block
+
+
+def extract_prefix_full(file_path: Path, L: int) -> str:
+    """F lines 1..L-1 with the leading import block stripped.
+
+    Imports are emitted separately (as the standalone `imports` field on a
+    Target); leaving them in F's prefix would create duplicates in the
+    verifier file. The returned text starts at the first non-import,
+    non-blank, non-pure-comment line (or the line right after the last
+    import, whichever comes first).
+    """
+    lines = file_path.read_text().splitlines()
+    if L <= 1:
+        return ""
+    _, after_imports = parse_imports(file_path)
+    start_idx = after_imports - 1  # 0-indexed line index where prefix begins
+    # F lines 1..L-1 in 1-indexed terms = 0..L-2 in 0-indexed slice
+    end_idx = L - 1  # exclusive
+    if start_idx >= end_idx:
+        return ""
+    return "\n".join(lines[start_idx:end_idx])
+
+
+# ---------- scope-only prefix extraction ----------
+
+# Lines that affect Lean's elaboration scope and should be kept.
+_SCOPE_HEADS = (
+    "namespace ", "namespace\n",
+    "section", "noncomputable section",
+    "open ", "open\n",
+    "variable ", "variable\n",
+    "universe ", "universes ",
+    "set_option ",
+    "end",
+    "local notation", "local infix", "local prefix", "local postfix",
+    "local syntax", "local macro_rules",
+    "scoped notation", "scoped infix", "scoped prefix", "scoped postfix",
+)
+
+# Lines that begin a *content* declaration (to be dropped).
+_CONTENT_HEADS = (
+    "theorem ", "lemma ", "def ", "instance ", "instance:",
+    "structure ", "inductive ", "class ", "abbrev ", "example ", "example:",
+    "axiom ", "opaque ", "attribute ",
+)
+
+_MODIFIER_PREFIXES = (
+    "private ", "protected ", "scoped ",
+    "unsafe ", "partial ", "mutual ",
+    "noncomputable ",
+)
+
+
+def _column0_kind(line: str) -> str:
+    """Classify a line that starts at column 0 (no leading whitespace).
+    Returns one of: scope, content, attr, doc_open, block_comment_open,
+    line_comment, admin, import, empty, unknown."""
+    stripped = line.rstrip()
+    if not stripped.strip():
+        return "empty"
+    if stripped.startswith("--"):
+        return "line_comment"
+    if stripped.startswith("/--"):
+        return "doc_open"
+    if stripped.startswith("/-"):
+        return "block_comment_open"
+    if stripped.startswith("@["):
+        return "attr"
+    if stripped.startswith("#"):
+        return "admin"
+    if stripped.startswith("import "):
+        return "import"
+
+    # Strip modifiers to find the base keyword
+    s = stripped
+    while True:
+        for m in _MODIFIER_PREFIXES:
+            if s.startswith(m):
+                s = s[len(m):].lstrip()
+                break
+        else:
+            break
+
+    # `noncomputable section` is scope; `noncomputable def ...` was already
+    # stripped by the modifier loop above (so s now starts with "def ").
+    # But the unstripped "noncomputable section" exits the loop with s
+    # starting with "section" — we handle it below.
+
+    if s.startswith("section") and (len(s) == len("section") or not s[len("section")].isalnum()):
+        return "scope"
+    if s.startswith("end") and (len(s) == len("end") or not s[len("end")].isalnum()):
+        return "scope"
+
+    for h in _SCOPE_HEADS:
+        if s.startswith(h):
+            return "scope"
+    for h in _CONTENT_HEADS:
+        if s.startswith(h):
+            return "content"
+    return "unknown"
+
+
+def extract_prefix_scope_only(file_path: Path, L: int) -> str:
+    """Subset of `extract_prefix_full` that keeps only scope-affecting lines.
+
+    Drops:
+      - all theorem/lemma/def/instance/structure/inductive/class/abbrev/
+        example/axiom/opaque/attribute declarations and their bodies
+      - `@[...]` attribute markers and the declaration they modify
+      - `/-- ... -/` doc-comment blocks (and the declaration they document)
+      - `/- ... -/` non-doc block comments
+      - `--` line comments
+      - `#align_import`, `#check`, `#eval`, `#print` admin directives
+      - `import` lines (already emitted in the imports field)
+    Keeps:
+      - `namespace`/`section`/`noncomputable section`/`end` directives
+      - `open`/`variable`/`universe`/`set_option`
+      - `local notation`/`infix`/`prefix`/`postfix`/`syntax`
+    """
+    full = extract_prefix_full(file_path, L)
+    if not full:
+        return ""
+    lines = full.splitlines()
+    out: List[str] = []
+    skip_next_block = False  # set when we hit attr or doc — drop the decl that follows
+    in_block_comment = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if in_block_comment:
+            if _BLOCK_COMMENT_CLOSE_TOKEN in line:
+                in_block_comment = False
+            i += 1
+            continue
+
+        # Continuation lines (indented or blank) belong to the previous block
+        if _BLANK_RE.match(line):
+            # Emit blank lines only if we're NOT mid-skip
+            if not skip_next_block:
+                out.append(line)
+            i += 1
+            continue
+        if line and line[0].isspace():
+            # Indented continuation of the previous block — emit only if we
+            # decided to keep that block. Track via skip_next_block: if it's
+            # set, we're skipping, so drop. Otherwise, the previous block
+            # was kept (scope), and indented continuation should be kept too.
+            if not skip_next_block:
+                out.append(line)
+            i += 1
+            continue
+
+        # Column-0, non-empty: start of a new logical block.
+        kind = _column0_kind(line)
+        if kind in ("import", "admin", "line_comment"):
+            skip_next_block = False
+            i += 1
+            continue
+        if kind == "block_comment_open":
+            # Drop the comment; don't drop a following declaration.
+            if _BLOCK_COMMENT_CLOSE_TOKEN in line[line.index("/-") + 2:]:
+                pass  # closed on same line
+            else:
+                in_block_comment = True
+            skip_next_block = False
+            i += 1
+            continue
+        if kind == "doc_open":
+            # Drop the doc and the declaration it documents.
+            if _BLOCK_COMMENT_CLOSE_TOKEN in line[line.index("/--") + 3:]:
+                pass
+            else:
+                in_block_comment = True
+            skip_next_block = True
+            i += 1
+            continue
+        if kind == "attr":
+            # Attr applies to the next declaration; skip the attr and keep the
+            # skip flag set to drop the decl too.
+            skip_next_block = True
+            i += 1
+            continue
+        if kind == "content":
+            skip_next_block = True
+            i += 1
+            continue
+        if kind == "scope":
+            out.append(line)
+            skip_next_block = False
+            i += 1
+            continue
+        # Unknown: be conservative and emit, unless we're in skip mode
+        if not skip_next_block:
+            out.append(line)
+        i += 1
+
+    # Collapse runs of >2 blank lines to one
+    collapsed: List[str] = []
+    blank_run = 0
+    for ln in out:
+        if not ln.strip():
+            blank_run += 1
+            if blank_run <= 1:
+                collapsed.append("")
+        else:
+            blank_run = 0
+            collapsed.append(ln)
+    # Trim trailing blanks
+    while collapsed and not collapsed[-1].strip():
+        collapsed.pop()
+    return "\n".join(collapsed)
+
+
+# ---------- namespace stack + local-name resolution ----------
+
+_NAMESPACE_RE = re.compile(r"^\s*namespace\s+(\S+)")
+_END_RE = re.compile(r"^\s*end(?:\s+(\S+))?\s*$")
+
+
+def _push_namespace(stack: List[str], dotted: str) -> None:
+    """`namespace A.B` is equivalent to `namespace A; namespace B`. Push each
+    segment so `end B` closes only the inner one."""
+    for segment in dotted.split("."):
+        stack.append(segment)
+
+
+def _pop_end(stack: List[str], name: Optional[str]) -> None:
+    """`end` (no name) pops the top of the stack. `end A.B` pops segments
+    matching from right to left (inner-first)."""
+    if name is None:
+        if stack:
+            stack.pop()
+        return
+    segments = name.split(".")
+    for seg in reversed(segments):
+        if stack and stack[-1] == seg:
+            stack.pop()
+        else:
+            return  # mismatch — bail
+
+
+def namespace_stack_at(file_path: Path, L: int) -> List[str]:
+    """Active namespace stack at line L (1-indexed). Each entry is one
+    namespace segment."""
+    if L <= 1:
+        return []
+    lines = file_path.read_text().splitlines()
+    stack: List[str] = []
+    in_block_comment = False
+    for line in lines[:L - 1]:
+        if in_block_comment:
+            if _BLOCK_COMMENT_CLOSE_TOKEN in line:
+                in_block_comment = False
+            continue
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("/-") and _BLOCK_COMMENT_CLOSE_TOKEN not in s[2:]:
+            in_block_comment = True
+            continue
+        if s.startswith("--"):
+            continue
+        m = _NAMESPACE_RE.match(line)
+        if m:
+            _push_namespace(stack, m.group(1))
+            continue
+        m = _END_RE.match(line)
+        if m:
+            _pop_end(stack, m.group(1))
+            continue
+    return stack
+
+
+def local_name(full_name: str, file_path: Path, L: int) -> str:
+    """Strip the deepest matching namespace prefix from `full_name`, given
+    the active namespace stack at line L."""
+    stack = namespace_stack_at(file_path, L)
+    for k in range(len(stack), 0, -1):
+        prefix = ".".join(stack[:k]) + "."
+        if full_name.startswith(prefix):
+            return full_name[len(prefix):]
+    return full_name
