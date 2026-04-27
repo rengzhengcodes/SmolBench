@@ -340,6 +340,39 @@ These are not rewritten:
   that kimina-lean-server resolves imports against.
 - Pinned Lean toolchain `leanprover/lean4:v4.10.0-rc1`.
 
+## Verifier setup: kimina-lean-server local fork
+
+The local install at `external/kimina-lean-server/` carries one mandatory
+patch at `server/split.py`. **Without this patch the truncated-imports
+defense is silently defeated.**
+
+Upstream's `split_snippet` rewrites every `import Mathlib.X.Y` into a single
+`import Mathlib` before sending to the Lean REPL — a performance optimization
+that lets a warmed-up REPL pool serve any Mathlib-importing request from one
+shared environment. With it active, all our targets share the same fully-of-
+Mathlib elaborator scope, T is in scope, and replay against F's literal
+imports fails with "X has already been declared" errors as F's own content
+double-declares names already brought in by the rewritten `import Mathlib`.
+
+The patch (saved at `scripts/kimina-no-mathlib-collapse.patch`) keeps imports
+verbatim so Lean sees exactly what we wrote. Performance cost was measured:
+sub-imports cold-start at 1–4 s vs. 19 s for full `import Mathlib` (fewer
+oleans to load); warm latency unchanged at ~30–50 ms; total pilot overhead
+in the noise (a few extra minutes per ~3,000-cell batch, dominated by REPL-
+pool churn between distinct import sets).
+
+To reapply after any re-clone of kimina-lean-server (or after re-running
+its setup script):
+
+```
+cd external/kimina-lean-server
+git apply ../../scripts/kimina-no-mathlib-collapse.patch
+# then restart the server per external/kimina-lean-server/SETUP.md
+```
+
+`external/kimina-lean-server/` is not in this repo's git tree; the patch
+file is the durable record.
+
 ## Out of scope
 
 - Promotion to DeepSeek-Prover-V2-7B-FP8 on us-west-2c. Separate task; only
