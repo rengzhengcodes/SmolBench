@@ -396,7 +396,9 @@ def main():
                          "fresh. Default: resume from existing rows.")
     args = ap.parse_args()
 
-    if not is_up(args.server_url):
+    # Cold-start tolerant probe: a fresh kimina spawns its first REPL on the
+    # first verify, which can take 30+s to load Mathlib oleans.
+    if not is_up(args.server_url, timeout=120):
         print(f"ERROR: kimina-lean-server not reachable at {args.server_url}",
               file=sys.stderr)
         sys.exit(2)
@@ -466,7 +468,8 @@ def main():
     meta = collect_run_meta(args, n_targets=len(targets), n_cells=len(cells))
     meta_path = args.out.with_suffix(args.out.suffix + ".meta.jsonl")
     with meta_path.open("a") as mf:
-        mf.write(json.dumps(meta) + "\n")
+        # default=str so Path / Enum / etc. round-trip cleanly.
+        mf.write(json.dumps(meta, default=str) + "\n")
     print(f"Meta: {meta_path} (instance={meta.get('instance_id')}, "
           f"sha={(meta.get('code_sha') or '?')[:8]})", flush=True)
 

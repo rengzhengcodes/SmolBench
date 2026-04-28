@@ -92,10 +92,19 @@ if ! already_done repl; then
   log "fetching REPL from S3 + building"
   rm -rf "$ROOT/external/repl"
   aws s3 cp "$S3_CACHE/repl.tar.gz" - | gunzip | tar -x -C "$ROOT/external/"
+  # The S3 tarball was packed from a NixOS box and may carry a .lake/build
+  # whose binary's ELF interpreter points at /nix/store/.../ld-linux. Force
+  # a clean Ubuntu rebuild so the resulting binary is loadable here.
+  rm -rf "$ROOT/external/repl/.lake/build"
   cd "$ROOT/external/repl"
-  # Source tarball; needs lake build on this box.
   lake build
   test -x .lake/build/bin/repl || { log "REPL binary missing after build"; exit 1; }
+  # Sanity-check the binary actually runs (catches NixOS-linker leftovers).
+  if ! "$ROOT/external/repl/.lake/build/bin/repl" --help >/dev/null 2>&1; then
+    log "REPL binary built but won't execute; checking ldd:"
+    ldd "$ROOT/external/repl/.lake/build/bin/repl" | head -10 || true
+    exit 1
+  fi
   cd "$ROOT"
   done_marker repl
 fi
@@ -149,6 +158,15 @@ fi
 if ! already_done pool; then
   aws s3 cp "$S3_CACHE/replay_pool.jsonl" "$ROOT/data/replay_pool.jsonl"
   done_marker pool
+fi
+
+# ---------- 8b. data/mathlib4 symlink ----------
+# corpus.py reads source ranges via MATHLIB_DIR = data/mathlib4. The cache
+# tarball contains the same source under lean_dojo_cache/.../mathlib4 — point
+# data/mathlib4 at it so we don't need to ship the source tree twice.
+if [[ ! -e "$ROOT/data/mathlib4" ]]; then
+  ln -snf "$ROOT/data/lean_dojo_cache/leanprover-community-mathlib4-${MATHLIB_SHA}/mathlib4" \
+    "$ROOT/data/mathlib4"
 fi
 
 # ---------- 9. kimina .env ----------

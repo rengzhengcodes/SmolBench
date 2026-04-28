@@ -152,7 +152,9 @@ def main():
                     help="Optional: specific full_names to test, bypassing the candidate scan.")
     args = ap.parse_args()
 
-    if not is_up(args.server_url):
+    # Cold-start tolerant: kimina's first verify can take 30+s while it
+    # loads Mathlib oleans into the REPL.
+    if not is_up(args.server_url, timeout=120):
         print(f"ERROR: kimina-lean-server not reachable at {args.server_url}",
               file=sys.stderr)
         sys.exit(2)
