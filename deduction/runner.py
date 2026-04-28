@@ -15,17 +15,32 @@ Pipeline per cell:
 
 K=0..N; B=0..B_max. Each cell is sampled k_seeds times. Verdict per-cell is
 any-of-k success per DESIGN.md.
+
+Spot-instance behavior:
+  - Output JSONL is opened in append mode. On startup, completed
+    (target, K, B, seed) cells are read from the file and skipped. A
+    spot-interruption-restarted runner thus picks up where the last process
+    died.
+  - A sibling `<out>.meta.json` records the run-level context (instance,
+    model, code SHA, args, launch ts) once per process invocation.
+  - Each cell record stores the full prompt + raw model response so the
+    run is fully reproducible offline.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import socket
+import subprocess
 import sys
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from deduction.corpus import Premise, load_corpus, load_traced_lookup
 from deduction.elaborate import expand_premises
@@ -66,6 +81,118 @@ class CellResult:
     wall_ms: int
     skipped_no_corpus_count: int
     skipped_non_mathlib_count: int
+    # Full-fidelity capture (we want everything in S3 for offline analysis).
+    prompt_full: str = ""
+    response_full: str = ""
+    proof_body_extracted: Optional[str] = None
+    lean_source_submitted: Optional[str] = None
+    verifier_messages: Optional[list] = None
+    # Provenance (so we can merge JSONLs from multiple boxes).
+    instance_id: Optional[str] = None
+    model: Optional[str] = None
+    ts: Optional[str] = None  # ISO 8601 UTC of cell completion
+
+
+# ---------- run-level metadata ----------
+
+def _get_imds_token() -> Optional[str]:
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+        )
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.read().decode()
+    except Exception:
+        return None
+
+
+def _imds_get(path: str, token: Optional[str]) -> Optional[str]:
+    try:
+        req = urllib.request.Request(
+            f"http://169.254.169.254/latest/meta-data/{path}",
+            headers={"X-aws-ec2-metadata-token": token} if token else {},
+        )
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.read().decode().strip()
+    except Exception:
+        return None
+
+
+def _git_sha(repo_root: Path) -> Optional[str]:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _git_status(repo_root: Path) -> Optional[str]:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def collect_run_meta(args, n_targets: int, n_cells: int) -> dict:
+    """Snapshot run-level context. Written once per process to <out>.meta.json."""
+    repo_root = Path(__file__).resolve().parent.parent
+    token = _get_imds_token()
+    return {
+        "ts_start": datetime.now(timezone.utc).isoformat(),
+        "hostname": socket.gethostname(),
+        "instance_id": _imds_get("instance-id", token),
+        "instance_type": _imds_get("instance-type", token),
+        "public_ipv4": _imds_get("public-ipv4", token),
+        "availability_zone": _imds_get("placement/availability-zone", token),
+        "ami_id": _imds_get("ami-id", token),
+        "code_sha": _git_sha(repo_root),
+        "code_dirty": _git_status(repo_root),
+        "model": args.model,
+        "vllm_url": args.vllm_url,
+        "kimina_url": args.server_url,
+        "args": vars(args),
+        "n_targets": n_targets,
+        "n_cells_total": n_cells,
+        "pid": os.getpid(),
+    }
+
+
+# ---------- resumability ----------
+
+def load_completed(out_path: Path) -> Set[Tuple[str, int, int, int]]:
+    """Read existing JSONL output and return the set of completed cells.
+
+    A cell is "completed" if its record was successfully written, regardless
+    of verify_pass — we don't want to re-run an already-graded cell, only
+    pick up cells that were never graded due to interruption.
+    """
+    if not out_path.exists():
+        return set()
+    done: Set[Tuple[str, int, int, int]] = set()
+    n_bad = 0
+    with out_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+                done.add((r["target_id"], r["K"], r["B"], r["seed"]))
+            except Exception:
+                n_bad += 1
+    if n_bad:
+        print(f"  (resume) skipped {n_bad} malformed line(s) in {out_path}",
+              file=sys.stderr)
+    return done
 
 
 # ---------- pool loading ----------
@@ -111,8 +238,15 @@ def run_cell(
     max_tokens: int,
     server_url: str,
     verify_timeout: int,
+    max_prompt_chars: int,
+    instance_id: Optional[str],
 ) -> CellResult:
     t_total = time.perf_counter()
+    now_iso = lambda: datetime.now(timezone.utc).isoformat()
+    base_kwargs = dict(
+        target_id=target.full_name, K=K, B=B, seed=seed,
+        instance_id=instance_id, model=model,
+    )
 
     # 1. Elaborate premises
     elab = expand_premises(target, K=K, B=B, corpus=corpus, traced_lookup=traced_lookup)
@@ -120,6 +254,26 @@ def run_cell(
     # 2. LLM view
     user_msg = build_user_message(target, K=K, premises_blocks=elab.blocks)
     premise_chars = sum(len(s) for block in elab.blocks for s in block)
+
+    # 2b. Context-overflow guard: skip cells whose prompt is too big to fit
+    # the model's context window with reasonable headroom for the response.
+    # We compare against char count (rough proxy for tokens at ~4 chars/tok).
+    if max_prompt_chars > 0 and len(user_msg) > max_prompt_chars:
+        wall = int((time.perf_counter() - t_total) * 1000)
+        return CellResult(
+            **base_kwargs,
+            prompt_chars=len(user_msg), prompt_premise_chars=premise_chars,
+            completion_tokens=None, extracted_proof_chars=0,
+            extraction_path="context_overflow_skip",
+            verify_pass=False, error_class="context_overflow",
+            error_detail=f"prompt {len(user_msg)} chars > cap {max_prompt_chars}",
+            lookup_leak_attempt=False, transport_error=None, wall_ms=wall,
+            skipped_no_corpus_count=len(elab.skipped_no_corpus),
+            skipped_non_mathlib_count=len(elab.skipped_non_mathlib),
+            prompt_full=user_msg, response_full="", proof_body_extracted=None,
+            lean_source_submitted=None, verifier_messages=None,
+            ts=now_iso(),
+        )
 
     # 3. Generate
     try:
@@ -130,7 +284,7 @@ def run_cell(
     except Exception as e:
         wall = int((time.perf_counter() - t_total) * 1000)
         return CellResult(
-            target_id=target.full_name, K=K, B=B, seed=seed,
+            **base_kwargs,
             prompt_chars=len(user_msg), prompt_premise_chars=premise_chars,
             completion_tokens=None, extracted_proof_chars=0,
             extraction_path="generate_error",
@@ -138,6 +292,9 @@ def run_cell(
             lookup_leak_attempt=False, transport_error=None, wall_ms=wall,
             skipped_no_corpus_count=len(elab.skipped_no_corpus),
             skipped_non_mathlib_count=len(elab.skipped_non_mathlib),
+            prompt_full=user_msg, response_full="", proof_body_extracted=None,
+            lean_source_submitted=None, verifier_messages=None,
+            ts=now_iso(),
         )
 
     # 4. Extract proof body
@@ -145,7 +302,7 @@ def run_cell(
     if pb.body is None:
         wall = int((time.perf_counter() - t_total) * 1000)
         return CellResult(
-            target_id=target.full_name, K=K, B=B, seed=seed,
+            **base_kwargs,
             prompt_chars=len(user_msg), prompt_premise_chars=premise_chars,
             completion_tokens=gen.completion_tokens, extracted_proof_chars=0,
             extraction_path=pb.extraction_path,
@@ -154,6 +311,9 @@ def run_cell(
             lookup_leak_attempt=False, transport_error=None, wall_ms=wall,
             skipped_no_corpus_count=len(elab.skipped_no_corpus),
             skipped_non_mathlib_count=len(elab.skipped_non_mathlib),
+            prompt_full=user_msg, response_full=gen.raw, proof_body_extracted=None,
+            lean_source_submitted=None, verifier_messages=None,
+            ts=now_iso(),
         )
 
     # 5+6. Lean view + verify
@@ -176,7 +336,7 @@ def run_cell(
 
     wall = int((time.perf_counter() - t_total) * 1000)
     return CellResult(
-        target_id=target.full_name, K=K, B=B, seed=seed,
+        **base_kwargs,
         prompt_chars=len(user_msg), prompt_premise_chars=premise_chars,
         completion_tokens=gen.completion_tokens,
         extracted_proof_chars=len(pb.body),
@@ -187,6 +347,9 @@ def run_cell(
         wall_ms=wall,
         skipped_no_corpus_count=len(elab.skipped_no_corpus),
         skipped_non_mathlib_count=len(elab.skipped_non_mathlib),
+        prompt_full=user_msg, response_full=gen.raw, proof_body_extracted=pb.body,
+        lean_source_submitted=src, verifier_messages=res.messages,
+        ts=now_iso(),
     )
 
 
@@ -201,7 +364,9 @@ def main():
     ap.add_argument("--pool", type=Path, default=Path("data/replay_pool.jsonl"),
                     help="Replay-pool JSONL (output of deduction.filter).")
     ap.add_argument("--out", type=Path, required=True,
-                    help="Per-cell JSONL output path.")
+                    help="Per-cell JSONL output path. Opened in APPEND mode "
+                         "— a re-run on the same path skips already-completed "
+                         "cells.")
     ap.add_argument("--ks", default="0,1",
                     help="Comma-separated K values, e.g. '0,1,2'. Capped at "
                          "len(target.tactics) per target.")
@@ -221,6 +386,14 @@ def main():
     ap.add_argument("--workers", type=int, default=2,
                     help="Concurrent (target,K,B,seed) cells.")
     ap.add_argument("--verify-timeout", type=int, default=180)
+    ap.add_argument("--max-prompt-chars", type=int, default=100_000,
+                    help="Skip cells whose prompt exceeds this many chars "
+                         "(rough char->token at ~4 chars/tok). 0 disables. "
+                         "Default 100K chars ≈ 25K tokens, leaves headroom "
+                         "for response on a 32K-context model.")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="If set, ignore any existing rows in --out and start "
+                         "fresh. Default: resume from existing rows.")
     args = ap.parse_args()
 
     if not is_up(args.server_url):
@@ -267,21 +440,47 @@ def main():
                 for seed in range(args.k_seeds):
                     cells.append((t, f_down, K, B, seed))
 
-    print(f"Pool: {len(targets)} targets, "
-          f"Ks={Ks}, Bs={Bs}, k_seeds={args.k_seeds}, "
-          f"total cells={len(cells)}", flush=True)
-    print(f"Log: {args.out}", flush=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resumability: skip cells already in output.
+    completed: Set[Tuple[str, int, int, int]] = set()
+    if not args.no_resume:
+        completed = load_completed(args.out)
+    if completed:
+        print(f"Resume: {len(completed)} cells already in {args.out}; "
+              f"will skip those.", flush=True)
+    pending_cells = [
+        (t, f_down, K, B, seed)
+        for (t, f_down, K, B, seed) in cells
+        if (t.full_name, K, B, seed) not in completed
+    ]
+
+    print(f"Pool: {len(targets)} targets, "
+          f"Ks={Ks}, Bs={Bs}, k_seeds={args.k_seeds}, "
+          f"total cells={len(cells)}, pending={len(pending_cells)}", flush=True)
+    print(f"Log: {args.out}", flush=True)
+
+    # Run-level metadata: emitted once per process invocation. Append-mode by
+    # design — multiple restarts produce a JSONL of process-start records
+    # (also gives us a record of how many spot-restarts happened).
+    meta = collect_run_meta(args, n_targets=len(targets), n_cells=len(cells))
+    meta_path = args.out.with_suffix(args.out.suffix + ".meta.jsonl")
+    with meta_path.open("a") as mf:
+        mf.write(json.dumps(meta) + "\n")
+    print(f"Meta: {meta_path} (instance={meta.get('instance_id')}, "
+          f"sha={(meta.get('code_sha') or '?')[:8]})", flush=True)
+
+    instance_id = meta.get("instance_id")
     client = make_client(args.vllm_url)
 
     n_done = 0
     n_pass = 0
     n_extract_fail = 0
     n_leak = 0
+    n_overflow = 0
     t0 = time.time()
 
-    with args.out.open("w") as f, ThreadPoolExecutor(max_workers=args.workers) as ex:
+    with args.out.open("a") as f, ThreadPoolExecutor(max_workers=args.workers) as ex:
         futures = {
             ex.submit(
                 run_cell, t, K, B, seed,
@@ -289,8 +488,10 @@ def main():
                 vllm_client=client, model=args.model,
                 temperature=args.temperature, max_tokens=args.max_tokens,
                 server_url=args.server_url, verify_timeout=args.verify_timeout,
+                max_prompt_chars=args.max_prompt_chars,
+                instance_id=instance_id,
             ): (t.full_name, K, B, seed)
-            for (t, f_down, K, B, seed) in cells
+            for (t, f_down, K, B, seed) in pending_cells
         }
         for fut in as_completed(futures):
             rec = asdict(fut.result())
@@ -303,15 +504,17 @@ def main():
                 n_extract_fail += 1
             if rec["lookup_leak_attempt"]:
                 n_leak += 1
-            if n_done % 5 == 0 or n_done == len(cells):
+            if rec["error_class"] == "context_overflow":
+                n_overflow += 1
+            if n_done % 5 == 0 or n_done == len(pending_cells):
                 pct = 100 * n_pass / max(n_done, 1)
-                print(f"  [{n_done:4d}/{len(cells)}] pass={n_pass} "
+                print(f"  [{n_done:4d}/{len(pending_cells)}] pass={n_pass} "
                       f"extract_fail={n_extract_fail} leak={n_leak} "
-                      f"({pct:.0f}% pass)", flush=True)
+                      f"overflow={n_overflow} ({pct:.0f}% pass)", flush=True)
 
     elapsed = time.time() - t0
-    print(f"\nDone in {elapsed:.0f}s. {n_pass}/{len(cells)} pass "
-          f"({100 * n_pass / max(len(cells), 1):.0f}%).")
+    print(f"\nDone in {elapsed:.0f}s. {n_pass}/{len(pending_cells)} pass "
+          f"({100 * n_pass / max(len(pending_cells), 1):.0f}%).")
 
 
 if __name__ == "__main__":
