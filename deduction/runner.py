@@ -50,7 +50,7 @@ from deduction.errors import (
     is_lookup_leak,
 )
 from deduction.kimina import KIMINA_URL_DEFAULT, is_up, verify
-from deduction.lean_file import build_lean_view
+from deduction.lean_file import build_lean_view, build_lean_view_full_mathlib
 from deduction.prompt import build_user_message
 from deduction.targets import Target, build_target
 from deduction.vllm_client import (
@@ -87,6 +87,14 @@ class CellResult:
     proof_body_extracted: Optional[str] = None
     lean_source_submitted: Optional[str] = None
     verifier_messages: Optional[list] = None
+    # Relaxed second-pass: same body, but Lean view uses `import Mathlib`
+    # instead of F's literal imports. Distinguishes "broken Lean" (both
+    # fail) from "model used non-F lemma" (truncated fails, mathlib passes).
+    verify_pass_mathlib: Optional[bool] = None
+    error_class_mathlib: Optional[str] = None
+    error_detail_mathlib: Optional[str] = None
+    verifier_messages_mathlib: Optional[list] = None
+    lean_source_mathlib_submitted: Optional[str] = None
     # Provenance (so we can merge JSONLs from multiple boxes).
     instance_id: Optional[str] = None
     model: Optional[str] = None
@@ -316,14 +324,21 @@ def run_cell(
             ts=now_iso(),
         )
 
-    # 5+6. Lean view + verify. Under the "K as informational hint" design,
-    # the model writes the COMPLETE proof body — we splice it directly,
-    # without prepending the K canonical tactics that were shown only as a
-    # hint in the prompt.
+    # 5+6. Two verifications under the "K as informational hint" design:
+    # the model wrote the COMPLETE proof body, which we splice directly
+    # after `:= by`. We grade twice:
+    #   (a) truncated-imports view — strict: model used only F's imports.
+    #   (b) full-Mathlib view      — relaxed: model wrote valid Lean,
+    #                                 may have used non-F-scope lemmas.
+    # Lookup-leak detection only applies to (a); the relaxed view
+    # legitimately allows out-of-scope lemmas.
     src = build_lean_view(target, body=pb.body)
     res = verify(src, server_url=server_url, timeout=verify_timeout)
 
-    # 7. Classify
+    src_mathlib = build_lean_view_full_mathlib(target, body=pb.body)
+    res_mathlib = verify(src_mathlib, server_url=server_url, timeout=verify_timeout)
+
+    # 7. Classify both passes
     classified = classify_messages(res.messages)
     primary = next((c for c in classified if c.error_class is not ErrorClass.SORRY), None)
     error_class = primary.error_class.value if primary else None
@@ -336,6 +351,11 @@ def run_cell(
             target_local_name=target.local_name,
             f_downstream_of_t_names=f_downstream,
         )
+
+    classified_m = classify_messages(res_mathlib.messages)
+    primary_m = next((c for c in classified_m if c.error_class is not ErrorClass.SORRY), None)
+    error_class_m = primary_m.error_class.value if primary_m else None
+    error_detail_m = primary_m.detail if primary_m else None
 
     wall = int((time.perf_counter() - t_total) * 1000)
     return CellResult(
@@ -352,6 +372,10 @@ def run_cell(
         skipped_non_mathlib_count=len(elab.skipped_non_mathlib),
         prompt_full=user_msg, response_full=gen.raw, proof_body_extracted=pb.body,
         lean_source_submitted=src, verifier_messages=res.messages,
+        verify_pass_mathlib=res_mathlib.ok and not classified_m,
+        error_class_mathlib=error_class_m, error_detail_mathlib=error_detail_m,
+        verifier_messages_mathlib=res_mathlib.messages,
+        lean_source_mathlib_submitted=src_mathlib,
         ts=now_iso(),
     )
 
@@ -481,6 +505,7 @@ def main():
 
     n_done = 0
     n_pass = 0
+    n_pass_mathlib = 0
     n_extract_fail = 0
     n_leak = 0
     n_overflow = 0
@@ -506,6 +531,8 @@ def main():
             n_done += 1
             if rec["verify_pass"]:
                 n_pass += 1
+            if rec.get("verify_pass_mathlib"):
+                n_pass_mathlib += 1
             if rec["extraction_path"] == "parse_error":
                 n_extract_fail += 1
             if rec["lookup_leak_attempt"]:
@@ -514,13 +541,18 @@ def main():
                 n_overflow += 1
             if n_done % 5 == 0 or n_done == len(pending_cells):
                 pct = 100 * n_pass / max(n_done, 1)
-                print(f"  [{n_done:4d}/{len(pending_cells)}] pass={n_pass} "
+                pct_m = 100 * n_pass_mathlib / max(n_done, 1)
+                print(f"  [{n_done:4d}/{len(pending_cells)}] "
+                      f"pass={n_pass}({pct:.0f}%) "
+                      f"pass_mathlib={n_pass_mathlib}({pct_m:.0f}%) "
                       f"extract_fail={n_extract_fail} leak={n_leak} "
-                      f"overflow={n_overflow} ({pct:.0f}% pass)", flush=True)
+                      f"overflow={n_overflow}", flush=True)
 
     elapsed = time.time() - t0
-    print(f"\nDone in {elapsed:.0f}s. {n_pass}/{len(pending_cells)} pass "
-          f"({100 * n_pass / max(len(pending_cells), 1):.0f}%).")
+    print(f"\nDone in {elapsed:.0f}s. truncated={n_pass}/{len(pending_cells)} "
+          f"({100 * n_pass / max(len(pending_cells), 1):.0f}%) "
+          f"mathlib={n_pass_mathlib}/{len(pending_cells)} "
+          f"({100 * n_pass_mathlib / max(len(pending_cells), 1):.0f}%)")
 
 
 if __name__ == "__main__":

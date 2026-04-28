@@ -48,27 +48,56 @@ def replay_continuation(target: Target, K: int) -> str:
     return "\n".join(_indent(t) for t in rest)
 
 
+def _build(target: Target, body: str, imports: list[str], prefix: str,
+           *, decl_kind: str = "theorem", use_local_name: bool = True) -> str:
+    parts: list[str] = []
+    parts.extend(imports)
+    parts.append("import Aesop")
+    parts.append("set_option maxHeartbeats 0")
+    parts.append("")
+
+    if prefix.strip():
+        parts.append(prefix)
+        parts.append("")
+
+    name_part = f" {target.local_name}" if use_local_name else ""
+    parts.append(f"{decl_kind}{name_part} {target.sig_text} := by")
+
+    if body:
+        parts.append(body.rstrip("\n"))
+
+    return "\n".join(parts) + "\n"
+
+
 def build_lean_view(target: Target, body: str) -> str:
-    """Render the verification source file.
+    """Render the *truncated-imports* verification source: only F's literal
+    direct imports are visible. This is the strict criterion — it enforces
+    that the model used only what F itself had access to.
+
+    Uses F's full prefix (lemmas declared before T in F) since those aren't
+    available via the truncated imports.
 
     `body` is spliced verbatim as the proof body — the entire content
     after `theorem T sig := by`. The caller is responsible for the body's
     indentation (an extracted model body should already be indented since
     it was produced inside a `:= by` block; replay_continuation returns
     an already-indented string)."""
-    parts: list[str] = []
-    parts.extend(target.imports)
-    parts.append("import Aesop")
-    parts.append("set_option maxHeartbeats 0")
-    parts.append("")
+    return _build(target, body, list(target.imports), target.f_prefix_full)
 
-    if target.f_prefix_full.strip():
-        parts.append(target.f_prefix_full)
-        parts.append("")
 
-    parts.append(f"theorem {target.local_name} {target.sig_text} := by")
+def build_lean_view_full_mathlib(target: Target, body: str) -> str:
+    """Render the *full-Mathlib* verification source: replaces F's literal
+    imports with `import Mathlib`, uses only the scope-only prefix
+    (namespace/section/variable) — F's lemma declarations are already
+    loaded transitively from Mathlib — and emits the proof as `example`
+    rather than `theorem T`. Using `example` avoids "T has already been
+    declared" since T itself is in Mathlib once we import it all.
 
-    if body:
-        parts.append(body.rstrip("\n"))
+    Used as a relaxed second-pass to distinguish "model wrote broken Lean"
+    (fails both views) from "model wrote valid Lean using lemmas outside
+    F's scope" (passes Mathlib view, fails truncated view).
 
-    return "\n".join(parts) + "\n"
+    Note: `kimina-no-mathlib-collapse.patch` keeps user imports verbatim,
+    so writing `import Mathlib` here actually pulls in all of Mathlib."""
+    return _build(target, body, ["import Mathlib"], target.f_prefix_scope_only,
+                  decl_kind="example", use_local_name=False)
