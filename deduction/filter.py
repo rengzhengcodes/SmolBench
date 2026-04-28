@@ -80,21 +80,34 @@ def iter_targets(
         yield t
 
 
-def candidate_iter(*, min_tactics: int, max_tactics: int, limit: Optional[int]):
+def candidate_iter(*, min_tactics: int, max_tactics: int, limit: Optional[int],
+                   seed: Optional[int] = None):
     """Stream Targets that pass the tractability filter.
 
     Skips term-mode proofs: LeanDojo records inner-`by` tactics from
     term-mode bodies, but those are proof fragments that don't compose
     into a tactic-mode replay. They would fail with `unknown identifier`
     or `unsolved goals` when our renderer assembles them as
-    `theorem T sig := by <traced_tactics>`."""
+    `theorem T sig := by <traced_tactics>`.
+
+    When `seed` is given, candidates are uniformly shuffled before the
+    filter pass — yielding a representative sample of Mathlib targets
+    rather than the alphabetically-first prefix. The seed is logged so
+    a pool can be reproduced."""
+    import random
     corpus = load_corpus()
     traced = load_traced_lookup()
+    names = list(candidate_full_names(corpus, traced))
+    if seed is not None:
+        random.Random(seed).shuffle(names)
+        print(f"  candidates: {len(names)} (shuffled, seed={seed})", flush=True)
+    else:
+        print(f"  candidates: {len(names)} (sequential, alphabetical)", flush=True)
     n_emitted = 0
     n_skipped_term_mode = 0
     n_skipped_tactic_count = 0
     n_build_error = 0
-    for name in candidate_full_names(corpus, traced):
+    for name in names:
         try:
             t = build_target(name, corpus, traced)
         except Exception:
@@ -126,6 +139,11 @@ def main():
                     help="Cap candidate count after tractability filter.")
     ap.add_argument("--min-tactics", type=int, default=1)
     ap.add_argument("--max-tactics", type=int, default=8)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="If set, uniformly shuffle candidates before "
+                         "filtering — gives a representative random sample "
+                         "across Mathlib namespaces rather than the "
+                         "alphabetically-first prefix. Logged for reproducibility.")
     ap.add_argument("--workers", type=int, default=4,
                     help="Concurrent verify requests to Kimina.")
     ap.add_argument("--server-url", default=KIMINA_URL_DEFAULT)
@@ -165,6 +183,7 @@ def main():
             min_tactics=args.min_tactics,
             max_tactics=args.max_tactics,
             limit=args.limit,
+            seed=args.seed,
         ))
 
     print(f"Replay-testing {len(targets)} target(s) "
