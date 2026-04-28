@@ -28,6 +28,7 @@ from typing import Dict, List
 from deduction.corpus import (
     MATHLIB_DIR,
     Premise,
+    extract_premise_refs_from_text,
     read_source_with_attrs,
     strip_docstring,
 )
@@ -103,13 +104,29 @@ def expand_premises(
 
             # Build next frontier from this layer's children (premises
             # referenced inside each premise's own canonical proof).
+            #
+            # First try LeanDojo's annotated premise refs (precise, post-
+            # type-inference). If a premise has no traced_tactics (term-mode
+            # body, e.g., `:= rfl` or `:= some_lemma.trans other`), fall
+            # back to regex-extracting Mathlib-resident identifier tokens
+            # from its source body.
             next_frontier: List[str] = []
             for name in this_layer:
+                children: List[str] = []
                 for ct in traced_lookup.get(name, []):
                     for ref in ct.get("annotated_tactic", [None, []])[1]:
-                        cn = ref.get("full_name")
-                        if cn and cn not in seen_in_walk:
-                            next_frontier.append(cn)
+                        cn = ref.get("full_name") if isinstance(ref, dict) else None
+                        if cn:
+                            children.append(cn)
+                if not children:
+                    # Term-mode fallback: parse the premise's source body
+                    p = corpus[name]
+                    text = read_source_with_attrs(MATHLIB_DIR / p.file_path, p.start, p.end)
+                    text = strip_docstring(text)
+                    children = extract_premise_refs_from_text(text, corpus)
+                for cn in children:
+                    if cn not in seen_in_walk:
+                        next_frontier.append(cn)
             frontier = next_frontier
             if not frontier:
                 break

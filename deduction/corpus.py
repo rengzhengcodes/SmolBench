@@ -182,6 +182,61 @@ def extract_proof_body_source(
     return body.rstrip()
 
 
+# Identifier-like tokens that get extracted from term-mode proof bodies.
+# Lean identifiers can include dots, primes, and Greek/subscript Unicode;
+# we keep this conservative — module/declaration names accessed in
+# typical Mathlib bodies match `[A-Za-z_][\w.']*`.
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9.']*")
+
+# Single-letter / very-common short bound-variable names that almost
+# never refer to corpus declarations. If a single-letter name happens
+# to also be a corpus entry, that entry will not be picked up by
+# `extract_premise_refs_from_text` — we accept the precision loss in
+# exchange for far fewer false positives from proof-local binders.
+_BOUND_VAR_BLACKLIST = (
+    set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    | {
+        # Two-letter / common
+        "ih", "ne", "le", "lt", "ge", "gt", "eq",
+        # Lean keywords / primitives that shouldn't ever resolve to a
+        # premise even if they collide with a corpus name
+        "by", "fun", "let", "have", "show", "match", "with", "do",
+        "if", "then", "else", "rfl", "Iff", "Eq",
+    }
+)
+
+
+def extract_premise_refs_from_text(
+    text: str, corpus: "Dict[str, Premise]"
+) -> List[str]:
+    """Extract Mathlib-resident premise full_names from a chunk of Lean
+    source (typically a term-mode proof body). Used as a fallback in BFS
+    expansion when LeanDojo's `traced_tactics` are empty for a premise
+    (because the proof is term-mode and has no recorded tactics).
+
+    Strategy:
+      - Regex-extract identifier-like tokens
+      - Filter to tokens that are corpus-indexed and live in `Mathlib/...`
+      - Drop tokens in `_BOUND_VAR_BLACKLIST`
+      - Preserve first-seen order, dedup
+
+    Precision is lower than LeanDojo's annotations (which run after type
+    inference and capture dot-notation method calls). For tactic-mode
+    proofs with traced_tactics, use the annotations directly. For
+    term-mode proofs this is the only option."""
+    seen: set = set()
+    out: List[str] = []
+    for tok in _IDENT_RE.findall(text):
+        if tok in _BOUND_VAR_BLACKLIST:
+            continue
+        if tok in seen:
+            continue
+        if tok in corpus and corpus[tok].file_path.startswith("Mathlib/"):
+            seen.add(tok)
+            out.append(tok)
+    return out
+
+
 def split_top_level_tactics(proof_body_source: str) -> List[str]:
     """Split a proof body into its top-level tactics by indentation.
 
