@@ -117,13 +117,14 @@ if ! already_done kimina; then
     git clone --depth 1 https://github.com/project-numina/kimina-lean-server.git
   fi
   cd kimina-lean-server
-  # Apply the no-mathlib-collapse patch (idempotent: skip if already applied).
-  if grep -q '_replace_mathlib_imports' server/split.py 2>/dev/null; then
-    log "applying kimina-no-mathlib-collapse patch"
-    aws s3 cp "$S3_CACHE/kimina-no-mathlib-collapse.patch" /tmp/kimina.patch
-    git apply /tmp/kimina.patch
+  # Apply the no-mathlib-collapse patch. Detect by looking for the patched
+  # comment marker; skip the apply if already present.
+  aws s3 cp "$S3_CACHE/kimina-no-mathlib-collapse.patch" /tmp/kimina.patch
+  if grep -q "defeats our truncated-imports defense" server/split.py 2>/dev/null; then
+    log "kimina-no-mathlib-collapse patch already applied"
   else
-    log "kimina patch already applied (split.py has no _replace_mathlib_imports)"
+    log "applying kimina-no-mathlib-collapse patch"
+    git apply /tmp/kimina.patch || { log "patch failed"; exit 1; }
   fi
   # Python deps
   if [[ ! -d .venv ]]; then
@@ -150,8 +151,14 @@ if ! already_done benchmark; then
 fi
 
 if ! already_done cache; then
-  log "fetching lean_dojo_cache from S3 (~10-15GB compressed)"
+  log "fetching lean_dojo_cache from S3 (~3GB compressed)"
   aws s3 cp "$S3_CACHE/lean_dojo_cache.tar.gz" - | gunzip | tar -x -C "$ROOT/data/"
+  # The original lean_dojo_cache.tar.gz on S3 is missing the per-package
+  # build/lib oleans for aesop/batteries/proofwidgets/Qq/importGraph.
+  # Apply the small fixup tarball.
+  log "applying dep_oleans_fixup (~67MB)"
+  aws s3 cp "$S3_CACHE/dep_oleans_fixup.tar.gz" - \
+    | tar -xz -C "$ROOT/data/lean_dojo_cache/leanprover-community-mathlib4-${MATHLIB_SHA}/mathlib4/"
   done_marker cache
 fi
 
