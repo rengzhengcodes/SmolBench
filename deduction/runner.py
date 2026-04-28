@@ -386,6 +386,34 @@ def parse_int_list(spec: str) -> List[int]:
     return [int(x) for x in spec.split(",") if x.strip()]
 
 
+def parse_k_spec(spec: str) -> List:
+    """Parse a K spec that can include the literal token `max` (per-target,
+    expands to len(target.tactics)) alongside fixed integers. Returns a
+    mixed list of ints and the string "max"."""
+    out: List = []
+    for x in spec.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        if x == "max":
+            out.append("max")
+        else:
+            out.append(int(x))
+    return out
+
+
+def expand_ks_for_target(ks_spec: List, n_tactics: int) -> List[int]:
+    """Resolve a K spec (mix of ints and 'max') against a target's
+    n_tactics. Drops K values > n_tactics, dedups, sorts."""
+    out: set = set()
+    for k in ks_spec:
+        if k == "max":
+            out.add(n_tactics)
+        elif isinstance(k, int) and k <= n_tactics:
+            out.add(k)
+    return sorted(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pool", type=Path, default=Path("data/replay_pool.jsonl"),
@@ -395,8 +423,11 @@ def main():
                          "— a re-run on the same path skips already-completed "
                          "cells.")
     ap.add_argument("--ks", default="0,1",
-                    help="Comma-separated K values, e.g. '0,1,2'. Capped at "
-                         "len(target.tactics) per target.")
+                    help="Comma-separated K values, e.g. '0,1,2,max'. The "
+                         "literal token `max` expands per-target to "
+                         "len(target.tactics) (full canonical proof shown "
+                         "as hint). Integer values > len(tactics) are "
+                         "dropped per-target. Duplicates deduped.")
     ap.add_argument("--bs", default="0,1",
                     help="Comma-separated B values.")
     ap.add_argument("--k-seeds", type=int, default=4,
@@ -456,15 +487,14 @@ def main():
         except Exception as e:
             print(f"  skip {name}: {e}", file=sys.stderr)
 
-    Ks = parse_int_list(args.ks)
+    Ks_spec = parse_k_spec(args.ks)
     Bs = parse_int_list(args.bs)
 
     cells = []
     for t in targets:
         f_down = _f_downstream_of_t(corpus, t)
+        Ks = expand_ks_for_target(Ks_spec, len(t.tactics))
         for K in Ks:
-            if K > len(t.tactics):
-                continue
             for B in Bs:
                 for seed in range(args.k_seeds):
                     cells.append((t, f_down, K, B, seed))
