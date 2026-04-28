@@ -52,7 +52,7 @@ def _record_for(t: Target, ok: bool, transport_error: Optional[str],
 
 
 def replay_one(t: Target, server_url: str, timeout: int) -> dict:
-    src = build_lean_view(t, K=0, continuation=replay_continuation(t, K=0))
+    src = build_lean_view(t, body=replay_continuation(t, K=0))
     t0 = time.perf_counter()
     res = verify(src, server_url=server_url, timeout=timeout)
     wall = int((time.perf_counter() - t0) * 1000)

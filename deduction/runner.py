@@ -316,8 +316,11 @@ def run_cell(
             ts=now_iso(),
         )
 
-    # 5+6. Lean view + verify
-    src = build_lean_view(target, K=K, continuation=pb.body)
+    # 5+6. Lean view + verify. Under the "K as informational hint" design,
+    # the model writes the COMPLETE proof body — we splice it directly,
+    # without prepending the K canonical tactics that were shown only as a
+    # hint in the prompt.
+    src = build_lean_view(target, body=pb.body)
     res = verify(src, server_url=server_url, timeout=verify_timeout)
 
     # 7. Classify

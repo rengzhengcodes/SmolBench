@@ -10,15 +10,13 @@ Layout:
     <F prefix, lines 1..L-1, leading import block stripped>
 
     theorem <T.local_name> <sig> := by
-      <t_1>
-      ...
-      <t_K>
-      <continuation>
+      <body>
 
-The continuation is either (a) the canonical tactics t_{K+1}..t_N for replay
-testing, or (b) the proof body extracted from a model completion. Both views
-of the experiment use the same builder; the only thing that varies is the
-continuation.
+The body is either (a) the canonical proof body for the replay test or
+(b) the full proof body the model wrote. Under the "K as informational
+hint" design, K controls only what the prompt SHOWS the model — at
+verification time the model produces the entire body from scratch and we
+splice it in directly.
 """
 from __future__ import annotations
 
@@ -35,7 +33,7 @@ def _indent(text: str) -> str:
 
 
 def replay_continuation(target: Target, K: int) -> str:
-    """Continuation for the replay test. When K=0, return the literal
+    """Canonical proof body for replay tests. When K=0, return the literal
     proof body source from F — preserves bullets, `<;>` combinators, and
     inner-`by` blocks exactly as Lean originally accepted them.
 
@@ -50,17 +48,14 @@ def replay_continuation(target: Target, K: int) -> str:
     return "\n".join(_indent(t) for t in rest)
 
 
-def build_lean_view(target: Target, K: int, continuation: str) -> str:
+def build_lean_view(target: Target, body: str) -> str:
     """Render the verification source file.
 
-    `continuation` is spliced verbatim after the K indented canonical
-    tactics. Caller is responsible for the continuation's own indentation
-    (use `replay_continuation` for the canonical case; for model output,
-    the extracted proof body should already be indented since it was
-    produced inside a `:= by\\n  ...` block)."""
-    if not (0 <= K <= len(target.tactics)):
-        raise ValueError(f"K={K} out of range [0, {len(target.tactics)}]")
-
+    `body` is spliced verbatim as the proof body — the entire content
+    after `theorem T sig := by`. The caller is responsible for the body's
+    indentation (an extracted model body should already be indented since
+    it was produced inside a `:= by` block; replay_continuation returns
+    an already-indented string)."""
     parts: list[str] = []
     parts.extend(target.imports)
     parts.append("import Aesop")
@@ -72,10 +67,8 @@ def build_lean_view(target: Target, K: int, continuation: str) -> str:
         parts.append("")
 
     parts.append(f"theorem {target.local_name} {target.sig_text} := by")
-    for tac in target.tactics[:K]:
-        parts.append(_indent(tac))
 
-    if continuation:
-        parts.append(continuation.rstrip("\n"))
+    if body:
+        parts.append(body.rstrip("\n"))
 
     return "\n".join(parts) + "\n"
