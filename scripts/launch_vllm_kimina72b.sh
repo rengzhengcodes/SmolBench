@@ -13,7 +13,11 @@ set -euo pipefail
 
 ROOT="${ROOT:-/opt/dlami/nvme/sb}"
 MODEL="${MODEL:-AI-MO/Kimina-Prover-72B}"
-TP="${TP:-2}"
+# TP=4 is the safe default: Kimina-72B FP16 is ~144GB, which doesn't fit at
+# TP=2 on 80GB H100s (36GB room per GPU after weights at TP=4 vs ~8GB at TP=2).
+# H200 (144GB) can handle TP=2 — set TP=2 explicitly there if you want to
+# free GPUs for other work.
+TP="${TP:-4}"
 PORT="${PORT:-8010}"
 MAX_LEN="${MAX_LEN:-32768}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"

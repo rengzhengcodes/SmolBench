@@ -10,7 +10,9 @@ set -euo pipefail
 
 ROOT="${ROOT:-/opt/dlami/nvme/sb}"
 MODEL="${MODEL:-Goedel-LM/Goedel-Prover-V2-32B}"
-TP="${TP:-1}"
+# TP=2 default: Goedel-32B FP16 ~64GB fits TP=1 tight on 80GB H100, but
+# leaves little KV cache room. TP=2 is safe across H100/H200.
+TP="${TP:-2}"
 PORT="${PORT:-8010}"
 MAX_LEN="${MAX_LEN:-32768}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
