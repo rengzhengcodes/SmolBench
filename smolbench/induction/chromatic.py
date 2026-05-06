@@ -11,7 +11,7 @@ from ordered_set import OrderedSet
 
 import numpy as np
 
-from smolbench.evals import Quiz, ToF
+from smolbench.evals import Quiz, ToF, Numeric
 
 # A color in the mathematical sense of some label.
 Color: TypeAlias = str
@@ -385,12 +385,10 @@ def get_random_exclusive_prompts(
         # $query_years (an enumerated list of the queried years) so the query
         # representation matches the extensional context, removing the need to
         # mentally expand an interval query against an already-enumerated context.
-        start, end = int(query["start"]), int(query["end"])
-        query_years = "".join(_prompt_extensional([(start, end)]))
-        extens_sub = query | prompter.substitution | {
-            "positive_info": extension,
-            "query_years": query_years,
-        }
+        extens_sub = query | prompter.substitution | {"positive_info": extension}
+        if "start" in query and "end" in query:
+            start, end = int(query["start"]), int(query["end"])
+            extens_sub["query_years"] = "".join(_prompt_extensional([(start, end)]))
         extens = extens_template.safe_substitute(extens_sub)
 
         yield intens, extens, answer
@@ -412,6 +410,37 @@ def get_random_exclusive_quiz(
     for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
         intens_quiz.append(ToF(prompt=intens, answer=answer))
         extens_quiz.append(ToF(prompt=extens, answer=answer))
+    return tuple(intens_quiz), tuple(extens_quiz)
+
+
+def duration_query_gen(
+    label_to_intervals: Dict[Color, Intervals],
+    intervals_to_labels: Dict[Interval, Color],
+    seed: int,
+) -> Iterable[Tuple[Dict[str, str], int]]:
+    """Yields (query_dict, total_years) per color for duration queries.
+
+    The answer is the total number of years that color held the role,
+    computed as sum(end - start) over its annealed intervals.
+    """
+    for color, intervals in label_to_intervals.items():
+        if not intervals:
+            continue
+        annealed = tuple(anneal_intervals(intervals))
+        total = sum(end - start for start, end in annealed)
+        yield {"color": color}, total
+
+
+def get_random_exclusive_numeric_quiz(
+    config: ChromaticIntervalsConfig,
+    prompter: Prompter,
+) -> Tuple[Quiz, Quiz]:
+    """Like get_random_exclusive_quiz but yields Numeric items for integer answers."""
+    intens_quiz: Quiz = []
+    extens_quiz: Quiz = []
+    for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
+        intens_quiz.append(Numeric(prompt=intens, answer=answer))
+        extens_quiz.append(Numeric(prompt=extens, answer=answer))
     return tuple(intens_quiz), tuple(extens_quiz)
 
 

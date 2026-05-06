@@ -56,6 +56,26 @@ class ToF(QnA):
                 raise ValueError(f"'{ans}' is not a bool.")
 
 
+@dataclass(frozen=True)
+class Numeric(QnA):
+    """Integer answer question."""
+
+    def __post_init__(self):
+        if not isinstance(self.answer, int):
+            raise ValueError(f"self.answer = {self.answer} is not int")
+
+    @staticmethod
+    def condition(ans: str) -> int:
+        import re
+        m = re.search(r"-?\d+", ans)
+        if m is None:
+            raise ValueError(f"No integer found in '{ans}'")
+        return int(m.group())
+
+    def score(self, ans: int) -> Tuple[int, int]:
+        return (1, 0) if ans == self.answer else (0, 1)
+
+
 Quiz: TypeAlias = Sequence[QnA]
 
 
