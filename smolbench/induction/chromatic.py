@@ -336,6 +336,18 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> str:
     yield f"and {terminus}" if left else f"{terminus}"
 
 
+def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> str:
+    """Yields one 'Year X: Color.\n' line per year in chronological order.
+
+    Produces a year-keyed context so the model can resolve each queried year with
+    a direct key lookup instead of scanning a comma-separated list. Each year
+    appears exactly once due to the exclusive interval property.
+    """
+    for (start, end), color in sorted(intervals_to_labels.items()):
+        for year in range(start, end):
+            yield f"Year {year}: {color}.\n"
+
+
 def get_random_exclusive_prompts(
     config: ChromaticIntervalsConfig,
     prompter: Prompter,
@@ -347,17 +359,17 @@ def get_random_exclusive_prompts(
         config
     )
 
-    # Creates the intensional and extensional representation.
+    # Creates the intensional representation (person-indexed, interval format).
     intension: str = ""
-    extension: str = ""
     for color, inters in label_to_intervals.items():
         if not inters.any():
             continue
         anneal: Intervals = tuple(anneal_intervals(inters))
         intension += f"{color} was {prompter.substitution["role"]} on {
             "".join(_prompt_intervals(iter(anneal)))}.\n"
-        extension += f"{color} was {prompter.substitution["role"]} on {
-            "".join(_prompt_extensional(anneal))}.\n"
+
+    # Creates the extensional representation (year-indexed, direct lookup format).
+    extension: str = "".join(_prompt_extensional_indexed(intervals_to_labels))
 
     extens_template = prompter.extens_template or prompter.template
 

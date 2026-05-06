@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-05-06 05:37:17.780287+00:00
+date: 2026-05-06 06:14:40.618805+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -5242,8 +5242,8 @@ marks: !!python/tuple
 
         Between the years 1404 and 1428, exclusive of the end, could Ph have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
