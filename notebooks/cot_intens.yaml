@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-05-06 06:14:55.144889+00:00
+date: 2026-05-06 06:23:36.153514+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -106,10 +106,8 @@ marks: !!python/tuple
 
         Between the years 378 and 384, exclusive of the end, could qo have headed
         the Gildane parade every year?'
-    response: '
-
-        True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -215,9 +213,7 @@ marks: !!python/tuple
 
         Between the years 1963 and 1966, exclusive of the end, could qo have headed
         the Gildane parade every year?'
-    response: '
-
-        False'
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -433,9 +429,7 @@ marks: !!python/tuple
 
         Between the years 1740 and 1748, exclusive of the end, could Lw have headed
         the Gildane parade every year?'
-    response: '
-
-        False'
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -542,7 +536,9 @@ marks: !!python/tuple
 
         Between the years 1324 and 1326, exclusive of the end, could Lw have headed
         the Gildane parade every year?'
-    response: 'True'
+    response: '
+
+        True'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -649,7 +645,9 @@ marks: !!python/tuple
 
         Between the years 479 and 501, exclusive of the end, could Gv have headed
         the Gildane parade every year?'
-    response: 'False'
+    response: '
+
+        False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -865,7 +863,9 @@ marks: !!python/tuple
 
         Between the years 2710 and 2711, exclusive of the end, could Gv have headed
         the Gildane parade every year?'
-    response: 'False'
+    response: '
+
+        False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -1081,7 +1081,9 @@ marks: !!python/tuple
 
         Between the years 1855 and 1858, exclusive of the end, could Wd have headed
         the Gildane parade every year?'
-    response: 'False'
+    response: '
+
+        False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -1188,7 +1190,9 @@ marks: !!python/tuple
 
         Between the years 2364 and 2370, exclusive of the end, could UE have headed
         the Gildane parade every year?'
-    response: 'True'
+    response: '
+
+        True'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -1404,7 +1408,9 @@ marks: !!python/tuple
 
         Between the years 2746 and 2753, exclusive of the end, could ld have headed
         the Gildane parade every year?'
-    response: 'False'
+    response: '
+
+        False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -1620,7 +1626,9 @@ marks: !!python/tuple
 
         Between the years 1166 and 1167, exclusive of the end, could Gt have headed
         the Gildane parade every year?'
-    response: 'False'
+    response: '
+
+        False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -1727,7 +1735,9 @@ marks: !!python/tuple
 
         Between the years 1201 and 1249, exclusive of the end, could Gt have headed
         the Gildane parade every year?'
-    response: 'True'
+    response: '
+
+        True'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
