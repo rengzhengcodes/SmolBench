@@ -450,55 +450,40 @@ if __name__ == "__main__":
         "---\n"
         "There is a ceremonial role called the $role, whose job it is to"
         " head the $parade parade. No one else besides the $role is able to head"
-        " the $parade parade. The following lists the people who were $role and"
-        " the years they were $role:\n"
+        " the $parade parade. At the end of one's term as $role, they have a ceremony"
+        " where they hand off the $role ceremonial sceptre to their successor."
+        " The following lists the people who were $role and the years they were $role:\n"
         "$positive_info\n"
         "\n"
         "Query:\n"
-        "Between the years $start and $end, exclusive of the end, could $color"
-        " have headed the $parade parade every year? Answer with only one word:"
+        "Has $color1 handed the sceptre to $color2? Answer with only one word:"
         " 'True' or 'False'."
     )
 
     def query_gen(
         labels_to_intervals: Dict[Color, Intervals],
-        interval_to_label: Dict[Intervals, Color],
+        interval_to_label: Dict[Interval, Color],
         seed: int,
-    ) -> Dict[str, str]:
-        """Generates a series of queries"""
+    ) -> Iterable[Tuple[Dict[str, str], bool]]:
+        """Generates direct-succession queries."""
         rng: np.random.Generator = np.random.default_rng(seed)
-        # Finds max interval.
-        n: int = max(interval[1] for interval in interval_to_label)
-        for color, intervals in labels_to_intervals.items():
-            # Generates a series of true items.
-            for start, end in intervals:
-                start, end = np.sort(
-                    rng.choice(range(start, end + 1), size=2, replace=False)
-                )
-                yield {"color": color, "start": start, "end": end}, True
-            # Generates a false proposition.
-            invalid_range: Intervals = anneal_intervals(
-                itertools.chain(
-                    (
-                        OrderedSet(interval_to_label.keys())
-                        - OrderedSet(itertools.chain(*intervals))
-                    )
-                )
-            )
-            for start, end in invalid_range:
-                start = rng.choice(range(start, end))
-                # Binom with p = intervals / n capped at end for a similar-ish
-                # distr. to positive accounts.
-                end = min(
-                    end,
-                    start
-                    + rng.binomial(
-                        end - start + 1,
-                        np.mean([len(interval) for interval in interval_to_label]) / n,
-                    )
-                    + 1,
-                )
-                yield {"color": color, "start": start, "end": end}, False
+        sorted_intervals = sorted(interval_to_label.items(), key=lambda item: item[0][0])
+        # True cases: pairs where color2 immediately followed color1.
+        true_pairs: OrderedSet = OrderedSet(
+            (c1, c2)
+            for ((_s1, e1), c1), ((s2, _e2), c2) in zip(sorted_intervals, sorted_intervals[1:])
+        )
+        for color1, color2 in true_pairs:
+            yield {"color1": color1, "color2": color2}, True
+        # False cases: same count, randomly sampled non-successor pairs.
+        all_colors: list = list(labels_to_intervals.keys())
+        false_pairs: OrderedSet = OrderedSet()
+        while len(false_pairs) < len(true_pairs):
+            c1, c2 = (str(c) for c in rng.choice(all_colors, size=2, replace=False))
+            if (c1, c2) not in true_pairs:
+                false_pairs.add((c1, c2))
+        for color1, color2 in false_pairs:
+            yield {"color1": color1, "color2": color2}, False
 
     for inte, exte, ans in get_random_exclusive_prompts(
         ChromaticIntervalsConfig(
