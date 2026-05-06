@@ -6,7 +6,7 @@ import string
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable, Optional
 from ordered_set import OrderedSet
 
 import numpy as np
@@ -72,6 +72,10 @@ class Prompter:
     query_gen: Callable[
         [Dict[Color, Intervals], Dict[Interval, Color], int], Iterable[Dict[str, str]]
     ]
+    #: Optional template for extensional prompts. Uses $query_years instead of
+    #: $start/$end so the query representation matches the extensional context.
+    #: Falls back to template if not provided.
+    extens_template: Optional[string.Template] = None
 
 
 def _get_random_colors(
@@ -297,20 +301,23 @@ def anneal_intervals(intervals: Intervals) -> Intervals:
 
 
 def _prompt_intervals(intervals: Iterable[Interval]) -> str:
-    """Given an iterable of intervals, turn it into a prompt of intervals."""
+    """Given an iterable of intervals, turn it into a prompt of intervals.
+
+    Uses exclusive-end notation (e.g. "5 to 10") to match the query convention.
+    """
     # Picks off end for "and" handling.
     *left, terminus = intervals
     # Two interval handling.
     if len(left) == 1:
         start, end = left[0]
-        yield f"{start} to {end-1} "
+        yield f"{start} to {end} "
     # 3 or more interval handling.
     else:
         for start, end in left:
-            yield f"{start} to {end-1}, "
+            yield f"{start} to {end}, "
     # Terminating sentence handling.
     start, end = terminus
-    yield f"and {start} to {end-1}" if left else f"{start} to {end-1}"
+    yield f"and {start} to {end}" if left else f"{start} to {end}"
 
 
 def _prompt_extensional(intervals: Iterable[Interval]) -> str:
@@ -352,17 +359,27 @@ def get_random_exclusive_prompts(
         extension += f"{color} was {prompter.substitution["role"]} on {
             "".join(_prompt_extensional(anneal))}.\n"
 
+    extens_template = prompter.extens_template or prompter.template
+
     # Creates different types of queries.
     for query, answer in prompter.query_gen(
         label_to_intervals, intervals_to_labels, config.seed
     ):
-        substitution = query | prompter.substitution
-        # Creates the intensional prompt.
-        substitution["positive_info"] = intension
-        intens = prompter.template.safe_substitute(substitution)
-        # Creates the extensional prompt.
-        substitution["positive_info"] = extension
-        extens = prompter.template.safe_substitute(substitution)
+        # Creates the intensional prompt (interval query matches interval context).
+        intens_sub = query | prompter.substitution | {"positive_info": intension}
+        intens = prompter.template.safe_substitute(intens_sub)
+
+        # Creates the extensional prompt. If an extens_template is provided it uses
+        # $query_years (an enumerated list of the queried years) so the query
+        # representation matches the extensional context, removing the need to
+        # mentally expand an interval query against an already-enumerated context.
+        start, end = int(query["start"]), int(query["end"])
+        query_years = "".join(_prompt_extensional([(start, end)]))
+        extens_sub = query | prompter.substitution | {
+            "positive_info": extension,
+            "query_years": query_years,
+        }
+        extens = extens_template.safe_substitute(extens_sub)
 
         yield intens, extens, answer
 
