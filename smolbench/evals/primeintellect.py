@@ -10,7 +10,7 @@ from typing import Any, Optional, Dict
 import requests
 from joblib import Parallel, delayed
 
-from smolbench.evals import Answer, QnA, Quiz, Marks
+from smolbench.evals import Answer, QnA, Quiz, Mark, Marks
 
 PRIME_INTELLECT_API_KEY: str = os.getenv("PRIME_INTELLECT_API_KEY", None)
 URL: str = "https://api.pinference.ai/api/v1/chat/completions"
@@ -128,10 +128,6 @@ def evaluate(
     quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
 ) -> Marks:
     """Evaluates a model given a sequence of quizzes."""
-    correct: int = 0
-    incorrect: int = 0
-    invalid: int = 0
-
     ctx_len: int = get_model_context_length(model)
     max_workers: int = max(1, min(len(quiz), PRIME_INTELLECT_MAX_PARALLEL_REQUESTS))
     responses: list[str] = Parallel(n_jobs=max_workers, prefer="threads")(
@@ -139,23 +135,19 @@ def evaluate(
         for q in quiz
     )
 
+    mark_list: list[Mark] = []
     q: QnA
-    response: str
-    for q, response in zip(quiz, responses):
-        if PRIME_INTELLECT_INFO:
-            logging.info(correct, incorrect, invalid)
+    raw: str
+    for q, raw in zip(quiz, responses):
         try:
-            response: Answer = q.condition(response)
+            conditioned: Answer = q.condition(raw)
         except ValueError as e:
-            invalid += 1
             if PRIME_INTELLECT_INFO:
                 logging.info(e)
+            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, score=None))
             continue
 
-        part_correct, part_incorrect = q.score(response)
-        correct += part_correct
-        incorrect += part_incorrect
+        part_correct, _ = q.score(conditioned)
+        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, score=part_correct))
 
-    return Marks(
-        quiz=quiz, model=model, correct=correct, incorrect=incorrect, invalid=invalid
-    )
+    return Marks(model=model, marks=tuple(mark_list))

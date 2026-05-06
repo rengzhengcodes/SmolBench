@@ -1,8 +1,8 @@
 """Defines convenience TypeAlias and structs for evals."""
 
 from datetime import datetime, timezone
-from dataclasses import dataclass
-from typing import TypeAlias, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import TypeAlias, Sequence, Tuple, Optional
 
 Answer: TypeAlias = bool | int | str
 
@@ -60,18 +60,38 @@ Quiz: TypeAlias = Sequence[QnA]
 
 
 @dataclass(frozen=True)
-class Marks:
-    """Grading result of the LLM."""
+class Mark:
+    """Per-question grading result."""
 
-    #: What the marks were generated from.
-    quiz: Quiz
-    #: The model answering the quiz.
+    #: Prompt sent to the model.
+    query: str
+    #: Ground truth answer.
+    answer: Answer
+    #: Raw, unprocessed model response.
+    response: str
+    #: Score awarded (1=correct, 0=incorrect, None=invalid/unparseable).
+    score: Optional[int]
+
+
+@dataclass(frozen=True)
+class Marks:
+    """Grading result of the LLM across a full quiz."""
+
+    #: The model that was evaluated.
     model: str
-    #: Number of responses correct.
-    correct: int
-    #: Number of responses incorrect.
-    incorrect: int
-    #: Number of responses excluded due to incorrect LLM formatting.
-    invalid: int
-    #: Date the quiz was generated.
-    date: datetime = datetime.now(timezone.utc)
+    #: Per-question marks.
+    marks: tuple[Mark, ...]
+    #: Date the quiz was run.
+    date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def correct(self) -> int:
+        return sum(1 for m in self.marks if m.score == 1)
+
+    @property
+    def incorrect(self) -> int:
+        return sum(1 for m in self.marks if m.score == 0)
+
+    @property
+    def invalid(self) -> int:
+        return sum(1 for m in self.marks if m.score is None)
