@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-05-06 06:15:33.032459+00:00
+date: 2026-05-06 06:24:27.971100+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -748,8 +748,8 @@ marks: !!python/tuple
 
         Between the years 1626 and 1637, exclusive of the end, could Gv have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -962,8 +962,8 @@ marks: !!python/tuple
 
         Between the years 879 and 920, exclusive of the end, could Wd have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -1176,8 +1176,8 @@ marks: !!python/tuple
 
         Between the years 2364 and 2370, exclusive of the end, could UE have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -1497,8 +1497,8 @@ marks: !!python/tuple
 
         Between the years 2221 and 2223, exclusive of the end, could ld have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -1925,8 +1925,8 @@ marks: !!python/tuple
 
         Between the years 621 and 628, exclusive of the end, could nR have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -2674,8 +2674,8 @@ marks: !!python/tuple
 
         Between the years 818 and 830, exclusive of the end, could wJ have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3102,8 +3102,8 @@ marks: !!python/tuple
 
         Between the years 1299 and 1300, exclusive of the end, could gB have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3316,8 +3316,8 @@ marks: !!python/tuple
 
         Between the years 1381 and 1382, exclusive of the end, could gB have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3423,8 +3423,8 @@ marks: !!python/tuple
 
         Between the years 219 and 269, exclusive of the end, could Vp have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3530,8 +3530,8 @@ marks: !!python/tuple
 
         Between the years 1723 and 1728, exclusive of the end, could Vp have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -3958,8 +3958,8 @@ marks: !!python/tuple
 
         Between the years 1533 and 1545, exclusive of the end, could Sg have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -4172,8 +4172,8 @@ marks: !!python/tuple
 
         Between the years 540 and 554, exclusive of the end, could Wk have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -4279,8 +4279,8 @@ marks: !!python/tuple
 
         Between the years 100 and 103, exclusive of the end, could Wk have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -5135,8 +5135,8 @@ marks: !!python/tuple
 
         Between the years 2107 and 2110, exclusive of the end, could rv have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -5456,8 +5456,8 @@ marks: !!python/tuple
 
         Between the years 1809 and 1829, exclusive of the end, could wE have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -5670,8 +5670,8 @@ marks: !!python/tuple
 
         Between the years 1094 and 1096, exclusive of the end, could wE have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -7703,8 +7703,8 @@ marks: !!python/tuple
 
         Between the years 1120 and 1127, exclusive of the end, could Im have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -8024,8 +8024,8 @@ marks: !!python/tuple
 
         Between the years 1478 and 1479, exclusive of the end, could Je have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -8559,8 +8559,8 @@ marks: !!python/tuple
 
         Between the years 2546 and 2578, exclusive of the end, could dr have headed
         the Gildane parade every year?'
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8773,8 +8773,8 @@ marks: !!python/tuple
 
         Between the years 1473 and 1474, exclusive of the end, could ET have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -9522,8 +9522,8 @@ marks: !!python/tuple
 
         Between the years 1755 and 1757, exclusive of the end, could tP have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -10592,8 +10592,8 @@ marks: !!python/tuple
 
         Between the years 2058 and 2100, exclusive of the end, could yx have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -10913,8 +10913,8 @@ marks: !!python/tuple
 
         Between the years 2721 and 2722, exclusive of the end, could yx have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -11020,8 +11020,8 @@ marks: !!python/tuple
 
         Between the years 2785 and 2787, exclusive of the end, could PD have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -11448,6 +11448,6 @@ marks: !!python/tuple
 
         Between the years 2715 and 2716, exclusive of the end, could sU have headed
         the Gildane parade every year?'
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 model: qwen/qwen3-30b-a3b-instruct-2507
