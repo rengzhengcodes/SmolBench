@@ -348,12 +348,26 @@ def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> s
             yield f"Year {year}: {color}.\n"
 
 
+def _make_noise(length: int, rng: np.random.Generator) -> str:
+    """Generates a random noise string of the given character length.
+
+    Draws uniformly from ASCII letters, digits, spaces, and newlines —
+    matching the user-specified 'whitespace + random characters' profile.
+    """
+    charset = list(string.ascii_letters + string.digits + "   \n")
+    return "".join(charset[i] for i in rng.integers(len(charset), size=length))
+
+
 def get_random_exclusive_prompts(
     config: ChromaticIntervalsConfig,
     prompter: Prompter,
-) -> Tuple[str, str]:
+) -> Iterable[Tuple[str, str, str, bool]]:
     """
-    Generates an intensional and extensional prompt for the LLM.
+    Generates an intensional, extensional, and noise-padded intensional prompt for the LLM.
+
+    The noise-padded intensional uses the same interval-format context as the
+    intensional prompt but appends random noise so its positive_info length matches
+    the extensional's, ablating context-length as a confound.
     """
     label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
         config
@@ -370,6 +384,13 @@ def get_random_exclusive_prompts(
 
     # Creates the extensional representation (year-indexed, direct lookup format).
     extension: str = "".join(_prompt_extensional_indexed(intervals_to_labels))
+
+    # Creates the noise-padded intensional context: intension + noise to match
+    # the extensional length, so context-length is not a confound between the two.
+    noise_rng: np.random.Generator = np.random.default_rng(config.seed + 1)
+    noise_intension: str = intension + _make_noise(
+        max(0, len(extension) - len(intension)), noise_rng
+    )
 
     extens_template = prompter.extens_template or prompter.template
 
@@ -391,26 +412,33 @@ def get_random_exclusive_prompts(
             extens_sub["query_years"] = "".join(_prompt_extensional([(start, end)]))
         extens = extens_template.safe_substitute(extens_sub)
 
-        yield intens, extens, answer
+        # Creates the noise-padded intensional prompt (same template/query as intens,
+        # but positive_info is padded with random noise to match extensional length).
+        noise_intens_sub = query | prompter.substitution | {"positive_info": noise_intension}
+        noise_intens = prompter.template.safe_substitute(noise_intens_sub)
+
+        yield intens, extens, noise_intens, answer
 
 
 def get_random_exclusive_quiz(
     config: ChromaticIntervalsConfig,
     prompter: Prompter,
-) -> Tuple[Quiz, Quiz]:
+) -> Tuple[Quiz, Quiz, Quiz]:
     """
     Wraps get_random_exclusive_prompts to produce a QnA format.
 
     Returns
     -------
-    intensional Quiz, extensional Quiz
+    intensional Quiz, extensional Quiz, noise-padded intensional Quiz
     """
     intens_quiz: Quiz = []
     extens_quiz: Quiz = []
-    for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
+    noise_intens_quiz: Quiz = []
+    for intens, extens, noise_intens, answer in get_random_exclusive_prompts(config, prompter):
         intens_quiz.append(ToF(prompt=intens, answer=answer))
         extens_quiz.append(ToF(prompt=extens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz)
+        noise_intens_quiz.append(ToF(prompt=noise_intens, answer=answer))
+    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
 
 
 def duration_query_gen(
@@ -434,14 +462,16 @@ def duration_query_gen(
 def get_random_exclusive_numeric_quiz(
     config: ChromaticIntervalsConfig,
     prompter: Prompter,
-) -> Tuple[Quiz, Quiz]:
+) -> Tuple[Quiz, Quiz, Quiz]:
     """Like get_random_exclusive_quiz but yields Numeric items for integer answers."""
     intens_quiz: Quiz = []
     extens_quiz: Quiz = []
-    for intens, extens, answer in get_random_exclusive_prompts(config, prompter):
+    noise_intens_quiz: Quiz = []
+    for intens, extens, noise_intens, answer in get_random_exclusive_prompts(config, prompter):
         intens_quiz.append(Numeric(prompt=intens, answer=answer))
         extens_quiz.append(Numeric(prompt=extens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz)
+        noise_intens_quiz.append(Numeric(prompt=noise_intens, answer=answer))
+    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
 
 
 if __name__ == "__main__":
