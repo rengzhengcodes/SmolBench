@@ -1,0 +1,68 @@
+# Main experiment v2 — adds token-matched noise controls between hint rungs.
+#
+# Each `noise:N` is `hint:(N-1)` baseline + lorem padding sized to match
+# `hint:N`'s token count. Comparing `hint:N` vs `noise:N` cleanly isolates
+# the *content* added at step N from the *volume* added.
+#
+# Rung sequence:
+#   stepk:2  no premise leak (full tactic state + tactics so far + theorem id)
+#   hint:0   + premise NAMES used in true next tactic
+#   hint:1   + premise SIGNATURES                  ── content step 1
+#   noise:1  hint:0 padded to hint:1 token count   ── volume control for step 1
+#   hint:2   + premise BODIES (full source)        ── content step 2
+#   noise:2  hint:1 padded to hint:2 token count   ── volume control for step 2
+#   hint:3   + 1-hop transitive premise closure    ── content step 3
+#   noise:3  hint:2 padded to hint:3 token count   ── volume control for step 3
+#
+# 30 theorems × 8 rungs × 5 models × 1 rollout = 1200 cells minus trivials.
+run_name: main_v2
+
+models:
+  - {provider: openai_compat, model: "anthropic/claude-sonnet-4.6"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "deepseek-v3.2-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "deepseek-v3.2-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - noise:1
+  - hint:2
+  - noise:2
+  - hint:3
+  - noise:3
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 8192
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 8
+skip_trivial: true
+theorem_workers: 4

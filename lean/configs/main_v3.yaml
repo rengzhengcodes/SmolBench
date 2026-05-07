@@ -1,0 +1,108 @@
+# Main experiment v3 — cross-lab reasoning-toggle pollution sweep on PI-hosted
+# open-weight models (no Anthropic, no OpenAI; Sonnet & GPT-5.5 dropped to fit
+# $200 budget). 100 theorems × 10 rungs × 9 model configs × 3 rollouts.
+#
+# Design (4 toggle pairs across 4 labs, 1 always-on reasoning anchor):
+#
+#   DeepSeek MoE (671B/37B):
+#     - v3.2-speciale     reasoning-on, separate fine-tune (always on)
+#     - v3.2-high         reasoning-on toggle
+#     - v3.2-none         reasoning-off toggle
+#   Qwen MoE (235B/22B):
+#     - thinking-2507     reasoning-on, distinct sibling fine-tune
+#     - instruct-2507     reasoning-off, sibling fine-tune
+#   Google dense (Flash tier):
+#     - gemini-3-flash high     reasoning-on toggle
+#     - gemini-3-flash none     reasoning-off toggle
+#   Moonshot MoE (1T/32B):
+#     - kimi-k2.6 high          reasoning-on toggle
+#     - kimi-k2.6 none          reasoning-off toggle
+#
+# Toggle behavior verified 2026-05-07 via results/runs/probe_v3/probe.py:
+# every "high"/"thinking" config emits substantive reasoning_content; every
+# "none"/"instruct" emits zero. PI exposes reasoning_content reliably on these
+# open-weight routes (unlike its OpenAI passthrough).
+#
+# Rung ladder (10 rungs):
+#   stepk:2  no premise leak (full state + tactics-so-far + theorem identity)
+#   hint:0   + premise NAMES used in true next tactic
+#   hint:1   + premise SIGNATURES                  ── content step 1
+#   noise:1  hint:0 padded to hint:1 token count   ── volume control 1
+#   hint:2   + premise BODIES (full source)        ── content step 2
+#   noise:2  hint:1 padded to hint:2 token count   ── volume control 2
+#   hint:3   + 1-hop per-premise dep closure       ── content step 3
+#   noise:3  hint:2 padded to hint:3 token count   ── volume control 3
+#   hint:4   + 2-hop per-premise dep closure       ── content step 4
+#   noise:4  hint:3 padded to hint:4 token count   ── volume control 4
+#
+# Cost projection at 100×10×9×3 = 27,000 cells (minus trivials, ~24k effective):
+# ~$180, with ~$20 buffer for retries.
+run_name: main_v3
+
+models:
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2-speciale"
+    display_name: "v3.2-speciale"
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "qwen/qwen3-235b-a22b-thinking-2507"
+    display_name: "qwen-thinking"
+  - provider: openai_compat
+    model: "qwen/qwen3-235b-a22b-instruct-2507"
+    display_name: "qwen-instruct"
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 100
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - noise:1
+  - hint:2
+  - noise:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 3
+temperature: 0.7
+max_tokens: 8192
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 8

@@ -1,0 +1,40 @@
+# Three-model isolation across the (MoE × reasoning) grid:
+#   - MoE no-reasoning:    mistralai/mixtral-8x22b-instruct  (~141B/39B active)
+#   - MoE reasoning:       nvidia/nemotron-3-super-120b-a12b (~120B/12B active)
+#   - Dense no-reasoning:  meta-llama/llama-3.3-70b-instruct (dense 70B)
+#
+# Same 30 theorems / 5 rungs / 1 rollout shape as the other noise_iso runs.
+run_name: noise_iso_3way_v1
+
+models:
+  - {provider: openai_compat, model: "mistralai/mixtral-8x22b-instruct"}
+  - {provider: openai_compat, model: "nvidia/nemotron-3-super-120b-a12b"}
+  - {provider: openai_compat, model: "meta-llama/llama-3.3-70b-instruct"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0                # same theorem set as the other noise_iso runs
+
+k:
+  strategy: last
+
+rungs:
+  - hint:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 8192        # generous for the reasoning model
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 8
+skip_trivial: true
+theorem_workers: 4
