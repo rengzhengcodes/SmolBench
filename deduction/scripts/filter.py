@@ -22,11 +22,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from deduction.corpus import load_corpus, load_traced_lookup
-from deduction.errors import classify_messages
-from deduction.kimina import KIMINA_URL_DEFAULT, is_up, verify
-from deduction.lean_file import build_lean_view, replay_continuation
-from deduction.targets import Target, build_target, candidate_full_names
+from deduction.src.corpus import load_corpus, load_traced_lookup
+from deduction.src.errors import classify_messages
+from deduction.src.kimina import KIMINA_URL_DEFAULT, is_up, verify
+from deduction.src.lean_file import build_lean_view, replay_continuation
+from deduction.src.targets import Target, build_target, candidate_full_names
 
 
 def _record_for(t: Target, ok: bool, transport_error: Optional[str],

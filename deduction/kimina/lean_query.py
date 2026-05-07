@@ -17,6 +17,15 @@ _BASE_OPTS = (
     "set_option pp.fullNames true\n"
     "set_option pp.universes false\n"
     "set_option pp.structureProjections false\n"
+    # Show proof terms (no `⋯` elision) and don't truncate deep terms.
+    # We deliberately do NOT enable pp.implicit / pp.coercions.types —
+    # those produce text that mostly doesn't roundtrip (`Real.lt✝`,
+    # over-coerced type ascriptions, etc.). The substituted bodies
+    # are typically parseable without them because Lean's elaborator
+    # re-infers implicit/coercion arguments from the body's surface form.
+    "set_option pp.proofs true\n"
+    "set_option pp.deepTerms true\n"
+    "set_option pp.maxSteps 1000000\n"
 )
 
 

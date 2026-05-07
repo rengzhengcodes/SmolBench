@@ -13,12 +13,17 @@ from typing import Optional
 
 from openai import OpenAI
 
-from deduction.prompt import SYSTEM
+from .prompt import SYSTEM
 
 
 VLLM_BASE_URL_DEFAULT = "http://localhost:8010/v1"
 VLLM_API_KEY = "EMPTY"
 MODEL_DEFAULT = "Qwen/Qwen2.5-Math-1.5B-Instruct"
+
+# OpenAI-compatible providers we route through this same client. The base_url
+# is the only thing that changes; auth flows through the standard OpenAI
+# `api_key` argument.
+PRIMEINTELLECT_BASE_URL = "https://api.pinference.ai/api/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +38,16 @@ class ProofBody:
     extraction_path: str           # "fenced_with_local", "fenced_last_by", "raw_last_by", "parse_error"
 
 
-def make_client(base_url: str = VLLM_BASE_URL_DEFAULT) -> OpenAI:
-    return OpenAI(base_url=base_url, api_key=VLLM_API_KEY)
+def make_client(base_url: str = VLLM_BASE_URL_DEFAULT,
+                api_key: str = VLLM_API_KEY,
+                extra_headers: Optional[dict] = None) -> OpenAI:
+    """Construct the OpenAI-compatible client. Defaults serve the local
+    vLLM (no auth). Pass `base_url=PRIMEINTELLECT_BASE_URL` and a real key
+    for PrimeIntellect routing. `extra_headers` is forwarded to every
+    request — used for `X-Prime-Team-ID` to bill against PI team credits
+    instead of the key owner's personal balance."""
+    return OpenAI(base_url=base_url, api_key=api_key,
+                  default_headers=extra_headers)
 
 
 def generate(

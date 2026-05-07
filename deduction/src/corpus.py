@@ -413,6 +413,16 @@ _CONTENT_HEADS = (
     "theorem ", "lemma ", "def ", "instance ", "instance:",
     "structure ", "inductive ", "class ", "abbrev ", "example ", "example:",
     "axiom ", "opaque ", "attribute ",
+    # `alias name := expr` and the iff-anonymous-constructor variant
+    # `alias ⟨a, b⟩ := iff_expr` both introduce real named declarations.
+    # Under `import Mathlib`, those names are already in scope, so leaving
+    # the `alias` in F's scope-only prefix triggers
+    # "<name> has already been declared" in the relaxed verify view.
+    "alias ",
+    # Mathlib file-purity assertions: these blow up under `import Mathlib`
+    # in the relaxed verify view since they assert that some declaration
+    # is NOT in scope, but `import Mathlib` makes everything available.
+    "assert_not_exists ", "assert_exists ", "assert_not_imported ",
 )
 
 _MODIFIER_PREFIXES = (
@@ -476,7 +486,7 @@ def extract_prefix_scope_only(file_path: Path, L: int) -> str:
 
     Drops:
       - all theorem/lemma/def/instance/structure/inductive/class/abbrev/
-        example/axiom/opaque/attribute declarations and their bodies
+        example/axiom/opaque/attribute/alias declarations and their bodies
       - `@[...]` attribute markers and the declaration they modify
       - `/-- ... -/` doc-comment blocks (and the declaration they document)
       - `/- ... -/` non-doc block comments

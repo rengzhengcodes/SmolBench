@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterator, List, Tuple
 
-from deduction.corpus import (
+from .corpus import (
     MATHLIB_DIR,
     Premise,
     extract_prefix_full,

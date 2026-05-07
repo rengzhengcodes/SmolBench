@@ -1,6 +1,6 @@
 """Continuous S3-sync daemon for SmolBench deductive runs.
 
-Designed to run alongside `deduction.runner` on a spot instance. Every
+Designed to run alongside `deduction.src.runner` / `deduction.src.baseline_min` on a spot instance. Every
 `--interval` seconds it `aws s3 sync`'s the run directory to the bucket so
 that nothing is lost when AWS reclaims the box.
 
@@ -22,7 +22,7 @@ Key design properties:
     handler can `kill -TERM` us and trust the result.
 
 Usage:
-    python -m deduction.s3_sync \\
+    python -m deduction.scripts.s3_sync \\
       --src /opt/dlami/nvme/sb/runs/run_box1 \\
       --dst s3://smolbench-deductive/runs/box1/run_2026-04-28/ \\
       --interval 60

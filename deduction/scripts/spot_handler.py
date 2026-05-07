@@ -16,7 +16,7 @@ It does NOT try to keep working past the warning — the goal is to leave a
 clean, fully-uploaded run directory when the instance is reclaimed.
 
 Usage:
-    python -m deduction.spot_handler \\
+    python -m deduction.scripts.spot_handler \\
       --runner-pidfile /tmp/runner.pid \\
       --sync-pidfile /tmp/s3_sync.pid \\
       --src /opt/dlami/nvme/sb/runs/run_box1 \\

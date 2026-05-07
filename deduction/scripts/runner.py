@@ -42,18 +42,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from deduction.corpus import Premise, load_corpus, load_traced_lookup
-from deduction.elaborate import expand_premises
-from deduction.errors import (
+from deduction.src.corpus import Premise, load_corpus, load_traced_lookup
+from deduction.src.elaborate import expand_premises
+from deduction.src.errors import (
     ErrorClass,
     classify_messages,
     is_lookup_leak,
 )
-from deduction.kimina import KIMINA_URL_DEFAULT, is_up, verify
-from deduction.lean_file import build_lean_view, build_lean_view_full_mathlib
-from deduction.prompt import build_user_message
-from deduction.targets import Target, build_target
-from deduction.vllm_client import (
+from deduction.src.kimina import KIMINA_URL_DEFAULT, is_up, verify
+from deduction.src.lean_file import build_lean_view, build_lean_view_full_mathlib
+from deduction.src.prompt import build_user_message
+from deduction.src.targets import Target, build_target
+from deduction.src.vllm_client import (
     MODEL_DEFAULT,
     VLLM_BASE_URL_DEFAULT,
     extract_proof_body,
@@ -248,6 +248,7 @@ def run_cell(
     verify_timeout: int,
     max_prompt_chars: int,
     instance_id: Optional[str],
+    pass_seed_to_llm: bool = True,
 ) -> CellResult:
     t_total = time.perf_counter()
     now_iso = lambda: datetime.now(timezone.utc).isoformat()
@@ -287,7 +288,8 @@ def run_cell(
     try:
         gen = generate(
             vllm_client, user_msg,
-            model=model, temperature=temperature, max_tokens=max_tokens, seed=seed,
+            model=model, temperature=temperature, max_tokens=max_tokens,
+            seed=seed if pass_seed_to_llm else None,
         )
     except Exception as e:
         wall = int((time.perf_counter() - t_total) * 1000)
@@ -417,7 +419,7 @@ def expand_ks_for_target(ks_spec: List, n_tactics: int) -> List[int]:
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pool", type=Path, default=Path("data/replay_pool.jsonl"),
-                    help="Replay-pool JSONL (output of deduction.filter).")
+                    help="Replay-pool JSONL (output of deduction.scripts.filter).")
     ap.add_argument("--out", type=Path, required=True,
                     help="Per-cell JSONL output path. Opened in APPEND mode "
                          "— a re-run on the same path skips already-completed "
@@ -437,7 +439,28 @@ def main():
     ap.add_argument("--names", nargs="*",
                     help="Optional explicit full_names; bypasses --pool.")
     ap.add_argument("--model", default=MODEL_DEFAULT)
-    ap.add_argument("--vllm-url", default=VLLM_BASE_URL_DEFAULT)
+    ap.add_argument("--vllm-url", default=VLLM_BASE_URL_DEFAULT,
+                    help="OpenAI-compatible base URL. For PrimeIntellect: "
+                         "https://api.pinference.ai/api/v1. Default is the "
+                         "local vLLM at http://localhost:8010/v1.")
+    ap.add_argument("--api-key-env", default=None,
+                    help="Environment variable holding the OpenAI-compatible "
+                         "API key. Required when --vllm-url targets a remote "
+                         "provider (e.g., PRIME_API_KEY for PrimeIntellect). "
+                         "Unset ⇒ key = 'EMPTY' (vLLM-style no-auth).")
+    ap.add_argument("--prime-team-id", default=None,
+                    help="If set, send `X-Prime-Team-ID: <id>` on every "
+                         "PrimeIntellect request — bills against the team's "
+                         "credit pool instead of the key owner's personal "
+                         "balance. Required when the $$ are sitting on a "
+                         "team and the personal balance is $0.")
+    ap.add_argument("--no-seed", action="store_true",
+                    help="Don't pass `seed` to the LLM. Required for "
+                         "Anthropic models via PrimeIntellect (their "
+                         "OpenAI-compat surface rejects seed). Cell records "
+                         "still log the iteration index as `seed` for "
+                         "bookkeeping; sampling stochasticity comes from "
+                         "temperature alone.")
     ap.add_argument("--server-url", default=KIMINA_URL_DEFAULT)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--max-tokens", type=int, default=4096)
@@ -531,7 +554,19 @@ def main():
           f"sha={(meta.get('code_sha') or '?')[:8]})", flush=True)
 
     instance_id = meta.get("instance_id")
-    client = make_client(args.vllm_url)
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env)
+        if not api_key:
+            print(f"ERROR: --api-key-env {args.api_key_env} is set but the "
+                  f"environment variable is empty or missing.", file=sys.stderr)
+            sys.exit(2)
+    else:
+        api_key = "EMPTY"
+    extra_headers = (
+        {"X-Prime-Team-ID": args.prime_team_id} if args.prime_team_id else None
+    )
+    client = make_client(args.vllm_url, api_key=api_key,
+                         extra_headers=extra_headers)
 
     n_done = 0
     n_pass = 0
@@ -551,6 +586,7 @@ def main():
                 server_url=args.server_url, verify_timeout=args.verify_timeout,
                 max_prompt_chars=args.max_prompt_chars,
                 instance_id=instance_id,
+                pass_seed_to_llm=not args.no_seed,
             ): (t.full_name, K, B, seed)
             for (t, f_down, K, B, seed) in pending_cells
         }

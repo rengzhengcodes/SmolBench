@@ -25,14 +25,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from deduction.corpus import (
+from .corpus import (
     MATHLIB_DIR,
     Premise,
     extract_premise_refs_from_text,
     read_source_with_attrs,
     strip_docstring,
 )
-from deduction.targets import Target
+from .targets import Target
 
 
 @dataclass

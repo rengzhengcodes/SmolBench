@@ -102,7 +102,7 @@ SYNC_PID="$ROOT/logs/s3_sync.pid"
 if [[ ! -f "$SYNC_PID" ]] || ! kill -0 "$(cat "$SYNC_PID")" 2>/dev/null; then
   log "starting s3-sync daemon -> $S3_DST"
   source "$ROOT/smolbench/.venv/bin/activate"
-  nohup python -m deduction.s3_sync \
+  nohup python -m deduction.scripts.s3_sync \
     --src "$RUN_DIR" \
     --dst "$S3_DST" \
     --interval "$SYNC_INTERVAL" \
@@ -119,7 +119,7 @@ SPOT_PID="$ROOT/logs/spot_handler.pid"
 if [[ ! -f "$SPOT_PID" ]] || ! kill -0 "$(cat "$SPOT_PID")" 2>/dev/null; then
   log "starting spot interruption watchdog"
   source "$ROOT/smolbench/.venv/bin/activate"
-  nohup python -m deduction.spot_handler \
+  nohup python -m deduction.scripts.spot_handler \
     --runner-pidfile "$ROOT/logs/runner.pid" \
     --sync-pidfile  "$SYNC_PID" \
     --src "$RUN_DIR" \
@@ -151,7 +151,7 @@ EXTRA_ARGS=()
 
 # Re-exec the runner so its PID becomes the script's PID (lets spot_handler
 # SIGTERM the actual python).
-exec python -m deduction.runner \
+exec python -m deduction.scripts.runner \
   --pool "$POOL" \
   --out "$RUN_DIR/cells.jsonl" \
   --ks "$KS" --bs "$BS" --k-seeds "$K_SEEDS" \

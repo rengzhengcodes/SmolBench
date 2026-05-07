@@ -20,7 +20,7 @@ splice it in directly.
 """
 from __future__ import annotations
 
-from deduction.targets import Target
+from .targets import Target
 
 
 _INDENT = "  "
@@ -83,6 +83,16 @@ def build_lean_view(target: Target, body: str) -> str:
     it was produced inside a `:= by` block; replay_continuation returns
     an already-indented string)."""
     return _build(target, body, list(target.imports), target.f_prefix_full)
+
+
+def build_lean_view_min(target: Target, body: str) -> str:
+    """Lean source for the *min_prompt* baseline: `import Mathlib` + F's
+    scope-only prefix + `example sig := by\\n<model_body>`. Uses `example`
+    (anonymous) to avoid the "T has already been declared" collision
+    that happens when our targets are real Mathlib theorems pulled in
+    transitively by `import Mathlib`."""
+    return _build(target, body, ["import Mathlib"], target.f_prefix_scope_only,
+                  decl_kind="example", use_local_name=False)
 
 
 def build_lean_view_full_mathlib(target: Target, body: str) -> str:

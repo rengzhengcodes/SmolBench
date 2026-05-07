@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from deduction.inspect import BENCHMARK_DIR, Premise
+from deduction.scripts.inspect import BENCHMARK_DIR, Premise
 
 
 def pilot_pool(
@@ -29,7 +29,7 @@ def pilot_pool(
         cleanly against the current toolchain (excludes targets broken by
         Mathlib drift).
     """
-    from deduction.inspect import pick_well_connected
+    from .inspect import pick_well_connected
 
     replay_path = Path(__file__).resolve().parent.parent / "data" / "replay_filter.json"
     replay_cache = json.load(replay_path.open())
