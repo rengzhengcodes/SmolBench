@@ -1,0 +1,83 @@
+# Main experiment v3.2 — frontier closed-weight complement to main_v3.
+#
+# main_v3 covers cross-lab open-weight models (DeepSeek, Google Flash, Moonshot)
+# at low cost (~$135). This sweep adds the frontier closed-weight tier that
+# was dropped from main_v3 to fit budget:
+#
+#   Anthropic dense (Sonnet 4.6):
+#     - sonnet-4.6 off       no extended thinking
+#     - sonnet-4.6 thinking  extended thinking on (toggle pair)
+#   OpenAI dense (GPT-5.5):
+#     - gpt-5.5 high         reasoning_effort=high
+#     - gpt-5.5 none         reasoning_effort=none (toggle pair)
+#
+# Routes via PI passthrough (same auth + plumbing as main_v3). Note: PI's
+# OpenAI-passthrough only reliably exposes reasoning_content ~17% of the time
+# (see main_v2 audit) — so for gpt-5.5-high we get the toggle effect on
+# pass rates but NOT the CoT text for qualitative analysis. Anthropic's
+# extended-thinking exposure on PI is untested; verify via probe before launch.
+#
+# Cost projection at 100×10×4×3 = 12,000 cells (minus trivials):
+#   sonnet-4.6 off:           ~$36
+#   sonnet-4.6 thinking-on:   ~$213   <-- dominates
+#   gpt-5.5 high:             ~$189
+#   gpt-5.5 none:             ~$57
+#                            ------
+#   total                    ~$495
+#
+# This is well over the original $200 budget. Options:
+#   - run only the cheapest pair (sonnet-off + gpt-5.5-none)  ~$93
+#   - drop sonnet-thinking (the most expensive single config)  ~$282
+#   - reduce theorems 100→30 for this sweep                     ~$148
+# Adjust before launching.
+run_name: main_v3_2
+
+models:
+  - provider: openai_compat
+    model: "anthropic/claude-sonnet-4.6"
+    display_name: "sonnet-4.6-none"
+  - provider: openai_compat
+    model: "anthropic/claude-sonnet-4.6"
+    display_name: "sonnet-4.6-thinking"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0  # 30-theorem subset of main_v3's set (deterministic via seed) for direct cross-model comparison
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - noise:1
+  - hint:2
+  - noise:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 3
+temperature: 0.7
+max_tokens: 32768
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 2  # share machine with main_v3 (which uses 8); stay under memory pressure

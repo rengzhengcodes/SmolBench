@@ -300,8 +300,12 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
     if chain == "stepk":
         parts = _render_stepk_parts(theorem, k, level)
-    else:  # "hint"
+    elif chain == "hint":
         parts = _render_hint_parts(theorem, k, level)
+    elif chain == "noise":
+        parts = _render_noise_parts(theorem, k, level)
+    else:
+        raise ValueError(f"unknown chain {chain!r}")
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
 
 

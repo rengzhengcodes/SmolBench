@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 
 from .base import LLMClient, LLMResponse, Message
 
 DEFAULT_PRIME_BASE_URL = "https://api.pinference.ai/api/v1"
+
+# Retry on transient 429 / 5xx — upstream providers (e.g. Qwen via PI) have
+# tight rate quotas that bursty concurrent traffic can trip even when global
+# concurrency looks fine. Honor Retry-After when present, else exp-backoff.
+_RETRY_STATUSES = (429, 500, 502, 503, 504)
+_RETRY_ATTEMPTS = 4
+_RETRY_BACKOFF_S = (5.0, 15.0, 45.0, 120.0)
 
 
 class OpenAICompatClient(LLMClient):
@@ -22,7 +30,7 @@ class OpenAICompatClient(LLMClient):
         api_key_env: str = "PRIME_INTELLECT_API_KEY",
         team_id: str | None = None,
         team_id_env: str = "PRIME_INTELLECT_TEAM_ID",
-        timeout: float = 600.0,
+        timeout: float = 1800.0,
     ) -> None:
         key = api_key or os.environ.get(api_key_env)
         if not key:
@@ -60,7 +68,25 @@ class OpenAICompatClient(LLMClient):
         }
         if extra_params:
             payload.update(extra_params)
-        rsp = self._client.post("/chat/completions", json=payload)
+        rsp = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            rsp = self._client.post("/chat/completions", json=payload)
+            if rsp.status_code not in _RETRY_STATUSES:
+                break
+            if attempt + 1 == _RETRY_ATTEMPTS:
+                break
+            # Honor server-suggested Retry-After if present and reasonable.
+            retry_after = rsp.headers.get("retry-after")
+            wait_s: float
+            if retry_after:
+                try:
+                    wait_s = min(float(retry_after), 300.0)
+                except ValueError:
+                    wait_s = _RETRY_BACKOFF_S[attempt]
+            else:
+                wait_s = _RETRY_BACKOFF_S[attempt]
+            time.sleep(wait_s)
+        assert rsp is not None
         if rsp.status_code >= 400:
             # Surface the API's error body, not just the status line — most
             # provider 4xx errors carry useful detail (context-too-long,

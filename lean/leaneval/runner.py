@@ -595,6 +595,7 @@ def _run_cells_at_step_concurrent(
     max_workers: int = 12,
     write_lock: threading.Lock | None = None,
     print_lock: threading.Lock | None = None,
+    model_semaphores: dict[str, threading.Semaphore] | None = None,
 ) -> tuple[int, int, int]:
     """Concurrent variant: fire all (rung, model, rollout) gen calls in parallel,
     then verify each on the shared Dojo session as the API responses arrive.
@@ -633,16 +634,49 @@ def _run_cells_at_step_concurrent(
     if not pending:
         return n_written, n_ok, n_skipped
 
+    # Submit longest-running cells first within each theorem so the slowest
+    # reasoning models start before fast non-reasoning ones queue up. Reduces
+    # per-theorem wall-clock since the Dojo session stays open until the last
+    # gen completes — slow gens at the front overlap with fast tail traffic.
+    # Sort key (asc): (rung_order, is_non_reasoning, model_order, rollout_idx)
+    rung_order = {r: i for i, r in enumerate(rungs)}
+    model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
+
+    def _is_reasoning(mc: dict) -> bool:
+        if "reasoning" in mc:
+            return bool(mc["reasoning"])
+        eff = (mc.get("extra_params") or {}).get("reasoning_effort")
+        if eff == "high":
+            return True
+        if eff == "none":
+            return False
+        name = (mc.get("model") or "").lower()
+        return ("thinking" in name) or ("speciale" in name)
+
+    pending.sort(key=lambda p: (
+        rung_order[p["rung"]],
+        0 if _is_reasoning(p["mc"]) else 1,
+        model_order[id(p["mc"])],
+        p["rollout_idx"],
+    ))
+
     # Open Dojo + submit all gens concurrently.
     with open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
         executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending)))
         try:
+            def _gated_complete(client, sem, *args, **kwargs):
+                if sem is None:
+                    return client.complete(*args, **kwargs)
+                with sem:
+                    return client.complete(*args, **kwargs)
+
             future_to_pending = {}
             for p in pending:
                 client = client_factory(p["mc"])
                 p["t_gen_start"] = time.monotonic()
+                sem = (model_semaphores or {}).get(p["display_name"])
                 fut = executor.submit(
-                    client.complete, p["messages"],
+                    _gated_complete, client, sem, p["messages"],
                     model=p["model"], max_tokens=max_tokens, temperature=temperature,
                     extra_params=p["extra_params"],
                 )
@@ -877,6 +911,18 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True) -> int:
             clients[key] = build_client(mc)
         return clients[key]
 
+    # Per-model concurrency caps: any model entry with `max_concurrency: N` gets
+    # a Semaphore(N) shared globally across all theorem workers. Used to throttle
+    # specific models that hit upstream rate limits (e.g. qwen-instruct's 429s)
+    # without slowing other models in the lineup.
+    model_semaphores: dict[str, threading.Semaphore] = {}
+    for mc in models_cfg:
+        cap = mc.get("max_concurrency")
+        if cap is not None:
+            display_name = mc.get("display_name", mc["model"])
+            model_semaphores[display_name] = threading.Semaphore(int(cap))
+            print(f"per-model cap: {display_name} = {int(cap)}", flush=True)
+
     n_total_cells = sum(
         len(_k_indices(t, k_strategy)) * len(rungs) * len(models_cfg) * n_rollouts
         for t in theorems
@@ -969,6 +1015,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True) -> int:
                             tdir=tdir, dojo_timeout=dojo_timeout,
                             max_workers=max_concurrency,
                             write_lock=write_lock, print_lock=print_lock,
+                            model_semaphores=model_semaphores,
                         )
                     else:
                         written_here, ok_here, skipped_here = _run_cells_at_step(

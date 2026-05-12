@@ -13,6 +13,7 @@ Two patterns:
 from __future__ import annotations
 
 import contextlib
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal
@@ -28,6 +29,30 @@ from lean_dojo import (
 )
 
 from .corpus import BenchmarkTheorem
+
+
+# LeanDojo's Dojo init occasionally fails with "Unexpected EOF" or similar
+# transient errors when several sessions open concurrently — the underlying
+# Lean subprocess startup races on the build cache. Manual reopen of the same
+# theorem typically succeeds within seconds. Retry with backoff before giving up.
+_DOJO_OPEN_RETRIES = 3
+_DOJO_OPEN_BACKOFF_S = (5.0, 15.0, 45.0)
+
+
+def _open_dojo_with_retry(thm: Theorem, timeout: int):
+    """Enter the Dojo context manager, retrying on transient init failures."""
+    last_exc: Exception | None = None
+    for attempt in range(_DOJO_OPEN_RETRIES):
+        try:
+            cm = Dojo(thm, timeout=timeout)
+            entered = cm.__enter__()
+            return cm, entered
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt + 1 < _DOJO_OPEN_RETRIES:
+                time.sleep(_DOJO_OPEN_BACKOFF_S[attempt])
+    assert last_exc is not None
+    raise last_exc
 
 Verdict = Literal["success", "lean_error", "incomplete", "given_up", "exception", "replay_failed"]
 
@@ -56,7 +81,8 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
     tactics = [tt.tactic for tt in bt.traced_tactics]
 
     try:
-        with Dojo(thm, timeout=timeout) as (dojo, state):
+        cm, (dojo, state) = _open_dojo_with_retry(thm, timeout)
+        try:
             for i, tac in enumerate(tactics):
                 state = dojo.run_tac(state, tac)
                 if isinstance(state, LeanError):
@@ -77,6 +103,8 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
                 bt.full_name, "incomplete", len(tactics), len(tactics),
                 final_state_pp=pp,
             )
+        finally:
+            cm.__exit__(None, None, None)
     except Exception as exc:  # noqa: BLE001
         return ReplayResult(
             bt.full_name, "exception", 0, len(tactics), error=f"{type(exc).__name__}: {exc}",
@@ -143,7 +171,8 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
 
     thm = _to_dojo_theorem(bt)
     prefix = [tt.tactic for tt in bt.traced_tactics[:k]]
-    with Dojo(thm, timeout=timeout) as (dojo, state):
+    cm, (dojo, state) = _open_dojo_with_retry(thm, timeout)
+    try:
         for tac in prefix:
             state = dojo.run_tac(state, tac)
             if not isinstance(state, TacticState):
@@ -151,6 +180,8 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
                     f"prefix tactic {tac!r} -> {type(state).__name__} on {bt.full_name}"
                 )
         yield dojo, state
+    finally:
+        cm.__exit__(None, None, None)
 
 
 def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600) -> ProofResult:

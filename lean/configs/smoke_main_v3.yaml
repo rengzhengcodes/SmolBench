@@ -1,0 +1,67 @@
+# Smoke for main_v3 — same 9 models / 10 rungs as main_v3, but 3 theorems × 1 rollout.
+# Goal: verify rendering, trivial-skip, verify pipeline, reasoning_content capture
+# across every model config before the full $180 sweep.
+# Expected: 3 × 10 × 9 × 1 = 270 cells (minus trivials), ~10-15 min wall, ~$3-5.
+run_name: smoke_main_v3_t32k_fixed2
+
+models:
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2-speciale"
+    display_name: "v3.2-speciale"
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 3
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - noise:1
+  - hint:2
+  - noise:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 32768
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 4
