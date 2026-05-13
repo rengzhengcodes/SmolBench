@@ -87,10 +87,12 @@ class Mark:
     query: str
     #: Ground truth answer.
     answer: Answer
-    #: Raw, unprocessed model response.
+    #: Raw, unprocessed model response (content field only).
     response: str
     #: Score awarded (1=correct, 0=incorrect, None=invalid/unparseable).
     score: Optional[int]
+    #: Chain-of-thought reasoning returned by the model, if any.
+    reasoning: Optional[str] = None
 
 
 @dataclass(frozen=True)

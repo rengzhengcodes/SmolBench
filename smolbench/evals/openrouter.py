@@ -5,7 +5,7 @@ Interfacing directly with the OpenRouter API.
 import logging
 import os
 import time
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, Tuple
 
 import requests
 from joblib import Parallel, delayed
@@ -57,7 +57,7 @@ def query(
     seed: int,
     context_length: int = 0,
     extra_args: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> Tuple[str, Optional[str]]:
     """
     Queries a model using openrouter.
 
@@ -109,14 +109,15 @@ def query(
             if OPENROUTER_INFO and OPENROUTER_INFO_RESPONSE:
                 logging.info(body)
 
-            if body["choices"][0]["message"]["content"] is None:
+            msg = body["choices"][0]["message"]
+            if msg["content"] is None:
                 logging.warning("Body returned none value: \n" f"{body}")
-                return ""
+                return "", None
             if (tokens := body["usage"]["total_tokens"]) > context_length:
                 raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
             if OPENROUTER_INFO:
                 logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-            return body["choices"][0]["message"]["content"]
+            return msg["content"], msg.get("reasoning")
 
         # Attempts to retry exceptions if possible.
         except requests.exceptions.RequestException as err:
@@ -141,7 +142,7 @@ def evaluate(
     """
     ctx_len: int = get_model_context_length(model)
     max_workers: int = max(1, min(len(quiz), OPENROUTER_MAX_PARALLEL_REQUESTS))
-    responses: list[str] = Parallel(n_jobs=max_workers, prefer="threads")(
+    responses: list[Tuple[str, Optional[str]]] = Parallel(n_jobs=max_workers, prefer="threads")(
         delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
         for q in quiz
     )
@@ -149,16 +150,17 @@ def evaluate(
     mark_list: list[Mark] = []
     q: QnA
     raw: str
-    for q, raw in zip(quiz, responses):
+    reasoning: Optional[str]
+    for q, (raw, reasoning) in zip(quiz, responses):
         try:
             conditioned: Answer = q.condition(raw)
         except ValueError as e:
             if OPENROUTER_INFO:
                 logging.info(e)
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, score=None))
+            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=None))
             continue
 
         part_correct, _ = q.score(conditioned)
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, score=part_correct))
+        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
 
     return Marks(model=model, marks=tuple(mark_list))
