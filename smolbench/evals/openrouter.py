@@ -1,0 +1,166 @@
+"""
+Interfacing directly with the OpenRouter API.
+"""
+
+import logging
+import os
+import time
+from typing import Any, Optional, Dict, Tuple
+
+import requests
+from joblib import Parallel, delayed
+
+from smolbench.evals import Answer, QnA, Quiz, Mark, Marks
+
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", None)
+URL: str = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_INFO: bool = bool(int(os.getenv("OPENROUTER_INFO", "0")))
+OPENROUTER_INFO_RESPONSE: bool = bool(int(os.getenv("OPENROUTER_INFO_RESPONSE", "0")))
+OPENROUTER_MAX_PARALLEL_REQUESTS: int = int(
+    os.getenv("OPENROUTER_MAX_PARALLEL_REQUESTS", "8")
+)
+OPENROUTER_RETRY_BACKOFF_SECONDS: int = 60
+
+
+def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
+    """
+    Returns whether an OpenRouter request error should be retried.
+    """
+    if isinstance(err, requests.exceptions.HTTPError):
+        response = err.response
+        if response is None:
+            return True
+
+        return response.status_code == 429 or 500 <= response.status_code < 600
+
+    return True
+
+
+def get_model_context_length(model: str) -> int:
+    """Fetches the model context window from segments."""
+    response: Dict[str, Any] = requests.get(
+        url=f"https://openrouter.ai/api/v1/models/{model}/endpoints",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        },
+        timeout=120,
+    ).json()
+
+    # pick the first available endpoint
+    ctx: int = response["data"]["endpoints"][0]["context_length"]
+    return ctx
+
+
+def query(
+    prompt: str,
+    model: str,
+    seed: int,
+    context_length: int = 0,
+    extra_args: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Queries a model using openrouter.
+
+    Parameters
+    ----------
+    prompt:
+        The content posed to the LLM we expect an answer from.
+    model:
+        The model to evaluate on OpenRouter.
+    seed:
+        Seed for LLM output.
+    context_length:
+        Context length of LLM model.
+    extra_args:
+        Extra args for `json=<slug>` of requests to get certain LLM behavior.
+
+    Returns
+    -------
+    The model's output.
+    """
+    attempt: int = 0
+    # Keep attempting to get a result until one is provisioned.
+    while True:
+        attempt += 1
+        # Tries to get a non-error code response from OpenRouter.
+        try:
+            response = requests.post(
+                url=URL,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=(
+                    {
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "seed": seed,
+                    }
+                    | (extra_args if extra_args else {})
+                ),
+                timeout=120,
+            )
+
+            if not response.ok:
+                logging.info(response.text)
+
+            response.raise_for_status()
+            body = response.json()
+            if OPENROUTER_INFO and OPENROUTER_INFO_RESPONSE:
+                logging.info(body)
+
+            msg = body["choices"][0]["message"]
+            if msg["content"] is None:
+                logging.warning("Body returned none value: \n" f"{body}")
+                return "", None
+            if (tokens := body["usage"]["total_tokens"]) > context_length:
+                raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
+            if OPENROUTER_INFO:
+                logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
+            return msg["content"], msg.get("reasoning")
+
+        # Attempts to retry exceptions if possible.
+        except requests.exceptions.RequestException as err:
+            if not _is_retryable_request_error(err):
+                raise
+            logging.info(
+                f"OpenRouter request failed on attempt {attempt}: {err}. "
+                f"Retrying in {OPENROUTER_RETRY_BACKOFF_SECONDS} seconds."
+            )
+            time.sleep(OPENROUTER_RETRY_BACKOFF_SECONDS)
+
+
+def evaluate(
+    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
+) -> Marks:
+    """
+    Evaluates a model given a sequence of quizzes.
+
+    Postconditions
+    --------------
+
+    """
+    ctx_len: int = get_model_context_length(model)
+    max_workers: int = max(1, min(len(quiz), OPENROUTER_MAX_PARALLEL_REQUESTS))
+    responses: list[Tuple[str, Optional[str]]] = Parallel(n_jobs=max_workers, prefer="threads")(
+        delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
+        for q in quiz
+    )
+
+    mark_list: list[Mark] = []
+    q: QnA
+    raw: str
+    reasoning: Optional[str]
+    for q, (raw, reasoning) in zip(quiz, responses):
+        try:
+            conditioned: Answer = q.condition(raw)
+        except ValueError as e:
+            if OPENROUTER_INFO:
+                logging.info(e)
+            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=None))
+            continue
+
+        part_correct, _ = q.score(conditioned)
+        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
+
+    return Marks(model=model, marks=tuple(mark_list))
