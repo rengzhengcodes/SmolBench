@@ -1,0 +1,35 @@
+# Noise-isolation sweep on DeepSeek V3.2 (the 671B MoE).
+# Same 30 theorems / 5 rungs / 1 rollout shape as noise_iso_v1, but:
+#   - single model (no Anthropic arm)
+#   - DeepSeek pricing on Prime Intellect is ~$0.50-1/M input → ~$2-4 total
+run_name: noise_iso_deepseek_v1
+
+models:
+  - {provider: openai_compat, model: "deepseek/deepseek-v3.2"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0                # same seed as noise_iso_v1 — same theorem set
+
+k:
+  strategy: last
+
+rungs:
+  - hint:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 4096
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 8
+skip_trivial: true

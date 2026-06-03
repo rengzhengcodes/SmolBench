@@ -1,0 +1,43 @@
+# Smoke sweep — full implemented rung ladder (8 rungs).
+# 30 theorems × 8 rungs × 2 models × 1 rollout = 480 cells (minus trivials).
+# With concurrent gen + Dojo session reuse: ~10-15 min wall-clock; ~$2-4.
+#
+# hint:2 now slices real proof bodies (not just corpus signature).
+# hint:3 / hint:4 add 1-hop / 2-hop file-imports transitive closure, token-capped.
+# Trivial rungs (e.g. stepk:2 at k=0; hint:* with no recorded premises) are
+# auto-skipped to keep per-rung pass rates apples-to-apples.
+run_name: smoke_v3
+
+models:
+  - {provider: openai_compat, model: "anthropic/claude-haiku-4.5"}
+  - {provider: openai_compat, model: "anthropic/claude-sonnet-4.6"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:0
+  - stepk:1
+  - stepk:2
+  - hint:0
+  - hint:1
+  - hint:2
+  - hint:3
+  - hint:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 4096
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true

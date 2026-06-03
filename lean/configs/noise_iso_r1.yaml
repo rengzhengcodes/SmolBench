@@ -1,0 +1,40 @@
+# Noise-isolation sweep on DeepSeek R1-0528 — the reasoning variant of the
+# same 671B base as V3.2. R1 emits reasoning_content separately from the
+# answer; our LLM client captures it and the runner logs it as
+# `reasoning_content` in each row.
+#
+# Same 30 theorems / 5 rungs / 1 rollout shape as the other noise_iso runs.
+# Note: R1 burns more output tokens (extended reasoning) → expect 5-30s/cell
+# generation latency on harder rungs. Cost still bounded (~$3-5 estimated).
+run_name: noise_iso_r1_v1
+
+models:
+  - {provider: openai_compat, model: "deepseek/deepseek-r1-0528"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0                # same theorem set as the other noise_iso runs
+
+k:
+  strategy: last
+
+rungs:
+  - hint:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 8192        # higher than 4096 because R1's reasoning channel can be long
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 4         # cap in-flight gens per theorem (R1 hits rate limits at 8)
+skip_trivial: true
+theorem_workers: 2         # cap parallel Dojo sessions: total in-flight R1 = 2*4 = 8

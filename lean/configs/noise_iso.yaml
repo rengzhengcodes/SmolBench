@@ -1,0 +1,48 @@
+# Noise-isolation sweep — does volume hurt, or does the *content* of hint:3/4 hurt?
+#
+# Compares each (theorem, model) at:
+#   hint:2  — the answer-conditional baseline (premise names + sigs + bodies)
+#   hint:3  — hint:2 + 1-hop transitive premise sigs (real content, ~33k tokens)
+#   noise:3 — hint:2 + lorem-ipsum padding sized to match hint:3 token count
+#   hint:4  — hint:2 + 2-hop transitive (real content, ≤50k tokens)
+#   noise:4 — hint:2 + lorem-ipsum padding sized to match hint:4 token count
+#
+# Reading: if hint:3 ≈ noise:3 then the degradation is volume alone; if
+# hint:3 < noise:3 then the answer-conditional content adds harm beyond
+# length; if hint:3 > noise:3 then transitive premises help despite the
+# volume.
+#
+# 30 theorems × 5 rungs × 2 models × 1 rollout = 300 cells (minus trivials).
+# Most spend is on hint:3/4 + noise:3/4 (4 large-context rungs).
+run_name: noise_iso_v1
+
+models:
+  - {provider: openai_compat, model: "anthropic/claude-haiku-4.5"}
+  - {provider: openai_compat, model: "anthropic/claude-sonnet-4.6"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 30
+  max_tactics: 5
+  seed: 0                # same seed as smoke_v3 — same theorem set
+
+k:
+  strategy: last
+
+rungs:
+  - hint:2
+  - hint:3
+  - noise:3
+  - hint:4
+  - noise:4
+
+n_rollouts: 1
+temperature: 0.7
+max_tokens: 4096
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 12
+skip_trivial: true
