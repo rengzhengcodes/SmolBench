@@ -5,7 +5,7 @@ Generates periodic patterns (generalized FizzBuzz).
 import string
 from dataclasses import dataclass
 from math import lcm
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable, Optional
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable
 
 from ordered_set import OrderedSet
 import numpy as np
@@ -195,8 +195,6 @@ class Prompter:
         [PeriodToLabel, PosToCompound, int],
         Iterable[Tuple[Dict[str, str], Answer]],
     ]
-    #: Optional template for extensional prompts; falls back to template if absent.
-    extens_template: Optional[string.Template] = None
 
 
 # ---------------------------------------------------------------------------
@@ -227,17 +225,11 @@ def get_periodic_prompts(
         max(0, len(extension) - len(intension)), noise_rng
     )
 
-    extens_template = prompter.extens_template or prompter.template
-
     for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
-        intens_sub = query | prompter.substitution | {"positive_info": intension}
-        intens = prompter.template.safe_substitute(intens_sub)
-
-        extens_sub = query | prompter.substitution | {"positive_info": extension}
-        extens = extens_template.safe_substitute(extens_sub)
-
-        noise_intens_sub = query | prompter.substitution | {"positive_info": noise_intension}
-        noise_intens = prompter.template.safe_substitute(noise_intens_sub)
+        sub = query | prompter.substitution
+        intens = prompter.template.safe_substitute(sub | {"positive_info": intension})
+        extens = prompter.template.safe_substitute(sub | {"positive_info": extension})
+        noise_intens = prompter.template.safe_substitute(sub | {"positive_info": noise_intension})
 
         yield intens, extens, noise_intens, answer
 
@@ -346,18 +338,7 @@ def numeric_count_query_gen(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    tof_template = string.Template(
-        "Context:\n"
-        "---\n"
-        "There is a counting game. Count positions starting from 1. "
-        "At each position write down words according to the following rules:\n"
-        "$positive_info\n"
-        "Query:\n"
-        "Does '$label' appear at position $pos? "
-        "Answer with only one word: 'True' or 'False'."
-    )
-
-    count_template = string.Template(
+    template = string.Template(
         "Context:\n"
         "---\n"
         "There is a counting game. Count positions starting from 1. "
@@ -374,22 +355,9 @@ if __name__ == "__main__":
         seed=42,
     )
 
-    print("=== True/False membership queries ===\n")
     for intens, extens, noise_intens, answer in get_periodic_prompts(
         cfg,
-        Prompter(tof_template, {}, tof_membership_query_gen),
-    ):
-        print("-- intensional --")
-        print(intens)
-        print("-- extensional --")
-        print(extens)
-        print("answer:", answer)
-        print()
-
-    print("=== Numeric count queries ===\n")
-    for intens, extens, noise_intens, answer in get_periodic_prompts(
-        cfg,
-        Prompter(count_template, {}, numeric_count_query_gen),
+        Prompter(template, {}, numeric_count_query_gen),
     ):
         print("-- intensional --")
         print(intens)
