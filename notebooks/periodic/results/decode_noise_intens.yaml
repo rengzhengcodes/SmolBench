@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 14:06:25.502581+00:00
+date: 2026-06-04 19:56:01.020030+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 420
@@ -368,8 +368,8 @@ marks: !!python/tuple
         \ q 4bL F iTbIL50cxP8  NogPTexnKyRFHuW1hrAXK43zv 3TGB8Qiv \nQuestion:\nHow\
         \ many of the positions 1 through 420 include 'dh'?"
     reasoning: null
-    response: ''
-    score: null
+    response: '211'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 105
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -491,7 +491,7 @@ marks: !!python/tuple
         \ q 4bL F iTbIL50cxP8  NogPTexnKyRFHuW1hrAXK43zv 3TGB8Qiv \nQuestion:\nHow\
         \ many of the positions 1 through 420 include 'mz'?"
     reasoning: null
-    response: '67'
+    response: '84'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 84
@@ -737,8 +737,8 @@ marks: !!python/tuple
         \ q 4bL F iTbIL50cxP8  NogPTexnKyRFHuW1hrAXK43zv 3TGB8Qiv \nQuestion:\nHow\
         \ many of the positions 1 through 420 include 'xy'?"
     reasoning: null
-    response: ''
-    score: null
+    response: '213'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 60
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -860,6 +860,6 @@ marks: !!python/tuple
         \ q 4bL F iTbIL50cxP8  NogPTexnKyRFHuW1hrAXK43zv 3TGB8Qiv \nQuestion:\nHow\
         \ many of the positions 1 through 420 include 'bp'?"
     reasoning: null
-    response: '63'
-    score: 0
+    response: ''
+    score: null
 model: meta-llama/llama-3.1-8b-instruct

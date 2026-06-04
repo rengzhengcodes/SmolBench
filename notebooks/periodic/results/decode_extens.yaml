@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 14:06:23.439396+00:00
+date: 2026-06-04 19:55:59.976908+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 420
@@ -868,7 +868,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''qy''?'
     reasoning: null
-    response: '201'
+    response: '196'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 210
@@ -1737,7 +1737,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''fe''?'
     reasoning: null
-    response: '178'
+    response: '146'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 140
@@ -2606,7 +2606,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''dh''?'
     reasoning: null
-    response: '41'
+    response: '20'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 105
@@ -3475,7 +3475,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''mz''?'
     reasoning: null
-    response: '124'
+    response: '244'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 84
@@ -4344,7 +4344,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''jp''?'
     reasoning: null
-    response: '203'
+    response: '43'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 70
@@ -5213,7 +5213,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''xy''?'
     reasoning: null
-    response: '42'
+    response: '114'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 60
@@ -6082,6 +6082,6 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''bp''?'
     reasoning: null
-    response: '101'
+    response: '270'
     score: 0
 model: meta-llama/llama-3.1-8b-instruct

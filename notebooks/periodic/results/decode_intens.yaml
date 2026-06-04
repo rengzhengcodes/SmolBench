@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 14:06:22.595765+00:00
+date: 2026-06-04 19:55:59.179023+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 420
@@ -42,7 +42,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''qy''?'
     reasoning: null
-    response: '84'
+    response: '210'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 210
@@ -85,7 +85,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''fe''?'
     reasoning: null
-    response: '84'
+    response: '197'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 140
@@ -128,7 +128,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''dh''?'
     reasoning: null
-    response: '298'
+    response: '84'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 105
@@ -214,8 +214,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''jp''?'
     reasoning: null
-    response: '84'
-    score: 1
+    response: '139'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 70
     query: 'You are a precise integer counter.
@@ -257,7 +257,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''xy''?'
     reasoning: null
-    response: '84'
+    response: '216'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 60
@@ -300,6 +300,6 @@ marks: !!python/tuple
 
         How many of the positions 1 through 420 include ''bp''?'
     reasoning: null
-    response: '147'
+    response: '128'
     score: 0
 model: meta-llama/llama-3.1-8b-instruct
