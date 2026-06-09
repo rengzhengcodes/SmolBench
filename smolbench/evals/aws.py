@@ -21,14 +21,17 @@ SageMaker (point the same client at your deployed endpoint):
     AWS_INFERENCE_BASE_URL=https://runtime.sagemaker.<region>.amazonaws.com/endpoints/<endpoint>/openai/v1
     AWS_INFERENCE_API_KEY=<minted bearer token>   # SageMaker tokens last <= 12h
 
-Enabling Bedrock model access, deploying a SageMaker endpoint, and minting a
-SageMaker token are out-of-band steps; this module stays dependency-free and
-only speaks HTTP (no boto3 / sagemaker SDK import). The ``model`` argument is a
+Enabling Bedrock model access and minting a SageMaker token are out-of-band
+steps; the inference path stays dependency-free and only speaks HTTP. The
+optional ``provision_endpoint`` helper can deploy and tear down a SageMaker
+endpoint for the duration of an experiment; it imports boto3/botocore lazily, so
+importing this module (and the query path) requires neither. The ``model`` argument is a
 model id from the configured endpoint's catalog -- on the default bedrock-mantle
 endpoint, e.g. ``anthropic.claude-haiku-4-5``, ``qwen.qwen3-32b``, or
 ``openai.gpt-oss-120b``; call ``list_models()`` to enumerate them.
 """
 
+import contextlib
 import logging
 import os
 import time
@@ -290,3 +293,206 @@ def evaluate(
         mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
 
     return Marks(model=model, marks=tuple(mark_list))
+
+
+# ---------------------------------------------------------------------------
+# Optional SageMaker endpoint provisioning (lazy boto3; opt-in)
+# ---------------------------------------------------------------------------
+# Deploying/tearing down a SageMaker endpoint needs boto3/botocore; the inference
+# path does not, so those imports stay *inside* the functions below to keep
+# importing this module dependency-free (see module docstring). The endpoint NAME
+# must equal the model id passed to query()/evaluate() -- the provider builds
+# .../endpoints/<name>/openai/v1 from it.
+
+# SageMaker vLLM Deep Learning Container (override via env). The OpenAI-compatible
+# /openai/v1 route is served by AWS's vLLM and SGLang DLCs.
+SAGEMAKER_VLLM_DLC: str = os.getenv(
+    "SAGEMAKER_VLLM_DLC",
+    f"763104351884.dkr.ecr.{AWS_REGION}.amazonaws.com/vllm:0.11.1-gpu-py312-cu129-ubuntu22.04-sagemaker",
+)
+SAGEMAKER_EXEC_ROLE_NAME: str = os.getenv("SAGEMAKER_EXEC_ROLE_NAME", "smolbench-sm-exec-role")
+# Per-endpoint deployment spec. The small entry runs within the default ml.g5
+# quota; the big models need a Service Quota increase for their instance type
+# (multi-GPU endpoint quotas default to 0) plus likely quantization/multi-node
+# tuning -- treat their specs as editable templates. Add {"env": {"HF_TOKEN":
+# "hf_..."}} for gated models, or {"image": "..."} to override the container.
+SAGEMAKER_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
+    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct",                    "instance_type": "ml.g5.2xlarge",  "tp": 1},
+    "llama-31-405b":       {"hf_model_id": "meta-llama/Llama-3.1-405B-Instruct",            "instance_type": "ml.p5.48xlarge", "tp": 8},
+    "nemotron-ultra-253b": {"hf_model_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",       "instance_type": "ml.p5.48xlarge", "tp": 8},
+    "llama4-maverick":     {"hf_model_id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct", "instance_type": "ml.p5.48xlarge", "tp": 8},
+}
+
+
+def _is_sagemaker_provider() -> bool:
+    """Whether the active provider targets a SageMaker endpoint (vs serverless Bedrock)."""
+    prov = os.getenv("INFERENCE_PROVIDER", "").lower()
+    if prov not in ("aws", "bedrock", "sagemaker"):
+        return False
+    return (
+        prov == "sagemaker"
+        or "sagemaker" in AWS_INFERENCE_BASE_URL
+        or "{model}" in AWS_INFERENCE_BASE_URL
+    )
+
+
+def _sagemaker_client():
+    import boto3  # lazy: keep the inference path boto3-free
+
+    return boto3.client("sagemaker", region_name=AWS_REGION)
+
+
+def mint_sagemaker_token(expires: int = 43200) -> str:
+    """Mints a short-lived (<=12h) SageMaker bearer token from local AWS creds.
+
+    The token is a base64-encoded SigV4 pre-signed ``CallWithBearerToken`` URL --
+    the same scheme the SageMaker SDK's ``generate_token`` produces, implemented
+    here with botocore so the module needs no extra SDK.
+    """
+    import base64
+    from botocore.auth import SigV4QueryAuth
+    from botocore.awsrequest import AWSRequest
+    from botocore.session import Session as BotocoreSession
+
+    creds = BotocoreSession().get_credentials()
+    if creds is None:
+        raise RuntimeError("No AWS credentials found.")
+    req = AWSRequest(
+        method="POST",
+        url="https://sagemaker.amazonaws.com/",
+        headers={"host": "sagemaker.amazonaws.com"},
+        params={"Action": "CallWithBearerToken"},
+    )
+    SigV4QueryAuth(creds, "sagemaker", AWS_REGION, expires=expires).add_auth(req)
+    presigned = req.url.replace("https://", "") + "&Version=1"
+    return "sagemaker-api-key-" + base64.b64encode(presigned.encode()).decode()
+
+
+def _ensure_exec_role() -> str:
+    """Returns the SageMaker execution role ARN, creating it (idempotently) if absent."""
+    import json
+
+    import boto3
+
+    iam = boto3.client("iam")
+    trust = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"Service": "sagemaker.amazonaws.com"},
+                "Action": "sts:AssumeRole",
+            }
+        ],
+    }
+    try:
+        arn = iam.create_role(
+            RoleName=SAGEMAKER_EXEC_ROLE_NAME,
+            AssumeRolePolicyDocument=json.dumps(trust),
+        )["Role"]["Arn"]
+        iam.attach_role_policy(
+            RoleName=SAGEMAKER_EXEC_ROLE_NAME,
+            PolicyArn="arn:aws:iam::aws:policy/AmazonSageMakerFullAccess",
+        )
+        time.sleep(10)  # let the new role propagate before SageMaker assumes it
+        return arn
+    except iam.exceptions.EntityAlreadyExistsException:
+        return iam.get_role(RoleName=SAGEMAKER_EXEC_ROLE_NAME)["Role"]["Arn"]
+
+
+@contextlib.contextmanager
+def provision_endpoint(model: str, timeout_min: int = 40):
+    """Provision the SageMaker endpoint named ``model`` for the body of a ``with``.
+
+    Deploys the endpoint from ``SAGEMAKER_DEPLOY_SPECS[model]``, waits until it is
+    InService, refreshes the bearer token, yields, and GUARANTEES teardown (delete
+    endpoint + endpoint-config + model, which stops the billed instance) on exit --
+    success, exception, or KeyboardInterrupt. A no-op for serverless Bedrock and
+    non-AWS providers, so wrapping an experiment with it is always safe::
+
+        with provision_endpoint(DENSE_MODEL):
+            decode_intens_eval = evaluate(intens_quiz, DENSE_MODEL, SEED)
+    """
+    global AWS_INFERENCE_API_KEY
+
+    if not _is_sagemaker_provider():
+        logging.info("provision_endpoint: serverless/non-SageMaker provider; nothing to provision.")
+        yield model
+        return
+
+    spec = SAGEMAKER_DEPLOY_SPECS.get(model)
+    if spec is None:
+        raise KeyError(
+            f"No SAGEMAKER_DEPLOY_SPECS entry for endpoint {model!r}; "
+            "add one with hf_model_id / instance_type / tp."
+        )
+
+    mdl, cfg = f"{model}-model", f"{model}-config"
+    role = _ensure_exec_role()
+    try:
+        logging.info(
+            f"provision_endpoint: deploying {model!r} ({spec['hf_model_id']} on {spec['instance_type']}) ..."
+        )
+        _sagemaker_client().create_model(
+            ModelName=mdl,
+            ExecutionRoleArn=role,
+            PrimaryContainer={
+                "Image": spec.get("image", SAGEMAKER_VLLM_DLC),
+                "Environment": {
+                    "HF_MODEL_ID": spec["hf_model_id"],
+                    "SM_VLLM_TENSOR_PARALLEL_SIZE": str(spec.get("tp", 1)),
+                    "SAGEMAKER_ENABLE_LOAD_AWARE": "1",
+                }
+                | spec.get("env", {}),
+            },
+        )
+        _sagemaker_client().create_endpoint_config(
+            EndpointConfigName=cfg,
+            ProductionVariants=[
+                {
+                    "VariantName": "variant1",
+                    "ModelName": mdl,
+                    "InitialInstanceCount": 1,
+                    "InstanceType": spec["instance_type"],
+                    "ContainerStartupHealthCheckTimeoutInSeconds": 1800,
+                }
+            ],
+        )
+        _sagemaker_client().create_endpoint(EndpointName=model, EndpointConfigName=cfg)
+
+        deadline = time.time() + timeout_min * 60
+        while True:
+            # Fresh client each poll so a rotated/refreshed credential file is picked up.
+            desc = _sagemaker_client().describe_endpoint(EndpointName=model)
+            status = desc["EndpointStatus"]
+            if status == "InService":
+                logging.info(f"provision_endpoint: {model!r} is InService.")
+                break
+            if status in ("Failed", "OutOfService"):
+                raise RuntimeError(f"endpoint {model} {status}: {desc.get('FailureReason', '?')}")
+            if time.time() > deadline:
+                raise TimeoutError(
+                    f"endpoint {model} not InService after {timeout_min} min (status={status})."
+                )
+            time.sleep(30)
+
+        # Refresh the bearer token (a long deploy may have outlived an earlier one)
+        # and point this module's inference path at it.
+        token = mint_sagemaker_token()
+        os.environ["AWS_INFERENCE_API_KEY"] = token
+        AWS_INFERENCE_API_KEY = token
+
+        yield model
+    finally:
+        # Guaranteed teardown -- runs on success, error, or interrupt.
+        sm = _sagemaker_client()
+        for label, call in (
+            ("endpoint", lambda: sm.delete_endpoint(EndpointName=model)),
+            ("endpoint-config", lambda: sm.delete_endpoint_config(EndpointConfigName=cfg)),
+            ("model", lambda: sm.delete_model(ModelName=mdl)),
+        ):
+            try:
+                call()
+                logging.info(f"provision_endpoint: torn down {label} {model}")
+            except Exception as exc:  # teardown must not mask the body's exception
+                logging.info(f"provision_endpoint: teardown skip {label}: {type(exc).__name__}: {exc}")
