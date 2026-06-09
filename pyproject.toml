@@ -28,6 +28,8 @@ requires-python = ">=3.14"
 dependencies = [
     "joblib>=1.0",
     "numpy>=2.4.3",
+    # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
+    "ordered-set>=4.1.0",
     "requests>=2.33.1",
 ]
 
@@ -46,6 +48,18 @@ dev = [
 # notebook server stack that is not currently part of the environment.
 notebook = [
     "ipykernel>=7.2.0",
+    # Runtime libraries the checked-in notebooks import directly:
+    #   - PyYAML (`import yaml`) serializes per-model results to results/*.yaml.
+    #     Pinned to a version with cp314 wheels so it installs without libyaml.
+    #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
+    #   - botocore (`import botocore`) mints the short-lived SageMaker bearer
+    #     token via SigV4 in the AWS eval path (boto3 not required).
+    "PyYAML>=6.0.3",
+    "python-dotenv>=1.0.1",
+    "botocore>=1.35.0",
+    # The analysis notebooks (e.g. notebooks/chromatic/induction_eval_analysis)
+    # plot results with matplotlib; pinned to a cp314-wheel release.
+    "matplotlib>=3.10.0",
 ]
 
 [tool.setuptools]

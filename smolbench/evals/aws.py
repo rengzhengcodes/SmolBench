@@ -60,6 +60,64 @@ AWS_INFERENCE_BASE_URL: str = os.getenv(
 ).rstrip("/")
 URL: str = f"{AWS_INFERENCE_BASE_URL}/chat/completions"
 MODELS_URL: str = f"{AWS_INFERENCE_BASE_URL}/models"
+# Override for the OpenAI ``model`` field in the request body. SageMaker routes
+# by endpoint URL, so AWS's docs say this field "can be empty or set to match the
+# model name your container expects": the vLLM/SGLang DLCs accept "", but a
+# *custom* container may reject "" and require its served model id (a 400). By
+# default ``_body_model`` auto-resolves that id per endpoint from ``list_models``;
+# set this env var to force ONE value across all endpoints instead.
+AWS_INFERENCE_BODY_MODEL: Optional[str] = os.getenv("AWS_INFERENCE_BODY_MODEL")
+# Cache of each SageMaker endpoint's served model id (resolved lazily; see
+# ``_body_model``). Keyed by endpoint name.
+_SERVED_MODELS: Dict[str, str] = {}
+
+
+def _resolve_base(model: str) -> str:
+    """Fills the ``{model}`` placeholder in the base URL with the endpoint name.
+
+    SageMaker serves one model per endpoint, so set
+    ``AWS_INFERENCE_BASE_URL=https://runtime.sagemaker.<region>.amazonaws.com/endpoints/{model}/openai/v1``
+    and the ``{model}`` placeholder is filled with the (endpoint) name per call.
+    With no placeholder (Bedrock-mantle, which selects the model via the request
+    body) the static base URL is returned unchanged.
+    """
+    return (
+        AWS_INFERENCE_BASE_URL.replace("{model}", model)
+        if "{model}" in AWS_INFERENCE_BASE_URL
+        else AWS_INFERENCE_BASE_URL
+    )
+
+
+def _chat_url(model: str) -> str:
+    """Returns the chat-completions endpoint for ``model``."""
+    return f"{_resolve_base(model)}/chat/completions"
+
+
+def _body_model(model: str) -> str:
+    """The OpenAI ``model`` field to put in the request body.
+
+    Precedence: an explicit ``AWS_INFERENCE_BODY_MODEL`` wins (one value for all
+    endpoints). Otherwise, for Bedrock (no ``{model}`` placeholder) the model id
+    selects the model and is sent as-is. For a SageMaker single-model endpoint
+    (templated base URL) AWS routes by the URL, so the field is nominally free --
+    the vLLM/SGLang DLCs accept ``""`` -- but a *custom* container may reject
+    ``""`` and require its served id (a 400). We therefore resolve each endpoint's
+    served id once via ``list_models`` (cached per endpoint) and fall back to
+    ``""`` if the listing is unavailable, so every endpoint -- including the
+    notebook's three distinct SageMaker endpoints -- gets the name its own
+    container expects.
+    """
+    if AWS_INFERENCE_BODY_MODEL is not None:
+        return AWS_INFERENCE_BODY_MODEL
+    if "{model}" not in AWS_INFERENCE_BASE_URL:
+        return model
+    if model not in _SERVED_MODELS:
+        try:
+            served = list_models(model)
+            _SERVED_MODELS[model] = served[0] if served else ""
+        except requests.exceptions.RequestException:
+            _SERVED_MODELS[model] = ""
+    return _SERVED_MODELS[model]
 
 AWS_BEDROCK_INFO: bool = bool(int(os.getenv("AWS_BEDROCK_INFO", "0")))
 AWS_BEDROCK_INFO_RESPONSE: bool = bool(int(os.getenv("AWS_BEDROCK_INFO_RESPONSE", "0")))
@@ -98,15 +156,18 @@ def get_model_context_length(model: str) -> int:
     return _CONTEXT_LENGTHS.get(model, AWS_BEDROCK_CONTEXT_LENGTH)
 
 
-def list_models() -> list[str]:
+def list_models(model: str = "") -> list[str]:
     """Lists model ids available on the configured AWS endpoint.
 
-    Works on the default bedrock-mantle endpoint and on SageMaker endpoints. The
-    bedrock-runtime OpenAI surface does not implement ``GET /models`` (it 404s);
-    there, discover ids with ``aws bedrock list-foundation-models`` instead.
+    Works on the default bedrock-mantle endpoint and on SageMaker endpoints. For a
+    templated SageMaker base URL (``.../endpoints/{model}/openai/v1``) pass the
+    endpoint name as ``model`` to fill the ``{model}`` placeholder; otherwise the
+    request hits a literal ``{model}`` path and fails. The bedrock-runtime OpenAI
+    surface does not implement ``GET /models`` (it 404s); there, discover ids with
+    ``aws bedrock list-foundation-models`` instead.
     """
     response = requests.get(
-        url=MODELS_URL,
+        url=f"{_resolve_base(model)}/models",
         headers={"Authorization": f"Bearer {AWS_INFERENCE_API_KEY}"},
         timeout=120,
     )
@@ -149,14 +210,14 @@ def query(
         # Tries to get a non-error code response from AWS.
         try:
             response = requests.post(
-                url=URL,
+                url=_chat_url(model),
                 headers={
                     "Authorization": f"Bearer {AWS_INFERENCE_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json=(
                     {
-                        "model": model,
+                        "model": _body_model(model),
                         "messages": [{"role": "user", "content": prompt}],
                         "seed": seed,
                     }
