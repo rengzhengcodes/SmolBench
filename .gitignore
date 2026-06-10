@@ -210,6 +210,10 @@ __marimo__/
 # Environment variables.
 *.env
 
+# EC2 spot-instance state written by smolbench/evals/ec2.py (holds the
+# instance's control token and vLLM api key).
+.ec2_state.json
+
 # Claude files
 .claude
 CLAUDE.md

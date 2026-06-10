@@ -54,9 +54,13 @@ notebook = [
     #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
     #   - botocore (`import botocore`) mints the short-lived SageMaker bearer
     #     token via SigV4 in the AWS eval path (boto3 not required).
+    #   - boto3 provisions/terminates the EC2 spot instance behind the `ec2`
+    #     provider (smolbench/evals/ec2.py imports it lazily; only the
+    #     lifecycle paths need it, never inference).
     "PyYAML>=6.0.3",
     "python-dotenv>=1.0.1",
     "botocore>=1.35.0",
+    "boto3>=1.43",
     # The analysis notebooks (e.g. notebooks/chromatic/induction_eval_analysis)
     # plot results with matplotlib; pinned to a cp314-wheel release.
     "matplotlib>=3.10.0",
