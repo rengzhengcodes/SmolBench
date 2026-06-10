@@ -94,13 +94,15 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
         r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()
     )
 )
-# Root gp3 volume. 1500 GB holds the HF cache for all three FP8 checkpoints
-# (~410 + ~253 + ~400 GB) plus the vLLM image with headroom; swaps re-use the
-# cache. gp3 allows at most 0.25 MB/s of throughput per provisioned IOPS, so
-# 1000 MB/s needs >= 4000 IOPS.
-EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "1500"))
-EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "1000"))
-EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "8000"))
+# Root gp3 volume: OS + docker image only. The model cache lives on
+# instance-store NVMe when the type has one (every targeted type does:
+# p5e/p5/p4de/g5/g6) -- bootstrap formats and mounts the first one at
+# /opt/hf-cache, dodging gp3's 1000 MB/s ceiling. If you launch a type
+# WITHOUT instance store, the cache falls back to the root volume: raise
+# EC2_ROOT_VOLUME_GB to hold your checkpoints (the FP8 trio is ~1.1 TB).
+EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
+EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
+EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
 # Pinned to vLLM 0.11.1 to match the SageMaker DLC the specs were written
 # against (vllm:0.11.1-gpu-py312-...), keeping serving behavior comparable.
 EC2_VLLM_IMAGE: str = os.getenv("EC2_VLLM_IMAGE", "vllm/vllm-openai:v0.11.1")
@@ -119,10 +121,14 @@ EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
 # notebooks/periodic/. Contains the control token and vLLM key -> gitignored.
 EC2_STATE_FILE: str = os.getenv("EC2_STATE_FILE", ".ec2_state.json")
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
-EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "120"))
+# Serve timeout and the watchdog's loading-counts-as-active grace must cover a
+# COLD checkpoint pull from HF: a ~410 GB download proved that 90/120 min are
+# too tight (a live 405B serve outran both). With the S3 cache warm these are
+# minutes, but the first-ever pull sets the bound.
+EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
-EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "90"))
+EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # Optional EC2 key pair name for SSH debugging; empty = no SSH (the default --
 # boot problems are then visible only via the serial console/screenshot).
 EC2_KEY_NAME: str = os.getenv("EC2_KEY_NAME", "")
@@ -133,6 +139,17 @@ EC2_RETRY_BACKOFF_SECONDS: int = int(os.getenv("EC2_RETRY_BACKOFF_SECONDS", "60"
 EC2_MAX_CONNECTION_FAILURES: int = int(os.getenv("EC2_MAX_CONNECTION_FAILURES", "10"))
 # Soft post-hoc token guard for models without a deploy spec.
 EC2_CONTEXT_LENGTH: int = int(os.getenv("EC2_CONTEXT_LENGTH", "16384"))
+# Optional S3 model cache, e.g. s3://smolbench-model-cache-<acct>/hf. When
+# set, provisioning creates the bucket and an instance profile (S3 RW on the
+# bucket + SSM core), the agent pulls each checkpoint from S3 before launching
+# vLLM (same-region S3 -> NVMe runs at multi-GB/s vs 10-35 min from HF), and
+# serve_model uploads freshly downloaded weights back in the background -- so
+# the mirror seeds itself: the first instance pays HF once, later ones don't.
+# Cross-region pulls still work (slower, ~$0.02/GB), so put the bucket where
+# spot capacity usually lands (EC2_S3_CACHE_REGION).
+EC2_S3_MODEL_CACHE: str = os.getenv("EC2_S3_MODEL_CACHE", "").rstrip("/")
+EC2_S3_CACHE_REGION: str = os.getenv("EC2_S3_CACHE_REGION", AWS_REGION)
+EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2-role")
 # Overrides that bypass the state file -- point the inference path at any
 # OpenAI-compatible server (used by the offline stub tests).
 EC2_INFERENCE_BASE_URL: Optional[str] = os.getenv("EC2_INFERENCE_BASE_URL")
@@ -474,6 +491,7 @@ AGENT_PY: str = '''\
 import hmac
 import json
 import os
+import shlex
 import subprocess
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -482,11 +500,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
 AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
 SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
+SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
 CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
 VLLM_API_KEY = os.environ["VLLM_API_KEY"]
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 VLLM_IMAGE = os.environ["VLLM_IMAGE"]
+# Optional S3 mirror of the HF hub cache (creds come from the instance
+# profile; empty = HF-only, the pre-S3 behavior).
+S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
+CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
 SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
+SYNC_PROC = None  # the in-flight cache upload, if any
 
 
 def touch(name):
@@ -548,8 +572,11 @@ class Handler(BaseHTTPRequestHandler):
             "container": container_state(),
             "healthy": vllm_healthy(),
             "serve_rc": SERVE_PROC.poll() if SERVE_PROC is not None else None,
+            "sync_rc": SYNC_PROC.poll() if SYNC_PROC is not None else None,
+            "sync_started": SYNC_PROC is not None,
             "log_tail": (logs.stdout + logs.stderr)[-8000:],
             "serve_log_tail": tail(SERVE_LOG),
+            "sync_log_tail": tail(SYNC_LOG, 2000),
         })
 
     def do_POST(self):
@@ -563,6 +590,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/serve":
             self._serve(payload)
+        elif self.path == "/sync-up":
+            self._sync_up(payload)
         elif self.path == "/stop":
             docker("rm", "-f", "vllm")
             self._reply(200, {"ok": True})
@@ -593,8 +622,11 @@ class Handler(BaseHTTPRequestHandler):
             "--gpus", "all", "--ipc=host",
             "-p", "8000:8000",
             # The HF cache outlives container swaps, so each checkpoint
-            # downloads once per instance.
+            # downloads once per instance. vLLM's compile/CUDA-graph cache is
+            # persisted alongside it, so RE-serving a model skips the
+            # several-minute torch.compile step.
             "-v", "/opt/hf-cache:/root/.cache/huggingface",
+            "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
             "-e", "HF_TOKEN=" + HF_TOKEN,
             "-e", "HUGGING_FACE_HUB_TOKEN=" + HF_TOKEN,
             VLLM_IMAGE,
@@ -604,11 +636,54 @@ class Handler(BaseHTTPRequestHandler):
             "--max-model-len", str(max_len),
             "--api-key", VLLM_API_KEY,
         ] + vllm_args
-        # Async: `docker run -d` itself can block minutes on a cold image
-        # pull. /status reports serve_rc + serve_log_tail while this runs.
+        # Async: a cold `docker run -d` blocks minutes on the image pull;
+        # /status reports serve_rc + serve_log_tail meanwhile. S3 mirror:
+        # blobs/ holds weights once, snapshots/refs symlinks travel as a tiny
+        # meta.tar (s3 sync follows symlinks -- mirroring snapshots/ directly
+        # doubles every transfer). No meta.tar -> legacy whole-prefix sync,
+        # and HF fills any remaining gap.
+        script = ""
+        if S3_CACHE:
+            sub = "models--" + hf_id.replace("/", "--")
+            s3p = shlex.quote(S3_CACHE + "/" + sub)
+            loc = shlex.quote(CACHE_HUB + "/" + sub)
+            script += (
+                "mkdir -p %s\\n"
+                "aws s3 sync --only-show-errors --exclude '*.incomplete' %s/blobs %s/blobs || true\\n"
+                "T=$(mktemp)\\n"
+                "if aws s3 cp --only-show-errors %s/meta.tar $T; then tar -xf $T -C %s; "
+                "else aws s3 sync --only-show-errors --exclude '*.incomplete' %s %s || true; fi\\n"
+                "rm -f $T\\n"
+            ) % (loc, s3p, loc, s3p, loc, s3p, loc)
+        script += shlex.join(cmd)
         log = open(SERVE_LOG, "wb")
-        SERVE_PROC = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+        SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
         self._reply(202, {"ok": True, "launching": name})
+
+    def _sync_up(self, payload):
+        """Uploads (part of) the hub cache to S3: blobs once + meta.tar.
+
+        snapshots holding real >1M files (restored from the legacy doubled
+        mirror) cannot be tarred sanely -> legacy whole-prefix sync instead.
+        *.incomplete never travels (would confuse a later resume).
+        """
+        global SYNC_PROC
+        if not S3_CACHE:
+            self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
+            return
+        sub = str(payload.get("subdir", "")).strip("/")
+        dirs = "%s/%s" % (CACHE_HUB, sub) if sub else "%s/models--*" % CACHE_HUB
+        body = (
+            "for d in %s; do [ -d $d ] || continue; n=$(basename $d); "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' $d/blobs %s/$n/blobs; "
+            "if find $d/snapshots -type f -size +1M 2>/dev/null | grep -q .; then "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' --exclude 'blobs/*' $d %s/$n; "
+            "else T=$(mktemp); tar -cf $T -C $d snapshots refs 2>/dev/null && "
+            "aws s3 cp --only-show-errors $T %s/$n/meta.tar; rm -f $T; fi; done"
+        ) % (dirs, S3_CACHE, S3_CACHE, S3_CACHE)
+        log = open(SYNC_LOG, "ab")
+        SYNC_PROC = subprocess.Popen(["bash", "-c", body], stdout=log, stderr=subprocess.STDOUT)
+        self._reply(202, {"ok": True, "syncing": sub or "all"})
 
     def log_message(self, *args):
         pass  # systemd journals stdout; per-request noise is not useful
@@ -772,11 +847,39 @@ shutdown -h +@@MAX_LIFETIME_MIN@@ "smolbench max-lifetime backstop" || true
 
 mkdir -p /opt/smolbench /opt/hf-cache /var/run/smolbench /etc/smolbench
 
+# Model cache on instance-store NVMe (multi-GB/s; no instance store -> root
+# volume, so size EC2_ROOT_VOLUME_GB for the checkpoints then). The DL AMI
+# pre-assembles ALL NVMe into one LVM at /opt/dlami/nvme -- mkfs on a raw
+# device then fails "in use" (bit a live p5): bind-mount it instead. The
+# raw-device path is for AMIs that leave devices alone; by-id detection
+# because lsblk MODEL renders underscores on some kernels (also bit a p5).
+if mountpoint -q /opt/dlami/nvme; then
+  mkdir -p /opt/dlami/nvme/smolbench-hf-cache
+  mount --bind /opt/dlami/nvme/smolbench-hf-cache /opt/hf-cache
+  echo "model cache bind-mounted on the AMI-managed instance store (/opt/dlami/nvme)"
+else
+  CACHE_DEV=$(ls /dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage* 2>/dev/null | grep -v -- -part | head -1 || true)
+  if [ -z "$CACHE_DEV" ]; then
+    CACHE_DEV=$(lsblk -dno NAME,MODEL | tr '_' ' ' | grep -i "instance storage" | head -1 | awk '{print "/dev/"$1}' || true)
+  fi
+  if [ -n "$CACHE_DEV" ]; then
+    echo "model cache on instance-store $CACHE_DEV"
+    mkfs.ext4 -q -F "$CACHE_DEV" && mount -o noatime "$CACHE_DEV" /opt/hf-cache || echo "NVMe mount failed; cache stays on the root volume"
+  else
+    echo "no instance-store NVMe; model cache on the root volume"
+  fi
+fi
+mkdir -p /opt/hf-cache/hub
+
+# Parallelism for the S3 cache pulls/pushes (aws s3 sync).
+aws configure set default.s3.max_concurrent_requests 64 || true
+
 cat > /etc/smolbench/env <<'ENV_EOF'
 CONTROL_TOKEN=@@CONTROL_TOKEN@@
 VLLM_API_KEY=@@VLLM_API_KEY@@
 HF_TOKEN=@@HF_TOKEN@@
 VLLM_IMAGE=@@VLLM_IMAGE@@
+S3_CACHE_URI=@@S3_CACHE_URI@@
 IDLE_TIMEOUT_MIN=@@IDLE_TIMEOUT_MIN@@
 STARTUP_GRACE_MIN=@@STARTUP_GRACE_MIN@@
 ENV_EOF
@@ -845,6 +948,7 @@ def _render_user_data(
     startup_grace_min: int,
     max_lifetime_min: int,
     image: str,
+    s3_cache_uri: str = "",
 ) -> str:
     """Fills the user-data template; asserts it is valid and within limits."""
     for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
@@ -858,6 +962,7 @@ def _render_user_data(
         ("@@VLLM_API_KEY@@", vllm_api_key),
         ("@@HF_TOKEN@@", hf_token),
         ("@@VLLM_IMAGE@@", image),
+        ("@@S3_CACHE_URI@@", s3_cache_uri),
         ("@@IDLE_TIMEOUT_MIN@@", str(idle_timeout_min)),
         ("@@STARTUP_GRACE_MIN@@", str(startup_grace_min)),
         ("@@AGENT_PY@@", AGENT_PY.rstrip("\n")),
@@ -990,6 +1095,103 @@ def _ensure_security_group(region: str, vpc_id: str, ip: str) -> str:
             )["SecurityGroups"][0]["GroupId"]
     _authorize_ingress(region, group_id, ip)
     return group_id
+
+
+def _ensure_bucket(bucket: str, region: str) -> None:
+    """Creates the S3 cache bucket if absent (private, default settings)."""
+    import boto3
+    from botocore.exceptions import ClientError
+
+    s3 = boto3.session.Session().client("s3", region_name=region)
+    try:
+        s3.head_bucket(Bucket=bucket)
+        return
+    except ClientError as err:
+        code = _error_code(err)
+        if code not in ("404", "NoSuchBucket"):
+            # 403/301: the name exists in another account/region -- creating
+            # would fail confusingly, so surface it.
+            raise RuntimeError(
+                f"S3 bucket {bucket!r} exists but is not accessible from this "
+                f"account/region (HEAD -> {code}); pick another EC2_S3_MODEL_CACHE."
+            ) from err
+    kwargs: Dict[str, Any] = {"Bucket": bucket}
+    if region != "us-east-1":  # us-east-1 rejects an explicit LocationConstraint
+        kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    s3.create_bucket(**kwargs)
+    logging.info(f"_ensure_bucket: created s3://{bucket} in {region}")
+
+
+def _ensure_instance_profile(bucket: str) -> str:
+    """Returns the instance-profile name for the model cache, creating it if absent.
+
+    The role grants (a) read/write scoped to the cache bucket and (b) SSM core,
+    which doubles as the break-glass shell for a box that has no SSH key.
+    """
+    import json as _json
+
+    import boto3
+    from botocore.exceptions import ClientError
+
+    iam = boto3.session.Session().client("iam")
+    name = EC2_INSTANCE_ROLE_NAME
+    trust = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"Service": "ec2.amazonaws.com"},
+                "Action": "sts:AssumeRole",
+            }
+        ],
+    }
+    created = False
+    try:
+        iam.create_role(RoleName=name, AssumeRolePolicyDocument=_json.dumps(trust))
+        created = True
+    except ClientError as err:
+        if _error_code(err) != "EntityAlreadyExists":
+            raise
+    # put_role_policy overwrites idempotently, so the grant tracks the bucket.
+    iam.put_role_policy(
+        RoleName=name,
+        PolicyName="smolbench-s3-model-cache",
+        PolicyDocument=_json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["s3:ListBucket"],
+                        "Resource": f"arn:aws:s3:::{bucket}",
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": ["s3:GetObject", "s3:PutObject"],
+                        "Resource": f"arn:aws:s3:::{bucket}/*",
+                    },
+                ],
+            }
+        ),
+    )
+    iam.attach_role_policy(
+        RoleName=name,
+        PolicyArn="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    )
+    try:
+        iam.create_instance_profile(InstanceProfileName=name)
+        created = True
+    except ClientError as err:
+        if _error_code(err) != "EntityAlreadyExists":
+            raise
+    try:
+        iam.add_role_to_instance_profile(InstanceProfileName=name, RoleName=name)
+    except ClientError as err:
+        if _error_code(err) != "LimitExceeded":  # role already attached
+            raise
+    if created:
+        time.sleep(12)  # let IAM propagate before RunInstances references it
+    return name
 
 
 def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -1206,6 +1408,15 @@ def provision_spot_instance(
             "would fail to download, and the token cannot be injected after "
             "provisioning."
         )
+    iam_profile: Optional[str] = None
+    if EC2_S3_MODEL_CACHE:
+        bucket = EC2_S3_MODEL_CACHE.split("://", 1)[1].split("/", 1)[0]
+        _ensure_bucket(bucket, EC2_S3_CACHE_REGION)
+        iam_profile = _ensure_instance_profile(bucket)
+        logging.info(
+            f"provision_spot_instance: S3 model cache at {EC2_S3_MODEL_CACHE} "
+            f"(instance profile {iam_profile})"
+        )
     user_data = _render_user_data(
         control_token=control_token,
         vllm_api_key=vllm_api_key,
@@ -1214,6 +1425,7 @@ def provision_spot_instance(
         startup_grace_min=EC2_STARTUP_GRACE_MIN,
         max_lifetime_min=max_lifetime_min,
         image=EC2_VLLM_IMAGE,
+        s3_cache_uri=EC2_S3_MODEL_CACHE,
     )
 
     region_info: Dict[str, Optional[Dict[str, Any]]] = {}  # cached per-region lookups
@@ -1288,6 +1500,8 @@ def provision_spot_instance(
                 }
                 if EC2_KEY_NAME:
                     kwargs["KeyName"] = EC2_KEY_NAME
+                if iam_profile:
+                    kwargs["IamInstanceProfile"] = {"Name": iam_profile}
                 try:
                     logging.info(f"provision_spot_instance: trying {instance_type} in {az} ...")
                     instance_id = _try_launch(region, kwargs)
@@ -1313,6 +1527,7 @@ def provision_spot_instance(
                     "control_token": control_token,
                     "vllm_api_key": vllm_api_key,
                     "idle_timeout_min": idle_timeout_min,
+                    "s3_cache": EC2_S3_MODEL_CACHE,
                     "launched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
                 _save_state(state)
@@ -1364,13 +1579,17 @@ def _wait_model_ready(
 
 
 @contextlib.contextmanager
-def serve_model(model: str, timeout_min: Optional[int] = None):
+def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = False):
     """Points the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
     Swaps the serving container (the previous model's container is removed),
     waits until the OpenAI endpoint is healthy and serving ``model``, and
-    yields. Exit tears NOTHING down -- the instance stays up for the next
-    section, and the idle watchdog covers the case where there is none::
+    yields. Idempotent: when the instance is ALREADY healthy and serving
+    ``model`` the swap is skipped entirely (pass ``force=True`` for a fresh
+    container), so re-running a section cell after an interruption costs
+    seconds, not a reload. Exit tears NOTHING down -- the instance stays up
+    for the next section, and the idle watchdog covers the case where there
+    is none::
 
         with serve_model(DENSE_MODEL):
             decode_intens_eval = evaluate(intens_quiz, DENSE_MODEL, SEED)
@@ -1382,6 +1601,20 @@ def serve_model(model: str, timeout_min: Optional[int] = None):
             "add one with hf_model_id / tp / max_model_len."
         )
     state = _require_state()
+    if not force:
+        # Decide BEFORE yielding: the yield must sit outside this try, or an
+        # exception raised by the with-body would be swallowed here and the
+        # generator would fall through to a second serve/yield.
+        try:
+            already_serving = bool(
+                _agent(state, "GET", "/status", timeout=15).get("healthy")
+            ) and list_models() == [model]
+        except (requests.exceptions.RequestException, RuntimeError):
+            already_serving = False
+        if already_serving:
+            logging.info(f"serve_model: {model!r} already serving; skipping the swap.")
+            yield model
+            return
     logging.info(f"serve_model: requesting {model!r} ({spec['hf_model_id']}) ...")
     _agent(
         state,
@@ -1405,6 +1638,20 @@ def serve_model(model: str, timeout_min: Optional[int] = None):
             "did another process swap the model?"
         )
     logging.info(f"serve_model: {model!r} is up at {_base_url()}")
+    if state.get("s3_cache"):
+        # The weights are complete on disk: refresh the S3 mirror in the
+        # background (a fast no-op when S3 already has them) so the next
+        # instance pulls from S3 instead of HF. Best-effort by design.
+        try:
+            _agent(
+                state,
+                "POST",
+                "/sync-up",
+                {"subdir": "models--" + spec["hf_model_id"].replace("/", "--")},
+            )
+            logging.info(f"serve_model: background S3 cache upload kicked off for {model!r}")
+        except Exception as exc:  # noqa: BLE001
+            logging.info(f"serve_model: S3 cache upload skipped: {exc}")
     try:
         yield model
     finally:
@@ -1439,6 +1686,17 @@ def shutdown_instance(wait: bool = True) -> None:
     instance_id: Optional[str] = None
     if state is not None:
         region, instance_id = state["region"], state["instance_id"]
+        if state.get("s3_cache"):
+            try:  # warn when a cache upload would be cut short by the halt
+                status = _agent(state, "GET", "/status", timeout=10)
+                if status.get("sync_started") and status.get("sync_rc") is None:
+                    logging.warning(
+                        "shutdown_instance: an S3 cache upload is still in flight and "
+                        "will be cut short; the next instance re-downloads whatever "
+                        "is missing (wait and re-run this cell to let it finish)."
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         try:  # best-effort graceful halt; termination below is authoritative
             _agent(state, "POST", "/shutdown", timeout=10)
         except Exception as exc:  # noqa: BLE001
