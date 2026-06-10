@@ -168,8 +168,18 @@ EC2_INFO_RESPONSE: bool = bool(int(os.getenv("EC2_INFO_RESPONSE", "0")))
 # Llama-3.1-405B (~810 GB) and BF16 Llama-4-Maverick (~800 GB) do not fit the
 # 640 GB of a p5.48xlarge, so those two must be FP8 there; Nemotron-Ultra-253B
 # is FP8 as well to keep precision comparable. All three FP8 checkpoints
-# (~410/253/417 GB) fit p5.48xlarge with KV headroom at 32k context, and fit
-# p5e.48xlarge (1128 GB) trivially.
+# (~410/253/417 GB) fit p5.48xlarge, and fit p5e.48xlarge (1128 GB) trivially.
+#
+# Context: all three serve at their native 131072 (Maverick's checkpoint says
+# 1M, capped here so every archetype gets the same context budget). The quiz
+# prompts run ~43k tokens, so anything lower 400s. KV-cache fit at 128k on the
+# 640 GB p5: the 405B is the only tight one (126 layers x 8 KV heads x 128 dim
+# ~= 1.0 MB/token -> vLLM's startup check needs ~132 GB KV vs ~140-150 GB free
+# at the default --gpu-memory-utilization 0.9), hence its 0.95 flag below.
+# Nemotron (~253 GB weights, NAS-pruned attention) and Maverick (only 12 of 48
+# layers global attention) have ample slack at the default. If the 405B still
+# fails its KV check on some box: append --kv-cache-dtype fp8 (halves KV) or
+# drop its max_model_len to 65536.
 #
 # All three repos are UNGATED (anonymous download; no HF account or token):
 # Meta's own meta-llama/*-FP8 repos require a logged-in account with the Llama
@@ -182,17 +192,21 @@ EC2_INFO_RESPONSE: bool = bool(int(os.getenv("EC2_INFO_RESPONSE", "0")))
 # prompt "detailed thinking on" (its chat template keys off it; the OpenAI
 # ``reasoning_effort`` param is not wired up for it on vLLM). Injecting it
 # here, at the provider layer, keeps the notebook's user prompts byte-identical
-# across archetypes while ``--reasoning-parser deepseek_r1`` splits the
-# <think>...</think> output into the response's ``reasoning_content`` channel.
+# across archetypes. The <think>...</think> block is split out CLIENT-side in
+# query(): Nemotron's Llama tokenizer has no think token ids, and every
+# <think>-style ``--reasoning-parser`` in vLLM 0.11.1 (deepseek_r1, qwen3, ...)
+# is token-id-based, so passing one crashes the engine at startup
+# ("could not locate think start/end tokens in the tokenizer" -- live, 2026-06-10).
 EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
     # Small smoke-test entry: exercises the full lifecycle on a cheap single-GPU
     # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar.
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 16384},
-    "llama-31-405b":       {"hf_model_id": "RedHatAI/Meta-Llama-3.1-405B-Instruct-FP8-dynamic", "tp": 8, "max_model_len": 32768},
-    "nemotron-ultra-253b": {"hf_model_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8", "tp": 8, "max_model_len": 32768,
-                            "vllm_args": ["--trust-remote-code", "--reasoning-parser", "deepseek_r1"],
+    "llama-31-405b":       {"hf_model_id": "RedHatAI/Meta-Llama-3.1-405B-Instruct-FP8-dynamic", "tp": 8, "max_model_len": 131072,
+                            "vllm_args": ["--gpu-memory-utilization", "0.95"]},
+    "nemotron-ultra-253b": {"hf_model_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8", "tp": 8, "max_model_len": 131072,
+                            "vllm_args": ["--trust-remote-code"],
                             "system_prompt": "detailed thinking on"},
-    "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 32768},
+    "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
 }
 
 
@@ -412,10 +426,19 @@ def query(
             if msg["content"] is None:
                 logging.warning("Body returned none value: \n" f"{body}")
                 return "", None
-            # vLLM's reasoning parsers surface chain-of-thought as
-            # reasoning_content (reasoning kept as a fallback for other
+            # Servers with a working reasoning parser surface chain-of-thought
+            # as reasoning_content (reasoning kept as a fallback for other
             # OpenAI-compatible servers behind EC2_INFERENCE_BASE_URL).
+            content = msg["content"]
             reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+            # Nemotron-Ultra emits <think>...</think> as PLAIN TEXT (no think
+            # token ids in its Llama tokenizer, so vLLM's token-id-based
+            # reasoning parsers cannot run for it -- see EC2_DEPLOY_SPECS).
+            # Split the channels client-side so scoring sees only the answer.
+            if reasoning is None and "</think>" in content:
+                reasoning, _, content = content.partition("</think>")
+                reasoning = reasoning.removeprefix("<think>").strip()
+                content = content.lstrip()
             # Usage may be omitted by some servers; only guard when a token
             # count is reported.
             usage = body.get("usage") or {}
@@ -424,7 +447,7 @@ def query(
                 raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
             if EC2_INFO:
                 logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-            return msg["content"], reasoning
+            return content, reasoning
 
         # Attempts to retry exceptions if possible.
         except requests.exceptions.RequestException as err:
@@ -1601,14 +1624,30 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             "add one with hf_model_id / tp / max_model_len."
         )
     state = _require_state()
+    serve_payload = {
+        "served_model_name": model,
+        "hf_model_id": spec["hf_model_id"],
+        "tp": spec.get("tp", 1),
+        "max_model_len": spec.get("max_model_len", EC2_CONTEXT_LENGTH),
+        # HF_TOKEN is deliberately NOT in this payload: it was baked into
+        # the instance at provision time, so it never crosses plain HTTP.
+        "vllm_args": list(spec.get("vllm_args", [])),
+    }
     if not force:
         # Decide BEFORE yielding: the yield must sit outside this try, or an
         # exception raised by the with-body would be swallowed here and the
         # generator would fall through to a second serve/yield.
+        #
+        # "Already serving" requires the recorded launch payload to match too:
+        # the served name alone can't tell a 32k container from a 128k one, so
+        # after a spec edit a re-run must swap, not skip. No record (state file
+        # predates this field, or another client served) => swap to be safe.
         try:
-            already_serving = bool(
-                _agent(state, "GET", "/status", timeout=15).get("healthy")
-            ) and list_models() == [model]
+            already_serving = (
+                bool(_agent(state, "GET", "/status", timeout=15).get("healthy"))
+                and list_models() == [model]
+                and state.get("serving") == serve_payload
+            )
         except (requests.exceptions.RequestException, RuntimeError):
             already_serving = False
         if already_serving:
@@ -1616,20 +1655,7 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             yield model
             return
     logging.info(f"serve_model: requesting {model!r} ({spec['hf_model_id']}) ...")
-    _agent(
-        state,
-        "POST",
-        "/serve",
-        {
-            "served_model_name": model,
-            "hf_model_id": spec["hf_model_id"],
-            "tp": spec.get("tp", 1),
-            "max_model_len": spec.get("max_model_len", EC2_CONTEXT_LENGTH),
-            # HF_TOKEN is deliberately NOT in this payload: it was baked into
-            # the instance at provision time, so it never crosses plain HTTP.
-            "vllm_args": list(spec.get("vllm_args", [])),
-        },
-    )
+    _agent(state, "POST", "/serve", serve_payload)
     _wait_model_ready(state, model, timeout_min or EC2_SERVE_TIMEOUT_MIN)
     served = list_models()
     if model not in served:
@@ -1637,6 +1663,10 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             f"instance is healthy but serves {served}, not {model!r}; "
             "did another process swap the model?"
         )
+    # Remember exactly what this container was launched with, so the
+    # already-serving fast path above can tell config drift from a true match.
+    state["serving"] = serve_payload
+    _save_state(state)
     logging.info(f"serve_model: {model!r} is up at {_base_url()}")
     if state.get("s3_cache"):
         # The weights are complete on disk: refresh the S3 mirror in the
@@ -1667,7 +1697,10 @@ def agent_status() -> Dict[str, Any]:
 
 def stop_model() -> None:
     """Removes the serving container (without touching the instance)."""
-    _agent(_require_state(), "POST", "/stop")
+    state = _require_state()
+    _agent(state, "POST", "/stop")
+    if state.pop("serving", None) is not None:
+        _save_state(state)
 
 
 def shutdown_instance(wait: bool = True) -> None:
