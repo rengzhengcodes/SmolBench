@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 20:43:21.912403+00:00
+date: 2026-06-10 18:24:05.477040+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 2520
@@ -46,8 +46,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''jo''?'
     reasoning: null
-    response: '2520'
-    score: 1
+    response: '840'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 1260
     query: 'You are a precise integer counter.
@@ -424,4 +424,4 @@ marks: !!python/tuple
     reasoning: null
     response: '280'
     score: 1
-model: meta-llama/llama-3.3-70b-instruct
+model: llama-31-405b

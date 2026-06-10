@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 20:52:32.877108+00:00
+date: 2026-06-10 18:35:01.605086+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 2520
@@ -46,7 +46,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''jo''?'
     reasoning: null
-    response: '1008'
+    response: '280'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 1260
@@ -140,7 +140,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''fp''?'
     reasoning: null
-    response: '1'
+    response: '280'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 630
@@ -187,8 +187,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''xx''?'
     reasoning: null
-    response: '1'
-    score: 0
+    response: '630'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 504
     query: 'You are a precise integer counter.
@@ -234,8 +234,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''bp''?'
     reasoning: null
-    response: '1'
-    score: 0
+    response: '504'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 420
     query: 'You are a precise integer counter.
@@ -281,8 +281,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''yj''?'
     reasoning: null
-    response: '1'
-    score: 0
+    response: '420'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 360
     query: 'You are a precise integer counter.
@@ -328,8 +328,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''dh''?'
     reasoning: null
-    response: '1'
-    score: 0
+    response: '360'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 315
     query: 'You are a precise integer counter.
@@ -375,8 +375,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''qx''?'
     reasoning: null
-    response: '1'
-    score: 0
+    response: '315'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 280
     query: 'You are a precise integer counter.
@@ -422,6 +422,6 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''fe''?'
     reasoning: null
-    response: '1'
-    score: 0
-model: mistralai/mixtral-8x22b-instruct
+    response: '280'
+    score: 1
+model: llama4-maverick

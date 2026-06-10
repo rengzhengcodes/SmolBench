@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 20:52:39.532901+00:00
+date: 2026-06-10 18:35:03.758509+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 2520
@@ -720,8 +720,8 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'jo'?"
     reasoning: null
-    response: '1'
-    score: 0
+    response: '2520'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 1260
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -1441,7 +1441,12 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'my'?"
     reasoning: null
-    response: '1050'
+    response: '2520/2=1260
+
+        The final answer is the integer that results from the division.
+
+
+        1260'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 840
@@ -2162,8 +2167,8 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'fp'?"
     reasoning: null
-    response: '168'
-    score: 0
+    response: '840'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 630
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -2883,8 +2888,8 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'xx'?"
     reasoning: null
-    response: '1'
-    score: 0
+    response: '630'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 504
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -3604,8 +3609,8 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'bp'?"
     reasoning: null
-    response: '1'
-    score: 0
+    response: '504'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 420
     query: "You are a precise integer counter.\n\nTask: answer the question below\
@@ -4325,7 +4330,7 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'yj'?"
     reasoning: null
-    response: '1'
+    response: '6'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 360
@@ -5046,7 +5051,7 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'dh'?"
     reasoning: null
-    response: '1'
+    response: '7'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 315
@@ -5767,7 +5772,7 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'qx'?"
     reasoning: null
-    response: '1'
+    response: '8'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 280
@@ -6488,6 +6493,8 @@ marks: !!python/tuple
         \ 6gKiQ48w1a6iqx5 lm90WMsLTl2A02Z HlfT1wFwfIdpPjh7vxN ZF 0uiaVrfFUOyBmdE\n\
         Question:\nHow many of the positions 1 through 2520 include 'fe'?"
     reasoning: null
-    response: '1'
+    response: '9*280+1
+
+        2521'
     score: 0
-model: mistralai/mixtral-8x22b-instruct
+model: llama4-maverick

@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-04 20:52:36.067324+00:00
+date: 2026-06-10 18:35:02.445668+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: 2520
@@ -10137,8 +10137,8 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''my''?'
     reasoning: null
-    response: '1890'
-    score: 0
+    response: '1260'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: 840
     query: 'You are a precise integer counter.
@@ -20275,7 +20275,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''xx''?'
     reasoning: null
-    response: '1260'
+    response: '840'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 504
@@ -25344,7 +25344,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''bp''?'
     reasoning: null
-    response: '1260'
+    response: '630'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 420
@@ -30413,7 +30413,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''yj''?'
     reasoning: null
-    response: '109'
+    response: '630'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 360
@@ -35482,7 +35482,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''dh''?'
     reasoning: null
-    response: '126'
+    response: '252'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 315
@@ -40551,7 +40551,7 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''qx''?'
     reasoning: null
-    response: '1008'
+    response: '630'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: 280
@@ -45620,6 +45620,6 @@ marks: !!python/tuple
 
         How many of the positions 1 through 2520 include ''fe''?'
     reasoning: null
-    response: '1260'
+    response: '420'
     score: 0
-model: mistralai/mixtral-8x22b-instruct
+model: llama4-maverick
