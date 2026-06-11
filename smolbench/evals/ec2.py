@@ -16,9 +16,11 @@ Lifecycle contract (each step is a notebook cell)::
     shutdown_instance()                       # once, at notebook end
 
 ``provision_spot_instance`` is idempotent: it records the instance in a local
-state file (``EC2_STATE_FILE``) and tags it ``smolbench:experiment``, so
-re-running the cell (or restarting the kernel) reattaches to a live instance
-instead of launching a second one. ``serve_model`` exits WITHOUT tearing
+state file (``EC2_STATE_FILE``, by default at the repo root regardless of the
+caller's cwd) and tags it ``smolbench:experiment``, so re-running the cell (or
+restarting the kernel) reattaches to a live instance instead of launching a
+second one. Even with the state file lost entirely, it rebuilds the state from
+the tagged instance's user-data rather than stranding the box. ``serve_model`` exits WITHOUT tearing
 anything down -- the next section swaps the container, and abandonment is
 covered by the safety nets below.
 
@@ -117,9 +119,13 @@ EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-i
 # Value of the ``smolbench:experiment`` tag used to find/reattach/terminate
 # this experiment's instance.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
-# Resolved relative to the cwd, so the notebook keeps it next to itself in
-# notebooks/periodic/. Contains the control token and vLLM key -> gitignored.
-EC2_STATE_FILE: str = os.getenv("EC2_STATE_FILE", ".ec2_state.json")
+# Anchored to the repo root via this module's own location, NOT the cwd:
+# notebook kernels and scripts run with arbitrary cwds (temp dirs included),
+# and a cwd-relative default once stranded a live instance's state where no
+# later session could find it. Contains the control token and vLLM key ->
+# gitignored.
+_DEFAULT_STATE_FILE: Path = Path(__file__).resolve().parents[2] / ".ec2_state.json"
+EC2_STATE_FILE: str = os.getenv("EC2_STATE_FILE", str(_DEFAULT_STATE_FILE))
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # Serve timeout and the watchdog's loading-counts-as-active grace must cover a
 # COLD checkpoint pull from HF: a ~410 GB download proved that 90/120 min are
@@ -216,15 +222,25 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
 
 
 def _state_path() -> Path:
-    return Path(EC2_STATE_FILE)
+    return Path(EC2_STATE_FILE).expanduser()
 
 
 def _load_state() -> Optional[Dict[str, Any]]:
-    """Returns the saved instance state, or None when absent/corrupt."""
-    try:
-        return json.loads(_state_path().read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
+    """Returns the saved instance state, or None when absent/corrupt.
+
+    Falls back to the legacy cwd-relative ``.ec2_state.json`` (the pre-anchor
+    default) when the primary path has nothing and no override is set, so
+    state written by an older version is still honored.
+    """
+    candidates = [_state_path()]
+    if not os.getenv("EC2_STATE_FILE"):
+        candidates.append(Path(".ec2_state.json"))
+    for path in candidates:
+        try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def _save_state(state: Dict[str, Any]) -> None:
@@ -244,8 +260,11 @@ def _require_state() -> Dict[str, Any]:
     state = _load_state()
     if state is None:
         raise RuntimeError(
-            f"No EC2 instance state found at {_state_path().resolve()}; "
-            "run provision_spot_instance() first."
+            f"No EC2 instance state found at {_state_path().resolve()} "
+            "(override via EC2_STATE_FILE). Run provision_spot_instance() -- it is "
+            "idempotent: it reattaches to a live instance via the state file or the "
+            "smolbench:experiment tag (recovering lost state from the instance's "
+            "user-data) before it would ever launch a new box."
         )
     return state
 
@@ -1232,6 +1251,54 @@ def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
     return None
 
 
+def _recover_state_from_instance(
+    region: str, instance: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Rebuilds the state dict for a live instance whose state file was lost.
+
+    The per-experiment secrets ride in the instance's user-data (the
+    ``/etc/smolbench/env`` heredoc), so DescribeInstanceAttribute recovers
+    them -- the same in-account visibility the security model already
+    accepts. Returns None when the user-data cannot be parsed (a foreign or
+    older-format instance), leaving the caller to refuse reuse.
+    """
+    import base64
+
+    try:
+        attr = _ec2_client(region).describe_instance_attribute(
+            InstanceId=instance["InstanceId"], Attribute="userData"
+        )
+        user_data = base64.b64decode(attr["UserData"]["Value"]).decode()
+    except Exception as exc:  # noqa: BLE001 -- recovery is best-effort
+        logging.warning(f"state recovery: could not read instance user-data: {exc}")
+        return None
+    # The env heredoc writes one NAME=value per line at column 0; the embedded
+    # python scripts only ever reference these names via os.environ, so a
+    # plain line scan is unambiguous.
+    env: Dict[str, str] = {}
+    for line in user_data.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in ("CONTROL_TOKEN", "VLLM_API_KEY", "IDLE_TIMEOUT_MIN", "S3_CACHE_URI"):
+            env.setdefault(key, value)
+    security_groups = instance.get("SecurityGroups") or []
+    if not env.get("CONTROL_TOKEN") or not env.get("VLLM_API_KEY") or not security_groups:
+        return None
+    launch_time = instance.get("LaunchTime")
+    return {
+        "instance_id": instance["InstanceId"],
+        "region": region,
+        "availability_zone": instance.get("Placement", {}).get("AvailabilityZone", "?"),
+        "instance_type": instance.get("InstanceType", "?"),
+        "public_ip": instance.get("PublicIpAddress"),
+        "security_group_id": security_groups[0]["GroupId"],
+        "control_token": env["CONTROL_TOKEN"],
+        "vllm_api_key": env["VLLM_API_KEY"],
+        "idle_timeout_min": int(env.get("IDLE_TIMEOUT_MIN") or EC2_IDLE_TIMEOUT_MIN),
+        "s3_cache": env.get("S3_CACHE_URI", EC2_S3_MODEL_CACHE),
+        "launched_at": launch_time.strftime("%Y-%m-%dT%H:%M:%SZ") if launch_time else "?",
+    }
+
+
 def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]]:
     from botocore.exceptions import ClientError
 
@@ -1394,11 +1461,27 @@ def provision_spot_instance(
         )
         _clear_state()
 
-    # 2) A live tagged instance without a state file is unusable: its control
-    #    token only existed in the lost file. Refuse to leak a second box.
+    # 2) A live tagged instance without a state file: rebuild the state from
+    #    the instance itself -- its secrets ride in its user-data (readable
+    #    via DescribeInstanceAttribute; see the security model note up top),
+    #    so losing the local file must not strand a $30-45/h box.
     found = _find_tagged_instance()
     if found is not None:
         region, instance = found
+        state = _recover_state_from_instance(region, instance)
+        if state is not None:
+            _authorize_ingress(region, state["security_group_id"], my_ip)
+            state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
+                region, state["instance_id"]
+            )
+            _save_state(state)
+            _wait_agent(state)
+            logging.info(
+                f"provision_spot_instance: recovered state for {state['instance_id']} "
+                f"({state['instance_type']} @ {region}, {state['public_ip']}) "
+                "from its user-data"
+            )
+            return state
         name = next(
             (t["Value"] for t in instance.get("Tags", []) if t["Key"] == "Name"), "?"
         )
@@ -1406,10 +1489,11 @@ def provision_spot_instance(
             f"Found live instance {instance['InstanceId']} (Name={name}, "
             f"{instance.get('InstanceType', '?')} @ {region}, launched "
             f"{instance.get('LaunchTime', '?')}) tagged "
-            f"smolbench:experiment={EC2_EXPERIMENT_TAG}, but no local state file -- its "
-            "control token is unrecoverable, so it cannot be reused. If it is someone "
-            "else's run (or a test) wait for it to finish/self-terminate; otherwise run "
-            "shutdown_instance() to terminate it, then provision again."
+            f"smolbench:experiment={EC2_EXPERIMENT_TAG}, but no local state file, and its "
+            "user-data could not be parsed for the control token, so it cannot be "
+            "reused. If it is someone else's run (or a test) wait for it to "
+            "finish/self-terminate; otherwise run shutdown_instance() to terminate it, "
+            "then provision again."
         )
 
     # 3) Fresh launch.

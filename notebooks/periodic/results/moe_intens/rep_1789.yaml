@@ -1,0 +1,427 @@
+!!python/object:smolbench.evals.Marks
+date: 2026-06-11 04:44:30.862572+00:00
+marks: !!python/tuple
+- !!python/object:smolbench.evals.Mark
+    answer: 2520
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''wc''?'
+    reasoning: null
+    response: '2520'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 1260
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''kz''?'
+    reasoning: null
+    response: '630'
+    score: 0
+- !!python/object:smolbench.evals.Mark
+    answer: 840
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''qq''?'
+    reasoning: null
+    response: '840'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 630
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''qv''?'
+    reasoning: null
+    response: '630'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 504
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''qm''?'
+    reasoning: null
+    response: '504'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 420
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''mj''?'
+    reasoning: null
+    response: '420'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 360
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''mf''?'
+    reasoning: null
+    response: '360'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 315
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''xi''?'
+    reasoning: null
+    response: '315'
+    score: 1
+- !!python/object:smolbench.evals.Mark
+    answer: 280
+    query: 'You are a precise integer counter.
+
+
+        Task: answer the question below with a single integer and nothing else.
+
+
+        Output format:
+
+        Return exactly one integer and nothing else.
+
+        Do not output any explanation, punctuation, quotes, or extra whitespace.
+
+        Stop immediately after writing the integer.
+
+
+        Context:
+
+        There is a counting game. Positions are counted starting from 1. At each position,
+        words are written according to the following rules:
+
+        Every 1 positions write wc.
+
+        Every 2 positions write kz.
+
+        Every 3 positions write qq.
+
+        Every 4 positions write qv.
+
+        Every 5 positions write qm.
+
+        Every 6 positions write mj.
+
+        Every 7 positions write mf.
+
+        Every 8 positions write xi.
+
+        Every 9 positions write rl.
+
+
+        Question:
+
+        How many of the positions 1 through 2520 include ''rl''?'
+    reasoning: null
+    response: '280'
+    score: 1
+model: llama4-maverick
