@@ -213,6 +213,16 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
                             "vllm_args": ["--trust-remote-code"],
                             "system_prompt": "detailed thinking on"},
     "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
+    # notebooks/chromatic archetypes: the EXACT models the notebook previously
+    # ran via OpenRouter -- all ungated HF-format repos (anonymous download
+    # verified 2026-06-12), BF16 (~47/66/61 GB), served at a uniform 32768
+    # context on one 4-GPU box (tp=4; chromatic prompts are short). R1-Distill
+    # needs no system prompt or toggle: its chat template force-opens <think>,
+    # so it always reasons, and its plain-text think block is split client-side
+    # in query() (no --reasoning-parser, per the crash note above).
+    "devstral-small-2505": {"hf_model_id": "mistralai/Devstral-Small-2505",            "tp": 4, "max_model_len": 32768},
+    "r1-distill-qwen-32b": {"hf_model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "tp": 4, "max_model_len": 32768},
+    "qwen3-30b-a3b-2507":  {"hf_model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",         "tp": 4, "max_model_len": 32768},
 }
 
 
