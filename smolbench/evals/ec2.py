@@ -214,15 +214,32 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
                             "system_prompt": "detailed thinking on"},
     "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
     # notebooks/chromatic archetypes: the EXACT models the notebook previously
-    # ran via OpenRouter -- all ungated HF-format repos (anonymous download
-    # verified 2026-06-12), BF16 (~47/66/61 GB), served at a uniform 32768
-    # context on one 4-GPU box (tp=4; chromatic prompts are short). R1-Distill
-    # needs no system prompt or toggle: its chat template force-opens <think>,
-    # so it always reasons, and its plain-text think block is split client-side
-    # in query() (no --reasoning-parser, per the crash note above).
-    "devstral-small-2505": {"hf_model_id": "mistralai/Devstral-Small-2505",            "tp": 4, "max_model_len": 32768},
-    "r1-distill-qwen-32b": {"hf_model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "tp": 4, "max_model_len": 32768},
-    "qwen3-30b-a3b-2507":  {"hf_model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",         "tp": 4, "max_model_len": 32768},
+    # ran via OpenRouter -- all ungated repos (anonymous download verified
+    # 2026-06-12), BF16 (~47/66/61 GB), served at a uniform 65536 context on
+    # one 4-GPU box (tp=4). The extens/noise quizzes prompt at ~33k tokens
+    # (measured live via /tokenize: 32,846 on Devstral's tokenizer), so the
+    # original 32768 cap made vLLM's default completion budget
+    # (max_model_len - prompt) go NEGATIVE -> 400 "max_tokens must be at
+    # least 1, got -3" (live, 2026-06-12); 65536 covers prompt + the CoT's
+    # 8192-token completion with headroom, and every model here is natively
+    # >=128k. At this cap R1-Distill needs ~16 GB of KV on top of 66 GB of
+    # weights -- a 192 GB g6e box, NOT the 96 GB g5/g6.12xlarge (keys.env
+    # pins EC2_INSTANCE_TYPES accordingly). R1-Distill needs no system
+    # prompt or toggle: its chat template force-opens <think>, so it always
+    # reasons, and its plain-text think block is split client-side in
+    # query() (no --reasoning-parser, per the crash note above).
+    # Devstral ships ONLY Mistral-native tokenizer/config files (tekken.json +
+    # params.json; no tokenizer.json/tokenizer_config.json), so vLLM's default
+    # HF "auto" tokenizer mode has nothing to load and dies at startup. Serve
+    # it fully Mistral-native (Mistral's documented vLLM recipe for this repo);
+    # --load-format mistral also pulls the single consolidated.safetensors
+    # instead of the duplicate HF shard set.
+    "devstral-small-2505": {"hf_model_id": "mistralai/Devstral-Small-2505",            "tp": 4, "max_model_len": 65536,
+                            "vllm_args": ["--tokenizer-mode", "mistral",
+                                          "--config-format", "mistral",
+                                          "--load-format", "mistral"]},
+    "r1-distill-qwen-32b": {"hf_model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "tp": 4, "max_model_len": 65536},
+    "qwen3-30b-a3b-2507":  {"hf_model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",         "tp": 4, "max_model_len": 65536},
 }
 
 
