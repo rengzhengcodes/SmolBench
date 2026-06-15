@@ -139,6 +139,21 @@ EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # boot problems are then visible only via the serial console/screenshot).
 EC2_KEY_NAME: str = os.getenv("EC2_KEY_NAME", "")
 EC2_MAX_PARALLEL_REQUESTS: int = int(os.getenv("EC2_MAX_PARALLEL_REQUESTS", "8"))
+# Per-request inference read timeout. Long CoT generations (max_completion_tokens
+# over big prompts) can exceed the old hardcoded 120 s; raise the default and let
+# callers override per eval so long chains finish on attempt 1 (deterministic),
+# instead of timing out and surviving only via the retry lottery -- which censors
+# the CoT-length distribution from the top.
+EC2_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("EC2_REQUEST_TIMEOUT_SECONDS", "600"))
+# Connect timeout, kept SHORT and SEPARATE from the (long) read timeout above.
+# requests treats a scalar ``timeout`` as both connect AND read, so a generous
+# read timeout for long CoT generations would also make a dead/unreachable box
+# (spot reclaim, IP drift) blackhole each connect for the full read timeout
+# before retrying -- 10 attempts then turns into hours of hanging. A short
+# connect timeout fails fast so the connection-failure cap trips in minutes and
+# raises the actionable "endpoint unreachable" error, while a genuinely slow
+# generation still gets the full read budget.
+EC2_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("EC2_CONNECT_TIMEOUT_SECONDS", "10"))
 EC2_RETRY_BACKOFF_SECONDS: int = int(os.getenv("EC2_RETRY_BACKOFF_SECONDS", "60"))
 # Consecutive connection failures tolerated before concluding the endpoint is
 # gone (spot interruption / IP drift) rather than transiently overloaded.
@@ -213,33 +228,38 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
                             "vllm_args": ["--trust-remote-code"],
                             "system_prompt": "detailed thinking on"},
     "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
-    # notebooks/chromatic archetypes: the EXACT models the notebook previously
-    # ran via OpenRouter -- all ungated repos (anonymous download verified
-    # 2026-06-12), BF16 (~47/66/61 GB), served at a uniform 65536 context on
-    # one 4-GPU box (tp=4). The extens/noise quizzes prompt at ~33k tokens
-    # (measured live via /tokenize: 32,846 on Devstral's tokenizer), so the
-    # original 32768 cap made vLLM's default completion budget
-    # (max_model_len - prompt) go NEGATIVE -> 400 "max_tokens must be at
-    # least 1, got -3" (live, 2026-06-12); 65536 covers prompt + the CoT's
-    # 8192-token completion with headroom, and every model here is natively
-    # >=128k. At this cap R1-Distill needs ~16 GB of KV on top of 66 GB of
-    # weights -- a 192 GB g6e box, NOT the 96 GB g5/g6.12xlarge (keys.env
-    # pins EC2_INSTANCE_TYPES accordingly). R1-Distill needs no system
+    # notebooks/chromatic archetypes: an English-centric ~32B trio covering the
+    # three eval archetypes -- dense non-reasoning, dense always-reasons, and a
+    # non-reasoning MoE -- all released within ~3 months of each other (Sep-Dec
+    # 2025), all ungated (anonymous download verified 2026-06-15), BF16 (~64 GB
+    # each), served one at a time at a uniform 65536 context on one 8-GPU
+    # H200/H100 box (tp=8). The extens/noise quizzes prompt at ~33k tokens, so
+    # the cap must exceed prompt + the CoT's 8192-token completion; every model
+    # here is natively >=65536 (Olmo 65536, Granite 131072), so NO
+    # --rope-scaling/YaRN is needed.
+    #
+    # Why tp=8 on p5e/p5 (keys.env pins EC2_INSTANCE_TYPES=p5e.48xlarge,
+    # p5.48xlarge): CoT decode is memory-bandwidth bound, so the L40S the trio
+    # first ran on (g6e, 864 GB/s x4 = 3.5 TB/s aggregate) was the throughput
+    # ceiling; H200 (4.8 TB/s) / H100 (3.35 TB/s) at tp=8 give ~27-38 TB/s,
+    # ~5-7x faster. p5/p5e ship only as 8-GPU boxes, so tp matches GPU count
+    # (tp<8 would leave GPUs idle). The ~64 GB BF16 weights fit the 640 GB p5 /
+    # 1128 GB p5e trivially, leaving large KV headroom. tp=8 shards cleanly:
+    # Olmo (40 attn / 8 KV heads), Granite (32 attn / 8 KV, mamba_n_heads=128,
+    # 72 experts) -- all divisible by 8; Granite's mamba_n_groups=1 is not
+    # divisible by 8 (nor by the prior tp=4 it already served under), so vLLM
+    # pads groups for TP. keys.env also bumps EC2_VLLM_IMAGE to v0.23.0 -- the
+    # pinned v0.11.1 predates the olmo3 and granitemoehybrid architectures.
+    # Olmo-3.1-32B-Instruct and -Think are two checkpoints on one 32.2B backbone
+    # -> the cleanest CoT-vs-non-CoT control. The Think model needs no system
     # prompt or toggle: its chat template force-opens <think>, so it always
-    # reasons, and its plain-text think block is split client-side in
-    # query() (no --reasoning-parser, per the crash note above).
-    # Devstral ships ONLY Mistral-native tokenizer/config files (tekken.json +
-    # params.json; no tokenizer.json/tokenizer_config.json), so vLLM's default
-    # HF "auto" tokenizer mode has nothing to load and dies at startup. Serve
-    # it fully Mistral-native (Mistral's documented vLLM recipe for this repo);
-    # --load-format mistral also pulls the single consolidated.safetensors
-    # instead of the duplicate HF shard set.
-    "devstral-small-2505": {"hf_model_id": "mistralai/Devstral-Small-2505",            "tp": 4, "max_model_len": 65536,
-                            "vllm_args": ["--tokenizer-mode", "mistral",
-                                          "--config-format", "mistral",
-                                          "--load-format", "mistral"]},
-    "r1-distill-qwen-32b": {"hf_model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "tp": 4, "max_model_len": 65536},
-    "qwen3-30b-a3b-2507":  {"hf_model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",         "tp": 4, "max_model_len": 65536},
+    # reasons, and its plain-text think block is split client-side in query()
+    # (no --reasoning-parser, per the crash note above). Instruct and Granite
+    # are non-reasoning by default. All three use standard HF tokenizers, so no
+    # tokenizer/load-format flags are needed.
+    "olmo-3.1-32b-instruct": {"hf_model_id": "allenai/Olmo-3.1-32B-Instruct",   "tp": 8, "max_model_len": 65536},
+    "olmo-3.1-32b-think":    {"hf_model_id": "allenai/Olmo-3.1-32B-Think",      "tp": 8, "max_model_len": 65536},
+    "granite-4.0-h-small":   {"hf_model_id": "ibm-granite/granite-4.0-h-small", "tp": 8, "max_model_len": 65536},
 }
 
 
@@ -402,6 +422,7 @@ def query(
     seed: int,
     context_length: int = 0,
     extra_args: Optional[Dict[str, Any]] = None,
+    request_timeout: Optional[int] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Queries the model currently served by the experiment's EC2 instance.
@@ -419,6 +440,11 @@ def query(
         Context length of LLM model.
     extra_args:
         Extra args for `json=<slug>` of requests to get certain LLM behavior.
+    request_timeout:
+        Per-request read timeout in seconds; falls back to
+        ``EC2_REQUEST_TIMEOUT_SECONDS`` when None. Raise it for long CoT
+        generations so they complete on attempt 1 instead of timing out and
+        relying on the retry lottery.
 
     Returns
     -------
@@ -454,7 +480,12 @@ def query(
                     }
                     | (extra_args if extra_args else {})
                 ),
-                timeout=120,
+                # (connect, read): short connect fails fast on a dead box;
+                # long read covers genuine long CoT generations.
+                timeout=(
+                    EC2_CONNECT_TIMEOUT_SECONDS,
+                    request_timeout or EC2_REQUEST_TIMEOUT_SECONDS,
+                ),
             )
             # The server answered, so the instance is alive: only sustained
             # connection failures should count toward the unreachable verdict.
@@ -513,16 +544,71 @@ def query(
             time.sleep(EC2_RETRY_BACKOFF_SECONDS)
 
 
+def _indexed_query(index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
+    """``query()`` tagged with its quiz index.
+
+    Results stream back out of order (``return_as="generator_unordered"``); the
+    index lets ``evaluate`` restore quiz order before scoring.
+    """
+    return index, query(*args, **kwargs)
+
+
+def _render_progress(done: int, total: int, model: str, width: int = 30) -> None:
+    """Renders a single-line "N/total prompted" bar (no tqdm dependency).
+
+    Driven by joblib's as-completed generator, so the bar advances as each
+    prompt's response actually lands -- not merely as tasks are dispatched.
+    A trailing newline is emitted once the run is complete.
+    """
+    filled: int = width if total == 0 else int(width * done / total)
+    bar: str = "#" * filled + "-" * (width - filled)
+    pct: float = 100.0 if total == 0 else 100.0 * done / total
+    end: str = "\n" if done >= total else ""
+    print(f"\r{model}: [{bar}] {done}/{total} prompted ({pct:3.0f}%)", end=end, flush=True)
+
+
 def evaluate(
-    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
+    quiz: Quiz,
+    model: str,
+    seed: int,
+    extra_args: Optional[Dict[str, Any]] = None,
+    max_parallel: Optional[int] = None,
+    request_timeout: Optional[int] = None,
+    show_progress: bool = True,
 ) -> Marks:
-    """Evaluates a model given a sequence of quizzes."""
+    """Evaluates a model given a sequence of quizzes.
+
+    ``max_parallel`` (falls back to ``EC2_MAX_PARALLEL_REQUESTS``) and
+    ``request_timeout`` (falls back to ``EC2_REQUEST_TIMEOUT_SECONDS``) let CoT
+    runs lower concurrency and raise the timeout so the longest chain finishes
+    on attempt 1 -- otherwise long generations time out under contention and the
+    measured CoT-length distribution gets censored from the top.
+
+    ``show_progress`` prints a live "N/total prompted" bar as responses land.
+    """
     ctx_len: int = get_model_context_length(model)
-    max_workers: int = max(1, min(len(quiz), EC2_MAX_PARALLEL_REQUESTS))
-    responses: list[Tuple[str, Optional[str]]] = Parallel(n_jobs=max_workers, prefer="threads")(
-        delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
-        for q in quiz
+    total: int = len(quiz)
+    max_workers: int = max(1, min(total, max_parallel or EC2_MAX_PARALLEL_REQUESTS))
+
+    # Stream results as they complete so the progress bar reflects finished
+    # prompts; each carries its index so we can restore quiz order afterwards.
+    results_by_index: Dict[int, Tuple[str, Optional[str]]] = {}
+    completed: int = 0
+    if show_progress:
+        _render_progress(completed, total, model)
+    stream = Parallel(n_jobs=max_workers, prefer="threads", return_as="generator_unordered")(
+        delayed(_indexed_query)(
+            i, q.prompt, model, seed, ctx_len,
+            extra_args=extra_args, request_timeout=request_timeout,
+        )
+        for i, q in enumerate(quiz)
     )
+    for index, resp in stream:
+        results_by_index[index] = resp
+        completed += 1
+        if show_progress:
+            _render_progress(completed, total, model)
+    responses: list[Tuple[str, Optional[str]]] = [results_by_index[i] for i in range(total)]
 
     mark_list: list[Mark] = []
     q: QnA

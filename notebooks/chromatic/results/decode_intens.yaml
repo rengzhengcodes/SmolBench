@@ -1,5 +1,5 @@
 !!python/object:smolbench.evals.Marks
-date: 2026-06-13 16:15:32.047184+00:00
+date: 2026-06-15 18:36:13.683471+00:00
 marks: !!python/tuple
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -215,8 +215,8 @@ marks: !!python/tuple
 
         Has dr handed the sceptre to Vp?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -323,7 +323,7 @@ marks: !!python/tuple
 
         Has Vp handed the sceptre to Sl?'
     reasoning: null
-    response: True.
+    response: 'True'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -431,8 +431,8 @@ marks: !!python/tuple
 
         Has Sl handed the sceptre to qo?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -755,8 +755,8 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to nR?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -863,7 +863,7 @@ marks: !!python/tuple
 
         Has nR handed the sceptre to zI?'
     reasoning: null
-    response: True.
+    response: 'True'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -971,8 +971,8 @@ marks: !!python/tuple
 
         Has zI handed the sceptre to HA?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -1079,8 +1079,8 @@ marks: !!python/tuple
 
         Has HA handed the sceptre to wJ?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -1187,7 +1187,7 @@ marks: !!python/tuple
 
         Has wJ handed the sceptre to Wd?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -1511,8 +1511,8 @@ marks: !!python/tuple
 
         Has ZW handed the sceptre to Ja?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -1835,7 +1835,7 @@ marks: !!python/tuple
 
         Has Im handed the sceptre to Gt?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -1943,7 +1943,7 @@ marks: !!python/tuple
 
         Has Gt handed the sceptre to Gt?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -2267,8 +2267,8 @@ marks: !!python/tuple
 
         Has xe handed the sceptre to gB?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -2483,7 +2483,7 @@ marks: !!python/tuple
 
         Has yx handed the sceptre to Lw?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -2807,8 +2807,8 @@ marks: !!python/tuple
 
         Has ET handed the sceptre to zI?'
     reasoning: null
-    response: False.
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -2915,7 +2915,7 @@ marks: !!python/tuple
 
         Has zI handed the sceptre to Sg?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -3023,8 +3023,8 @@ marks: !!python/tuple
 
         Has Sg handed the sceptre to zI?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3347,8 +3347,8 @@ marks: !!python/tuple
 
         Has Gv handed the sceptre to Vp?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -3563,8 +3563,8 @@ marks: !!python/tuple
 
         Has Lw handed the sceptre to wE?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -4211,8 +4211,8 @@ marks: !!python/tuple
 
         Has tP handed the sceptre to rN?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -4319,8 +4319,8 @@ marks: !!python/tuple
 
         Has rN handed the sceptre to Po?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -4643,8 +4643,8 @@ marks: !!python/tuple
 
         Has xe handed the sceptre to Ef?'
     reasoning: null
-    response: False.
-    score: 0
+    response: 'True'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -4859,7 +4859,7 @@ marks: !!python/tuple
 
         Has yx handed the sceptre to zI?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -4967,7 +4967,7 @@ marks: !!python/tuple
 
         Has zI handed the sceptre to UE?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
@@ -5075,8 +5075,8 @@ marks: !!python/tuple
 
         Has UE handed the sceptre to wJ?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -5507,8 +5507,8 @@ marks: !!python/tuple
 
         Has ol handed the sceptre to dr?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -5831,8 +5831,8 @@ marks: !!python/tuple
 
         Has gB handed the sceptre to ld?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -6155,8 +6155,8 @@ marks: !!python/tuple
 
         Has PD handed the sceptre to Im?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -6263,8 +6263,8 @@ marks: !!python/tuple
 
         Has Im handed the sceptre to wE?'
     reasoning: null
-    response: 'True'
-    score: 1
+    response: 'False'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: true
     query: 'You are a Boolean classifier.
@@ -6587,114 +6587,6 @@ marks: !!python/tuple
 
         Has Gv handed the sceptre to ld?'
     reasoning: null
-    response: 'True'
-    score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: false
-    query: 'You are a Boolean classifier.
-
-
-        Task: determine whether the statement in the Question is logically possible
-        given the Context.
-
-
-        Output format:
-
-        Return exactly one of these two strings and nothing else:
-
-        True
-
-        False
-
-
-        Do not output any explanation, punctuation, quotes, labels, code fences, or
-        extra whitespace.Stop immediately after writing True or False.
-
-        Context:
-
-        There is a ceremonial role called the Twislax, whose job it is to head the
-        Gildane parade. No one else besides the Twislax is able to head the Gildane
-        parade. At the end of one''s term as Twislax, they have a ceremony where they
-        hand off the Twislax ceremonial sceptre to their successor. The following
-        lists the people who were Twislax and the years they were Twislax:
-
-        qo was Twislax on 374 to 454.
-
-        Lw was Twislax on 1325 to 1403 and 1729 to 1772.
-
-        Gv was Twislax on 454 to 533 and 1617 to 1670.
-
-        Wd was Twislax on 838 to 935.
-
-        UE was Twislax on 2361 to 2370.
-
-        ld was Twislax on 2717 to 2762.
-
-        Gt was Twislax on 1137 to 1252.
-
-        nR was Twislax on 589 to 636 and 2386 to 2511.
-
-        Ef was Twislax on 0 to 181, 2151 to 2205, and 2646 to 2675.
-
-        wJ was Twislax on 816 to 838, 1860 to 1861, and 2370 to 2386.
-
-        gB was Twislax on 1297 to 1303 and 2681 to 2717.
-
-        Vp was Twislax on 191 to 291 and 1670 to 1729.
-
-        Sg was Twislax on 1525 to 1557.
-
-        Wk was Twislax on 533 to 589.
-
-        xe was Twislax on 1254 to 1297, 1834 to 1860, 2148 to 2151, 2675 to 2681,
-        and 2762 to 2767.
-
-        rv was Twislax on 1861 to 1925.
-
-        Ph was Twislax on 1403 to 1473.
-
-        wE was Twislax on 1772 to 1834 and 2846 to 2878.
-
-        ol was Twislax on 1925 to 1965 and 2533 to 2539.
-
-        Ja was Twislax on 1019 to 1085.
-
-        Cj was Twislax on 935 to 999.
-
-        Po was Twislax on 2015 to 2023.
-
-        zI was Twislax on 636 to 794, 1474 to 1525, 1557 to 1566, and 2233 to 2361.
-
-        Sl was Twislax on 291 to 374.
-
-        Im was Twislax on 1105 to 1137 and 2836 to 2846.
-
-        FX was Twislax on 1085 to 1105.
-
-        dr was Twislax on 181 to 191, 1252 to 1254, and 2539 to 2646.
-
-        ET was Twislax on 1473 to 1474.
-
-        tP was Twislax on 1965 to 2010 and 2878 to 2980.
-
-        rN was Twislax on 2010 to 2015.
-
-        HA was Twislax on 794 to 816 and 2980 to 3000.
-
-        oF was Twislax on 1566 to 1617.
-
-        yx was Twislax on 1303 to 1325, 2023 to 2148, 2205 to 2233, and 2511 to 2533.
-
-        PD was Twislax on 2767 to 2836.
-
-        ZW was Twislax on 999 to 1019.
-
-
-
-        Question:
-
-        Has Im handed the sceptre to Cj?'
-    reasoning: null
     response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
@@ -6801,9 +6693,117 @@ marks: !!python/tuple
 
         Question:
 
+        Has Im handed the sceptre to Cj?'
+    reasoning: null
+    response: 'True'
+    score: 0
+- !!python/object:smolbench.evals.Mark
+    answer: false
+    query: 'You are a Boolean classifier.
+
+
+        Task: determine whether the statement in the Question is logically possible
+        given the Context.
+
+
+        Output format:
+
+        Return exactly one of these two strings and nothing else:
+
+        True
+
+        False
+
+
+        Do not output any explanation, punctuation, quotes, labels, code fences, or
+        extra whitespace.Stop immediately after writing True or False.
+
+        Context:
+
+        There is a ceremonial role called the Twislax, whose job it is to head the
+        Gildane parade. No one else besides the Twislax is able to head the Gildane
+        parade. At the end of one''s term as Twislax, they have a ceremony where they
+        hand off the Twislax ceremonial sceptre to their successor. The following
+        lists the people who were Twislax and the years they were Twislax:
+
+        qo was Twislax on 374 to 454.
+
+        Lw was Twislax on 1325 to 1403 and 1729 to 1772.
+
+        Gv was Twislax on 454 to 533 and 1617 to 1670.
+
+        Wd was Twislax on 838 to 935.
+
+        UE was Twislax on 2361 to 2370.
+
+        ld was Twislax on 2717 to 2762.
+
+        Gt was Twislax on 1137 to 1252.
+
+        nR was Twislax on 589 to 636 and 2386 to 2511.
+
+        Ef was Twislax on 0 to 181, 2151 to 2205, and 2646 to 2675.
+
+        wJ was Twislax on 816 to 838, 1860 to 1861, and 2370 to 2386.
+
+        gB was Twislax on 1297 to 1303 and 2681 to 2717.
+
+        Vp was Twislax on 191 to 291 and 1670 to 1729.
+
+        Sg was Twislax on 1525 to 1557.
+
+        Wk was Twislax on 533 to 589.
+
+        xe was Twislax on 1254 to 1297, 1834 to 1860, 2148 to 2151, 2675 to 2681,
+        and 2762 to 2767.
+
+        rv was Twislax on 1861 to 1925.
+
+        Ph was Twislax on 1403 to 1473.
+
+        wE was Twislax on 1772 to 1834 and 2846 to 2878.
+
+        ol was Twislax on 1925 to 1965 and 2533 to 2539.
+
+        Ja was Twislax on 1019 to 1085.
+
+        Cj was Twislax on 935 to 999.
+
+        Po was Twislax on 2015 to 2023.
+
+        zI was Twislax on 636 to 794, 1474 to 1525, 1557 to 1566, and 2233 to 2361.
+
+        Sl was Twislax on 291 to 374.
+
+        Im was Twislax on 1105 to 1137 and 2836 to 2846.
+
+        FX was Twislax on 1085 to 1105.
+
+        dr was Twislax on 181 to 191, 1252 to 1254, and 2539 to 2646.
+
+        ET was Twislax on 1473 to 1474.
+
+        tP was Twislax on 1965 to 2010 and 2878 to 2980.
+
+        rN was Twislax on 2010 to 2015.
+
+        HA was Twislax on 794 to 816 and 2980 to 3000.
+
+        oF was Twislax on 1566 to 1617.
+
+        yx was Twislax on 1303 to 1325, 2023 to 2148, 2205 to 2233, and 2511 to 2533.
+
+        PD was Twislax on 2767 to 2836.
+
+        ZW was Twislax on 999 to 1019.
+
+
+
+        Question:
+
         Has wE handed the sceptre to Vp?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -7019,8 +7019,8 @@ marks: !!python/tuple
 
         Has FX handed the sceptre to zI?'
     reasoning: null
-    response: False.
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8099,8 +8099,8 @@ marks: !!python/tuple
 
         Has vP handed the sceptre to yx?'
     reasoning: null
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8423,8 +8423,8 @@ marks: !!python/tuple
 
         Has Ja handed the sceptre to xe?'
     reasoning: null
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8531,8 +8531,8 @@ marks: !!python/tuple
 
         Has Cj handed the sceptre to Im?'
     reasoning: null
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8747,8 +8747,8 @@ marks: !!python/tuple
 
         Has Im handed the sceptre to ld?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -8963,8 +8963,8 @@ marks: !!python/tuple
 
         Has Lw handed the sceptre to ol?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -9071,8 +9071,8 @@ marks: !!python/tuple
 
         Has Sl handed the sceptre to gB?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -9287,8 +9287,8 @@ marks: !!python/tuple
 
         Has wJ handed the sceptre to UE?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -9395,8 +9395,8 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to Wd?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -9611,8 +9611,8 @@ marks: !!python/tuple
 
         Has PD handed the sceptre to xe?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -10043,8 +10043,8 @@ marks: !!python/tuple
 
         Has gB handed the sceptre to zI?'
     reasoning: null
-    response: False.
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -10367,7 +10367,7 @@ marks: !!python/tuple
 
         Has Po handed the sceptre to zI?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -10691,7 +10691,7 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to Gv?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -11015,7 +11015,7 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to gB?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -11123,8 +11123,8 @@ marks: !!python/tuple
 
         Has Gv handed the sceptre to HA?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -11231,7 +11231,7 @@ marks: !!python/tuple
 
         Has wE handed the sceptre to Lw?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -11339,7 +11339,7 @@ marks: !!python/tuple
 
         Has rv handed the sceptre to wJ?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -11663,8 +11663,8 @@ marks: !!python/tuple
 
         Has dr handed the sceptre to wE?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -11879,8 +11879,8 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to PD?'
     reasoning: null
-    response: 'False'
-    score: 1
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -11987,11 +11987,8 @@ marks: !!python/tuple
 
         Has UE handed the sceptre to xe?'
     reasoning: null
-    response: False. UE was Twislax on 2361 to 2370. xe was Twislax on 1254 to 1297,
-        1834 to 1860, 2148 to 2151, 2675 to 2681, and 2762 to 2767. The terms of UE
-        and xe do not overlap in such a way that UE would have handed the sceptre
-        to xe.
-    score: null
+    response: 'True'
+    score: 0
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -12206,8 +12203,8 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to Gt?'
     reasoning: null
-    response: 'True'
-    score: 0
+    response: 'False'
+    score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
     query: 'You are a Boolean classifier.
@@ -12314,7 +12311,7 @@ marks: !!python/tuple
 
         Has Wk handed the sceptre to tP?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -12638,7 +12635,7 @@ marks: !!python/tuple
 
         Has ol handed the sceptre to Im?'
     reasoning: null
-    response: False.
+    response: 'False'
     score: 1
 - !!python/object:smolbench.evals.Mark
     answer: false
@@ -12964,4 +12961,4 @@ marks: !!python/tuple
     reasoning: null
     response: 'False'
     score: 1
-model: devstral-small-2505
+model: olmo-3.1-32b-instruct
