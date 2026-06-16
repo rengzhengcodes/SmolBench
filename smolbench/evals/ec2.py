@@ -257,9 +257,14 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
     # (no --reasoning-parser, per the crash note above). Instruct and Granite
     # are non-reasoning by default. All three use standard HF tokenizers, so no
     # tokenizer/load-format flags are needed.
-    "olmo-3.1-32b-instruct": {"hf_model_id": "allenai/Olmo-3.1-32B-Instruct",   "tp": 8, "max_model_len": 65536},
-    "olmo-3.1-32b-think":    {"hf_model_id": "allenai/Olmo-3.1-32B-Think",      "tp": 8, "max_model_len": 65536},
-    "granite-4.0-h-small":   {"hf_model_id": "ibm-granite/granite-4.0-h-small", "tp": 8, "max_model_len": 65536},
+    # --enable-prefix-caching: every quiz reuses one ~33k-token prompt prefix
+    # across its ~122 questions (only the trailing Question line varies), so
+    # caching that prefix pays its prefill once per quiz instead of per
+    # question. vLLM's V1 engine (v0.23) defaults this on; setting it
+    # explicitly documents the dependency and survives a default change.
+    "olmo-3.1-32b-instruct": {"hf_model_id": "allenai/Olmo-3.1-32B-Instruct",   "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
+    "olmo-3.1-32b-think":    {"hf_model_id": "allenai/Olmo-3.1-32B-Think",      "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
+    "granite-4.0-h-small":   {"hf_model_id": "ibm-granite/granite-4.0-h-small", "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
 }
 
 
