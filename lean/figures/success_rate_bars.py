@@ -12,7 +12,6 @@ Run:
     uv run python figures/success_rate_bars.py --runs main_v3 main_v3_2
 """
 
-import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -21,25 +20,27 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _util import (
+    DEFAULT_FIGSIZE,
     EXCLUDE_MODELS,
     FAMILY_ORDER,
     HINT_LABELS_VERBOSE as HINT_LABELS,
     HINT_RUNGS,
     NOISE_RUNGS,
     family_color_map,
+    figure_out_path,
     is_reasoning,
     lighten,
     load_rows,
     model_family,
     models_per_run,
     order_within_group,
+    parse_runs_args,
     pretty_model,
+    save_figure,
     trivial_skip_keys,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
-OUT_PATH = ROOT / "figures/success_rate_bars.png"
+OUT_PATH = figure_out_path("success_rate_bars")
 
 # This figure uses the "degree of positive information" verbose labels
 # rather than _util's terse HINT_LABELS — see _util.HINT_LABELS_VERBOSE
@@ -48,11 +49,9 @@ OUT_PATH = ROOT / "figures/success_rate_bars.png"
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", nargs="+", default=DEFAULT_RUNS)
-    args = ap.parse_args()
-    print(f"runs: {args.runs}")
-    rows = load_rows(args.runs)
+    runs = parse_runs_args()
+    print(f"runs: {runs}")
+    rows = load_rows(runs)
     real = [r for r in rows if r.get("model")]
 
     # Trivial-skip filter: keep only (theorem, k) present at every hint level.
@@ -114,7 +113,7 @@ def main():
     peak_idx = {m: int(np.nanargmax(vals)) if not np.all(np.isnan(vals)) else -1
                 for m, vals in rates_by_model.items()}
 
-    fig, ax = plt.subplots(figsize=(14, 5.5))
+    fig, ax = plt.subplots(figsize=DEFAULT_FIGSIZE)
     n_levels = len(HINT_RUNGS)
     x_centers = np.arange(n_levels)
 
@@ -200,10 +199,7 @@ def main():
         fontsize=8, loc="upper right", framealpha=0.9,
     )
 
-    plt.tight_layout()
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUT_PATH, dpi=140)
-    print(f"saved {OUT_PATH}")
+    save_figure(OUT_PATH)
 
 
 if __name__ == "__main__":

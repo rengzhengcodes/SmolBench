@@ -108,6 +108,49 @@ def test_openrouter_evaluate_via_provider_dispatch(stub_server, monkeypatch):
     assert marks.correct == 1
 
 
+def test_primeintellect_query_and_context_length(stub_server, monkeypatch):
+    """Mirrors the openrouter/aws round trips above, for the Prime Intellect
+    provider: PRIME_INTELLECT_BASE_URL points at the stub, and
+    get_model_context_length resolves via the stub's Prime-Intellect-style
+    GET /models/{model} shape (conftest's do_GET already serves
+    {"context_length": 100000} for any path containing "/models/")."""
+    from smolbench.evals import primeintellect
+
+    monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
+    monkeypatch.setenv("PRIME_INTELLECT_API_KEY", "stub-key")
+
+    # Unique model name per test avoids get_model_context_length's
+    # module-level lru_cache bleeding a stale value in from another test.
+    assert primeintellect.get_model_context_length("m-primeintellect-ctxlen") == 100000
+    assert stub_server.requests[-1]["path"] == "/v1/models/m-primeintellect-ctxlen"
+
+    stub_server.queue_response(chat_completion("True"))
+    content, _ = primeintellect.query("p", "m-primeintellect-ctxlen", seed=1, context_length=100)
+    assert content == "True"
+    body = stub_server.requests[-1]["body"]
+    assert body["model"] == "m-primeintellect-ctxlen"  # identity body_model, sent verbatim
+    assert body["seed"] == 1
+
+
+def test_primeintellect_evaluate_via_provider_dispatch(stub_server, monkeypatch):
+    """evaluate() tuning kwargs work under primeintellect too (the same
+    substitutability check test_openrouter_evaluate_via_provider_dispatch
+    performs for openrouter)."""
+    from smolbench.evals import provider
+
+    monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
+    monkeypatch.setenv("PRIME_INTELLECT_API_KEY", "stub-key")
+    monkeypatch.setenv("INFERENCE_PROVIDER", "primeintellect")
+
+    stub_server.default_response = chat_completion("True")
+    quiz = (ToF(prompt="q", answer=True),)
+    marks = provider.evaluate(
+        quiz, "m-primeintellect-dispatch-test", seed=1,
+        max_parallel=2, request_timeout=30, show_progress=False,
+    )
+    assert marks.correct == 1
+
+
 def test_aws_body_model_and_key_resolution(stub_server, monkeypatch):
     from smolbench.evals import aws
 

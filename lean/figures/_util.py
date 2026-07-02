@@ -19,18 +19,131 @@ begun to drift) across the six figure scripts:
 - model-family color-grouping helpers used by the two bar-chart scripts
   (`model_family`, `family_color_map`, `lighten`, `family_idx`,
   `order_within_group`)
+- the shared `--runs` CLI flag (`parse_runs_args`) and the `plt.savefig`
+  footer every script ends with (`save_figure`, `figure_out_path`)
+- the "solvable-subset bucket" data-prep pipeline shared by the two hint+
+  noise trendline scripts (`build_success_buckets`, `SuccessBuckets`)
 
-Each figure script still owns its own plotting/argparse logic; only the data
-loading and filtering conventions common to multiple scripts live here.
+Each figure script still owns its own plotting logic (and, where its
+data-prep pipeline is not one of the shared ones above, its own filtering);
+only the conventions actually common to multiple scripts live here.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+
+# ---------------------------------------------------------------------------
+# CLI / figure-output helpers
+# ---------------------------------------------------------------------------
+#
+# Every figure script accepts the same `--runs` flag and ends with the same
+# `plt.tight_layout(); ...; plt.savefig(...); print(...)` footer; both were
+# copy-pasted six times (with the `--runs` help text drifting — three
+# scripts had it, three didn't) before being centralized here.
+
+# DEFAULT_RUNS is the run-directory list every figure script merges over
+# when `--runs` is not passed: the full `main_v3` sweep (100 theorems) plus
+# the smaller `main_v3_2` sweep that adds a few low-n frontier closed-weight
+# models (Sonnet 4.6, GPT-5.5) not present in `main_v3`. See
+# `models_per_run` / `model_sort_key` for how the "low-n" distinction is
+# used downstream.
+DEFAULT_RUNS = ["main_v3", "main_v3_2"]
+
+# DEFAULT_FIGSIZE is the (width, height) inches five of the six figure
+# scripts pass to `plt.subplots(figsize=...)` — every script except
+# `prompt_length_vs_hint.py`, whose single-panel box plot genuinely wants a
+# narrower, taller figure (8, 5) and keeps that value locally rather than
+# overriding this default.
+DEFAULT_FIGSIZE = (14, 5.5)
+
+
+def parse_runs_args() -> list[str]:
+    """Parse the `--runs` command-line flag shared by every figure script.
+
+    Every figure script accepts an identical `--runs` flag (one or more run
+    directory names under `results/runs/` to merge, via `load_rows`) and
+    nothing else; this factors out the six copy-pasted `argparse.ArgumentParser`
+    blocks (which had begun to drift — some had a `help=` string, some
+    didn't) into one canonical definition.
+
+    Returns
+    -------
+    list of str
+        The parsed `--runs` values, defaulting to `DEFAULT_RUNS` when the
+        flag is omitted. (Returns the raw list, not the `argparse.Namespace`,
+        since every caller immediately does `args.runs` and nothing else
+        with the parsed arguments.)
+
+    Notes
+    -----
+    Calls `sys.exit` (via `argparse`) on `-h`/`--help` or malformed
+    arguments, matching standard `argparse` CLI behavior.
+    """
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--runs", nargs="+", default=DEFAULT_RUNS,
+        help="run dirs under results/runs/ to merge (default: %(default)s)",
+    )
+    return ap.parse_args().runs
+
+
+def figure_out_path(name: str) -> Path:
+    """Resolve the output PNG path for a figure script, by figure name.
+
+    Parameters
+    ----------
+    name : str
+        The figure's base filename without extension (conventionally the
+        script's own module name, e.g. `"success_rate_bars"`).
+
+    Returns
+    -------
+    pathlib.Path
+        `lean/figures/<name>.png`, anchored via this module's own
+        `__file__` (i.e. this module's parent directory) rather than the
+        caller script's `__file__` or working directory, so every script
+        resolves to the same path regardless of where it's invoked from.
+    """
+    return Path(__file__).resolve().parent / f"{name}.png"
+
+
+def save_figure(out_path: Path) -> None:
+    """Finalize the current matplotlib figure and write it to `out_path`.
+
+    Runs the footer every figure script previously copy-pasted: tighten the
+    layout, ensure the output directory exists, save at a fixed DPI, and log
+    the path written.
+
+    Parameters
+    ----------
+    out_path : pathlib.Path
+        Destination PNG path (typically from `figure_out_path`). Parent
+        directories are created if missing.
+
+    Notes
+    -----
+    Operates on the current pyplot figure (`plt.gcf()` implicitly, via
+    `plt.tight_layout()`/`plt.savefig()`) rather than taking a `Figure`
+    object explicitly — matches every figure script's existing style of
+    calling bare `plt.tight_layout()`/`plt.savefig()` after building exactly
+    one figure per script invocation.
+
+    The DPI (140) is fixed rather than parameterized: no script previously
+    varied it, and the byte-for-byte PNG comparison used to verify this
+    refactor depends on it staying fixed.
+    """
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=140)
+    print(f"saved {out_path}")
+
 
 # ---------------------------------------------------------------------------
 # Rung vocabulary
@@ -374,3 +487,198 @@ def order_within_group(models, low_n_models: set[str]) -> list:
         `models` sorted as described above. Does not mutate `models`.
     """
     return sorted(models, key=lambda m: (1 if m in low_n_models else 0, family_idx(m), m))
+
+
+# ---------------------------------------------------------------------------
+# Solvable-subset success bucket (success_rate_per_model_rung.py,
+# success_rate_with_noise.py)
+# ---------------------------------------------------------------------------
+#
+# Both of these scripts build a (model, rung) -> [verdict] bucket by the
+# exact same ~40-line pipeline (trivial-skip intersection -> per-model
+# "solvable at some hint/noise rung" set -> verdict bucket restricted to
+# both -> low-n model tagging -> reasoning/non-reasoning split), differing
+# only in which rungs the trivial-skip intersection is computed over. That
+# pipeline is centralized here as `build_success_buckets`.
+#
+# response_length_per_model_rung.py and success_rate_bars.py have
+# structurally similar (but NOT identical) pipelines:
+#   - response_length_per_model_rung.py accumulates `completion_tokens`
+#     values keyed by (model, rung) instead of `verdict` strings, and has no
+#     accepted-verdict allowlist check (its own "is this row usable" test is
+#     `completion_tokens > 0`) — a genuinely different bucket value type and
+#     filter, not just a parameter difference.
+#   - success_rate_bars.py's pipeline is actually parameter-identical to
+#     `build_success_buckets(real, HINT_RUNGS, NOISE_RUNGS)` (its default
+#     `keep_rungs`), but it additionally needs `order_within_group`/
+#     `family_color_map`-based grouping rather than the plain
+#     reasoning/non_reasoning split this helper returns, so folding it in
+#     would mean immediately discarding half of `SuccessBuckets`.
+# Per the refactor spec this helper was written for, only the two scripts
+# with a genuinely identical pipeline (module docstring above) were folded
+# in; the other two were deliberately left as-is rather than forced into a
+# shape that doesn't fit them.
+@dataclass(frozen=True)
+class SuccessBuckets:
+    """Container for `build_success_buckets`'s outputs.
+
+    A small dataclass (rather than a plain tuple) so call sites read
+    `result.bucket`, `result.reasoning`, etc. by name instead of position —
+    with five differently-shaped return values (a dict, a set of str, two
+    lists of str, and a set of tuples) a positional tuple would be an easy
+    place to introduce a silent transposition bug (e.g. swapping
+    `low_n_models` and `keep`, both sets).
+
+    Attributes
+    ----------
+    bucket : dict of (str, str) to list of str
+        Maps `(model, rung)` to the list of `verdict` strings observed for
+        that cell, after all of `build_success_buckets`'s filtering.
+    low_n_models : set of str
+        Models present in `bucket` but absent from the `main_v3` run (i.e.
+        contributing rows only via the smaller `main_v3_2` sweep) — callers
+        plot these at reduced alpha.
+    reasoning : list of str
+        Reasoning-flagged models (`is_reasoning`) present in `bucket`,
+        ordered by `model_sort_key` (full-n models first, alphabetical
+        within each of the full-n/low-n groups).
+    non_reasoning : list of str
+        Non-reasoning models present in `bucket`, ordered the same way as
+        `reasoning`.
+    keep : set of tuple
+        The `(theorem_id, k)` intersection set `bucket` was restricted to —
+        exposed so callers can log its size (both current callers print
+        `f"... {len(sb.keep)}"` with their own wording, since the two
+        scripts describe slightly different rung sets).
+    """
+
+    bucket: dict[tuple[str, str], list[str]]
+    low_n_models: set[str]
+    reasoning: list[str]
+    non_reasoning: list[str]
+    keep: set[tuple]
+
+
+def build_success_buckets(
+    real: list[dict],
+    hint_rungs: list[str],
+    noise_rungs: list[str | None],
+    *,
+    keep_rungs: list[str] | None = None,
+) -> SuccessBuckets:
+    """Build the (model, rung) -> [verdict] bucket shared by the hint/noise
+    success-rate trendline figures.
+
+    Implements, in order:
+
+    1. Restrict to the `(theorem_id, k)` pairs present at every rung in
+       `keep_rungs` (via `trivial_skip_keys`), so every rung plotted on a
+       shared x-axis describes the exact same set of theorems.
+    2. Compute, per model, the set of `(theorem_id, k)` pairs that model
+       solved (`verdict == "success"`) at *some* hint rung beyond the first
+       or *some* noise rung — the "solvable" set.
+    3. Build the verdict bucket: for each row with a recognized verdict
+       (`"success"`, `"lean_error"`, `"exception"`, `"incomplete"` — other
+       verdicts, e.g. `"timeout"`, are silently dropped) whose model is not
+       in `EXCLUDE_MODELS` and whose `(theorem_id, k)` survived step 1,
+       accumulate its `verdict` into `bucket[(model, rung)]`. The `stepk:2`
+       ("no hint") cell is further restricted, per model, to that model's
+       own "solvable" set from step 2 — so the no-hint baseline reflects
+       only theorems the model could solve *somewhere*, not hopeless ones.
+    4. Tag `low_n_models`: models present in `bucket` but not in the
+       `main_v3` run (`models_per_run`), for reduced-alpha plotting.
+    5. Split the bucket's models into `reasoning`/`non_reasoning` lists
+       (`is_reasoning`), each ordered by `model_sort_key`.
+
+    Parameters
+    ----------
+    real : list of dict
+        Rows already filtered to `r.get("model")` truthy (i.e. the `real`
+        subset of `load_rows`'s output — this function does not itself
+        filter out summary/meta rows).
+    hint_rungs : list of str
+        The hint-ladder rungs (conventionally `_util.HINT_RUNGS`:
+        `stepk:2`, `hint:0`..`hint:3`). `hint_rungs[0]` is treated as the
+        "no hint" rung subject to the step-2 solvability restriction; the
+        rest are treated as positive-information rungs.
+    noise_rungs : list of str or None
+        The noise-ladder rungs, aligned to `hint_rungs` by position
+        (conventionally `_util.NOISE_RUNGS_ALIGNED`, whose leading `None`
+        entries mark hint positions with no noise counterpart). `None`
+        entries are dropped before use.
+    keep_rungs : list of str or None, default None
+        Rungs to intersect over in step 1. Defaults to `hint_rungs` when
+        omitted — matching `success_rate_per_model_rung.py`'s "present at
+        every hint level" restriction. Pass `hint_rungs + noise_present` to
+        additionally require every noise rung, matching
+        `success_rate_with_noise.py`'s "present at every (hint, noise)
+        level" restriction (this is the one input difference between the
+        two scripts' otherwise-identical pipelines).
+
+    Returns
+    -------
+    SuccessBuckets
+        See `SuccessBuckets` for field documentation.
+
+    Raises
+    ------
+    ValueError
+        Propagated from `trivial_skip_keys` if the effective `keep_rungs`
+        (after defaulting) is empty.
+
+    Notes
+    -----
+    Time complexity is O(len(real)) for each of the two passes over `real`
+    (steps 2 and 3), plus the O(len(real)) work inside `trivial_skip_keys`
+    and `models_per_run` — linear overall in the number of input rows.
+    """
+    noise_present = [r for r in noise_rungs if r is not None]
+    if keep_rungs is None:
+        keep_rungs = hint_rungs
+    keep = trivial_skip_keys(real, keep_rungs)
+
+    # Per-model "solved somewhere beyond the bare no-hint rung" set, used
+    # below to restrict the stepk:2 cell to theorems this model could
+    # actually make progress on (rather than diluting it with theorems the
+    # model was always going to fail regardless of hint/noise).
+    hint_noise_rungs = hint_rungs[1:] + noise_present
+    solvable: set[tuple] = set()
+    for r in real:
+        if (r.get("theorem_id"), r.get("k")) not in keep:
+            continue
+        if r.get("rung") in hint_noise_rungs and r.get("verdict") == "success":
+            solvable.add((r.get("model"), r.get("theorem_id"), r.get("k")))
+
+    bucket: dict[tuple[str, str], list[str]] = {}
+    for r in real:
+        m = r.get("model")
+        if m in EXCLUDE_MODELS:
+            continue
+        rung = r.get("rung")
+        v = r.get("verdict")
+        if v not in ("success", "lean_error", "exception", "incomplete"):
+            continue
+        if (r.get("theorem_id"), r.get("k")) not in keep:
+            continue
+        # Design: both original call sites hardcoded the literal "stepk:2"
+        # here; generalized to `hint_rungs[0]` since that's exactly what
+        # "stepk:2" *means* in both callers (the no-hint rung) and this
+        # function otherwise treats `hint_rungs[0]` as that rung throughout
+        # (see the `hint_noise_rungs = hint_rungs[1:] + ...` line above) —
+        # for both current callers `hint_rungs[0] == "stepk:2"`, so this is
+        # a zero-behavior-change generalization, not a semantic one.
+        if rung == hint_rungs[0]:
+            triple = (m, r.get("theorem_id"), r.get("k"))
+            if triple not in solvable:
+                continue
+        bucket.setdefault((m, rung), []).append(v)
+
+    by_run = models_per_run(real)
+    main_v3_models = by_run.get("main_v3", set())
+    low_n_models = {m for m in {k[0] for k in bucket} if m not in main_v3_models}
+
+    models = sorted({k[0] for k in bucket}, key=lambda m: model_sort_key(m, low_n_models))
+    reasoning = [m for m in models if is_reasoning(m)]
+    non_reasoning = [m for m in models if not is_reasoning(m)]
+
+    return SuccessBuckets(bucket, low_n_models, reasoning, non_reasoning, keep)

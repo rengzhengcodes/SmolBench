@@ -9,7 +9,6 @@ Run:
     uv run python figures/prompt_length_vs_hint.py --runs main_v3 main_v3_2
 """
 
-import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -18,11 +17,9 @@ from matplotlib.lines import Line2D
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _util import load_rows
+from _util import figure_out_path, load_rows, parse_runs_args, save_figure
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
-OUT_PATH = ROOT / "figures/prompt_length_vs_hint.png"
+OUT_PATH = figure_out_path("prompt_length_vs_hint")
 
 LEVELS = ["stepk:2", "hint:0", "hint:1", "hint:2", "hint:3"]
 LABELS = ["no hint", "hint 1", "hint 2", "hint 3", "hint 4"]
@@ -55,12 +52,9 @@ def load_prompt_tokens_by_level(runs):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", nargs="+", default=DEFAULT_RUNS,
-                    help="run dirs under results/runs/ to merge (default: %(default)s)")
-    args = ap.parse_args()
-    print(f"runs: {args.runs}")
-    data = load_prompt_tokens_by_level(args.runs)
+    runs = parse_runs_args()
+    print(f"runs: {runs}")
+    data = load_prompt_tokens_by_level(runs)
     print("n per level: " + ", ".join(f"{LABELS[i]}={len(data[i])}" for i in range(len(LEVELS))))
 
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -77,7 +71,7 @@ def main():
 
     ax.set_xlabel("Hint level")
     ax.set_ylabel("Prompt length (tokens)")
-    ax.set_title(f"Prompt length vs hint level  —  {' + '.join(args.runs)}")
+    ax.set_title(f"Prompt length vs hint level  —  {' + '.join(runs)}")
     ax.set_yscale("log")
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(
@@ -93,10 +87,7 @@ def main():
                 ha="center", fontsize=8, color="#1f77b4",
             )
 
-    plt.tight_layout()
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUT_PATH, dpi=140)
-    print(f"saved {OUT_PATH}")
+    save_figure(OUT_PATH)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from typing import Any, Dict, Tuple
 
 import requests
 
-from smolbench.evals.openai_compat import ChatClient
+from smolbench.evals.openai_compat import ChatClient, METADATA_TIMEOUT_S
 
 OPENROUTER_RETRY_BACKOFF_SECONDS: int = 60
 _DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -52,7 +52,7 @@ def get_model_context_length(model: str) -> int:
         headers={
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY', '')}",
         },
-        timeout=120,
+        timeout=METADATA_TIMEOUT_S,
     ).json()
 
     # pick the first available endpoint

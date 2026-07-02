@@ -45,6 +45,16 @@ from joblib import Parallel, delayed
 
 from smolbench.evals import Answer, Quiz, Mark, Marks
 
+#: HTTP timeout (seconds) for provider METADATA requests -- catalog listings
+#: (e.g. ``GET /models``) and context-length lookups -- as distinct from chat
+#: completions, which use ``ChatClient.connect_timeout_s`` /
+#: ``read_timeout_s`` (or the per-call ``request_timeout`` override) because
+#: those must tolerate slow chain-of-thought generations. Metadata calls
+#: return a small, fast payload, so one shared constant covers every
+#: provider's catalog/context-length lookup instead of each module
+#: hardcoding its own ``timeout=120`` literal.
+METADATA_TIMEOUT_S: int = 120
+
 
 def is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
     """Returns whether a chat-completions request error should be retried.

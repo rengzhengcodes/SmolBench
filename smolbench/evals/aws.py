@@ -25,9 +25,17 @@ SageMaker (point the same client at your deployed endpoint):
     AWS_INFERENCE_BASE_URL=https://runtime.sagemaker.<region>.amazonaws.com/endpoints/<endpoint>/openai/v1
     AWS_INFERENCE_API_KEY=<minted bearer token>   # SageMaker tokens last <= 12h
 
-All env config is read at CALL time, never import time: setting or refreshing
-AWS_INFERENCE_API_KEY (e.g. after ``mint_sagemaker_token``) takes effect on
-the next request with no re-import, and no module global needs mutating.
+All env config on the INFERENCE path (base URL, bearer token, body-model
+override, context-length override) is read at CALL time, never import time:
+setting or refreshing AWS_INFERENCE_API_KEY (e.g. after
+``mint_sagemaker_token``) takes effect on the next request with no
+re-import, and no module global needs mutating. The optional SageMaker
+PROVISIONING knobs (``SAGEMAKER_VLLM_DLC``, ``SAGEMAKER_EXEC_ROLE_NAME``,
+below) are the exception: they are captured from the environment once, at
+IMPORT time, as module-level constants. If you want to override them, call
+``load_dotenv()`` (or otherwise set the environment) BEFORE importing this
+module -- importing first and then setting the env var will not pick up an
+override, unlike everywhere else in this module.
 
 Enabling Bedrock model access and minting a SageMaker token are out-of-band
 steps; the inference path stays dependency-free and only speaks HTTP. The
@@ -47,14 +55,22 @@ from typing import Any, Dict, Tuple
 
 import requests
 
-from smolbench.evals.openai_compat import ChatClient
+from smolbench.evals.openai_compat import ChatClient, METADATA_TIMEOUT_S
 
 AWS_BEDROCK_RETRY_BACKOFF_SECONDS: int = 60
+# Default bedrock-mantle base URL, as a format template so ``region`` stays
+# resolved at CALL time (via ``_region()``) rather than baked in here at
+# import time -- consistent with the module's call-time env-resolution
+# policy for the inference path (see the module docstring).
+AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE: str = "https://bedrock-mantle.{region}.api.aws/v1"
+# Fallback context window (tokens) for ``get_model_context_length`` when no
+# ``AWS_BEDROCK_CONTEXT_LENGTH`` override is set. Bedrock's OpenAI-compatible
+# endpoints don't expose per-model context windows, so this is a conservative
+# soft default -- see ``get_model_context_length``.
+AWS_BEDROCK_DEFAULT_CONTEXT_LENGTH: int = 200000
 # Cache of each SageMaker endpoint's served model id (resolved lazily; see
 # ``_body_model``). Keyed by endpoint name.
 _SERVED_MODELS: Dict[str, str] = {}
-# Per-model context-window overrides for get_model_context_length.
-_CONTEXT_LENGTHS: Dict[str, int] = {}
 
 
 def _region() -> str:
@@ -77,7 +93,7 @@ def _base_url_template() -> str:
     """
     return os.getenv(
         "AWS_INFERENCE_BASE_URL",
-        f"https://bedrock-mantle.{_region()}.api.aws/v1",
+        AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE.format(region=_region()),
     ).rstrip("/")
 
 
@@ -140,14 +156,27 @@ def _body_model(model: str) -> str:
 def get_model_context_length(model: str) -> int:
     """Returns the configured context window for a model.
 
-    AWS's OpenAI-compatible endpoints expose model ids but not context windows,
-    so this returns a per-model override from ``_CONTEXT_LENGTHS`` when known and
-    otherwise the ``AWS_BEDROCK_CONTEXT_LENGTH`` default (env var, default
-    200000). It is only used as a soft post-hoc token guard.
+    AWS's OpenAI-compatible endpoints expose model ids but not context
+    windows, so this returns the ``AWS_BEDROCK_CONTEXT_LENGTH`` env override
+    when set, and otherwise ``AWS_BEDROCK_DEFAULT_CONTEXT_LENGTH`` (read at
+    CALL time, so a changed/exported env var takes effect on the next call
+    with no re-import). It is only used as a soft post-hoc token guard, so
+    one value shared across every model on the endpoint is an acceptable
+    approximation -- there is currently no per-model override.
+
+    Parameters
+    ----------
+    model:
+        Provider-specific model id. Accepted for interface parity with the
+        other providers' ``get_model_context_length`` (and because
+        ``ChatClient.context_length`` calls it as ``Callable[[str], int]``);
+        unused since AWS exposes no per-model context-window catalog.
+
+    Returns
+    -------
+    The context window, in tokens, to guard ``usage.total_tokens`` against.
     """
-    return _CONTEXT_LENGTHS.get(
-        model, int(os.getenv("AWS_BEDROCK_CONTEXT_LENGTH", "200000"))
-    )
+    return int(os.getenv("AWS_BEDROCK_CONTEXT_LENGTH", str(AWS_BEDROCK_DEFAULT_CONTEXT_LENGTH)))
 
 
 def list_models(model: str = "") -> list[str]:
@@ -163,7 +192,7 @@ def list_models(model: str = "") -> list[str]:
     response = requests.get(
         url=f"{_resolve_base(model)}/models",
         headers={"Authorization": f"Bearer {_api_key()}"},
-        timeout=120,
+        timeout=METADATA_TIMEOUT_S,
     )
     response.raise_for_status()
     return [m["id"] for m in response.json().get("data", [])]

@@ -23,7 +23,7 @@ from typing import Any, Dict, Tuple
 
 import requests
 
-from smolbench.evals.openai_compat import ChatClient
+from smolbench.evals.openai_compat import ChatClient, METADATA_TIMEOUT_S
 
 PRIME_INTELLECT_RETRY_BACKOFF_SECONDS: int = 60
 _DEFAULT_BASE_URL: str = "https://api.pinference.ai/api/v1"
@@ -51,7 +51,7 @@ def get_model_context_length(model: str) -> int:
         headers={
             "Authorization": f"Bearer {os.getenv('PRIME_INTELLECT_API_KEY', '')}",
         },
-        timeout=120,
+        timeout=METADATA_TIMEOUT_S,
     ).json()
 
     ctx: int = response["context_length"]

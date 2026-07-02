@@ -15,7 +15,6 @@ Run:
     uv run python figures/marginal_content_vs_noise.py --runs main_v3
 """
 
-import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,22 +23,24 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _util import (
+    DEFAULT_FIGSIZE,
     EXCLUDE_MODELS,
     FAMILY_ORDER,
     family_color_map,
+    figure_out_path,
     is_reasoning,
     lighten,
     load_rows,
     model_family,
     models_per_run,
     order_within_group,
+    parse_runs_args,
     pretty_model,
+    save_figure,
     trivial_skip_keys,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
-OUT_PATH = ROOT / "figures/marginal_content_vs_noise.png"
+OUT_PATH = figure_out_path("marginal_content_vs_noise")
 
 # (hint_rung, noise_rung, x-axis label) — labels match the
 # Degree-of-positive-information convention used in success_rate_bars.
@@ -52,11 +53,9 @@ ALL_RUNGS = sorted({r for h, n, _ in PAIRS for r in (h, n)})
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", nargs="+", default=DEFAULT_RUNS)
-    args = ap.parse_args()
-    print(f"runs: {args.runs}")
-    rows = load_rows(args.runs)
+    runs = parse_runs_args()
+    print(f"runs: {runs}")
+    rows = load_rows(runs)
     real = [r for r in rows if r.get("model")]
 
     keep = trivial_skip_keys(real, ALL_RUNGS)
@@ -99,7 +98,7 @@ def main():
         for m in reasoning + non_reasoning
     }
 
-    fig, ax = plt.subplots(figsize=(14, 5.5))
+    fig, ax = plt.subplots(figsize=DEFAULT_FIGSIZE)
     n_levels = len(PAIRS)
     x_centers = np.arange(n_levels)
 
@@ -164,10 +163,7 @@ def main():
         title_fontsize=8,
     )
 
-    plt.tight_layout()
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUT_PATH, dpi=140)
-    print(f"saved {OUT_PATH}")
+    save_figure(OUT_PATH)
 
 
 if __name__ == "__main__":

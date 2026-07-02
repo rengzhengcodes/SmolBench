@@ -76,6 +76,62 @@ def test_run_replicates_partial_resume(harness, fake_evaluate, tmp_path):
     assert [c["n"] for c in fake_evaluate] == [1]
 
 
+def test_run_replicates_unknown_model_raises_keyerror(harness):
+    """archetype_tags is looked up with a plain ``self.archetype_tags[model]``
+    subscript (see run_replicates' source) -- no ``.get()``, no try/except.
+    An unconfigured model is therefore a caller bug the harness surfaces
+    immediately as KeyError, rather than silently skipping the archetype or
+    falling back to some placeholder tag that would corrupt the results
+    layout."""
+    with pytest.raises(KeyError):
+        harness.run_replicates("some-unconfigured-model")
+
+
+def test_cot_chain_lengths_reports_word_counts(harness, capsys):
+    """cot_chain_lengths has no return value (see its source): like
+    summarize(), its contract is entirely print-based, so this test drives
+    it through capsys rather than inspecting a return value.
+
+    Builds the cached CoT replicate files with Marks.dump (never
+    hand-crafting the YAML format) at the paths the harness's own
+    ``_rep_path("cot", info, seed)`` convention expects, with a mix of
+    substantive, empty-string, and None ``Mark.reasoning`` values. The
+    empty/None entries must be excluded from the word-count stats (the
+    source's ``if mark.reasoning:`` guard skips falsy values) -- this
+    mirrors real runs, where non-reasoning archetypes or truncated
+    responses leave ``reasoning`` unset.
+    """
+    # seed 1 contributes word counts [3, 2] (the None entry is skipped);
+    # seed 2 contributes [4] (the empty string is falsy and skipped too).
+    reasoning_by_seed = {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}
+    for seed, texts in reasoning_by_seed.items():
+        marks = Marks(
+            model="stub-model",
+            marks=tuple(
+                Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r)
+                for i, r in enumerate(texts)
+            ),
+        )
+        path = harness._rep_path("cot", "intens", seed)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        marks.dump(path)
+    # "extens" (the harness's other configured info type) gets no replicate
+    # files at all, exercising the "no reasoning chains found" branch.
+
+    harness.cot_chain_lengths()  # default tag="cot"
+    out = capsys.readouterr().out
+
+    # Pooled across both seeds: lengths = [3, 2, 4] -> n=3 min=2 max=4
+    # mean=3 median=3. The exact spacing mirrors cot_chain_lengths' format
+    # spec (n:4d, min/max:5d, mean/median:6.0f) so a format change is
+    # caught here just as much as a value change.
+    assert (
+        "cot/intens: n=   3  min=    2  max=    4  "
+        "mean=     3  median=     3  words  (~tokens x 1.3)"
+    ) in out
+    assert "cot/extens: no reasoning chains found" in out
+
+
 def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
     prefixed = ReplicateHarness(
         results_dir=tmp_path,

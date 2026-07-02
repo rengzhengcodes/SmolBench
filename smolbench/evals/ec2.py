@@ -44,6 +44,20 @@ Setup
                                # specs (the defaults are all ungated); baked
                                # into the instance at provision time
 
+Env-read timing: the PROVISIONING constants above this docstring (AWS_REGION,
+EC2_INSTANCE_TYPES, EC2_VLLM_IMAGE, EC2_EXPERIMENT_TAG, EC2_S3_MODEL_CACHE /
+EC2_S3_CACHE_REGION, and the other EC2_* module attributes near the top of
+this file) are captured at IMPORT time -- set them before the first ``import
+smolbench.evals.ec2`` (e.g. in keys.env, loaded before the notebook's imports
+run), not right before calling provision_spot_instance(). This is deliberate:
+notebooks bind them as ordinary module attributes (``ec2.EC2_EXPERIMENT_TAG``
+etc.) that a call-time getter would break. The exception is the INFERENCE-path
+knobs -- EC2_INFERENCE_BASE_URL, EC2_VLLM_API_KEY, EC2_STATE_FILE (plus
+HF_TOKEN, which was never a module constant) -- which genuinely ARE read at
+call time (inside _base_url/_api_key/_connection/_state_path/
+provision_spot_instance respectively), so those may be set any time before
+the relevant call.
+
 Provisioning imports boto3/botocore lazily, so importing this module (and the
 query path) requires neither -- same convention as aws.py. The ``model``
 argument to query()/evaluate() is a key of ``EC2_DEPLOY_SPECS``; that key is
@@ -115,8 +129,21 @@ EC2_AMI_SSM_PARAM: str = os.getenv(
     "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id",
 )
 EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-inference")
+# Fixed (NOT env-configurable, unlike the EC2_* knobs around them) ports for
+# the two on-instance HTTP planes -- see the module docstring's "Security
+# model" section for what each guards. Kept as plain constants rather than
+# EC2_*-style os.getenv knobs because changing either requires coordinated
+# changes beyond just this client (the security group ingress rule, the
+# payload scripts' docker port-publish/probe URLs, and vLLM's own listen
+# port), so a would-be override belongs in code, not a stray env var.
+EC2_VLLM_PORT: int = 8000
+EC2_AGENT_PORT: int = 9000
 # Value of the ``smolbench:experiment`` tag used to find/reattach/terminate
-# this experiment's instance.
+# this experiment's instance. The "periodic-induction" default is specific to
+# THIS experiment; other experiments sharing this module (e.g. chromatic) set
+# EC2_EXPERIMENT_TAG in their own env BEFORE the first `import
+# smolbench.evals.ec2` -- it is an import-time capture (see "Env-read timing"
+# in the module docstring), so setting it later has no effect.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
 # Anchored to the repo root via this module's own location, NOT the cwd:
 # notebook kernels and scripts run with arbitrary cwds (temp dirs included),
@@ -131,6 +158,9 @@ EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # COLD checkpoint pull from HF: a ~410 GB download proved that 90/120 min are
 # too tight (a live 405B serve outran both). With the S3 cache warm these are
 # minutes, but the first-ever pull sets the bound.
+# INVARIANT: WATCHDOG_PY's own STARTUP_GRACE_MIN env fallback (used only if
+# the env var somehow fails to propagate to the instance) must match this
+# default -- keep both at "180" if either changes.
 EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
@@ -270,6 +300,37 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
+# Internal poll/timeout tuning: implementation detail, NOT env-configurable
+# like the EC2_* knobs above -- these bound how chattily this module polls
+# AWS/the instance, not anything a notebook run should need to tune.
+# ---------------------------------------------------------------------------
+# _wait_public_ip: how long to wait for DescribeInstances to report a public
+# IP after launch, and how often to re-poll while waiting.
+_WAIT_IP_TIMEOUT_S: int = 300
+_WAIT_IP_POLL_S: int = 5
+# _wait_agent: how often to retry the control-agent's /status probe, and
+# every how many polls to additionally confirm (via DescribeInstances) that
+# the instance itself is still alive -- 6 polls * 10s = one extra
+# DescribeInstances call per minute, cheap insurance against silently polling
+# a dead box for the whole timeout instead of failing fast.
+_AGENT_POLL_S: int = 10
+_AGENT_PROGRESS_EVERY_N_POLLS: int = 6
+# _wait_model_ready: how often to re-poll the agent's /status while a model
+# loads (dominated by the checkpoint download; see the function's docstring).
+_MODEL_READY_POLL_S: int = 15
+# _ensure_instance_profile: IAM is eventually consistent, so a just-created
+# role/instance-profile is not always immediately usable by RunInstances;
+# this is empirically enough slack for that propagation to catch up.
+_IAM_PROPAGATION_SLEEP_S: int = 12
+# list_models(): read timeout for the small, fast GET /v1/models metadata
+# call. Deliberately a LOCAL constant rather than importing one from
+# openai_compat -- this module's inference path stays decoupled from that
+# module's own timeout tuning (same instinct as the lazy boto3 imports
+# keeping this module's provisioning path optional for pure inference use).
+_METADATA_TIMEOUT_S: int = 120
+
+
+# ---------------------------------------------------------------------------
 # Local state file (instance identity + secrets); shared by both paths
 # ---------------------------------------------------------------------------
 
@@ -333,7 +394,7 @@ def _base_url() -> str:
     override = os.getenv("EC2_INFERENCE_BASE_URL")
     if override:
         return override.rstrip("/")
-    return f"http://{_require_state()['public_ip']}:8000/v1"
+    return f"http://{_require_state()['public_ip']}:{EC2_VLLM_PORT}/v1"
 
 
 def _api_key() -> str:
@@ -367,7 +428,7 @@ def list_models() -> list[str]:
     response = requests.get(
         url=f"{_base_url()}/models",
         headers={"Authorization": f"Bearer {_api_key()}"},
-        timeout=120,
+        timeout=_METADATA_TIMEOUT_S,
     )
     response.raise_for_status()
     return [m["id"] for m in response.json().get("data", [])]
@@ -391,6 +452,15 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
                 "Reservations"
             ]
             instances = reservations[0]["Instances"] if reservations else []
+            # NOTE: intentionally NOT using the _instance_state(region, id)
+            # helper here (see its docstring) -- that helper routes through
+            # _describe_instance, which SWALLOWS InvalidInstanceID.NotFound
+            # into "absent". Here, a raw ClientError (including NotFound) is
+            # meant to fall into the `except Exception` below and produce the
+            # generic "instance-state check failed" detail, not the specific
+            # "is absent" RuntimeError -- switching this site to the helper
+            # would silently change that error message for an aged-out
+            # instance id, which is out of scope for this refactor.
             inst_state = instances[0]["State"]["Name"] if instances else "absent"
             if inst_state not in ("pending", "running"):
                 raise RuntimeError(
@@ -426,7 +496,7 @@ def _connection(model: str) -> Tuple[str, str]:
     # the truthiness checks in _base_url/_api_key.
     if not base or not key:
         state = _require_state()
-        base = base or f"http://{state['public_ip']}:8000/v1"
+        base = base or f"http://{state['public_ip']}:{EC2_VLLM_PORT}/v1"
         key = key or state["vllm_api_key"]
     return f"{base.rstrip('/')}/chat/completions", key
 
@@ -491,6 +561,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Overridable so the repo's offline tests can run the agent unprivileged.
 RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
 AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
+# "8000" mirrors AGENT_PORT above; governs the health probe + docker -p below.
+VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
 SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
 SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
 CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
@@ -522,7 +594,8 @@ def container_state():
 
 def vllm_healthy():
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3) as resp:
+        url = "http://127.0.0.1:%d/health" % VLLM_PORT
+        with urllib.request.urlopen(url, timeout=3) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -612,7 +685,7 @@ class Handler(BaseHTTPRequestHandler):
             # --ipc=host is mandatory at tp>1: NCCL needs more shared memory
             # than docker's default 64 MB /dev/shm.
             "--gpus", "all", "--ipc=host",
-            "-p", "8000:8000",
+            "-p", "%d:%d" % (VLLM_PORT, VLLM_PORT),
             # The HF cache outlives container swaps, so each checkpoint
             # downloads once per instance. vLLM's compile/CUDA-graph cache is
             # persisted alongside it, so RE-serving a model skips the
@@ -713,8 +786,10 @@ import urllib.request
 # Overridable so the repo's offline tests can run the watchdog unprivileged.
 RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
 IDLE_TIMEOUT_S = int(os.environ.get("IDLE_TIMEOUT_MIN", "30")) * 60
-STARTUP_GRACE_S = int(os.environ.get("STARTUP_GRACE_MIN", "120")) * 60
+# INVARIANT: must match EC2_STARTUP_GRACE_MIN's default ("180") in ec2.py.
+STARTUP_GRACE_S = int(os.environ.get("STARTUP_GRACE_MIN", "180")) * 60
 CHECK_INTERVAL_S = 60
+VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))  # see AGENT_PY
 
 
 def path(name):
@@ -737,7 +812,8 @@ def mtime(name):
 def metrics_activity():
     """True/False = counters moved / are still; None = vLLM not answering."""
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8000/metrics", timeout=5) as resp:
+        url = "http://127.0.0.1:%d/metrics" % VLLM_PORT
+        with urllib.request.urlopen(url, timeout=5) as resp:
             text = resp.read().decode("utf-8", "replace")
     except Exception:
         return None
@@ -874,6 +950,7 @@ VLLM_IMAGE=@@VLLM_IMAGE@@
 S3_CACHE_URI=@@S3_CACHE_URI@@
 IDLE_TIMEOUT_MIN=@@IDLE_TIMEOUT_MIN@@
 STARTUP_GRACE_MIN=@@STARTUP_GRACE_MIN@@
+SMOLBENCH_VLLM_PORT=@@VLLM_PORT@@
 ENV_EOF
 chmod 600 /etc/smolbench/env
 
@@ -941,8 +1018,58 @@ def _render_user_data(
     max_lifetime_min: int,
     image: str,
     s3_cache_uri: str = "",
+    vllm_port: int = EC2_VLLM_PORT,
 ) -> str:
-    """Fills the user-data template; asserts it is valid and within limits."""
+    """Fills the cloud-init user-data template; validates size and completeness.
+
+    Substitutes every ``@@PLACEHOLDER@@`` marker in ``USER_DATA_TEMPLATE`` via
+    plain ``str.replace`` (not ``str.format``/f-strings -- the embedded bash
+    and python are full of literal braces and dollar signs that would collide
+    with template syntax), then asserts the result is fully substituted and
+    fits EC2's user-data size cap.
+
+    Parameters
+    ----------
+    control_token : str
+        Per-experiment bearer token the control agent requires on :EC2_AGENT_PORT.
+    vllm_api_key : str
+        Per-experiment bearer token vLLM requires on :EC2_VLLM_PORT.
+    hf_token : str
+        Hugging Face token baked in for gated checkpoints, or ``""``. Empty is
+        fine for the default (all-ungated) deploy specs.
+    idle_timeout_min : int
+        Minutes of inactivity before the on-instance watchdog self-halts.
+    startup_grace_min : int
+        Minutes a loading-but-not-yet-healthy model still counts as activity.
+    max_lifetime_min : int
+        Absolute backstop: ``shutdown -h`` scheduled this many minutes after
+        boot, regardless of activity.
+    image : str
+        vLLM Docker image reference (``docker pull``-able).
+    s3_cache_uri : str, optional
+        ``s3://bucket/prefix`` model-cache mirror, or ``""`` to disable it
+        (HF-only, the pre-S3 behavior). Default ``""``.
+    vllm_port : int, optional
+        Port threaded into the instance as ``SMOLBENCH_VLLM_PORT`` (read by
+        AGENT_PY/WATCHDOG_PY for their localhost health/metrics probes and the
+        docker port-publish in ``_serve()``). Defaults to the module-level
+        ``EC2_VLLM_PORT`` so existing callers that do not pass it keep the
+        historical behavior unchanged.
+
+    Returns
+    -------
+    str
+        The fully rendered cloud-init script, ready for ``RunInstances``'
+        ``UserData`` kwarg (boto3 base64-encodes it internally).
+
+    Raises
+    ------
+    AssertionError
+        If a heredoc delimiter appears inside an embedded payload script (it
+        would truncate the heredoc early), if any ``@@...@@`` marker survives
+        substitution, or if the rendered result is >= 16 KB (EC2's user-data
+        cap before base64 encoding).
+    """
     for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
         # A heredoc terminates at its delimiter; the scripts must never
         # contain one as a line of their own.
@@ -957,6 +1084,7 @@ def _render_user_data(
         ("@@S3_CACHE_URI@@", s3_cache_uri),
         ("@@IDLE_TIMEOUT_MIN@@", str(idle_timeout_min)),
         ("@@STARTUP_GRACE_MIN@@", str(startup_grace_min)),
+        ("@@VLLM_PORT@@", str(vllm_port)),
         ("@@AGENT_PY@@", AGENT_PY.rstrip("\n")),
         ("@@WATCHDOG_PY@@", WATCHDOG_PY.rstrip("\n")),
     ):
@@ -1034,11 +1162,11 @@ def _default_vpc_subnets(region: str) -> Tuple[Optional[str], List[Tuple[str, st
 
 
 def _authorize_ingress(region: str, group_id: str, ip: str) -> None:
-    """Opens 8000 (vLLM) + 9000 (agent) to ip/32; tolerates existing rules."""
+    """Opens EC2_VLLM_PORT + EC2_AGENT_PORT to ip/32; tolerates existing rules."""
     from botocore.exceptions import ClientError
 
     ec2 = _ec2_client(region)
-    for port in (8000, 9000):
+    for port in (EC2_VLLM_PORT, EC2_AGENT_PORT):
         try:
             ec2.authorize_security_group_ingress(
                 GroupId=group_id,
@@ -1182,7 +1310,7 @@ def _ensure_instance_profile(bucket: str) -> str:
         if _error_code(err) != "LimitExceeded":  # role already attached
             raise
     if created:
-        time.sleep(12)  # let IAM propagate before RunInstances references it
+        time.sleep(_IAM_PROPAGATION_SLEEP_S)  # let IAM propagate before RunInstances references it
     return name
 
 
@@ -1250,6 +1378,14 @@ def _recover_state_from_instance(
 
 
 def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]]:
+    """Returns the full DescribeInstances record for one instance, or None.
+
+    None covers both "never existed" and "existed but aged out of the API"
+    (``InvalidInstanceID.NotFound``, which AWS raises once a terminated
+    instance's record expires, typically about an hour after termination) --
+    callers that only need the state Name should use ``_instance_state``
+    instead, which also normalizes both cases to ``"absent"``.
+    """
     from botocore.exceptions import ClientError
 
     try:
@@ -1264,6 +1400,43 @@ def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]
         for instance in reservation["Instances"]:
             return instance
     return None
+
+
+def _instance_state(region: str, instance_id: str) -> str:
+    """Returns an instance's EC2 state Name, or "absent" when it is gone.
+
+    Thin convenience wrapper around ``_describe_instance`` for call sites that
+    need ONLY the state name. Sites that also need another field from the
+    same describe result (e.g. ``PublicIpAddress``) intentionally do NOT use
+    this helper -- routing them through it would cost a second
+    DescribeInstances call for data the caller already has in hand from its
+    own ``_describe_instance`` call. See the inline notes at those call sites
+    (``_wait_public_ip``, and ``provision_spot_instance``'s reattach branch)
+    for why they keep the raw ``(instance or {}).get(...)`` idiom instead.
+
+    Parameters
+    ----------
+    region : str
+        AWS region to query.
+    instance_id : str
+        EC2 instance id.
+
+    Returns
+    -------
+    str
+        The instance's ``State.Name`` (e.g. ``"pending"``, ``"running"``,
+        ``"shutting-down"``, ``"terminated"``), or ``"absent"`` when
+        ``_describe_instance`` returns ``None`` (never existed, or aged out
+        of the API after termination).
+
+    Notes
+    -----
+    Makes one DescribeInstances API call per invocation (via
+    ``_describe_instance``); callers polling in a loop should be mindful of
+    that cost (see the poll-interval constants near the EC2_* config block).
+    """
+    instance = _describe_instance(region, instance_id)
+    return (instance or {}).get("State", {}).get("Name", "absent")
 
 
 def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
@@ -1292,10 +1465,38 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
     return response["Instances"][0]["InstanceId"]
 
 
-def _wait_public_ip(region: str, instance_id: str, timeout_s: int = 300) -> str:
+def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIMEOUT_S) -> str:
+    """Polls DescribeInstances until ``instance_id`` reports a public IP.
+
+    Parameters
+    ----------
+    region : str
+        AWS region the instance was launched in.
+    instance_id : str
+        EC2 instance id to poll.
+    timeout_s : int, optional
+        Give up after this many seconds. Default ``_WAIT_IP_TIMEOUT_S``.
+
+    Returns
+    -------
+    str
+        The instance's public IPv4 address, as soon as EC2 reports one.
+
+    Raises
+    ------
+    RuntimeError
+        If the instance transitions to ``shutting-down``/``terminated``/
+        absent before ever getting an IP (spot reclaimed right after launch).
+    TimeoutError
+        If no public IP appears within ``timeout_s``.
+    """
     deadline = time.time() + timeout_s
     while True:
         instance = _describe_instance(region, instance_id)
+        # NOTE: NOT using _instance_state(region, instance_id) here -- this
+        # site also needs PublicIpAddress from the SAME describe result right
+        # below, and the helper would cost a second DescribeInstances call
+        # for state alone. See _instance_state's docstring.
         state = (instance or {}).get("State", {}).get("Name", "absent")
         if state in ("shutting-down", "terminated", "absent"):
             raise RuntimeError(
@@ -1307,7 +1508,7 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = 300) -> str:
             return ip
         if time.time() > deadline:
             raise TimeoutError(f"instance {instance_id} got no public IP in {timeout_s}s")
-        time.sleep(5)
+        time.sleep(_WAIT_IP_POLL_S)
 
 
 def _agent(
@@ -1317,7 +1518,7 @@ def _agent(
     """One authenticated control-agent call; raises with the body on failure."""
     response = requests.request(
         method,
-        f"http://{state['public_ip']}:9000{path}",
+        f"http://{state['public_ip']}:{EC2_AGENT_PORT}{path}",
         headers={"Authorization": f"Bearer {state['control_token']}"},
         json=payload,
         timeout=timeout,
@@ -1328,125 +1529,347 @@ def _agent(
 
 
 def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_MIN) -> None:
-    """Waits for the control agent to answer after boot/reattach."""
+    """Waits for the control agent to answer after boot/reattach.
+
+    Polls ``GET /status`` every ``_AGENT_POLL_S`` seconds; every
+    ``_AGENT_PROGRESS_EVERY_N_POLLS`` polls it additionally confirms (via
+    DescribeInstances) that the instance itself is still alive, so a spot
+    reclaim during boot fails fast with an actionable error instead of
+    silently exhausting the whole ``timeout_min`` budget.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Instance state dict (needs ``public_ip``, ``control_token``,
+        ``region``, ``instance_id``).
+    timeout_min : int, optional
+        Give up after this many minutes. Default ``EC2_PROVISION_TIMEOUT_MIN``.
+
+    Raises
+    ------
+    RuntimeError
+        If the periodic liveness check finds the instance no longer
+        ``pending``/``running`` (spot reclaimed while waiting for its agent).
+    TimeoutError
+        If the agent never answers within ``timeout_min``.
+    """
+    from botocore.exceptions import ClientError
+
     deadline = time.time() + timeout_min * 60
     polls = 0
     while True:
         try:
             _agent(state, "GET", "/status", timeout=5)
-            logging.info(f"control agent up at {state['public_ip']}:9000")
+            logging.info(f"control agent up at {state['public_ip']}:{EC2_AGENT_PORT}")
             return
         except (requests.exceptions.RequestException, RuntimeError):
             pass
         polls += 1
-        if polls % 6 == 0:  # every minute, make sure the box still exists
+        if polls % _AGENT_PROGRESS_EVERY_N_POLLS == 0:  # every minute, make sure the box still exists
             try:
-                instance = _describe_instance(state["region"], state["instance_id"])
-                inst_state = (instance or {}).get("State", {}).get("Name", "absent")
+                inst_state = _instance_state(state["region"], state["instance_id"])
                 if inst_state not in ("pending", "running"):
                     raise RuntimeError(
                         f"instance {state['instance_id']} went {inst_state} while waiting "
                         "for its agent (spot reclaimed?); re-run provision_spot_instance()."
                     )
-            except ImportError:
+            except ClientError:
+                # A transient describe failure (throttling, a brief AWS-side
+                # blip) should not abort the wait -- swallow it and re-check
+                # on the next progress poll. The RuntimeError raised just
+                # above (instance genuinely gone) is not a ClientError and
+                # still propagates.
                 pass
         if time.time() > deadline:
             raise TimeoutError(
-                f"control agent at {state['public_ip']}:9000 not answering after "
+                f"control agent at {state['public_ip']}:{EC2_AGENT_PORT} not answering after "
                 f"{timeout_min} min. Debug via the EC2 serial console / instance "
                 "screenshot, or relaunch with EC2_KEY_NAME set for SSH; bootstrap "
                 "logs to /var/log/smolbench-bootstrap.log on the instance."
             )
-        time.sleep(10)
+        time.sleep(_AGENT_POLL_S)
 
 
-def provision_spot_instance(
-    instance_types: Optional[Tuple[str, ...]] = None,
-    regions: Optional[Tuple[str, ...]] = None,
-    volume_gb: Optional[int] = None,
-    idle_timeout_min: Optional[int] = None,
-    max_lifetime_min: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Provisions (or reattaches to) the experiment's EC2 spot instance.
+def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
+    """``provision_spot_instance`` branch 1: reuse the state-file instance.
 
-    Idempotent: a live instance recorded in the state file is reused -- the
-    security group is re-authorized for the caller's CURRENT public IP and the
-    saved endpoint refreshed -- so re-running the notebook cell after a kernel
-    restart is safe. Otherwise launches a fresh one-time spot instance,
-    hunting capacity type-major across ``instance_types`` x ``regions`` x each
-    region's default-VPC subnets (AZs).
+    Preconditions: none -- safe to call unconditionally. A missing/corrupt
+    state file (``_load_state()`` returns ``None``) is a normal "nothing to
+    reattach to" outcome, not an error.
 
-    Returns the state dict (also persisted to ``EC2_STATE_FILE``): instance_id,
-    region, public_ip, instance_type, control_token, vllm_api_key, ...
+    Side effects (only when an instance IS reattached): re-authorizes the
+    security group for ``my_ip``, refreshes and persists ``public_ip`` in the
+    state file, and blocks until the control agent answers. When the
+    recorded instance is no longer alive, the stale state file is cleared as
+    a side effect so the caller's next strategy (tag recovery, then a fresh
+    launch) starts from a clean slate.
+
+    Parameters
+    ----------
+    my_ip : str
+        Caller's current public IP, to (re-)authorize in the security group.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        The refreshed, already-saved state dict when the state-file instance
+        is still ``pending``/``running``; ``None`` when there is no state
+        file, or the recorded instance is no longer alive.
     """
-    instance_types = tuple(instance_types or EC2_INSTANCE_TYPES)
-    regions = tuple(regions or EC2_REGIONS)
-    volume_gb = volume_gb or EC2_ROOT_VOLUME_GB
-    idle_timeout_min = idle_timeout_min or EC2_IDLE_TIMEOUT_MIN
-    max_lifetime_min = max_lifetime_min or EC2_MAX_LIFETIME_MIN
-
-    from botocore.exceptions import ClientError
-
-    my_ip = _my_public_ip()
-
-    # 1) Reattach to the instance in the state file when it is still alive.
     state = _load_state()
-    if state is not None:
-        instance = _describe_instance(state["region"], state["instance_id"])
-        inst_state = (instance or {}).get("State", {}).get("Name", "absent")
-        if inst_state in ("pending", "running"):
-            _authorize_ingress(state["region"], state["security_group_id"], my_ip)
-            state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
-                state["region"], state["instance_id"]
-            )
-            _save_state(state)
-            _wait_agent(state)
-            logging.info(
-                f"provision_spot_instance: reattached to {state['instance_id']} "
-                f"({state['instance_type']} @ {state['region']}, {state['public_ip']})"
-            )
-            return state
+    if state is None:
+        return None
+    instance = _describe_instance(state["region"], state["instance_id"])
+    # NOTE: NOT using _instance_state(region, instance_id) here -- `instance`
+    # is reused for PublicIpAddress just below, and the helper would cost a
+    # second DescribeInstances call for state alone. See _instance_state's
+    # docstring.
+    inst_state = (instance or {}).get("State", {}).get("Name", "absent")
+    if inst_state in ("pending", "running"):
+        _authorize_ingress(state["region"], state["security_group_id"], my_ip)
+        state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
+            state["region"], state["instance_id"]
+        )
+        _save_state(state)
+        _wait_agent(state)
         logging.info(
-            f"provision_spot_instance: stale state ({state['instance_id']} is {inst_state}); relaunching."
+            f"provision_spot_instance: reattached to {state['instance_id']} "
+            f"({state['instance_type']} @ {state['region']}, {state['public_ip']})"
         )
-        _clear_state()
+        return state
+    logging.info(
+        f"provision_spot_instance: stale state ({state['instance_id']} is {inst_state}); relaunching."
+    )
+    _clear_state()
+    return None
 
-    # 2) A live tagged instance without a state file: rebuild the state from
-    #    the instance itself -- its secrets ride in its user-data (readable
-    #    via DescribeInstanceAttribute; see the security model note up top),
-    #    so losing the local file must not strand a $30-45/h box.
+
+def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
+    """``provision_spot_instance`` branch 2: recover a live tagged instance.
+
+    Runs only after branch 1 finds nothing to reattach to. Covers a lost/
+    never-written local state file: a live instance tagged
+    ``smolbench:experiment=EC2_EXPERIMENT_TAG`` carries its own secrets in its
+    user-data (see ``_recover_state_from_instance``), so this rebuilds the
+    state dict from the instance itself rather than stranding a $30-45/h box.
+
+    Side effects (only when state IS recovered): same as
+    ``_reattach_existing_instance`` -- re-authorizes ingress, refreshes and
+    persists ``public_ip``, waits for the agent.
+
+    Parameters
+    ----------
+    my_ip : str
+        Caller's current public IP, to (re-)authorize in the security group.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        The recovered, already-saved state dict when a tagged live instance
+        is found AND its user-data parses; ``None`` when no tagged instance
+        exists at all (the caller should proceed to a fresh launch).
+
+    Raises
+    ------
+    RuntimeError
+        A tagged live instance exists but its user-data could not be parsed
+        for the control token (a foreign or older-format instance) --
+        refusing to silently reuse a box this process cannot authenticate to.
+    """
     found = _find_tagged_instance()
-    if found is not None:
-        region, instance = found
-        state = _recover_state_from_instance(region, instance)
-        if state is not None:
-            _authorize_ingress(region, state["security_group_id"], my_ip)
-            state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
-                region, state["instance_id"]
-            )
-            _save_state(state)
-            _wait_agent(state)
-            logging.info(
-                f"provision_spot_instance: recovered state for {state['instance_id']} "
-                f"({state['instance_type']} @ {region}, {state['public_ip']}) "
-                "from its user-data"
-            )
-            return state
-        name = next(
-            (t["Value"] for t in instance.get("Tags", []) if t["Key"] == "Name"), "?"
+    if found is None:
+        return None
+    region, instance = found
+    state = _recover_state_from_instance(region, instance)
+    if state is not None:
+        _authorize_ingress(region, state["security_group_id"], my_ip)
+        state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
+            region, state["instance_id"]
         )
-        raise RuntimeError(
-            f"Found live instance {instance['InstanceId']} (Name={name}, "
-            f"{instance.get('InstanceType', '?')} @ {region}, launched "
-            f"{instance.get('LaunchTime', '?')}) tagged "
-            f"smolbench:experiment={EC2_EXPERIMENT_TAG}, but no local state file, and its "
-            "user-data could not be parsed for the control token, so it cannot be "
-            "reused. If it is someone else's run (or a test) wait for it to "
-            "finish/self-terminate; otherwise run shutdown_instance() to terminate it, "
-            "then provision again."
+        _save_state(state)
+        _wait_agent(state)
+        logging.info(
+            f"provision_spot_instance: recovered state for {state['instance_id']} "
+            f"({state['instance_type']} @ {region}, {state['public_ip']}) "
+            "from its user-data"
         )
+        return state
+    name = next(
+        (t["Value"] for t in instance.get("Tags", []) if t["Key"] == "Name"), "?"
+    )
+    raise RuntimeError(
+        f"Found live instance {instance['InstanceId']} (Name={name}, "
+        f"{instance.get('InstanceType', '?')} @ {region}, launched "
+        f"{instance.get('LaunchTime', '?')}) tagged "
+        f"smolbench:experiment={EC2_EXPERIMENT_TAG}, but no local state file, and its "
+        "user-data could not be parsed for the control token, so it cannot be "
+        "reused. If it is someone else's run (or a test) wait for it to "
+        "finish/self-terminate; otherwise run shutdown_instance() to terminate it, "
+        "then provision again."
+    )
 
-    # 3) Fresh launch.
+
+def _run_instances_kwargs(
+    ami: str,
+    instance_type: str,
+    subnet_id: str,
+    group_id: str,
+    root_device: str,
+    volume_gb: int,
+    user_data: str,
+    key_name: str,
+    iam_profile: Optional[str],
+) -> Dict[str, Any]:
+    """Builds the ``run_instances`` kwargs for one launch attempt.
+
+    Pure and side-effect-free (no AWS calls): every value that varies per
+    attempt (AZ/subnet, AMI, instance type, security group, root device) is a
+    parameter; values fixed for the whole experiment (root-volume throughput/
+    IOPS, the experiment tag) are read from the module-level ``EC2_*``
+    constants, exactly as the inline dict this was extracted from did.
+
+    Parameters
+    ----------
+    ami : str
+        AMI id resolved for the target region (see ``_resolve_ami``).
+    instance_type : str
+        e.g. ``"p5e.48xlarge"``.
+    subnet_id : str
+        Default-VPC subnet to launch into (pins the availability zone).
+    group_id : str
+        Security group id from ``_ensure_security_group``.
+    root_device : str
+        Root device name for ``ami`` (e.g. ``"/dev/sda1"``), from
+        ``_resolve_ami``.
+    volume_gb : int
+        Root gp3 volume size in GiB.
+    user_data : str
+        Rendered cloud-init script (see ``_render_user_data``); passed
+        through unencoded -- boto3 base64-encodes it internally.
+    key_name : str
+        EC2 key pair name for SSH debugging, or ``""`` to omit the
+        ``KeyName`` kwarg entirely (no key pair attached).
+    iam_profile : Optional[str]
+        Instance-profile name for the S3 model cache, or ``None``/``""`` to
+        omit the ``IamInstanceProfile`` kwarg (no S3 cache configured).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Keyword arguments for ``ec2_client.run_instances(**kwargs)``: a
+        one-time Spot instance with InstanceInitiatedShutdownBehavior=
+        terminate (see ``_try_launch`` for the fallback when an API rejects
+        that combination), a single ENI with a public IP in the experiment's
+        security group, and a gp3 root volume sized/tuned from
+        ``EC2_ROOT_VOLUME_*``.
+    """
+    kwargs: Dict[str, Any] = {
+        "ImageId": ami,
+        "InstanceType": instance_type,
+        "MinCount": 1,
+        "MaxCount": 1,
+        "InstanceMarketOptions": {
+            "MarketType": "spot",
+            "SpotOptions": {
+                "SpotInstanceType": "one-time",
+                "InstanceInterruptionBehavior": "terminate",
+            },
+        },
+        "InstanceInitiatedShutdownBehavior": "terminate",
+        "NetworkInterfaces": [
+            {
+                "DeviceIndex": 0,
+                "SubnetId": subnet_id,
+                "Groups": [group_id],
+                "AssociatePublicIpAddress": True,
+                "DeleteOnTermination": True,
+            }
+        ],
+        "BlockDeviceMappings": [
+            {
+                "DeviceName": root_device,
+                "Ebs": {
+                    "VolumeSize": volume_gb,
+                    "VolumeType": "gp3",
+                    "Throughput": EC2_ROOT_VOLUME_THROUGHPUT,
+                    "Iops": EC2_ROOT_VOLUME_IOPS,
+                    "DeleteOnTermination": True,
+                },
+            }
+        ],
+        "TagSpecifications": [
+            {
+                "ResourceType": "instance",
+                "Tags": [
+                    {"Key": "smolbench:experiment", "Value": EC2_EXPERIMENT_TAG},
+                    {"Key": "Name", "Value": f"smolbench-{EC2_EXPERIMENT_TAG}"},
+                ],
+            }
+        ],
+        "UserData": user_data,
+    }
+    if key_name:
+        kwargs["KeyName"] = key_name
+    if iam_profile:
+        kwargs["IamInstanceProfile"] = {"Name": iam_profile}
+    return kwargs
+
+
+def _launch_fresh(
+    instance_types: Tuple[str, ...],
+    regions: Tuple[str, ...],
+    volume_gb: int,
+    idle_timeout_min: int,
+    max_lifetime_min: int,
+    my_ip: str,
+) -> Dict[str, Any]:
+    """``provision_spot_instance`` branch 3: hunt capacity and launch fresh.
+
+    Runs only after branches 1 and 2 find nothing to reattach to or recover.
+    Generates fresh per-experiment secrets (control token, vLLM API key),
+    optionally provisions the S3 model-cache bucket/instance-profile, renders
+    the cloud-init user-data once, then hunts Spot capacity TYPE-MAJOR: every
+    region (and every default-VPC subnet/AZ within it) is tried for the first
+    instance type before falling back to the next type. Per-region resources
+    (AMI, security group, subnets) are resolved once and cached across the
+    instance-type loop via ``region_info``.
+
+    Parameters
+    ----------
+    instance_types : Tuple[str, ...]
+        Instance types to try, in priority order (already defaulted by the
+        caller to ``EC2_INSTANCE_TYPES`` when the notebook passes ``None``).
+    regions : Tuple[str, ...]
+        Regions to try per instance type (already defaulted to
+        ``EC2_REGIONS``).
+    volume_gb : int
+        Root gp3 volume size in GiB (already defaulted to
+        ``EC2_ROOT_VOLUME_GB``).
+    idle_timeout_min : int
+        Minutes of inactivity before the watchdog self-halts (already
+        defaulted to ``EC2_IDLE_TIMEOUT_MIN``).
+    max_lifetime_min : int
+        Absolute lifetime backstop in minutes (already defaulted to
+        ``EC2_MAX_LIFETIME_MIN``).
+    my_ip : str
+        Caller's public IP (resolved ONCE by ``provision_spot_instance`` and
+        threaded through here) to authorize in each region's security group.
+        Deliberately NOT re-resolved per region: reusing one snapshot for the
+        whole hunt matches the pre-extraction behavior exactly and avoids one
+        extra ``checkip.amazonaws.com`` round trip per region encountered.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The newly launched instance's state dict (already saved to
+        ``EC2_STATE_FILE``), once its control agent answers.
+
+    Raises
+    ------
+    RuntimeError
+        No ``(instance_type, region)`` combination yielded capacity; the
+        message lists every attempt and its failure reason/code.
+    """
     control_token = secrets.token_urlsafe(32)
     vllm_api_key = secrets.token_urlsafe(32)
     hf_token = os.getenv("HF_TOKEN", "")
@@ -1483,7 +1906,10 @@ def provision_spot_instance(
         max_lifetime_min=max_lifetime_min,
         image=EC2_VLLM_IMAGE,
         s3_cache_uri=EC2_S3_MODEL_CACHE,
+        vllm_port=EC2_VLLM_PORT,
     )
+
+    from botocore.exceptions import ClientError  # lazy: keep the inference path boto3-free
 
     region_info: Dict[str, Optional[Dict[str, Any]]] = {}  # cached per-region lookups
     attempts: List[str] = []
@@ -1510,55 +1936,17 @@ def provision_spot_instance(
                 attempts.append(f"{instance_type} @ {region}: not offered")
                 continue
             for subnet_id, az in info["subnets"]:
-                kwargs: Dict[str, Any] = {
-                    "ImageId": info["ami"],
-                    "InstanceType": instance_type,
-                    "MinCount": 1,
-                    "MaxCount": 1,
-                    "InstanceMarketOptions": {
-                        "MarketType": "spot",
-                        "SpotOptions": {
-                            "SpotInstanceType": "one-time",
-                            "InstanceInterruptionBehavior": "terminate",
-                        },
-                    },
-                    "InstanceInitiatedShutdownBehavior": "terminate",
-                    "NetworkInterfaces": [
-                        {
-                            "DeviceIndex": 0,
-                            "SubnetId": subnet_id,
-                            "Groups": [info["group_id"]],
-                            "AssociatePublicIpAddress": True,
-                            "DeleteOnTermination": True,
-                        }
-                    ],
-                    "BlockDeviceMappings": [
-                        {
-                            "DeviceName": info["root_device"],
-                            "Ebs": {
-                                "VolumeSize": volume_gb,
-                                "VolumeType": "gp3",
-                                "Throughput": EC2_ROOT_VOLUME_THROUGHPUT,
-                                "Iops": EC2_ROOT_VOLUME_IOPS,
-                                "DeleteOnTermination": True,
-                            },
-                        }
-                    ],
-                    "TagSpecifications": [
-                        {
-                            "ResourceType": "instance",
-                            "Tags": [
-                                {"Key": "smolbench:experiment", "Value": EC2_EXPERIMENT_TAG},
-                                {"Key": "Name", "Value": f"smolbench-{EC2_EXPERIMENT_TAG}"},
-                            ],
-                        }
-                    ],
-                    "UserData": user_data,
-                }
-                if EC2_KEY_NAME:
-                    kwargs["KeyName"] = EC2_KEY_NAME
-                if iam_profile:
-                    kwargs["IamInstanceProfile"] = {"Name": iam_profile}
+                kwargs = _run_instances_kwargs(
+                    ami=info["ami"],
+                    instance_type=instance_type,
+                    subnet_id=subnet_id,
+                    group_id=info["group_id"],
+                    root_device=info["root_device"],
+                    volume_gb=volume_gb,
+                    user_data=user_data,
+                    key_name=EC2_KEY_NAME,
+                    iam_profile=iam_profile,
+                )
                 try:
                     logging.info(f"provision_spot_instance: trying {instance_type} in {az} ...")
                     instance_id = _try_launch(region, kwargs)
@@ -1602,6 +1990,57 @@ def provision_spot_instance(
     )
 
 
+def provision_spot_instance(
+    instance_types: Optional[Tuple[str, ...]] = None,
+    regions: Optional[Tuple[str, ...]] = None,
+    volume_gb: Optional[int] = None,
+    idle_timeout_min: Optional[int] = None,
+    max_lifetime_min: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Provisions (or reattaches to) the experiment's EC2 spot instance.
+
+    Idempotent: a live instance recorded in the state file is reused -- the
+    security group is re-authorized for the caller's CURRENT public IP and the
+    saved endpoint refreshed -- so re-running the notebook cell after a kernel
+    restart is safe. Otherwise launches a fresh one-time spot instance,
+    hunting capacity type-major across ``instance_types`` x ``regions`` x each
+    region's default-VPC subnets (AZs).
+
+    Delegates to three helpers, tried in order, each covering one branch of
+    the idempotency contract: ``_reattach_existing_instance`` (state-file
+    reuse), ``_recover_tagged_instance`` (state-file lost but a live tagged
+    instance exists), ``_launch_fresh`` (neither -- hunt capacity and launch).
+
+    Returns the state dict (also persisted to ``EC2_STATE_FILE``): instance_id,
+    region, public_ip, instance_type, control_token, vllm_api_key, ...
+    """
+    instance_types = tuple(instance_types or EC2_INSTANCE_TYPES)
+    regions = tuple(regions or EC2_REGIONS)
+    volume_gb = volume_gb or EC2_ROOT_VOLUME_GB
+    idle_timeout_min = idle_timeout_min or EC2_IDLE_TIMEOUT_MIN
+    max_lifetime_min = max_lifetime_min or EC2_MAX_LIFETIME_MIN
+
+    my_ip = _my_public_ip()
+
+    # 1) Reattach to the instance in the state file when it is still alive.
+    state = _reattach_existing_instance(my_ip)
+    if state is not None:
+        return state
+
+    # 2) A live tagged instance without a state file: rebuild the state from
+    #    the instance itself -- its secrets ride in its user-data (readable
+    #    via DescribeInstanceAttribute; see the security model note up top),
+    #    so losing the local file must not strand a $30-45/h box.
+    state = _recover_tagged_instance(my_ip)
+    if state is not None:
+        return state
+
+    # 3) Fresh launch.
+    return _launch_fresh(
+        instance_types, regions, volume_gb, idle_timeout_min, max_lifetime_min, my_ip
+    )
+
+
 def _wait_model_ready(
     state: Dict[str, Any], model: str, timeout_min: int = EC2_SERVE_TIMEOUT_MIN
 ) -> None:
@@ -1632,7 +2071,7 @@ def _wait_model_ready(
                 f"{model!r} not healthy after {timeout_min} min "
                 f"(container={container}); docker logs tail:\n{status.get('log_tail', '')}"
             )
-        time.sleep(15)
+        time.sleep(_MODEL_READY_POLL_S)
 
 
 @contextlib.contextmanager

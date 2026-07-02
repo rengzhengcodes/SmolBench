@@ -12,9 +12,10 @@ import numpy as np
 from smolbench.evals import Quiz, ToF, Numeric, Answer
 from smolbench.induction._common import (
     Prompter,
-    make_noise,
+    build_substitution,
+    noise_pad,
     quizzes_from_prompts,
-    random_unique_strings,
+    random_labels,
 )
 
 # Re-exported for callers configuring the benchmark (the class is shared with
@@ -67,18 +68,14 @@ class PeriodicConfig:
                 raise ValueError(
                     f"When labels is int it must equal n ({self.n}), got {self.labels}."
                 )
-            length = max(
-                2,
-                int(np.ceil(np.emath.logn(len(_LABEL_CHARSET), self.labels))) * 2,
-            )
+            # min_length=2: periodic labels are always multi-character, even
+            # for small n where the information-theoretic minimum would
+            # allow single letters -- see random_labels' docstring.
             object.__setattr__(
                 self,
                 "labels",
-                tuple(
-                    random_unique_strings(
-                        self.labels, length, np.random.default_rng(self.seed),
-                        charset=_LABEL_CHARSET,
-                    )
+                random_labels(
+                    self.labels, self.seed, charset=_LABEL_CHARSET, min_length=2
                 ),
             )
         else:
@@ -173,18 +170,18 @@ def get_periodic_prompts(
     intension: str = _render_intensional(period_to_label)
     extension: str = _render_extensional(pos_to_compound)
 
-    noise_rng: np.random.Generator = np.random.default_rng(config.seed + 1)
-    noise_intension: str = intension + make_noise(
-        max(0, len(extension) - len(intension)), noise_rng
-    )
-
-    extens_template = prompter.extens_template or prompter.template
+    noise_intension: str = noise_pad(intension, extension, config.seed)
 
     for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
-        sub = query | prompter.substitution
-        intens = prompter.template.safe_substitute(sub | {"positive_info": intension})
-        extens = extens_template.safe_substitute(sub | {"positive_info": extension})
-        noise_intens = prompter.template.safe_substitute(sub | {"positive_info": noise_intension})
+        intens = prompter.template.safe_substitute(
+            build_substitution(query, prompter, intension)
+        )
+        extens = prompter.resolved_extens_template.safe_substitute(
+            build_substitution(query, prompter, extension)
+        )
+        noise_intens = prompter.template.safe_substitute(
+            build_substitution(query, prompter, noise_intension)
+        )
 
         yield intens, extens, noise_intens, answer
 

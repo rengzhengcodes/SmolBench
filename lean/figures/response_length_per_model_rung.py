@@ -10,7 +10,6 @@ Run:
     uv run python figures/response_length_per_model_rung.py --runs main_v3 main_v3_2
 """
 
-import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -19,21 +18,23 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _util import (
+    DEFAULT_FIGSIZE,
     EXCLUDE_MODELS,
     HINT_LABELS,
     HINT_RUNGS,
     NOISE_RUNGS_ALIGNED as NOISE_RUNGS,
+    figure_out_path,
     is_reasoning,
     load_rows,
     model_sort_key,
     models_per_run,
+    parse_runs_args,
     pretty_model,
+    save_figure,
     trivial_skip_keys,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
-OUT_PATH = ROOT / "figures/response_length_per_model_rung.png"
+OUT_PATH = figure_out_path("response_length_per_model_rung")
 
 # Two trendlines per model: hint line through (no hint, hint 1..5), noise line
 # through (noise 2..5). Noise paired with hint:N at matched token volume; user
@@ -42,12 +43,9 @@ OUT_PATH = ROOT / "figures/response_length_per_model_rung.png"
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", nargs="+", default=DEFAULT_RUNS,
-                    help="run dirs under results/runs/ to merge (default: %(default)s)")
-    args = ap.parse_args()
-    print(f"runs: {args.runs}")
-    rows = load_rows(args.runs)
+    runs = parse_runs_args()
+    print(f"runs: {runs}")
+    rows = load_rows(runs)
     real = [r for r in rows if r.get("model")]
 
     # Drop (theorem, k) pairs that were trivial-skipped at any rung shown.
@@ -93,7 +91,7 @@ def main():
     reasoning = [m for m in models if is_reasoning(m)]
     non_reasoning = [m for m in models if not is_reasoning(m)]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    fig, axes = plt.subplots(1, 2, figsize=DEFAULT_FIGSIZE)
     cmap = plt.get_cmap("tab10")
     x = np.arange(len(HINT_RUNGS))
 
@@ -131,14 +129,11 @@ def main():
         ax.set_xticklabels(HINT_LABELS, rotation=20, ha="right")
         ax.set_xlabel("Hint level")
         ax.set_ylabel("Median response length (completion_tokens)")
-        ax.set_title(f"{title} models  —  {' + '.join(args.runs)}")
+        ax.set_title(f"{title} models  —  {' + '.join(runs)}")
         ax.grid(True, axis="y", alpha=0.3, which="both")
         ax.legend(fontsize=7, loc="best", ncol=1)
 
-    plt.tight_layout()
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUT_PATH, dpi=140)
-    print(f"saved {OUT_PATH}")
+    save_figure(OUT_PATH)
 
 
 if __name__ == "__main__":
