@@ -13,7 +13,6 @@ Run:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -21,45 +20,31 @@ import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _util import pretty_model, model_sort_key
+from _util import (
+    EXCLUDE_MODELS,
+    FAMILY_ORDER,
+    HINT_LABELS_VERBOSE as HINT_LABELS,
+    HINT_RUNGS,
+    NOISE_RUNGS,
+    family_color_map,
+    is_reasoning,
+    lighten,
+    load_rows,
+    model_family,
+    models_per_run,
+    order_within_group,
+    pretty_model,
+    trivial_skip_keys,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNS = ["main_v3", "main_v3_2"]
 OUT_PATH = ROOT / "figures/success_rate_bars.png"
 
-HINT_RUNGS = ["stepk:2", "hint:0", "hint:1", "hint:2", "hint:3"]
-HINT_LABELS = ["None", "1: Names", "2: Signatures", "3: Derivations", "4: 1-hop deriv."]
-NOISE_RUNGS = ["noise:1", "noise:2", "noise:3"]
-EXCLUDE_MODELS = {"v3.2-speciale"}
-
-
-def is_reasoning(model_name: str) -> bool:
-    n = model_name.lower()
-    return ("high" in n) or ("thinking" in n) or ("speciale" in n)
-
-
-def load_rows(runs):
-    rows = []
-    for run in runs:
-        path = ROOT / f"results/runs/{run}/all_rows.jsonl"
-        if not path.exists():
-            print(f"warning: {path} missing, skipping")
-            continue
-        for l in path.open():
-            if not l.strip():
-                continue
-            r = json.loads(l)
-            r["_run"] = run
-            rows.append(r)
-    return rows
-
-
-def models_per_run(real):
-    out = {}
-    for r in real:
-        if r.get("model"):
-            out.setdefault(r["_run"], set()).add(r["model"])
-    return out
+# This figure uses the "degree of positive information" verbose labels
+# rather than _util's terse HINT_LABELS — see _util.HINT_LABELS_VERBOSE
+# docstring for why both label sets are kept (this is the only script that
+# uses the verbose one).
 
 
 def main():
@@ -71,12 +56,7 @@ def main():
     real = [r for r in rows if r.get("model")]
 
     # Trivial-skip filter: keep only (theorem, k) present at every hint level.
-    rung_to_keys = {r: set() for r in HINT_RUNGS}
-    for r in real:
-        rung = r.get("rung")
-        if rung in rung_to_keys:
-            rung_to_keys[rung].add((r.get("theorem_id"), r.get("k")))
-    keep = set.intersection(*rung_to_keys.values())
+    keep = trivial_skip_keys(real, HINT_RUNGS)
     print(f"theorems present at every hint level: {len(keep)}")
 
     # No-hint per-model filter: theorems where this model succeeded somewhere
@@ -112,36 +92,17 @@ def main():
 
     # Family detection: each toggle pair shares one family color, with the
     # reasoning version drawn in the saturated family color and the
-    # non-reasoning version in a lighter blend of the same color.
-    def family(model: str) -> str:
-        if model.startswith("gemini-flash-"): return "gemini"
-        if model.startswith("kimi-k2.6-"): return "kimi"
-        if model.startswith("v3.2-"): return "deepseek"
-        if model.startswith("gpt-5.5-"): return "gpt-5.5"
-        if model.startswith("sonnet-4.6-"): return "sonnet-4.6"
-        return model
-
-    family_order = ["gemini", "kimi", "deepseek", "gpt-5.5", "sonnet-4.6"]
-    cmap = plt.get_cmap("tab10")
-    family_color = {f: cmap(i) for i, f in enumerate(family_order)}
-
-    import matplotlib.colors as mcolors
-    def lighten(c, factor=0.55):
-        rgb = mcolors.to_rgb(c)
-        return tuple(rgb[i] + (1.0 - rgb[i]) * factor for i in range(3))
+    # non-reasoning version in a lighter blend of the same color. (Shared
+    # with marginal_content_vs_noise.py via _util's model_family/family_idx/
+    # order_within_group/family_color_map/lighten.)
+    family = model_family
+    family_color = family_color_map()
 
     # Within each group (reasoning, non-reasoning), order by family then put
     # low-n models last (so gpt-5.5 / sonnet-4.6 sit at the right edge).
-    def family_idx(m):
-        f = family(m)
-        return family_order.index(f) if f in family_order else 999
-
-    def order_within_group(models):
-        return sorted(models, key=lambda m: (1 if m in low_n_models else 0, family_idx(m), m))
-
     all_in_bucket = {k[0] for k in bucket}
-    reasoning = order_within_group([m for m in all_in_bucket if is_reasoning(m)])
-    non_reasoning = order_within_group([m for m in all_in_bucket if not is_reasoning(m)])
+    reasoning = order_within_group([m for m in all_in_bucket if is_reasoning(m)], low_n_models)
+    non_reasoning = order_within_group([m for m in all_in_bucket if not is_reasoning(m)], low_n_models)
 
     def rate(model, rung):
         vs = bucket.get((model, rung), [])
@@ -201,7 +162,7 @@ def main():
     # fills COLUMN-major, so handles must be ordered as the full left column
     # followed by the full right column.
     from matplotlib.patches import Patch
-    families_present = [f for f in family_order
+    families_present = [f for f in FAMILY_ORDER
                         if any(family(m) == f for m in reasoning + non_reasoning)]
 
     r_handles, r_labels, nr_handles, nr_labels = [], [], [], []

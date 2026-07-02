@@ -10,12 +10,15 @@ Run:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _util import load_rows
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNS = ["main_v3", "main_v3_2"]
@@ -23,17 +26,6 @@ OUT_PATH = ROOT / "figures/prompt_length_vs_hint.png"
 
 LEVELS = ["stepk:2", "hint:0", "hint:1", "hint:2", "hint:3"]
 LABELS = ["no hint", "hint 1", "hint 2", "hint 3", "hint 4"]
-
-
-def load_rows(runs):
-    rows = []
-    for run in runs:
-        path = ROOT / f"results/runs/{run}/all_rows.jsonl"
-        if not path.exists():
-            print(f"warning: {path} missing, skipping")
-            continue
-        rows.extend(json.loads(l) for l in path.open() if l.strip())
-    return rows
 
 
 def load_prompt_tokens_by_level(runs):

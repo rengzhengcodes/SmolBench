@@ -29,8 +29,9 @@ with c = 1 (a harmonic failed once is not assumed failed with certainty). A
 sensitivity pass with pure condition-mean rates (no per-harmonic structure)
 is reported alongside.
 
-Run:
-    uv run --with scipy --with statsmodels python notebooks/periodic/power_analysis.py
+Run (ephemeral env via --no-project: plain `uv run` would sync the project
+and strip the notebook/dev extras from .venv):
+    uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/periodic/power_analysis.py
 """
 
 import re

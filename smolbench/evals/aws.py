@@ -1,6 +1,10 @@
 """
 Interfacing with AWS-hosted models through an OpenAI-compatible endpoint.
 
+A configuration over :mod:`smolbench.evals.openai_compat` (the shared retry/
+parsing/evaluation core); what lives here is AWS-specific endpoint and auth
+resolution plus the optional SageMaker endpoint provisioning helpers.
+
 Defaults to Amazon Bedrock's OpenAI-compatible Chat Completions API on the
 bedrock-mantle endpoint, which fronts a broad catalog of chat models behind a
 single base URL (Qwen, Mistral, DeepSeek, Gemma, OpenAI gpt-oss, GLM, Kimi,
@@ -21,6 +25,10 @@ SageMaker (point the same client at your deployed endpoint):
     AWS_INFERENCE_BASE_URL=https://runtime.sagemaker.<region>.amazonaws.com/endpoints/<endpoint>/openai/v1
     AWS_INFERENCE_API_KEY=<minted bearer token>   # SageMaker tokens last <= 12h
 
+All env config is read at CALL time, never import time: setting or refreshing
+AWS_INFERENCE_API_KEY (e.g. after ``mint_sagemaker_token``) takes effect on
+the next request with no re-import, and no module global needs mutating.
+
 Enabling Bedrock model access and minting a SageMaker token are out-of-band
 steps; the inference path stays dependency-free and only speaks HTTP. The
 optional ``provision_endpoint`` helper can deploy and tear down a SageMaker
@@ -35,44 +43,52 @@ import contextlib
 import logging
 import os
 import time
-from typing import Any, Optional, Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import requests
-from joblib import Parallel, delayed
 
-from smolbench.evals import Answer, QnA, Quiz, Mark, Marks
+from smolbench.evals.openai_compat import ChatClient
 
-AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
-# Long-lived Bedrock API key (AWS's own env-var name). For SageMaker, override
-# with AWS_INFERENCE_API_KEY (a minted, time-limited bearer token).
-AWS_BEARER_TOKEN_BEDROCK: str = os.getenv("AWS_BEARER_TOKEN_BEDROCK", None)
-AWS_INFERENCE_API_KEY: str = os.getenv("AWS_INFERENCE_API_KEY") or AWS_BEARER_TOKEN_BEDROCK
-# Full base URL up to (but excluding) "/chat/completions". Defaults to the
-# bedrock-mantle endpoint -- AWS's OpenAI-compatible surface fronting the broad
-# model catalog (Anthropic, Qwen, Mistral, DeepSeek, Gemma, gpt-oss, GLM, Kimi,
-# Nemotron, MiniMax, ...; call list_models()). Verified live in us-east-1.
-# Override AWS_INFERENCE_BASE_URL for:
-#   - bedrock-runtime's OpenAI surface (serves only the OpenAI gpt-oss models;
-#     Anthropic/Nova there are reached via Converse/Messages, not this API):
-#       https://bedrock-runtime.{region}.amazonaws.com/openai/v1
-#   - a SageMaker endpoint:
-#       https://runtime.sagemaker.{region}.amazonaws.com/endpoints/{ep}/openai/v1
-AWS_INFERENCE_BASE_URL: str = os.getenv(
-    "AWS_INFERENCE_BASE_URL",
-    f"https://bedrock-mantle.{AWS_REGION}.api.aws/v1",
-).rstrip("/")
-URL: str = f"{AWS_INFERENCE_BASE_URL}/chat/completions"
-MODELS_URL: str = f"{AWS_INFERENCE_BASE_URL}/models"
-# Override for the OpenAI ``model`` field in the request body. SageMaker routes
-# by endpoint URL, so AWS's docs say this field "can be empty or set to match the
-# model name your container expects": the vLLM/SGLang DLCs accept "", but a
-# *custom* container may reject "" and require its served model id (a 400). By
-# default ``_body_model`` auto-resolves that id per endpoint from ``list_models``;
-# set this env var to force ONE value across all endpoints instead.
-AWS_INFERENCE_BODY_MODEL: Optional[str] = os.getenv("AWS_INFERENCE_BODY_MODEL")
+AWS_BEDROCK_RETRY_BACKOFF_SECONDS: int = 60
 # Cache of each SageMaker endpoint's served model id (resolved lazily; see
 # ``_body_model``). Keyed by endpoint name.
 _SERVED_MODELS: Dict[str, str] = {}
+# Per-model context-window overrides for get_model_context_length.
+_CONTEXT_LENGTHS: Dict[str, int] = {}
+
+
+def _region() -> str:
+    return os.getenv("AWS_REGION", "us-east-1")
+
+
+def _base_url_template() -> str:
+    """Full base URL up to (but excluding) ``/chat/completions``.
+
+    Defaults to the bedrock-mantle endpoint -- AWS's OpenAI-compatible surface
+    fronting the broad model catalog (Anthropic, Qwen, Mistral, DeepSeek,
+    Gemma, gpt-oss, GLM, Kimi, Nemotron, MiniMax, ...; call list_models()).
+    Verified live in us-east-1. Override AWS_INFERENCE_BASE_URL for:
+      - bedrock-runtime's OpenAI surface (serves only the OpenAI gpt-oss
+        models; Anthropic/Nova there are reached via Converse/Messages, not
+        this API):
+          https://bedrock-runtime.{region}.amazonaws.com/openai/v1
+      - a SageMaker endpoint:
+          https://runtime.sagemaker.{region}.amazonaws.com/endpoints/{ep}/openai/v1
+    """
+    return os.getenv(
+        "AWS_INFERENCE_BASE_URL",
+        f"https://bedrock-mantle.{_region()}.api.aws/v1",
+    ).rstrip("/")
+
+
+def _api_key() -> str:
+    """Bearer token, resolved at call time.
+
+    ``AWS_INFERENCE_API_KEY`` (a minted, time-limited SageMaker token) wins;
+    otherwise ``AWS_BEARER_TOKEN_BEDROCK`` (AWS's own env-var name for the
+    long-lived Bedrock API key).
+    """
+    return os.getenv("AWS_INFERENCE_API_KEY") or os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
 
 
 def _resolve_base(model: str) -> str:
@@ -84,16 +100,13 @@ def _resolve_base(model: str) -> str:
     With no placeholder (Bedrock-mantle, which selects the model via the request
     body) the static base URL is returned unchanged.
     """
-    return (
-        AWS_INFERENCE_BASE_URL.replace("{model}", model)
-        if "{model}" in AWS_INFERENCE_BASE_URL
-        else AWS_INFERENCE_BASE_URL
-    )
+    base = _base_url_template()
+    return base.replace("{model}", model) if "{model}" in base else base
 
 
-def _chat_url(model: str) -> str:
-    """Returns the chat-completions endpoint for ``model``."""
-    return f"{_resolve_base(model)}/chat/completions"
+def _connection(model: str) -> Tuple[str, str]:
+    """Returns the chat-completions URL and bearer token for ``model``."""
+    return f"{_resolve_base(model)}/chat/completions", _api_key()
 
 
 def _body_model(model: str) -> str:
@@ -110,9 +123,10 @@ def _body_model(model: str) -> str:
     notebook's three distinct SageMaker endpoints -- gets the name its own
     container expects.
     """
-    if AWS_INFERENCE_BODY_MODEL is not None:
-        return AWS_INFERENCE_BODY_MODEL
-    if "{model}" not in AWS_INFERENCE_BASE_URL:
+    body_model_override = os.getenv("AWS_INFERENCE_BODY_MODEL")
+    if body_model_override is not None:
+        return body_model_override
+    if "{model}" not in _base_url_template():
         return model
     if model not in _SERVED_MODELS:
         try:
@@ -122,41 +136,18 @@ def _body_model(model: str) -> str:
             _SERVED_MODELS[model] = ""
     return _SERVED_MODELS[model]
 
-AWS_BEDROCK_INFO: bool = bool(int(os.getenv("AWS_BEDROCK_INFO", "0")))
-AWS_BEDROCK_INFO_RESPONSE: bool = bool(int(os.getenv("AWS_BEDROCK_INFO_RESPONSE", "0")))
-AWS_BEDROCK_MAX_PARALLEL_REQUESTS: int = int(
-    os.getenv("AWS_BEDROCK_MAX_PARALLEL_REQUESTS", "8")
-)
-AWS_BEDROCK_RETRY_BACKOFF_SECONDS: int = 60
-# Bedrock's OpenAI-compatible /models listing does not report context windows,
-# so context length is a configurable default (optionally refined per model via
-# the static map below). It is only used as a soft post-hoc token guard.
-AWS_BEDROCK_CONTEXT_LENGTH: int = int(os.getenv("AWS_BEDROCK_CONTEXT_LENGTH", "200000"))
-_CONTEXT_LENGTHS: Dict[str, int] = {}
-
-
-def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
-    """
-    Returns whether an AWS request error should be retried.
-    """
-    if isinstance(err, requests.exceptions.HTTPError):
-        response = err.response
-        if response is None:
-            return True
-
-        return response.status_code == 429 or 500 <= response.status_code < 600
-
-    return True
-
 
 def get_model_context_length(model: str) -> int:
     """Returns the configured context window for a model.
 
     AWS's OpenAI-compatible endpoints expose model ids but not context windows,
     so this returns a per-model override from ``_CONTEXT_LENGTHS`` when known and
-    otherwise the ``AWS_BEDROCK_CONTEXT_LENGTH`` default.
+    otherwise the ``AWS_BEDROCK_CONTEXT_LENGTH`` default (env var, default
+    200000). It is only used as a soft post-hoc token guard.
     """
-    return _CONTEXT_LENGTHS.get(model, AWS_BEDROCK_CONTEXT_LENGTH)
+    return _CONTEXT_LENGTHS.get(
+        model, int(os.getenv("AWS_BEDROCK_CONTEXT_LENGTH", "200000"))
+    )
 
 
 def list_models(model: str = "") -> list[str]:
@@ -171,128 +162,26 @@ def list_models(model: str = "") -> list[str]:
     """
     response = requests.get(
         url=f"{_resolve_base(model)}/models",
-        headers={"Authorization": f"Bearer {AWS_INFERENCE_API_KEY}"},
+        headers={"Authorization": f"Bearer {_api_key()}"},
         timeout=120,
     )
     response.raise_for_status()
     return [m["id"] for m in response.json().get("data", [])]
 
 
-def query(
-    prompt: str,
-    model: str,
-    seed: int,
-    context_length: int = 0,
-    extra_args: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, Optional[str]]:
-    """
-    Queries a model hosted on AWS (Bedrock by default).
+_CLIENT = ChatClient(
+    name="AWS",
+    env_prefix="AWS_BEDROCK",
+    connection=_connection,
+    context_length=get_model_context_length,
+    body_model=_body_model,
+    retry_backoff_s=AWS_BEDROCK_RETRY_BACKOFF_SECONDS,
+)
 
-    Parameters
-    ----------
-    prompt:
-        The content posed to the LLM we expect an answer from.
-    model:
-        The model to evaluate (a Bedrock inference-profile id, or the model your
-        SageMaker endpoint serves).
-    seed:
-        Seed for LLM output.
-    context_length:
-        Context length of LLM model.
-    extra_args:
-        Extra args for `json=<slug>` of requests to get certain LLM behavior.
-
-    Returns
-    -------
-    The model's output.
-    """
-    attempt: int = 0
-    # Keep attempting to get a result until one is provisioned.
-    while True:
-        attempt += 1
-        # Tries to get a non-error code response from AWS.
-        try:
-            response = requests.post(
-                url=_chat_url(model),
-                headers={
-                    "Authorization": f"Bearer {AWS_INFERENCE_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=(
-                    {
-                        "model": _body_model(model),
-                        "messages": [{"role": "user", "content": prompt}],
-                        "seed": seed,
-                    }
-                    | (extra_args if extra_args else {})
-                ),
-                timeout=120,
-            )
-
-            if not response.ok:
-                logging.info(response.text)
-
-            response.raise_for_status()
-            body = response.json()
-            if AWS_BEDROCK_INFO and AWS_BEDROCK_INFO_RESPONSE:
-                logging.info(body)
-
-            msg = body["choices"][0]["message"]
-            if msg["content"] is None:
-                logging.warning("Body returned none value: \n" f"{body}")
-                return "", None
-            # Bedrock/SageMaker surface reasoning as reasoning_content (or
-            # reasoning) when a model emits a separate chain-of-thought channel.
-            reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-            # Usage may be omitted by some SageMaker containers; only guard when
-            # the provider reports a token count.
-            usage = body.get("usage") or {}
-            tokens = usage.get("total_tokens")
-            if tokens is not None and tokens > context_length:
-                raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
-            if AWS_BEDROCK_INFO:
-                logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-            return msg["content"], reasoning
-
-        # Attempts to retry exceptions if possible.
-        except requests.exceptions.RequestException as err:
-            if not _is_retryable_request_error(err):
-                raise
-            logging.info(
-                f"AWS request failed on attempt {attempt}: {err}. "
-                f"Retrying in {AWS_BEDROCK_RETRY_BACKOFF_SECONDS} seconds."
-            )
-            time.sleep(AWS_BEDROCK_RETRY_BACKOFF_SECONDS)
-
-
-def evaluate(
-    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
-) -> Marks:
-    """Evaluates a model given a sequence of quizzes."""
-    ctx_len: int = get_model_context_length(model)
-    max_workers: int = max(1, min(len(quiz), AWS_BEDROCK_MAX_PARALLEL_REQUESTS))
-    responses: list[Tuple[str, Optional[str]]] = Parallel(n_jobs=max_workers, prefer="threads")(
-        delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
-        for q in quiz
-    )
-
-    mark_list: list[Mark] = []
-    q: QnA
-    raw: str
-    reasoning: Optional[str]
-    for q, (raw, reasoning) in zip(quiz, responses):
-        try:
-            conditioned: Answer = q.condition(raw)
-        except ValueError as e:
-            if AWS_BEDROCK_INFO:
-                logging.info(e)
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=None))
-            continue
-
-        part_correct, _ = q.score(conditioned)
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
-
-    return Marks(model=model, marks=tuple(mark_list))
+# The provider-facing API (dispatched via smolbench.evals.provider); full
+# parameter docs live on ChatClient.query / ChatClient.evaluate.
+query = _CLIENT.query
+evaluate = _CLIENT.evaluate
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +197,7 @@ def evaluate(
 # /openai/v1 route is served by AWS's vLLM and SGLang DLCs.
 SAGEMAKER_VLLM_DLC: str = os.getenv(
     "SAGEMAKER_VLLM_DLC",
-    f"763104351884.dkr.ecr.{AWS_REGION}.amazonaws.com/vllm:0.11.1-gpu-py312-cu129-ubuntu22.04-sagemaker",
+    f"763104351884.dkr.ecr.{_region()}.amazonaws.com/vllm:0.11.1-gpu-py312-cu129-ubuntu22.04-sagemaker",
 )
 SAGEMAKER_EXEC_ROLE_NAME: str = os.getenv("SAGEMAKER_EXEC_ROLE_NAME", "smolbench-sm-exec-role")
 # Per-endpoint deployment spec. The small entry runs within the default ml.g5
@@ -329,17 +218,14 @@ def _is_sagemaker_provider() -> bool:
     prov = os.getenv("INFERENCE_PROVIDER", "").lower()
     if prov not in ("aws", "bedrock", "sagemaker"):
         return False
-    return (
-        prov == "sagemaker"
-        or "sagemaker" in AWS_INFERENCE_BASE_URL
-        or "{model}" in AWS_INFERENCE_BASE_URL
-    )
+    base = _base_url_template()
+    return prov == "sagemaker" or "sagemaker" in base or "{model}" in base
 
 
 def _sagemaker_client():
     import boto3  # lazy: keep the inference path boto3-free
 
-    return boto3.client("sagemaker", region_name=AWS_REGION)
+    return boto3.client("sagemaker", region_name=_region())
 
 
 def mint_sagemaker_token(expires: int = 43200) -> str:
@@ -363,7 +249,7 @@ def mint_sagemaker_token(expires: int = 43200) -> str:
         headers={"host": "sagemaker.amazonaws.com"},
         params={"Action": "CallWithBearerToken"},
     )
-    SigV4QueryAuth(creds, "sagemaker", AWS_REGION, expires=expires).add_auth(req)
+    SigV4QueryAuth(creds, "sagemaker", _region(), expires=expires).add_auth(req)
     presigned = req.url.replace("https://", "") + "&Version=1"
     return "sagemaker-api-key-" + base64.b64encode(presigned.encode()).decode()
 
@@ -413,8 +299,6 @@ def provision_endpoint(model: str, timeout_min: int = 40):
         with provision_endpoint(DENSE_MODEL):
             decode_intens_eval = evaluate(intens_quiz, DENSE_MODEL, SEED)
     """
-    global AWS_INFERENCE_API_KEY
-
     if not _is_sagemaker_provider():
         logging.info("provision_endpoint: serverless/non-SageMaker provider; nothing to provision.")
         yield model
@@ -476,11 +360,11 @@ def provision_endpoint(model: str, timeout_min: int = 40):
                 )
             time.sleep(30)
 
-        # Refresh the bearer token (a long deploy may have outlived an earlier one)
-        # and point this module's inference path at it.
-        token = mint_sagemaker_token()
-        os.environ["AWS_INFERENCE_API_KEY"] = token
-        AWS_INFERENCE_API_KEY = token
+        # Refresh the bearer token (a long deploy may have outlived an earlier
+        # one). The inference path reads AWS_INFERENCE_API_KEY from the
+        # environment at call time, so setting it here is sufficient -- no
+        # module global to mutate.
+        os.environ["AWS_INFERENCE_API_KEY"] = mint_sagemaker_token()
 
         yield model
     finally:

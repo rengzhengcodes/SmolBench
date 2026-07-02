@@ -72,9 +72,8 @@ from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 import requests
-from joblib import Parallel, delayed
 
-from smolbench.evals import Answer, QnA, Quiz, Mark, Marks
+from smolbench.evals.openai_compat import ChatClient
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order. Types are tried type-major (each type across every
@@ -123,9 +122,10 @@ EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
 # notebook kernels and scripts run with arbitrary cwds (temp dirs included),
 # and a cwd-relative default once stranded a live instance's state where no
 # later session could find it. Contains the control token and vLLM key ->
-# gitignored.
+# gitignored. The EC2_STATE_FILE env override is read at CALL time (in
+# _state_path), so notebooks may set it any time before the first
+# provision/query -- there is no import-order trap.
 _DEFAULT_STATE_FILE: Path = Path(__file__).resolve().parents[2] / ".ec2_state.json"
-EC2_STATE_FILE: str = os.getenv("EC2_STATE_FILE", str(_DEFAULT_STATE_FILE))
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # Serve timeout and the watchdog's loading-counts-as-active grace must cover a
 # COLD checkpoint pull from HF: a ~410 GB download proved that 90/120 min are
@@ -138,7 +138,8 @@ EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # Optional EC2 key pair name for SSH debugging; empty = no SSH (the default --
 # boot problems are then visible only via the serial console/screenshot).
 EC2_KEY_NAME: str = os.getenv("EC2_KEY_NAME", "")
-EC2_MAX_PARALLEL_REQUESTS: int = int(os.getenv("EC2_MAX_PARALLEL_REQUESTS", "8"))
+# evaluate()'s default fan-out is the EC2_MAX_PARALLEL_REQUESTS env var
+# (default 8), read at call time by the shared ChatClient.
 # Per-request inference read timeout. Long CoT generations (max_completion_tokens
 # over big prompts) can exceed the old hardcoded 120 s; raise the default and let
 # callers override per eval so long chains finish on attempt 1 (deterministic),
@@ -171,12 +172,12 @@ EC2_CONTEXT_LENGTH: int = int(os.getenv("EC2_CONTEXT_LENGTH", "16384"))
 EC2_S3_MODEL_CACHE: str = os.getenv("EC2_S3_MODEL_CACHE", "").rstrip("/")
 EC2_S3_CACHE_REGION: str = os.getenv("EC2_S3_CACHE_REGION", AWS_REGION)
 EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2-role")
-# Overrides that bypass the state file -- point the inference path at any
-# OpenAI-compatible server (used by the offline stub tests).
-EC2_INFERENCE_BASE_URL: Optional[str] = os.getenv("EC2_INFERENCE_BASE_URL")
-EC2_VLLM_API_KEY: Optional[str] = os.getenv("EC2_VLLM_API_KEY")
-EC2_INFO: bool = bool(int(os.getenv("EC2_INFO", "0")))
-EC2_INFO_RESPONSE: bool = bool(int(os.getenv("EC2_INFO_RESPONSE", "0")))
+# EC2_INFERENCE_BASE_URL / EC2_VLLM_API_KEY env overrides bypass the state
+# file and point the inference path at any OpenAI-compatible server (used by
+# tests/test_openai_compat.py's local stub server). They are read at call
+# time in _base_url/_api_key/_connection, not here. EC2_INFO /
+# EC2_INFO_RESPONSE (verbose logging) are likewise read at call time by the
+# shared ChatClient.
 
 # Per-model deployment spec. The dict key is simultaneously (a) the ``model``
 # argument the notebook passes to query()/evaluate() and (b) vLLM's
@@ -274,7 +275,8 @@ EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
 
 
 def _state_path() -> Path:
-    return Path(EC2_STATE_FILE).expanduser()
+    """State-file path; the env override is honored at call time."""
+    return Path(os.getenv("EC2_STATE_FILE", str(_DEFAULT_STATE_FILE))).expanduser()
 
 
 def _load_state() -> Optional[Dict[str, Any]]:
@@ -324,18 +326,21 @@ def _require_state() -> Dict[str, Any]:
 def _base_url() -> str:
     """The OpenAI-compatible base URL, resolved at call time.
 
-    Unlike aws.py this cannot be an import-time constant: the instance's IP
-    does not exist until provisioning. ``EC2_INFERENCE_BASE_URL`` overrides
-    (tests / externally managed servers); otherwise the state file supplies it.
+    This cannot be an import-time constant: the instance's IP does not exist
+    until provisioning. ``EC2_INFERENCE_BASE_URL`` overrides (tests /
+    externally managed servers); otherwise the state file supplies it.
     """
-    if EC2_INFERENCE_BASE_URL:
-        return EC2_INFERENCE_BASE_URL.rstrip("/")
+    override = os.getenv("EC2_INFERENCE_BASE_URL")
+    if override:
+        return override.rstrip("/")
     return f"http://{_require_state()['public_ip']}:8000/v1"
 
 
 def _api_key() -> str:
-    if EC2_VLLM_API_KEY:
-        return EC2_VLLM_API_KEY
+    """The vLLM bearer token, resolved at call time (override or state file)."""
+    override = os.getenv("EC2_VLLM_API_KEY")
+    if override:
+        return override
     return _require_state()["vllm_api_key"]
 
 
@@ -366,20 +371,6 @@ def list_models() -> list[str]:
     )
     response.raise_for_status()
     return [m["id"] for m in response.json().get("data", [])]
-
-
-def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
-    """
-    Returns whether an inference request error should be retried.
-    """
-    if isinstance(err, requests.exceptions.HTTPError):
-        response = err.response
-        if response is None:
-            return True
-
-        return response.status_code == 429 or 500 <= response.status_code < 600
-
-    return True
 
 
 def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
@@ -421,225 +412,66 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
     ) from err
 
 
-def query(
-    prompt: str,
-    model: str,
-    seed: int,
-    context_length: int = 0,
-    extra_args: Optional[Dict[str, Any]] = None,
-    request_timeout: Optional[int] = None,
-) -> Tuple[str, Optional[str]]:
+def _connection(model: str) -> Tuple[str, str]:
+    """Chat URL + vLLM token, resolved together from ONE state snapshot.
+
+    Called once per request attempt (see ChatClient.connection): a spot
+    instance re-provisioned mid-retry-loop is picked up on the next attempt,
+    and reading the state file a single time per attempt closes the window
+    where the URL and token could come from two different state versions.
     """
-    Queries the model currently served by the experiment's EC2 instance.
-
-    Parameters
-    ----------
-    prompt:
-        The content posed to the LLM we expect an answer from.
-    model:
-        The model to evaluate (an ``EC2_DEPLOY_SPECS`` key; sent verbatim as
-        the OpenAI ``model`` field since vLLM serves under that name).
-    seed:
-        Seed for LLM output.
-    context_length:
-        Context length of LLM model.
-    extra_args:
-        Extra args for `json=<slug>` of requests to get certain LLM behavior.
-    request_timeout:
-        Per-request read timeout in seconds; falls back to
-        ``EC2_REQUEST_TIMEOUT_SECONDS`` when None. Raise it for long CoT
-        generations so they complete on attempt 1 instead of timing out and
-        relying on the retry lottery.
-
-    Returns
-    -------
-    The model's output.
-    """
-    spec = EC2_DEPLOY_SPECS.get(model, {})
-    # Spec-level system prompt (e.g. Nemotron's "detailed thinking on" CoT
-    # toggle) is injected here so the notebook's user prompts stay identical
-    # across archetypes.
-    messages: List[Dict[str, str]] = []
-    if spec.get("system_prompt"):
-        messages.append({"role": "system", "content": spec["system_prompt"]})
-    messages.append({"role": "user", "content": prompt})
-
-    attempt: int = 0
-    connection_failures: int = 0
-    # Keep attempting to get a result until one is provisioned.
-    while True:
-        attempt += 1
-        # Tries to get a non-error code response from the endpoint.
-        try:
-            response = requests.post(
-                url=f"{_base_url()}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {_api_key()}",
-                    "Content-Type": "application/json",
-                },
-                json=(
-                    {
-                        "model": model,
-                        "messages": messages,
-                        "seed": seed,
-                    }
-                    | (extra_args if extra_args else {})
-                ),
-                # (connect, read): short connect fails fast on a dead box;
-                # long read covers genuine long CoT generations.
-                timeout=(
-                    EC2_CONNECT_TIMEOUT_SECONDS,
-                    request_timeout or EC2_REQUEST_TIMEOUT_SECONDS,
-                ),
-            )
-            # The server answered, so the instance is alive: only sustained
-            # connection failures should count toward the unreachable verdict.
-            connection_failures = 0
-
-            if not response.ok:
-                logging.info(response.text)
-
-            response.raise_for_status()
-            body = response.json()
-            if EC2_INFO and EC2_INFO_RESPONSE:
-                logging.info(body)
-
-            msg = body["choices"][0]["message"]
-            if msg["content"] is None:
-                logging.warning("Body returned none value: \n" f"{body}")
-                return "", None
-            # Servers with a working reasoning parser surface chain-of-thought
-            # as reasoning_content (reasoning kept as a fallback for other
-            # OpenAI-compatible servers behind EC2_INFERENCE_BASE_URL).
-            content = msg["content"]
-            reasoning = msg.get("reasoning_content") or msg.get("reasoning")
-            # Nemotron-Ultra emits <think>...</think> as PLAIN TEXT (no think
-            # token ids in its Llama tokenizer, so vLLM's token-id-based
-            # reasoning parsers cannot run for it -- see EC2_DEPLOY_SPECS).
-            # Split the channels client-side so scoring sees only the answer.
-            if reasoning is None and "</think>" in content:
-                reasoning, _, content = content.partition("</think>")
-                reasoning = reasoning.removeprefix("<think>").strip()
-                content = content.lstrip()
-            # Usage may be omitted by some servers; only guard when a token
-            # count is reported.
-            usage = body.get("usage") or {}
-            tokens = usage.get("total_tokens")
-            if tokens is not None and tokens > context_length:
-                raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
-            if EC2_INFO:
-                logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-            return content, reasoning
-
-        # Attempts to retry exceptions if possible.
-        except requests.exceptions.RequestException as err:
-            if not _is_retryable_request_error(err):
-                raise
-            # A self-managed spot endpoint can vanish (interruption, watchdog,
-            # caller-IP drift); unlike aws.py, cap connection-level failures
-            # instead of retrying forever against a dead box.
-            if not isinstance(err, requests.exceptions.HTTPError):
-                connection_failures += 1
-                if connection_failures >= EC2_MAX_CONNECTION_FAILURES:
-                    _raise_endpoint_unreachable(err)
-            logging.info(
-                f"EC2 endpoint request failed on attempt {attempt}: {err}. "
-                f"Retrying in {EC2_RETRY_BACKOFF_SECONDS} seconds."
-            )
-            time.sleep(EC2_RETRY_BACKOFF_SECONDS)
+    base = os.getenv("EC2_INFERENCE_BASE_URL")
+    key = os.getenv("EC2_VLLM_API_KEY")
+    # Empty-string env values (blanked keys.env lines) count as unset, like
+    # the truthiness checks in _base_url/_api_key.
+    if not base or not key:
+        state = _require_state()
+        base = base or f"http://{state['public_ip']}:8000/v1"
+        key = key or state["vllm_api_key"]
+    return f"{base.rstrip('/')}/chat/completions", key
 
 
-def _indexed_query(index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
-    """``query()`` tagged with its quiz index.
-
-    Results stream back out of order (``return_as="generator_unordered"``); the
-    index lets ``evaluate`` restore quiz order before scoring.
-    """
-    return index, query(*args, **kwargs)
+def _system_prompt(model: str) -> Optional[str]:
+    """Spec-level system prompt (e.g. Nemotron's "detailed thinking on" CoT
+    toggle), injected at the provider layer so the notebook's user prompts
+    stay byte-identical across archetypes."""
+    return EC2_DEPLOY_SPECS.get(model, {}).get("system_prompt")
 
 
-def _render_progress(done: int, total: int, model: str, width: int = 30) -> None:
-    """Renders a single-line "N/total prompted" bar (no tqdm dependency).
+_CLIENT = ChatClient(
+    name="EC2 endpoint",
+    env_prefix="EC2",
+    connection=_connection,
+    context_length=get_model_context_length,
+    system_prompt=_system_prompt,
+    retry_backoff_s=EC2_RETRY_BACKOFF_SECONDS,
+    # (connect, read): short connect fails fast on a dead box; long read
+    # covers genuine long CoT generations (see the constants' comments).
+    connect_timeout_s=EC2_CONNECT_TIMEOUT_SECONDS,
+    read_timeout_s=EC2_REQUEST_TIMEOUT_SECONDS,
+    # A self-managed spot endpoint can vanish (interruption, watchdog,
+    # caller-IP drift); unlike managed providers, cap connection-level
+    # failures instead of retrying forever against a dead box, and diagnose
+    # the cause (spot reclaim vs caller-IP drift) in the raised error.
+    max_connection_failures=EC2_MAX_CONNECTION_FAILURES,
+    on_unreachable=_raise_endpoint_unreachable,
+)
 
-    Driven by joblib's as-completed generator, so the bar advances as each
-    prompt's response actually lands -- not merely as tasks are dispatched.
-    A trailing newline is emitted once the run is complete.
-    """
-    filled: int = width if total == 0 else int(width * done / total)
-    bar: str = "#" * filled + "-" * (width - filled)
-    pct: float = 100.0 if total == 0 else 100.0 * done / total
-    end: str = "\n" if done >= total else ""
-    print(f"\r{model}: [{bar}] {done}/{total} prompted ({pct:3.0f}%)", end=end, flush=True)
-
-
-def evaluate(
-    quiz: Quiz,
-    model: str,
-    seed: int,
-    extra_args: Optional[Dict[str, Any]] = None,
-    max_parallel: Optional[int] = None,
-    request_timeout: Optional[int] = None,
-    show_progress: bool = True,
-) -> Marks:
-    """Evaluates a model given a sequence of quizzes.
-
-    ``max_parallel`` (falls back to ``EC2_MAX_PARALLEL_REQUESTS``) and
-    ``request_timeout`` (falls back to ``EC2_REQUEST_TIMEOUT_SECONDS``) let CoT
-    runs lower concurrency and raise the timeout so the longest chain finishes
-    on attempt 1 -- otherwise long generations time out under contention and the
-    measured CoT-length distribution gets censored from the top.
-
-    ``show_progress`` prints a live "N/total prompted" bar as responses land.
-    """
-    ctx_len: int = get_model_context_length(model)
-    total: int = len(quiz)
-    max_workers: int = max(1, min(total, max_parallel or EC2_MAX_PARALLEL_REQUESTS))
-
-    # Stream results as they complete so the progress bar reflects finished
-    # prompts; each carries its index so we can restore quiz order afterwards.
-    results_by_index: Dict[int, Tuple[str, Optional[str]]] = {}
-    completed: int = 0
-    if show_progress:
-        _render_progress(completed, total, model)
-    stream = Parallel(n_jobs=max_workers, prefer="threads", return_as="generator_unordered")(
-        delayed(_indexed_query)(
-            i, q.prompt, model, seed, ctx_len,
-            extra_args=extra_args, request_timeout=request_timeout,
-        )
-        for i, q in enumerate(quiz)
-    )
-    for index, resp in stream:
-        results_by_index[index] = resp
-        completed += 1
-        if show_progress:
-            _render_progress(completed, total, model)
-    responses: list[Tuple[str, Optional[str]]] = [results_by_index[i] for i in range(total)]
-
-    mark_list: list[Mark] = []
-    q: QnA
-    raw: str
-    reasoning: Optional[str]
-    for q, (raw, reasoning) in zip(quiz, responses):
-        try:
-            conditioned: Answer = q.condition(raw)
-        except ValueError as e:
-            if EC2_INFO:
-                logging.info(e)
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=None))
-            continue
-
-        part_correct, _ = q.score(conditioned)
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
-
-    return Marks(model=model, marks=tuple(mark_list))
+# The provider-facing API (dispatched via smolbench.evals.provider); full
+# parameter docs live on ChatClient.query / ChatClient.evaluate. The plain-
+# text <think> splitting Nemotron-Ultra and Olmo-Think need (no think token
+# ids -> no server-side reasoning parser; see EC2_DEPLOY_SPECS) lives in the
+# shared client, so every provider handles it identically.
+query = _CLIENT.query
+evaluate = _CLIENT.evaluate
 
 
 # ---------------------------------------------------------------------------
 # On-instance payloads (control agent, idle watchdog, cloud-init bootstrap)
 # ---------------------------------------------------------------------------
 # These run under Ubuntu 22.04's system python3 (3.10): keep them stdlib-only
-# and 3.10-compatible. They are module constants (not rendered strings) so the
-# offline tests can ast.parse() them directly.
+# and 3.10-compatible. They are module constants (not rendered strings) so
+# tests/test_ec2_payloads.py can ast.parse() them directly.
 
 # Control agent: the notebook's only way to drive the instance (no SSH, no SSM
 # role). Bearer-authenticated HTTP on :9000; every authenticated request also

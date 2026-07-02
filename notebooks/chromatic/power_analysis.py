@@ -108,7 +108,15 @@ class Quiz:
         return (self.k_true + self.k_false) / (self.n_true + self.n_false)
 
 
-_MARK_SPLIT = re.compile(r"!!python/object:smolbench\.evals\.Mark")
+# A mark starts either with the legacy ``!!python/object`` tag (results
+# written by the pre-Marks.dump yaml.dump of dataclasses) or, in the current
+# plain-mapping format (Marks.dump / yaml.safe_dump), with a column-0 list
+# item whose first (alphabetically sorted) key is ``answer``. Embedded text
+# inside quoted scalars is always indented, so the column-0 anchor cannot
+# fire inside a response.
+_MARK_SPLIT = re.compile(
+    r"!!python/object:smolbench\.evals\.Mark|^-(?=\s+answer:)", re.M
+)
 _ANSWER_RE = re.compile(r"^\s*answer:\s*(true|false)\b", re.I | re.M)
 _SCORE_RE = re.compile(r"^\s*score:\s*(\S+?)\s*$", re.M)
 
@@ -116,11 +124,13 @@ _SCORE_RE = re.compile(r"^\s*score:\s*(\S+?)\s*$", re.M)
 def parse_quiz(text: str) -> Quiz:
     """Recover per-polarity counts from one result YAML's text.
 
-    The files carry ``!!python/object`` tags, so rather than unsafe-loading we
-    split on the per-mark tag and, within each mark, read the first ``answer:``
-    (the ground-truth polarity, the first field) and the last ``score:`` (the
-    1/0 correctness, the last field -- any ``score:`` inside the reasoning/
-    response text appears earlier and is ignored).
+    This is a plain text scan (works in this script's slim ``uv run
+    --no-project`` env: no PyYAML, no smolbench import): split on the
+    per-mark boundary (legacy tag or plain-mapping list item) and, within
+    each mark, read the first ``answer:`` (the ground-truth polarity, the
+    first field in both formats) and the last ``score:`` (the 1/0
+    correctness, the last field in both formats -- any ``score:`` inside the
+    reasoning/response text appears earlier and is ignored).
     """
     k_true = n_true = k_false = n_false = 0
     for chunk in _MARK_SPLIT.split(text)[1:]:
@@ -143,9 +153,9 @@ def parse_quiz(text: str) -> Quiz:
 def load_condition(model: str, info: str) -> list[Quiz]:
     """All replicate quizzes for a condition.
 
-    Supports the current flat ``{model}_{info}.yaml`` layout and the
-    forward-compatible per-replicate ``{model}_{info}/rep_*.yaml`` layout (so the
-    same script finalises the firm R once pilots are run).
+    Prefers the per-replicate ``{model}_{info}/rep_*.yaml`` layout (the
+    current output of induction_eval.ipynb's R=30 design); falls back to the
+    legacy single-run flat ``{model}_{info}.yaml`` for pre-replication pilots.
     """
     nested_dir = RESULTS_DIR / f"{model}_{info}"
     if nested_dir.is_dir():
@@ -573,16 +583,16 @@ def empirical_report(quizzes, rates, obs, contrasts, n_reps) -> None:
     print(f"[1] Firm R for 80%/90% power at the estimated sigma_between, overall accuracy:")
     print(f"    {'contrast':26s} {'gap':>5s} {'R(80%)':>7s} {'R(90%)':>7s}")
     print("    " + "-" * 50)
+    feasible = []
     for ci, (name, ka, kb) in enumerate(contrasts):
         gap = abs(obs[ka].p_overall - obs[kb].p_overall)
         r80 = replicates_needed(rates[ka], rates[kb], sigma_hat, "overall", seed=[SEED, ci, 0], target=0.80)
         r90 = replicates_needed(rates[ka], rates[kb], sigma_hat, "overall", seed=[SEED, ci, 1], target=0.90)
         print(f"    {name:26s} {gap:5.2f} {fmt_r(r80):>7s} {fmt_r(r90):>7s}")
-    feasible = [
-        replicates_needed(rates[ka], rates[kb], sigma_hat, "overall", seed=[SEED, ci, 0])
-        for ci, (_, ka, kb) in enumerate(contrasts)
-    ]
-    feasible = [r for r in feasible if r is not None]
+        if r80 is not None:
+            # Reused for the recommendation below; recomputing each r80 would
+            # re-run its whole simulated binary search (~seconds per contrast).
+            feasible.append(r80)
     if feasible:
         print()
         print(f"    Recommended R (max over powerable contrasts): {max(feasible)} quizzes/condition.")

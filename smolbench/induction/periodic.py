@@ -5,12 +5,30 @@ Generates periodic patterns (generalized FizzBuzz).
 import string
 from dataclasses import dataclass
 from math import lcm
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict
 
-from ordered_set import OrderedSet
 import numpy as np
 
 from smolbench.evals import Quiz, ToF, Numeric, Answer
+from smolbench.induction._common import (
+    Prompter,
+    make_noise,
+    quizzes_from_prompts,
+    random_unique_strings,
+)
+
+# Re-exported for callers configuring the benchmark (the class is shared with
+# chromatic so the prompting contract stays identical across benchmarks).
+__all__ = [
+    "PeriodicConfig",
+    "Prompter",
+    "generate_sequence",
+    "get_periodic_prompts",
+    "get_periodic_quiz",
+    "get_periodic_numeric_quiz",
+    "tof_membership_query_gen",
+    "numeric_count_query_gen",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +75,10 @@ class PeriodicConfig:
                 self,
                 "labels",
                 tuple(
-                    _get_random_labels(self.labels, length, np.random.default_rng(self.seed))
+                    random_unique_strings(
+                        self.labels, length, np.random.default_rng(self.seed),
+                        charset=_LABEL_CHARSET,
+                    )
                 ),
             )
         else:
@@ -75,54 +96,6 @@ class PeriodicConfig:
 
 # Charset restricted to lowercase letters so the default '|' separator is always safe.
 _LABEL_CHARSET: str = string.ascii_lowercase
-
-
-# ---------------------------------------------------------------------------
-# Label generation
-# ---------------------------------------------------------------------------
-
-def _get_random_labels(
-    n: int,
-    l: int,
-    rng: np.random.Generator,
-    charset: Collection[str] = _LABEL_CHARSET,
-) -> OrderedSet[Label]:
-    """
-    Generates n unique random labels of length l.
-
-    Parameters
-    ----------
-    n:
-        Number of labels to generate.
-    l:
-        Length of each label.
-    rng:
-        The RNG being used.
-    charset:
-        Character set for labels (must not include the separator in use).
-
-    Returns
-    -------
-    OrderedSet of n unique label strings.
-
-    Raises
-    ------
-    ValueError if l < ceil(log_{len(charset)}(n)).
-    """
-    charset = tuple(charset)
-    base: int = len(charset)
-    min_len = np.ceil(np.emath.logn(base, n))
-    if l < min_len:
-        raise ValueError(
-            f"l={l} < {min_len} = ceil(log_{base}({n})): "
-            f"insufficient length to generate {n} unique labels."
-        )
-    indices: np.ndarray = rng.choice(base ** l, size=n, replace=False)
-    digits: np.ndarray = np.empty((n, l), dtype=np.int64)
-    for idx in range(l - 1, -1, -1):
-        indices, digits[:, idx] = np.divmod(indices, base)
-    charset_array: np.ndarray = np.asarray(charset)
-    return OrderedSet("".join(row) for row in charset_array[digits])
 
 
 # ---------------------------------------------------------------------------
@@ -175,28 +148,6 @@ def _render_extensional(pos_to_compound: PosToCompound) -> str:
     )
 
 
-def _make_noise(length: int, rng: np.random.Generator) -> str:
-    """Generates random noise of the given character length."""
-    charset = list(string.ascii_letters + string.digits + "   \n")
-    return "".join(charset[i] for i in rng.integers(len(charset), size=length))
-
-
-# ---------------------------------------------------------------------------
-# Prompter
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True, slots=True)
-class Prompter:
-    """Everything needed to prompt an LLM given the periodic context."""
-
-    template: string.Template
-    substitution: Dict[str, str]
-    query_gen: Callable[
-        [PeriodToLabel, PosToCompound, int],
-        Iterable[Tuple[Dict[str, str], Answer]],
-    ]
-
-
 # ---------------------------------------------------------------------------
 # Core prompt generation
 # ---------------------------------------------------------------------------
@@ -209,7 +160,9 @@ def get_periodic_prompts(
     Generates intensional, extensional, and noise-padded intensional prompts.
 
     The noise-padded intensional appends random noise so its length matches the
-    extensional, ablating context length as a confound.
+    extensional, ablating context length as a confound. When the prompter sets
+    ``extens_template`` it is used for the extensional prompt; otherwise all
+    three share ``template``.
 
     Yields
     ------
@@ -221,14 +174,16 @@ def get_periodic_prompts(
     extension: str = _render_extensional(pos_to_compound)
 
     noise_rng: np.random.Generator = np.random.default_rng(config.seed + 1)
-    noise_intension: str = intension + _make_noise(
+    noise_intension: str = intension + make_noise(
         max(0, len(extension) - len(intension)), noise_rng
     )
+
+    extens_template = prompter.extens_template or prompter.template
 
     for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
         sub = query | prompter.substitution
         intens = prompter.template.safe_substitute(sub | {"positive_info": intension})
-        extens = prompter.template.safe_substitute(sub | {"positive_info": extension})
+        extens = extens_template.safe_substitute(sub | {"positive_info": extension})
         noise_intens = prompter.template.safe_substitute(sub | {"positive_info": noise_intension})
 
         yield intens, extens, noise_intens, answer
@@ -249,14 +204,7 @@ def get_periodic_quiz(
     -------
     (intensional Quiz, extensional Quiz, noise-padded intensional Quiz)
     """
-    intens_quiz: list = []
-    extens_quiz: list = []
-    noise_intens_quiz: list = []
-    for intens, extens, noise_intens, answer in get_periodic_prompts(config, prompter):
-        intens_quiz.append(ToF(prompt=intens, answer=answer))
-        extens_quiz.append(ToF(prompt=extens, answer=answer))
-        noise_intens_quiz.append(ToF(prompt=noise_intens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
+    return quizzes_from_prompts(get_periodic_prompts(config, prompter), ToF)
 
 
 def get_periodic_numeric_quiz(
@@ -270,19 +218,19 @@ def get_periodic_numeric_quiz(
     -------
     (intensional Quiz, extensional Quiz, noise-padded intensional Quiz)
     """
-    intens_quiz: list = []
-    extens_quiz: list = []
-    noise_intens_quiz: list = []
-    for intens, extens, noise_intens, answer in get_periodic_prompts(config, prompter):
-        intens_quiz.append(Numeric(prompt=intens, answer=answer))
-        extens_quiz.append(Numeric(prompt=extens, answer=answer))
-        noise_intens_quiz.append(Numeric(prompt=noise_intens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
+    return quizzes_from_prompts(get_periodic_prompts(config, prompter), Numeric)
 
 
 # ---------------------------------------------------------------------------
 # Built-in query generators
 # ---------------------------------------------------------------------------
+
+# tof_membership_query_gen samples at most this many queries of EACH polarity
+# per quiz, so quiz size stays fixed as n grows (n changes task difficulty and
+# the lcm(1..n) context length; it must never silently change sample size --
+# the replication design is powered around fixed question counts).
+MAX_QUERIES_PER_POLARITY: int = 10
+
 
 def tof_membership_query_gen(
     period_to_label: PeriodToLabel,
@@ -292,8 +240,11 @@ def tof_membership_query_gen(
     """
     Yields True/False queries of the form 'Does label appear at position pos?'
 
-    Period-1 labels are always present and are excluded (trivially True). The
-    remaining queries are balanced between True and False cases.
+    Period-1 labels are always present and are excluded (trivially True).
+    Yields at most ``MAX_QUERIES_PER_POLARITY`` True and as many False
+    queries (fewer when the pattern admits fewer of either polarity), sampled
+    without replacement using ``seed`` -- the query count does NOT scale with
+    n or sequence length; see the constant's comment.
     """
     rng = np.random.default_rng(seed)
 
@@ -307,7 +258,7 @@ def tof_membership_query_gen(
             entry = ({"pos": str(pos), "label": label}, pos % period == 0)
             (true_qs if pos % period == 0 else false_qs).append(entry)
 
-    n = min(len(true_qs), len(false_qs), 10)
+    n = min(len(true_qs), len(false_qs), MAX_QUERIES_PER_POLARITY)
     if n == 0:
         return
 

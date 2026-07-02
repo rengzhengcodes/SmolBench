@@ -16,7 +16,6 @@ Run:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,7 +23,19 @@ import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _util import pretty_model
+from _util import (
+    EXCLUDE_MODELS,
+    FAMILY_ORDER,
+    family_color_map,
+    is_reasoning,
+    lighten,
+    load_rows,
+    model_family,
+    models_per_run,
+    order_within_group,
+    pretty_model,
+    trivial_skip_keys,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNS = ["main_v3", "main_v3_2"]
@@ -38,36 +49,6 @@ PAIRS = [
     ("hint:3", "noise:3", "4: 1-hop deriv."),
 ]
 ALL_RUNGS = sorted({r for h, n, _ in PAIRS for r in (h, n)})
-EXCLUDE_MODELS = {"v3.2-speciale"}
-
-
-def is_reasoning(model_name: str) -> bool:
-    n = model_name.lower()
-    return ("high" in n) or ("thinking" in n) or ("speciale" in n)
-
-
-def load_rows(runs):
-    rows = []
-    for run in runs:
-        path = ROOT / f"results/runs/{run}/all_rows.jsonl"
-        if not path.exists():
-            print(f"warning: {path} missing, skipping")
-            continue
-        for l in path.open():
-            if not l.strip():
-                continue
-            r = json.loads(l)
-            r["_run"] = run
-            rows.append(r)
-    return rows
-
-
-def models_per_run(real):
-    out = {}
-    for r in real:
-        if r.get("model"):
-            out.setdefault(r["_run"], set()).add(r["model"])
-    return out
 
 
 def main():
@@ -78,12 +59,7 @@ def main():
     rows = load_rows(args.runs)
     real = [r for r in rows if r.get("model")]
 
-    rung_to_keys = {r: set() for r in ALL_RUNGS}
-    for r in real:
-        rung = r.get("rung")
-        if rung in rung_to_keys:
-            rung_to_keys[rung].add((r.get("theorem_id"), r.get("k")))
-    keep = set.intersection(*rung_to_keys.values())
+    keep = trivial_skip_keys(real, ALL_RUNGS)
     print(f"theorems present at every level shown: {len(keep)}")
 
     bucket = {}
@@ -103,34 +79,14 @@ def main():
     main_v3_models = by_run.get("main_v3", set())
     low_n_models = {m for m in {k[0] for k in bucket} if m not in main_v3_models}
 
-    # family/colors mirroring success_rate_bars
-    def family(model: str) -> str:
-        if model.startswith("gemini-flash-"): return "gemini"
-        if model.startswith("kimi-k2.6-"): return "kimi"
-        if model.startswith("v3.2-"): return "deepseek"
-        if model.startswith("gpt-5.5-"): return "gpt-5.5"
-        if model.startswith("sonnet-4.6-"): return "sonnet-4.6"
-        return model
-
-    family_order = ["gemini", "kimi", "deepseek", "gpt-5.5", "sonnet-4.6"]
-    cmap = plt.get_cmap("tab10")
-    family_color = {f: cmap(i) for i, f in enumerate(family_order)}
-
-    import matplotlib.colors as mcolors
-    def lighten(c, factor=0.55):
-        rgb = mcolors.to_rgb(c)
-        return tuple(rgb[i] + (1.0 - rgb[i]) * factor for i in range(3))
-
-    def family_idx(m):
-        f = family(m)
-        return family_order.index(f) if f in family_order else 999
-
-    def order_within_group(models):
-        return sorted(models, key=lambda m: (1 if m in low_n_models else 0, family_idx(m), m))
+    # family/colors mirroring success_rate_bars (shared via _util's
+    # model_family/order_within_group/family_color_map/lighten).
+    family = model_family
+    family_color = family_color_map()
 
     all_in_bucket = {k[0] for k in bucket}
-    reasoning = order_within_group([m for m in all_in_bucket if is_reasoning(m)])
-    non_reasoning = order_within_group([m for m in all_in_bucket if not is_reasoning(m)])
+    reasoning = order_within_group([m for m in all_in_bucket if is_reasoning(m)], low_n_models)
+    non_reasoning = order_within_group([m for m in all_in_bucket if not is_reasoning(m)], low_n_models)
 
     def rate(model, rung):
         vs = bucket.get((model, rung), [])
@@ -180,7 +136,7 @@ def main():
 
     # Legend: column-major fill, left = reasoning, right = non-reasoning
     from matplotlib.patches import Patch
-    families_present = [f for f in family_order
+    families_present = [f for f in FAMILY_ORDER
                         if any(family(m) == f for m in reasoning + non_reasoning)]
     r_handles, r_labels, nr_handles, nr_labels = [], [], [], []
     for f in families_present:

@@ -4,14 +4,37 @@ Generates chromatic intervals.
 
 import string
 import itertools
-from collections import defaultdict
 from dataclasses import dataclass
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict, Callable, Optional
-from ordered_set import OrderedSet
+from typing import TypeAlias, Collection, Iterable, Iterator, Tuple, Dict
 
+from ordered_set import OrderedSet
 import numpy as np
 
 from smolbench.evals import Quiz, ToF, Numeric
+from smolbench.induction._common import (
+    Prompter,
+    make_noise,
+    quizzes_from_prompts,
+    random_unique_strings,
+)
+
+# Prompter is re-exported: the class is shared with periodic so the prompting
+# contract stays identical across benchmarks.
+__all__ = [
+    "ChromaticIntervalsConfig",
+    "Prompter",
+    "Color",
+    "Interval",
+    "Intervals",
+    "anneal_intervals",
+    "get_random_exclusive_chromatic_intervals",
+    "get_random_exclusive_prompts",
+    "get_random_exclusive_quiz",
+    "get_random_exclusive_numeric_quiz",
+    "succession_query_gen",
+    "one_hop_year_query_gen",
+    "duration_query_gen",
+]
 
 # A color in the mathematical sense of some label.
 Color: TypeAlias = str
@@ -54,8 +77,9 @@ class ChromaticIntervalsConfig:
                 self,
                 "colors",
                 tuple(
-                    _get_random_colors(
-                        self.colors, length, np.random.default_rng(self.seed)
+                    random_unique_strings(
+                        self.colors, length, np.random.default_rng(self.seed),
+                        charset=string.ascii_letters,
                     )
                 ),
             )
@@ -63,125 +87,22 @@ class ChromaticIntervalsConfig:
             object.__setattr__(self, "colors", tuple(self.colors))
 
 
-@dataclass(frozen=True, slots=True)
-class Prompter:
-    """Everything needed to prompt an LLM given the context."""
-
-    template: string.Template
-    substitution: Dict[str, str]
-    query_gen: Callable[
-        [Dict[Color, Intervals], Dict[Interval, Color], int], Iterable[Dict[str, str]]
-    ]
-    #: Optional template for extensional prompts. Uses $query_years instead of
-    #: $start/$end so the query representation matches the extensional context.
-    #: Falls back to template if not provided.
-    extens_template: Optional[string.Template] = None
-
-
-def _get_random_colors(
-    n: int,
-    l: int,
-    rng: np.random.Generator,
-    charset: Collection[str] = string.ascii_letters,
-) -> OrderedSet[Color]:
+def _get_random_exclusive_intervals(n: int, intervaler: Iterator[int]) -> Iterator[Interval]:
     """
-    Generates n unique random colors of l length.
+    Generates consecutive non-overlapping [start, end) intervals tiling [0, n).
 
     Parameters
     ----------
     n:
-        Number of colors to generate.
-    l:
-        Length of each color.
-    rng:
-        The rng being used.
-    charset:
-        The characters to include in each color.
-
-    Return
-    ------
-    OrderedSet of unique colors.
-
-    Exceptions
-    ----------
-    ValueError if l < ceil(log_{len(charset)}(n)) as cannot generate n unique colors.
-    """
-    charset = tuple(charset)
-    base: int = len(charset)
-    min_len: int = np.ceil(np.emath.logn(base, n))
-    if l < min_len:
-        raise ValueError(
-            f"l < {min_len} = "
-            f"ceil(log_{{{base}}}({n}))\n"
-            f"Insufficient expressivity for labels in charset for the given length."
-        )
-
-    # Colors represented as an integer so it could be quickly exhaustively generated.
-    colors: np.ndarray[int] = rng.choice(base**l, size=n, replace=False)
-    digits: np.ndarray[int] = np.empty((n, l), dtype=np.int64)
-    for idx in range(l - 1, -1, -1):
-        colors, digits[:, idx] = np.divmod(colors, base)
-
-    charset_array: np.ndarray[str] = np.asarray(charset)
-    return OrderedSet("".join(color) for color in charset_array[digits])
-
-
-def _assign_colors(
-    intervals: Collection[Interval],
-    colors: Collection[Color],
-    labeler: Callable[[Color, Intervals], Intervals],
-    cleanser: Callable[[Intervals, Intervals], Intervals],
-) -> Tuple[Dict[Color, Intervals], Dict[Interval, OrderedSet[Color]]]:
-    """
-    Given an ordered collection of intervals, assign colors to each interval.
-
-    Parameters
-    ----------
-    intervals:
-        A collection of intervals that need to be assigned a color.
-    colors:
-        The assignable interval colors.
-    labeler:
-        The arbitrator of which intervals get assigned for a color.
-    cleanser:
-        Cleans up what the labeler has access to on the next iteration of assignment.
-
-    Returns
-    -------
-    A dictionary of every color to its intervals and every interval to its color.
-    """
-    label_to_intervals: Dict[Color, Intervals] = {}
-    intervals_to_label: Dict[Interval, Color] = defaultdict(OrderedSet)
-    for color in colors:
-        # Assigns to remaining intervals.
-        assignment: Intervals = labeler(color, intervals)
-
-        # Return bookkeeping.
-        label_to_intervals[color] = assignment
-        for interval in assignment:
-            intervals_to_label[tuple(interval.tolist())].add(color)
-
-        # Cleanses assignable intervals.
-        intervals = cleanser(intervals, assignment)
-
-    return label_to_intervals, intervals_to_label
-
-
-def _get_random_exclusive_intervals(n: int, intervaler: Iterable[int]) -> Interval:
-    """
-    Generates intervals from [0, n) where each interval does not overlap the
-    previous.
-
-    Parameters
-    ----------
-    n:
-        The total length of intervals to generate.
+        Exclusive upper bound of the covered range [0, n).
     intervaler:
-        The structure used to generate the next element of an interval.
+        Iterator of candidate interval endpoints (e.g. sorted random
+        markers); each yielded end is clamped to n and the final interval
+        always closes at n.
 
     Yields
     ------
-    A series of intervals from [0, n) generated off rng.
+    Consecutive non-overlapping (start, end) tuples whose ends tile [0, n).
     """
     start: int = 0
     end: int = 0
@@ -190,40 +111,6 @@ def _get_random_exclusive_intervals(n: int, intervaler: Iterable[int]) -> Interv
         end = min(n, next(intervaler, n))
         yield (start, end)
         start = end
-
-
-def _get_exclusive_chromatic_intervals(
-    n: int,
-    colors: Collection[Color],
-    intervaler: Iterable[int],
-    labeler: Callable[[Color, Intervals], Intervals],
-    cleanser: Callable[[Color]],
-) -> Tuple[Dict[Color, Intervals], Dict[Interval, Color]]:
-    """
-    Generates chromatic intervals from [0, n), where each i in [0, n) has exactly
-    one color (i.e., no intervals overlap).
-
-    Parameters
-    ----------
-    n:
-        The length the intervals can span.
-    colors:
-        The colors to assign to the intervals.
-    intervaler:
-        The generator of intervals.
-    labeler:
-        Assigns colors to each interval.
-    cleanser:
-        Cleans up what the labeler has access to between colors.
-
-    Returns
-    -------
-    A dictionary of every color to its intervals and every interval to its color.
-    """
-    intervals: OrderedSet[Interval] = np.array(
-        tuple(_get_random_exclusive_intervals(n, intervaler))
-    )
-    return _assign_colors(intervals, colors, labeler, cleanser)
 
 
 def get_random_exclusive_chromatic_intervals(
@@ -241,45 +128,41 @@ def get_random_exclusive_chromatic_intervals(
     Returns
     -------
     A dictionary mapping colors to intervals and a dictionary mapping intervals to
-    colors.
+    colors. Both preserve color-major insertion order (all of the first
+    color's intervals, then the second's, ...), which downstream query
+    generators rely on for reproducible RNG consumption.
     """
 
     # Seeds and generates the interval demarcations.
     rng: np.random.Generator = np.random.default_rng(config.seed)
-    markers: np.ndarray[int] = rng.choice(
+    markers: np.ndarray = rng.choice(
         np.arange(config.n), config.intervals - 1, replace=False
     )
     markers.sort()
 
-    # Defines a uniform labeler.
+    # Uniform color assignment: one independent draw per interval.
     num_colors: int = len(config.colors)
     labels = rng.integers(num_colors, size=config.intervals)
 
-    def labeler(color: Color, intervals: np.ndarray[Interval]) -> np.ndarray(Interval):
-        """Returns the intervals associated with a given color."""
-        color_idx: int = config.colors.index(color)
-        return intervals[labels == color_idx]
-
-    # Defines a null cleanser.
-    def cleanser(original: Intervals, _: Intervals) -> Intervals:
-        """Does not prune anything due to how the labeler works."""
-        return original
-
-    # Generates the chromatic intervals.
-    label_to_intervals, intervals_to_labels = _get_exclusive_chromatic_intervals(
-        config.n, config.colors, iter(markers), labeler, cleanser
+    intervals_arr: np.ndarray = np.array(
+        tuple(_get_random_exclusive_intervals(config.n, iter(markers)))
     )
+
+    # Bookkeeping in color-major order (see the Returns note). The exclusive
+    # property holds by construction: each interval got exactly one draw.
+    label_to_intervals: Dict[Color, Intervals] = {}
+    intervals_to_labels: Dict[Interval, Color] = {}
+    for color_idx, color in enumerate(config.colors):
+        assignment: np.ndarray = intervals_arr[labels == color_idx]
+        label_to_intervals[color] = assignment
+        for interval in assignment:
+            intervals_to_labels[tuple(interval.tolist())] = color
+
     if len(intervals_to_labels) != config.intervals:
         raise AssertionError(
             "Generated interval count does not match the requested interval count."
         )
-    # Flattens intervals to labels due to exclusive property.
-    flat_intervals_to_labels: Dict[Interval, Color] = {}
-    for interval, labels in intervals_to_labels.items():
-        assert len(labels) == 1, f"{interval}:{labels}"
-        flat_intervals_to_labels[interval] = labels.pop()
-
-    return label_to_intervals, flat_intervals_to_labels
+    return label_to_intervals, intervals_to_labels
 
 
 def anneal_intervals(intervals: Intervals) -> Intervals:
@@ -300,7 +183,7 @@ def anneal_intervals(intervals: Intervals) -> Intervals:
     yield proposed_start, proposed_end
 
 
-def _prompt_intervals(intervals: Iterable[Interval]) -> str:
+def _prompt_intervals(intervals: Iterable[Interval]) -> Iterator[str]:
     """Given an iterable of intervals, turn it into a prompt of intervals.
 
     Uses exclusive-end notation (e.g. "5 to 10") to match the query convention.
@@ -320,7 +203,7 @@ def _prompt_intervals(intervals: Iterable[Interval]) -> str:
     yield f"and {start} to {end}" if left else f"{start} to {end}"
 
 
-def _prompt_extensional(intervals: Iterable[Interval]) -> str:
+def _prompt_extensional(intervals: Iterable[Interval]) -> Iterator[str]:
     """Given an iterable of intervals, turn it into an extensional prompt of intervals."""
     # Picks off end for "and" handling.
     times: Iterable = itertools.chain(*[range(start, end) for start, end in intervals])
@@ -336,7 +219,7 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> str:
     yield f"and {terminus}" if left else f"{terminus}"
 
 
-def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> str:
+def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> Iterator[str]:
     """Yields one 'Year X: Color.\n' line per year in chronological order.
 
     Produces a year-keyed context so the model can resolve each queried year with
@@ -346,16 +229,6 @@ def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> s
     for (start, end), color in sorted(intervals_to_labels.items()):
         for year in range(start, end):
             yield f"Year {year}: {color}.\n"
-
-
-def _make_noise(length: int, rng: np.random.Generator) -> str:
-    """Generates a random noise string of the given character length.
-
-    Draws uniformly from ASCII letters, digits, spaces, and newlines —
-    matching the user-specified 'whitespace + random characters' profile.
-    """
-    charset = list(string.ascii_letters + string.digits + "   \n")
-    return "".join(charset[i] for i in rng.integers(len(charset), size=length))
 
 
 def get_random_exclusive_prompts(
@@ -388,7 +261,7 @@ def get_random_exclusive_prompts(
     # Creates the noise-padded intensional context: intension + noise to match
     # the extensional length, so context-length is not a confound between the two.
     noise_rng: np.random.Generator = np.random.default_rng(config.seed + 1)
-    noise_intension: str = intension + _make_noise(
+    noise_intension: str = intension + make_noise(
         max(0, len(extension) - len(intension)), noise_rng
     )
 
@@ -425,20 +298,87 @@ def get_random_exclusive_quiz(
     prompter: Prompter,
 ) -> Tuple[Quiz, Quiz, Quiz]:
     """
-    Wraps get_random_exclusive_prompts to produce a QnA format.
+    Wraps get_random_exclusive_prompts to produce a True/False QnA format.
 
     Returns
     -------
-    intensional Quiz, extensional Quiz, noise-padded intensional Quiz
+    (intensional Quiz, extensional Quiz, noise-padded intensional Quiz)
     """
-    intens_quiz: Quiz = []
-    extens_quiz: Quiz = []
-    noise_intens_quiz: Quiz = []
-    for intens, extens, noise_intens, answer in get_random_exclusive_prompts(config, prompter):
-        intens_quiz.append(ToF(prompt=intens, answer=answer))
-        extens_quiz.append(ToF(prompt=extens, answer=answer))
-        noise_intens_quiz.append(ToF(prompt=noise_intens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
+    return quizzes_from_prompts(get_random_exclusive_prompts(config, prompter), ToF)
+
+
+def get_random_exclusive_numeric_quiz(
+    config: ChromaticIntervalsConfig,
+    prompter: Prompter,
+) -> Tuple[Quiz, Quiz, Quiz]:
+    """Like get_random_exclusive_quiz but yields Numeric items for integer answers."""
+    return quizzes_from_prompts(get_random_exclusive_prompts(config, prompter), Numeric)
+
+
+# ---------------------------------------------------------------------------
+# Built-in query generators
+# ---------------------------------------------------------------------------
+# These are the importable task definitions (mirroring periodic.py's built-in
+# generators): the notebooks and the __main__ demo consume the SAME functions,
+# so the statistically load-bearing query sampling exists in exactly one place.
+
+def succession_query_gen(
+    labels_to_intervals: Dict[Color, Intervals],
+    interval_to_label: Dict[Interval, Color],
+    seed: int,
+) -> Iterable[Tuple[Dict[str, str], bool]]:
+    """Generates direct-succession queries.
+
+    Yields True for each unique (predecessor, successor) pair and an equal
+    number of False for randomly-sampled non-successor pairs. Substitution
+    keys: ``$color1``, ``$color2``.
+    """
+    rng: np.random.Generator = np.random.default_rng(seed)
+    sorted_intervals = sorted(interval_to_label.items(), key=lambda item: item[0][0])
+    # True cases: pairs where color2 immediately followed color1.
+    true_pairs: OrderedSet = OrderedSet(
+        (c1, c2)
+        for ((_s1, e1), c1), ((s2, _e2), c2) in zip(sorted_intervals, sorted_intervals[1:])
+    )
+    for color1, color2 in true_pairs:
+        yield {"color1": color1, "color2": color2}, True
+    # False cases: same count, randomly sampled non-successor pairs.
+    all_colors: list = list(labels_to_intervals.keys())
+    false_pairs: OrderedSet = OrderedSet()
+    while len(false_pairs) < len(true_pairs):
+        c1, c2 = (str(c) for c in rng.choice(all_colors, size=2, replace=False))
+        if (c1, c2) not in true_pairs:
+            false_pairs.add((c1, c2))
+    for color1, color2 in false_pairs:
+        yield {"color1": color1, "color2": color2}, False
+
+
+def one_hop_year_query_gen(
+    labels_to_intervals: Dict[Color, Intervals],
+    interval_to_label: Dict[Interval, Color],
+    seed: int,
+) -> Iterable[Tuple[Dict[str, str], bool]]:
+    """Generates single-year queries (one-hop for both representations).
+
+    True: one random year sampled from each interval the colour holds.
+    False: one random year sampled from another colour's interval, per
+    interval held. Substitution keys: ``$color``, ``$year``.
+    """
+    rng: np.random.Generator = np.random.default_rng(seed)
+    all_intervals: list = list(interval_to_label.items())  # [((s, e), color), ...]
+    for color, intervals in labels_to_intervals.items():
+        if not intervals.any():
+            continue
+        # True: one year drawn uniformly from each interval this colour holds.
+        for start, end in intervals:
+            year = int(rng.integers(start, end))
+            yield {"color": color, "year": year}, True
+        # False: one year drawn from a different colour's interval, per interval held.
+        other_intervals: list = [(s, e) for (s, e), c in all_intervals if c != color]
+        for _ in intervals:
+            s, e = other_intervals[int(rng.integers(len(other_intervals)))]
+            year = int(rng.integers(s, e))
+            yield {"color": color, "year": year}, False
 
 
 def duration_query_gen(
@@ -450,6 +390,10 @@ def duration_query_gen(
 
     The answer is the total number of years that color held the role,
     computed as sum(end - start) over its annealed intervals.
+
+    WARNING: currently broken against the ndarray interval collections the
+    pipeline produces ("if not intervals:" raises on a multi-element array);
+    unused by any notebook. Left as-is pending a correctness review.
     """
     for color, intervals in label_to_intervals.items():
         if not intervals:
@@ -457,21 +401,6 @@ def duration_query_gen(
         annealed = tuple(anneal_intervals(intervals))
         total = sum(end - start for start, end in annealed)
         yield {"color": color}, total
-
-
-def get_random_exclusive_numeric_quiz(
-    config: ChromaticIntervalsConfig,
-    prompter: Prompter,
-) -> Tuple[Quiz, Quiz, Quiz]:
-    """Like get_random_exclusive_quiz but yields Numeric items for integer answers."""
-    intens_quiz: Quiz = []
-    extens_quiz: Quiz = []
-    noise_intens_quiz: Quiz = []
-    for intens, extens, noise_intens, answer in get_random_exclusive_prompts(config, prompter):
-        intens_quiz.append(Numeric(prompt=intens, answer=answer))
-        extens_quiz.append(Numeric(prompt=extens, answer=answer))
-        noise_intens_quiz.append(Numeric(prompt=noise_intens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
 
 
 if __name__ == "__main__":
@@ -490,32 +419,7 @@ if __name__ == "__main__":
         " 'True' or 'False'."
     )
 
-    def query_gen(
-        labels_to_intervals: Dict[Color, Intervals],
-        interval_to_label: Dict[Interval, Color],
-        seed: int,
-    ) -> Iterable[Tuple[Dict[str, str], bool]]:
-        """Generates direct-succession queries."""
-        rng: np.random.Generator = np.random.default_rng(seed)
-        sorted_intervals = sorted(interval_to_label.items(), key=lambda item: item[0][0])
-        # True cases: pairs where color2 immediately followed color1.
-        true_pairs: OrderedSet = OrderedSet(
-            (c1, c2)
-            for ((_s1, e1), c1), ((s2, _e2), c2) in zip(sorted_intervals, sorted_intervals[1:])
-        )
-        for color1, color2 in true_pairs:
-            yield {"color1": color1, "color2": color2}, True
-        # False cases: same count, randomly sampled non-successor pairs.
-        all_colors: list = list(labels_to_intervals.keys())
-        false_pairs: OrderedSet = OrderedSet()
-        while len(false_pairs) < len(true_pairs):
-            c1, c2 = (str(c) for c in rng.choice(all_colors, size=2, replace=False))
-            if (c1, c2) not in true_pairs:
-                false_pairs.add((c1, c2))
-        for color1, color2 in false_pairs:
-            yield {"color1": color1, "color2": color2}, False
-
-    for inte, exte, ans in get_random_exclusive_prompts(
+    for inte, exte, noise_inte, ans in get_random_exclusive_prompts(
         ChromaticIntervalsConfig(
             n=250,
             intervals=250 // 4,
@@ -528,7 +432,7 @@ if __name__ == "__main__":
                 "role": "Twislax",
                 "parade": "Gildane",
             },
-            query_gen,
+            succession_query_gen,
         ),
     ):
         print(inte)

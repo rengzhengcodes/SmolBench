@@ -1,46 +1,55 @@
 """
 Interfacing directly with the Prime Intellect inference API.
+
+A thin configuration over :mod:`smolbench.evals.openai_compat`, which holds
+the retry loop, response parsing, and parallel evaluation shared by every
+provider; only Prime Intellect's endpoint, auth, and context-length lookup
+live here.
+
+Setup
+-----
+    PRIME_INTELLECT_API_KEY=<api key>
+    INFERENCE_PROVIDER=primeintellect   # to route smolbench.evals.provider here
+
+Tuning env vars (read at call time): ``PRIME_INTELLECT_MAX_PARALLEL_REQUESTS``
+(default 8), ``PRIME_INTELLECT_INFO`` / ``PRIME_INTELLECT_INFO_RESPONSE``
+(verbose logging). ``PRIME_INTELLECT_BASE_URL`` overrides the API root
+(offline stub tests; see tests/).
 """
 
-import logging
+import functools
 import os
-import time
-from typing import Any, Optional, Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import requests
-from joblib import Parallel, delayed
 
-from smolbench.evals import Answer, QnA, Quiz, Mark, Marks
+from smolbench.evals.openai_compat import ChatClient
 
-PRIME_INTELLECT_API_KEY: str = os.getenv("PRIME_INTELLECT_API_KEY", None)
-URL: str = "https://api.pinference.ai/api/v1/chat/completions"
-PRIME_INTELLECT_INFO: bool = bool(int(os.getenv("PRIME_INTELLECT_INFO", "0")))
-PRIME_INTELLECT_INFO_RESPONSE: bool = bool(
-    int(os.getenv("PRIME_INTELLECT_INFO_RESPONSE", "0"))
-)
-PRIME_INTELLECT_MAX_PARALLEL_REQUESTS: int = int(
-    os.getenv("PRIME_INTELLECT_MAX_PARALLEL_REQUESTS", "8")
-)
 PRIME_INTELLECT_RETRY_BACKOFF_SECONDS: int = 60
+_DEFAULT_BASE_URL: str = "https://api.pinference.ai/api/v1"
 
 
-def _is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
-    if isinstance(err, requests.exceptions.HTTPError):
-        response = err.response
-        if response is None:
-            return True
-
-        return response.status_code == 429 or 500 <= response.status_code < 600
-
-    return True
+def _base_url() -> str:
+    """API root, resolved at call time so env overrides need no re-import."""
+    return os.getenv("PRIME_INTELLECT_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
+def _connection(model: str) -> Tuple[str, str]:
+    """Returns the chat-completions URL and bearer token."""
+    return f"{_base_url()}/chat/completions", os.getenv("PRIME_INTELLECT_API_KEY", "")
+
+
+@functools.lru_cache(maxsize=None)
 def get_model_context_length(model: str) -> int:
-    """Fetches the model context window from Prime Intellect."""
+    """Fetches the model context window from Prime Intellect.
+
+    A model's window is constant, so the network lookup is cached (see the
+    OpenRouter twin of this function for the rationale).
+    """
     response: Dict[str, Any] = requests.get(
-        url=f"https://api.pinference.ai/api/v1/models/{model}",
+        url=f"{_base_url()}/models/{model}",
         headers={
-            "Authorization": f"Bearer {PRIME_INTELLECT_API_KEY}",
+            "Authorization": f"Bearer {os.getenv('PRIME_INTELLECT_API_KEY', '')}",
         },
         timeout=120,
     ).json()
@@ -49,107 +58,15 @@ def get_model_context_length(model: str) -> int:
     return ctx
 
 
-def query(
-    prompt: str,
-    model: str,
-    seed: int,
-    context_length: int = 0,
-    extra_args: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, Optional[str]]:
-    """
-    Queries a model using Prime Intellect.
+_CLIENT = ChatClient(
+    name="Prime Intellect",
+    env_prefix="PRIME_INTELLECT",
+    connection=_connection,
+    context_length=get_model_context_length,
+    retry_backoff_s=PRIME_INTELLECT_RETRY_BACKOFF_SECONDS,
+)
 
-    Parameters
-    ----------
-    prompt:
-        The content posed to the LLM we expect an answer from.
-    model:
-        The model to evaluate on Prime Intellect.
-    seed:
-        Seed for LLM output.
-    context_length:
-        Context length of LLM model.
-    extra_args:
-        Extra args for `json=<slug>` of requests to get certain LLM behavior.
-
-    Returns
-    -------
-    The model's output.
-    """
-    attempt: int = 0
-    while True:
-        attempt += 1
-        try:
-            response = requests.post(
-                url=URL,
-                headers={
-                    "Authorization": f"Bearer {PRIME_INTELLECT_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=(
-                    {
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "seed": seed,
-                    }
-                    | (extra_args if extra_args else {})
-                ),
-                timeout=120,
-            )
-
-            if not response.ok:
-                logging.info(response.text)
-
-            response.raise_for_status()
-            body = response.json()
-            if PRIME_INTELLECT_INFO and PRIME_INTELLECT_INFO_RESPONSE:
-                logging.info(body)
-
-            msg = body["choices"][0]["message"]
-            if msg["content"] is None:
-                logging.warning("Body returned none value: \n" f"{body}")
-                return "", None
-            if (tokens := body["usage"]["total_tokens"]) > context_length:
-                raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
-            if PRIME_INTELLECT_INFO:
-                logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-            return msg["content"], msg.get("reasoning")
-
-        except requests.exceptions.RequestException as err:
-            if not _is_retryable_request_error(err):
-                raise
-            logging.info(
-                f"Prime Intellect request failed on attempt {attempt}: {err}. "
-                f"Retrying in {PRIME_INTELLECT_RETRY_BACKOFF_SECONDS} seconds."
-            )
-            time.sleep(PRIME_INTELLECT_RETRY_BACKOFF_SECONDS)
-
-
-def evaluate(
-    quiz: Quiz, model: str, seed: int, extra_args: Optional[Dict[str, Any]] = None
-) -> Marks:
-    """Evaluates a model given a sequence of quizzes."""
-    ctx_len: int = get_model_context_length(model)
-    max_workers: int = max(1, min(len(quiz), PRIME_INTELLECT_MAX_PARALLEL_REQUESTS))
-    responses: list[Tuple[str, Optional[str]]] = Parallel(n_jobs=max_workers, prefer="threads")(
-        delayed(query)(q.prompt, model, seed, ctx_len, extra_args=extra_args)
-        for q in quiz
-    )
-
-    mark_list: list[Mark] = []
-    q: QnA
-    raw: str
-    reasoning: Optional[str]
-    for q, (raw, reasoning) in zip(quiz, responses):
-        try:
-            conditioned: Answer = q.condition(raw)
-        except ValueError as e:
-            if PRIME_INTELLECT_INFO:
-                logging.info(e)
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=None))
-            continue
-
-        part_correct, _ = q.score(conditioned)
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw, reasoning=reasoning, score=part_correct))
-
-    return Marks(model=model, marks=tuple(mark_list))
+# The provider-facing API (dispatched via smolbench.evals.provider); full
+# parameter docs live on ChatClient.query / ChatClient.evaluate.
+query = _CLIENT.query
+evaluate = _CLIENT.evaluate

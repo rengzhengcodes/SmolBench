@@ -11,7 +11,6 @@ Run:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -19,7 +18,18 @@ import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _util import pretty_model, model_sort_key
+from _util import (
+    EXCLUDE_MODELS,
+    HINT_LABELS,
+    HINT_RUNGS,
+    NOISE_RUNGS_ALIGNED as NOISE_RUNGS,
+    is_reasoning,
+    load_rows,
+    model_sort_key,
+    models_per_run,
+    pretty_model,
+    trivial_skip_keys,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNS = ["main_v3", "main_v3_2"]
@@ -27,41 +37,8 @@ OUT_PATH = ROOT / "figures/response_length_per_model_rung.png"
 
 # Two trendlines per model: hint line through (no hint, hint 1..5), noise line
 # through (noise 2..5). Noise paired with hint:N at matched token volume; user
-# labels shifted up by 1, so internal noise:1 == user "noise 2".
-HINT_RUNGS = ["stepk:2", "hint:0", "hint:1", "hint:2", "hint:3"]
-HINT_LABELS = ["no hint", "hint 1", "hint 2", "hint 3", "hint 4"]
-NOISE_RUNGS = [None, None, "noise:1", "noise:2", "noise:3"]  # aligned to HINT positions
-EXCLUDE_MODELS = {"v3.2-speciale"}
-
-
-def is_reasoning(model_name: str) -> bool:
-    n = model_name.lower()
-    return ("high" in n) or ("thinking" in n) or ("speciale" in n)
-
-
-def load_rows(runs):
-    """Load rows, tagging each with the run it came from."""
-    rows = []
-    for run in runs:
-        path = ROOT / f"results/runs/{run}/all_rows.jsonl"
-        if not path.exists():
-            print(f"warning: {path} missing, skipping")
-            continue
-        for l in path.open():
-            if not l.strip():
-                continue
-            r = json.loads(l)
-            r["_run"] = run
-            rows.append(r)
-    return rows
-
-
-def models_per_run(real):
-    out = {}
-    for r in real:
-        if r.get("model"):
-            out.setdefault(r["_run"], set()).add(r["model"])
-    return out
+# labels shifted up by 1, so internal noise:1 == user "noise 2" — see
+# _util.NOISE_RUNGS_ALIGNED for the full explanation of this shift.
 
 
 def main():
@@ -77,12 +54,7 @@ def main():
     # Keep only those present at every hint level AND every noise level so
     # the lines describe the same theorems across the x-axis.
     all_rungs = HINT_RUNGS + [r for r in NOISE_RUNGS if r is not None]
-    rung_to_keys = {r: set() for r in all_rungs}
-    for r in real:
-        rung = r.get("rung")
-        if rung in rung_to_keys:
-            rung_to_keys[rung].add((r.get("theorem_id"), r.get("k")))
-    keep = set.intersection(*rung_to_keys.values())
+    keep = trivial_skip_keys(real, all_rungs)
     print(f"theorems present at every (hint, noise) level shown: {len(keep)}")
 
     # For the "no hint" point, further restrict to (model, theorem, k) where
