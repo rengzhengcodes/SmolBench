@@ -28,8 +28,10 @@ print(f"get_model_context_length default: {ctx}")
 assert ctx == 200000
 
 # Pick a small, cheap, non-reasoning chat model for the content check.
+# gemma-3 specifically: google.gemma-4-* is 401-gated for this account
+# ("Berm is not enabled") despite appearing in the catalog.
 preferred = [m for m in models if "qwen3-8b" in m or "mistral-small" in m.lower()
-             or "gemma" in m.lower()]
+             or "gemma-3" in m.lower()]
 model = preferred[0] if preferred else models[0]
 print(f"evaluate model: {model}")
 
