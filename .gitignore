@@ -214,6 +214,8 @@ __marimo__/
 # instance's control token and vLLM api key).
 .ec2_state*.json
 
-# Claude files
-.claude
+# Claude files -- except .claude/skills/, which holds committed agent
+# tooling (run skills + their drivers).
+.claude/*
+!.claude/skills/
 CLAUDE.md
