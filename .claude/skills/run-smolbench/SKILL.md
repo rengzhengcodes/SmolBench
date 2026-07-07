@@ -38,6 +38,7 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
 bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real Dojo replay (see below)
+bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -95,17 +96,33 @@ gitignored). Manual driving from the repo root with
 
 The canonical sweep driver is `notebooks/lean/lean_eval.ipynb` (kernel:
 `.venv-lean`) — config dicts live in its cells; `run-sweep` is the headless
-escape hatch for the same config schema. Verified tiers in this container:
-`metadata`/`list` (credential-free, no Lean) and `replay`/Dojo
-(needs elan on PATH; first call pulls the ~2.4 GB traced corpus from S3 to
-`~/.cache/lean_dojo/` — creds-free, ~1 min; cold replay ~2–4 min, warm ~10 s).
-NOT verified here: `run-cell`/`run-sweep` (need a provider key —
-`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY` — and cost money) and
-`filter` (~70 min/split). Figure scripts live in `notebooks/lean/figures/`
-and read results under `notebooks/lean/results/runs/` (committed once
-sweeps are run; currently empty — scripts warn and skip missing runs).
-Sweep configs need the `replay_passing_*.jsonl` sidecar that only `filter`
-produces; none is checked in yet.
+escape hatch for the same config schema.
+
+**Credential-free END-TO-END sweep verification (fake LLM, REAL Lean):**
+`lean_smoke.sh --e2e` is the committed harness — it starts two local
+OpenAI-compatible stubs (`stub_llm.py` beside this file: one answers with
+the theorem's ground-truth tail in a ```` ```lean ```` fence, one with a
+bogus tactic), points the `primeintellect` + `openrouter` providers at them
+via `*_BASE_URL`/`*_API_KEY` env, and drives `run-sweep` on
+`Lagrange.eval_nodal_at_node` (2 tactics, ~7 s warm replay). It asserts:
+sanity gate passes, real Lean returns `success` for the true tail and
+`lean_error` for the bogus one, rows AND wire requests carry `seed`,
+per-model provider dispatch holds, and an identical rerun resume-skips both
+cells. Results/reqlog go to a mktemp dir via `SMOLBENCH_LEAN_RESULTS` —
+keep stub runs out of the committed results tree if you adapt it. ~30 s
+warm; like `--replay` it needs elan (first Dojo call pulls the ~2.4 GB
+traced corpus from S3 to `~/.cache/lean_dojo/`, creds-free; cold ~2–4 min,
+warm ~10 s).
+Real-model `run-cell`/`run-sweep` need a provider key
+(`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
+user-opt-in only; `filter` (~70 min/split) produces the
+`replay_passing_*.jsonl` sidecar that non-explicit sweep configs need —
+none is checked in yet (`--e2e` sidesteps it with `theorems.source:
+explicit`). Figure scripts live in `notebooks/lean/figures/` and read
+results under `notebooks/lean/results/runs/` (committed once sweeps are
+run; currently empty — scripts warn and skip missing runs, and write PNGs
+next to themselves, so point `SMOLBENCH_LEAN_RESULTS` at scratch data with
+care: a pilot run's PNG overwrites the committed figure).
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 
