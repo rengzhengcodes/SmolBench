@@ -3,13 +3,13 @@
 Every figure script under ``notebooks/lean/figures/`` reads rollout rows
 from ``<results_root>/runs/<run>/all_rows.jsonl`` (one JSON object per
 (model, theorem, k, rung, rollout) cell, where ``results_root`` defaults to
-``smolbench.lean.runner.results_root()``) and slices/aggregates them over a
+``smolbench.deduction.lean.runner.results_root()``) and slices/aggregates them over a
 shared "rung" vocabulary — the experimental condition each rollout was run
 under: no hint (``stepk:2``), a positive-information hint level
 (``hint:0``..``hint:3``), or a volume-matched noise control
 (``noise:1``..``noise:3``).
 
-This module itself lives under ``smolbench/lean/`` (an installed package)
+This module itself lives under ``smolbench/deduction/lean/`` (an installed package)
 rather than alongside the figure scripts it serves (``notebooks/lean/
 figures/``) — see `load_rows` and `figure_out_path` for how each accounts
 for that split (a lazily-imported results root, and an explicit output
@@ -114,7 +114,7 @@ def figure_out_path(name: str, out_dir: Path) -> Path:
         Directory the PNG is written into. Callers pass their own
         `Path(__file__).parent` (i.e. `notebooks/lean/figures/`) explicitly.
 
-        Design: this module now lives under `smolbench/lean/` (an installed
+        Design: this module now lives under `smolbench/deduction/lean/` (an installed
         package, potentially imported from anywhere) while the figure
         scripts and their PNG outputs live under `notebooks/lean/figures/` —
         two different directories. The previous version of this function
@@ -250,7 +250,7 @@ def is_reasoning(model_name: str) -> bool:
     Notes
     -----
     This mirrors (independently) the reasoning heuristic used at collection
-    time in `smolbench/lean/runner.py`'s `_is_reasoning`, which additionally checks
+    time in `smolbench/deduction/lean/runner.py`'s `_is_reasoning`, which additionally checks
     `extra_params.reasoning_effort` before falling back to the substring
     check. Figure scripts only see display names, not model configs, so they
     use the substring-only fallback.
@@ -276,14 +276,14 @@ def load_rows(runs: list[str], results_root: Path | None = None) -> list[dict]:
         Root of the results tree, i.e. the directory containing `runs/`.
         Each run resolves to `<results_root>/runs/<run>/all_rows.jsonl`. If
         `None` (the default used by every figure script), resolved via
-        `smolbench.lean.runner.results_root()`.
+        `smolbench.deduction.lean.runner.results_root()`.
 
         Design: the import of `runner.results_root` is deliberately LAZY
         (done here, inside the function body, rather than at module level).
         `runner.py` pulls in the whole sweep engine — context/premise
         rendering (tiktoken) and the provider dispatch stack — which is far
         heavier than anything else this `figures` module needs, so a bare
-        `import smolbench.lean.figures` stays cheap. (It does NOT pull in
+        `import smolbench.deduction.lean.figures` stays cheap. (It does NOT pull in
         LeanDojo: the runner loads `verify.py` lazily through its
         `verifier=` seam, which is why the figure scripts run on the main
         3.14 venv.) Callers who already have a `results_root` handy (e.g. a

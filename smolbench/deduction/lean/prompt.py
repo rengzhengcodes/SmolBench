@@ -64,7 +64,7 @@ def build_user_prompt(rendered: RenderedContext) -> str:
     ----------
     rendered : RenderedContext
         The rendered context block for one (theorem, k, rung) triple, as
-        produced by `smolbench.lean.context.render`.
+        produced by `smolbench.deduction.lean.context.render`.
 
     Returns
     -------

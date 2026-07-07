@@ -1,14 +1,14 @@
-"""Command-line entry points. Run as `python -m smolbench.lean.cli <subcommand>`.
+"""Command-line entry points. Run as `python -m smolbench.deduction.lean.cli <subcommand>`.
 
 Environment split: `replay`, `filter`, `run-cell`, and `run-sweep` verify
 candidate/ground-truth proofs against Lean and therefore import
-`smolbench.lean.verify`, which requires the `lean_dojo` package — these four
+`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package — these four
 subcommands only work from the dedicated `.venv-lean` environment (see
 `verify.py`'s import guard for how to build it). Every other subcommand
 (`metadata`, `list`, `analyze`, `report`, `show`, `compare`, `prompt-stats`)
 touches only the generation/analysis modules (`corpus`, `context`, `prompt`,
 `runner`'s dispatch) and runs on this project's regular `.venv`. To keep that
-split real, `smolbench.lean.verify` is imported lazily (inside `cmd_replay`
+split real, `smolbench.deduction.lean.verify` is imported lazily (inside `cmd_replay`
 and `cmd_filter`, the two commands here that call it directly) rather than
 at module top — `run-cell`/`run-sweep` don't import it directly at all; they
 reach it indirectly through `runner.run_cell`/`runner.sweep`, which resolve
@@ -102,7 +102,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Requires `.venv-lean`: imports `smolbench.lean.verify` (see the module
+    Requires `.venv-lean`: imports `smolbench.deduction.lean.verify` (see the module
     docstring's environment split) to open real Dojo sessions. Prints one
     line per theorem (verdict, tactics applied/total, wall time) plus the
     first line of any error, then a final pass/total summary.
@@ -168,7 +168,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Requires `.venv-lean`: imports `smolbench.lean.verify` (see the module
+    Requires `.venv-lean`: imports `smolbench.deduction.lean.verify` (see the module
     docstring's environment split). Resumable: without ``--fresh``,
     theorems already recorded in the output JSONL
     (``corpus.replay_passing_path(args.kind, args.split)``) are skipped,
@@ -263,7 +263,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Requires `.venv-lean`: reaches `smolbench.lean.verify` indirectly
+    Requires `.venv-lean`: reaches `smolbench.deduction.lean.verify` indirectly
     through `runner.run_cell`'s lazily-resolved default verifier (see the
     module docstring's environment split), rather than importing it
     directly here. Writes one JSONL row per rollout to
@@ -561,7 +561,7 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Requires `.venv-lean`: reaches `smolbench.lean.verify` indirectly
+    Requires `.venv-lean`: reaches `smolbench.deduction.lean.verify` indirectly
     through `runner.sweep`'s lazily-resolved default verifier (see the
     module docstring's environment split). All other side effects (output
     directory layout, resumability, manifest/analysis writing) belong to
@@ -800,7 +800,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the `smolbench.lean.cli` argument parser.
+    """Build the `smolbench.deduction.lean.cli` argument parser.
 
     See the module docstring for the `.venv-lean` vs. main-`.venv`
     subcommand split (`replay`/`filter`/`run-cell`/`run-sweep` need
@@ -816,7 +816,7 @@ def build_parser() -> argparse.ArgumentParser:
         dispatches via ``args.func(args)`` without a separate
         subcommand-name switch.
     """
-    p = argparse.ArgumentParser(prog="python -m smolbench.lean.cli")
+    p = argparse.ArgumentParser(prog="python -m smolbench.deduction.lean.cli")
     sub = p.add_subparsers(required=True, dest="cmd")
 
     p_meta = sub.add_parser("metadata", help="print benchmark metadata.json")
@@ -913,7 +913,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for ``python -m smolbench.lean.cli <subcommand> ...``.
+    """Entry point for ``python -m smolbench.deduction.lean.cli <subcommand> ...``.
 
     Parameters
     ----------

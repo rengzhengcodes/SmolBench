@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke driver for the smolbench.lean harness (LeanDojo theorem-proving eval,
+# Smoke driver for the smolbench.deduction.lean harness (LeanDojo theorem-proving eval,
 # folded into the main package from the old standalone lean/ project).
 #
 # Default run is credential-free and Lean-free: check the generation/analysis
@@ -8,9 +8,9 @@
 # Benchmark 4 JSON from Zenodo (64 MB, one-time), then drive the `metadata`
 # and `list` CLI subcommands against real benchmark data.
 #
-#   bash .claude/skills/run-smolbench/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
-#   bash .claude/skills/run-smolbench/lean_smoke.sh --replay   # + one Dojo ground-truth replay
-#   bash .claude/skills/run-smolbench/lean_smoke.sh --e2e      # + FULL run-sweep: fake LLMs, REAL Lean
+#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
+#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --replay   # + one Dojo ground-truth replay
+#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --e2e      # + FULL run-sweep: fake LLMs, REAL Lean
 #
 # --replay and --e2e additionally need elan on PATH and, on first use, pull
 # the ~2.4 GB traced corpus from LeanDojo's S3 cache into ~/.cache/lean_dojo/
@@ -31,11 +31,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
 # uv-managed Python needs the system CA bundle (see notebooks/lean/README.md).
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Tier 0: the generation/analysis side of smolbench.lean must import on the
+# Tier 0: the generation/analysis side of smolbench.deduction.lean must import on the
 # main venv (3.14, no lean_dojo) — only verify.py is allowed to need 3.12.
-.venv/bin/python -c "import smolbench.lean.runner, smolbench.lean.cli" \
-    || { echo "FAIL: smolbench.lean.{runner,cli} must import on the main .venv" >&2; exit 1; }
-echo "PASS — Tier 0 (smolbench.lean imports cleanly on the main 3.14 venv)."
+.venv/bin/python -c "import smolbench.deduction.lean.runner, smolbench.deduction.lean.cli" \
+    || { echo "FAIL: smolbench.deduction.lean.{runner,cli} must import on the main .venv" >&2; exit 1; }
+echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly on the main 3.14 venv)."
 
 # Dedicated 3.12 venv for the verification path. UV_PROJECT_ENVIRONMENT keeps
 # the root .venv untouched; the environment marker on lean-dojo makes this
@@ -52,15 +52,15 @@ if [ ! -f "$DATA/metadata.json" ]; then
     rm notebooks/lean/data/leandojo_benchmark_4.tar.gz
 fi
 
-metadata_out=$(.venv-lean/bin/python -m smolbench.lean.cli metadata)
+metadata_out=$(.venv-lean/bin/python -m smolbench.deduction.lean.cli metadata)
 echo "$metadata_out"
 grep -q "LeanDojo Benchmark 4" <<<"$metadata_out" || { echo "FAIL: unexpected metadata" >&2; exit 1; }
 
-list_out=$(.venv-lean/bin/python -m smolbench.lean.cli list --kind random --split test --limit 5)
+list_out=$(.venv-lean/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5)
 echo "$list_out"
 grep -q "theorems with traced tactics in random/test" <<<"$list_out" || { echo "FAIL: unexpected list output" >&2; exit 1; }
 
-echo "PASS — smolbench.lean Tier-1 smoke (metadata + list against real benchmark data)."
+echo "PASS — smolbench.deduction.lean Tier-1 smoke (metadata + list against real benchmark data)."
 
 need_elan() {
     export PATH="$HOME/.elan/bin:$PATH"
@@ -73,8 +73,8 @@ need_elan() {
 
 if [ "${1:-}" = "--replay" ]; then
     need_elan
-    .venv-lean/bin/python -m smolbench.lean.cli replay -n 1 --seed 0
-    echo "PASS — smolbench.lean replay smoke (Dojo ground-truth replay succeeded)."
+    .venv-lean/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
+    echo "PASS — smolbench.deduction.lean replay smoke (Dojo ground-truth replay succeeded)."
 fi
 
 if [ "${1:-}" = "--e2e" ]; then
@@ -128,7 +128,7 @@ YAML
         SMOLBENCH_LEAN_RESULTS="$WORK/results" \
         PRIME_INTELLECT_BASE_URL="http://127.0.0.1:$PI_PORT/v1" PRIME_INTELLECT_API_KEY=dummy \
         OPENROUTER_BASE_URL="http://127.0.0.1:$OR_PORT/v1" OPENROUTER_API_KEY=dummy \
-        .venv-lean/bin/python -m smolbench.lean.cli run-sweep --config "$WORK/sweep.yaml"
+        .venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config "$WORK/sweep.yaml"
     }
     run_sweep
 
@@ -153,5 +153,5 @@ PY
     resume_out=$(run_sweep)
     grep -q "(2 skipped)" <<<"$resume_out" \
         || { echo "FAIL: resume rerun did not skip both cells:" >&2; echo "$resume_out" >&2; exit 1; }
-    echo "PASS — smolbench.lean END-TO-END stub sweep (fake LLMs, real Lean: good=success, bad=lean_error, resume skips)."
+    echo "PASS — smolbench.deduction.lean END-TO-END stub sweep (fake LLMs, real Lean: good=success, bad=lean_error, resume skips)."
 fi

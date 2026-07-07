@@ -89,9 +89,9 @@ class RenderedContext:
     """The rendered text for one (chain, level) context rung, plus its label.
 
     Returned by `render`; the text is consumed by prompt assembly
-    (``smolbench.lean.prompt.build_user_prompt``), and `label` is recorded
+    (``smolbench.deduction.lean.prompt.build_user_prompt``), and `label` is recorded
     as the cell's ``rung`` in every result row (see
-    ``smolbench.lean.runner.run_cell``).
+    ``smolbench.deduction.lean.runner.run_cell``).
     """
 
     #: Which chain this rung belongs to.
@@ -487,7 +487,7 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
         chain-specific rules above. False for any `chain` this function
         does not recognize, and for `k` outside
         ``[0, len(theorem.traced_tactics))`` -- a defensive default rather
-        than a raised error, since the only caller (`smolbench.lean.runner.
+        than a raised error, since the only caller (`smolbench.deduction.lean.runner.
         sweep`, gated by ``skip_trivial``) always invokes this with a `k`
         it has already validated for other purposes; "never trivial" is
         the safe default in case that assumption is ever violated, since it

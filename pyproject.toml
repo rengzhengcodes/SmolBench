@@ -19,7 +19,7 @@ readme = "README.md"
 # The main development venv (.venv) runs Python 3.14. The floor is 3.12 --
 # claimed solely so the Lean theorem-proving verification path can share this
 # package: lean-dojo (the `lean` extra) pins Requires-Python <3.13 upstream,
-# so smolbench.lean.verify runs from a dedicated 3.12 venv (.venv-lean; see
+# so smolbench.deduction.lean.verify runs from a dedicated 3.12 venv (.venv-lean; see
 # notebooks/lean/README.md). All smolbench code is validated on both 3.12 and
 # 3.14 by the offline test suite.
 requires-python = ">=3.12"
@@ -59,7 +59,7 @@ aws = [
     "boto3>=1.43",
 ]
 
-# Lean theorem-proving eval (smolbench/lean/): corpus/context/prompt rendering
+# Lean theorem-proving eval (smolbench/deduction/lean/): corpus/context/prompt rendering
 # and the sweep runner need PyYAML (configs, results) and tiktoken (noise-rung
 # token matching, prompt-stats); verification additionally needs lean-dojo,
 # which pins Requires-Python <3.13 upstream -- the environment marker lets

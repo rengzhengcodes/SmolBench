@@ -1,4 +1,4 @@
-"""Offline tests for smolbench.lean.corpus against a tiny committed fixture.
+"""Offline tests for smolbench.deduction.lean.corpus against a tiny committed fixture.
 
 All tests point SMOLBENCH_LEAN_DATA at tests/fixtures/lean_mini/ (a hand-built
 LeanDojo-Benchmark-4-shaped tree) and reset the corpus/premises lru_caches so
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import smolbench.lean.corpus as corpus
+import smolbench.deduction.lean.corpus as corpus
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
 

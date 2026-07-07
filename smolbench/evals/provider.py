@@ -21,7 +21,7 @@ where a single INFERENCE_PROVIDER env var can't express "this model via ec2,
 that one via openrouter" at the same time -- can resolve a provider module
 explicitly via provider_module("ec2"), bypassing the environment entirely,
 instead of going through the env-dispatched query/evaluate/complete/
-get_model_context_length functions below (smolbench.lean uses exactly this
+get_model_context_length functions below (smolbench.deduction.lean uses exactly this
 explicit-name pattern; everything else uses env dispatch).
 
 This module only dispatches; it has no provisioning logic of its own. The

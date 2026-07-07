@@ -5,7 +5,7 @@ of mathlib4 (commit ``fe4454af``, March 2024) traced by
 `LeanDojo <https://leandojo.org>`_: every theorem's tactic-by-tactic proof
 state transitions (this module), plus a corpus of every premise
 (theorem/def/etc.) declared in the traced repo, with source position and
-containing file (``smolbench.lean.premises``). See
+containing file (``smolbench.deduction.lean.premises``). See
 ``notebooks/lean/README.md`` for the full dataset description, pool sizes,
 and bootstrap instructions.
 
@@ -33,6 +33,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterator, Literal
 
+import smolbench
+
 
 def data_root() -> Path:
     """Root directory of the LeanDojo Benchmark 4 dataset.
@@ -41,14 +43,18 @@ def data_root() -> Path:
       1. The ``SMOLBENCH_LEAN_DATA`` environment variable, if set.
       2. ``notebooks/lean/data/leandojo_benchmark_4`` under the repo root.
 
-    The default is anchored to this file's own location
-    (``parents[2]`` from ``smolbench/lean/corpus.py`` is the repo root) rather
-    than the current working directory. This mirrors the repo-anchoring
-    pattern used for ``_DEFAULT_STATE_FILE`` in ``smolbench/evals/ec2.py``:
-    notebook kernels and test runners invoke this module from arbitrary
-    cwds (temp dirs included), so a cwd-relative default would silently
-    resolve to the wrong place — or nowhere at all — depending on who
-    imports the module.
+    The default is anchored to the installed ``smolbench`` package
+    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root)
+    rather than the current working directory. Anchoring off the top-level
+    package -- instead of counting ``parents`` up from *this* file -- keeps
+    the resolution correct no matter how deeply this module is nested, so
+    moving the subpackage (e.g. ``smolbench/lean`` -> ``smolbench/deduction/
+    lean``) cannot silently break it. This mirrors the repo-anchoring pattern
+    used for ``_DEFAULT_STATE_FILE`` in ``smolbench/evals/ec2.py`` and
+    ``repo_root()`` in ``smolbench/induction/experiment.py``: notebook kernels
+    and test runners invoke this module from arbitrary cwds (temp dirs
+    included), so a cwd-relative default would silently resolve to the wrong
+    place — or nowhere at all — depending on who imports the module.
 
     The env var is read at *call* time (not import time), so callers
     (including tests) may set ``SMOLBENCH_LEAN_DATA`` at any point before
@@ -67,7 +73,7 @@ def data_root() -> Path:
     if override:
         return Path(override)
     return (
-        Path(__file__).resolve().parents[2]
+        Path(smolbench.__file__).resolve().parents[1]
         / "notebooks"
         / "lean"
         / "data"
@@ -92,16 +98,16 @@ class TracedTactic:
     tactic: str
     #: Pretty-printed Lean tactic state (hypotheses followed by goal(s),
     #: separated by a line starting with ``⊢``) immediately before `tactic`
-    #: is applied. See ``smolbench.lean.context.split_state``.
+    #: is applied. See ``smolbench.deduction.lean.context.split_state``.
     state_before: str
     #: Pretty-printed Lean tactic state immediately after `tactic` is
     #: applied (``"no goals"`` when the tactic closes the last goal).
     state_after: str
     #: Premises referenced by name inside `tactic`, one dict per reference:
     #: ``{full_name, def_path, def_pos, def_end_pos}``. This is a lighter,
-    #: distinct shape from ``smolbench.lean.premises.Premise`` (no
+    #: distinct shape from ``smolbench.deduction.lean.premises.Premise`` (no
     #: ``code``/``kind``) -- ``full_name`` is the join key used to look the
-    #: full premise up via ``smolbench.lean.premises.lookup`` (see
+    #: full premise up via ``smolbench.deduction.lean.premises.lookup`` (see
     #: ``context._render_hint_parts``). Empty when the tactic references no
     #: known premise (most tactics -- e.g. ``intro h``, bare ``simp``). See
     #: ``_from_json`` for how this is extracted from the raw
@@ -124,7 +130,7 @@ class BenchmarkTheorem:
     full_name: str
     #: ``(line, column)`` of the declaration's start, as recorded in the
     #: LeanDojo trace. Nothing in this codebase consumes these fields for
-    #: source slicing (unlike the parallel ``smolbench.lean.premises.
+    #: source slicing (unlike the parallel ``smolbench.deduction.lean.premises.
     #: Premise.start``/``.end``, whose *line* is provably 1-indexed --
     #: see ``premises.slice_full_decl``'s explicit ``start_line - 1``
     #: conversion before list-indexing a file's lines), so their indexing
@@ -327,12 +333,12 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
     """Yield theorems whose ground-truth replay was recorded as `success`.
 
     Reads `data/replay_passing_<kind>_<split>.jsonl`, produced by
-    `python -m smolbench.lean.cli filter --kind <kind> --split <split>`.
+    `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found — run `python -m smolbench.lean.cli filter "
+            f"{path} not found — run `python -m smolbench.deduction.lean.cli filter "
             f"--kind {kind} --split {split}` first"
         )
     passing: set[str] = set()
@@ -351,7 +357,7 @@ def reset_caches() -> None:
 
     `data_root()` re-reads `SMOLBENCH_LEAN_DATA` on every call, but the
     lru_cache-memoized loaders in this module (`load_split`) and in
-    `smolbench.lean.premises` (`_index`, `_traced_root`, `slice_full_decl`,
+    `smolbench.deduction.lean.premises` (`_index`, `_traced_root`, `slice_full_decl`,
     `_file_records`, `_short_name_index`, `referenced_premises`) key their
     results only on their own arguments — not on the current `data_root()`
     value. A test that repoints `SMOLBENCH_LEAN_DATA` to a fixture directory
@@ -363,7 +369,7 @@ def reset_caches() -> None:
 
     Notes
     -----
-    `smolbench.lean.premises` is imported inside this function body, not at
+    `smolbench.deduction.lean.premises` is imported inside this function body, not at
     module level, because `premises` imports `data_root` from `corpus`
     (this module): a top-level `from . import premises` here would create
     an import cycle (`corpus` -> `premises` -> `corpus`) that fails at

@@ -1,7 +1,7 @@
-"""Offline tests for smolbench.lean.prompt (fence extraction + prompt assembly)."""
+"""Offline tests for smolbench.deduction.lean.prompt (fence extraction + prompt assembly)."""
 
-import smolbench.lean.prompt as prompt
-from smolbench.lean.context import RenderedContext
+import smolbench.deduction.lean.prompt as prompt
+from smolbench.deduction.lean.context import RenderedContext
 
 
 def test_extract_last_lean_fence_wins():

@@ -37,10 +37,10 @@ except ImportError as exc:
     # verifier — needs the dedicated `.venv-lean` environment. Re-raising
     # with an actionable message here (instead of letting the bare
     # ModuleNotFoundError propagate) means anyone who accidentally imports
-    # `smolbench.lean.verify` from the wrong interpreter gets pointed at the
+    # `smolbench.deduction.lean.verify` from the wrong interpreter gets pointed at the
     # fix instead of a bare "no module named lean_dojo".
     raise ImportError(
-        "smolbench.lean.verify requires the 'lean_dojo' package, which is "
+        "smolbench.deduction.lean.verify requires the 'lean_dojo' package, which is "
         "only installable in the dedicated '.venv-lean' environment (the "
         "upstream package pins python<3.13, incompatible with this "
         "project's main .venv). Build it once with:\n"
@@ -85,7 +85,7 @@ def _open_dojo_with_retry(thm: Theorem, timeout: int):
 #
 # All 6 values below are valid for `ProofResult.verdict` (produced by
 # `try_tail` / `verify_proof_tail`, or constructed directly by
-# `smolbench.lean.runner`'s exception-handling paths when generation or
+# `smolbench.deduction.lean.runner`'s exception-handling paths when generation or
 # verification raises). `ReplayResult.verdict` (`replay_ground_truth`) only
 # ever takes 5 of them -- it never produces `"replay_failed"`, since
 # replaying the FULL ground-truth proof has no prefix/tail split for a
@@ -246,7 +246,7 @@ class ProofResult:
     """Outcome of trying a candidate proof tail from a specific proof step.
 
     Produced by `try_tail` (and its one-shot wrapper `verify_proof_tail`),
-    and also constructed directly by `smolbench.lean.runner`'s exception
+    and also constructed directly by `smolbench.deduction.lean.runner`'s exception
     handlers when generation or Dojo verification itself raises. See the
     "Verdict taxonomy" comment above `Verdict` for the full 6-value verdict
     set -- `ProofResult` is the only one of the two result classes that can
@@ -330,7 +330,7 @@ def try_tail(dojo, state_at_k, tail: str, theorem_name: str) -> ProofResult:
         holds the last state's pretty-print). Never ``"exception"`` or
         ``"replay_failed"`` -- those verdicts are produced by callers that
         wrap this function (`verify_proof_tail`'s except-blocks;
-        `smolbench.lean.runner`'s per-cell exception handling), not by
+        `smolbench.deduction.lean.runner`'s per-cell exception handling), not by
         `try_tail` itself.
     """
     tactics = _split_tactics(tail)

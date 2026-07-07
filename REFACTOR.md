@@ -327,7 +327,7 @@ widen the hunt (this run needed
 The standalone `lean/` uv project (leaneval, Python 3.12) was dissolved into
 the main package structure:
 
-- **`smolbench/lean/`** (new subpackage, git-mv'ed with history): corpus /
+- **`smolbench/deduction/lean/`** (new subpackage, git-mv'ed with history): corpus /
   premises / context / prompt / verify / runner / cli, plus `figures.py`
   (the old `lean/figures/_util.py`). The bespoke `leaneval/llm/` layer
   (base/factory/anthropic/openai_compat) was deleted outright — generation
@@ -350,15 +350,15 @@ the main package structure:
   `python_version < '3.13'` marker in the new `lean` extra. Main `.venv`
   stays 3.14; verification runs from `.venv-lean` (3.12,
   `UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 --extra lean
-  --extra notebook --extra dev`). `smolbench.lean.verify` import-guards
+  --extra notebook --extra dev`). `smolbench.deduction.lean.verify` import-guards
   lean_dojo with an actionable error; everything else imports on 3.14.
 - §1.5/§2.4's `lean/figures/` references above are historical — those files
-  now live at `notebooks/lean/figures/` + `smolbench/lean/figures.py`.
+  now live at `notebooks/lean/figures/` + `smolbench/deduction/lean/figures.py`.
 
 ## Part 4 — modularize + document pass (2026-07-07)
 
 Scope: unify the AWS provisioning primitives duplicated across `aws.py` and
-`ec2.py`; a NumPy-style docstring pass over `smolbench/lean/{corpus,cli,
+`ec2.py`; a NumPy-style docstring pass over `smolbench/deduction/lean/{corpus,cli,
 premises,context,verify}.py` plus real module docstrings on
 `induction/periodic.py`/`chromatic.py`; an `InductionExperiment` facade
 collapsing the three eval notebooks' hand-rolled harness/EC2 cells; dedupe

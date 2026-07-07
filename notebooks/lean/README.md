@@ -148,14 +148,14 @@ The eval was folded into `smolbench` from a standalone `lean/` project (see
 git history for the pre-fold layout). It now spans two directories:
 
 ```
-smolbench/lean/            # installed package: generation + verification
+smolbench/deduction/lean/            # installed package: generation + verification
 ├── corpus.py               # load benchmark; iterate (theorem, k, traced_tactic)
 ├── premises.py              # premise lookup → (signature, body, file)
 ├── context.py               # render rungs along stepk + hint chains
 ├── prompt.py                 # message assembly + LLM-response parsing
 ├── verify.py                  # Dojo replay + tail submission (.venv-lean only)
 ├── runner.py                   # sweep engine → JSONL (resumable, session reuse)
-├── cli.py                       # `python -m smolbench.lean.cli ...`
+├── cli.py                       # `python -m smolbench.deduction.lean.cli ...`
 └── figures.py                    # shared helpers for the figure scripts below
 
 notebooks/lean/             # experiment surface (this directory)
@@ -173,7 +173,7 @@ notebooks/lean/             # experiment surface (this directory)
 └── figures/                   # publication-figure scripts (see below)
 ```
 
-Every `smolbench.lean` module except `verify.py` — including `runner.py`
+Every `smolbench.deduction.lean` module except `verify.py` — including `runner.py`
 and `cli.py` — imports cleanly on any Python ≥ 3.12 (the repo's main
 `.venv` included): the runner reaches `verify.py` lazily, at call time,
 through its `verifier=` injection seam (`runner._default_verifier`), never
@@ -181,7 +181,7 @@ at import time. What needs the dedicated `.venv-lean` environment is
 *executing* the verification path — `sweep`/`run_cell` with the default
 verifier, and the `replay`/`filter`/`run-cell`/`run-sweep` CLI
 subcommands — because `lean_dojo` pins `Requires-Python <3.13` upstream.
-Importing `smolbench.lean.verify` on 3.14 raises an actionable
+Importing `smolbench.deduction.lean.verify` on 3.14 raises an actionable
 `ImportError` pointing at the `.venv-lean` one-liner.
 
 The four YAML configs that used to live under the standalone project's
@@ -244,7 +244,7 @@ regenerate. **None are checked in yet**: the sweep configs use
 (kind, split) run the pre-flight filter once (~70 min for random/val):
 
 ```sh
-.venv-lean/bin/python -m smolbench.lean.cli filter --kind random --split val
+.venv-lean/bin/python -m smolbench.deduction.lean.cli filter --kind random --split val
 ```
 
 then `git add` the sidecar. Until it exists the runner fails fast with a
@@ -254,7 +254,7 @@ pulled lazily from LeanDojo's S3 cache to `~/.cache/lean_dojo/` on the first
 `Dojo` call (cold start: a few minutes).
 
 `SMOLBENCH_LEAN_DATA` overrides the data root if you'd rather keep the
-dataset outside the repo tree (see `smolbench.lean.corpus.data_root`).
+dataset outside the repo tree (see `smolbench.deduction.lean.corpus.data_root`).
 
 ### keys.env
 
@@ -286,28 +286,28 @@ variables:
 live sweep configs and a run + analyze cell pair for each. Open it with the
 `.venv-lean` kernel (see Bring-up).
 
-The `smolbench.lean.cli` (`python -m smolbench.lean.cli <subcommand>`)
+The `smolbench.deduction.lean.cli` (`python -m smolbench.deduction.lean.cli <subcommand>`)
 remains the scriptable/headless entry point and CI/ad-hoc-debugging escape
 hatch. Venv split by subcommand:
 
 ```sh
 # Main .venv (3.14) — no Dojo session, generation/analysis only:
-.venv/bin/python -m smolbench.lean.cli metadata
-.venv/bin/python -m smolbench.lean.cli list --limit 10
-.venv/bin/python -m smolbench.lean.cli analyze notebooks/lean/results/runs/<run>/all_rows.jsonl
-.venv/bin/python -m smolbench.lean.cli report notebooks/lean/results/runs/<run>
-.venv/bin/python -m smolbench.lean.cli show notebooks/lean/results/runs/<run>
-.venv/bin/python -m smolbench.lean.cli compare notebooks/lean/results/runs/<run> <model> <rung_a> <rung_b>
-.venv/bin/python -m smolbench.lean.cli prompt-stats --limit 50
+.venv/bin/python -m smolbench.deduction.lean.cli metadata
+.venv/bin/python -m smolbench.deduction.lean.cli list --limit 10
+.venv/bin/python -m smolbench.deduction.lean.cli analyze notebooks/lean/results/runs/<run>/all_rows.jsonl
+.venv/bin/python -m smolbench.deduction.lean.cli report notebooks/lean/results/runs/<run>
+.venv/bin/python -m smolbench.deduction.lean.cli show notebooks/lean/results/runs/<run>
+.venv/bin/python -m smolbench.deduction.lean.cli compare notebooks/lean/results/runs/<run> <model> <rung_a> <rung_b>
+.venv/bin/python -m smolbench.deduction.lean.cli prompt-stats --limit 50
 
 # .venv-lean (3.12) — opens a Dojo session:
-.venv-lean/bin/python -m smolbench.lean.cli replay -n 5 --seed 0   # cold start: ~3min for the 2.4GB traced-corpus pull
-.venv-lean/bin/python -m smolbench.lean.cli filter --kind random --split val   # pre-flight replay filter; ~70min for random/val
-.venv-lean/bin/python -m smolbench.lean.cli run-cell --full-name "MvPolynomial.totalDegree_zero" --k 1 --rung stepk:1 --n-rollouts 3 --model "anthropic/claude-haiku-4.5"
-.venv-lean/bin/python -m smolbench.lean.cli run-sweep --config path/to/config.yaml   # headless equivalent of a notebook run cell
+.venv-lean/bin/python -m smolbench.deduction.lean.cli replay -n 5 --seed 0   # cold start: ~3min for the 2.4GB traced-corpus pull
+.venv-lean/bin/python -m smolbench.deduction.lean.cli filter --kind random --split val   # pre-flight replay filter; ~70min for random/val
+.venv-lean/bin/python -m smolbench.deduction.lean.cli run-cell --full-name "MvPolynomial.totalDegree_zero" --k 1 --rung stepk:1 --n-rollouts 3 --model "anthropic/claude-haiku-4.5"
+.venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config path/to/config.yaml   # headless equivalent of a notebook run cell
 ```
 
-In Python: `from smolbench.lean.corpus import iter_replay_passing` yields
+In Python: `from smolbench.deduction.lean.corpus import iter_replay_passing` yields
 the `BenchmarkTheorem`s whose ground-truth replay was recorded as `success`.
 
 ## Results policy

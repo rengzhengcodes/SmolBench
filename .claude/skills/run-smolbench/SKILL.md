@@ -1,6 +1,6 @@
 ---
 name: run-smolbench
-description: Build, launch, and drive SmolBench — run the offline smolbench eval smoke driver, pytest suite, and induction demos, and run/smoke/test the smolbench.lean theorem-proving harness (notebooks/lean experiment). Use when asked to run, start, test, smoke, or drive smolbench or the lean eval, or to verify a change works end-to-end.
+description: Build, launch, and drive SmolBench — run the offline smolbench eval smoke driver, pytest suite, and induction demos, and run/smoke/test the smolbench.deduction.lean theorem-proving harness (notebooks/lean experiment). Use when asked to run, start, test, smoke, or drive smolbench or the lean eval, or to verify a change works end-to-end.
 ---
 
 # Run SmolBench
@@ -8,7 +8,7 @@ description: Build, launch, and drive SmolBench — run the offline smolbench ev
 One package, two runnable surfaces, no GUI/server. **smolbench** (repo root):
 an LLM-eval library — "running" it means driving the real quiz → provider →
 evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zero
-credentials. **smolbench.lean** (package `smolbench/lean/`, experiment
+credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
 `notebooks/lean/`): a Lean 4 theorem-proving eval whose VERIFICATION path
 (lean_dojo) needs a dedicated Python 3.12 venv — generation/analysis run on
 the main venv. All paths below are relative to the repo root; all commands
@@ -36,9 +36,9 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 .venv/bin/python -m smolbench.induction.periodic              # quiz-generation demo
 .venv/bin/python -m smolbench.induction.chromatic | tail -25  # prints ~120 prompt blocks
 
-bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
-bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real Dojo replay (see below)
-bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
+bash .claude/skills/run-smolbench/deduction/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
+bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --replay  # + one real Dojo replay (see below)
+bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -73,7 +73,7 @@ server.shutdown()
 # -> 1 correct / 1 incorrect / 0 invalid of 2
 ```
 
-## Run: smolbench.lean (theorem-proving eval)
+## Run: smolbench.deduction.lean (theorem-proving eval)
 
 `lean_smoke.sh` handles both venv syncs and a one-time 64 MB benchmark
 bootstrap (Zenodo record 10929138 → `notebooks/lean/data/leandojo_benchmark_4/`,
@@ -82,16 +82,16 @@ gitignored). Manual driving from the repo root with
 
 ```bash
 # Anywhere (main .venv works — no Lean/Dojo needed):
-.venv/bin/python -m smolbench.lean.cli metadata
-.venv/bin/python -m smolbench.lean.cli list --kind random --split test --limit 5
-.venv/bin/python -m smolbench.lean.cli analyze <run_dir>/all_rows.jsonl   # + report/show/compare
+.venv/bin/python -m smolbench.deduction.lean.cli metadata
+.venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5
+.venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl   # + report/show/compare
 # prompt-stats also runs here but needs the replay_passing_*.jsonl sidecar
 # that only `filter` (~70 min, .venv-lean) produces.
 
-# Verification path (needs .venv-lean; importing smolbench.lean.verify on 3.14
+# Verification path (needs .venv-lean; importing smolbench.deduction.lean.verify on 3.14
 # raises an actionable ImportError):
-.venv-lean/bin/python -m smolbench.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
-.venv-lean/bin/python -m smolbench.lean.cli run-sweep --config <sweep.yaml>
+.venv-lean/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
+.venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
 
 The canonical sweep driver is `notebooks/lean/lean_eval.ipynb` (kernel:
@@ -173,7 +173,7 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
   `python3`; rerun with `.venv/bin/python`.
 - `cannot import tests.conftest` (driver exit 2) → run from a synced repo:
   `uv sync --all-extras` at the root.
-- `ImportError: smolbench.lean.verify requires lean_dojo` → you ran a
+- `ImportError: smolbench.deduction.lean.verify requires lean_dojo` → you ran a
   Dojo-touching subcommand on the 3.14 venv; rerun with
   `.venv-lean/bin/python` (build it with the UV_PROJECT_ENVIRONMENT one-liner
   under Prerequisites).

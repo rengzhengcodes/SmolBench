@@ -3,11 +3,11 @@
 Two entry points:
   - `run_cell(...)` — yields rows for one (theorem, k, chain, level) cell.
     Opens its own Dojo session per call. Used by the `run-cell` CLI
-    subcommand (`python -m smolbench.lean.cli run-cell`).
+    subcommand (`python -m smolbench.deduction.lean.cli run-cell`).
   - `sweep(config, run_dir)` — runs a YAML-described sweep with per-theorem
     output directories and Dojo session reuse across all rungs/models/rollouts
     sharing a (theorem, k). Used by the `run-sweep` CLI subcommand
-    (`python -m smolbench.lean.cli run-sweep`).
+    (`python -m smolbench.deduction.lean.cli run-sweep`).
 
 Generation dispatch: both entry points resolve a `smolbench.evals` provider
 module (`smolbench.evals.provider.provider_module`) per model config and call
@@ -63,6 +63,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable
 
+import smolbench
 from smolbench.evals.provider import provider_module
 
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
@@ -90,9 +91,10 @@ def results_root() -> Path:
       1. The ``SMOLBENCH_LEAN_RESULTS`` environment variable, if set.
       2. ``notebooks/lean/results`` under the repo root.
 
-    Repo-anchored via this file's own location (``parents[2]`` from
-    ``smolbench/lean/runner.py`` is the repo root), never cwd-relative —
-    mirrors the pattern used by ``corpus.data_root()``: callers (CLI
+    Repo-anchored off the installed ``smolbench`` package
+    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root),
+    never cwd-relative and never a fragile ``parents`` count up from this
+    file — mirrors the pattern used by ``corpus.data_root()``: callers (CLI
     invocations, notebook kernels, test runners) may run from arbitrary
     working directories, so a cwd-relative default would silently resolve
     to the wrong place depending on who calls it.
@@ -110,13 +112,13 @@ def results_root() -> Path:
     override = os.getenv("SMOLBENCH_LEAN_RESULTS")
     if override:
         return Path(override)
-    return Path(__file__).resolve().parents[2] / "notebooks" / "lean" / "results"
+    return Path(smolbench.__file__).resolve().parents[1] / "notebooks" / "lean" / "results"
 
 
 def _default_verifier():
     """Lazily resolve the real Lean verifier module.
 
-    Deferred (call-time, not module-top) import of `smolbench.lean.verify`,
+    Deferred (call-time, not module-top) import of `smolbench.deduction.lean.verify`,
     which requires `lean_dojo` and therefore only works under the dedicated
     `.venv-lean` environment (see that module's import guard). Callers on
     the main venv that need a verifier must pass one explicitly (e.g. the
@@ -126,18 +128,18 @@ def _default_verifier():
     Returns
     -------
     ModuleType
-        The `smolbench.lean.verify` module, exposing `open_at_step`,
+        The `smolbench.deduction.lean.verify` module, exposing `open_at_step`,
         `try_tail`, `replay_ground_truth`, `verify_proof_tail`, and
         `ProofResult`.
 
     Raises
     ------
     ImportError
-        Propagated from `smolbench.lean.verify` when `lean_dojo` is not
+        Propagated from `smolbench.deduction.lean.verify` when `lean_dojo` is not
         installed in the current interpreter (see that module's guard for
         the actionable remedy message).
     """
-    from smolbench.lean import verify
+    from smolbench.deduction.lean import verify
     return verify
 
 
@@ -194,7 +196,7 @@ def run_cell(
         docstring's "Generation dispatch" note.
     model : str
         Provider-specific model id.
-    theorem, k, chain, level : see `smolbench.lean.context.render`.
+    theorem, k, chain, level : see `smolbench.deduction.lean.context.render`.
     n_rollouts : int
         Number of independent generations to run against the same rendered
         prompt.
@@ -215,7 +217,7 @@ def run_cell(
         Retryable-failure cap forwarded to `complete()`.
     verifier : ModuleType or None
         Verifier module exposing `verify_proof_tail`. `None` (the default)
-        lazily resolves the real `smolbench.lean.verify` module via
+        lazily resolves the real `smolbench.deduction.lean.verify` module via
         `_default_verifier()` — see that function's docstring. Tests pass a
         fake here to run on interpreters without `lean_dojo`.
 
@@ -1131,7 +1133,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         Verifier module exposing `open_at_step`, `try_tail`,
         `replay_ground_truth`, `verify_proof_tail`, and `ProofResult`.
         `None` (the default) lazily resolves the real
-        `smolbench.lean.verify` module via `_default_verifier()` — tests
+        `smolbench.deduction.lean.verify` module via `_default_verifier()` — tests
         pass a fake here to run the whole sweep dispatch/schema/resume
         logic on interpreters without `lean_dojo`.
 

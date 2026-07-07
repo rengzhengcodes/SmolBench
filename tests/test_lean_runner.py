@@ -1,4 +1,4 @@
-"""Offline tests for smolbench.lean.runner (and cli import-cleanliness).
+"""Offline tests for smolbench.deduction.lean.runner (and cli import-cleanliness).
 
 The Lean verifier is faked (FakeVerifier below) so the whole sweep runs with
 no lean_dojo and no Lean process: generation goes to two local OpenAI-compatible
@@ -19,10 +19,10 @@ from typing import Optional
 
 import pytest
 
-import smolbench.lean.context as context
-import smolbench.lean.corpus as corpus
-import smolbench.lean.prompt as prompt
-import smolbench.lean.runner as runner
+import smolbench.deduction.lean.context as context
+import smolbench.deduction.lean.corpus as corpus
+import smolbench.deduction.lean.prompt as prompt
+import smolbench.deduction.lean.runner as runner
 from tests.conftest import StubServer, chat_completion
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
@@ -37,7 +37,7 @@ MARKER = "QED"
 
 
 # ---------------------------------------------------------------------------
-# Fake verifier: stands in for smolbench.lean.verify without lean_dojo.
+# Fake verifier: stands in for smolbench.deduction.lean.verify without lean_dojo.
 # Field names mirror the real ProofResult / ReplayResult so the runner's
 # attribute access (verdict/error/final_state_pp, verdict/tactics_applied/
 # tactics_total/error) works unchanged.
@@ -443,8 +443,8 @@ def test_runner_and_cli_import_without_lean_dojo():
     # This module already imports runner at top level; on the main .venv
     # (Python 3.14, no lean_dojo) that import succeeding at collection time is
     # itself the guarantee. Confirm both modules and their public surface.
-    import smolbench.lean.cli as cli
-    import smolbench.lean.runner as rnr
+    import smolbench.deduction.lean.cli as cli
+    import smolbench.deduction.lean.runner as rnr
 
     assert callable(rnr.sweep)
     assert callable(rnr.run_cell)
@@ -454,7 +454,7 @@ def test_runner_and_cli_import_without_lean_dojo():
 
 def test_cli_help_subprocess():
     result = subprocess.run(
-        [sys.executable, "-m", "smolbench.lean.cli", "--help"],
+        [sys.executable, "-m", "smolbench.deduction.lean.cli", "--help"],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr

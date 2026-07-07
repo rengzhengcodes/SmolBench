@@ -17,7 +17,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from smolbench.lean.figures import (
+from smolbench.deduction.lean.figures import (
     DEFAULT_FIGSIZE,
     EXCLUDE_MODELS,
     FAMILY_ORDER,
@@ -39,7 +39,7 @@ from smolbench.lean.figures import (
 )
 
 # figure_out_path now takes an explicit output directory (this module lives
-# in a different package from the figure scripts — see smolbench.lean.figures
+# in a different package from the figure scripts — see smolbench.deduction.lean.figures
 # .figure_out_path's docstring), so pass this script's own directory.
 OUT_PATH = figure_out_path("success_rate_bars", Path(__file__).resolve().parent)
 

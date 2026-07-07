@@ -32,7 +32,7 @@ class Premise:
     """One premise (theorem/def/instance/etc.) declared in the traced repo.
 
     Built from one entry of a `corpus.jsonl` record's ``premises`` list (see
-    `_index`). Distinct from ``smolbench.lean.corpus.TracedTactic.premises``
+    `_index`). Distinct from ``smolbench.deduction.lean.corpus.TracedTactic.premises``
     -- the lighter, per-reference dicts recorded inline in a proof step --
     ``full_name`` is the join key between the two: `context.py`'s hint-chain
     rendering looks each `TracedTactic.premises` entry up in this class's

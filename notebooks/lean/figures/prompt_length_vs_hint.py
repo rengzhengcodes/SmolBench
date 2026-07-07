@@ -15,10 +15,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-from smolbench.lean.figures import figure_out_path, load_rows, parse_runs_args, save_figure
+from smolbench.deduction.lean.figures import figure_out_path, load_rows, parse_runs_args, save_figure
 
 # figure_out_path now takes an explicit output directory (this module lives
-# in a different package from the figure scripts — see smolbench.lean.figures
+# in a different package from the figure scripts — see smolbench.deduction.lean.figures
 # .figure_out_path's docstring), so pass this script's own directory.
 OUT_PATH = figure_out_path("prompt_length_vs_hint", Path(__file__).resolve().parent)
 

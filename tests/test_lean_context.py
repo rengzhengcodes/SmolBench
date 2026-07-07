@@ -1,4 +1,4 @@
-"""Offline tests for smolbench.lean.context render + trivial-rung logic.
+"""Offline tests for smolbench.deduction.lean.context render + trivial-rung logic.
 
 Golden expectations below were derived by RUNNING render() on the fixture and
 hand-verifying the output, not by copying whatever the code currently emits.
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import smolbench.lean.context as context
-import smolbench.lean.corpus as corpus
+import smolbench.deduction.lean.context as context
+import smolbench.deduction.lean.corpus as corpus
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
 

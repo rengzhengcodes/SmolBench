@@ -30,9 +30,9 @@ this project's regular `.venv`. `verify.py` additionally requires the
 `python<3.13` for compatibility with the traced-repo tooling it wraps.
 
 This `__init__.py` deliberately carries no imports. Importing
-`smolbench.lean` must stay dependency-light: `context.py` pulls in
+`smolbench.deduction.lean` must stay dependency-light: `context.py` pulls in
 `tiktoken` (for token-budget accounting) and `verify.py` pulls in
 `lean_dojo` (a heavy, `.venv-lean`-only dependency) — neither should load
-merely because a caller wrote `import smolbench.lean`. Import the specific
-submodule you need instead (e.g. `import smolbench.lean.corpus`).
+merely because a caller wrote `import smolbench.deduction.lean`. Import the specific
+submodule you need instead (e.g. `import smolbench.deduction.lean.corpus`).
 """
