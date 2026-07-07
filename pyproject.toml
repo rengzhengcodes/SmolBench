@@ -16,10 +16,13 @@ version = "0.1.0"
 description = "A benchmark for smol manipulation of language."
 readme = "README.md"
 
-# The checked-in pyenv for this repository is `smolbench`, currently resolving
-# to Python 3.14.3. Using >=3.14 avoids claiming support for older interpreters
-# that have not been validated in this repo.
-requires-python = ">=3.14"
+# The main development venv (.venv) runs Python 3.14. The floor is 3.12 --
+# claimed solely so the Lean theorem-proving verification path can share this
+# package: lean-dojo (the `lean` extra) pins Requires-Python <3.13 upstream,
+# so smolbench.lean.verify runs from a dedicated 3.12 venv (.venv-lean; see
+# notebooks/lean/README.md). All smolbench code is validated on both 3.12 and
+# 3.14 by the offline test suite.
+requires-python = ">=3.12"
 
 # These are the direct runtime dependencies observed from the repository's
 # import graph and confirmed by the `smolbench` pyenv `pip freeze`.
@@ -54,6 +57,20 @@ dev = [
 aws = [
     "botocore>=1.35.0",
     "boto3>=1.43",
+]
+
+# Lean theorem-proving eval (smolbench/lean/): corpus/context/prompt rendering
+# and the sweep runner need PyYAML (configs, results) and tiktoken (noise-rung
+# token matching, prompt-stats); verification additionally needs lean-dojo,
+# which pins Requires-Python <3.13 upstream -- the environment marker lets
+# `uv sync --all-extras` succeed on the 3.14 main venv (generation/analysis
+# modules import cleanly there) while the dedicated 3.12 venv (.venv-lean)
+# gets the full verification stack.
+lean = [
+    "lean-dojo>=2.0; python_version < '3.13'",
+    "PyYAML>=6.0.3",
+    # 0.13 is the first release shipping both cp312 and cp314 wheels.
+    "tiktoken>=0.13",
 ]
 
 # The repository now includes a checked-in notebook under `notebooks/`.

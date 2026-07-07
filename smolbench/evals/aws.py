@@ -208,8 +208,9 @@ _CLIENT = ChatClient(
 )
 
 # The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query / ChatClient.evaluate.
+# parameter docs live on ChatClient.query / ChatClient.complete / ChatClient.evaluate.
 query = _CLIENT.query
+complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
 evaluate = _CLIENT.evaluate
 
 

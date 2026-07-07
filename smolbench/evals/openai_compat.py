@@ -6,9 +6,15 @@ Bedrock/SageMaker, self-provisioned EC2 vLLM) speak the same
 ``/chat/completions`` dialect; they differ only in how the endpoint is
 resolved and authenticated, and in a handful of policy knobs (timeouts,
 retry backoff, connection-failure escalation). Each provider module builds
-one :class:`ChatClient` and re-exports its bound ``query``/``evaluate`` as
-the module-level functions that ``smolbench.evals.provider`` dispatches to,
-so a fix or feature added here reaches every provider at once.
+one :class:`ChatClient` and re-exports its bound ``query``/``complete``/
+``evaluate`` as the module-level functions that ``smolbench.evals.provider``
+dispatches to, so a fix or feature added here reaches every provider at once.
+``complete`` returns the full :class:`ChatResult` (content, reasoning, token
+usage, server-reported model id, finish reason); ``query`` is a thin wrapper
+narrowing that down to the ``(content, reasoning)`` 2-tuple every existing
+caller (provider modules, ``evaluate``, the notebooks) relies on -- new
+callers that need usage or a bounded ``max_retries`` (e.g. a Lean sweep
+runner) should call ``complete`` directly instead.
 
 Unified response handling (the superset of what the providers had grown
 separately, so no provider loses behavior):
@@ -81,6 +87,11 @@ def _no_system_prompt(model: str) -> Optional[str]:
     return None
 
 
+def _no_extra_headers(model: str) -> Dict[str, str]:
+    """Default: no provider-specific request headers beyond auth/content-type."""
+    return {}
+
+
 def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
           log_invalid: bool = False) -> Marks:
     """Grades raw (content, reasoning) responses against a quiz.
@@ -136,6 +147,54 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
 
 
 @dataclass(frozen=True)
+class ChatResult:
+    """Full per-call response from :meth:`ChatClient.complete`.
+
+    A superset of the ``(content, reasoning)`` 2-tuple :meth:`ChatClient.query`
+    has always returned: it adds token usage, the model id the server
+    actually reports, and the finish reason. Introduced so callers that need
+    more than content/reasoning -- e.g. a Lean theorem-proving sweep runner
+    that budgets retries against token usage inside an open verification
+    session -- don't have to change ``query()``'s signature or return type,
+    which every existing provider module and notebook relies on (see
+    ``ChatClient.query``).
+
+    Every field is populated DEFENSIVELY from the response body (``.get``
+    chains in ``ChatClient.complete``): some servers (certain SageMaker
+    containers) omit ``usage`` entirely, and not every server echoes
+    ``model``/``finish_reason``, so absence is a documented, non-exceptional
+    case here rather than a ``KeyError``.
+    """
+
+    #: The message content. Empty string on the server's null-content path
+    #: (see ``ChatClient.complete``'s empty-content warning branch).
+    content: str
+    #: Reasoning-channel text: server-reported (``reasoning_content`` /
+    #: ``reasoning``) or client-side-split from a plain-text ``<think>``
+    #: block (see the module docstring). None when neither is present.
+    reasoning: Optional[str]
+    #: ``usage.prompt_tokens``; 0 when ``usage`` is absent or omits the field.
+    prompt_tokens: int
+    #: ``usage.completion_tokens``; 0 when ``usage`` is absent or omits the
+    #: field.
+    completion_tokens: int
+    #: ``usage.prompt_tokens_details.cached_tokens`` -- OpenRouter/OpenAI
+    #: report Anthropic/OpenAI prompt-cache hits here; 0 when absent.
+    cached_prompt_tokens: int
+    #: ``usage.total_tokens``; None when ``usage`` is absent or omits the
+    #: field. This is the field ``ChatClient.complete``'s context-length
+    #: guard reads -- see that method for why it tolerates absence.
+    total_tokens: Optional[int]
+    #: ``body["model"]`` when the server echoes it back in the response,
+    #: else the model id that was requested (some containers -- and the
+    #: empty-content path -- don't echo one back).
+    model: str
+    #: ``choices[0].finish_reason`` (e.g. ``"stop"``, ``"length"``); None
+    #: when the server omits it.
+    finish_reason: Optional[str]
+
+
+@dataclass(frozen=True)
 class ChatClient:
     """One OpenAI-compatible chat-completions endpoint family.
 
@@ -167,6 +226,13 @@ class ChatClient:
     #: Lets model-specific toggles (Nemotron's "detailed thinking on") live
     #: in a deploy spec while user prompts stay byte-identical across models.
     system_prompt: Callable[[str], Optional[str]] = _no_system_prompt
+    #: model -> extra request headers merged into every chat-completions
+    #: request (e.g. Prime Intellect's ``X-Prime-Team-ID`` billing-routing
+    #: header). Resolved at CALL time once per request attempt, same
+    #: rationale as ``connection``. On a key collision the client's own
+    #: ``Authorization``/``Content-Type`` pair wins -- extra headers must
+    #: never be able to silently clobber auth.
+    extra_headers: Callable[[str], Dict[str, str]] = _no_extra_headers
     #: Seconds slept between retryable failures.
     retry_backoff_s: int = 60
     #: Connect timeout, kept SHORT and separate from the read timeout: a
@@ -191,16 +257,30 @@ class ChatClient:
     def _default_max_parallel(self) -> int:
         return int(os.getenv(f"{self.env_prefix}_MAX_PARALLEL_REQUESTS", "8"))
 
-    def query(
+    def complete(
         self,
         prompt: str,
         model: str,
         seed: int,
+        *,
+        system: Optional[str] = None,
         context_length: int = 0,
         extra_args: Optional[Dict[str, Any]] = None,
         request_timeout: Optional[int] = None,
-    ) -> Tuple[str, Optional[str]]:
-        """Queries ``model`` once, retrying transient failures indefinitely.
+        max_retries: Optional[int] = None,
+    ) -> ChatResult:
+        """Queries ``model`` once, returning the full response as a ``ChatResult``.
+
+        This holds the message assembly, retry loop, ``<think>``-splitting,
+        usage guard, and logging that used to live directly in ``query()``;
+        ``query()`` is now a thin wrapper that narrows this method's
+        ``ChatResult`` down to the ``(content, reasoning)`` 2-tuple every
+        existing provider module, ``evaluate()``/``_indexed_query``, and the
+        notebooks rely on (see ``query``'s docstring for that compatibility
+        contract). New callers that need token usage, the server-reported
+        model id, or a bounded retry count -- e.g. a Lean sweep runner that
+        must not spin forever inside an open verification session -- should
+        call this method directly.
 
         Parameters
         ----------
@@ -211,6 +291,15 @@ class ChatClient:
         seed:
             Decoding seed, sent with every request (repo rule: seeded,
             reproducible generations -- never drop it to dodge an error).
+        system:
+            Optional per-call system prompt. Design: message order is
+            ``[provider system_prompt(model) (if any), system (if given),
+            user prompt]`` -- the provider-level prompt goes FIRST because it
+            carries deploy-spec toggles that must survive a per-call system
+            message unshadowed (e.g. Nemotron's "detailed thinking on" CoT
+            toggle; see ``EC2_DEPLOY_SPECS``), and the per-call ``system`` is
+            additive context layered after it, never replacing it. The user
+            prompt is always last.
         context_length:
             Token-budget guard: raises ``ValueError`` when the response
             reports ``usage.total_tokens`` above this. Pass
@@ -223,21 +312,69 @@ class ChatClient:
             Per-request read timeout in seconds; falls back to the client's
             ``read_timeout_s``. Raise it for long CoT generations so they
             complete on attempt 1.
+        max_retries:
+            Caps retryable failures (HTTP 429/5xx, or connection-level
+            errors) at N: the Nth retryable failure re-raises the last error
+            instead of sleeping again. None (default) preserves the original
+            behavior of retrying retryable errors forever. Non-retryable
+            errors (4xx other than 429) always raise immediately on first
+            occurrence, regardless of this cap. The existing
+            ``max_connection_failures``/``on_unreachable`` escalation is
+            unchanged and takes precedence when it trips first -- this cap
+            is only consulted afterward. When THIS cap exhausts first on a
+            connection-level failure (a retry budget smaller than
+            ``max_connection_failures``, e.g. the Lean sweep's 4 vs EC2's
+            10), the ``on_unreachable`` diagnosis hook still fires before
+            the re-raise, so a self-managed endpoint that vanishes is
+            diagnosed (spot reclaim, caller-IP drift) rather than surfaced
+            as a generic connection error. Intended for callers (e.g. a
+            Lean verification sweep) that must bound how long a single
+            query can spin against a wedged endpoint.
 
         Returns
         -------
-        ``(content, reasoning)``: the message content, and the model's
-        separate reasoning channel (or client-side-split ``<think>`` block)
-        or None when absent.
+        A ``ChatResult`` with the message content, reasoning channel, token
+        usage (defensively defaulted when the server omits ``usage``), the
+        model id the server reports (or the requested one), and the finish
+        reason.
+
+        Raises
+        ------
+        requests.exceptions.HTTPError
+            A non-retryable HTTP error (4xx other than 429), or a retryable
+            one (429/5xx) once ``max_retries`` is exhausted.
+        requests.exceptions.RequestException
+            A non-HTTP connection-level failure, once ``max_retries`` is
+            exhausted (or immediately if not retryable).
+        RuntimeError
+            ``max_connection_failures`` consecutive connection-level
+            failures tripped first (see the field's docs); takes precedence
+            over ``max_retries``.
+        ValueError
+            The response reports ``usage.total_tokens`` above
+            ``context_length``.
         """
         sys_prompt = self.system_prompt(model)
         messages: List[Dict[str, str]] = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
+        if system:
+            # Second system message, AFTER the provider's own -- see the
+            # ``system`` parameter doc above for why this order is load-bearing.
+            messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
         attempt: int = 0
         connection_failures: int = 0
+        # Counts every retryable failure (connection-level OR HTTP
+        # 429/5xx), independent of `connection_failures` (which counts only
+        # non-HTTP connection failures, for the separate
+        # max_connection_failures escalation below). Kept as its own
+        # counter so the two caps -- which serve different callers (a
+        # self-managed endpoint that can vanish vs. any caller that wants a
+        # hard retry ceiling) -- can't interfere with each other's
+        # bookkeeping.
+        retry_failures: int = 0
         while True:
             attempt += 1
             # Resolved per attempt -- see the ``connection`` field docs.
@@ -245,7 +382,10 @@ class ChatClient:
             try:
                 response = requests.post(
                     url=url,
-                    headers={
+                    # Extra headers first, base pair second: on collision the
+                    # base Authorization/Content-Type wins (see the
+                    # ``extra_headers`` field docs).
+                    headers=self.extra_headers(model) | {
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
                     },
@@ -267,17 +407,52 @@ class ChatClient:
                 connection_failures = 0
 
                 if not response.ok:
-                    logging.info(response.text)
-
-                response.raise_for_status()
+                    # Surface the API's error body, not just the status line
+                    # -- most provider 4xx errors carry the actionable detail
+                    # (context-too-long, invalid model id, billing) in the
+                    # JSON body, and callers persist str(err) into durable
+                    # artifacts (e.g. the Lean sweep's exception rows).
+                    # ``response=`` stays attached: is_retryable_request_error
+                    # reads ``err.response.status_code`` to classify the
+                    # failure as retryable (429/5xx) or permanent.
+                    raise requests.exceptions.HTTPError(
+                        f"{response.status_code} {response.reason} for url "
+                        f"{response.url}: {response.text[:1000]}",
+                        response=response,
+                    )
                 body = response.json()
                 if self._flag("INFO") and self._flag("INFO_RESPONSE"):
                     logging.info(body)
 
-                msg = body["choices"][0]["message"]
+                choice = body["choices"][0]
+                msg = choice["message"]
+                # Usage/model/finish_reason are read once here and reused on
+                # both the empty-content and normal-content return paths, so
+                # ChatResult is populated defensively (`.get` chains) even
+                # when `usage` is entirely absent (some SageMaker containers
+                # omit it -- see the module docstring).
+                usage = body.get("usage") or {}
+                prompt_tokens: int = int(usage.get("prompt_tokens") or 0)
+                completion_tokens: int = int(usage.get("completion_tokens") or 0)
+                cached_prompt_tokens: int = int(
+                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+                )
+                total_tokens: Optional[int] = usage.get("total_tokens")
+                reported_model: str = body.get("model") or model
+                finish_reason: Optional[str] = choice.get("finish_reason")
+
                 if msg["content"] is None:
                     logging.warning("Body returned none value: \n" f"{body}")
-                    return "", None
+                    return ChatResult(
+                        content="",
+                        reasoning=None,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached_prompt_tokens=cached_prompt_tokens,
+                        total_tokens=total_tokens,
+                        model=reported_model,
+                        finish_reason=finish_reason,
+                    )
                 content = msg["content"]
                 reasoning = msg.get("reasoning_content") or msg.get("reasoning")
                 if reasoning is None and "</think>" in content:
@@ -289,13 +464,20 @@ class ChatClient:
                     content = content.lstrip()
                 # Usage may be omitted by some servers; only guard when a
                 # token count is actually reported.
-                usage = body.get("usage") or {}
-                tokens = usage.get("total_tokens")
-                if tokens is not None and tokens > context_length:
-                    raise ValueError(f"Response:\n{body}\n was {tokens} > {context_length}")
+                if total_tokens is not None and total_tokens > context_length:
+                    raise ValueError(f"Response:\n{body}\n was {total_tokens} > {context_length}")
                 if self._flag("INFO"):
-                    logging.info(f"Response:\n{body}\n was {tokens} <= {context_length}")
-                return content, reasoning
+                    logging.info(f"Response:\n{body}\n was {total_tokens} <= {context_length}")
+                return ChatResult(
+                    content=content,
+                    reasoning=reasoning,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cached_prompt_tokens=cached_prompt_tokens,
+                    total_tokens=total_tokens,
+                    model=reported_model,
+                    finish_reason=finish_reason,
+                )
 
             except requests.exceptions.RequestException as err:
                 if not is_retryable_request_error(err):
@@ -311,11 +493,76 @@ class ChatClient:
                             f"{self.name} endpoint unreachable after "
                             f"{self.max_connection_failures} consecutive connection failures."
                         ) from err
+                if max_retries is not None:
+                    retry_failures += 1
+                    if retry_failures >= max_retries:
+                        # Nth retryable failure: stop spinning and surface
+                        # the error instead of sleeping again (see the
+                        # max_retries parameter doc). When the terminal
+                        # failure is connection-level and the client has an
+                        # ``on_unreachable`` diagnosis hook, route through it
+                        # first: a caller-supplied retry cap smaller than
+                        # ``max_connection_failures`` (the Lean sweep's
+                        # default 4 vs EC2's 10) would otherwise exhaust
+                        # before the hook ever fires, and the actionable
+                        # spot-reclaim/IP-drift diagnosis would be lost to a
+                        # generic connection error. Bare `raise` re-raises
+                        # the RequestException already being handled.
+                        if (
+                            self.on_unreachable is not None
+                            and connection_failures > 0
+                            and not isinstance(err, requests.exceptions.HTTPError)
+                        ):
+                            self.on_unreachable(err)
+                        raise
                 logging.info(
                     f"{self.name} request failed on attempt {attempt}: {err}. "
                     f"Retrying in {self.retry_backoff_s} seconds."
                 )
                 time.sleep(self.retry_backoff_s)
+
+    def query(
+        self,
+        prompt: str,
+        model: str,
+        seed: int,
+        context_length: int = 0,
+        extra_args: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[int] = None,
+        *,
+        system: Optional[str] = None,
+        max_retries: Optional[int] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Queries ``model`` once, retrying transient failures indefinitely.
+
+        Thin wrapper over ``complete()``: the positional signature and
+        ``(content, reasoning)`` return type are UNCHANGED from before
+        ``complete()`` existed (every provider module and the notebooks call
+        this positionally), and ``system``/``max_retries`` are new
+        keyword-only parameters appended at the end so no existing call
+        site -- positional or keyword -- breaks. See ``complete()`` for the
+        full parameter docs (including these two) and for the additional
+        ``ChatResult`` fields (token usage, server-reported model,
+        finish_reason) this wrapper discards; callers that need those should
+        call ``complete()`` directly.
+
+        Returns
+        -------
+        ``(content, reasoning)``: the message content, and the model's
+        separate reasoning channel (or client-side-split ``<think>`` block)
+        or None when absent.
+        """
+        result = self.complete(
+            prompt,
+            model,
+            seed,
+            system=system,
+            context_length=context_length,
+            extra_args=extra_args,
+            request_timeout=request_timeout,
+            max_retries=max_retries,
+        )
+        return result.content, result.reasoning
 
     def _indexed_query(self, index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
         """``query()`` tagged with its quiz index.

@@ -321,3 +321,36 @@ widen the hunt (this run needed
   missing from `archetype_tags` (documented-by-test; an actionable message
   would be nicer). `cot_chain_lengths` is print-only by contract, like
   `summarize`.
+
+## Part 3 — folding `lean/` into smolbench + notebooks (2026-07-07)
+
+The standalone `lean/` uv project (leaneval, Python 3.12) was dissolved into
+the main package structure:
+
+- **`smolbench/lean/`** (new subpackage, git-mv'ed with history): corpus /
+  premises / context / prompt / verify / runner / cli, plus `figures.py`
+  (the old `lean/figures/_util.py`). The bespoke `leaneval/llm/` layer
+  (base/factory/anthropic/openai_compat) was deleted outright — generation
+  now goes through the shared `ChatClient` stack via a new additive
+  `ChatClient.complete() -> ChatResult` (usage fields, per-call `system=`,
+  `max_retries=` cap, `extra_headers` hook for Prime Intellect's
+  `X-Prime-Team-ID`) and a public `provider.provider_module(name)` for
+  per-model provider mixing inside one sweep.
+- **`notebooks/lean/`** (experiment dir, notebooks convention):
+  `lean_eval.ipynb` is the canonical sweep driver (config dicts migrated
+  from the four live YAML configs; the other seven live in git history),
+  README, `figures/` scripts, `data/` (gitignored dataset), `results/`
+  (COMMITTED per repo convention).
+- **Seeding**: sweeps now send `seed = config["seed"] + rollout_idx` with
+  every request (row schema gained a `seed` field); `request_timeout`
+  (default 1800 s) and `max_retries` (default 4) are config keys so a sweep
+  can neither top-censor long CoT generations nor spin forever inside an
+  open Dojo session.
+- **Python split**: `requires-python` lowered to `>=3.12`; lean-dojo rides a
+  `python_version < '3.13'` marker in the new `lean` extra. Main `.venv`
+  stays 3.14; verification runs from `.venv-lean` (3.12,
+  `UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 --extra lean
+  --extra notebook --extra dev`). `smolbench.lean.verify` import-guards
+  lean_dojo with an actionable error; everything else imports on 3.14.
+- §1.5/§2.4's `lean/figures/` references above are historical — those files
+  now live at `notebooks/lean/figures/` + `smolbench/lean/figures.py`.

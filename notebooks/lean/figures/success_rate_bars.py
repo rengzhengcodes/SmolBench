@@ -1,0 +1,207 @@
+"""Grouped-bar success rate per (model, hint level).
+
+Two panels (reasoning, non-reasoning), one bar per model at each hint level,
+with each model's peak-rate bar cross-hatched. Same filtering as the line
+version: trivial-skip intersection across all hint levels, "no hint" point
+restricted per model to theorems where the model passed at least one hint
+or noise rung. Low-alpha for models with limited theorem coverage
+(only present in the smaller main_v3_2 sweep).
+
+Run:
+    .venv/bin/python notebooks/lean/figures/success_rate_bars.py
+    .venv/bin/python notebooks/lean/figures/success_rate_bars.py --runs main_v3 main_v3_2
+"""
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from smolbench.lean.figures import (
+    DEFAULT_FIGSIZE,
+    EXCLUDE_MODELS,
+    FAMILY_ORDER,
+    HINT_LABELS_VERBOSE as HINT_LABELS,
+    HINT_RUNGS,
+    NOISE_RUNGS,
+    family_color_map,
+    figure_out_path,
+    is_reasoning,
+    lighten,
+    load_rows,
+    model_family,
+    models_per_run,
+    order_within_group,
+    parse_runs_args,
+    pretty_model,
+    save_figure,
+    trivial_skip_keys,
+)
+
+# figure_out_path now takes an explicit output directory (this module lives
+# in a different package from the figure scripts — see smolbench.lean.figures
+# .figure_out_path's docstring), so pass this script's own directory.
+OUT_PATH = figure_out_path("success_rate_bars", Path(__file__).resolve().parent)
+
+# This figure uses the "degree of positive information" verbose labels
+# rather than _util's terse HINT_LABELS — see _util.HINT_LABELS_VERBOSE
+# docstring for why both label sets are kept (this is the only script that
+# uses the verbose one).
+
+
+def main():
+    runs = parse_runs_args()
+    print(f"runs: {runs}")
+    rows = load_rows(runs)
+    real = [r for r in rows if r.get("model")]
+
+    # Trivial-skip filter: keep only (theorem, k) present at every hint level.
+    keep = trivial_skip_keys(real, HINT_RUNGS)
+    print(f"theorems present at every hint level: {len(keep)}")
+
+    # No-hint per-model filter: theorems where this model succeeded somewhere
+    # in {hint, noise} rungs.
+    HINT_NOISE_RUNGS = HINT_RUNGS[1:] + NOISE_RUNGS
+    solvable = set()
+    for r in real:
+        if (r.get("theorem_id"), r.get("k")) not in keep:
+            continue
+        if r.get("rung") in HINT_NOISE_RUNGS and r.get("verdict") == "success":
+            solvable.add((r.get("model"), r.get("theorem_id"), r.get("k")))
+
+    bucket = {}
+    for r in real:
+        m = r.get("model")
+        if m in EXCLUDE_MODELS:
+            continue
+        rung = r.get("rung")
+        v = r.get("verdict")
+        if v not in ("success", "lean_error", "exception", "incomplete"):
+            continue
+        if (r.get("theorem_id"), r.get("k")) not in keep:
+            continue
+        if rung == "stepk:2":
+            triple = (m, r.get("theorem_id"), r.get("k"))
+            if triple not in solvable:
+                continue
+        bucket.setdefault((m, rung), []).append(v)
+
+    by_run = models_per_run(real)
+    main_v3_models = by_run.get("main_v3", set())
+    low_n_models = {m for m in {k[0] for k in bucket} if m not in main_v3_models}
+
+    # Family detection: each toggle pair shares one family color, with the
+    # reasoning version drawn in the saturated family color and the
+    # non-reasoning version in a lighter blend of the same color. (Shared
+    # with marginal_content_vs_noise.py via _util's model_family/family_idx/
+    # order_within_group/family_color_map/lighten.)
+    family = model_family
+    family_color = family_color_map()
+
+    # Within each group (reasoning, non-reasoning), order by family then put
+    # low-n models last (so gpt-5.5 / sonnet-4.6 sit at the right edge).
+    all_in_bucket = {k[0] for k in bucket}
+    reasoning = order_within_group([m for m in all_in_bucket if is_reasoning(m)], low_n_models)
+    non_reasoning = order_within_group([m for m in all_in_bucket if not is_reasoning(m)], low_n_models)
+
+    def rate(model, rung):
+        vs = bucket.get((model, rung), [])
+        if not vs:
+            return np.nan
+        return 100 * sum(1 for v in vs if v == "success") / len(vs)
+
+    rates_by_model = {m: [rate(m, r) for r in HINT_RUNGS] for m in reasoning + non_reasoning}
+    peak_idx = {m: int(np.nanargmax(vals)) if not np.all(np.isnan(vals)) else -1
+                for m, vals in rates_by_model.items()}
+
+    fig, ax = plt.subplots(figsize=DEFAULT_FIGSIZE)
+    n_levels = len(HINT_RUNGS)
+    x_centers = np.arange(n_levels)
+
+    # Layout: positions 0..N_r-1 for reasoning, then a gap of GAP slots, then
+    # N_r+GAP..N_r+GAP+N_nr-1 for non-reasoning. Total bar slots = N_r + GAP + N_nr.
+    GAP = 0.7  # in bar-widths
+    N_r, N_nr = len(reasoning), len(non_reasoning)
+    total_slots = N_r + GAP + N_nr
+    bar_w = 0.92 / total_slots
+
+    def offset_for(model_index_in_group, group):
+        if group == "reasoning":
+            slot = model_index_in_group
+        else:
+            slot = N_r + GAP + model_index_in_group
+        return (slot - (total_slots - 1) / 2) * bar_w
+
+    def draw(model, slot_offset, fill_color):
+        base_alpha = 0.45 if model in low_n_models else 1.0
+        xs = x_centers + slot_offset
+        ys = rates_by_model[model]
+        for j, y in enumerate(ys):
+            if np.isnan(y):
+                continue
+            is_peak = (j == peak_idx[model])
+            ax.bar(xs[j], y, width=bar_w, color=fill_color, alpha=base_alpha,
+                   hatch="//" if is_peak else None,
+                   edgecolor="black" if is_peak else fill_color,
+                   linewidth=1.0 if is_peak else 0.4)
+
+    for i, m in enumerate(reasoning):
+        draw(m, offset_for(i, "reasoning"), family_color[family(m)])
+    for i, m in enumerate(non_reasoning):
+        draw(m, offset_for(i, "non-reasoning"), lighten(family_color[family(m)]))
+
+    ax.set_xticks(x_centers)
+    ax.set_xticklabels(HINT_LABELS)
+    ax.set_xlabel("Degree of positive information")
+    ax.set_ylabel("Pass rate (%)")
+    ax.set_ylim(0, 100)
+    ax.grid(True, axis="y", alpha=0.3)
+
+    # Legend: left column = reasoning models (saturated family swatch), right
+    # column = non-reasoning siblings (lightened swatch). Matplotlib's legend
+    # fills COLUMN-major, so handles must be ordered as the full left column
+    # followed by the full right column.
+    from matplotlib.patches import Patch
+    families_present = [f for f in FAMILY_ORDER
+                        if any(family(m) == f for m in reasoning + non_reasoning)]
+
+    r_handles, r_labels, nr_handles, nr_labels = [], [], [], []
+    for f in families_present:
+        c = family_color[f]
+        r_models = [m for m in reasoning if family(m) == f]
+        nr_models = [m for m in non_reasoning if family(m) == f]
+        if r_models:
+            r_handles.append(Patch(facecolor=c, edgecolor=c))
+            r_labels.append(pretty_model(r_models[0]))
+        else:
+            r_handles.append(Patch(facecolor="none", edgecolor="none"))
+            r_labels.append("")
+        if nr_models:
+            nr_handles.append(Patch(facecolor=lighten(c), edgecolor=lighten(c)))
+            nr_labels.append(pretty_model(nr_models[0]))
+        else:
+            nr_handles.append(Patch(facecolor="none", edgecolor="none"))
+            nr_labels.append("")
+
+    fam_legend = ax.legend(
+        r_handles + nr_handles,
+        r_labels + nr_labels,
+        fontsize=8, loc="upper left", ncol=2, framealpha=0.9,
+        columnspacing=1.6, handletextpad=0.6,
+        title="reasoning                            non-reasoning",
+        title_fontsize=8,
+    )
+    ax.add_artist(fam_legend)
+    # Separate legend for the peak-rate hatching key, so it doesn't fight the
+    # column layout of the family legend.
+    ax.legend(
+        [Patch(facecolor="white", edgecolor="black", hatch="//")],
+        ["best pass rate per model"],
+        fontsize=8, loc="upper right", framealpha=0.9,
+    )
+
+    save_figure(OUT_PATH)
+
+
+if __name__ == "__main__":
+    main()

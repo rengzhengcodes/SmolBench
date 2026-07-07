@@ -528,11 +528,12 @@ _CLIENT = ChatClient(
 )
 
 # The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query / ChatClient.evaluate. The plain-
-# text <think> splitting Nemotron-Ultra and Olmo-Think need (no think token
-# ids -> no server-side reasoning parser; see EC2_DEPLOY_SPECS) lives in the
-# shared client, so every provider handles it identically.
+# parameter docs live on ChatClient.query / ChatClient.complete / ChatClient.evaluate. The
+# plain-text <think> splitting Nemotron-Ultra and Olmo-Think need (no think
+# token ids -> no server-side reasoning parser; see EC2_DEPLOY_SPECS) lives in
+# the shared client, so every provider handles it identically.
 query = _CLIENT.query
+complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
 evaluate = _CLIENT.evaluate
 
 

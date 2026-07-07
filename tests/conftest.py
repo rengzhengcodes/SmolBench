@@ -26,7 +26,11 @@ class _StubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
-        self.server.requests.append({"path": self.path, "body": payload})
+        # Headers are recorded alongside the body so tests can assert on
+        # auth/routing headers (e.g. Prime Intellect's X-Prime-Team-ID).
+        self.server.requests.append(
+            {"path": self.path, "body": payload, "headers": dict(self.headers)}
+        )
         self._reply(self.server.next_response())
 
     def do_GET(self):
@@ -88,3 +92,37 @@ def stub_server():
     yield server
     server.shutdown()
     thread.join(timeout=5)
+
+
+@pytest.fixture(autouse=True)
+def _clear_provider_context_length_caches():
+    """Autouse: clear the openrouter/primeintellect `get_model_context_length`
+    `lru_cache`s before AND after every test.
+
+    Several existing tests work around cross-test cache bleed by picking a
+    globally-unique model-name string per test (see the "Unique model name
+    per test avoids ... lru_cache" comments sprinkled through
+    test_openai_compat.py / test_lean_runner.py) -- a fragile convention
+    that silently breaks the moment two tests happen to reuse the same
+    model id against two different stub servers. Clearing both caches
+    around every test makes that isolation an actual guarantee instead of a
+    naming convention every test author has to remember. Guarded by
+    ImportError so this fixture degrades gracefully (skips silently) if a
+    provider module is ever renamed/removed rather than failing collection
+    for the whole suite.
+    """
+    def _clear() -> None:
+        try:
+            from smolbench.evals import openrouter
+            openrouter.get_model_context_length.cache_clear()
+        except ImportError:
+            pass
+        try:
+            from smolbench.evals import primeintellect
+            primeintellect.get_model_context_length.cache_clear()
+        except ImportError:
+            pass
+
+    _clear()   # drop any stale entries left by a previous test
+    yield
+    _clear()   # leave a clean cache for whatever runs next

@@ -39,6 +39,18 @@ def _connection(model: str) -> Tuple[str, str]:
     return f"{_base_url()}/chat/completions", os.getenv("PRIME_INTELLECT_API_KEY", "")
 
 
+def _extra_headers(model: str) -> Dict[str, str]:
+    """Optional team-billing header, resolved at call time.
+
+    Team-billed Prime Intellect accounts route billing/quota through the
+    ``X-Prime-Team-ID`` header; personal accounts omit it entirely. Read from
+    ``PRIME_INTELLECT_TEAM_ID`` per request attempt so it can be set alongside
+    the API key in keys.env without re-importing anything.
+    """
+    team_id = os.getenv("PRIME_INTELLECT_TEAM_ID", "")
+    return {"X-Prime-Team-ID": team_id} if team_id else {}
+
+
 @functools.lru_cache(maxsize=None)
 def get_model_context_length(model: str) -> int:
     """Fetches the model context window from Prime Intellect.
@@ -63,10 +75,12 @@ _CLIENT = ChatClient(
     env_prefix="PRIME_INTELLECT",
     connection=_connection,
     context_length=get_model_context_length,
+    extra_headers=_extra_headers,
     retry_backoff_s=PRIME_INTELLECT_RETRY_BACKOFF_SECONDS,
 )
 
 # The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query / ChatClient.evaluate.
+# parameter docs live on ChatClient.query / ChatClient.complete / ChatClient.evaluate.
 query = _CLIENT.query
+complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
 evaluate = _CLIENT.evaluate
