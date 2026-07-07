@@ -223,6 +223,11 @@ __marimo__/
 # generated artifact; results and replay_passing_*.jsonl sidecars ARE committed.
 notebooks/lean/data/leandojo_benchmark_4/
 
+# Generated LoRA SFT dataset (large JSONL, regenerable from the benchmark via
+# scripts/build_lean_sft.py). The manifest.json beside it IS committed -- it is
+# the decontamination/provenance record (counts + holdout fingerprint).
+notebooks/lean/data/sft/*.jsonl
+
 # Claude files -- except .claude/skills/, which holds committed agent
 # tooling (run skills + their drivers).
 .claude/*

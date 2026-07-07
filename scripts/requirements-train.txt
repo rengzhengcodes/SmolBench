@@ -1,0 +1,28 @@
+# Training-only dependencies for the Lean 4 LoRA fine-tune (scripts/lean_lora_sft.py).
+#
+# DELIBERATELY kept OUT of pyproject.toml / uv.lock. The repo's uv.lock is a
+# universal lock across the 3.14 main venv and the 3.12 .venv-lean, and every
+# dependency there is chosen to have wheels for BOTH (see the "cp312 and cp314
+# wheels" notes in pyproject.toml). torch/bitsandbytes ship no cp314 wheels and
+# pull a large CUDA subtree, so adding them as an extra would either break
+# `uv sync --all-extras` on 3.14 or bloat the committed lock. Training runs on a
+# SEPARATE, dedicated GPU environment, not the eval venvs.
+#
+# Bring-up on the training box (Python 3.10-3.12, CUDA):
+#   python -m venv .venv-train && . .venv-train/bin/activate
+#   pip install -r scripts/requirements-train.txt
+#   pip install -e .            # smolbench itself, for smolbench.deduction.lean.sft
+#
+# The eval/serving path never imports any of these (the LoRA is served through
+# vLLM on the EC2 provider), so the offline test suite and both eval venvs are
+# unaffected.
+
+torch>=2.4
+transformers>=4.45
+peft>=0.13
+trl>=0.12
+datasets>=3.0
+accelerate>=1.0
+bitsandbytes>=0.44        # 4-bit QLoRA base quantization
+# Optional, for sharding the larger bases across the 8-GPU box:
+# deepspeed>=0.15

@@ -261,6 +261,17 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                             "vllm_args": ["--trust-remote-code"],
                             "system_prompt": "detailed thinking on"},
     "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
+    # Param-matched MoE archetype for the Lean 4 deduction experiment
+    # (notebooks/lean): 235B total / 22B active, so it sits next to the dense
+    # CoT nemotron-ultra-253b on TOTAL params (235 vs 253B) instead of the
+    # 671B DeepSeek-V3 the strict-Lean4 search first surfaced. Standard HF
+    # `qwen3_moe` arch -> no --trust-remote-code; hybrid thinking model run in
+    # its NON-thinking (archetype-3) default, so no system_prompt toggle. FP8
+    # (~235 GB) fits the 640 GB p5 / 1128 GB p5e box at tp=8 with KV headroom;
+    # Qwen ships the official FP8 checkpoint, ungated (Apache-2.0). This entry
+    # is the LoRA base; the Lean4-fine-tuned variant is a separate spec whose
+    # hf_model_id points at the trained (private) repo -- see notebooks/lean.
+    "qwen3-235b-a22b":     {"hf_model_id": "Qwen/Qwen3-235B-A22B-FP8", "tp": 8, "max_model_len": 131072},
     # notebooks/chromatic archetypes: an English-centric ~32B trio covering the
     # three eval archetypes -- dense non-reasoning, dense always-reasons, and a
     # non-reasoning MoE -- all released within ~3 months of each other (Sep-Dec
