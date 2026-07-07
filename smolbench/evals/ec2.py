@@ -87,7 +87,9 @@ from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 import requests
 
-from smolbench.evals.openai_compat import ChatClient
+from smolbench.evals import _aws
+from smolbench.evals._aws import DeploySpec
+from smolbench.evals.openai_compat import ChatClient, metadata_get
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order. Types are tried type-major (each type across every
@@ -249,7 +251,7 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # <think>-style ``--reasoning-parser`` in vLLM 0.11.1 (deepseek_r1, qwen3, ...)
 # is token-id-based, so passing one crashes the engine at startup
 # ("could not locate think start/end tokens in the tokenizer" -- live, 2026-06-10).
-EC2_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
+EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # Small smoke-test entry: exercises the full lifecycle on a cheap single-GPU
     # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar.
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 16384},
@@ -323,11 +325,13 @@ _MODEL_READY_POLL_S: int = 15
 # this is empirically enough slack for that propagation to catch up.
 _IAM_PROPAGATION_SLEEP_S: int = 12
 # list_models(): read timeout for the small, fast GET /v1/models metadata
-# call. Deliberately a LOCAL constant rather than importing one from
-# openai_compat -- this module's inference path stays decoupled from that
-# module's own timeout tuning (same instinct as the lazy boto3 imports
-# keeping this module's provisioning path optional for pure inference use).
-_METADATA_TIMEOUT_S: int = 120
+# call. Shared with every other provider via openai_compat.METADATA_TIMEOUT_S
+# (see that constant's docstring) rather than a duplicate local literal --
+# this used to be a deliberately-local constant, but the /_aws.py extraction
+# was a natural point to fold it into the one already-shared value. Since the
+# metadata_get() extraction, list_models() no longer names the constant
+# directly -- it inherits this timeout from metadata_get's own default
+# parameter (see smolbench.evals.openai_compat.metadata_get).
 
 
 # ---------------------------------------------------------------------------
@@ -423,15 +427,32 @@ def get_model_context_length(model: str) -> int:
     return EC2_CONTEXT_LENGTH
 
 
-def list_models() -> list[str]:
-    """Lists model ids the instance's vLLM currently serves (normally one)."""
-    response = requests.get(
-        url=f"{_base_url()}/models",
-        headers={"Authorization": f"Bearer {_api_key()}"},
-        timeout=_METADATA_TIMEOUT_S,
-    )
-    response.raise_for_status()
-    return [m["id"] for m in response.json().get("data", [])]
+def list_models(model: str = "") -> List[str]:
+    """Lists model ids the instance's vLLM currently serves (normally one).
+
+    Parameters
+    ----------
+    model : str, optional
+        Accepted and IGNORED. This module's vLLM instance serves exactly one
+        model at a time (whichever ``serve_model`` last swapped in), so there
+        is nothing to select by name -- the parameter exists purely for
+        signature parity with ``smolbench.evals.aws.list_models(model="")``,
+        whose SageMaker path DOES use it (to fill a templated per-endpoint
+        base URL). Sharing one signature across providers lets
+        ``smolbench.evals.provider``'s dispatch surface call
+        ``list_models(model)`` uniformly without special-casing EC2. Internal
+        callers within this module (``serve_model``) intentionally keep
+        calling ``list_models()`` with no argument, since they have nothing
+        meaningful to pass either.
+
+    Returns
+    -------
+    List[str]
+        Model ids from the vLLM ``GET /v1/models`` response's ``data[].id``
+        (normally a single-element list).
+    """
+    response = metadata_get(f"{_base_url()}/models", _api_key(), check_status=True)
+    return [m["id"] for m in response.get("data", [])]
 
 
 def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
@@ -1099,12 +1120,15 @@ def _render_user_data(
 # ---------------------------------------------------------------------------
 # EC2 spot provisioning / lifecycle (lazy boto3; opt-in)
 # ---------------------------------------------------------------------------
-# boto3/botocore are imported inside these functions so the inference path
-# stays dependency-free (see module docstring). Clients are created from a
-# FRESH boto3 Session per operation -- not boto3.client(), whose process-wide
-# default session caches credentials at first resolve, so a refreshed
-# ~/.aws/credentials (IdP sessions here last ~12h) would otherwise keep
-# raising RequestExpired until the kernel restarts.
+# boto3/botocore are imported inside these functions (transitively, via
+# _aws.fresh_client) so the inference path stays dependency-free (see module
+# docstring). Clients are created from a FRESH boto3 Session per operation --
+# not boto3.client(), whose process-wide default session caches credentials
+# at first resolve, so a refreshed ~/.aws/credentials (IdP sessions here last
+# ~12h) would otherwise keep raising RequestExpired until the kernel
+# restarts. See smolbench.evals._aws.fresh_client's docstring for the full
+# rationale -- this module and aws.py both hit the same failure mode
+# independently, which is why the fix now lives in one shared place.
 
 # ClientError codes that mean "this pool cannot fill the request right now" --
 # worth trying the next subnet/region -- as opposed to quota or genuine errors.
@@ -1120,13 +1144,24 @@ _CAPACITY_ERROR_CODES = frozenset(
 
 
 def _ec2_client(region: str):
-    import boto3  # lazy: keep the inference path boto3-free
+    """Thin wrapper over ``_aws.fresh_client("ec2", region)``.
 
-    return boto3.session.Session().client("ec2", region_name=region)
+    Kept as a locally-named one-liner (rather than calling ``_aws.
+    fresh_client`` directly at every call site) so ``tests/test_ec2_
+    provision.py`` and friends can keep doing
+    ``monkeypatch.setattr(ec2, "_ec2_client", ...)`` exactly as before the
+    ``_aws.py`` extraction -- every call site in this module goes through
+    this name, never ``_aws.fresh_client`` directly, so patching this one
+    name still intercepts every EC2 API call this module makes.
+    """
+    return _aws.fresh_client("ec2", region)
 
 
-def _error_code(err: Exception) -> str:
-    return getattr(err, "response", {}).get("Error", {}).get("Code", "")
+# Design: `_error_code = _aws.error_code` (rather than re-defining the body)
+# keeps this a plain re-export -- same monkeypatchability as `_ec2_client`
+# above (tests patch `ec2._error_code`), zero behavioral difference from the
+# pre-extraction inline function.
+_error_code = _aws.error_code
 
 
 def _my_public_ip() -> str:
@@ -1135,9 +1170,7 @@ def _my_public_ip() -> str:
 
 def _resolve_ami(region: str) -> Tuple[str, str]:
     """Returns (ami_id, root_device_name) for the region's latest DL Base GPU AMI."""
-    import boto3
-
-    ssm = boto3.session.Session().client("ssm", region_name=region)
+    ssm = _aws.fresh_client("ssm", region)
     ami = ssm.get_parameter(Name=EC2_AMI_SSM_PARAM)["Parameter"]["Value"]
     image = _ec2_client(region).describe_images(ImageIds=[ami])["Images"][0]
     return ami, image["RootDeviceName"]
@@ -1220,10 +1253,9 @@ def _ensure_security_group(region: str, vpc_id: str, ip: str) -> str:
 
 def _ensure_bucket(bucket: str, region: str) -> None:
     """Creates the S3 cache bucket if absent (private, default settings)."""
-    import boto3
     from botocore.exceptions import ClientError
 
-    s3 = boto3.session.Session().client("s3", region_name=region)
+    s3 = _aws.fresh_client("s3", region)
     try:
         s3.head_bucket(Bucket=bucket)
         return
@@ -1246,73 +1278,18 @@ def _ensure_bucket(bucket: str, region: str) -> None:
 def _ensure_instance_profile(bucket: str) -> str:
     """Returns the instance-profile name for the model cache, creating it if absent.
 
+    Thin wrapper over ``_aws.ensure_instance_profile``, threading in this
+    module's own ``EC2_INSTANCE_ROLE_NAME`` / ``_IAM_PROPAGATION_SLEEP_S``
+    module constants as that shared function's ``role_name`` /
+    ``propagation_sleep_s`` parameters. Kept as a locally-named one-liner
+    (rather than calling ``_aws.ensure_instance_profile`` directly from
+    ``_launch_fresh``) for the same monkeypatchability reason as
+    ``_ec2_client`` above -- tests patch ``ec2._ensure_instance_profile``.
+
     The role grants (a) read/write scoped to the cache bucket and (b) SSM core,
     which doubles as the break-glass shell for a box that has no SSH key.
     """
-    import json as _json
-
-    import boto3
-    from botocore.exceptions import ClientError
-
-    iam = boto3.session.Session().client("iam")
-    name = EC2_INSTANCE_ROLE_NAME
-    trust = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Principal": {"Service": "ec2.amazonaws.com"},
-                "Action": "sts:AssumeRole",
-            }
-        ],
-    }
-    created = False
-    try:
-        iam.create_role(RoleName=name, AssumeRolePolicyDocument=_json.dumps(trust))
-        created = True
-    except ClientError as err:
-        if _error_code(err) != "EntityAlreadyExists":
-            raise
-    # put_role_policy overwrites idempotently, so the grant tracks the bucket.
-    iam.put_role_policy(
-        RoleName=name,
-        PolicyName="smolbench-s3-model-cache",
-        PolicyDocument=_json.dumps(
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Action": ["s3:ListBucket"],
-                        "Resource": f"arn:aws:s3:::{bucket}",
-                    },
-                    {
-                        "Effect": "Allow",
-                        "Action": ["s3:GetObject", "s3:PutObject"],
-                        "Resource": f"arn:aws:s3:::{bucket}/*",
-                    },
-                ],
-            }
-        ),
-    )
-    iam.attach_role_policy(
-        RoleName=name,
-        PolicyArn="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    )
-    try:
-        iam.create_instance_profile(InstanceProfileName=name)
-        created = True
-    except ClientError as err:
-        if _error_code(err) != "EntityAlreadyExists":
-            raise
-    try:
-        iam.add_role_to_instance_profile(InstanceProfileName=name, RoleName=name)
-    except ClientError as err:
-        if _error_code(err) != "LimitExceeded":  # role already attached
-            raise
-    if created:
-        time.sleep(_IAM_PROPAGATION_SLEEP_S)  # let IAM propagate before RunInstances references it
-    return name
+    return _aws.ensure_instance_profile(EC2_INSTANCE_ROLE_NAME, bucket, _IAM_PROPAGATION_SLEEP_S)
 
 
 def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -1490,26 +1467,38 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
         absent before ever getting an IP (spot reclaimed right after launch).
     TimeoutError
         If no public IP appears within ``timeout_s``.
+
+    Notes
+    -----
+    Built on ``_aws.poll_until``: the RuntimeError abort (spot reclaimed
+    right after launch) is raised straight out of ``check()`` per that
+    function's contract, propagating unchanged through ``poll_until``.
+    ``check()`` returns ``ip or None`` rather than ``ip`` -- ``poll_until``
+    treats any non-None return as success, so this preserves the original
+    loop's truthiness check (``if ip:``) rather than an ``is not None``
+    check, in case EC2 ever reports an empty-string address (never observed,
+    but the original guarded it, so this does too).
     """
-    deadline = time.time() + timeout_s
-    while True:
+
+    def check() -> Optional[str]:
         instance = _describe_instance(region, instance_id)
         # NOTE: NOT using _instance_state(region, instance_id) here -- this
         # site also needs PublicIpAddress from the SAME describe result right
         # below, and the helper would cost a second DescribeInstances call
         # for state alone. See _instance_state's docstring.
-        state = (instance or {}).get("State", {}).get("Name", "absent")
-        if state in ("shutting-down", "terminated", "absent"):
+        inst_state = (instance or {}).get("State", {}).get("Name", "absent")
+        if inst_state in ("shutting-down", "terminated", "absent"):
             raise RuntimeError(
-                f"instance {instance_id} went {state} right after launch "
+                f"instance {instance_id} went {inst_state} right after launch "
                 "(spot reclaimed?); re-run provision_spot_instance()."
             )
         ip = (instance or {}).get("PublicIpAddress")
-        if ip:
-            return ip
-        if time.time() > deadline:
-            raise TimeoutError(f"instance {instance_id} got no public IP in {timeout_s}s")
-        time.sleep(_WAIT_IP_POLL_S)
+        return ip or None
+
+    def on_timeout() -> TimeoutError:
+        return TimeoutError(f"instance {instance_id} got no public IP in {timeout_s}s")
+
+    return _aws.poll_until(check, timeout_s=timeout_s, interval_s=_WAIT_IP_POLL_S, on_timeout=on_timeout)
 
 
 def _agent(
@@ -1553,16 +1542,25 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
         ``pending``/``running`` (spot reclaimed while waiting for its agent).
     TimeoutError
         If the agent never answers within ``timeout_min``.
+
+    Notes
+    -----
+    Built on ``_aws.poll_until``. The every-``_AGENT_PROGRESS_EVERY_N_POLLS``
+    liveness sub-check needs a poll COUNTER that survives across iterations,
+    which ``poll_until``'s stateless ``check()`` contract does not provide by
+    itself -- so ``check()`` closes over a ``polls`` counter via ``nonlocal``,
+    exactly reproducing the original loop's own local ``polls`` variable.
     """
     from botocore.exceptions import ClientError
 
-    deadline = time.time() + timeout_min * 60
     polls = 0
-    while True:
+
+    def check() -> Optional[bool]:
+        nonlocal polls
         try:
             _agent(state, "GET", "/status", timeout=5)
             logging.info(f"control agent up at {state['public_ip']}:{EC2_AGENT_PORT}")
-            return
+            return True
         except (requests.exceptions.RequestException, RuntimeError):
             pass
         polls += 1
@@ -1579,16 +1577,21 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
                 # blip) should not abort the wait -- swallow it and re-check
                 # on the next progress poll. The RuntimeError raised just
                 # above (instance genuinely gone) is not a ClientError and
-                # still propagates.
+                # still propagates out of check(), per poll_until's contract.
                 pass
-        if time.time() > deadline:
-            raise TimeoutError(
-                f"control agent at {state['public_ip']}:{EC2_AGENT_PORT} not answering after "
-                f"{timeout_min} min. Debug via the EC2 serial console / instance "
-                "screenshot, or relaunch with EC2_KEY_NAME set for SSH; bootstrap "
-                "logs to /var/log/smolbench-bootstrap.log on the instance."
-            )
-        time.sleep(_AGENT_POLL_S)
+        return None
+
+    def on_timeout() -> TimeoutError:
+        return TimeoutError(
+            f"control agent at {state['public_ip']}:{EC2_AGENT_PORT} not answering after "
+            f"{timeout_min} min. Debug via the EC2 serial console / instance "
+            "screenshot, or relaunch with EC2_KEY_NAME set for SSH; bootstrap "
+            "logs to /var/log/smolbench-bootstrap.log on the instance."
+        )
+
+    _aws.poll_until(
+        check, timeout_s=timeout_min * 60, interval_s=_AGENT_POLL_S, on_timeout=on_timeout
+    )
 
 
 def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
@@ -2049,12 +2052,24 @@ def _wait_model_ready(
 
     First-time serves are dominated by the checkpoint download (hundreds of
     GB for the big FP8 models); the HF cache makes later swaps minutes.
+
+    Notes
+    -----
+    Built on ``_aws.poll_until``. The TimeoutError message reports the LAST
+    polled ``container`` state and ``log_tail`` -- data ``poll_until``'s
+    zero-argument ``on_timeout()`` cannot see unless ``check()`` stashes it
+    somewhere ``on_timeout()`` can read, hence the ``last_status`` closure
+    variable populated on every poll (success or not) and read back only if
+    the loop times out.
     """
-    deadline = time.time() + timeout_min * 60
-    while True:
+    last_status: Dict[str, Any] = {}
+
+    def check() -> Optional[bool]:
+        nonlocal last_status
         status = _agent(state, "GET", "/status", timeout=30)
+        last_status = status
         if status.get("healthy"):
-            return
+            return True
         container = status.get("container")
         serve_rc = status.get("serve_rc")
         if container in ("exited", "dead"):
@@ -2067,12 +2082,18 @@ def _wait_model_ready(
                 f"docker run for {model!r} failed (rc={serve_rc}); launcher output:\n"
                 f"{status.get('serve_log_tail', '')}"
             )
-        if time.time() > deadline:
-            raise TimeoutError(
-                f"{model!r} not healthy after {timeout_min} min "
-                f"(container={container}); docker logs tail:\n{status.get('log_tail', '')}"
-            )
-        time.sleep(_MODEL_READY_POLL_S)
+        return None
+
+    def on_timeout() -> TimeoutError:
+        return TimeoutError(
+            f"{model!r} not healthy after {timeout_min} min "
+            f"(container={last_status.get('container')}); "
+            f"docker logs tail:\n{last_status.get('log_tail', '')}"
+        )
+
+    _aws.poll_until(
+        check, timeout_s=timeout_min * 60, interval_s=_MODEL_READY_POLL_S, on_timeout=on_timeout
+    )
 
 
 @contextlib.contextmanager

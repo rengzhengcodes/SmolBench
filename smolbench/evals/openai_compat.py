@@ -62,6 +62,99 @@ from smolbench.evals import Answer, Quiz, Mark, Marks
 METADATA_TIMEOUT_S: int = 120
 
 
+def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
+    """Performs one bearer-authenticated metadata GET and returns its parsed JSON body.
+
+    Extracted from four near-identical copies that had grown independently:
+    OpenRouter's and Prime Intellect's ``get_model_context_length`` (a GET
+    against ``/models/{model}/endpoints`` or ``/models/{model}``), and AWS's
+    and EC2's ``list_models`` (a GET against ``/models``). All four built the
+    same ``requests.get(url, headers={"Authorization": f"Bearer {key}"},
+    timeout=...).json()`` call and differed only in the URL, the timeout
+    (all four use ``METADATA_TIMEOUT_S`` today), and whether the response
+    status is checked before parsing -- see the FIDELITY note below for why
+    that last difference is preserved via ``check_status`` rather than
+    unified. Each call site keeps its own URL construction, ``lru_cache``
+    (where applicable), and JSON post-processing; this function only
+    performs the GET and returns the raw parsed body.
+
+    Parameters
+    ----------
+    url : str
+        Fully-resolved request URL. Callers build this themselves since each
+        provider's path shape differs (OpenRouter's
+        ``/models/{model}/endpoints``, Prime Intellect's ``/models/{model}``,
+        AWS/EC2's flat ``/models``).
+    api_key : str
+        Bearer token sent as ``Authorization: Bearer {api_key}``. Callers
+        resolve this themselves (an env var, a state file, a minted
+        short-lived token, ...); this function only shapes the header.
+    check_status : bool
+        When True, ``response.raise_for_status()`` is called before parsing,
+        raising ``requests.exceptions.HTTPError`` on a 4xx/5xx response --
+        this is today's ``list_models`` behavior (AWS, EC2). When False, the
+        body is parsed as JSON regardless of status code -- this is today's
+        ``get_model_context_length`` behavior (OpenRouter, Prime Intellect).
+        Required (no default): every call site has an opinion here, and a
+        silently-wrong default would be the kind of behavior change this
+        extraction must not introduce. See the FIDELITY note.
+    timeout : float, optional
+        Read timeout in seconds, forwarded to ``requests.get`` as a scalar
+        (no separate connect timeout -- metadata calls are small, fast
+        lookups, unlike chat completions; see ``METADATA_TIMEOUT_S``).
+        Defaults to ``METADATA_TIMEOUT_S``; pass an explicit value only if a
+        call site's timeout genuinely diverges from that shared default.
+
+    Returns
+    -------
+    Any
+        ``response.json()`` -- the parsed JSON body, whatever shape the
+        endpoint returns (a bare list, a dict with a top-level ``"data"``
+        key, ...). Callers perform their own shape-specific post-processing
+        (e.g. ``response["data"]["endpoints"][0]["context_length"]`` vs
+        ``[m["id"] for m in response["data"]]``); this function does not
+        interpret the body at all.
+
+    Raises
+    ------
+    requests.exceptions.HTTPError
+        Only when ``check_status`` is True and the response status is a
+        4xx/5xx.
+    requests.exceptions.RequestException
+        A connection-level failure (timeout, DNS failure, connection reset),
+        regardless of ``check_status``.
+    requests.exceptions.JSONDecodeError
+        The response body is not valid JSON. Reachable even when
+        ``check_status`` is True, if the server returns a 2xx with a
+        non-JSON body; when ``check_status`` is True and the status is an
+        error, ``raise_for_status()`` raises first and ``.json()`` is never
+        reached.
+
+    Notes
+    -----
+    FIDELITY: the two context-length lookups (OpenRouter, Prime Intellect)
+    deliberately do NOT check status before parsing -- an error response's
+    JSON body flows straight into the caller's shape-specific indexing
+    (``response["data"]["endpoints"][0]["context_length"]`` etc.), which
+    raises its own ``KeyError``/``TypeError`` on a malformed or error-shaped
+    body. This matches each provider's pre-extraction behavior under the
+    retry machinery in ``ChatClient`` and is NOT a bug to "fix" here. The two
+    ``list_models`` call sites (AWS, EC2) already DID check status before
+    this extraction. ``check_status`` exists to preserve BOTH behaviors
+    verbatim, one per call-site kind -- do not change either default when
+    calling this function, and do not collapse the parameter to a single
+    hardcoded choice.
+    """
+    response = requests.get(
+        url=url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    if check_status:
+        response.raise_for_status()
+    return response.json()
+
+
 def is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
     """Returns whether a chat-completions request error should be retried.
 

@@ -29,12 +29,47 @@ from .corpus import data_root
 
 @dataclass(frozen=True)
 class Premise:
+    """One premise (theorem/def/instance/etc.) declared in the traced repo.
+
+    Built from one entry of a `corpus.jsonl` record's ``premises`` list (see
+    `_index`). Distinct from ``smolbench.lean.corpus.TracedTactic.premises``
+    -- the lighter, per-reference dicts recorded inline in a proof step --
+    ``full_name`` is the join key between the two: `context.py`'s hint-chain
+    rendering looks each `TracedTactic.premises` entry up in this class's
+    index via `lookup`.
+    """
+
+    #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``), unique
+    #: within the index (see `_index`'s collision-handling note).
     full_name: str
+    #: Source text as captured by the corpus: signature-only for theorems
+    #: (proof omitted), signature plus ``:= body`` for defs. See
+    #: `signature` / `body` / `body_with_proof` for the three ways this is
+    #: presented to callers.
     code: str
+    #: ``(line, column)`` of the declaration's start in `file_path`.
+    #: `start[0]` (the line) is consumed 1-indexed by `slice_full_decl` --
+    #: see that function's explicit ``start_line - 1`` conversion before
+    #: list-indexing the source file's lines -- making this the one place
+    #: in this codebase where the corpus's line-indexing convention is
+    #: actually exercised, and therefore provably 1-indexed.
     start: tuple[int, int]
+    #: ``(line, column)`` of the declaration's end in `file_path`. See
+    #: `start`.
     end: tuple[int, int]
+    #: Corpus-reported declaration kind (e.g. ``"theorem"``, ``"def"``,
+    #: ``"instance"``) -- surfaced alongside the premise's signature/body in
+    #: rendered hint-chain prompts (see ``context._render_hint_parts``).
     kind: str
-    file_path: str   # the source file this premise is declared in
+    #: Path (relative to the traced repo root) of the source file this
+    #: premise is declared in. Provenance: taken from the *file record*'s
+    #: ``path`` field in ``corpus.jsonl`` (the file the premise was found
+    #: under while iterating that record's ``premises`` list) -- not from
+    #: any field on the premise's own JSON dict -- so every `Premise` built
+    #: from the same file record shares this value. Consumed by
+    #: `_resolve_source` to locate the cached mathlib4 source file for
+    #: `body_with_proof`'s full-declaration slicing.
+    file_path: str
 
 
 @lru_cache(maxsize=1)
@@ -63,6 +98,24 @@ def _index() -> dict[str, Premise]:
 
 
 def lookup(full_name: str) -> Premise | None:
+    """Look up a premise by its fully-qualified name.
+
+    Parameters
+    ----------
+    full_name : str
+        Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
+
+    Returns
+    -------
+    Premise or None
+        The indexed `Premise`, or None if `full_name` is not present in the
+        corpus index (e.g. declared outside the traced repo, or dropped as
+        a duplicate by `_index`'s collision handling). Every caller in this
+        module and in `context.py` treats a None result as "premise
+        unavailable" rather than an error condition -- e.g.
+        ``context._render_hint_parts`` renders a "(not found in premise
+        corpus)" placeholder instead of raising.
+    """
     return _index().get(full_name)
 
 
@@ -346,6 +399,46 @@ def premise_dep_closure(
     Yields premises reachable from `seeds` within `depth` hops in BFS order
     (closest first). Excludes the seeds themselves. Capped at `max_premises`
     to keep prompts bounded; truncation drops the deepest discoveries first.
+
+    Parameters
+    ----------
+    seeds : list of Premise
+        Starting premises (typically the true premises used in a tactic,
+        already resolved via `lookup`) whose per-premise reference graph
+        (`referenced_premises`) is walked outward from.
+    depth : int
+        Number of BFS hops to expand. `depth <= 0`, or an empty `seeds`,
+        short-circuits to an empty list without calling `referenced_premises`
+        at all.
+    max_premises : int, default 500
+        Hard cap on the number of premises returned. The BFS returns the
+        instant `len(out) >= max_premises` is reached -- mid-hop and even
+        mid-frontier-item if necessary, without finishing the remaining
+        references of the premise currently being expanded or the rest of
+        that hop's frontier.
+
+    Returns
+    -------
+    list of Premise
+        Premises reachable from `seeds`, in BFS order: every hop-``n``
+        premise precedes every hop-``(n+1)`` premise, and within a hop,
+        order follows frontier-iteration order then per-premise reference
+        order. Excludes `seeds` themselves and any premise already
+        discovered at a shallower hop (a `visited` set dedupes across hops,
+        so a premise referenced by multiple frontier premises appears once,
+        at its first-discovered hop).
+
+    Notes
+    -----
+    Because discovery order is strictly hop-major, truncating the output at
+    `max_premises` always drops the deepest (least-relevant) tail of that
+    order first -- a hop-1 premise already appended to `out` is never
+    displaced by, or dropped in favor of, a hop-2 discovery.
+
+    Each hop's cost is bounded by `referenced_premises`'s own
+    ``lru_cache(maxsize=4096)``, so repeated calls sharing seeds across
+    different (theorem, k) cells reuse prior tokenization/lookup work
+    rather than repeating it.
     """
     if depth <= 0 or not seeds:
         return []

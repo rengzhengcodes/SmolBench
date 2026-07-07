@@ -34,7 +34,11 @@ class _StubHandler(BaseHTTPRequestHandler):
         self._reply(self.server.next_response())
 
     def do_GET(self):
-        self.server.requests.append({"path": self.path, "body": None})
+        # Headers recorded for the same reason as in do_POST (e.g. asserting
+        # metadata_get's Authorization bearer header).
+        self.server.requests.append(
+            {"path": self.path, "body": None, "headers": dict(self.headers)}
+        )
         if self.path.endswith("/endpoints"):
             # OpenRouter-style context-length listing.
             self._reply({"data": {"endpoints": [{"context_length": 100000}]}})

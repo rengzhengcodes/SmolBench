@@ -45,17 +45,34 @@ importing this module (and the query path) requires neither. The ``model`` argum
 model id from the configured endpoint's catalog -- on the default bedrock-mantle
 endpoint, e.g. ``anthropic.claude-haiku-4-5``, ``qwen.qwen3-32b``, or
 ``openai.gpt-oss-120b``; call ``list_models()`` to enumerate them.
+
+Provisioning is built on :mod:`smolbench.evals._aws`, the primitives shared
+with ``ec2.py``'s EC2 Spot provisioning (fresh-Session client construction,
+IAM execution-role creation, the generic ``poll_until`` wait loop, the
+``DeploySpec`` shape); see that module's docstring for the full lifecycle-
+correspondence table between the two providers -- ``provision_endpoint``
+here is a per-model, always-tears-down ``@contextmanager``, deliberately a
+different shape from ec2.py's provision-once/``serve_model``-swaps split.
+This module's own call-time resolvers (``_base_url_template``/``_api_key``/
+``_connection``) correspond 1:1 to ec2.py's (``_base_url``/``_api_key``/
+``_connection``) -- same job (build a chat-completions URL + bearer token per
+call) but deliberately NOT merged into one shared resolver, since each reads
+different env vars and different state (a static Bedrock/SageMaker bearer
+token here vs. EC2's per-instance state file there); a shared function would
+need as many branches as there are call sites today, buying nothing over two
+small independent implementations.
 """
 
 import contextlib
 import logging
 import os
-import time
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
-from smolbench.evals.openai_compat import ChatClient, METADATA_TIMEOUT_S
+from smolbench.evals import _aws
+from smolbench.evals._aws import DeploySpec
+from smolbench.evals.openai_compat import ChatClient, metadata_get
 
 AWS_BEDROCK_RETRY_BACKOFF_SECONDS: int = 60
 # Default bedrock-mantle base URL, as a format template so ``region`` stays
@@ -189,13 +206,8 @@ def list_models(model: str = "") -> list[str]:
     surface does not implement ``GET /models`` (it 404s); there, discover ids with
     ``aws bedrock list-foundation-models`` instead.
     """
-    response = requests.get(
-        url=f"{_resolve_base(model)}/models",
-        headers={"Authorization": f"Bearer {_api_key()}"},
-        timeout=METADATA_TIMEOUT_S,
-    )
-    response.raise_for_status()
-    return [m["id"] for m in response.json().get("data", [])]
+    response = metadata_get(f"{_resolve_base(model)}/models", _api_key(), check_status=True)
+    return [m["id"] for m in response.get("data", [])]
 
 
 _CLIENT = ChatClient(
@@ -235,7 +247,7 @@ SAGEMAKER_EXEC_ROLE_NAME: str = os.getenv("SAGEMAKER_EXEC_ROLE_NAME", "smolbench
 # (multi-GPU endpoint quotas default to 0) plus likely quantization/multi-node
 # tuning -- treat their specs as editable templates. Add {"env": {"HF_TOKEN":
 # "hf_..."}} for gated models, or {"image": "..."} to override the container.
-SAGEMAKER_DEPLOY_SPECS: Dict[str, Dict[str, Any]] = {
+SAGEMAKER_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct",                    "instance_type": "ml.g5.2xlarge",  "tp": 1},
     "llama-31-405b":       {"hf_model_id": "meta-llama/Llama-3.1-405B-Instruct",            "instance_type": "ml.p5.48xlarge", "tp": 8},
     "nemotron-ultra-253b": {"hf_model_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",       "instance_type": "ml.p5.48xlarge", "tp": 8},
@@ -253,9 +265,28 @@ def _is_sagemaker_provider() -> bool:
 
 
 def _sagemaker_client():
-    import boto3  # lazy: keep the inference path boto3-free
+    """Thin wrapper over ``_aws.fresh_client("sagemaker", _region())``.
 
-    return boto3.client("sagemaker", region_name=_region())
+    Kept as a locally-named one-liner (rather than calling ``_aws.
+    fresh_client`` directly at every call site) so ``tests/test_aws_
+    provision.py`` can monkeypatch this one name to substitute a recording
+    fake, exactly mirroring ec2.py's own ``_ec2_client`` wrapper.
+
+    Notes
+    -----
+    Intentional behavioral delta from the pre-refactor version, carried over
+    from ``_aws.fresh_client`` (see its docstring for the full rationale):
+    the original built ``boto3.client("sagemaker", region_name=_region())``
+    directly, which resolves against the process-wide DEFAULT boto3 session
+    (caching credentials at first resolve). This wrapper instead constructs a
+    brand-new ``boto3.session.Session()`` on every call, so a rotated
+    ``~/.aws/credentials`` file is picked up on the very next call rather
+    than raising ``ExpiredToken``/``RequestExpired`` until the process
+    restarts. The delta is payload-invariant: every request kwargs dict this
+    module builds and sends (see ``_create_model_kwargs`` and friends) is
+    identical either way -- only the credential-resolution mechanics differ.
+    """
+    return _aws.fresh_client("sagemaker", _region())
 
 
 def mint_sagemaker_token(expires: int = 43200) -> str:
@@ -285,35 +316,210 @@ def mint_sagemaker_token(expires: int = 43200) -> str:
 
 
 def _ensure_exec_role() -> str:
-    """Returns the SageMaker execution role ARN, creating it (idempotently) if absent."""
-    import json
+    """Returns the SageMaker execution role ARN, creating it (idempotently) if absent.
 
-    import boto3
+    Thin wrapper over ``_aws.ensure_sagemaker_execution_role(SAGEMAKER_
+    EXEC_ROLE_NAME)``. Kept as a locally-named one-liner (rather than calling
+    ``_aws.ensure_sagemaker_execution_role`` directly from ``provision_
+    endpoint``) so tests can monkeypatch this one name -- matching the
+    convention ``_sagemaker_client`` and ec2.py's own thin wrappers
+    (``_ec2_client``, ``_ensure_instance_profile``) already use. The IAM
+    calls, trust policy, and 10s propagation sleep all now live in ``_aws.py``
+    (see its docstring for the one intentional behavioral delta: a fresh
+    boto3 Session per call instead of the process-wide default session).
 
-    iam = boto3.client("iam")
-    trust = {
-        "Version": "2012-10-17",
-        "Statement": [
+    Returns
+    -------
+    str
+        The role's ARN.
+    """
+    return _aws.ensure_sagemaker_execution_role(SAGEMAKER_EXEC_ROLE_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Pure kwargs builders -- no AWS I/O, no boto3 import, fully offline-pinnable.
+# ---------------------------------------------------------------------------
+# Design: `provision_endpoint`'s three CreateX calls and its teardown loop
+# used to build their request dicts inline. Extracted to standalone functions
+# so `tests/test_aws_provision.py` can pin the exact payload each one
+# produces (a dict-equality assertion) without constructing a SageMaker
+# client or a `provision_endpoint` context at all -- every literal below
+# (`SAGEMAKER_ENABLE_LOAD_AWARE`, the `1800`s health-check timeout, the `|`
+# env-merge precedence, the `f"{model}-model"`/`f"{model}-config"` naming) is
+# preserved byte-for-byte from the pre-extraction inline code.
+
+
+def _create_model_kwargs(model: str, spec: DeploySpec, role_arn: str) -> Dict[str, Any]:
+    """Builds the ``CreateModel`` kwargs for one SageMaker deploy spec.
+
+    Parameters
+    ----------
+    model : str
+        The endpoint name (== the model id passed to ``provision_endpoint``/
+        ``query``/``evaluate``). The SageMaker *model* resource created from
+        this is named ``f"{model}-model"``, distinct from the endpoint name
+        itself since SageMaker's model/endpoint-config/endpoint are three
+        separate named resources.
+    spec : DeploySpec
+        The deploy spec for ``model`` (typically ``SAGEMAKER_DEPLOY_
+        SPECS[model]``). Must have ``spec["hf_model_id"]``; optionally reads
+        ``spec.get("image", SAGEMAKER_VLLM_DLC)``, ``spec.get("tp", 1)``, and
+        ``spec.get("env", {})``.
+    role_arn : str
+        The SageMaker execution role ARN (from ``_ensure_exec_role`` /
+        ``_aws.ensure_sagemaker_execution_role``) the model assumes at
+        runtime.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Kwargs for ``boto3``'s SageMaker ``create_model``. ``Environment``
+        merges a fixed base dict (``HF_MODEL_ID``, ``SM_VLLM_TENSOR_
+        PARALLEL_SIZE`` as a str, ``SAGEMAKER_ENABLE_LOAD_AWARE``) with
+        ``spec.get("env", {})`` via ``|`` -- since the spec dict comes
+        SECOND in that merge, a spec ``env`` key with the same name as a
+        base key (e.g. a spec overriding ``SAGEMAKER_ENABLE_LOAD_AWARE``)
+        WINS over the base value; an unrelated spec env key is simply added
+        alongside the base keys.
+
+    Raises
+    ------
+    KeyError
+        If ``spec`` has no ``"hf_model_id"`` key.
+
+    Notes
+    -----
+    Pure -- no AWS I/O, no boto3 import, no side effects. Every call with the
+    same arguments returns an equal (independently-mutable) dict.
+    """
+    return {
+        "ModelName": f"{model}-model",
+        "ExecutionRoleArn": role_arn,
+        "PrimaryContainer": {
+            "Image": spec.get("image", SAGEMAKER_VLLM_DLC),
+            "Environment": {
+                "HF_MODEL_ID": spec["hf_model_id"],
+                "SM_VLLM_TENSOR_PARALLEL_SIZE": str(spec.get("tp", 1)),
+                "SAGEMAKER_ENABLE_LOAD_AWARE": "1",
+            }
+            | spec.get("env", {}),
+        },
+    }
+
+
+def _create_endpoint_config_kwargs(model: str, spec: DeploySpec) -> Dict[str, Any]:
+    """Builds the ``CreateEndpointConfig`` kwargs for one SageMaker deploy spec.
+
+    Parameters
+    ----------
+    model : str
+        The endpoint name; the endpoint config is named ``f"{model}-config"``
+        and its single production variant references the model resource
+        named ``f"{model}-model"`` (see ``_create_model_kwargs``).
+    spec : DeploySpec
+        Must have ``spec["instance_type"]`` (the production variant's
+        ``InstanceType``, e.g. ``"ml.p5.48xlarge"``).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Kwargs for ``boto3``'s SageMaker ``create_endpoint_config``, with a
+        single production variant (``"variant1"``, 1 initial instance, a
+        fixed 1800s container-startup health-check timeout -- large multi-GPU
+        DLC images can take a while to pull and load).
+
+    Raises
+    ------
+    KeyError
+        If ``spec`` has no ``"instance_type"`` key.
+
+    Notes
+    -----
+    Pure -- no AWS I/O, no boto3 import, no side effects.
+    """
+    return {
+        "EndpointConfigName": f"{model}-config",
+        "ProductionVariants": [
             {
-                "Effect": "Allow",
-                "Principal": {"Service": "sagemaker.amazonaws.com"},
-                "Action": "sts:AssumeRole",
+                "VariantName": "variant1",
+                "ModelName": f"{model}-model",
+                "InitialInstanceCount": 1,
+                "InstanceType": spec["instance_type"],
+                "ContainerStartupHealthCheckTimeoutInSeconds": 1800,
             }
         ],
     }
-    try:
-        arn = iam.create_role(
-            RoleName=SAGEMAKER_EXEC_ROLE_NAME,
-            AssumeRolePolicyDocument=json.dumps(trust),
-        )["Role"]["Arn"]
-        iam.attach_role_policy(
-            RoleName=SAGEMAKER_EXEC_ROLE_NAME,
-            PolicyArn="arn:aws:iam::aws:policy/AmazonSageMakerFullAccess",
-        )
-        time.sleep(10)  # let the new role propagate before SageMaker assumes it
-        return arn
-    except iam.exceptions.EntityAlreadyExistsException:
-        return iam.get_role(RoleName=SAGEMAKER_EXEC_ROLE_NAME)["Role"]["Arn"]
+
+
+def _create_endpoint_kwargs(model: str) -> Dict[str, Any]:
+    """Builds the ``CreateEndpoint`` kwargs for one SageMaker deploy spec.
+
+    Parameters
+    ----------
+    model : str
+        The endpoint name -- becomes ``EndpointName`` verbatim (this is the
+        same string ``query()``/``evaluate()`` are later called with, and
+        what fills the ``{model}`` placeholder in ``AWS_INFERENCE_BASE_URL``).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Kwargs for ``boto3``'s SageMaker ``create_endpoint``, referencing the
+        endpoint config named ``f"{model}-config"`` (see
+        ``_create_endpoint_config_kwargs``).
+
+    Notes
+    -----
+    Pure -- no AWS I/O, no boto3 import, no side effects.
+    """
+    return {"EndpointName": model, "EndpointConfigName": f"{model}-config"}
+
+
+def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
+    """Builds the ordered ``(label, callable)`` teardown steps for one endpoint.
+
+    Parameters
+    ----------
+    sm : Any
+        A SageMaker client (as returned by ``_sagemaker_client()``) exposing
+        ``delete_endpoint``/``delete_endpoint_config``/``delete_model``. Not
+        type-hinted more narrowly than ``Any`` since boto3 clients are
+        dynamically generated (no static type available without an optional
+        stub-generation dependency) -- consistent with the rest of this
+        module's boto3-adjacent code.
+    model : str
+        The endpoint name; the associated endpoint-config and model
+        resources are named ``f"{model}-config"`` / ``f"{model}-model"``
+        (see ``_create_endpoint_config_kwargs`` / ``_create_model_kwargs``).
+
+    Returns
+    -------
+    List[Tuple[str, Callable[[], Any]]]
+        Exactly three ``(label, call)`` pairs, in DEPENDENCY-SAFE order --
+        ``"endpoint"`` (deletes the endpoint itself, which stops the billed
+        instance), then ``"endpoint-config"``, then ``"model"``. Each
+        ``call`` is a zero-argument closure over ``sm``/``model`` that
+        performs exactly one ``delete_*`` call when invoked; none of the
+        three calls are made until the caller actually invokes them --
+        building this list has no side effects.
+
+    Notes
+    -----
+    Deliberately returns bare labels (``"endpoint"``, not e.g. ``f"endpoint
+    {model}"``) rather than embedding ``model`` into the label string: doing
+    so would let a generic step-runner's SUCCESS log line reproduce the
+    pre-extraction format (which appended the model name), but would just as
+    much corrupt its FAILURE/skip log line (which, in the pre-extraction
+    code, did NOT include the model name) -- see ``provision_endpoint``'s
+    ``finally`` block for why this function's caller therefore hand-rolls its
+    own teardown loop instead of delegating to ``_aws.best_effort_teardown``.
+    """
+    mdl, cfg = f"{model}-model", f"{model}-config"
+    return [
+        ("endpoint", lambda: sm.delete_endpoint(EndpointName=model)),
+        ("endpoint-config", lambda: sm.delete_endpoint_config(EndpointConfigName=cfg)),
+        ("model", lambda: sm.delete_model(ModelName=mdl)),
+    ]
 
 
 @contextlib.contextmanager
@@ -328,6 +534,49 @@ def provision_endpoint(model: str, timeout_min: int = 40):
 
         with provision_endpoint(DENSE_MODEL):
             decode_intens_eval = evaluate(intens_quiz, DENSE_MODEL, SEED)
+
+    Parameters
+    ----------
+    model : str
+        Endpoint name; must be a key of ``SAGEMAKER_DEPLOY_SPECS`` once
+        ``_is_sagemaker_provider()`` is true (checked eagerly, before any AWS
+        call, so a typo'd model name fails fast).
+    timeout_min : int, optional
+        Minutes to wait for the endpoint to reach ``InService`` before
+        raising ``TimeoutError``. Default 40 (large multi-GPU DLC images can
+        take a while to provision, pull, and load).
+
+    Yields
+    ------
+    str
+        ``model``, unchanged -- for symmetry with the no-op path (so
+        ``with provision_endpoint(m) as name:`` gives the same ``name``
+        whether or not anything was actually provisioned).
+
+    Raises
+    ------
+    KeyError
+        If ``_is_sagemaker_provider()`` is true and ``model`` has no
+        ``SAGEMAKER_DEPLOY_SPECS`` entry.
+    RuntimeError
+        If the endpoint reaches ``Failed``/``OutOfService`` while waiting for
+        ``InService``.
+    TimeoutError
+        If the endpoint has not reached ``InService`` within ``timeout_min``.
+
+    Notes
+    -----
+    Builds its three ``CreateX`` request payloads via ``_create_model_
+    kwargs``/``_create_endpoint_config_kwargs``/``_create_endpoint_kwargs``
+    (pure, offline-pinnable -- see ``tests/test_aws_provision.py``), and its
+    teardown steps via ``_teardown_steps``, but does NOT delegate the actual
+    polling to ``_aws.poll_until``'s caller-facing `on_timeout`/`check`
+    machinery blindly -- see the ``check``/``on_timeout`` closures below for
+    how the pre-extraction wait loop's exact semantics (deadline consulted
+    only after a failed check, the last-seen status embedded in the timeout
+    message) are preserved on top of that shared primitive. Similarly, the
+    ``finally`` block does NOT delegate to ``_aws.best_effort_teardown`` --
+    see that block's own comment for why.
     """
     if not _is_sagemaker_provider():
         logging.info("provision_endpoint: serverless/non-SageMaker provider; nothing to provision.")
@@ -341,54 +590,49 @@ def provision_endpoint(model: str, timeout_min: int = 40):
             "add one with hf_model_id / instance_type / tp."
         )
 
-    mdl, cfg = f"{model}-model", f"{model}-config"
     role = _ensure_exec_role()
     try:
         logging.info(
             f"provision_endpoint: deploying {model!r} ({spec['hf_model_id']} on {spec['instance_type']}) ..."
         )
-        _sagemaker_client().create_model(
-            ModelName=mdl,
-            ExecutionRoleArn=role,
-            PrimaryContainer={
-                "Image": spec.get("image", SAGEMAKER_VLLM_DLC),
-                "Environment": {
-                    "HF_MODEL_ID": spec["hf_model_id"],
-                    "SM_VLLM_TENSOR_PARALLEL_SIZE": str(spec.get("tp", 1)),
-                    "SAGEMAKER_ENABLE_LOAD_AWARE": "1",
-                }
-                | spec.get("env", {}),
-            },
-        )
-        _sagemaker_client().create_endpoint_config(
-            EndpointConfigName=cfg,
-            ProductionVariants=[
-                {
-                    "VariantName": "variant1",
-                    "ModelName": mdl,
-                    "InitialInstanceCount": 1,
-                    "InstanceType": spec["instance_type"],
-                    "ContainerStartupHealthCheckTimeoutInSeconds": 1800,
-                }
-            ],
-        )
-        _sagemaker_client().create_endpoint(EndpointName=model, EndpointConfigName=cfg)
+        # Design: one fresh `_sagemaker_client()` per create call (not a
+        # single client reused across all three), matching the pre-
+        # extraction code exactly -- each call independently benefits from
+        # picking up a just-rotated credentials file (see `_sagemaker_client`'s
+        # docstring), and a long-running notebook cell is exactly the case
+        # where that matters most.
+        _sagemaker_client().create_model(**_create_model_kwargs(model, spec, role))
+        _sagemaker_client().create_endpoint_config(**_create_endpoint_config_kwargs(model, spec))
+        _sagemaker_client().create_endpoint(**_create_endpoint_kwargs(model))
 
-        deadline = time.time() + timeout_min * 60
-        while True:
+        # Design: built on `_aws.poll_until` (shared with ec2.py's wait
+        # loops) rather than a hand-rolled `while True`, but `last_status` is
+        # threaded through via `nonlocal` because `on_timeout()` -- called
+        # AFTER `check()` returns None and the deadline has passed -- needs
+        # the MOST RECENTLY POLLED status to build the exact pre-extraction
+        # TimeoutError message; `poll_until`'s `check` contract is otherwise
+        # stateless (it only distinguishes success/None/raise).
+        last_status: Optional[str] = None
+
+        def check() -> Optional[bool]:
+            nonlocal last_status
             # Fresh client each poll so a rotated/refreshed credential file is picked up.
             desc = _sagemaker_client().describe_endpoint(EndpointName=model)
             status = desc["EndpointStatus"]
+            last_status = status
             if status == "InService":
                 logging.info(f"provision_endpoint: {model!r} is InService.")
-                break
+                return True
             if status in ("Failed", "OutOfService"):
                 raise RuntimeError(f"endpoint {model} {status}: {desc.get('FailureReason', '?')}")
-            if time.time() > deadline:
-                raise TimeoutError(
-                    f"endpoint {model} not InService after {timeout_min} min (status={status})."
-                )
-            time.sleep(30)
+            return None
+
+        def on_timeout() -> TimeoutError:
+            return TimeoutError(
+                f"endpoint {model} not InService after {timeout_min} min (status={last_status})."
+            )
+
+        _aws.poll_until(check, timeout_s=timeout_min * 60, interval_s=30, on_timeout=on_timeout)
 
         # Refresh the bearer token (a long deploy may have outlived an earlier
         # one). The inference path reads AWS_INFERENCE_API_KEY from the
@@ -398,13 +642,22 @@ def provision_endpoint(model: str, timeout_min: int = 40):
 
         yield model
     finally:
-        # Guaranteed teardown -- runs on success, error, or interrupt.
-        sm = _sagemaker_client()
-        for label, call in (
-            ("endpoint", lambda: sm.delete_endpoint(EndpointName=model)),
-            ("endpoint-config", lambda: sm.delete_endpoint_config(EndpointConfigName=cfg)),
-            ("model", lambda: sm.delete_model(ModelName=mdl)),
-        ):
+        # Guaranteed teardown -- runs on success, error, or interrupt. NOT
+        # delegated to `_aws.best_effort_teardown`: that helper's log lines
+        # are always f"{log_prefix}: torn down {label}" / f"{log_prefix}:
+        # teardown skip {label}: ...", but the pre-extraction format here is
+        # ASYMMETRIC -- the success line appends the model name ("torn down
+        # endpoint {model}") while the skip/failure line does not ("teardown
+        # skip endpoint: ..."). Embedding `model` into the step label (e.g.
+        # "endpoint {model}") would fix the success line but then wrongly
+        # leak into the skip line too, and `tests/test_aws_provision.py`'s
+        # `test_teardown_steps_order_and_calls` pins bare labels
+        # (``"endpoint"``, not ``f"endpoint {model}"``) for exactly this
+        # reason. So the loop stays here, hand-rolled with the original
+        # f-strings, only its (label, call) pairs sourced from
+        # `_teardown_steps` -- reproducing today's log output byte-for-byte
+        # takes priority over reusing the shared helper.
+        for label, call in _teardown_steps(_sagemaker_client(), model):
             try:
                 call()
                 logging.info(f"provision_endpoint: torn down {label} {model}")

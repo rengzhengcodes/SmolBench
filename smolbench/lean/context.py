@@ -21,9 +21,28 @@ from .corpus import BenchmarkTheorem
 
 Chain = Literal["stepk", "hint", "noise"]
 
-# hint:N for N >= 3 is (N-2)-hop transitive premise closure. 50k token cap
-# means deeper levels just hit truncation rather than producing more content.
-# Cap chains generously so callers can experiment with depth.
+# `_MAX_LEVEL` bounds `validate`'s (chain, level) range check, per chain:
+#
+# - "stepk" caps at 2 because `_render_stepk_parts` only defines levels 0
+#   (bare goal), 1 (+ full tactic state), and 2 (+ proof-so-far + theorem
+#   identity) -- there is no level 3+ to render.
+# - "hint" caps at 9. `_render_hint_parts` defines levels 0 (premise names),
+#   1 (+ signatures), 2 (+ full bodies with proofs), and 3+ as a transitive
+#   premise-dependency closure whose *hop count* is `level - 2` (hint:3 =
+#   1-hop, hint:4 = 2-hop, ..., hint:9 = 7-hop -- see `_render_hint_parts`'s
+#   `depth = level - 2`). This deliberately extends well past the
+#   `notebooks/lean/README.md`-documented, sweep-tested range (hint:0..4):
+#   nothing in the renderer actually breaks past hint:4, since
+#   `_HINT2_3_TOKEN_CAP` (50k tokens) already bounds the rendered text no
+#   matter how many hops the closure walks -- so a caller experimenting
+#   with deeper hops just hits earlier truncation (more content discovered,
+#   none of it rendered) rather than an error. The cap exists to keep
+#   `validate` a real bound rather than removing range-checking outright,
+#   without artificially restricting experimentation to the currently-used
+#   levels.
+# - "noise" caps at 9 to mirror "hint": `_render_noise_parts(level)` renders
+#   `_render_hint_parts` at both `level - 1` and `level` to compute the
+#   padding delta, so it needs the same level range `hint` supports.
 _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 
 
@@ -67,12 +86,38 @@ def extract_goal_only(state_pp: str) -> str:
 
 @dataclass(frozen=True)
 class RenderedContext:
+    """The rendered text for one (chain, level) context rung, plus its label.
+
+    Returned by `render`; the text is consumed by prompt assembly
+    (``smolbench.lean.prompt.build_user_prompt``), and `label` is recorded
+    as the cell's ``rung`` in every result row (see
+    ``smolbench.lean.runner.run_cell``).
+    """
+
+    #: Which chain this rung belongs to.
     chain: Chain
+    #: The rung's level within `chain`.
     level: int
+    #: The fully-assembled prompt-context text for this rung (the
+    #: chain-specific parts, blank-line-joined by `render`).
     text: str
 
     @property
     def label(self) -> str:
+        """This rung's canonical ``"<chain>:<level>"`` identifier, e.g. ``"hint:2"``.
+
+        Returns
+        -------
+        str
+            ``f"{self.chain}:{self.level}"``. This exact format is the wire
+            contract every other module in this package parses rungs with:
+            `cli.py`'s ``--rung`` flag is split on ``":"``
+            (``chain_str, _, level_str = args.rung.partition(":")``),
+            `runner.py` does the same (``rung.split(":", 1)``) when
+            reconstructing ``(chain, level)`` from a sweep config's
+            ``rungs`` list, and ``runner.slug_rung`` replaces the ``":"``
+            with ``"-"`` for filesystem-safe output paths.
+        """
         return f"{self.chain}:{self.level}"
 
 
@@ -152,6 +197,35 @@ def _generate_lorem(target_tokens: int) -> str:
 
 
 def _count_tokens(s: str) -> int:
+    """Approximate token count of `s`, for internal token-budget decisions only.
+
+    Parameters
+    ----------
+    s : str
+        Text to measure.
+
+    Returns
+    -------
+    int
+        The `tiktoken` ``cl100k_base`` encoding length of `s` when
+        `tiktoken` is importable and encoding succeeds; otherwise
+        ``len(s) // 4`` (a rough ~4-characters-per-token estimate for
+        English prose).
+
+    Notes
+    -----
+    The char-based fallback is intentionally rough: this function only
+    gates internal budget decisions -- `_render_noise_parts`'s
+    padding-delta calculation, `_render_hint_parts`'s hint:3+ truncation
+    loop, and `is_trivial_rung`'s noise-triviality check -- none of which
+    need an exact count, just a consistent-enough estimate to size padding
+    or decide whether a rung added content. `cl100k_base` is not
+    necessarily the tokenizer of whichever model is actually being
+    prompted, so even the `tiktoken` path is already an approximation; the
+    char-based fallback only widens that approximation for the rare case
+    where `tiktoken` is unavailable or errors, rather than raising and
+    aborting context rendering entirely.
+    """
     try:
         import tiktoken
         return len(tiktoken.get_encoding("cl100k_base").encode(s))
@@ -281,6 +355,25 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
 
 
 def validate(chain: Chain, level: int) -> None:
+    """Validate that `(chain, level)` names an in-range rung.
+
+    Parameters
+    ----------
+    chain : Chain
+        Chain name to validate.
+    level : int
+        Level to validate against `chain`'s bound in `_MAX_LEVEL`.
+
+    Raises
+    ------
+    ValueError
+        If `chain` is not one of `_MAX_LEVEL`'s keys (``"stepk"``,
+        ``"hint"``, ``"noise"``), or if `level` is outside
+        ``[0, _MAX_LEVEL[chain]]``. Does not check chain-specific
+        constraints narrower than `_MAX_LEVEL` (e.g. `chain == "noise"`
+        with `level == 0` passes here but is rejected later, by
+        `_render_noise_parts`; see `render`'s ``Raises`` section).
+    """
     if chain not in _MAX_LEVEL:
         raise ValueError(f"unknown chain: {chain!r}")
     hi = _MAX_LEVEL[chain]
@@ -291,8 +384,40 @@ def validate(chain: Chain, level: int) -> None:
 def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> RenderedContext:
     """Render context at proof step `k` of `theorem` for the given (chain, level).
 
-    `k` is the 0-indexed step we are about to prove (the LLM should produce the
-    tail starting at tactic[k]). Requires `0 <= k < len(traced_tactics)`.
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        Theorem being proved.
+    k : int
+        The 0-indexed step we are about to prove -- the rendered context
+        describes the state immediately before ``theorem.traced_tactics[k]``,
+        and the LLM is expected to produce a tail starting at that tactic.
+        Must satisfy ``0 <= k < len(theorem.traced_tactics)``.
+    chain : Chain
+        Which context chain to render (``"stepk"``, ``"hint"``, or
+        ``"noise"``).
+    level : int
+        Level within `chain`; checked against `_MAX_LEVEL` via `validate`.
+
+    Returns
+    -------
+    RenderedContext
+        `chain`/`level` echoed back, plus `RenderedContext.text`: the
+        chain-specific parts (from `_render_stepk_parts`,
+        `_render_hint_parts`, or `_render_noise_parts`) joined with blank
+        lines.
+
+    Raises
+    ------
+    ValueError
+        If `k` is outside ``[0, len(theorem.traced_tactics))``; if
+        `(chain, level)` fails `validate` (unknown `chain`, or `level`
+        outside `_MAX_LEVEL`'s bound); or if `chain == "noise"` and
+        `level < 1` (propagated from `_render_noise_parts` -- `validate`
+        alone does not reject ``noise:0``, since there is no noise
+        counterpart for the `hint:0`/`stepk:2` baseline it would pad; see
+        ``figures.NOISE_RUNGS_ALIGNED``'s docstring for the same gap
+        described from the figure-plotting side).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")
@@ -333,11 +458,40 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
       - `hint:0` when no premises are recorded for the next tactic.
       - `hint:1` when the corpus has no record for any of the true premises.
       - `hint:2` when no premise's body differs from its signature.
-      - `hint:3`/`hint:4` when seed files have no imports at the requested depth.
+      - `hint:3`+ when the per-premise dependency closure
+        (``premises.premise_dep_closure``) at the requested hop depth is
+        empty.
+      - `noise:N` when the matching `hint:N` rung is itself trivial, or when
+        `hint:N`'s rendering adds no tokens beyond `hint:(N-1)`'s (nothing
+        to pad).
 
     Skipping these saves LLM tokens and makes per-rung pass rates a clean
     apples-to-apples comparison: every counted cell saw a real context
     expansion vs the previous rung.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        Theorem being evaluated.
+    k : int
+        0-indexed proof step under consideration.
+    chain : Chain
+        Chain the rung belongs to.
+    level : int
+        Level within `chain`.
+
+    Returns
+    -------
+    bool
+        True if `(chain, level)` is trivial at this `(theorem, k)`, per the
+        chain-specific rules above. False for any `chain` this function
+        does not recognize, and for `k` outside
+        ``[0, len(theorem.traced_tactics))`` -- a defensive default rather
+        than a raised error, since the only caller (`smolbench.lean.runner.
+        sweep`, gated by ``skip_trivial``) always invokes this with a `k`
+        it has already validated for other purposes; "never trivial" is
+        the safe default in case that assumption is ever violated, since it
+        means a cell still runs rather than being silently dropped.
     """
     if not 0 <= k < len(theorem.traced_tactics):
         return False

@@ -19,6 +19,12 @@ chromatic/induction_eval, chromatic/induction_eval_one_hop) previously
 carried hand-copied versions of this harness that had already drifted
 (cwd-relative results dirs, missing pooling, divergent summaries). Notebooks
 now hold only their experiment config and templates.
+
+Notebook cells no longer construct ``ReplicateHarness`` directly: each
+notebook builds one ``smolbench.induction.experiment.InductionExperiment``
+instead, which bundles a ``ReplicateHarness`` (unchanged, see its
+``harness`` cached property) with the EC2 provisioning lifecycle that
+serves the models under test. See that module for the notebook-facing API.
 """
 
 import logging

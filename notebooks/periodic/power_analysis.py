@@ -29,34 +29,56 @@ with c = 1 (a harmonic failed once is not assumed failed with certainty). A
 sensitivity pass with pure condition-mean rates (no per-harmonic structure)
 is reported alongside.
 
+Data availability
+-----------------
+This script reads the ARCHIVED pilot flat layout (``results/{model}_{info}.yaml``,
+one outcome per harmonic) -- the preliminary results it was designed for. The
+in-tree results were since reorganized into per-replicate
+``{model}_{info}/rep_*.yaml`` directories, so on the current tree this script
+exits with ``FileNotFoundError``. The pilot inputs live in git history (commit
+51bfc2d^). This is intentional: updating the statistics for the replicate
+layout is a methodological decision explicitly out of scope here. (Contrast:
+``notebooks/chromatic/power_analysis.py``'s loader already prefers the
+replicate layout with a flat-file fallback.)
+
 Run (ephemeral env via --no-project: plain `uv run` would sync the project
 and strip the notebook/dev extras from .venv):
     uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/periodic/power_analysis.py
 """
 
 import re
-from itertools import combinations
+import sys
 from pathlib import Path
+
+# notebooks/ (where _power_common.py lives) is one level up from this
+# script's directory; __file__-anchored so the import works regardless of
+# the caller's cwd (repo convention -- see _power_common.py itself).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 from scipy.stats import chi2
 
-RESULTS_DIR = Path(__file__).parent / "results"
+from _power_common import (
+    ALPHA,
+    ALPHA_CORRECTED,
+    INFOS,
+    MODELS,
+    N_TESTS,
+    POWER_TARGETS,
+    SEED,
+    build_contrasts,
+    fmt_r,
+    results_dir,
+)
 
-MODELS = ("decode", "cot", "moe")
-INFOS = ("intens", "extens", "noise_intens")
+RESULTS_DIR = results_dir(__file__)
 N_HARMONICS = 9
 
-# Simulation parameters. The seed is fixed for reproducibility (repo rule:
-# seeded generations everywhere).
-SEED = 0
+# Simulation parameters that are specific to this script's stratified-CMH
+# design (not shared with chromatic's quiz-level design).
 N_SIMS = 10_000
 MAX_REPLICATES = 200
 SHRINKAGE = 1.0  # c in p_k = (y_k + c * p_bar) / (1 + c)
-ALPHA = 0.05
-N_TESTS = 18  # 9 archetype contrasts + 9 info-type contrasts
-ALPHA_CORRECTED = ALPHA / N_TESTS
-POWER_TARGETS = (0.80, 0.90)
 
 
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
@@ -276,17 +298,10 @@ def main() -> None:
     )
     print()
 
-    contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
-    for info in INFOS:
-        for m_a, m_b in combinations(MODELS, 2):
-            contrasts.append(
-                (f"[{info}] {m_a} vs {m_b}", (m_a, info), (m_b, info))
-            )
-    for model in MODELS:
-        for i_a, i_b in combinations(INFOS, 2):
-            contrasts.append(
-                (f"[{model}] {i_a} vs {i_b}", (model, i_a), (model, i_b))
-            )
+    # Design: contrast family lives in _power_common (shared verbatim with
+    # chromatic's build_contrasts -- structural identity verified when this
+    # module was introduced).
+    contrasts = build_contrasts()
 
     header = (
         f"{'contrast':38s} {'rates':13s} {'R(80%)':>7s} {'R(90%)':>7s} "
@@ -302,7 +317,7 @@ def main() -> None:
         needed_pooled, _ = replicates_needed(pooled[key_a], pooled[key_b], rng_pooled)
         results.append((name, key_a, key_b, needed))
         r80, r90 = needed[0.80], needed[0.90]
-        fmt = lambda r: f">{MAX_REPLICATES}" if r is None else str(r)
+        fmt = lambda r: fmt_r(r, MAX_REPLICATES)
         extra = "n/a" if r80 is None else f"{(r80 - 1) * N_HARMONICS}q"
         obs = (
             f"{outcomes[key_a].mean():.2f} vs {outcomes[key_b].mean():.2f}"

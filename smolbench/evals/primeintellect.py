@@ -21,9 +21,7 @@ import functools
 import os
 from typing import Any, Dict, Tuple
 
-import requests
-
-from smolbench.evals.openai_compat import ChatClient, METADATA_TIMEOUT_S
+from smolbench.evals.openai_compat import ChatClient, metadata_get
 
 PRIME_INTELLECT_RETRY_BACKOFF_SECONDS: int = 60
 _DEFAULT_BASE_URL: str = "https://api.pinference.ai/api/v1"
@@ -58,13 +56,11 @@ def get_model_context_length(model: str) -> int:
     A model's window is constant, so the network lookup is cached (see the
     OpenRouter twin of this function for the rationale).
     """
-    response: Dict[str, Any] = requests.get(
-        url=f"{_base_url()}/models/{model}",
-        headers={
-            "Authorization": f"Bearer {os.getenv('PRIME_INTELLECT_API_KEY', '')}",
-        },
-        timeout=METADATA_TIMEOUT_S,
-    ).json()
+    response: Dict[str, Any] = metadata_get(
+        f"{_base_url()}/models/{model}",
+        os.getenv("PRIME_INTELLECT_API_KEY", ""),
+        check_status=False,  # unchecked -- see metadata_get's FIDELITY note
+    )
 
     ctx: int = response["context_length"]
     return ctx

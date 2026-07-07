@@ -354,3 +354,102 @@ the main package structure:
   lean_dojo with an actionable error; everything else imports on 3.14.
 - §1.5/§2.4's `lean/figures/` references above are historical — those files
   now live at `notebooks/lean/figures/` + `smolbench/lean/figures.py`.
+
+## Part 4 — modularize + document pass (2026-07-07)
+
+Scope: unify the AWS provisioning primitives duplicated across `aws.py` and
+`ec2.py`; a NumPy-style docstring pass over `smolbench/lean/{corpus,cli,
+premises,context,verify}.py` plus real module docstrings on
+`induction/periodic.py`/`chromatic.py`; an `InductionExperiment` facade
+collapsing the three eval notebooks' hand-rolled harness/EC2 cells; dedupe
+the two `power_analysis.py` scripts' shared scaffolding; package the
+chromatic analysis notebook's inline plotting pipeline into a module.
+
+New files:
+
+- `smolbench/evals/_aws.py` — `fresh_client`, `error_code`,
+  `assume_role_trust_policy`, `ensure_sagemaker_execution_role`,
+  `ensure_instance_profile`, `poll_until`, `best_effort_teardown`,
+  `DeploySpec` + `SAGEMAKER_SPEC_KEYS`/`EC2_SPEC_KEYS`. `aws.py`/`ec2.py`
+  wrap these via locally-named thin wrappers (`_ensure_exec_role`,
+  `_ec2_client`, ...) so existing `monkeypatch.setattr(module, "_name", ...)`
+  test patches keep working unchanged; `aws.py`'s provisioning is further
+  decomposed into pure, offline-pinnable kwargs builders
+  (`_create_model_kwargs`/`_create_endpoint_config_kwargs`/
+  `_create_endpoint_kwargs`), and its poll loop plus `ec2.py`'s three wait
+  loops (`_wait_public_ip`, `_wait_agent`, `provision_endpoint`'s
+  `InService` wait) now all run on the shared `_aws.poll_until`.
+- `smolbench/induction/experiment.py` — `InductionExperiment`, replacing
+  the three notebooks' hand-copied harness/env/EC2 cells with a single
+  `provision()`/`run(model, ...)`/`summarize(model)`/`teardown()` facade.
+- `smolbench/induction/figures.py` — `accuracy`/`load_condition_accuracies`/
+  `plot_archetype_accuracy`, backing
+  `notebooks/chromatic/induction_eval_analysis.ipynb` (a pinned historical
+  figure over the archived `result2/` pilot).
+- `notebooks/_power_common.py` — scaffolding shared verbatim by both
+  `power_analysis.py` scripts (`build_contrasts`, `fmt_r`, `results_dir`,
+  `MODELS`/`INFOS`/`SEED`/`ALPHA`/...); each script pulls it in via a
+  `__file__`-anchored `sys.path.insert` (kept stdlib-only, since both
+  scripts run standalone via `uv run --no-project`). The statistics
+  themselves stay unshared by design — periodic's outcome is a
+  harmonic-stratified binomial (CMH test) while chromatic's is a
+  bias-correlated quiz (quiz-level Welch t) — see that module's docstring.
+- New tests: `test_aws_shared.py`, `test_aws_provision.py`,
+  `test_experiment.py`, `test_power_common.py`, `test_induction_figures.py`,
+  plus invariant/headroom additions to `test_ec2_payloads.py` and
+  `metadata_get`/`check_status` coverage in `test_openai_compat.py`.
+
+### Behavior-preservation evidence
+
+- Offline suite green throughout this pass (183 tests at the end).
+- `aws.py`'s three SageMaker `CreateX` kwargs builders and its
+  teardown-step ordering are pinned against the pre-extraction inline
+  literals (dict-equality assertions, no AWS I/O, `test_aws_provision.py`).
+- `ec2.py`'s rendered user-data is unchanged at **16191 bytes** under
+  realistic inputs (~190 bytes of headroom under the 16 KB cap) —
+  `test_render_user_data_headroom_with_realistic_inputs`.
+- Golden induction quizzes (seeds 1776/1777) stay byte-identical
+  (`test_golden_quizzes.py`); `python -m smolbench.induction.periodic` /
+  `.chromatic` demos run clean.
+- `InductionExperiment.summarize`/`.cot_chain_lengths` verified as pure
+  delegates to `ReplicateHarness` — identical printed output
+  (`test_experiment.py`).
+- `notebooks/chromatic/power_analysis.py`'s full stdout reproduced against
+  the in-tree replicate-layout results after the `_power_common`
+  extraction (its loader already prefers that layout with a flat-file
+  fallback — see below).
+- `notebooks/periodic/power_analysis.py`'s stdout reproduced against the
+  ARCHIVED pilot flat-file layout reconstructed from git history (commit
+  `51bfc2d^`) — the layout this script was designed for and still reads.
+
+### Two pre-existing findings surfaced (not fixed, by design)
+
+- `notebooks/periodic/power_analysis.py` reads the SUPERSEDED pilot flat
+  layout (`results/{model}_{info}.yaml`); the in-tree results were since
+  reorganized into per-replicate `results/{model}_{info}/rep_*.yaml`
+  directories, so on the current tree this script raises
+  `FileNotFoundError`. Behavior is frozen and documented in the script's
+  own docstring; updating its statistics for the replicate layout is a
+  methodological decision explicitly left open — contrast with chromatic's
+  script, whose loader already prefers the replicate layout with a
+  flat-file fallback.
+- The committed `notebooks/chromatic/induction_eval_results.png` predates
+  the `26e75cb` refactor's repoint of `induction_eval_analysis.ipynb` onto
+  `result2/`, and was NOT regenerated as part of this pass. The extracted
+  `plot_archetype_accuracy` was instead verified to reproduce the SAME
+  `{(model, condition): accuracy}` data (an accuracy-dict identity check),
+  not re-rendered and pixel-diffed against the stale PNG.
+
+### One intentional delta
+
+`aws.py`'s SageMaker client construction (and every `_aws.py`-mediated IAM
+call) moved from `boto3.client(...)`'s process-wide default session to a
+fresh `boto3.session.Session()` per call, matching `ec2.py`'s existing fix
+(now shared via `_aws.fresh_client`; see `smolbench/evals/README.md`'s
+"Known delta" note). Payload-invariant — identical API calls and request
+bodies either way; only the credential-resolution mechanics differ.
+
+**Live re-verification recommended before the next real provisioning
+run:** `scripts/bedrock_smoke.py` (aws.py) and
+`scripts/ec2_lifecycle_smoke.py` (ec2.py) — see Part 2.8's runbook,
+unchanged by this pass.

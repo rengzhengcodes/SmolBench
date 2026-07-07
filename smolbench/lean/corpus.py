@@ -1,4 +1,28 @@
-"""Load LeanDojo Benchmark 4 splits and the premise corpus."""
+"""Load LeanDojo Benchmark 4 splits and the premise corpus.
+
+`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a snapshot
+of mathlib4 (commit ``fe4454af``, March 2024) traced by
+`LeanDojo <https://leandojo.org>`_: every theorem's tactic-by-tactic proof
+state transitions (this module), plus a corpus of every premise
+(theorem/def/etc.) declared in the traced repo, with source position and
+containing file (``smolbench.lean.premises``). See
+``notebooks/lean/README.md`` for the full dataset description, pool sizes,
+and bootstrap instructions.
+
+Two independent axes select which slice of the benchmark to load, both
+threaded through every loader in this module as ``(kind, split)``:
+
+- ``SplitKind`` (``kind``) -- ``"random"`` (an i.i.d. train/val/test split)
+  or ``"novel_premises"`` (val/test theorems chosen so their premises are
+  under-represented in train -- the harder generalization slice).
+- ``Split`` (``split``) -- ``"train"``, ``"val"``, or ``"test"`` within a
+  ``kind``.
+
+The dataset itself is not shipped in this repo (a ~700 MB external
+download); every loader here raises ``FileNotFoundError`` with an
+actionable remedy when the expected file is missing rather than failing
+with a bare "file not found".
+"""
 
 from __future__ import annotations
 
@@ -57,28 +81,111 @@ SplitKind = Literal["random", "novel_premises"]
 
 @dataclass(frozen=True)
 class TracedTactic:
+    """One tactic application recorded during LeanDojo's trace of a proof.
+
+    Corresponds to one entry of a benchmark JSON record's ``traced_tactics``
+    list (see ``_from_json``).
+    """
+
+    #: The tactic text as written in the proof (e.g. ``"simp"``,
+    #: ``"exact Mini.premiseA h"``).
     tactic: str
+    #: Pretty-printed Lean tactic state (hypotheses followed by goal(s),
+    #: separated by a line starting with ``⊢``) immediately before `tactic`
+    #: is applied. See ``smolbench.lean.context.split_state``.
     state_before: str
+    #: Pretty-printed Lean tactic state immediately after `tactic` is
+    #: applied (``"no goals"`` when the tactic closes the last goal).
     state_after: str
-    premises: list[dict]   # [{full_name, def_path, def_pos, def_end_pos}, ...]
+    #: Premises referenced by name inside `tactic`, one dict per reference:
+    #: ``{full_name, def_path, def_pos, def_end_pos}``. This is a lighter,
+    #: distinct shape from ``smolbench.lean.premises.Premise`` (no
+    #: ``code``/``kind``) -- ``full_name`` is the join key used to look the
+    #: full premise up via ``smolbench.lean.premises.lookup`` (see
+    #: ``context._render_hint_parts``). Empty when the tactic references no
+    #: known premise (most tactics -- e.g. ``intro h``, bare ``simp``). See
+    #: ``_from_json`` for how this is extracted from the raw
+    #: ``annotated_tactic`` field.
+    premises: list[dict]
 
 
 @dataclass(frozen=True)
 class BenchmarkTheorem:
+    """One theorem entry from a LeanDojo Benchmark 4 ``<kind>/<split>.json`` file."""
+
+    #: GitHub URL of the traced repo (mathlib4).
     url: str
+    #: Commit hash the theorem was traced at (e.g. ``fe4454af...``).
     commit: str
+    #: Path to the theorem's declaring file, relative to the repo root
+    #: (e.g. ``Mathlib/Algebra/Group/Basic.lean``).
     file_path: str
+    #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
     full_name: str
+    #: ``(line, column)`` of the declaration's start, as recorded in the
+    #: LeanDojo trace. Nothing in this codebase consumes these fields for
+    #: source slicing (unlike the parallel ``smolbench.lean.premises.
+    #: Premise.start``/``.end``, whose *line* is provably 1-indexed --
+    #: see ``premises.slice_full_decl``'s explicit ``start_line - 1``
+    #: conversion before list-indexing a file's lines), so their indexing
+    #: convention is not independently exercised here. The fixture data is
+    #: consistent with a 1-indexed line (``start == (1, 1)`` for a
+    #: declaration at the very top of its file), but the column's indexing
+    #: is not distinguishable from that alone -- treat both as opaque
+    #: LeanDojo trace positions unless a caller adds code that depends on
+    #: the exact convention.
     start: tuple[int, int]
+    #: ``(line, column)`` of the declaration's end. See `start`.
     end: tuple[int, int]
+    #: The theorem's tactic-by-tactic trace, in proof order. Empty for
+    #: theorems LeanDojo could not trace (see `has_proof`).
     traced_tactics: list[TracedTactic]
 
     @property
     def has_proof(self) -> bool:
+        """True if LeanDojo recorded at least one traced tactic step.
+
+        Theorems with an empty `traced_tactics` are typically term-mode
+        proofs or otherwise untraceable by LeanDojo's tactic-mode tracer
+        (see ``notebooks/lean/README.md``'s "What's not in scope"); such
+        theorems are excluded by `iter_with_proof`.
+
+        Returns
+        -------
+        bool
+            ``len(self.traced_tactics) > 0``.
+        """
         return len(self.traced_tactics) > 0
 
 
 def _from_json(rec: dict) -> BenchmarkTheorem:
+    """Parse one raw split-file JSON record into a `BenchmarkTheorem`.
+
+    Parameters
+    ----------
+    rec : dict
+        One element of a ``<kind>/<split>.json`` array, in the LeanDojo
+        Benchmark 4 schema: ``url``, ``commit``, ``file_path``,
+        ``full_name``, ``start``, ``end``, and ``traced_tactics`` (each with
+        ``tactic``, ``annotated_tactic``, ``state_before``, ``state_after``).
+
+    Returns
+    -------
+    BenchmarkTheorem
+        The parsed theorem, with each ``traced_tactics`` entry converted to
+        a `TracedTactic`.
+
+    Notes
+    -----
+    Premise-extraction contract: each raw tactic's ``annotated_tactic`` is
+    nominally a ``[annotated_text, premises]`` pair, but some records give
+    only ``[annotated_text]`` (length 1, no premises element at all) rather
+    than an explicit ``[annotated_text, []]``. Reading
+    ``annotated[1] if len(annotated) > 1 else []`` normalizes both
+    no-premise shapes -- a missing second element, or an explicit empty
+    list -- to ``TracedTactic.premises == []``, so no caller downstream
+    needs to length-check ``annotated_tactic`` itself.
+    """
     tts = []
     for tt in rec["traced_tactics"]:
         annotated = tt["annotated_tactic"]
@@ -103,25 +210,116 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
 
 @lru_cache(maxsize=8)
 def load_split(kind: SplitKind = "random", split: Split = "val") -> list[BenchmarkTheorem]:
+    """Load and parse one ``<kind>/<split>.json`` benchmark split file.
+
+    Parameters
+    ----------
+    kind : {"random", "novel_premises"}, default "random"
+        Which split axis to load (see the module docstring).
+    split : {"train", "val", "test"}, default "val"
+        Which train/val/test partition of `kind` to load.
+
+    Returns
+    -------
+    list of BenchmarkTheorem
+        Every theorem record in ``<data_root()>/<kind>/<split>.json``,
+        parsed via `_from_json`, in file order.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``<data_root()>/<kind>/<split>.json`` does not exist -- the
+        dataset has not been bootstrapped yet. See ``notebooks/lean/
+        README.md``'s "Data bootstrap" section for the Zenodo download and
+        unpack steps. (Distinct from `iter_replay_passing`'s
+        ``FileNotFoundError``, which reports a missing `filter`-generated
+        sidecar rather than a missing raw split file.)
+
+    Notes
+    -----
+    Memoized per ``(kind, split)`` argument pair via `functools.lru_cache`
+    (``maxsize=8`` comfortably covers all 6 combinations plus slack). The
+    cache key does NOT include `data_root`'s current return value, so
+    repointing ``SMOLBENCH_LEAN_DATA`` mid-process (as tests do, via
+    ``monkeypatch.setenv``) will keep returning theorems loaded from
+    whichever root was active the first time a given ``(kind, split)`` pair
+    was requested. Call `reset_caches` after changing the environment
+    variable to force this (and the other memoized loaders it clears) to
+    re-read from disk.
+    """
     path = data_root() / kind / f"{split}.json"
     raw = json.loads(path.read_text())
     return [_from_json(r) for r in raw]
 
 
 def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
+    """Yield theorems in ``(kind, split)`` that LeanDojo successfully traced.
+
+    Parameters
+    ----------
+    kind : {"random", "novel_premises"}, default "random"
+        Forwarded to `load_split`.
+    split : {"train", "val", "test"}, default "val"
+        Forwarded to `load_split`.
+
+    Yields
+    ------
+    BenchmarkTheorem
+        Each theorem from ``load_split(kind, split)`` whose `has_proof` is
+        True, in file order; untraced (typically term-mode) theorems are
+        skipped.
+    """
     for t in load_split(kind, split):
         if t.has_proof:
             yield t
 
 
 def metadata() -> dict:
+    """Load the benchmark's top-level ``metadata.json``.
+
+    Returns
+    -------
+    dict
+        Parsed JSON with keys including ``dataset_name``, ``creation_time``,
+        ``from_repo`` (``{url, commit}``), and ``leandojo_version``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``<data_root()>/metadata.json`` does not exist (dataset not
+        bootstrapped -- see `load_split`'s ``Raises`` section for the
+        remedy).
+    """
     return json.loads((data_root() / "metadata.json").read_text())
 
 
 def replay_passing_path(kind: SplitKind, split: Split) -> Path:
-    # Design: anchored on data_root().parent (the `data/` dir), matching the
-    # pre-move layout where replay_passing_*.jsonl sat alongside the
-    # leandojo_benchmark_4/ directory rather than inside it.
+    """Path to the `filter`-generated replay-passing sidecar for ``(kind, split)``.
+
+    Parameters
+    ----------
+    kind : SplitKind
+        Split kind the sidecar covers.
+    split : Split
+        Split partition the sidecar covers.
+
+    Returns
+    -------
+    Path
+        ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl``. Not
+        guaranteed to exist -- see `iter_replay_passing`'s precondition.
+
+    Notes
+    -----
+    Design: anchored on ``data_root().parent`` (the ``data/`` directory that
+    contains ``leandojo_benchmark_4/``), not `data_root` itself. This
+    matches the pre-move layout where ``replay_passing_*.jsonl`` sidecars
+    sat alongside the ``leandojo_benchmark_4/`` directory rather than inside
+    it, and keeps these small, committed sidecars out of the large,
+    wholesale-gitignored dataset directory (see ``notebooks/lean/
+    README.md``'s "Data bootstrap": the sidecars are committed once
+    generated, unlike the raw ~700 MB dataset download).
+    """
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
 

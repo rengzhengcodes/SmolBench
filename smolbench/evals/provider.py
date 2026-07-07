@@ -21,7 +21,16 @@ where a single INFERENCE_PROVIDER env var can't express "this model via ec2,
 that one via openrouter" at the same time -- can resolve a provider module
 explicitly via provider_module("ec2"), bypassing the environment entirely,
 instead of going through the env-dispatched query/evaluate/complete/
-get_model_context_length functions below.
+get_model_context_length functions below (smolbench.lean uses exactly this
+explicit-name pattern; everything else uses env dispatch).
+
+This module only dispatches; it has no provisioning logic of its own. The
+AWS-specific provisioning primitives shared by aws.py (SageMaker) and
+ec2.py (EC2 Spot) -- fresh-Session clients, IAM role setup, the generic
+poll loop, teardown -- live in smolbench.evals._aws, with each provider's
+own deploy/serve/teardown lifecycle built on top in aws.py/ec2.py
+respectively; see _aws.py's module docstring for the lifecycle-
+correspondence table between the two.
 """
 
 import importlib

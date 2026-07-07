@@ -16,7 +16,7 @@ import pytest
 import requests
 
 from smolbench.evals import Numeric, ToF
-from smolbench.evals.openai_compat import ChatClient
+from smolbench.evals.openai_compat import ChatClient, metadata_get
 from tests.conftest import chat_completion
 
 
@@ -337,7 +337,7 @@ def test_openrouter_complete_via_provider_dispatch(stub_server, monkeypatch):
 
 
 class _FlakyHandler(BaseHTTPRequestHandler):
-    """Replays a queue of ``(status_code, body)`` pairs, one per POST."""
+    """Replays a queue of ``(status_code, body)`` pairs, one per request."""
 
     def _reply(self, obj, code):
         payload = json.dumps(obj).encode()
@@ -350,6 +350,11 @@ class _FlakyHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         self.rfile.read(length)  # drain the body; the retry tests don't need it
+        code, body = self.server.next_response()
+        self._reply(body, code)
+
+    def do_GET(self):
+        # Same scripted queue for GETs (metadata_get error-status tests).
         code, body = self.server.next_response()
         self._reply(body, code)
 
@@ -526,3 +531,34 @@ def test_on_unreachable_not_called_on_http_500_exhaustion(flaky_server):
     with pytest.raises(requests.exceptions.HTTPError):
         client.complete("p", "m", seed=1, max_retries=2)
     assert diagnosed == []
+
+
+# ---------------------------------------------------------------------------
+# metadata_get -- the shared bearer-authenticated metadata GET
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_get_round_trip_sends_bearer_auth(stub_server):
+    body = metadata_get(
+        f"{stub_server.base_url}/models", "sekret-key", check_status=False
+    )
+    assert body == {"data": [{"id": "stub-model"}]}
+    request = stub_server.requests[-1]
+    assert request["path"] == "/v1/models"
+    assert request["headers"]["Authorization"] == "Bearer sekret-key"
+
+
+def test_metadata_get_check_status_true_raises_on_500(flaky_server):
+    """The list_models call sites (aws, ec2) check status before parsing."""
+    flaky_server.queue(500, {"error": "boom"})
+    with pytest.raises(requests.exceptions.HTTPError):
+        metadata_get(f"{flaky_server.base_url}/models", "k", check_status=True)
+
+
+def test_metadata_get_check_status_false_passes_error_body_through(flaky_server):
+    """The context-length call sites (openrouter, primeintellect) parse the
+    body regardless of status -- an error-shaped JSON body must flow through
+    unraised (the FIDELITY contract in metadata_get's docstring)."""
+    flaky_server.queue(500, {"error": {"message": "denied"}})
+    body = metadata_get(f"{flaky_server.base_url}/models", "k", check_status=False)
+    assert body == {"error": {"message": "denied"}}

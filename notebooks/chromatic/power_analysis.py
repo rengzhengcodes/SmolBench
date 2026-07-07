@@ -2,7 +2,10 @@
 Power analysis for the chromatic induction eval (quiz-level / conservative).
 
 Counterpart to ``notebooks/periodic/power_analysis.py``, but the chromatic task
-has a different statistical structure that forces a different design.
+has a different statistical structure that forces a different design. The two
+scripts share only experiment-design constants and small presentation helpers
+(``notebooks/_power_common.py``); see that module's docstring for why the
+statistics themselves are NOT shared.
 
 Design notes
 ------------
@@ -49,29 +52,39 @@ Run (ephemeral env, leaves .venv untouched):
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
-from itertools import combinations
 from pathlib import Path
+
+# notebooks/ (where _power_common.py lives) is one level up from this
+# script's directory; __file__-anchored so the import works regardless of
+# the caller's cwd (repo convention -- see _power_common.py itself).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 from scipy import stats
 from scipy.special import expit, logit
 
-RESULTS_DIR = Path(__file__).parent / "results"
+from _power_common import (
+    ALPHA,
+    ALPHA_CORRECTED,
+    INFOS,
+    MODELS,
+    N_TESTS,
+    POWER_TARGETS,
+    SEED,
+    build_contrasts,
+    fmt_r,
+    results_dir,
+)
 
-MODELS = ("decode", "cot", "moe")
-INFOS = ("intens", "extens", "noise_intens")
+RESULTS_DIR = results_dir(__file__)
 
-# Simulation parameters. SEED is fixed for reproducibility (repo rule: seeded
-# generations everywhere); run the script twice -> identical output.
-SEED = 0
+# Simulation parameters that are specific to this script's quiz-level Welch
+# design (not shared with periodic's stratified-CMH design).
 N_SIMS = 8_000          # sims per power estimate in the R scans
 N_SIMS_OMNI = 20_000    # sims for the (vectorised) omnibus / reported points
 MAX_REPLICATES = 80
-ALPHA = 0.05
-N_TESTS = 18            # 9 archetype contrasts + 9 info-type contrasts
-ALPHA_CORRECTED = ALPHA / N_TESTS
-POWER_TARGETS = (0.80, 0.90)
 
 # Between-quiz SD sweep, expressed on the probability (accuracy) scale at
 # p = 0.5. Applied as a logit-scale random effect tau = 4 * sigma per polarity
@@ -383,22 +396,9 @@ HISTORY: dict[str, dict[tuple[str, str], tuple[int, int, int, int]]] = {
 # ---------------------------------------------------------------------------
 # Contrasts
 # ---------------------------------------------------------------------------
-
-def build_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
-    """The 18 pairwise contrasts: 9 archetype (within info) + 9 info (within model)."""
-    contrasts = []
-    for info in INFOS:
-        for m_a, m_b in combinations(MODELS, 2):
-            contrasts.append((f"[{info}] {m_a} vs {m_b}", (m_a, info), (m_b, info)))
-    for model in MODELS:
-        for i_a, i_b in combinations(INFOS, 2):
-            contrasts.append((f"[{model}] {i_a} vs {i_b}", (model, i_a), (model, i_b)))
-    return contrasts
-
-
-def fmt_r(r: int | None) -> str:
-    return f">{MAX_REPLICATES}" if r is None else str(r)
-
+# build_contrasts and fmt_r now live in _power_common (shared verbatim with
+# periodic; fmt_r there takes an explicit max_replicates param since each
+# script's MAX_REPLICATES differs).
 
 # ---------------------------------------------------------------------------
 # Report
@@ -456,7 +456,7 @@ def single_run_report(rates, obs, contrasts) -> None:
         row = [replicates_needed(rates[ka], rates[kb], sigma, "overall", seed=[SEED, ci, si])
                for si, sigma in enumerate(SIGMA_SWEEP)]
         sec1[ci] = row
-        print(f"    {name:26s} {gap:5.2f} " + " ".join(f"{fmt_r(r):>6s}" for r in row))
+        print(f"    {name:26s} {gap:5.2f} " + " ".join(f"{fmt_r(r, MAX_REPLICATES):>6s}" for r in row))
     print()
 
     # --- Section 2: behavioural breakdown (discrimination vs bias) ------------
@@ -472,7 +472,7 @@ def single_run_report(rates, obs, contrasts) -> None:
         r_disc = replicates_needed(rates[ka], rates[kb], REP_SIGMA, "true", seed=[SEED, ci, 100])
         r_bias = replicates_needed(rates[ka], rates[kb], REP_SIGMA, "false", seed=[SEED, ci, 200])
         sec2[ci] = (r_disc, r_bias)
-        print(f"    {name:26s} {d_disc:7.2f} {fmt_r(r_disc):>7s} {d_bias:7.2f} {fmt_r(r_bias):>7s}")
+        print(f"    {name:26s} {d_disc:7.2f} {fmt_r(r_disc, MAX_REPLICATES):>7s} {d_bias:7.2f} {fmt_r(r_bias, MAX_REPLICATES):>7s}")
     print("    (discrimination and bias are two separate 18-contrast families, each at")
     print(f"     alpha={ALPHA_CORRECTED:.5f}; overall accuracy in [1] is the primary family.)")
     print()
@@ -493,7 +493,7 @@ def single_run_report(rates, obs, contrasts) -> None:
         for di, delta in enumerate(DELTAS):
             r = equivalence_needed(rates[ka], rates[kb], delta, REP_SIGMA,
                                    seed=[SEED, ci, 300 + di], alpha_eq=alpha_eq)
-            cells.append(f"{fmt_r(r):>8s}")
+            cells.append(f"{fmt_r(r, MAX_REPLICATES):>8s}")
         r_disc, r_bias = sec2[ci]
         artifact = (r_disc is not None) or (r_bias is not None)
         n_artifact += artifact
@@ -523,7 +523,7 @@ def single_run_report(rates, obs, contrasts) -> None:
         worst = max(powered) if powered else None
         print(f"    {label}")
         print(f"        powered contrasts: {len(powered)}/18  |  near-ties: {18 - len(powered)}"
-              f"  |  max R(80%) = {fmt_r(worst)}")
+              f"  |  max R(80%) = {fmt_r(worst, MAX_REPLICATES)}")
     print()
 
     # --- Section 6: minimum detectable effect --------------------------------
@@ -588,7 +588,7 @@ def empirical_report(quizzes, rates, obs, contrasts, n_reps) -> None:
         gap = abs(obs[ka].p_overall - obs[kb].p_overall)
         r80 = replicates_needed(rates[ka], rates[kb], sigma_hat, "overall", seed=[SEED, ci, 0], target=0.80)
         r90 = replicates_needed(rates[ka], rates[kb], sigma_hat, "overall", seed=[SEED, ci, 1], target=0.90)
-        print(f"    {name:26s} {gap:5.2f} {fmt_r(r80):>7s} {fmt_r(r90):>7s}")
+        print(f"    {name:26s} {gap:5.2f} {fmt_r(r80, MAX_REPLICATES):>7s} {fmt_r(r90, MAX_REPLICATES):>7s}")
         if r80 is not None:
             # Reused for the recommendation below; recomputing each r80 would
             # re-run its whole simulated binary search (~seconds per contrast).
