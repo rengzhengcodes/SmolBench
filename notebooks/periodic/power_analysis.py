@@ -13,9 +13,10 @@ preliminary results:
 
 Design notes
 ------------
-Each condition currently holds exactly one binary outcome per harmonic
-k = 1..9 (numeric_count_query_gen yields one count question per period, in
-ascending period order, so mark order recovers the harmonic). Difficulty
+This script reads exactly one binary outcome per harmonic k = 1..9 per
+condition -- the PILOT run (numeric_count_query_gen yields one count question
+per period, in ascending period order, so mark order recovers the harmonic).
+Difficulty
 varies systematically with k, so the data are a stratified binomial with the
 harmonic as the stratum -- NOT 9 iid Bernoulli draws. Power therefore scales
 with replicates per harmonic, and the planned analysis-time test is the
@@ -31,15 +32,18 @@ is reported alongside.
 
 Data availability
 -----------------
-This script reads the ARCHIVED pilot flat layout (``results/{model}_{info}.yaml``,
-one outcome per harmonic) -- the preliminary results it was designed for. The
-in-tree results were since reorganized into per-replicate
-``{model}_{info}/rep_*.yaml`` directories, so on the current tree this script
-exits with ``FileNotFoundError``. The pilot inputs live in git history (commit
-51bfc2d^). This is intentional: updating the statistics for the replicate
-layout is a methodological decision explicitly out of scope here. (Contrast:
-``notebooks/chromatic/power_analysis.py``'s loader already prefers the
-replicate layout with a flat-file fallback.)
+The pilot this script sizes from was originally the flat
+``results/{model}_{info}.yaml`` layout; when the R=30 replicate design landed
+those files became ``{model}_{info}/rep_1776.yaml`` (BASE_SEED == "the
+original preliminary run == replicate 0" in the notebook; verified
+byte-identical to the archived flat files at commit ``51bfc2d^``). The loader
+therefore prefers the migrated pilot replicate and falls back to the flat
+file on archived checkouts (the same dual-layout approach as
+``notebooks/chromatic/power_analysis.py``). It deliberately reads ONLY the
+pilot replicate, never the full replicate block: this is the analysis that
+SIZED the replicate study, so feeding the completed replicates back in would
+be a circular, post-hoc exercise -- if a posterior power check over all 30
+replicates is ever wanted, that is a new analysis, not this one.
 
 Run (ephemeral env via --no-project: plain `uv run` would sync the project
 and strip the notebook/dev extras from .venv):
@@ -80,18 +84,29 @@ N_SIMS = 10_000
 MAX_REPLICATES = 200
 SHRINKAGE = 1.0  # c in p_k = (y_k + c * p_bar) / (1 + c)
 
+# The pilot run's seed: BASE_SEED in the notebooks ("the original preliminary
+# run == replicate 0"). Its flat {model}_{info}.yaml files were migrated to
+# {model}_{info}/rep_1776.yaml when the replicate layout landed.
+PILOT_SEED = 1776
+
 
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
-    """Per-condition harmonic outcome vectors, index k-1 = harmonic k.
+    """Per-condition PILOT harmonic outcome vectors, index k-1 = harmonic k.
 
-    The result YAMLs carry !!python/object tags, so rather than unsafe-loading
-    them we regex the per-mark `score:` lines; marks are serialized in the
-    generator's ascending-period order, so position recovers the harmonic.
+    Reads only the pilot run (see the module docstring's "Data availability"
+    section): the migrated ``{model}_{info}/rep_{PILOT_SEED}.yaml`` when the
+    replicate layout is present, else the archived flat
+    ``{model}_{info}.yaml``. The result YAMLs carry !!python/object tags, so
+    rather than unsafe-loading them we regex the per-mark `score:` lines;
+    marks are serialized in the generator's ascending-period order, so
+    position recovers the harmonic.
     """
     outcomes: dict[tuple[str, str], np.ndarray] = {}
     for model in MODELS:
         for info in INFOS:
-            text = (RESULTS_DIR / f"{model}_{info}.yaml").read_text()
+            nested = RESULTS_DIR / f"{model}_{info}" / f"rep_{PILOT_SEED}.yaml"
+            flat = RESULTS_DIR / f"{model}_{info}.yaml"
+            text = (nested if nested.exists() else flat).read_text()
             scores = re.findall(r"^\s*score:\s*(\S+)", text, re.M)
             assert len(scores) == N_HARMONICS, (model, info, len(scores))
             # score 1 = correct; 0 or null (invalid) = failure.

@@ -422,23 +422,35 @@ New files:
   ARCHIVED pilot flat-file layout reconstructed from git history (commit
   `51bfc2d^`) — the layout this script was designed for and still reads.
 
-### Two pre-existing findings surfaced (not fixed, by design)
+### Three pre-existing findings surfaced — FIXED 2026-07-07 (follow-up pass)
 
-- `notebooks/periodic/power_analysis.py` reads the SUPERSEDED pilot flat
-  layout (`results/{model}_{info}.yaml`); the in-tree results were since
-  reorganized into per-replicate `results/{model}_{info}/rep_*.yaml`
-  directories, so on the current tree this script raises
-  `FileNotFoundError`. Behavior is frozen and documented in the script's
-  own docstring; updating its statistics for the replicate layout is a
-  methodological decision explicitly left open — contrast with chromatic's
-  script, whose loader already prefers the replicate layout with a
-  flat-file fallback.
-- The committed `notebooks/chromatic/induction_eval_results.png` predates
-  the `26e75cb` refactor's repoint of `induction_eval_analysis.ipynb` onto
-  `result2/`, and was NOT regenerated as part of this pass. The extracted
-  `plot_archetype_accuracy` was instead verified to reproduce the SAME
-  `{(model, condition): accuracy}` data (an accuracy-dict identity check),
-  not re-rendered and pixel-diffed against the stale PNG.
+- `notebooks/periodic/power_analysis.py` read the SUPERSEDED pilot flat
+  layout (`results/{model}_{info}.yaml`) and raised `FileNotFoundError` on
+  the current tree. FIX: the pilot survives in-tree — the flat files were
+  migrated verbatim to `results/{model}_{info}/rep_1776.yaml` (verified
+  byte-identical to `51bfc2d^` for all 9 conditions) — so `load_outcomes()`
+  now prefers `rep_{PILOT_SEED}.yaml` with a flat-file fallback for
+  archived checkouts (chromatic's dual-layout approach). It deliberately
+  still reads ONLY the pilot replicate: this script SIZED the R=30 study,
+  so feeding the completed replicates back in would be circular (documented
+  in its docstring). Gates: in-tree run AND flat-fallback run both
+  byte-identical to the reconstructed-pilot baseline (R=59 output).
+- The committed `notebooks/chromatic/induction_eval_results.png` predated
+  the `26e75cb` repoint of `induction_eval_analysis.ipynb` onto `result2/`
+  (it still showed the old flat-`results/` data, including noise bars
+  `result2/` never had). FIX: regenerated through the packaged
+  `smolbench.induction.figures` pipeline from `result2/` — deterministic
+  (identical hash across two renders), accuracy dict identical to the old
+  inline code's, noise bars now absent exactly as the notebook's
+  HISTORICAL banner states.
+- The periodic notebook's intro claimed "R = 29 achieves ≥80% power for
+  every pairwise CMH contrast" — wrong as stated (three contrasts need
+  30/31/59 by CMH). FIX: reworded to the script's actual output — the 15
+  clearly-separated contrasts need R ≤ 14 by CMH at α = 0.05/18; the three
+  near-ties (decode-vs-moe intens/extens, cot-vs-moe noise) are handled as
+  TOST equivalence within ±0.15 at α = 0.05/3, needing up to R = 29; the
+  script's headline "recommended R: 59" is the all-difference-tests
+  requirement the design deliberately does not use.
 
 ### One intentional delta
 
@@ -449,7 +461,22 @@ fresh `boto3.session.Session()` per call, matching `ec2.py`'s existing fix
 "Known delta" note). Payload-invariant — identical API calls and request
 bodies either way; only the credential-resolution mechanics differ.
 
-**Live re-verification recommended before the next real provisioning
-run:** `scripts/bedrock_smoke.py` (aws.py) and
-`scripts/ec2_lifecycle_smoke.py` (ec2.py) — see Part 2.8's runbook,
-unchanged by this pass.
+**Live re-verification COMPLETED 2026-07-07** (Part 2.8 runbook, tag
+`docpass-smoke-0707`, ~$0.30) — all steps OK, certifying the fresh-Session
+delta and every `poll_until`-migrated wait against real AWS timing:
+
+- `bedrock_smoke.py`: `metadata_get`-backed `list_models` → 51 models;
+  ctx-length default 200000; seeded evaluate 2/2 on `google.gemma-3-4b-it`
+  (bearer minted in-process from the refreshed `rengz` profile).
+- `provision`: first attempt found us-east-1 spot capacity dry for
+  g6/g5.2xlarge (12 clean per-AZ `InsufficientInstanceCapacity` entries —
+  the hunt loop aggregated correctly); widened per runbook to 3 types ×
+  3 regions → `g6.2xlarge` @ us-east-1 in 50.5 s
+  (`_aws.ensure_instance_profile`, pinned `_run_instances_kwargs`,
+  user-data render, `_wait_public_ip`/`_wait_agent` on `poll_until`).
+- `serve_eval`: `qwen2.5-1.5b` healthy at 256.7 s (`_wait_model_ready` on
+  `poll_until`); seeded 4-question evaluate 4/4 through the vLLM port.
+- `reattach` 1.1 s (state-file branch); `recover` found the SAME instance
+  via the tag after state-file deletion; `shutdown` returned at 379.3 s.
+- Billing check: `describe-instances` by tag → `terminated` in us-east-1,
+  no instances in us-east-2/us-west-2.
