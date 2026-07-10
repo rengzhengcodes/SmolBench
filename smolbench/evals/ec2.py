@@ -708,6 +708,7 @@ class Handler(BaseHTTPRequestHandler):
             tp = int(payload.get("tp", 1))
             max_len = int(payload.get("max_model_len", 16384))
             vllm_args = [str(a) for a in payload.get("vllm_args", [])]
+            adapters = payload.get("adapters") or []  # LoRA: staged from S3 below
         except (KeyError, TypeError, ValueError) as exc:
             self._reply(400, {"error": "bad payload: %s" % (exc,)})
             return
@@ -715,14 +716,11 @@ class Handler(BaseHTTPRequestHandler):
         touch("serve_started")  # opens the watchdog's startup-grace window
         cmd = [
             "docker", "run", "-d", "--name", "vllm",
-            # --ipc=host is mandatory at tp>1: NCCL needs more shared memory
-            # than docker's default 64 MB /dev/shm.
+            # --ipc=host mandatory at tp>1: NCCL needs >docker's 64 MB /dev/shm.
             "--gpus", "all", "--ipc=host",
             "-p", "%d:%d" % (VLLM_PORT, VLLM_PORT),
-            # The HF cache outlives container swaps, so each checkpoint
-            # downloads once per instance. vLLM's compile/CUDA-graph cache is
-            # persisted alongside it, so RE-serving a model skips the
-            # several-minute torch.compile step.
+            # HF cache + vLLM compile/CUDA-graph cache persist across swaps, so a
+            # checkpoint downloads once and RE-serving skips torch.compile.
             "-v", "/opt/hf-cache:/root/.cache/huggingface",
             "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
             "-e", "HF_TOKEN=" + HF_TOKEN,
@@ -734,12 +732,9 @@ class Handler(BaseHTTPRequestHandler):
             "--max-model-len", str(max_len),
             "--api-key", VLLM_API_KEY,
         ] + vllm_args
-        # Async: a cold `docker run -d` blocks minutes on the image pull;
-        # /status reports serve_rc + serve_log_tail meanwhile. S3 mirror:
-        # blobs/ holds weights once, snapshots/refs symlinks travel as a tiny
-        # meta.tar (s3 sync follows symlinks -- mirroring snapshots/ directly
-        # doubles every transfer). No meta.tar -> legacy whole-prefix sync,
-        # and HF fills any remaining gap.
+        # Async (cold `docker run -d` blocks on the image pull; /status reports
+        # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
+        # (else legacy whole-prefix sync); HF fills any gap.
         script = ""
         if S3_CACHE:
             sub = "models--" + hf_id.replace("/", "--")
@@ -753,18 +748,20 @@ class Handler(BaseHTTPRequestHandler):
                 "else aws s3 sync --only-show-errors --exclude '*.incomplete' %s %s || true; fi\\n"
                 "rm -f $T\\n"
             ) % (loc, s3p, loc, s3p, loc, s3p, loc)
+        # Stage LoRA adapters S3 -> hub cache; --region since box may != bucket.
+        for ad in adapters:
+            d = shlex.quote("/opt/hf-cache/lora/" + str(ad["name"]))
+            rg = " --region " + shlex.quote(str(ad["region"])) if ad.get("region") else ""
+            script += "mkdir -p %s\\naws s3 sync%s --only-show-errors --exclude 'checkpoint-*/*' %s %s\\n" % (
+                d, rg, shlex.quote(str(ad["s3"])), d)
         script += shlex.join(cmd)
         log = open(SERVE_LOG, "wb")
         SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
         self._reply(202, {"ok": True, "launching": name})
 
     def _sync_up(self, payload):
-        """Uploads (part of) the hub cache to S3: blobs once + meta.tar.
-
-        snapshots holding real >1M files (restored from the legacy doubled
-        mirror) cannot be tarred sanely -> legacy whole-prefix sync instead.
-        *.incomplete never travels (would confuse a later resume).
-        """
+        """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
+        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
         global SYNC_PROC
         if not S3_CACHE:
             self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
@@ -2139,6 +2136,9 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
         # the instance at provision time, so it never crosses plain HTTP.
         "vllm_args": list(spec.get("vllm_args", [])),
     }
+    if spec.get("adapters"):
+        # LoRA adapters staged from S3 on the box before launch (see _serve).
+        serve_payload["adapters"] = [dict(a) for a in spec["adapters"]]
     if not force:
         # Decide BEFORE yielding: the yield must sit outside this try, or an
         # exception raised by the with-body would be swallowed here and the

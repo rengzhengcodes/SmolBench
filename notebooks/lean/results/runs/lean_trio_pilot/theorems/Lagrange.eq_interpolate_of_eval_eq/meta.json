@@ -1,0 +1,14 @@
+{
+  "full_name": "Lagrange.eq_interpolate_of_eval_eq",
+  "file_path": "Mathlib/LinearAlgebra/Lagrange.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [eq_interpolate hvs degree_f_lt]\nexact interpolate_eq_of_values_eq_on _ _ eval_f",
+  "ground_truth_remaining_from_k": "exact interpolate_eq_of_values_eq_on _ _ eval_f",
+  "true_premises_at_k": [
+    "Lagrange.interpolate_eq_of_values_eq_on"
+  ],
+  "state_before_k": "F : Type u_1\ninst✝¹ : Field F\nι : Type u_2\ninst✝ : DecidableEq ι\ns t : Finset ι\ni j : ι\nv r r' : ι → F\nf : F[X]\nhvs : Set.InjOn v ↑s\ndegree_f_lt : degree f < ↑s.card\neval_f : ∀ i ∈ s, eval (v i) f = r i\n⊢ ((interpolate s v) fun i => eval (v i) f) = (interpolate s v) r"
+}

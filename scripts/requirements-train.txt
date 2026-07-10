@@ -17,12 +17,28 @@
 # vLLM on the EC2 provider), so the offline test suite and both eval venvs are
 # unaffected.
 
-torch>=2.4
-transformers>=4.45
-peft>=0.13
-trl>=0.12
-datasets>=3.0
-accelerate>=1.0
-bitsandbytes>=0.44        # 4-bit QLoRA base quantization
+# HARD PINS. Loose ranges here let every fresh box resolve a different stack,
+# and that drift produced two distinct on-box crashes in one week:
+#   - trl >=1.7 defaults SFTConfig.loss_type to "chunked_nll", whose lm-head
+#     patch does inspect.signature(forward.__func__) and explodes on
+#     device_map/accelerate-hooked models (lean_lora_sft.py passes
+#     loss_type="nll", same loss math, no chunking).
+#   - transformers 5.6.0 removed WeightConverter's distributed_operation /
+#     quantization_operation init args, which peft (<=0.19.1, latest as of
+#     2026-07-10, unbounded transformers requirement) still passes in its MoE
+#     v4->v5 adapter-conversion shim -- so ANY peft load_adapter on a MoE base
+#     (checkpoint resume, --init-adapter staging) crashes with
+#     "unexpected keyword argument 'distributed_operation'". 5.5.4 is the
+#     newest release whose signature matches; validated on-box with a
+#     tiny-Qwen3MoE fresh/resume/init-adapter GPU smoke.
+# When bumping ANYTHING here, re-run the on-box smokes first:
+#   lean_train_ec2.py gpu-smoke, plus a Qwen3-MoE resume + --init-adapter run.
+torch==2.13.0
+transformers==5.5.4
+peft==0.19.1
+trl==1.7.1
+datasets==5.0.0
+accelerate==1.14.0
+bitsandbytes==0.49.2      # 4-bit QLoRA base quantization
 # Optional, for sharding the larger bases across the 8-GPU box:
 # deepspeed>=0.15

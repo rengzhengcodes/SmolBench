@@ -219,6 +219,13 @@ __marimo__/
 # instance's control token and vLLM api key).
 .ec2_state*.json
 
+# SSH private key for the lean-train GPU box (scripts/lean_train_ec2.py) and any
+# loose HF token file -- secrets, must never be committed. The .pem.pub public
+# key is not secret but is machine-generated; ignore it too.
+*.pem
+*.pem.pub
+.hf_token
+
 # LeanDojo Benchmark 4 -- a ~700MB external dataset (Zenodo download), not a
 # generated artifact; results and replay_passing_*.jsonl sidecars ARE committed.
 notebooks/lean/data/leandojo_benchmark_4/
@@ -227,6 +234,11 @@ notebooks/lean/data/leandojo_benchmark_4/
 # scripts/build_lean_sft.py). The manifest.json beside it IS committed -- it is
 # the decontamination/provenance record (counts + holdout fingerprint).
 notebooks/lean/data/sft/*.jsonl
+
+# Raw synthetic corpora (external downloads -- Goedel-V2 HF snapshot, the
+# LeanNavigator Zenodo archive), inputs to scripts/build_lean_synth_sft.py;
+# multi-GB and re-downloadable, never generated here.
+notebooks/lean/data/synth/
 
 # Claude files -- except .claude/skills/, which holds committed agent
 # tooling (run skills + their drivers).

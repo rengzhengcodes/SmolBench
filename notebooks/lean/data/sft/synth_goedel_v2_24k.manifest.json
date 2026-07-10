@@ -1,0 +1,48 @@
+{
+  "config": {
+    "arm": "goedel",
+    "source": "/workspace/SmolBench/notebooks/lean/data/synth/goedel_v2",
+    "cap": 24000,
+    "pool_factor": 3,
+    "seed": 1776,
+    "limit": 0,
+    "eval_specs": [
+      [
+        "novel_premises",
+        "val"
+      ],
+      [
+        "novel_premises",
+        "test"
+      ]
+    ]
+  },
+  "stats": {
+    "scanned": 1745009,
+    "duplicates": 810679,
+    "pooled": 72000,
+    "processed": 24651,
+    "parse_failures": 536,
+    "dropped": {
+      "tactic_ngram": 115
+    },
+    "dropped_total": 115,
+    "emitted": 24000,
+    "holdout_name_mention_rows": 320,
+    "holdout_name_mentions_total": 604
+  },
+  "decontamination": {
+    "holdout_size": 4000,
+    "holdout_fingerprint": "6708b9253b524648607b9db8c8455750d55288ba7f4381f76f5ca3978540d598",
+    "index": {
+      "names": 4000,
+      "statements": 3981,
+      "states": 19157,
+      "chains": 1208,
+      "tactic_ngrams": 7729,
+      "pairs": 23303
+    },
+    "zero_leak_rescan": "passed"
+  },
+  "output_jsonl": "synth_goedel_v2_24k.jsonl"
+}

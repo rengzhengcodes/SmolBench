@@ -310,6 +310,115 @@ hatch. Venv split by subcommand:
 In Python: `from smolbench.deduction.lean.corpus import iter_replay_passing` yields
 the `BenchmarkTheorem`s whose ground-truth replay was recorded as `success`.
 
+## Fine-tuning (LoRA SFT)
+
+The trio bases (`meta-llama/Llama-3.1-405B-Instruct`,
+`nvidia/Llama-3_1-Nemotron-Ultra-253B-v1`, `Qwen/Qwen3-235B-A22B`) are
+QLoRA-tuned to this eval's exact task shape and wire format, then served
+via the EC2 vLLM provider and swept like any other model.
+
+### Datasets (all under `data/sft/`; JSONLs gitignored, manifests committed)
+
+| builder | output | contents |
+|---|---|---|
+| `scripts/build_lean_sft.py` | `novel_premises_train_stepk1.jsonl` | REAL: LeanDojo `novel_premises/train` rendered at `stepk:1`, eval theorems held out by `full_name` |
+| `scripts/build_lean_synth_sft.py --arm real` | `novel_premises_train_stepk1_decontam.jsonl` | the real set re-filtered through the content-level keys below (stage-2 anneal set) |
+| `scripts/build_lean_synth_sft.py --arm goedel` | `synth_goedel_v2_24k.jsonl` | SYNTHETIC arm A: 24k seeded-sampled rows of `Goedel-LM/SFT_dataset_v2` (autoformalized competition problems, compiler-verified proofs; statements mathlib-independent), declarations converted to pseudo initial tactic states, CoT stripped |
+| `scripts/build_lean_synth_sft.py --arm leannavigator` | `synth_leannavigator_24k.jsonl` | SYNTHETIC arm B: 24k seeded-sampled `(state, tactic)` pairs of LeanNavigator (Zenodo `13989482`; mathlib state-graph traversal -- mathlib-derived by construction, the high-leak-risk arm) |
+
+Raw synthetic corpora download to `data/synth/` (gitignored): the Goedel-V2
+HF snapshot (~6 GB parquet) and the LeanNavigator Zenodo tar (~2.7 GB
+unpacked JSON).
+
+### Decontamination
+
+Name-based holdout cannot work on an external corpus (no shared naming),
+so `smolbench.deduction.lean.decontam.HoldoutIndex` fingerprints every
+`novel_premises/{val,test}` theorem's *content* -- everything the eval's
+positive-information rungs can expose:
+
+- **K1 name** -- `full_name` (the original holdout, kept).
+- **K2 statement** -- normalized step-0 tactic state, exact + MinHash/LSH
+  near-duplicate (catches alpha-renamed restatements). Goal-only variants
+  are indexed only when long enough to be identifying (short generic goals
+  like `⊢ False` recur everywhere and identify nothing).
+- **K3 goal states** -- exact match of the state at EVERY proof step
+  (sweeps stratify `k`).
+- **K4 tactic chains** -- full chain + any 3-consecutive-tactic window
+  (>= 3-tactic proofs), plus `(state, next-tactic)` answer pairs, which
+  cover 1-2-tactic proofs where a bare `simp`/`rfl` match would be noise.
+
+A row is dropped on any hit; rows merely *invoking* an eval theorem as a
+premise are counted in the manifest but kept (premise usage reveals no
+answer content). Every build ends with a zero-leak re-scan gate that
+re-derives each emitted row's facets from the written JSONL and fails the
+build on any hit. Deterministic throughout (seeded MinHash, no model
+calls); manifests record per-key drop counts and the holdout fingerprint.
+
+The holdout is `novel_premises/{val,test}` — the eval slices these
+fine-tunes are scored on. The `random` and `novel_premises` kinds
+repartition one theorem pool, so a `random/val` theorem can sit in
+`novel_premises/train`: **if a sweep is ever scored on a `random` split,
+add it to the holdout** (`--eval-spec random:val`, repeatable) or its
+theorems are not decontaminated.
+
+### Training (staged, per base model)
+
+`scripts/lean_lora_sft.py` (QLoRA; dedicated GPU box via
+`scripts/lean_train_ec2.py` -- see its docstring for the provision/setup/
+train/teardown flow):
+
+1. **Stage 1 (synthetic pretrain):** train a fresh adapter on
+   `synth_goedel_v2_24k.jsonl` (arm A) or `synth_leannavigator_24k.jsonl`
+   (arm B).
+2. **Stage 2 (real anneal):** continue that adapter on the decontaminated
+   real set with `--init-adapter <stage-1 adapter> --dataset
+   novel_premises_train_stepk1_decontam.jsonl --cap 8000`.
+
+Nemotron-Ultra uses the same HF pipeline (bnb int32 guard);
+`scripts/nemo_convert_data.py` remains the NeMo fallback and consumes the
+same JSONLs. The resulting sweep compares four arms per base: base /
+real-only / goedel+real / leannavigator+real.
+
+### Capacity Blocks (interruption-free windows for long runs)
+
+Spot p5 boxes get reclaimed mid-stage (twice in one day, 2026-07-10). For
+stages that shouldn't race spot reclaims — the multi-day Nemotron-253B and
+Llama-405B runs — reserve an EC2 Capacity Block for ML and launch the same
+training box into it:
+
+```bash
+# 1. Find offerings (read-only; prints price + window + offering id):
+python scripts/lean_train_ec2.py cb-search --duration-hours 72 --start-after +6h
+
+# 2. Validate, then buy (UPFRONT + NON-REFUNDABLE; blocks cannot be cancelled):
+python scripts/lean_train_ec2.py cb-purchase --region us-east-2 --offering-id cbo-...        # DryRun only
+python scripts/lean_train_ec2.py cb-purchase --region us-east-2 --offering-id cbo-... --yes  # real purchase
+
+# 3. Watch it go scheduled -> active, then launch into it:
+python scripts/lean_train_ec2.py cb-status
+python scripts/lean_train_ec2.py provision --capacity-reservation auto
+```
+
+If a live spot box is still recorded in the state file, `provision
+--capacity-reservation` **refuses** rather than silently reattaching to the
+interruptible box (the flag would otherwise be dropped and the prepaid block
+would burn idle) — `teardown` the spot box first, or wait for its stage to
+finish. `cb-purchase --yes` runs on a no-retry client: PurchaseCapacityBlock
+has no idempotency token, so botocore's default auto-retry could buy the
+same block several times on a flaky connection.
+
+Purchases are recorded in `.ec2_state_lean_train_cb.json` (gitignored, next
+to the instance state file); `provision --capacity-reservation` pins the
+launch to the reservation's region/AZ/instance type and sizes the OS-halt
+backstop to the block's **end** (+60 min) instead of the 48h spot default —
+the block is prepaid, so an idle tail costs nothing, while the spot default
+would halt a 7-day run mid-block. Inside the window there are no spot
+interruptions; AWS still reclaims the box at the block's end (~30 min
+warning), which the per-stage S3 checkpoint sync already covers. Everything
+downstream (`setup` / `attach-s3` / `train` / the 4-way orchestrator) is
+unchanged.
+
 ## Results policy
 
 `notebooks/lean/results/` is **committed** to the repo, per this repo's

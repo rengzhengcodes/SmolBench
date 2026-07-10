@@ -538,5 +538,5 @@ SAGEMAKER_SPEC_KEYS: frozenset = frozenset(
 #: ``tp``/``max_model_len``/``vllm_args``/``system_prompt`` are all read via
 #: ``.get(...)`` with documented defaults.
 EC2_SPEC_KEYS: frozenset = frozenset(
-    {"hf_model_id", "tp", "max_model_len", "vllm_args", "system_prompt"}
+    {"hf_model_id", "tp", "max_model_len", "vllm_args", "system_prompt", "adapters"}
 )

@@ -1,0 +1,36 @@
+{
+  "config": {
+    "train_kind": "novel_premises",
+    "train_split": "train",
+    "source": "with_proof",
+    "k_strategy": "last",
+    "chain": "stepk",
+    "level": 1,
+    "seed": 1776,
+    "eval_specs": [
+      [
+        "novel_premises",
+        "val"
+      ],
+      [
+        "novel_premises",
+        "test"
+      ]
+    ]
+  },
+  "stats": {
+    "pool": 55932,
+    "dropped": 0,
+    "theorems": 55932,
+    "examples": 55932,
+    "excluded": 4000
+  },
+  "decontamination": {
+    "holdout_size": 4000,
+    "holdout_fingerprint": "6708b9253b524648607b9db8c8455750d55288ba7f4381f76f5ca3978540d598",
+    "included_theorems": 55931,
+    "included_fingerprint": "6efaf69ff8e3e23e957ae42372daf154b4fcb31b990579f78e51a57d20607833",
+    "leaked": 0
+  },
+  "output_jsonl": "novel_premises_train_stepk1.jsonl"
+}
