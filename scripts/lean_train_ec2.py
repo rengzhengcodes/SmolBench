@@ -91,6 +91,12 @@ os.environ.setdefault("EC2_EXPERIMENT_TAG", "lean-train")
 os.environ.setdefault("EC2_STATE_FILE", str(_REPO_ROOT / ".ec2_state_lean_train.json"))
 os.environ.setdefault("EC2_SECURITY_GROUP_NAME", "smolbench-lean-train")
 
+# The training box's cloud-init template ships from the payloads package.
+# Unlike ec2 (whose import captures EC2_* env at import time -- hence the
+# setdefaults above and the lazy per-function ec2 imports below), payloads is
+# env-independent and safe to import eagerly.
+from smolbench.evals.payloads import TRAIN_USER_DATA_TEMPLATE
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -133,7 +139,7 @@ REQUIREMENTS = _REPO_ROOT / "scripts" / "requirements-train.txt"
 #: Resumable on-box Qwen 4-way orchestrator (uploaded by `setup`; launched via nohup).
 ORCHESTRATOR = _REPO_ROOT / "scripts" / "lean_qwen_4way.sh"
 
-#: On-box working tree (all on the NVMe mount; see TRAIN_USER_DATA).
+#: On-box working tree (all on the NVMe mount; see payloads/train_user_data.sh).
 REMOTE_ROOT = "/opt/train"
 REMOTE_VENV = f"{REMOTE_ROOT}/venv"
 REMOTE_HF_CACHE = f"{REMOTE_ROOT}/hf-cache"
@@ -173,46 +179,11 @@ TRIO: List[Dict[str, object]] = [
 ]
 _TRIO_BY_KEY = {m["key"]: m for m in TRIO}
 
-#: Training instance role's cloud-init: mount NVMe -> REMOTE_ROOT (HF cache +
-#: checkpoints), schedule ONLY the max-lifetime backstop. No watchdog, no vLLM,
-#: no secrets (HF_TOKEN arrives later over SSH). ``@@MAX_LIFETIME_MIN@@`` is the
-#: sole placeholder.
-TRAIN_USER_DATA = """#!/bin/bash
-set -uo pipefail
-exec > /var/log/smolbench-train-bootstrap.log 2>&1
-echo "smolbench train bootstrap starting: $(date -u)"
-
-# Absolute backstop: an OS halt terminates a one-time spot instance even if the
-# driver disconnects. Sized generously for long trainings (see --max-lifetime).
-shutdown -h +@@MAX_LIFETIME_MIN@@ "smolbench train max-lifetime backstop" || true
-
-mkdir -p /opt/train
-# Model cache + checkpoints on instance-store NVMe (multi-TB, multi-GB/s). The
-# DL AMI pre-assembles all NVMe into one LVM at /opt/dlami/nvme -> bind-mount it;
-# otherwise mkfs the first raw instance-store device. Root gp3 is small (checkpoints
-# and the 400-810 GB base downloads must NOT land there).
-if mountpoint -q /opt/dlami/nvme; then
-  mkdir -p /opt/dlami/nvme/train
-  mount --bind /opt/dlami/nvme/train /opt/train
-  echo "train dir bind-mounted on AMI-managed instance store"
-else
-  CACHE_DEV=$(ls /dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage* 2>/dev/null | grep -v -- -part | head -1 || true)
-  if [ -z "$CACHE_DEV" ]; then
-    CACHE_DEV=$(lsblk -dno NAME,MODEL | tr '_' ' ' | grep -i "instance storage" | head -1 | awk '{print "/dev/"$1}' || true)
-  fi
-  if [ -n "$CACHE_DEV" ]; then
-    echo "train dir on instance-store $CACHE_DEV"
-    mkfs.ext4 -q -F "$CACHE_DEV" && mount -o noatime "$CACHE_DEV" /opt/train || echo "NVMe mount failed; train dir on root volume"
-  else
-    echo "no instance-store NVMe; train dir on root volume"
-  fi
-fi
-mkdir -p /opt/train/hf-cache /opt/train/out
-chown -R ubuntu:ubuntu /opt/train
-chmod 755 /opt/train
-touch /opt/train/BOOTSTRAP_DONE
-echo "smolbench train bootstrap done: $(date -u)"
-"""
+#: Training instance role's cloud-init (payloads/train_user_data.sh): mount
+#: NVMe -> REMOTE_ROOT (HF cache + checkpoints), schedule ONLY the max-lifetime
+#: backstop. No watchdog, no vLLM, no secrets (HF_TOKEN arrives later over
+#: SSH). ``@@MAX_LIFETIME_MIN@@`` is the sole placeholder; rendered by
+#: ``_render_train_user_data`` below.
 
 
 def _hf_token() -> str:
@@ -327,7 +298,7 @@ def _render_train_user_data(max_lifetime_min: int) -> str:
     # silently leaves the box with NO lifetime backstop.
     assert isinstance(max_lifetime_min, int) and max_lifetime_min > 0, \
         f"max_lifetime_min must be a positive int, got {max_lifetime_min!r}"
-    ud = TRAIN_USER_DATA.replace("@@MAX_LIFETIME_MIN@@", str(max_lifetime_min))
+    ud = TRAIN_USER_DATA_TEMPLATE.replace("@@MAX_LIFETIME_MIN@@", str(max_lifetime_min))
     assert "@@" not in ud, "unsubstituted placeholder in train user-data"
     assert len(ud.encode()) < 16384, f"user-data too large: {len(ud.encode())} bytes"
     return ud
@@ -1377,7 +1348,9 @@ def build_parser() -> argparse.ArgumentParser:
     pcbs.add_argument("--instance-type", default="p5.48xlarge")
     pcbs.add_argument("--instance-count", type=int, default=1)
     pcbs.add_argument("--duration-hours", type=int, required=True,
-                      help="block length in hours (AWS sells 24h-granularity blocks; e.g. 24, 72, 168)")
+                      help="desired block length in hours (e.g. 24, 72, 168); offerings come back "
+                           "aligned to AWS's fixed start/end boundaries, so actual durations vary "
+                           "(a live search for 24h returned 16h/24h/40h windows)")
     pcbs.add_argument("--start-after", default=None, help="earliest start: +Nh / +Nd / ISO-8601 (default: any)")
     pcbs.add_argument("--end-before", default=None, help="latest end: +Nh / +Nd / ISO-8601 (default: any)")
     pcbs.add_argument("--regions", default=None, help="comma list; default EC2_REGIONS")

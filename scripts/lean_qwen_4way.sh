@@ -73,3 +73,8 @@ run goedel-stage2  novel_premises_train_stepk1_decontam.jsonl 8000 /opt/train/ou
 run leannav-stage1 synth_leannavigator_24k.jsonl             8000 ""                                            || { echo "ABORT leannav-stage1" | tee -a "$ORCH"; exit 1; }
 run leannav-stage2 novel_premises_train_stepk1_decontam.jsonl 8000 /opt/train/out/qwen3-235b-a22b/leannav-stage1 || { echo "ABORT leannav-stage2" | tee -a "$ORCH"; exit 1; }
 echo "[$(date -u +%H:%M:%S)] ===== QWEN_4WAY_DONE =====" | tee -a "$ORCH"
+# Self-halt: everything is synced to S3 by now, and an idle p5 burns ~$40+/h
+# until someone notices (the 07-10 run idled from DONE until a lucky spot
+# reclaim). OS halt terminates a one-time spot instance; on a capacity-block
+# box it just ends the instance (the prepaid window is unaffected).
+sudo shutdown -h +5 "qwen 4-way complete; self-terminating" || true

@@ -95,8 +95,17 @@ notebook = [
 
 [tool.setuptools]
 # This project is pure Python and ships only the package source under
-# `smolbench/`.
+# `smolbench/` (plus the explicitly listed payload assets below).
 include-package-data = false
+
+[tool.setuptools.package-data]
+# Byte-exact on-instance payloads (cloud-init templates + the py3.10 control
+# agent/watchdog) shipped as data files inside the payloads subpackage.
+# setuptools auto-includes only *.py, so without this a non-editable install
+# would drop them and smolbench.evals.payloads would fail at import. The
+# non-.py extensions are deliberate: they keep black/isort/pylint and the
+# import machinery away from files whose bytes are a production contract.
+"smolbench.evals.payloads" = ["*.sh", "*.py.txt"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.

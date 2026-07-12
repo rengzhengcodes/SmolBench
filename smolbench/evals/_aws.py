@@ -467,7 +467,8 @@ class _DeploySpecRequired(TypedDict):
     #: puts it in the container's ``HF_MODEL_ID`` env var
     #: (``aws.provision_endpoint``); EC2/vLLM passes it as the control
     #: agent's ``hf_model_id`` payload field, which becomes vLLM's
-    #: ``--model`` flag (``ec2.serve_model`` / ``AGENT_PY``'s ``_serve``).
+    #: ``--model`` flag (``ec2.serve_model`` / the control agent's ``_serve``
+    #: in ``payloads/agent.py.txt``).
     hf_model_id: str
 
 

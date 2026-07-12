@@ -90,6 +90,7 @@ import requests
 from smolbench.evals import _aws
 from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
+from smolbench.evals.payloads import render_user_data
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order. Types are tried type-major (each type across every
@@ -160,9 +161,10 @@ EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # COLD checkpoint pull from HF: a ~410 GB download proved that 90/120 min are
 # too tight (a live 405B serve outran both). With the S3 cache warm these are
 # minutes, but the first-ever pull sets the bound.
-# INVARIANT: WATCHDOG_PY's own STARTUP_GRACE_MIN env fallback (used only if
-# the env var somehow fails to propagate to the instance) must match this
-# default -- keep both at "180" if either changes.
+# INVARIANT: the watchdog payload's own STARTUP_GRACE_MIN env fallback
+# (payloads/watchdog.py.txt; used only if the env var somehow fails to
+# propagate to the instance) must match this default -- keep both at "180"
+# if either changes.
 EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
@@ -572,557 +574,12 @@ evaluate = _CLIENT.evaluate
 # ---------------------------------------------------------------------------
 # On-instance payloads (control agent, idle watchdog, cloud-init bootstrap)
 # ---------------------------------------------------------------------------
-# These run under Ubuntu 22.04's system python3 (3.10): keep them stdlib-only
-# and 3.10-compatible. They are module constants (not rendered strings) so
-# tests/test_ec2_payloads.py can ast.parse() them directly.
-
-# Control agent: the notebook's only way to drive the instance (no SSH, no SSM
-# role). Bearer-authenticated HTTP on :9000; every authenticated request also
-# feeds the idle watchdog by touching last_active. /serve launches docker
-# asynchronously because a cold `docker run` may first pull the multi-GB vLLM
-# image; progress is observable via /status instead of a long-blocking POST.
-AGENT_PY: str = '''\
-"""smolbench control agent: swaps the vLLM container on request."""
-import hmac
-import json
-import os
-import shlex
-import subprocess
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-# Overridable so the repo's offline tests can run the agent unprivileged.
-RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
-AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
-# "8000" mirrors AGENT_PORT above; governs the health probe + docker -p below.
-VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
-SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
-SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
-CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
-VLLM_API_KEY = os.environ["VLLM_API_KEY"]
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-VLLM_IMAGE = os.environ["VLLM_IMAGE"]
-# Optional S3 mirror of the HF hub cache (creds come from the instance
-# profile; empty = HF-only, the pre-S3 behavior).
-S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
-CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
-SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
-SYNC_PROC = None  # the in-flight cache upload, if any
-
-
-def touch(name):
-    path = os.path.join(RUN_DIR, name)
-    with open(path, "a"):
-        os.utime(path, None)
-
-
-def docker(*args, timeout=120):
-    return subprocess.run(["docker"] + list(args), capture_output=True, text=True, timeout=timeout)
-
-
-def container_state():
-    probe = docker("inspect", "-f", "{{.State.Status}}", "vllm")
-    return probe.stdout.strip() if probe.returncode == 0 else "absent"
-
-
-def vllm_healthy():
-    try:
-        url = "http://127.0.0.1:%d/health" % VLLM_PORT
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def tail(path, limit=8000):
-    try:
-        with open(path, "rb") as fh:
-            return fh.read()[-limit:].decode("utf-8", "replace")
-    except OSError:
-        return ""
-
-
-class Handler(BaseHTTPRequestHandler):
-    def _reply(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _authed(self):
-        got = self.headers.get("Authorization", "")
-        if not hmac.compare_digest(got, "Bearer " + CONTROL_TOKEN):
-            self._reply(401, {"error": "bad token"})
-            return False
-        touch("last_active")
-        return True
-
-    def do_GET(self):
-        if not self._authed():
-            return
-        if self.path != "/status":
-            self._reply(404, {"error": "unknown path"})
-            return
-        logs = docker("logs", "--tail", "40", "vllm")
-        self._reply(200, {
-            "container": container_state(),
-            "healthy": vllm_healthy(),
-            "serve_rc": SERVE_PROC.poll() if SERVE_PROC is not None else None,
-            "sync_rc": SYNC_PROC.poll() if SYNC_PROC is not None else None,
-            "sync_started": SYNC_PROC is not None,
-            "log_tail": (logs.stdout + logs.stderr)[-8000:],
-            "serve_log_tail": tail(SERVE_LOG),
-            "sync_log_tail": tail(SYNC_LOG, 2000),
-        })
-
-    def do_POST(self):
-        if not self._authed():
-            return
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError:
-            self._reply(400, {"error": "bad json"})
-            return
-        if self.path == "/serve":
-            self._serve(payload)
-        elif self.path == "/sync-up":
-            self._sync_up(payload)
-        elif self.path == "/stop":
-            docker("rm", "-f", "vllm")
-            self._reply(200, {"ok": True})
-        elif self.path == "/shutdown":
-            # Reply first; the OS halt (=> spot termination) races the socket.
-            self._reply(200, {"ok": True, "shutting_down": True})
-            subprocess.Popen(["shutdown", "-h", "now"])
-        else:
-            self._reply(404, {"error": "unknown path"})
-
-    def _serve(self, payload):
-        global SERVE_PROC
-        try:
-            name = str(payload["served_model_name"])
-            hf_id = str(payload["hf_model_id"])
-            tp = int(payload.get("tp", 1))
-            max_len = int(payload.get("max_model_len", 16384))
-            vllm_args = [str(a) for a in payload.get("vllm_args", [])]
-            adapters = payload.get("adapters") or []  # LoRA: staged from S3 below
-        except (KeyError, TypeError, ValueError) as exc:
-            self._reply(400, {"error": "bad payload: %s" % (exc,)})
-            return
-        docker("rm", "-f", "vllm")
-        touch("serve_started")  # opens the watchdog's startup-grace window
-        cmd = [
-            "docker", "run", "-d", "--name", "vllm",
-            # --ipc=host mandatory at tp>1: NCCL needs >docker's 64 MB /dev/shm.
-            "--gpus", "all", "--ipc=host",
-            "-p", "%d:%d" % (VLLM_PORT, VLLM_PORT),
-            # HF cache + vLLM compile/CUDA-graph cache persist across swaps, so a
-            # checkpoint downloads once and RE-serving skips torch.compile.
-            "-v", "/opt/hf-cache:/root/.cache/huggingface",
-            "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
-            "-e", "HF_TOKEN=" + HF_TOKEN,
-            "-e", "HUGGING_FACE_HUB_TOKEN=" + HF_TOKEN,
-            VLLM_IMAGE,
-            "--model", hf_id,
-            "--served-model-name", name,
-            "--tensor-parallel-size", str(tp),
-            "--max-model-len", str(max_len),
-            "--api-key", VLLM_API_KEY,
-        ] + vllm_args
-        # Async (cold `docker run -d` blocks on the image pull; /status reports
-        # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
-        # (else legacy whole-prefix sync); HF fills any gap.
-        script = ""
-        if S3_CACHE:
-            sub = "models--" + hf_id.replace("/", "--")
-            s3p = shlex.quote(S3_CACHE + "/" + sub)
-            loc = shlex.quote(CACHE_HUB + "/" + sub)
-            script += (
-                "mkdir -p %s\\n"
-                "aws s3 sync --only-show-errors --exclude '*.incomplete' %s/blobs %s/blobs || true\\n"
-                "T=$(mktemp)\\n"
-                "if aws s3 cp --only-show-errors %s/meta.tar $T; then tar -xf $T -C %s; "
-                "else aws s3 sync --only-show-errors --exclude '*.incomplete' %s %s || true; fi\\n"
-                "rm -f $T\\n"
-            ) % (loc, s3p, loc, s3p, loc, s3p, loc)
-        # Stage LoRA adapters S3 -> hub cache; --region since box may != bucket.
-        for ad in adapters:
-            d = shlex.quote("/opt/hf-cache/lora/" + str(ad["name"]))
-            rg = " --region " + shlex.quote(str(ad["region"])) if ad.get("region") else ""
-            script += "mkdir -p %s\\naws s3 sync%s --only-show-errors --exclude 'checkpoint-*/*' %s %s\\n" % (
-                d, rg, shlex.quote(str(ad["s3"])), d)
-        script += shlex.join(cmd)
-        log = open(SERVE_LOG, "wb")
-        SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
-        self._reply(202, {"ok": True, "launching": name})
-
-    def _sync_up(self, payload):
-        """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
-        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
-        global SYNC_PROC
-        if not S3_CACHE:
-            self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
-            return
-        sub = str(payload.get("subdir", "")).strip("/")
-        dirs = "%s/%s" % (CACHE_HUB, sub) if sub else "%s/models--*" % CACHE_HUB
-        body = (
-            "for d in %s; do [ -d $d ] || continue; n=$(basename $d); "
-            "aws s3 sync --only-show-errors --exclude '*.incomplete' $d/blobs %s/$n/blobs; "
-            "if find $d/snapshots -type f -size +1M 2>/dev/null | grep -q .; then "
-            "aws s3 sync --only-show-errors --exclude '*.incomplete' --exclude 'blobs/*' $d %s/$n; "
-            "else T=$(mktemp); tar -cf $T -C $d snapshots refs 2>/dev/null && "
-            "aws s3 cp --only-show-errors $T %s/$n/meta.tar; rm -f $T; fi; done"
-        ) % (dirs, S3_CACHE, S3_CACHE, S3_CACHE)
-        log = open(SYNC_LOG, "ab")
-        SYNC_PROC = subprocess.Popen(["bash", "-c", body], stdout=log, stderr=subprocess.STDOUT)
-        self._reply(202, {"ok": True, "syncing": sub or "all"})
-
-    def log_message(self, *args):
-        pass  # systemd journals stdout; per-request noise is not useful
-
-
-def main():
-    os.makedirs(RUN_DIR, exist_ok=True)
-    touch("last_active")
-    ThreadingHTTPServer(("0.0.0.0", AGENT_PORT), Handler).serve_forever()
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-# Idle watchdog: a long-running service that checks once a minute. It is a
-# plain loop under Restart=always rather than a systemd timer ON PURPOSE --
-# the obvious OnUnitActiveSec=60 + Type=oneshot pairing fires exactly once,
-# because a oneshot unit never enters the "active" state the timer measures
-# from (found live: the smoke instance's watchdog never re-armed). Activity =
-#   (a) any authenticated control-agent request (the agent touches last_active),
-#   (b) movement in vLLM's request-token counters, or requests in flight
-#       (clients hit vLLM directly during evals, invisible to the agent), or
-#   (c) a container that is up but not yet answering /metrics (weights still
-#       downloading/loading), honored only within the startup grace window.
-# vLLM's --api-key only guards /v1/*; /metrics and /health are keyless on
-# localhost, and the security group closes the port to everyone else.
-WATCHDOG_PY: str = '''\
-"""smolbench idle watchdog: halts the instance after sustained inactivity."""
-import os
-import subprocess
-import time
-import urllib.request
-
-# Overridable so the repo's offline tests can run the watchdog unprivileged.
-RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
-IDLE_TIMEOUT_S = int(os.environ.get("IDLE_TIMEOUT_MIN", "30")) * 60
-# INVARIANT: must match EC2_STARTUP_GRACE_MIN's default ("180") in ec2.py.
-STARTUP_GRACE_S = int(os.environ.get("STARTUP_GRACE_MIN", "180")) * 60
-CHECK_INTERVAL_S = 60
-VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))  # see AGENT_PY
-
-
-def path(name):
-    return os.path.join(RUN_DIR, name)
-
-
-def touch(name):
-    target = path(name)
-    with open(target, "a"):
-        os.utime(target, None)
-
-
-def mtime(name):
-    try:
-        return os.path.getmtime(path(name))
-    except OSError:
-        return None
-
-
-def metrics_activity():
-    """True/False = counters moved / are still; None = vLLM not answering."""
-    try:
-        url = "http://127.0.0.1:%d/metrics" % VLLM_PORT
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            text = resp.read().decode("utf-8", "replace")
-    except Exception:
-        return None
-    total = 0.0
-    running = 0.0
-    for line in text.splitlines():
-        if line.startswith("#"):
-            continue
-        if line.startswith("vllm:prompt_tokens_total") or line.startswith("vllm:generation_tokens_total"):
-            try:
-                total += float(line.rsplit(" ", 1)[1])
-            except (ValueError, IndexError):
-                pass
-        elif line.startswith("vllm:num_requests_running"):
-            try:
-                running += float(line.rsplit(" ", 1)[1])
-            except (ValueError, IndexError):
-                pass
-    snapshot = path("tokens_snapshot")
-    previous = None
-    try:
-        with open(snapshot) as fh:
-            previous = fh.read().strip()
-    except OSError:
-        pass
-    current = repr(total)
-    if previous != current:
-        with open(snapshot, "w") as fh:
-            fh.write(current)
-        return True
-    return running > 0
-
-
-def container_running():
-    probe = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", "vllm"],
-        capture_output=True, text=True,
-    )
-    return probe.returncode == 0 and probe.stdout.strip() == "true"
-
-
-def check_once():
-    last = mtime("last_active")
-    if last is None:
-        touch("last_active")  # boot counts as the start of the idle clock
-        return
-    active = metrics_activity()
-    if active:
-        touch("last_active")
-        return
-    if active is None and container_running():
-        # vLLM is up but not serving metrics yet: weights are downloading or
-        # loading. Counts as activity only within the grace window so a wedged
-        # download cannot keep the instance alive forever.
-        started = mtime("serve_started")
-        if started is not None and time.time() - started < STARTUP_GRACE_S:
-            touch("last_active")
-            return
-    idle = time.time() - last
-    if idle > IDLE_TIMEOUT_S:
-        print("idle %ds > %ds; shutting down" % (idle, IDLE_TIMEOUT_S), flush=True)
-        subprocess.Popen(["shutdown", "-h", "now"])
-
-
-def main():
-    os.makedirs(RUN_DIR, exist_ok=True)
-    once = os.environ.get("SMOLBENCH_WATCHDOG_ONCE") == "1"  # test hook
-    while True:
-        try:
-            check_once()
-        except Exception as exc:
-            # A transient failure (docker hiccup, fs error) must not kill the
-            # safety net; log and keep watching.
-            print("watchdog check failed: %r" % (exc,), flush=True)
-        if once:
-            return
-        time.sleep(CHECK_INTERVAL_S)
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-# Cloud-init bootstrap. @@PLACEHOLDER@@ markers are filled by
-# _render_user_data via str.replace -- NOT str.format/f-strings, since the
-# embedded bash and python are full of braces and dollar signs. The max-
-# lifetime backstop is scheduled FIRST so the box self-halts even if a later
-# bootstrap step fails. Heredocs are single-quoted (<<'EOF') so the embedded
-# scripts land byte-exact.
-USER_DATA_TEMPLATE: str = '''\
-#!/bin/bash
-set -euo pipefail
-exec > /var/log/smolbench-bootstrap.log 2>&1
-echo "smolbench bootstrap starting: $(date -u)"
-
-# Absolute backstop before anything fallible: an OS halt terminates a
-# one-time spot instance.
-shutdown -h +@@MAX_LIFETIME_MIN@@ "smolbench max-lifetime backstop" || true
-
-mkdir -p /opt/smolbench /opt/hf-cache /var/run/smolbench /etc/smolbench
-
-# Model cache on instance-store NVMe (multi-GB/s; no instance store -> root
-# volume, so size EC2_ROOT_VOLUME_GB for the checkpoints then). The DL AMI
-# pre-assembles ALL NVMe into one LVM at /opt/dlami/nvme -- mkfs on a raw
-# device then fails "in use" (bit a live p5): bind-mount it instead. The
-# raw-device path is for AMIs that leave devices alone; by-id detection
-# because lsblk MODEL renders underscores on some kernels (also bit a p5).
-if mountpoint -q /opt/dlami/nvme; then
-  mkdir -p /opt/dlami/nvme/smolbench-hf-cache
-  mount --bind /opt/dlami/nvme/smolbench-hf-cache /opt/hf-cache
-  echo "model cache bind-mounted on the AMI-managed instance store (/opt/dlami/nvme)"
-else
-  CACHE_DEV=$(ls /dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage* 2>/dev/null | grep -v -- -part | head -1 || true)
-  if [ -z "$CACHE_DEV" ]; then
-    CACHE_DEV=$(lsblk -dno NAME,MODEL | tr '_' ' ' | grep -i "instance storage" | head -1 | awk '{print "/dev/"$1}' || true)
-  fi
-  if [ -n "$CACHE_DEV" ]; then
-    echo "model cache on instance-store $CACHE_DEV"
-    mkfs.ext4 -q -F "$CACHE_DEV" && mount -o noatime "$CACHE_DEV" /opt/hf-cache || echo "NVMe mount failed; cache stays on the root volume"
-  else
-    echo "no instance-store NVMe; model cache on the root volume"
-  fi
-fi
-mkdir -p /opt/hf-cache/hub
-
-# Parallelism for the S3 cache pulls/pushes (aws s3 sync).
-aws configure set default.s3.max_concurrent_requests 64 || true
-
-cat > /etc/smolbench/env <<'ENV_EOF'
-CONTROL_TOKEN=@@CONTROL_TOKEN@@
-VLLM_API_KEY=@@VLLM_API_KEY@@
-HF_TOKEN=@@HF_TOKEN@@
-VLLM_IMAGE=@@VLLM_IMAGE@@
-S3_CACHE_URI=@@S3_CACHE_URI@@
-IDLE_TIMEOUT_MIN=@@IDLE_TIMEOUT_MIN@@
-STARTUP_GRACE_MIN=@@STARTUP_GRACE_MIN@@
-SMOLBENCH_VLLM_PORT=@@VLLM_PORT@@
-ENV_EOF
-chmod 600 /etc/smolbench/env
-
-cat > /opt/smolbench/agent.py <<'AGENT_EOF'
-@@AGENT_PY@@
-AGENT_EOF
-
-cat > /opt/smolbench/watchdog.py <<'WATCHDOG_EOF'
-@@WATCHDOG_PY@@
-WATCHDOG_EOF
-
-# The watchdog is a looping service, NOT a timer: OnUnitActiveSec never
-# re-arms against a Type=oneshot unit (it never enters the "active" state),
-# so a timer-driven watchdog runs exactly once and the box never reaps itself.
-cat > /etc/systemd/system/smolbench-watchdog.service <<'UNIT_EOF'
-[Unit]
-Description=smolbench idle watchdog
-After=docker.service
-
-[Service]
-EnvironmentFile=/etc/smolbench/env
-ExecStart=/usr/bin/python3 /opt/smolbench/watchdog.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
-
-cat > /etc/systemd/system/smolbench-agent.service <<'UNIT_EOF'
-[Unit]
-Description=smolbench model-switcher agent
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-EnvironmentFile=/etc/smolbench/env
-ExecStart=/usr/bin/python3 /opt/smolbench/agent.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
-
-systemctl daemon-reload
-# Watchdog first: even if the agent fails, idle termination still works.
-systemctl enable --now smolbench-watchdog.service
-systemctl enable --now smolbench-agent.service
-
-# Pre-pull the (multi-GB) vLLM image so the first /serve does not block on it.
-. /etc/smolbench/env
-docker pull "$VLLM_IMAGE" > /var/log/smolbench-pull.log 2>&1 &
-
-echo "smolbench bootstrap done: $(date -u)"
-'''
-
-
-def _render_user_data(
-    control_token: str,
-    vllm_api_key: str,
-    hf_token: str,
-    idle_timeout_min: int,
-    startup_grace_min: int,
-    max_lifetime_min: int,
-    image: str,
-    s3_cache_uri: str = "",
-    vllm_port: int = EC2_VLLM_PORT,
-) -> str:
-    """Fills the cloud-init user-data template; validates size and completeness.
-
-    Substitutes every ``@@PLACEHOLDER@@`` marker in ``USER_DATA_TEMPLATE`` via
-    plain ``str.replace`` (not ``str.format``/f-strings -- the embedded bash
-    and python are full of literal braces and dollar signs that would collide
-    with template syntax), then asserts the result is fully substituted and
-    fits EC2's user-data size cap.
-
-    Parameters
-    ----------
-    control_token : str
-        Per-experiment bearer token the control agent requires on :EC2_AGENT_PORT.
-    vllm_api_key : str
-        Per-experiment bearer token vLLM requires on :EC2_VLLM_PORT.
-    hf_token : str
-        Hugging Face token baked in for gated checkpoints, or ``""``. Empty is
-        fine for the default (all-ungated) deploy specs.
-    idle_timeout_min : int
-        Minutes of inactivity before the on-instance watchdog self-halts.
-    startup_grace_min : int
-        Minutes a loading-but-not-yet-healthy model still counts as activity.
-    max_lifetime_min : int
-        Absolute backstop: ``shutdown -h`` scheduled this many minutes after
-        boot, regardless of activity.
-    image : str
-        vLLM Docker image reference (``docker pull``-able).
-    s3_cache_uri : str, optional
-        ``s3://bucket/prefix`` model-cache mirror, or ``""`` to disable it
-        (HF-only, the pre-S3 behavior). Default ``""``.
-    vllm_port : int, optional
-        Port threaded into the instance as ``SMOLBENCH_VLLM_PORT`` (read by
-        AGENT_PY/WATCHDOG_PY for their localhost health/metrics probes and the
-        docker port-publish in ``_serve()``). Defaults to the module-level
-        ``EC2_VLLM_PORT`` so existing callers that do not pass it keep the
-        historical behavior unchanged.
-
-    Returns
-    -------
-    str
-        The fully rendered cloud-init script, ready for ``RunInstances``'
-        ``UserData`` kwarg (boto3 base64-encodes it internally).
-
-    Raises
-    ------
-    AssertionError
-        If a heredoc delimiter appears inside an embedded payload script (it
-        would truncate the heredoc early), if any ``@@...@@`` marker survives
-        substitution, or if the rendered result is >= 16 KB (EC2's user-data
-        cap before base64 encoding).
-    """
-    for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
-        # A heredoc terminates at its delimiter; the scripts must never
-        # contain one as a line of their own.
-        assert delimiter not in payload, f"{delimiter} must not appear in the embedded script"
-    rendered = USER_DATA_TEMPLATE
-    for marker, value in (
-        ("@@MAX_LIFETIME_MIN@@", str(max_lifetime_min)),
-        ("@@CONTROL_TOKEN@@", control_token),
-        ("@@VLLM_API_KEY@@", vllm_api_key),
-        ("@@HF_TOKEN@@", hf_token),
-        ("@@VLLM_IMAGE@@", image),
-        ("@@S3_CACHE_URI@@", s3_cache_uri),
-        ("@@IDLE_TIMEOUT_MIN@@", str(idle_timeout_min)),
-        ("@@STARTUP_GRACE_MIN@@", str(startup_grace_min)),
-        ("@@VLLM_PORT@@", str(vllm_port)),
-        ("@@AGENT_PY@@", AGENT_PY.rstrip("\n")),
-        ("@@WATCHDOG_PY@@", WATCHDOG_PY.rstrip("\n")),
-    ):
-        rendered = rendered.replace(marker, value)
-    assert "@@" not in rendered, "unsubstituted placeholder left in user-data"
-    # EC2 caps user-data at 16 KB before base64 (boto3 encodes it for us).
-    assert len(rendered.encode()) < 16384, f"user-data too large: {len(rendered.encode())} bytes"
-    return rendered
+# The payload programs and cloud-init templates live as byte-exact assets in
+# smolbench/evals/payloads/ (agent.py.txt, watchdog.py.txt, user_data.sh),
+# exposed there as string constants and rendered by payloads.render_user_data
+# (imported at the top of this module). See that package's docstring for the
+# payload contract (py3.10/stdlib-only, 16 KB user-data budget) and
+# tests/test_ec2_payloads.py for their pre-launch validation.
 
 
 # ---------------------------------------------------------------------------
@@ -1756,7 +1213,7 @@ def _run_instances_kwargs(
     volume_gb : int
         Root gp3 volume size in GiB.
     user_data : str
-        Rendered cloud-init script (see ``_render_user_data``); passed
+        Rendered cloud-init script (see ``payloads.render_user_data``); passed
         through unencoded -- boto3 base64-encodes it internally.
     key_name : str
         EC2 key pair name for SSH debugging, or ``""`` to omit the
@@ -1909,7 +1366,7 @@ def _launch_fresh(
             f"provision_spot_instance: S3 model cache at {EC2_S3_MODEL_CACHE} "
             f"(instance profile {iam_profile})"
         )
-    user_data = _render_user_data(
+    user_data = render_user_data(
         control_token=control_token,
         vllm_api_key=vllm_api_key,
         hf_token=hf_token,
@@ -2071,10 +1528,27 @@ def _wait_model_ready(
     the loop times out.
     """
     last_status: Dict[str, Any] = {}
+    consec_failures = 0
 
     def check() -> Optional[bool]:
-        nonlocal last_status
-        status = _agent(state, "GET", "/status", timeout=30)
+        nonlocal last_status, consec_failures
+        # A single dropped /status must NOT abort the (up to hours-long) wait:
+        # the caller's egress NAT rotates source IPs mid-run, so one connect
+        # timeout is routine (live 2026-07-11: one flap killed an arm and its
+        # stale serve script then raced the next arm's container). Only a
+        # SOLID stretch of unreachability (~8 min at the 15s poll) is treated
+        # as the box being gone.
+        try:
+            status = _agent(state, "GET", "/status", timeout=30)
+        except requests.exceptions.RequestException as exc:
+            consec_failures += 1
+            if consec_failures >= 20:
+                raise RuntimeError(
+                    f"agent unreachable {consec_failures}x in a row while waiting "
+                    f"for {model!r} (box gone or caller blocked): {exc}"
+                ) from exc
+            return None
+        consec_failures = 0
         last_status = status
         if status.get("healthy"):
             return True

@@ -1,0 +1,213 @@
+"""smolbench control agent: swaps the vLLM container on request."""
+import hmac
+import json
+import os
+import shlex
+import subprocess
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Overridable so the repo's offline tests can run the agent unprivileged.
+RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
+AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
+# "8000" mirrors AGENT_PORT above; governs the health probe + docker -p below.
+VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
+SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
+SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
+CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
+VLLM_API_KEY = os.environ["VLLM_API_KEY"]
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+VLLM_IMAGE = os.environ["VLLM_IMAGE"]
+# Optional S3 mirror of the HF hub cache (creds come from the instance
+# profile; empty = HF-only, the pre-S3 behavior).
+S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
+CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
+SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
+SYNC_PROC = None  # the in-flight cache upload, if any
+
+
+def touch(name):
+    path = os.path.join(RUN_DIR, name)
+    with open(path, "a"):
+        os.utime(path, None)
+
+
+def docker(*args, timeout=120):
+    return subprocess.run(["docker"] + list(args), capture_output=True, text=True, timeout=timeout)
+
+
+def container_state():
+    probe = docker("inspect", "-f", "{{.State.Status}}", "vllm")
+    return probe.stdout.strip() if probe.returncode == 0 else "absent"
+
+
+def vllm_healthy():
+    try:
+        url = "http://127.0.0.1:%d/health" % VLLM_PORT
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def tail(path, limit=8000):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()[-limit:].decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _reply(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authed(self):
+        got = self.headers.get("Authorization", "")
+        if not hmac.compare_digest(got, "Bearer " + CONTROL_TOKEN):
+            self._reply(401, {"error": "bad token"})
+            return False
+        touch("last_active")
+        return True
+
+    def do_GET(self):
+        if not self._authed():
+            return
+        if self.path != "/status":
+            self._reply(404, {"error": "unknown path"})
+            return
+        logs = docker("logs", "--tail", "40", "vllm")
+        self._reply(200, {
+            "container": container_state(),
+            "healthy": vllm_healthy(),
+            "serve_rc": SERVE_PROC.poll() if SERVE_PROC is not None else None,
+            "sync_rc": SYNC_PROC.poll() if SYNC_PROC is not None else None,
+            "sync_started": SYNC_PROC is not None,
+            "log_tail": (logs.stdout + logs.stderr)[-8000:],
+            "serve_log_tail": tail(SERVE_LOG),
+            "sync_log_tail": tail(SYNC_LOG, 2000),
+        })
+
+    def do_POST(self):
+        if not self._authed():
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            self._reply(400, {"error": "bad json"})
+            return
+        if self.path == "/serve":
+            self._serve(payload)
+        elif self.path == "/sync-up":
+            self._sync_up(payload)
+        elif self.path == "/stop":
+            docker("rm", "-f", "vllm")
+            self._reply(200, {"ok": True})
+        elif self.path == "/shutdown":
+            # Reply first; the OS halt (=> spot termination) races the socket.
+            self._reply(200, {"ok": True, "shutting_down": True})
+            subprocess.Popen(["shutdown", "-h", "now"])
+        else:
+            self._reply(404, {"error": "unknown path"})
+
+    def _serve(self, payload):
+        global SERVE_PROC
+        try:
+            name = str(payload["served_model_name"])
+            hf_id = str(payload["hf_model_id"])
+            tp = int(payload.get("tp", 1))
+            max_len = int(payload.get("max_model_len", 16384))
+            vllm_args = [str(a) for a in payload.get("vllm_args", [])]
+            adapters = payload.get("adapters") or []  # LoRA: staged from S3 below
+        except (KeyError, TypeError, ValueError) as exc:
+            self._reply(400, {"error": "bad payload: %s" % (exc,)})
+            return
+        # a stale serve script's pending docker run would race this swap
+        if SERVE_PROC and SERVE_PROC.poll() is None:
+            SERVE_PROC.kill(); SERVE_PROC.wait()
+        docker("rm", "-f", "vllm")
+        touch("serve_started")  # opens the watchdog's startup-grace window
+        cmd = [
+            "docker", "run", "-d", "--name", "vllm",
+            # --ipc=host mandatory at tp>1: NCCL needs >docker's 64 MB /dev/shm.
+            "--gpus", "all", "--ipc=host",
+            "-p", "%d:%d" % (VLLM_PORT, VLLM_PORT),
+            # HF cache + vLLM compile/CUDA-graph cache persist across swaps, so a
+            # checkpoint downloads once and RE-serving skips torch.compile.
+            "-v", "/opt/hf-cache:/root/.cache/huggingface",
+            "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
+            "-e", "HF_TOKEN=" + HF_TOKEN,
+            "-e", "HUGGING_FACE_HUB_TOKEN=" + HF_TOKEN,
+            VLLM_IMAGE,
+            "--model", hf_id,
+            "--served-model-name", name,
+            "--tensor-parallel-size", str(tp),
+            "--max-model-len", str(max_len),
+            "--api-key", VLLM_API_KEY,
+        ] + vllm_args
+        # Async (cold `docker run -d` blocks on the image pull; /status reports
+        # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
+        # (else legacy whole-prefix sync); HF fills any gap.
+        script = ""
+        if S3_CACHE:
+            sub = "models--" + hf_id.replace("/", "--")
+            s3p = shlex.quote(S3_CACHE + "/" + sub)
+            loc = shlex.quote(CACHE_HUB + "/" + sub)
+            script += (
+                "mkdir -p %s\n"
+                "aws s3 sync --only-show-errors --exclude '*.incomplete' %s/blobs %s/blobs || true\n"
+                "T=$(mktemp)\n"
+                "if aws s3 cp --only-show-errors %s/meta.tar $T; then tar -xf $T -C %s; "
+                "else aws s3 sync --only-show-errors --exclude '*.incomplete' %s %s || true; fi\n"
+                "rm -f $T\n"
+            ) % (loc, s3p, loc, s3p, loc, s3p, loc)
+        # Stage LoRA adapters S3 -> hub cache; --region since box may != bucket.
+        for ad in adapters:
+            d = shlex.quote("/opt/hf-cache/lora/" + str(ad["name"]))
+            rg = " --region " + shlex.quote(str(ad["region"])) if ad.get("region") else ""
+            script += "mkdir -p %s\naws s3 sync%s --only-show-errors --exclude 'checkpoint-*/*' %s %s\n" % (
+                d, rg, shlex.quote(str(ad["s3"])), d)
+        script += shlex.join(cmd)
+        log = open(SERVE_LOG, "wb")
+        SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
+        self._reply(202, {"ok": True, "launching": name})
+
+    def _sync_up(self, payload):
+        """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
+        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
+        global SYNC_PROC
+        if not S3_CACHE:
+            self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
+            return
+        sub = str(payload.get("subdir", "")).strip("/")
+        dirs = "%s/%s" % (CACHE_HUB, sub) if sub else "%s/models--*" % CACHE_HUB
+        body = (
+            "for d in %s; do [ -d $d ] || continue; n=$(basename $d); "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' $d/blobs %s/$n/blobs; "
+            "if find $d/snapshots -type f -size +1M 2>/dev/null | grep -q .; then "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' --exclude 'blobs/*' $d %s/$n; "
+            "else T=$(mktemp); tar -cf $T -C $d snapshots refs 2>/dev/null && "
+            "aws s3 cp --only-show-errors $T %s/$n/meta.tar; rm -f $T; fi; done"
+        ) % (dirs, S3_CACHE, S3_CACHE, S3_CACHE)
+        log = open(SYNC_LOG, "ab")
+        SYNC_PROC = subprocess.Popen(["bash", "-c", body], stdout=log, stderr=subprocess.STDOUT)
+        self._reply(202, {"ok": True, "syncing": sub or "all"})
+
+    def log_message(self, *args):
+        pass  # systemd journals stdout; per-request noise is not useful
+
+
+def main():
+    os.makedirs(RUN_DIR, exist_ok=True)
+    touch("last_active")
+    ThreadingHTTPServer(("0.0.0.0", AGENT_PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

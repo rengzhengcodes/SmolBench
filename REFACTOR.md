@@ -480,3 +480,59 @@ delta and every `poll_until`-migrated wait against real AWS timing:
   via the tag after state-file deletion; `shutdown` returned at 379.3 s.
 - Billing check: `describe-instances` by tag → `terminated` in us-east-1,
   no instances in us-east-2/us-west-2.
+
+## Part 3 — payload extraction into `smolbench/evals/payloads` (2026-07-12)
+
+A `/simplify` pass with the directive "make the inlined shell and python
+commands their own separate files that get imported, with a library-esque
+structure".
+
+### 3.1 What moved
+
+- `ec2.py`'s three embedded payload constants — `AGENT_PY` (~9.1 KB control
+  agent), `WATCHDOG_PY` (~3.8 KB idle watchdog), `USER_DATA_TEMPLATE`
+  (~3.4 KB cloud-init bash) — and `_render_user_data` moved to the new
+  `smolbench/evals/payloads/` subpackage: the program/template text lives in
+  `agent.py.txt`, `watchdog.py.txt`, `user_data.sh`, read once at import
+  into the same constant names by `payloads/__init__.py`, which also owns
+  the (now public) `render_user_data`. `ec2.py` shrank by ~550 lines and
+  imports `render_user_data` like any other collaborator.
+- `scripts/lean_train_ec2.py`'s `TRAIN_USER_DATA` cloud-init template moved
+  to `payloads/train_user_data.sh` (exposed as `TRAIN_USER_DATA_TEMPLATE`);
+  `_render_train_user_data` and `DEFAULT_MAX_LIFETIME_MIN` stayed put
+  (tests/test_lean_capacity_blocks.py imports them from the script).
+
+### 3.2 Deliberate decisions
+
+- **Byte-identical extraction.** The asset files were written from the
+  EVALUATED working-tree constants (never copy-pasted source: `ec2.py`'s
+  `\\n` escapes inside `AGENT_PY` evaluate to `\n` and must land that way).
+  SHA256 of all five payloads and of two fixed-input renders were pinned
+  before the move and verified identical after — nothing shipped to EC2
+  changed.
+- **Non-importable `.py.txt`/`.sh` extensions.** The payloads target Ubuntu
+  22.04's system python3 (3.10)/bash and sit ~160 bytes under EC2's 16 KB
+  user-data cap. The non-`.py` extension keeps black/isort/pylint, pytest
+  collection, and the import machinery structurally away (the agent reads
+  required env vars at module top — importing it would raise), with no
+  formatter-exclusion config to maintain.
+- **Two NVMe-mount blocks stay near-twins.** `user_data.sh` (mounts
+  `/opt/hf-cache`) and `train_user_data.sh` (mounts `/opt/train`) keep their
+  live-debugged divergences; no shared-snippet abstraction.
+- **Static systemd units stay inside `user_data.sh`** — they render via the
+  same single-quoted heredocs, and keeping each heredoc beside its delimiter
+  keeps the truncation guard in `render_user_data` easy to reason about.
+- **Left inline on purpose:** `lean_train_ec2.py`'s parameterized SSH
+  command chains (venv build, `_train_cmd`, GPU smoke, status loops) are
+  one-shot command strings interpolating runtime values, not programs;
+  extracting them would add a templating surface for zero payoff.
+
+### 3.3 Guards added
+
+- `[tool.setuptools.package-data]` ships the assets in wheels
+  (`include-package-data = false` would otherwise drop non-`.py` files).
+- `.gitattributes` (new) pins the assets LF-only.
+- `tests/test_ec2_payloads.py::test_payload_assets_are_byte_clean` asserts
+  each asset is CR-free with exactly one trailing newline and no leading
+  blank line; the existing parse/310-compat/heredoc/16 KB-headroom tests now
+  validate the file-backed constants unchanged.

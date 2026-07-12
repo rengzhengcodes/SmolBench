@@ -1,0 +1,16 @@
+{
+  "full_name": "card_le_of_surjective'",
+  "file_path": "Mathlib/LinearAlgebra/InvariantBasisNumber.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "let P := Finsupp.linearEquivFunOnFinite R R β\nlet Q := (Finsupp.linearEquivFunOnFinite R R α).symm\nexact\n  card_le_of_surjective R ((P.toLinearMap.comp f).comp Q.toLinearMap)\n    ((P.surjective.comp i).comp Q.surjective)",
+  "ground_truth_remaining_from_k": "exact\n  card_le_of_surjective R ((P.toLinearMap.comp f).comp Q.toLinearMap)\n    ((P.surjective.comp i).comp Q.surjective)",
+  "true_premises_at_k": [
+    "card_le_of_surjective",
+    "LinearMap.comp",
+    "Function.Surjective.comp"
+  ],
+  "state_before_k": "R : Type u\ninst✝³ : Semiring R\ninst✝² : RankCondition R\nα : Type u_1\nβ : Type u_2\ninst✝¹ : Fintype α\ninst✝ : Fintype β\nf : (α →₀ R) →ₗ[R] β →₀ R\ni : Surjective ⇑f\nP : (β →₀ R) ≃ₗ[R] β → R := Finsupp.linearEquivFunOnFinite R R β\nQ : (α → R) ≃ₗ[R] α →₀ R := LinearEquiv.symm (Finsupp.linearEquivFunOnFinite R R α)\n⊢ Fintype.card β ≤ Fintype.card α"
+}

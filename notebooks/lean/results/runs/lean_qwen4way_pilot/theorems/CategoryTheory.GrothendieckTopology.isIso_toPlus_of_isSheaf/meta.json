@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.GrothendieckTopology.isIso_toPlus_of_isSheaf",
+  "file_path": "Mathlib/CategoryTheory/Sites/Plus.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 13,
+  "k": 12,
+  "ground_truth_full_proof": "rw [Presheaf.isSheaf_iff_multiequalizer] at hP\nsuffices ∀ X, IsIso ((J.toPlus P).app X) from NatIso.isIso_of_isIso_app _\nintro X\nsuffices IsIso (colimit.ι (J.diagram P X.unop) (op ⊤)) from IsIso.comp_isIso\nsuffices ∀ (S T : (J.Cover X.unop)ᵒᵖ) (f : S ⟶ T), IsIso ((J.diagram P X.unop).map f) from\n  isIso_ι_of_isInitial (initialOpOfTerminal isTerminalTop) _\nintro S T e\nhave : S.unop.toMultiequalizer P ≫ (J.diagram P X.unop).map e = T.unop.toMultiequalizer P :=\n  Multiequalizer.hom_ext _ _ _ (fun II => by dsimp; simp)\nhave :\n  (J.diagram P X.unop).map e = inv (S.unop.toMultiequalizer P) ≫ T.unop.toMultiequalizer P := by\n  simp [← this]\nrw [this]\ninfer_instance\ndsimp\nsimp\nsimp [← this]",
+  "ground_truth_remaining_from_k": "simp [← this]",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝³ : Category.{v, u} C\nJ : GrothendieckTopology C\nD : Type w\ninst✝² : Category.{max v u, w} D\ninst✝¹ : ∀ (P : Cᵒᵖ ⥤ D) (X : C) (S : Cover J X), HasMultiequalizer (Cover.index S P)\nP : Cᵒᵖ ⥤ D\ninst✝ : ∀ (X : C), HasColimitsOfShape (Cover J X)ᵒᵖ D\nhP : ∀ (X : C) (S : Cover J X), IsIso (Cover.toMultiequalizer S P)\nX : Cᵒᵖ\nS T : (Cover J X.unop)ᵒᵖ\ne : S ⟶ T\nthis : Cover.toMultiequalizer S.unop P ≫ (diagram J P X.unop).map e = Cover.toMultiequalizer T.unop P\n⊢ (diagram J P X.unop).map e = inv (Cover.toMultiequalizer S.unop P) ≫ Cover.toMultiequalizer T.unop P"
+}

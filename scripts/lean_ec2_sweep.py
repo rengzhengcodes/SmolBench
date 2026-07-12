@@ -110,6 +110,54 @@ PHASES = {
 }
 
 
+#: The Qwen 4-way arms (synthetic-pretraining experiment, notebooks/lean):
+#: ``(variant key, adapter subprefix under <lora-s3-prefix>/qwen3-235b-a22b/)``.
+#: None = the base arm. stage2 adapters ARE the synth+real arms (stage 2
+#: annealed the stage-1 synthetic adapter on the decontaminated real set), so
+#: the sweep compares base / real-only / goedel+real / leannav+real.
+QWEN_4WAY_ARMS: list[tuple[str, str | None]] = [
+    ("qwen3-235b-a22b", None),
+    ("qwen3-lean-real", "real-only"),
+    ("qwen3-lean-goedel", "goedel-stage2"),
+    ("qwen3-lean-leannav", "leannav-stage2"),
+]
+
+
+def _qwen_4way_variants(args, ec2) -> list[dict]:
+    """The 4 Qwen arms as serve-swappable variants (same proven pattern as
+    ``_variants``: one model name per serve, adapter staged from S3).
+
+    All four arms share the ONE BF16 Qwen base (the trio's FP8-can't-serve
+    override applies here too), so the on-box HF cache makes swaps cheap:
+    the 470 GB download happens once, later swaps only reload GPUs.
+    """
+    base = ec2.EC2_DEPLOY_SPECS["qwen3-235b-a22b"]
+    base["hf_model_id"] = "Qwen/Qwen3-235B-A22B"  # BF16: see _variants' note
+    base["max_model_len"] = 40960
+    prefix = args.lora_s3_prefix.rstrip("/")
+    variants: list[dict] = []
+    for key, sub in QWEN_4WAY_ARMS:
+        if sub is None:
+            variants.append({"key": key, "display": f"{key}-base"})
+            continue
+        container_path = f"/root/.cache/huggingface/lora/{key}"
+        ec2.EC2_DEPLOY_SPECS[key] = {
+            "hf_model_id": base["hf_model_id"],
+            "tp": base.get("tp", 8),
+            "max_model_len": base["max_model_len"],
+            "vllm_args": [
+                *base.get("vllm_args", []),
+                "--enable-lora",
+                "--max-lora-rank", str(args.lora_rank),
+                "--lora-modules", f"{key}={container_path}",
+            ],
+            "adapters": [{"name": key, "s3": f"{prefix}/qwen3-235b-a22b/{sub}",
+                          "region": args.lora_region}],
+        }
+        variants.append({"key": key, "display": key})
+    return variants
+
+
 def _variants(args, ec2) -> list[dict]:
     """Resolve the model-variant list, registering LoRA deploy specs as needed.
 
@@ -164,6 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lora-s3-prefix", default=_ADAPTER_S3_PREFIX,
                    help="S3 prefix with <base_key>/adapter_model.safetensors for each model")
     p.add_argument("--no-lora", action="store_true", help="run base variants only (skip the LoRA arms)")
+    p.add_argument("--qwen-4way", action="store_true",
+                   help="sweep the Qwen synthetic-pretraining 4-way (base / real-only / "
+                        "goedel+real / leannav+real) instead of the trio; run_name gains a "
+                        "'qwen4way' infix so results never mix with trio runs")
     p.add_argument("--lora-rank", type=int, default=16, help="--max-lora-rank; must be >= the adapters' rank (16)")
     p.add_argument("--lora-region", default=os.environ.get("EC2_S3_CACHE_REGION", "us-west-2"),
                    help="AWS region of the adapter S3 bucket (the box may run in another region)")
@@ -196,7 +248,11 @@ def main(argv: list[str] | None = None) -> int:
         config["theorems"] = {**config["theorems"], "limit": args.limit, "seed": config["theorems"].get("seed", 1776)}
     if args.theorem_workers is not None:
         config["theorem_workers"] = args.theorem_workers
-    variants = _variants(args, ec2)
+    if args.qwen_4way:
+        config["run_name"] = config["run_name"].replace("trio", "qwen4way")
+        variants = _qwen_4way_variants(args, ec2)
+    else:
+        variants = _variants(args, ec2)
     if args.only:
         wanted = {s.strip() for s in args.only.split(",") if s.strip()}
         variants = [v for v in variants if v["key"] in wanted]
