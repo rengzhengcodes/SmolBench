@@ -134,10 +134,31 @@ DATASETS: Dict[str, Path] = {
 }
 #: Default dataset for a plain ``train`` (the decontaminated real anneal set).
 DEFAULT_DATASET = "novel_premises_train_stepk1_decontam.jsonl"
+#: CoT-augmented SFT sets (WP1's scripts/annotate_lean_cot.py output). Unlike
+#: DATASETS these are OPTIONAL: they are gitignored (*.jsonl) and only exist
+#: locally once the annotation pass has run, so `setup` uploads whichever are
+#: present and warns+skips the rest instead of hard-asserting on all of them
+#: the way DATASETS does (see `_existing_optional_datasets` /
+#: `_missing_optional_datasets`). Names match the coordination constants
+#: shared with the annotation/CoT-recipe packages exactly.
+#: ``cot_stepk1_bare_8k.jsonl`` is annotate_lean_cot.py's PAIRED bare-control
+#: sibling of ``cot_stepk1_think_8k.jsonl`` (byte-identical rows, minus the
+#: CoT wrapping, for the exact same theorem set -- see that script's module
+#: docstring, Pipeline step 5): lean_cot_recipe.sh's ``bare8k-r128`` stage
+#: trains on it so the bare/CoT smoke-gate arms are attributable to target
+#: format alone, not to which theorems each arm happened to sample.
+OPTIONAL_DATASETS: Dict[str, Path] = {
+    "cot_stepk1_think_8k.jsonl": _SFT_DIR / "cot_stepk1_think_8k.jsonl",
+    "cot_stepk1_think_full.jsonl": _SFT_DIR / "cot_stepk1_think_full.jsonl",
+    "cot_stepk1_fenced_full.jsonl": _SFT_DIR / "cot_stepk1_fenced_full.jsonl",
+    "cot_stepk1_bare_8k.jsonl": _SFT_DIR / "cot_stepk1_bare_8k.jsonl",
+}
 TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "lean_lora_sft.py"
 REQUIREMENTS = _REPO_ROOT / "scripts" / "requirements-train.txt"
 #: Resumable on-box Qwen 4-way orchestrator (uploaded by `setup`; launched via nohup).
 ORCHESTRATOR = _REPO_ROOT / "scripts" / "lean_qwen_4way.sh"
+#: Resumable on-box CoT-recipe orchestrator (uploaded by `setup`; launched via nohup).
+COT_ORCHESTRATOR = _REPO_ROOT / "scripts" / "lean_cot_recipe.sh"
 
 #: On-box working tree (all on the NVMe mount; see payloads/train_user_data.sh).
 REMOTE_ROOT = "/opt/train"
@@ -902,6 +923,36 @@ def _wait_ssh(state: Dict[str, Any], timeout_s: int) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _existing_optional_datasets() -> List[Tuple[str, Path]]:
+    """``OPTIONAL_DATASETS`` entries present on disk right now -- what `setup` uploads.
+
+    Pure (a filesystem ``Path.exists`` check, no SSH/network) so the
+    upload-vs-skip decision is unit-testable without a live box; see
+    ``tests/test_lean_cot_recipe.py``.
+
+    Returns
+    -------
+    list of (name, path)
+        Preserves ``OPTIONAL_DATASETS``' insertion order.
+    """
+    return [(name, path) for name, path in OPTIONAL_DATASETS.items() if path.exists()]
+
+
+def _missing_optional_datasets() -> List[str]:
+    """``OPTIONAL_DATASETS`` names absent on disk -- what `setup` warns about.
+
+    Complement of `_existing_optional_datasets`; kept as a separate pure
+    function (rather than diffing the other list at the call site) so both
+    halves of the upload decision are independently testable.
+
+    Returns
+    -------
+    list of str
+        Dataset filenames with no file at their configured path.
+    """
+    return [name for name, path in OPTIONAL_DATASETS.items() if not path.exists()]
+
+
 def setup(args) -> None:
     """Upload the dataset + trainer + requirements and build the training venv.
 
@@ -925,12 +976,25 @@ def setup(args) -> None:
     for name, path in DATASETS.items():
         print(f"  {name} ({path.stat().st_size // (1 << 20)} MB)", flush=True)
         _scp(state, path, f"{REMOTE_ROOT}/{name}")
+    # CoT sets are OPTIONAL: upload whichever the annotation pass (WP1) has
+    # already produced locally, and warn (not fail) about the rest -- unlike
+    # DATASETS above, it is EXPECTED for these to be partially/fully absent
+    # before scripts/annotate_lean_cot.py has run.
+    for name, path in _existing_optional_datasets():
+        print(f"  {name} ({path.stat().st_size // (1 << 20)} MB) [optional CoT set]", flush=True)
+        _scp(state, path, f"{REMOTE_ROOT}/{name}")
+    for name in _missing_optional_datasets():
+        print(f"  WARNING: optional CoT dataset {name!r} not found at "
+              f"{OPTIONAL_DATASETS[name]} -- skipping (run scripts/annotate_lean_cot.py "
+              f"first if a training run needs it)", file=sys.stderr)
     _scp(state, TRAIN_SCRIPT, f"{REMOTE_ROOT}/scripts/lean_lora_sft.py")
     _scp(state, REQUIREMENTS, f"{REMOTE_ROOT}/scripts/requirements-train.txt")
-    # The resumable Qwen 4-way orchestrator (run on-box via nohup). Uploaded
-    # here so a fresh box after a spot interruption has it without re-deriving.
+    # The resumable orchestrators (run on-box via nohup). Uploaded here so a
+    # fresh box after a spot interruption has them without re-deriving.
     if ORCHESTRATOR.exists():
         _scp(state, ORCHESTRATOR, f"{REMOTE_ROOT}/{ORCHESTRATOR.name}")
+    if COT_ORCHESTRATOR.exists():
+        _scp(state, COT_ORCHESTRATOR, f"{REMOTE_ROOT}/{COT_ORCHESTRATOR.name}")
 
     # HF token -> 0600 file on the box (transmitted over SSH stdin, not argv).
     _ssh(state, f"umask 077 && cat > {REMOTE_ROOT}/hf_env",
@@ -1017,6 +1081,18 @@ def _train_cmd(model: Dict[str, str], args) -> str:
     cap = "" if args.full else f"--max-examples {args.cap}"
     steps = f"--max-steps {args.max_steps}" if args.max_steps > 0 else ""
     det = "--full-determinism" if args.full_determinism else ""
+    # Optional epoch/schedule knobs (CoT recipe: 2 epochs, cosine, 0.03 warmup).
+    # ``getattr(..., default)`` -- not plain ``args.epochs`` -- because this
+    # function is also exercised in tests against hand-built Namespaces that
+    # predate these flags (see tests/test_lean_capacity_blocks.py); a missing
+    # attribute must fall back to the CLI default, not raise AttributeError.
+    # Emitted only when non-default, matching the {det} convention above.
+    epochs = getattr(args, "epochs", 1.0)
+    ep = f"--epochs {epochs}" if epochs != 1.0 else ""
+    lr_sched = getattr(args, "lr_scheduler_type", None)
+    lrst = f"--lr-scheduler-type {lr_sched}" if lr_sched else ""
+    warmup = getattr(args, "warmup_ratio", None)
+    wr = f"--warmup-ratio {warmup}" if warmup is not None else ""
     log = f"{REMOTE_OUT}/{slug}.log"
     done = f"{REMOTE_OUT}/{slug}.DONE"
     tm = f"--target-modules {model['target_modules']}"
@@ -1045,7 +1121,7 @@ def _train_cmd(model: Dict[str, str], args) -> str:
         f"--save-steps {args.save_steps} {cap} {steps} "
         f"--lora-r {args.lora_r} --lora-alpha {args.lora_alpha} "
         f"--batch-size {args.batch_size} --grad-accum {args.grad_accum} "
-        f"--seed {args.seed} {det}"
+        f"--seed {args.seed} {det} {ep} {lrst} {wr}"
     )
 
     if args.checkpoint_dest == "s3":
@@ -1381,8 +1457,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--s3-prefix", default="lean-train-checkpoints",
                         help="key prefix under the EC2_S3_MODEL_CACHE bucket for checkpoints")
         sp.add_argument("--org", default="rengz", help="HF namespace for the private adapter repos (hub dest only)")
-        sp.add_argument("--dataset-file", default=DEFAULT_DATASET, choices=list(DATASETS),
-                        help="which uploaded SFT dataset to train on (default: the decontaminated real anneal set)")
+        sp.add_argument("--dataset-file", default=DEFAULT_DATASET,
+                        choices=list(DATASETS) + list(OPTIONAL_DATASETS),
+                        help="which uploaded SFT dataset to train on (default: the decontaminated "
+                             "real anneal set; the CoT sets are OPTIONAL_DATASETS -- only usable "
+                             "once annotate_lean_cot.py has produced them and setup has uploaded them)")
         sp.add_argument("--init-adapter-s3", default=None,
                         help="s3:// URI of a stage-1 adapter to CONTINUE (staged anneal); synced to the box and "
                              "passed as --init-adapter. Omit for a fresh (stage-1) adapter.")
@@ -1397,6 +1476,16 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--lora-alpha", type=int, default=32)
         sp.add_argument("--batch-size", type=int, default=1)
         sp.add_argument("--grad-accum", type=int, default=16)
+        sp.add_argument("--epochs", type=float, default=1.0,
+                        help="training epochs threaded to lean_lora_sft.py (the CoT recipe commits "
+                             "to 2; default 1.0 matches the trainer's own default and is omitted "
+                             "from the remote command line)")
+        sp.add_argument("--lr-scheduler-type", default=None,
+                        help="TrainingArguments lr_scheduler_type threaded to lean_lora_sft.py "
+                             "(e.g. 'cosine'); omitted = trl's own default")
+        sp.add_argument("--warmup-ratio", type=float, default=None,
+                        help="TrainingArguments warmup_ratio threaded to lean_lora_sft.py "
+                             "(e.g. 0.03); omitted = trl's own default")
         sp.add_argument("--seed", type=int, default=1776, help="training seed threaded to lean_lora_sft.py (reproducibility)")
         sp.add_argument("--full-determinism", action="store_true", help="bitwise-reproducible training (slower; passed through)")
         sp.add_argument("--poll", type=int, default=60, help="log-poll interval, seconds")

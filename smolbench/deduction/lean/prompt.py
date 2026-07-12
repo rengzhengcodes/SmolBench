@@ -38,6 +38,26 @@ def extract_tactic_block(text: str) -> str:
     """Pull the Lean tactics out of an LLM response.
 
     Strategy:
+      0. If the (stripped) response opens with a plain-text ``<think>``
+         reasoning block, strip through the FIRST ``</think>`` tag (plus
+         any whitespace immediately following it) and continue extracting
+         from the remainder using steps 1-3 below. An UNCLOSED think block
+         (starts with ``<think>`` but has no matching ``</think>`` at all —
+         the completion was cut off mid-reasoning, e.g. it hit the
+         max-tokens budget before the model got to an answer) has no
+         recoverable tactic text, so this returns ``""`` rather than
+         scoring the raw reasoning ramble as a proof attempt: the LeanDojo
+         replay would fail on it regardless, and letting it through would
+         pollute ``lean_error`` stats with parse noise instead of a clean
+         "no answer" signal.
+
+         `smolbench/evals/openai_compat.py` (~line 551) already splits
+         ``content`` on the first ``</think>`` client-side when the server
+         returns reasoning and answer concatenated in one string, so in
+         practice this step is belt-and-suspenders for text that reaches
+         the extractor with the think blob still attached (e.g. a provider
+         that doesn't route through that client, or a future regression
+         there). See that module's docstring for the primary split point.
       1. If the response contains one or more ```` ```lean ... ``` ```` (or
          unlabelled) fenced blocks, return the LAST one — models that prefix
          tactics with reasoning typically put the answer last.
@@ -45,6 +65,15 @@ def extract_tactic_block(text: str) -> str:
       3. Otherwise return the stripped text as-is.
     """
     s = text.strip()
+    if s.startswith("<think>"):
+        close_idx = s.find("</think>")
+        if close_idx == -1:
+            # Truncated CoT: no closing tag means no tactic text survived
+            # to be extracted. Returning "" (rather than, say, the raw
+            # blob) keeps this a clean miss instead of a guaranteed-wrong
+            # proof attempt polluting lean_error stats. See docstring above.
+            return ""
+        s = s[close_idx + len("</think>") :].lstrip()
     matches = _FENCE_RE.findall(s)
     if matches:
         return matches[-1].strip()

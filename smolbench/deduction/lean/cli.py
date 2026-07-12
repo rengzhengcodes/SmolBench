@@ -430,7 +430,19 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     Runs on either venv -- pure JSONL aggregation, no Dojo session and no
     file writes. Prints, in order: sanity-gate pass/fail counts, an ASCII
     bar chart of success rate per (model, rung), a detailed per-(rung,
-    model) verdict-breakdown table, and per-model token/success totals.
+    model) verdict-breakdown table (with a ``trunc`` column -- rows whose
+    ``raw_response``/``content`` opened a ``<think>`` block it never closed;
+    always 0 for models that never emit one), and per-model token/success
+    totals.
+
+    When the sweep recorded more than one rollout for at least one
+    (model, rung, theorem_id, k) cell, two more tables follow: a pass@N
+    table (a cell counts as a pass if ANY of its rollouts verified; N is
+    the max rollout count seen across all cells) broken down per (rung,
+    model), and its per-model rollup. Sweeps with exactly one rollout per
+    cell everywhere (the common, non-replicated case) omit both -- their
+    output is byte-identical to the pre-pass@N/trunc format aside from the
+    added ``trunc`` column in the detail table.
     """
     from collections import defaultdict
 
@@ -438,9 +450,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0,
+            "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
+    # Design: keyed on the full cell identity (model, rung, theorem_id, k) --
+    # one entry per group, holding every rollout's verdict for that group --
+    # rather than folding straight into `cells`, because pass@N needs to ask
+    # "did ANY rollout of *this exact* (theorem, k) succeed", a question the
+    # (rung, model)-only `cells` aggregation has already lost the answer to.
+    groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
@@ -467,6 +485,37 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             c["tok_in"] += r.get("prompt_tokens", 0)
             c["tok_out"] += r.get("completion_tokens", 0)
             c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+
+            # Truncation smell: a reasoning model that got cut off mid-<think>
+            # never emits a tactic block at all, which otherwise just looks
+            # like an ordinary `incomplete`/`given_up` verdict -- surface it
+            # separately so a wave of these isn't misread as the model
+            # reasoning itself into a dead end. `raw_response` is the field
+            # the runner actually writes (see runner.py); `content` is a
+            # defensive fallback for any row schema variant that used the
+            # provider SDK's own key name instead.
+            raw_text = r.get("raw_response", "") or r.get("content", "")
+            unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
+            # Fix (parser-path blind spot): when the box is served WITH a
+            # vLLM --reasoning-parser, the model's <think> block is split out
+            # server-side into `reasoning_content` and never lands in
+            # `raw_response` at all -- so a generation that died inside the
+            # think channel leaves `raw_response` EMPTY (not "<think>...
+            # unclosed"), and the check above silently reads 0. Catch that
+            # shape too: reasoning was produced, but no answer content
+            # whatsoever made it out. Deliberately checks `raw_response`
+            # alone here (not the `content`-fallback `raw_text` above) per
+            # the row schema `runner.py` actually writes under a
+            # --reasoning-parser server.
+            died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
+            if unclosed_think_in_raw or died_in_reasoning_channel:
+                c["trunc"] += 1
+
+            group_key = (
+                r.get("model", "?"), r.get("rung", "?"),
+                r.get("theorem_id", "?"), r.get("k", -1),
+            )
+            groups[group_key].append(v)
 
     if not cells:
         print(f"empty: no rows in {args.path}", file=sys.stderr)
@@ -503,7 +552,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
         f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
-        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
+        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -518,7 +567,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
             f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
-            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
+            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
     # Per-model rollup
@@ -535,6 +584,44 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         rate = m["success"] / m["n"] if m["n"] else 0
         print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+
+    # ---- pass@N (only meaningful once a sweep actually replicated rollouts;
+    # with n_rollouts==1 everywhere, "pass@N" and the plain success rate
+    # above are identical, so we skip it rather than print a redundant,
+    # visually-noisy duplicate table). N is derived from the data itself
+    # (max rollouts seen in any single cell) rather than threaded through
+    # from the sweep config, so this stays correct even for sweeps that mix
+    # rollout counts across models/rungs.
+    n_max_rollouts = max((len(vs) for vs in groups.values()), default=1)
+    if n_max_rollouts > 1:
+        passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
+            lambda: {"groups": 0, "pass": 0}
+        )
+        for (model, rung, _theorem_id, _k), verdicts in groups.items():
+            pc = passn_cells[(rung, model)]
+            pc["groups"] += 1
+            if "success" in verdicts:
+                pc["pass"] += 1
+
+        print(f"\n# pass@N per rung × model (N={n_max_rollouts})")
+        header2 = f"{'rung':<10} {'model':<36} {'pass':>5}/{'grp':<4} {'rate':>6}"
+        print(header2)
+        print("-" * len(header2))
+        for (rung, model), pc in sorted(passn_cells.items(), key=sort_key):
+            rate = pc["pass"] / pc["groups"] if pc["groups"] else 0
+            print(f"{rung:<10} {model:<36} {pc['pass']:>5}/{pc['groups']:<4} {rate:>6.1%}")
+
+        print("\n# pass@N per-model totals")
+        by_model_passn: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"groups": 0, "pass": 0}
+        )
+        for (_rung, model), pc in passn_cells.items():
+            by_model_passn[model]["groups"] += pc["groups"]
+            by_model_passn[model]["pass"] += pc["pass"]
+        for model, m in sorted(by_model_passn.items()):
+            rate = m["pass"] / m["groups"] if m["groups"] else 0
+            print(f"  {model:<36}  {m['pass']:>4}/{m['groups']:<4}  {rate:>6.1%}")
+
     return 0
 
 

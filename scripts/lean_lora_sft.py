@@ -117,6 +117,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--epochs", type=float, default=1.0)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument(
+        "--lr-scheduler-type",
+        default=None,
+        help="TrainingArguments lr_scheduler_type (e.g. 'cosine', 'linear'); the CoT recipe "
+             "uses cosine. Default None = leave trl's own scheduler default in place.",
+    )
+    p.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=None,
+        help="TrainingArguments warmup_ratio -- fraction of total steps spent warming up the "
+             "LR (e.g. 0.03). Default None = leave trl's own default (0.0) in place.",
+    )
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--grad-accum", type=int, default=16)
     p.add_argument("--max-seq-len", type=int, default=4096)
@@ -185,6 +198,71 @@ def _load_chat_dataset(path: Path, max_examples: int = 0, seed: int = 1776):
     if max_examples and max_examples < len(ds):
         ds = ds.shuffle(seed=seed).select(range(max_examples))
     return ds
+
+
+def _resolve_sft_kwargs(args: argparse.Namespace, sft_fields: set[str]) -> dict:
+    """Version-guarded kwargs to splat into ``SFTConfig(...)``.
+
+    Isolated from `main` -- which needs a live torch/peft/transformers/trl
+    install to reach the point where these kwargs matter -- so the guard
+    logic itself (which of ``{max_length, max_seq_length, loss_type,
+    lr_scheduler_type, warmup_ratio}`` to include, and under what condition)
+    is unit-testable against a fake ``sft_fields`` set with NO training
+    stack installed (see ``tests/test_lean_cot_recipe.py``).
+
+    Two independent guards are folded together here, both version/config
+    driven:
+
+    - ``max_length`` vs ``max_seq_length``: trl renamed the field; exactly
+      one of the two is always emitted, whichever ``sft_fields`` exposes.
+    - ``loss_type`` / ``lr_scheduler_type`` / ``warmup_ratio``: emitted only
+      when BOTH the caller asked for something non-default (``loss_type`` is
+      unconditional -- see below -- but the other two are ``None``-gated)
+      AND the installed trl/transformers actually declares the field, so an
+      older pin in ``requirements-train.txt`` silently falls back to trl's
+      own default instead of ``SFTConfig()`` raising an unknown-kwarg
+      ``TypeError``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI args. Reads ``max_seq_len``, ``lr_scheduler_type``,
+        ``warmup_ratio``.
+    sft_fields : set of str
+        Field names exposed by the installed ``trl.SFTConfig``, i.e.
+        ``{f.name for f in dataclasses.fields(SFTConfig)}``.
+
+    Returns
+    -------
+    dict
+        Keys are a subset of ``{"max_length", "max_seq_length", "loss_type",
+        "lr_scheduler_type", "warmup_ratio"}``; always contains exactly one
+        of the first two.
+    """
+    kwargs: dict = {
+        ("max_length" if "max_length" in sft_fields else "max_seq_length"): args.max_seq_len,
+    }
+    # Force the STANDARD nll loss. trl >=1.7 defaults loss_type="chunked_nll",
+    # which patches lm_head.forward at SFTTrainer init via
+    # inspect.signature(forward.__func__) -- but on a device_map (accelerate-
+    # hooked) model that forward is a functools.partial with no __func__, so
+    # init raises AttributeError; and its compute_loss then needs
+    # outputs.num_valid_tokens, absent without the patch. "nll" is the SAME loss
+    # math (trl's own error recommends switching to it), just without the
+    # lm-head-chunking memory optimization we don't need (Qwen's 151k-vocab
+    # logits at seq 4096 are ~1.2 GB, fine on an H100). Version-guarded: older
+    # trl lacks the loss_type field (and the crashing patch).
+    if "loss_type" in sft_fields:
+        kwargs["loss_type"] = "nll"
+    # --lr-scheduler-type / --warmup-ratio: standard TrainingArguments fields,
+    # guarded the SAME way as loss_type above, PLUS a None check -- the
+    # caller leaving them at the CLI default (None) means "don't touch trl's
+    # own default", distinct from the unconditional loss_type override.
+    if args.lr_scheduler_type is not None and "lr_scheduler_type" in sft_fields:
+        kwargs["lr_scheduler_type"] = args.lr_scheduler_type
+    if args.warmup_ratio is not None and "warmup_ratio" in sft_fields:
+        kwargs["warmup_ratio"] = args.warmup_ratio
+    return kwargs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -432,20 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     import dataclasses
 
     _sft_fields = {f.name for f in dataclasses.fields(SFTConfig)}
-    _seq_kwargs = {("max_length" if "max_length" in _sft_fields else "max_seq_length"): args.max_seq_len}
-
-    # Force the STANDARD nll loss. trl >=1.7 defaults loss_type="chunked_nll",
-    # which patches lm_head.forward at SFTTrainer init via
-    # inspect.signature(forward.__func__) -- but on a device_map (accelerate-
-    # hooked) model that forward is a functools.partial with no __func__, so
-    # init raises AttributeError; and its compute_loss then needs
-    # outputs.num_valid_tokens, absent without the patch. "nll" is the SAME loss
-    # math (trl's own error recommends switching to it), just without the
-    # lm-head-chunking memory optimization we don't need (Qwen's 151k-vocab
-    # logits at seq 4096 are ~1.2 GB, fine on an H100). Version-guarded: older
-    # trl lacks the loss_type field (and the crashing patch).
-    if "loss_type" in _sft_fields:
-        _seq_kwargs["loss_type"] = "nll"
+    _seq_kwargs = _resolve_sft_kwargs(args, _sft_fields)
 
     sft_config = SFTConfig(
         output_dir=str(args.output_dir),

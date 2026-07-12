@@ -107,6 +107,44 @@ PHASES = {
             "noise:3", "noise:4",
         ],
     },
+    # The paired CoT-recipe gate: bare-tail LoRA vs CoT-augmented LoRA (plus
+    # base + real-only controls, via --cot-smoke) at pass@8. `limit`/
+    # `n_rollouts` below are placeholders -- the actual spend-gating values
+    # are PRE-REGISTERED by `scripts/lean_gate_power.py` (a power analysis
+    # run BEFORE any money is spent, per the module's docstring) and passed
+    # in at invocation time via `--limit`/`--n-rollouts` rather than hand-
+    # edited here, so the registered numbers are the ones that shipped.
+    "cot-gate": {
+        **_COMMON,
+        "run_name": "lean_cot_gate",
+        "n_rollouts": 8,
+        "theorems": {"source": "replay_passing", "kind": "novel_premises",
+                     "split": "val", "limit": 150, "seed": 1776},
+        "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
+    },
+    # Expert-iteration harvest pass: sample pass@8 rollouts on TRAIN theorems
+    # (never val/test -- see below) at temperature 1.0 for diversity, so
+    # scripts/harvest_expert_iter.py has a genuine choice of distinct correct
+    # proofs to dedup/cap per theorem. Single rung (stepk:1) matches the base
+    # SFT set's context shape -- harvested rows must be prompt-format
+    # identical to `sft.iter_dataset`'s default, or the CoT-augmented target
+    # would be trained under a context the eval never actually shows.
+    "expert-iter": {
+        **_COMMON,
+        "run_name": "lean_expert_iter",
+        "n_rollouts": 8,
+        "temperature": 1.0,
+        "rungs": ["stepk:1"],
+        # source MUST be "with_proof", not the phase-default "replay_passing":
+        # the replay_passing sidecar (`corpus.replay_passing_path`) is only
+        # ever generated for val/test (`cli filter` is run against the eval
+        # splits, never train -- see corpus.iter_replay_passing's docstring),
+        # so `iter_replay_passing("novel_premises", "train")` would raise
+        # FileNotFoundError. `with_proof` (`corpus.iter_with_proof`) needs no
+        # sidecar and is the same source `sft.iter_dataset` trains on.
+        "theorems": {"source": "with_proof", "kind": "novel_premises",
+                     "split": "train", "limit": 200, "seed": 1776},
+    },
 }
 
 
@@ -137,6 +175,60 @@ def _qwen_4way_variants(args, ec2) -> list[dict]:
     prefix = args.lora_s3_prefix.rstrip("/")
     variants: list[dict] = []
     for key, sub in QWEN_4WAY_ARMS:
+        if sub is None:
+            variants.append({"key": key, "display": f"{key}-base"})
+            continue
+        container_path = f"/root/.cache/huggingface/lora/{key}"
+        ec2.EC2_DEPLOY_SPECS[key] = {
+            "hf_model_id": base["hf_model_id"],
+            "tp": base.get("tp", 8),
+            "max_model_len": base["max_model_len"],
+            "vllm_args": [
+                *base.get("vllm_args", []),
+                "--enable-lora",
+                "--max-lora-rank", str(args.lora_rank),
+                "--lora-modules", f"{key}={container_path}",
+            ],
+            "adapters": [{"name": key, "s3": f"{prefix}/qwen3-235b-a22b/{sub}",
+                          "region": args.lora_region}],
+        }
+        variants.append({"key": key, "display": key})
+    return variants
+
+
+#: The CoT-SFT gate arms (notebooks/lean's CoT-recipe experiment, distinct
+#: from the synthetic-pretraining `QWEN_4WAY_ARMS` above): ``(variant key,
+#: adapter subprefix under <lora-s3-prefix>/qwen3-235b-a22b/)``. Must match
+#: the "Sweep smoke arms" coordination constant exactly -- every other
+#: package (the trainer, the harvester, the gate-power script) hard-codes
+#: these same four arm identities and S3 subprefixes, so a rename here would
+#: silently desync the sweep from the checkpoints it's supposed to load.
+COT_SMOKE_ARMS: list[tuple[str, str | None]] = [
+    ("qwen3-235b-a22b", None),
+    ("qwen3-lean-real", "real-only"),
+    ("qwen3-lean-bare-r128", "bare8k-r128"),
+    ("qwen3-lean-cot-r128", "cot8k-r128"),
+]
+
+
+def _cot_smoke_variants(args, ec2) -> list[dict]:
+    """The 4 CoT-gate arms as serve-swappable variants.
+
+    Structurally identical to `_qwen_4way_variants` (same BF16-override /
+    adapter-staging pattern -- see that function's docstring for why the
+    base is served in BF16 rather than the trio's FP8), just iterating
+    `COT_SMOKE_ARMS` instead of `QWEN_4WAY_ARMS`. Kept as a separate
+    function (rather than parameterizing `_qwen_4way_variants` over an arms
+    list) so each experiment's arm table and its variant-building code stay
+    textually next to each other -- a reviewer diffing one experiment's arms
+    never has to reason about the other's call site.
+    """
+    base = ec2.EC2_DEPLOY_SPECS["qwen3-235b-a22b"]
+    base["hf_model_id"] = "Qwen/Qwen3-235B-A22B"  # BF16: see _variants' note
+    base["max_model_len"] = 40960
+    prefix = args.lora_s3_prefix.rstrip("/")
+    variants: list[dict] = []
+    for key, sub in COT_SMOKE_ARMS:
         if sub is None:
             variants.append({"key": key, "display": f"{key}-base"})
             continue
@@ -212,21 +304,138 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lora-s3-prefix", default=_ADAPTER_S3_PREFIX,
                    help="S3 prefix with <base_key>/adapter_model.safetensors for each model")
     p.add_argument("--no-lora", action="store_true", help="run base variants only (skip the LoRA arms)")
-    p.add_argument("--qwen-4way", action="store_true",
-                   help="sweep the Qwen synthetic-pretraining 4-way (base / real-only / "
-                        "goedel+real / leannav+real) instead of the trio; run_name gains a "
-                        "'qwen4way' infix so results never mix with trio runs")
-    p.add_argument("--lora-rank", type=int, default=16, help="--max-lora-rank; must be >= the adapters' rank (16)")
+    # --qwen-4way and --cot-smoke both replace the trio variant list wholesale
+    # with a different fixed arm table (QWEN_4WAY_ARMS / COT_SMOKE_ARMS) --
+    # there is no sensible way to combine them, so a mutually exclusive group
+    # makes the conflict an argparse-time SystemExit instead of a silent
+    # "whichever `if` branch runs first wins" footgun.
+    _arms = p.add_mutually_exclusive_group()
+    _arms.add_argument("--qwen-4way", action="store_true",
+                        help="sweep the Qwen synthetic-pretraining 4-way (base / real-only / "
+                             "goedel+real / leannav+real) instead of the trio; run_name gains a "
+                             "'qwen4way' infix so results never mix with trio runs")
+    _arms.add_argument("--cot-smoke", action="store_true",
+                        help="sweep the CoT-SFT gate arms (base / real-only / bare8k-r128 / "
+                             "cot8k-r128, see COT_SMOKE_ARMS) instead of the trio -- pair with "
+                             "--phase cot-gate")
+    # default=None (not 16) so _resolve_config can tell "user didn't pass
+    # --lora-rank" apart from "user explicitly passed --lora-rank 16" and
+    # pick the right per-experiment default -- see _resolve_config.
+    p.add_argument("--lora-rank", type=int, default=None,
+                   help="--max-lora-rank; must be >= the served adapter's rank (16 for the trio "
+                        "and real-only arms, 128 for the cot8k/bare8k arms; default resolved by "
+                        "--cot-smoke -- see _resolve_config)")
     p.add_argument("--lora-region", default=os.environ.get("EC2_S3_CACHE_REGION", "us-west-2"),
                    help="AWS region of the adapter S3 bucket (the box may run in another region)")
     p.add_argument("--only", default=None,
                    help="comma-separated variant keys to restrict to (e.g. the Nemotron-first smoke)")
     p.add_argument("--limit", type=int, default=None,
                    help="override the phase's theorem count (e.g. --limit 1 for a warm-theorem smoke)")
+    p.add_argument("--n-rollouts", type=int, default=None,
+                   help="override the phase's rollout count (e.g. the expert-iteration harvest "
+                        "pass, or a cot-gate re-run at the scripts/lean_gate_power.py-recommended N)")
     p.add_argument("--theorem-workers", type=int, default=None,
                    help="override parallel Dojo verifiers (local RAM-bound; lower if verification OOMs)")
     p.add_argument("--no-teardown", action="store_true", help="leave the instance up after the sweep")
     return p
+
+
+def _resolve_config(args: argparse.Namespace) -> tuple[dict, list[dict], Path]:
+    """Resolve parsed CLI `args` into a sweep config, variant list, and run_dir.
+
+    Pulled out of `main` so the CLI-flag -> sweep-config mapping (phase
+    lookup, the ``--limit``/``--theorem-workers``/``--n-rollouts`` overrides,
+    ``--qwen-4way``/``--cot-smoke`` arm-list selection, the ``--lora-rank``
+    default, and ``--only`` filtering) is unit-testable in isolation from
+    `main`'s remaining body -- provisioning an EC2 box, serving each variant,
+    and running the (expensive, network-dependent) sweep itself -- none of
+    which can run under the offline test suite.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI args from `build_parser()`. Mutated in place: if
+        ``args.lora_rank`` is `None` (the argparse default -- see
+        `build_parser`), it is resolved here to 16 (the trio/real-only
+        adapters' native rank) or 128 (the cot8k/bare8k arms' rank, when
+        ``--cot-smoke`` is set) and written back onto `args`, since
+        `_variants`/`_qwen_4way_variants`/`_cot_smoke_variants` all read
+        ``args.lora_rank`` directly for their ``--max-lora-rank`` value.
+
+    Returns
+    -------
+    (config, variants, run_dir) : (dict, list[dict], pathlib.Path)
+        `config` -- the resolved sweep config (the phase's base dict plus
+        any ``--limit``/``--theorem-workers``/``--n-rollouts`` overrides;
+        ``models`` is NOT yet populated -- `main` fills that in per-variant
+        inside its serve loop). `variants` -- the resolved model-variant
+        list to serve-swap through, already filtered by ``--only`` if given.
+        `run_dir` -- ``runner.results_root() / "runs" / config["run_name"]``.
+
+    Raises
+    ------
+    SystemExit
+        If ``--only`` is given but matches no variant of the resolved
+        variant list.
+
+    Notes
+    -----
+    Registers LoRA variant specs into ``ec2.EC2_DEPLOY_SPECS`` as a side
+    effect (via `_variants`/`_qwen_4way_variants`/`_cot_smoke_variants`) --
+    an in-memory dict mutation, not I/O or a network call, so this stays
+    safe to call repeatedly (including from tests) without AWS credentials.
+    """
+    from smolbench.evals import ec2
+    from smolbench.deduction.lean import runner
+
+    if args.lora_rank is None:
+        # --max-lora-rank is a serving CEILING, not the adapter's actual
+        # rank: vLLM sizes its LoRA workspace to the ceiling regardless of
+        # what any given adapter was trained at, so serving a rank-16
+        # adapter (the trio/real-only arms) under a rank-128 ceiling is
+        # harmless -- it just reserves workspace the r16 adapter doesn't
+        # use. The cot8k/bare8k arms, however, ARE trained at rank 128 (see
+        # the coordination constants) and need the ceiling to actually
+        # cover their rank. Default to 128 only when --cot-smoke selected
+        # that arm list; the trio/qwen-4way arms keep their historical
+        # rank-16 default.
+        args.lora_rank = 128 if args.cot_smoke else 16
+
+    config = dict(PHASES[args.phase])
+    if args.limit is not None:
+        # Override the phase's theorem count (seeded sample); e.g. --limit 1 smoke.
+        config["theorems"] = {**config["theorems"], "limit": args.limit, "seed": config["theorems"].get("seed", 1776)}
+    if args.theorem_workers is not None:
+        config["theorem_workers"] = args.theorem_workers
+    if args.n_rollouts is not None:
+        # Override the phase's rollout count (e.g. expert-iteration harvest
+        # passes, or a gate re-run at the power-analysis-recommended N).
+        config["n_rollouts"] = args.n_rollouts
+
+    if args.qwen_4way:
+        config["run_name"] = config["run_name"].replace("trio", "qwen4way")
+        variants = _qwen_4way_variants(args, ec2)
+    elif args.cot_smoke:
+        variants = _cot_smoke_variants(args, ec2)
+    else:
+        variants = _variants(args, ec2)
+
+    if args.only:
+        wanted = {s.strip() for s in args.only.split(",") if s.strip()}
+        # Fix: capture the RESOLVED variant list's own keys before filtering
+        # -- not the raw `TRIO` constant, which only names the base trio and
+        # is flatly wrong here under --qwen-4way/--cot-smoke (whose variant
+        # keys are qwen3-lean-*/-base names, none of which are in TRIO at
+        # all), and is incomplete even in the default arm list (`_variants`
+        # also emits each base's `<key>-lean-lora` variant, which TRIO alone
+        # doesn't name either).
+        available_keys = [v["key"] for v in variants]
+        variants = [v for v in variants if v["key"] in wanted]
+        if not variants:
+            raise SystemExit(f"--only {sorted(wanted)} matched no variant of {available_keys}")
+
+    run_dir = runner.results_root() / "runs" / config["run_name"]
+    return config, variants, run_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,26 +448,10 @@ def main(argv: list[str] | None = None) -> int:
     if elan_bin.is_dir() and str(elan_bin) not in os.environ.get("PATH", "").split(os.pathsep):
         os.environ["PATH"] = f"{elan_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
+    config, variants, run_dir = _resolve_config(args)
+
     from smolbench.evals import ec2
     from smolbench.deduction.lean import runner
-
-    config = dict(PHASES[args.phase])
-    if args.limit is not None:
-        # Override the phase's theorem count (seeded sample); e.g. --limit 1 smoke.
-        config["theorems"] = {**config["theorems"], "limit": args.limit, "seed": config["theorems"].get("seed", 1776)}
-    if args.theorem_workers is not None:
-        config["theorem_workers"] = args.theorem_workers
-    if args.qwen_4way:
-        config["run_name"] = config["run_name"].replace("trio", "qwen4way")
-        variants = _qwen_4way_variants(args, ec2)
-    else:
-        variants = _variants(args, ec2)
-    if args.only:
-        wanted = {s.strip() for s in args.only.split(",") if s.strip()}
-        variants = [v for v in variants if v["key"] in wanted]
-        if not variants:
-            raise SystemExit(f"--only {sorted(wanted)} matched no variant of {[v for v in TRIO]}")
-    run_dir = runner.results_root() / "runs" / config["run_name"]
 
     if args.no_lora:
         print("note: --no-lora -> BASE variants only", flush=True)

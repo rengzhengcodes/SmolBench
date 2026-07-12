@@ -21,6 +21,30 @@ def test_extract_bare_text_passthrough():
     assert prompt.extract_tactic_block("  exact h\nsimp  ") == "exact h\nsimp"
 
 
+def test_extract_leading_closed_think_bare_tactics():
+    text = "<think>\nfirst I'll try induction\n</think>\nexact h\nsimp"
+    assert prompt.extract_tactic_block(text) == "exact h\nsimp"
+
+
+def test_extract_leading_closed_think_then_fenced_block():
+    text = "<think>reasoning about the goal state</think>\n```lean\nexact h\nsimp\n```"
+    assert prompt.extract_tactic_block(text) == "exact h\nsimp"
+
+
+def test_extract_unclosed_think_returns_empty():
+    text = "<think>\nstill reasoning and reasoning with no end in sight..."
+    assert prompt.extract_tactic_block(text) == ""
+
+
+def test_extract_think_not_at_start_untouched():
+    text = "some preamble <think>not a leading tag</think> exact h"
+    assert prompt.extract_tactic_block(text) == text.strip()
+
+
+def test_extract_empty_rationale_think_block():
+    assert prompt.extract_tactic_block("<think></think>tac") == "tac"
+
+
 def test_build_user_prompt_appends_instruction():
     rc = RenderedContext(chain="stepk", level=0, text="CONTEXT BLOCK")
     assert prompt.build_user_prompt(rc) == "CONTEXT BLOCK" + "\n\n" + prompt.INSTRUCTION

@@ -419,6 +419,232 @@ warning), which the per-stage S3 checkpoint sync already covers. Everything
 downstream (`setup` / `attach-s3` / `train` / the 4-way orchestrator) is
 unchanged.
 
+## CoT recipe (round 1)
+
+The real-only/synthetic-pretrain trio above (`base` / `real-only` /
+`goedel+real` / `leannav+real`) scored no better than chance: the best arm,
+`qwen3-lean-leannav`, beat 17/77 vs base's 15/77, McNemar insignificant. The
+2026-07-12 deep-research report
+(`notebooks/lean/research/2026-07-12_sft_recipe_deep_research.md`) diagnoses
+why — bare tactic-tail SFT targets with assistant-only loss train away the
+base models' chain-of-thought (output length collapsed ~5k → ~15 tokens
+during training) — and ranks CoT-augmented targets as the highest-evidence
+fix, ahead of expert iteration, higher LoRA rank, and curation. This section
+is the runbook for that recipe's round-1 (smoke-gated) rollout.
+
+### 8k smoke chain
+
+De-risks the recipe on Qwen alone (the trio's least-favorable base — see the
+plan's "Gate asymmetry" decision) before annotating or training the other
+two. Each step is a separate spend/go decision; stop and read the previous
+step's output before starting the next.
+
+1. **Annotate.** A Bedrock Claude call per row writes a retrospective
+   rationale around each row's byte-identical ground-truth tail (see
+   `scripts/annotate_lean_cot.py`'s module docstring); boto3 SigV4 needs no
+   bearer minting, just a profile:
+
+   ```bash
+   # Preview composed prompts/targets first -- no AWS client, no network:
+   .venv/bin/python scripts/annotate_lean_cot.py --style think --limit 5 --dry-run
+
+   # The smoke annotation (~$15 at Haiku-tier pricing, temperature 0):
+   AWS_PROFILE=rengz .venv/bin/python scripts/annotate_lean_cot.py --style think --limit 8000
+   ```
+
+   Writes `notebooks/lean/data/sft/cot_stepk1_think_8k.jsonl` plus
+   `cot_stepk1_think_8k.manifest.json` and `cot_stepk1_think_8k.qc.json`.
+
+2. **QC report check** — read the `.qc.json` (and skim 20 rows by hand,
+   per the plan's live-gate list) before spending anything on GPUs:
+   `rationale_length_chars` percentiles look like prose, not a one-liner;
+   `distinct_5gram_ratio` isn't near-zero (boilerplate rationale);
+   `grounding_rate` is well above zero (rationales actually cite goal/hyp
+   symbols); `holdout_name_mentions.total == 0`. The `.manifest.json`'s
+   `decontamination.preflight_bare_facet_rescan` must read `"passed"`.
+
+3. **Provision the training box + attach S3:**
+
+   ```bash
+   set -a; source notebooks/periodic/keys.env; set +a   # HF_TOKEN + AWS creds
+   .venv/bin/python scripts/lean_train_ec2.py provision
+   .venv/bin/python scripts/lean_train_ec2.py setup      # uploads DATASETS, present OPTIONAL_DATASETS
+                                                          # (warns + skips missing CoT jsonls), both orchestrators
+   .venv/bin/python scripts/lean_train_ec2.py attach-s3
+   ```
+
+4. **Launch the orchestrator** (SSH in; it self-halts when done, so a plain
+   `nohup … &` is enough):
+
+   ```bash
+   ssh -i .ec2_lean_train_key.pem ubuntu@<public_ip>   # public_ip from step 3's output, or `status`
+   nohup bash /opt/train/lean_cot_recipe.sh > /opt/train/out/cot-recipe.stdout.log 2>&1 &
+   exit
+   ```
+
+   Runs `bare8k-r128` (control) then `cot8k-r128` (treatment), same
+   rank/schedule, so a gate win is attributable to the CoT format and not
+   the rank bump alone. Poll with `.venv/bin/python scripts/lean_train_ec2.py
+   status` (tails the most recent on-box log); the orchestrator's own
+   step log is `/opt/train/out/cot-recipe.orch.log`
+   (START/RESUME/SKIP/END per stage). Off-box, `DRYRUN=1 bash
+   scripts/lean_cot_recipe.sh` prints every stage's fully-resolved command
+   with no AWS/GPU touch — the plumbing check `tests/test_lean_cot_recipe.py`
+   runs offline.
+
+5. **Gate eval**, pre-registered before spend:
+
+   ```bash
+   # Pick n_theorems off the RECOMMEND line (defaults: pass@8, mid delta):
+   .venv/bin/python scripts/lean_gate_power.py --sims 2000
+
+   set -a; source notebooks/periodic/keys.env; set +a
+   .venv-lean/bin/python scripts/lean_ec2_sweep.py --phase cot-gate --cot-smoke \
+     --limit <RECOMMEND n_theorems> --n-rollouts 8
+   ```
+
+   `--cot-smoke` serves the four paired arms (`base` / `real-only` /
+   `bare8k-r128` / `cot8k-r128`, `COT_SMOKE_ARMS` in `lean_ec2_sweep.py`) on
+   the SAME cells (`--phase cot-gate`'s theorem sample), `--lora-rank`
+   auto-resolves to 128. `.venv/bin/python -m smolbench.deduction.lean.cli
+   analyze notebooks/lean/results/runs/lean_cot_gate/all_rows.jsonl` prints
+   the per-(model, rung) pass@N tables. **IMPROVEMENT GATE**: `cot8k-r128`
+   must beat BOTH `bare8k-r128` and base on paired (theorem, k, rung) cells
+   — McNemar's exact test on each pair's discordant counts (reuse
+   `lean_gate_power.mcnemar_exact_p(b, c)`; there's no CLI wrapper for this
+   cross-arm pairing yet, so read the discordant counts off `all_rows.jsonl`
+   by hand/notebook) at `p < 0.05` each, reporting effect size
+   `(b - c) / n_cells` and a CI, not just the p-value. Green → prune + full
+   annotation + trio commitment (below). Red → the plan's fallback is a
+   cheap dense fenced micro-smoke (a few hundred fenced rows, tiny
+   train+serve) before any abandon decision — not decisive on Qwen alone
+   given the gate-asymmetry caveat.
+
+### Sizing
+
+Effective batch = `--batch-size 1 × --grad-accum 16` = 16; steps =
+`ceil(rows / 16) × --epochs`; ~40s/step observed for a trio-class QLoRA
+step:
+
+| stage | rows | epochs | steps | wall time |
+|---|---:|---:|---:|---|
+| 8k smoke arm (`bare8k-r128` / `cot8k-r128`, each) | 8,000 | 2 | 1,000 | ≈11h/arm |
+| 56k full (`cot-full-r128`, per trio model, **pre-prune**) | 56,000 | 2 | 7,000 | ≈78h/model |
+
+The 56k figure spans the 48h spot horizon — capacity-block territory (see
+below); the round-1.5 curation prune (below) is expected to cut both the
+row count and this wall time by ~30–40%.
+
+### Capacity blocks for the full-trio run
+
+Reuses the general `cb-search` / `cb-purchase` / `cb-status` /
+`provision --capacity-reservation` flow documented above; `setup` /
+`attach-s3` are unchanged. The CoT-specific piece is the launch command
+(`FULL=1` runs one `cot-full-r128` stage per trio model, cap 0 = all rows,
+on the FULL annotated pool — only after the smoke gate above is green):
+
+```bash
+ssh -i .ec2_lean_train_key.pem ubuntu@<public_ip>
+FULL=1 nohup bash /opt/train/lean_cot_recipe.sh > /opt/train/out/cot-recipe-full.stdout.log 2>&1 &
+```
+
+**Two-block spanning is a MANUAL flow** — one 72h-class block will not
+cover a ~78h/model (pre-prune) sequential trio run:
+
+1. Block A ends; AWS reclaims the box (~30 min warning). The orchestrator's
+   90s S3 sync + `--save-steps 100` checkpoints already cover this — nothing
+   to do here but let it happen.
+2. Have block B `cb-purchase`d and `cb-status`-confirmed active ahead of
+   time, so there's no idle gap between blocks.
+3. `provision --capacity-reservation <block B id>` (or `auto`) re-launches
+   into block B. Confirm block A's box reads terminated via `status` first
+   — `provision --capacity-reservation` refuses if a live box is still
+   recorded in the state file.
+4. `setup` again (a fresh box has a fresh NVMe — datasets, trainer, and
+   both orchestrators need re-uploading) and `attach-s3` again (fresh
+   instance profile attachment).
+5. Relaunch `FULL=1 nohup bash /opt/train/lean_cot_recipe.sh &`. Per-stage
+   S3 completion-check + `--resume-from-checkpoint auto` picks back up from
+   the last checkpoint synced before the reclaim — continuity crosses the
+   block boundary automatically; only the box-level orchestration above is
+   manual.
+
+### Curation prune — TODO round-1.5
+
+Before annotating the remaining pool for the full run, research finding #8
+(MPS-Prover: pruning ~40% of redundant training rows loses nothing, and
+improves results) calls for a near-dup self-prune over
+`novel_premises_train_stepk1_decontam.jsonl`, reusing
+`smolbench.deduction.lean.decontam`'s MinHash/LSH machinery (its K2
+near-duplicate index) in SELF-dedup mode — one pool row against another,
+not against the eval holdout. Expected cut ~30–40%, shrinking both the
+remaining annotation spend and the Sizing table's 56k-row wall time
+proportionally. **Not implemented in round 1** — no prune script exists yet;
+do this before the `--limit 0` full annotation pass below.
+
+Full annotation, once pruned (or, if the prune is skipped, run as-is against
+the full pre-prune pool):
+
+```bash
+AWS_PROFILE=rengz .venv/bin/python scripts/annotate_lean_cot.py --style think  --limit 0  # Qwen
+AWS_PROFILE=rengz .venv/bin/python scripts/annotate_lean_cot.py --style fenced --limit 0  # both dense bases
+```
+
+`--limit 0` selects every row in `--dataset` (no priority ranking, unlike a
+capped run), which trivially superset-includes the smoke's 8,000 rows by
+`(full_name, k)` identity. Resume keys off `--out`, and the full run's
+default `--out` (`cot_stepk1_think_full.jsonl`) differs from the smoke's
+(`cot_stepk1_think_8k.jsonl`) — `cp` the smoke output to the full run's
+default path first if you want resume to skip (and not re-pay for) those
+8,000 rows; otherwise the ~$15 duplicate spend is small relative to the
+full run's ~$75–200 and it's fine to just let it re-annotate.
+
+### Deferred to round 2
+
+- **Compiler-feedback self-correction / DPO-on-errors** (research finding
+  #3): retrain on the model's own FAILED rollouts paired with the Lean
+  compiler's error message, either as SFT self-correction turns or a DPO
+  preference pair (successful vs. failed proof of the same cell). Needs a
+  harvest pass over `verdict != "success"` rows — the inverse filter of
+  `harvest_expert_iter.py`'s success-only gate. Not built.
+- **Lean-STaR-style rationale-reproduction filtering**: keep a rationale
+  only if re-feeding it to the trainee model, without the ground-truth
+  tail, reproduces (or nearly reproduces) the same tail — a
+  faithfulness-by-reconstruction filter, distinct from the judge pass
+  below. Not built.
+- **`annotate_lean_cot.py --judge-sample N`**: parsed but reserved
+  (`default=0`, prints "not implemented in round 1" and exits 1 if set) —
+  an LLM-judge faithfulness pass over `N` sampled rationales.
+
+### Expert iteration
+
+Gated on the smoke: closing the self-generated-proof loop is only worth the
+spend once the CoT format itself is confirmed to help.
+
+```bash
+set -a; source notebooks/periodic/keys.env; set +a
+.venv-lean/bin/python scripts/lean_ec2_sweep.py --phase expert-iter --cot-smoke \
+  --only qwen3-lean-cot-r128
+# -> notebooks/lean/results/runs/lean_expert_iter/all_rows.jsonl
+#    (pass@8, temperature 1.0, novel_premises/train, stepk:1, source=with_proof)
+
+.venv/bin/python scripts/harvest_expert_iter.py \
+  --run-dir notebooks/lean/results/runs/lean_expert_iter --style think \
+  --out notebooks/lean/data/sft/expert_iter_r1_think.jsonl \
+  --easy-at 0.75 --min-successes 1 --max-per-theorem 2
+```
+
+`--cot-smoke --only qwen3-lean-cot-r128` restricts the sweep to the one arm
+worth harvesting from (serving the `cot8k-r128` adapter at rank 128).
+`harvest_expert_iter.py` keeps verified successes below the `--easy-at`
+difficulty ceiling, dedups per theorem, decontaminates from the VERIFIED
+proof (never the rationale), and writes rows in the trained wire shape. Feed
+the output into a round-2 anneal — e.g. `lean_lora_sft.py --init-adapter
+<cot8k-r128 adapter> --dataset expert_iter_r1_think.jsonl` — which is not
+yet wired into `lean_cot_recipe.sh` as its own stage; run it as a manual
+`lean_train_ec2.py train` invocation until a round-2 orchestrator stage
+exists.
+
 ## Results policy
 
 `notebooks/lean/results/` is **committed** to the repo, per this repo's
