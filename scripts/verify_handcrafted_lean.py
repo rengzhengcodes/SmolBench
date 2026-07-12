@@ -136,8 +136,10 @@ FORBIDDEN_SRC_RE = re.compile(
 #: flagged for review rather than hard-failed.
 UNIVERSE_STAR_RE = re.compile(r"(?:Type|Sort)\s*\*")
 
-#: `#print axioms` output, both shapes (stdout, one line per directive).
-_AXIOMS_DEPENDS_RE = re.compile(r"^'([^']+)' depends on axioms: \[(.*)\]$", re.MULTILINE)
+#: `#print axioms` output, both shapes. The axiom list wraps across lines
+#: once it exceeds the pretty-printer width (~7+ axioms), so the bracket
+#: body is matched with a newline-tolerant negated class, not `.*$`.
+_AXIOMS_DEPENDS_RE = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _AXIOMS_NONE_RE = re.compile(r"^'([^']+)' does not depend on any axioms$", re.MULTILINE)
 
 #: Binder names in a theorem signature: ``(h1 : P -> Q)`` etc.
@@ -315,6 +317,7 @@ def parse_axioms(stdout: str) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for m in _AXIOMS_DEPENDS_RE.finditer(stdout):
         out[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
+
     for m in _AXIOMS_NONE_RE.finditer(stdout):
         out[m.group(1)] = []
     return out
@@ -349,10 +352,12 @@ def compile_lean(source: str, timeout: float) -> dict:
     combined = stdout + "\n" + stderr
     errors = re.findall(r"^.*: error: .*$", combined, re.MULTILINE)
     has_sorry = "declaration uses 'sorry'" in combined
+    unused = re.findall(r"^.*unused variable.*$", combined, re.MULTILINE)
     return {
         "ok": rc == 0 and not errors and not has_sorry and not timed_out,
         "errors": errors,
         "sorry": has_sorry,
+        "unused": unused,
         "stdout": stdout,
         "stderr": stderr,
         "wall_ms": wall_ms,
@@ -517,6 +522,10 @@ def verify_row(row: dict, *, timeout: float) -> dict:
     if not res["ok"]:
         first = res["errors"][0] if res["errors"] else (res["stderr"].strip().splitlines() or ["unknown"])[-1]
         return fail("compile_error:" + first[:200])
+    if res["unused"]:
+        # Dead haves/binders compile, but they are exactly the proof text a
+        # reasoning chain ends up rationalizing falsely (audit-found class).
+        return fail("unused_variable:" + res["unused"][0][:200])
 
     # 4. axiom audit
     printed = parse_axioms(res["stdout"])
@@ -549,6 +558,16 @@ def verify_row(row: dict, *, timeout: float) -> dict:
         ]
         if not mentioned:
             return fail("provenance:provided_material_unreferenced")
+    if row["provision_style"] == "axiom":
+        # The STATEMENT itself must name provided material -- a goal that is
+        # pure ambient arithmetic (e.g. `∃ m, n < m`) is provable with the
+        # axioms deleted, making the provision decorative (audit-found class).
+        stated = [
+            n for n in provided_names
+            if re.search(rf"(?<![\w.']){re.escape(n)}(?![\w'])", row["theorem_src"])
+        ]
+        if not stated:
+            return fail("provenance:statement_ignores_axioms")
 
     # 6. consistency probe (any row that declares axioms)
     if declared_axioms:

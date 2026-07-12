@@ -1,0 +1,165 @@
+{
+  "config": {
+    "mathlib_commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+    "toolchain": "leanprover/lean4:v4.7.0-rc2",
+    "preamble": "import Mathlib.Tactic\nset_option autoImplicit false\nset_option relaxedAutoImplicit false",
+    "preamble_sha256": "23a9bec9a0574e8eeaad45f132bbd01c56894441a6ae2d1265c64f7decc7253d",
+    "ban_list": [
+      "simp",
+      "simp_all",
+      "simp_rw",
+      "simpa",
+      "dsimp",
+      "rw",
+      "rwa",
+      "erw",
+      "exact",
+      "exacts",
+      "exact_mod_cast",
+      "apply",
+      "rfl"
+    ],
+    "core_axiom_allowlist": [
+      "Classical.choice",
+      "Quot.sound",
+      "propext"
+    ],
+    "compile_timeout_s": 60.0,
+    "jobs": 12,
+    "max_rationale_chars": 2500,
+    "dedupe_fail_jaccard": 0.8
+  },
+  "stats": {
+    "rows": 500,
+    "verified_pass": 500,
+    "verify_failures": {},
+    "provision_style": {
+      "axiom": 136,
+      "hypothesis": 176,
+      "definition": 188
+    },
+    "category_counts": {
+      "prop_logic": 50,
+      "custom_inductive": 50,
+      "rec_arithmetic": 50,
+      "algebra_ineq": 50,
+      "finite_case": 50,
+      "classical": 50,
+      "existential": 50,
+      "equational_calc": 50,
+      "extensionality": 50,
+      "order_mono": 50
+    },
+    "tactic_head_histogram": {
+      "have": 368,
+      "omega": 187,
+      "decide": 120,
+      "assumption": 108,
+      "show": 106,
+      "refine": 91,
+      "constructor": 86,
+      "calc": 83,
+      "cases": 68,
+      "intro": 61,
+      "induction": 58,
+      "funext": 50,
+      "obtain": 40,
+      "unfold": 40,
+      "rcases": 30,
+      "contradiction": 27,
+      "nlinarith": 25,
+      "by_cases": 20,
+      "ring": 19,
+      "right": 17,
+      "linarith": 17,
+      "left": 15,
+      "fin_cases": 15,
+      "all_goals": 15,
+      "interval_cases": 14,
+      "specialize": 10,
+      "positivity": 8,
+      "gcongr": 8,
+      "congrArg": 7,
+      "by_contra": 5,
+      "contrapose!": 5,
+      "clear": 5,
+      "use": 4,
+      "injection": 4,
+      "rintro": 4,
+      "let": 3,
+      "subst": 3,
+      "generalize": 3,
+      "ring_nf": 2,
+      "split_ifs": 2,
+      "revert": 2,
+      "push_neg": 2,
+      "norm_num": 1,
+      "mul_nonneg": 1,
+      "mul_le_mul_of_nonneg_right": 1,
+      "star2": 1
+    },
+    "wall_ms": {
+      "p50": 2284,
+      "p90": 2647,
+      "max": 3546
+    },
+    "universe_star_flags": []
+  },
+  "decontamination": {
+    "skipped": false,
+    "eval_specs": [
+      [
+        "novel_premises",
+        "val"
+      ],
+      [
+        "novel_premises",
+        "test"
+      ]
+    ],
+    "index": {
+      "names": 4000,
+      "statements": 3981,
+      "states": 19157,
+      "chains": 1208,
+      "tactic_ngrams": 7729,
+      "pairs": 23303
+    },
+    "holdout_names_sha256": "57773d9426152bfb16cf4f343aded303cea3e56070e2f1059ca5af3ad79d92b9",
+    "hits_total": 0,
+    "eval_name_mentions_total": 0
+  },
+  "soundness": {
+    "consistency_probe": {
+      "clean": 150,
+      "inconsistent": 0,
+      "n/a": 350
+    },
+    "negative_control": {
+      "failed_as_required": 176,
+      "still_compiles": 0
+    }
+  },
+  "dedupe": {
+    "fail_pairs_ge_0.8": [],
+    "warn_pairs_0.6_0.8": [
+      [
+        "U095",
+        "U490",
+        0.76
+      ],
+      [
+        "U234",
+        "U236",
+        0.605
+      ],
+      [
+        "U301",
+        "U304",
+        0.694
+      ]
+    ]
+  },
+  "output_jsonl": "unrelated_500.jsonl",
+  "sft_jsonl": "unrelated_500_sft.jsonl"
+}
