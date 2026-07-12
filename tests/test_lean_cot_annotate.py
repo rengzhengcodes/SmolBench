@@ -176,6 +176,33 @@ def test_qc_gate_too_long():
     assert ac._qc_gate("x" * 2500, "omega", max_rationale_chars=2500) is None
 
 
+@pytest.mark.parametrize(
+    "hedged",
+    [
+        "This rewrites via the lemma `foo_comm` or similar, closing the goal.",
+        "The lemma likely states that addition commutes, so `simp` closes it.",
+        "Probably the hypothesis h gives the bound we need for the final step.",
+        "PERHAPS the coercion is stripped first; then the equality is direct.",
+    ],
+)
+def test_qc_gate_hedging_rejected(hedged):
+    assert ac._qc_gate(hedged, "omega", max_rationale_chars=2500) == "hedging"
+
+
+def test_qc_gate_hedging_no_interior_word_match():
+    # "unlikely" must NOT trip the \b-anchored "likely" pattern -- committed
+    # mathematical prose legitimately uses it.
+    ok = "It is unlikely simplification alone suffices, so we invoke the hypothesis h directly to conclude."
+    assert ac._qc_gate(ok, "omega", max_rationale_chars=2500) is None
+
+
+def test_qc_gate_hedging_checked_after_size_gates():
+    # Gate ordering: a hedged rationale that is ALSO too long counts against
+    # the earlier reason (histogram attribution is first-trip-only).
+    hedged_long = ("perhaps " * 400).strip()
+    assert ac._qc_gate(hedged_long, "omega", max_rationale_chars=2500) == "too_long"
+
+
 def test_qc_gate_restatement_single_line_tail_needs_exact_match():
     tail = "omega"
     assert ac._qc_gate("omega", tail, max_rationale_chars=2500) == "restatement"
@@ -635,6 +662,42 @@ def test_annotator_retries_connection_errors():
 
     assert annotator.annotate("prompt") == "ok"
     assert delays == [5.0]
+
+
+class MultiBlockStubClient:
+    """Converse stub returning a caller-supplied content-block list verbatim,
+    for testing reply shapes StubClient can't produce (reasoning models)."""
+
+    def __init__(self, blocks) -> None:
+        self._blocks = blocks
+
+    def converse(self, *, modelId, system, messages, inferenceConfig):  # noqa: N803
+        return {"output": {"message": {"content": self._blocks}}}
+
+
+def test_annotator_skips_reasoning_blocks_and_joins_text_blocks():
+    """Reasoning models (DeepSeek-R1) prepend a reasoningContent block; the
+    annotation is the concatenation of the text blocks only."""
+    client = MultiBlockStubClient(
+        [
+            {"reasoningContent": {"reasoningText": {"text": "scratchwork the caller must never see"}}},
+            {"text": "the actual "},
+            {"text": "rationale"},
+        ]
+    )
+    annotator = ac.BedrockAnnotator(client=client, model="m", max_tokens=100, max_retries=0)
+    assert annotator.annotate("prompt") == "the actual rationale"
+
+
+def test_annotator_returns_empty_when_reply_has_no_text_block():
+    """A reasoning model that hits maxTokens mid-think yields only a
+    reasoningContent block -- annotate() returns "" (QC rejects downstream)
+    rather than raising."""
+    client = MultiBlockStubClient(
+        [{"reasoningContent": {"reasoningText": {"text": "never finished thinking"}}}]
+    )
+    annotator = ac.BedrockAnnotator(client=client, model="m", max_tokens=100, max_retries=0)
+    assert annotator.annotate("prompt") == ""
 
 
 # ---------------------------------------------------------------------------

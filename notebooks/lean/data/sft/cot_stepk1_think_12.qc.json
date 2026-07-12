@@ -1,0 +1,35 @@
+{
+  "config": {
+    "style": "think",
+    "seed": 1776
+  },
+  "kept_this_run": 10,
+  "rationale_length_chars": {
+    "min": 598,
+    "p10": 598.0,
+    "p25": 612.75,
+    "p50": 659.5,
+    "p75": 730.5,
+    "p90": 754.5,
+    "p99": 774.75,
+    "max": 777,
+    "mean": 674.9
+  },
+  "distinct_5gram_ratio": {
+    "sample_size": 10,
+    "total_5grams": 1205,
+    "ratio": 0.9651452282157676
+  },
+  "grounding_rate": {
+    "grounded": 8,
+    "total": 10,
+    "rate": 0.8
+  },
+  "holdout_name_mentions": {
+    "rows": 0,
+    "total": 0
+  },
+  "drop_histogram": {
+    "hedging": 2
+  }
+}

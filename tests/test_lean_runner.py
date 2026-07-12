@@ -7,6 +7,7 @@ off a marker string in the model's reply. This exercises the runner's dispatch,
 seed threading, row schema, resume, and artifact writing on ANY interpreter.
 """
 
+import gzip
 import json
 import subprocess
 import sys
@@ -21,6 +22,7 @@ import pytest
 
 import smolbench.deduction.lean.context as context
 import smolbench.deduction.lean.corpus as corpus
+import smolbench.deduction.lean.lean3 as lean3
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
 from tests.conftest import StubServer, chat_completion
@@ -915,3 +917,119 @@ def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
 
     mc = {"model": "some-model", "provider": "primeintellect"}
     assert runner._ctx_len_for(mc, _BrokenModule()) == 10**9
+
+
+# ---------------------------------------------------------------------------
+# (p) `write_run_analysis`'s `l3` leak-rate column (WP-B2).
+#
+# Design: `write_run_analysis` is pure JSONL aggregation over an
+# `all_rows.jsonl` it can be handed directly (no Dojo session, no sweep) --
+# so, mirroring `tests/test_lean_analyze_passn.py`'s approach for the
+# separate `cli.cmd_analyze` table (NOT this function; the two share a
+# near-identical column layout by convention but are independent
+# implementations, and this WP only touches `write_run_analysis`), these
+# tests hand-write a small `all_rows.jsonl` straight into a tmp run dir and
+# call `write_run_analysis` directly rather than driving a full
+# `FakeVerifier` sweep, which would be unable to control `candidate_proof`
+# content precisely enough to target specific relic kinds.
+# ---------------------------------------------------------------------------
+
+
+def _l3_row(*, model: str = "m", rung: str = "stepk:0", verdict: str, candidate_proof: str) -> dict:
+    """Build one synthetic ``kind: "cell"`` row for the `l3`-column tests.
+
+    Only the fields `write_run_analysis` actually reads are populated;
+    token/timing fields are omitted deliberately (the function's own
+    ``r.get(..., 0)`` defaults cover their absence) to keep each fixture
+    row focused on the one thing each test varies: `candidate_proof`.
+    """
+    return {
+        "kind": "cell", "rung": rung, "model": model,
+        "verdict": verdict, "candidate_proof": candidate_proof,
+    }
+
+
+def _write_all_rows(run_dir: Path, rows: list[dict]) -> None:
+    """Write `rows` as ``run_dir/all_rows.jsonl``, creating `run_dir` first."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with (run_dir / "all_rows.jsonl").open("w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def _l3_data_row(analysis_text: str) -> list[str]:
+    """Whitespace-split fields of the single (rung, model) data row.
+
+    `write_run_analysis` emits exactly one table (unlike `cli.cmd_analyze`'s
+    three), so the data row directly follows the ``"-" * len(header)``
+    separator line; every field is whitespace-delimited with no internal
+    spaces (see the header's fixed-width format strings in `runner.py`), so
+    a plain `str.split()` per row is unambiguous.
+    """
+    lines = analysis_text.splitlines()
+    sep_idx = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    (row,) = [lines[sep_idx + 1]] if not lines[sep_idx + 1].startswith("#") else [lines[sep_idx + 2]]
+    return row.split()
+
+
+def _header_l3_index(analysis_text: str) -> int:
+    """Column index of ``l3`` in the (whitespace-split) table header."""
+    header = next(line for line in analysis_text.splitlines() if "l3" in line and "exc" in line)
+    return header.split().index("l3")
+
+
+def test_l3_counts_parse_level_relics_and_excludes_clean(tmp_path, monkeypatch):
+    """`existsi z` and `intros f,` are parse-level relics (no align map
+    needed -- see `lean3.find_relics`'s `existsi` and `trailing-comma`
+    rules); `rfl` is clean Lean 4. Chosen so this test is env-independent:
+    with no align map, `l3` must count exactly 2 of the 3 cells, not 3, and
+    the "align asset not built" marker line must appear."""
+    # Point SMOLBENCH_LEAN_DATA at a tmp subdir so `AlignMap.load()` (which
+    # resolves the asset BESIDE the data root, at data_root().parent --
+    # i.e. tmp_path here, which holds no asset) deterministically returns
+    # `None` regardless of whether a real `lean3_align.json.gz` has been
+    # built elsewhere in this checkout.
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
+    run_dir = tmp_path / "run"
+    _write_all_rows(run_dir, [
+        _l3_row(verdict="lean_error", candidate_proof="existsi z"),
+        _l3_row(verdict="lean_error", candidate_proof="intros f,"),
+        _l3_row(verdict="success", candidate_proof="rfl"),
+    ])
+
+    runner.write_run_analysis(run_dir)
+    text = (run_dir / "analysis.txt").read_text()
+
+    assert "# l3 = parse-level only (lean3_align.json.gz not built)" in text
+    fields = _l3_data_row(text)
+    assert fields[0] == "stepk:0" and fields[1] == "m"
+    assert fields[2] == "1/3"  # only the clean `rfl` row verified.
+    l3_idx = _header_l3_index(text)
+    assert fields[l3_idx] == "2"  # existsi + trailing-comma, NOT the clean rfl.
+    assert "l3=2" in text.splitlines()[-1]  # per-model totals line.
+
+
+def test_l3_counts_name_level_relic_when_align_map_present(tmp_path, monkeypatch):
+    """With a `lean3_align.json.gz` present, a comma-free mathlib3 lemma
+    name (`supr_le`, uncatchable at parse level alone) is now counted, and
+    the "not built" marker line disappears."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(data_dir))
+    data_dir.mkdir(parents=True)
+    # The asset lives BESIDE the benchmark dir (data_root().parent -- see
+    # lean3.AlignMap.load), i.e. at tmp_path here, not inside data_dir.
+    with gzip.open(tmp_path / lean3.ALIGN_ASSET_NAME, "wt", encoding="utf-8") as f:
+        json.dump({"lean3_to_lean4": {"supr_le": "iSup_le"}}, f)
+
+    run_dir = tmp_path / "run"
+    _write_all_rows(run_dir, [
+        _l3_row(verdict="lean_error", candidate_proof="apply supr_le"),
+    ])
+
+    runner.write_run_analysis(run_dir)
+    text = (run_dir / "analysis.txt").read_text()
+
+    assert "not built" not in text
+    fields = _l3_data_row(text)
+    l3_idx = _header_l3_index(text)
+    assert fields[l3_idx] == "1"

@@ -1,0 +1,41 @@
+{
+  "config": {
+    "dataset": "/workspace/SmolBench/notebooks/lean/data/sft/novel_premises_train_stepk1_decontam.jsonl",
+    "out": "/workspace/SmolBench/notebooks/lean/data/sft/lean3_repair_stepk1_1k6.jsonl",
+    "limit": 1600,
+    "identity_frac": 0.1,
+    "seed": 1776,
+    "align_asset": {
+      "path": "/workspace/SmolBench/notebooks/lean/data/lean3_align.json.gz",
+      "sha256": "2a3d016a0d7643fa03f89b6b4466f58d00f8a1c4580da3a81f8b3c2469819b01"
+    }
+  },
+  "stats": {
+    "source_rows": 55343,
+    "corrupted_emitted": 1600,
+    "identity_emitted": 160,
+    "skipped_no_transform": 0,
+    "decontam_dropped": {},
+    "transform_histogram": {
+      "binder-comma": 26,
+      "existsi": 1,
+      "lean3-name": 273,
+      "refl": 58,
+      "trailing-comma": 1476
+    },
+    "decontam_dropped_total": 0
+  },
+  "decontamination": {
+    "holdout_size": 4000,
+    "holdout_fingerprint": "6708b9253b524648607b9db8c8455750d55288ba7f4381f76f5ca3978540d598",
+    "index": {
+      "names": 4000,
+      "statements": 3981,
+      "states": 19157,
+      "chains": 1208,
+      "tactic_ngrams": 7729,
+      "pairs": 23303
+    }
+  },
+  "output_jsonl": "lean3_repair_stepk1_1k6.jsonl"
+}

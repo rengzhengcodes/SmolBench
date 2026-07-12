@@ -26,6 +26,20 @@
 #     list. Nothing in this script enforces that; it is a spend decision
 #     the operator makes, same as the cb-purchase gate below it. ***
 #
+# L3R (default auto): mixes the Lean3-relic repair auxiliary SFT set
+#   (/opt/train/lean3_repair_stepk1_1k6.jsonl, built by
+#   scripts/build_lean3_repair_sft.py) into EVERY stage via
+#   `--extra-dataset`, so the trainer sees a small, deterministic
+#   corruption->repair coordination set alongside the stage's own targets.
+#   L3R=1 forces it on, L3R=0 forces it off, and unset/`auto` (the default)
+#   turns it on iff that file exists on the box at runtime -- so an off-box
+#   DRYRUN with L3R unset behaves EXACTLY as it did before this env var
+#   existed (the file never exists off-box). When on, every stage name gets
+#   an `-l3r` infix inserted right before its trailing `-r128` rank suffix
+#   (e.g. `bare8k-r128` -> `bare8k-l3r-r128`) so its S3 checkpoint path can
+#   never collide with -- and silently resume into, mixing L3R and non-L3R
+#   data mid-run -- a non-L3R run of the same stage.
+#
 # Sizing (COMMON: --grad-accum 16 --batch-size 1 -> effective batch 16;
 # --epochs 2):
 #   8k rows:  8000/16 = 500 steps/epoch x2 epochs = 1000 steps
@@ -57,6 +71,7 @@ set -uo pipefail
 
 DRYRUN=${DRYRUN:-0}
 FULL=${FULL:-0}
+L3R=${L3R:-auto}
 
 VENV=/opt/train/venv/bin
 REG=us-west-2
@@ -95,6 +110,25 @@ log() {
   fi
 }
 
+# Resolve L3R to an on/off decision + a human-readable reason, once, before
+# any stage runs. `-f` is a read-only stat -- safe under DRYRUN (no writes,
+# no /opt/train tree required off-box) and cheap for real runs alike.
+L3R_DATASET=/opt/train/lean3_repair_stepk1_1k6.jsonl
+if [ "$L3R" == "1" ]; then
+  L3R_ON=1; L3R_REASON="forced"
+elif [ "$L3R" == "0" ]; then
+  L3R_ON=0; L3R_REASON="forced"
+elif [ -f "$L3R_DATASET" ]; then
+  L3R_ON=1; L3R_REASON="auto: dataset present"
+else
+  L3R_ON=0; L3R_REASON="auto: dataset absent"
+fi
+if [ "$L3R_ON" == "1" ]; then
+  log "L3R=on ($L3R_REASON)"
+else
+  log "L3R=off ($L3R_REASON)"
+fi
+
 # run BASE_KEY BASE_MODEL STAGE MODEL_FLAGS DATASET CAP
 #   BASE_KEY   TRIO key (S3 lives under $BUCKET/$BASE_KEY/$STAGE/, matching
 #              lean_train_ec2.py's per-model checkpoint layout).
@@ -107,11 +141,24 @@ log() {
 #   CAP        --max-examples value (0 = all rows, for FULL mode).
 run() {
   local base_key=$1 base_model=$2 stage=$3 model_flags=$4 ds=$5 cap=$6
+
+  # L3R: rewrite the stage name (`-l3r` infix before the trailing `-r128`
+  # rank suffix -- see the header comment for why) and append
+  # --extra-dataset for every downstream use of $stage (S3 dest, local out
+  # dir, log file name all derive from it below), so an L3R and non-L3R run
+  # of the "same" stage can never share -- and silently cross-resume into --
+  # the same checkpoint path.
+  local extra_flag=""
+  if [ "$L3R_ON" == "1" ]; then
+    stage="${stage%-r128}-l3r-r128"
+    extra_flag=" --extra-dataset $L3R_DATASET"
+  fi
+
   local dest="$BUCKET/$base_key/$stage/"
   local out="/opt/train/out/$base_key/$stage"
   local log_file="/opt/train/out/$base_key-$stage.log"
   local ss="/opt/train/out/$base_key-$stage.SYNCSTOP"
-  local cmd="$VENV/python scripts/lean_lora_sft.py --base-model $base_model $COT_COMMON $model_flags --dataset /opt/train/$ds --max-examples $cap --output-dir $out"
+  local cmd="$VENV/python scripts/lean_lora_sft.py --base-model $base_model $COT_COMMON $model_flags --dataset /opt/train/$ds --max-examples $cap --output-dir $out$extra_flag"
 
   if [ "$DRYRUN" == "1" ]; then
     log "DRYRUN $base_key/$stage: $cmd"

@@ -1,0 +1,18 @@
+{
+  "config": {
+    "source_commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+    "cache_path": "/home/ai/.cache/lean_dojo/leanprover-community-mathlib4-fe4454af900584467d21f4fd4fe951d29d9332a7/mathlib4"
+  },
+  "stats": {
+    "files_scanned": 4079,
+    "align_lines": 130939,
+    "pairs": 130752,
+    "duplicate_lean3_keys": 187,
+    "malformed_lines": 0
+  },
+  "asset": {
+    "name": "lean3_align.json.gz",
+    "sha256": "2a3d016a0d7643fa03f89b6b4466f58d00f8a1c4580da3a81f8b3c2469819b01",
+    "bytes": 1144606
+  }
+}

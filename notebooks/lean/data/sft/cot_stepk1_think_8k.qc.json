@@ -1,0 +1,77 @@
+{
+  "config": {
+    "style": "think",
+    "seed": 1776
+  },
+  "kept_this_run": 4724,
+  "rationale_length_chars": {
+    "min": 147,
+    "p10": 475.3,
+    "p25": 597.0,
+    "p50": 774.5,
+    "p75": 998.25,
+    "p90": 1268.6999999999998,
+    "p99": 1880.3899999999967,
+    "max": 2448,
+    "mean": 830.6435224386114
+  },
+  "distinct_5gram_ratio": {
+    "sample_size": 1000,
+    "total_5grams": 146245,
+    "ratio": 0.9248452938562002
+  },
+  "grounding_rate": {
+    "grounded": 3439,
+    "total": 4724,
+    "rate": 0.7279847586790855
+  },
+  "holdout_name_mentions": {
+    "rows": 10,
+    "total": 18
+  },
+  "drop_histogram": {
+    "forbidden_markup": 2,
+    "hedging": 529,
+    "restatement": 45,
+    "too_long": 111
+  },
+  "post_filter": {
+    "rule": "drop rows whose RATIONALE mentions an eval-holdout name absent from the ground-truth tail (tail-shared mentions are inherent to the dataset and paired across the bare-control arm)",
+    "dropped_keys": [
+      [
+        "Filter.map_val_atTop_of_Ici_subset",
+        12
+      ],
+      [
+        "IntermediateField.adjoin_simple_le_iff",
+        0
+      ],
+      [
+        "Irreducible.natSepDegree_eq_one_iff_of_monic",
+        0
+      ],
+      [
+        "Lagrange.sum_basis",
+        11
+      ],
+      [
+        "List.erase_cons_head",
+        0
+      ],
+      [
+        "Nat.Coprime.gcd_mul_right_cancel",
+        0
+      ],
+      [
+        "Set.toFinset_Ici",
+        1
+      ],
+      [
+        "eq_compl_iff_isCompl",
+        1
+      ]
+    ],
+    "rows_after": 7305,
+    "rationale_only_holdout_mentions_after": 0
+  }
+}

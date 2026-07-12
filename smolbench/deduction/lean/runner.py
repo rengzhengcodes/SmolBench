@@ -66,6 +66,7 @@ from typing import Iterable
 import smolbench
 from smolbench.evals.provider import provider_module
 
+from . import lean3
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
 from .corpus import (
     BenchmarkTheorem,
@@ -74,6 +75,13 @@ from .corpus import (
     load_split,
 )
 from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
+
+# Design: `lean3` is imported at module top (unlike `.verify` below), because
+# it is py3.14-safe by construction -- stdlib plus `.corpus` only, no
+# lean_dojo/torch/datasets (see lean3.py's own module docstring, "Design
+# constraints"). It is used unconditionally by `write_run_analysis` below to
+# compute the `l3` leak-rate column, so there is no lazy-import seam to
+# preserve here the way there is for `.verify`.
 
 # Design: NO top-level `from .verify import ...` here. `.verify` imports
 # `lean_dojo`, which is only installable in the dedicated `.venv-lean`
@@ -577,16 +585,63 @@ def write_theorem_summary(theorem_dir: Path) -> None:
 
 
 def write_run_analysis(run_dir: Path) -> None:
-    """Read all_rows.jsonl, dump a (rung, model) pass-rate table to analysis.txt."""
+    """Read all_rows.jsonl, dump a (rung, model) pass-rate table to analysis.txt.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Sweep output directory containing ``all_rows.jsonl`` (see the module
+        docstring's Output layout). Regenerated wholesale on every call --
+        not merged with a prior ``analysis.txt``.
+
+    Returns
+    -------
+    None
+        Writes ``run_dir / "analysis.txt"`` as a side effect. A no-op
+        (returns without writing anything) if ``all_rows.jsonl`` does not
+        exist yet.
+
+    Notes
+    -----
+    Table columns per (rung, model) cell: pass/N, rate, verdict-breakdown
+    counts (``lerr``/``incp``/``gvup``/``rplf``/``exc``), ``l3``, then
+    average prompt/completion tokens and wall time.
+
+    ``l3`` counts CELLS whose ``candidate_proof`` contains at least one Lean
+    3 relic (`smolbench.deduction.lean.lean3.find_relics`), regardless of
+    verdict -- a *successful* verification with a relic present is
+    essentially impossible (Lean would reject Lean 3 syntax/lemma names
+    outright), except for a trailing-comma-free name coincidence, so in
+    practice ``l3`` is a subset of the failure counts already in the row.
+    It is the measurable endpoint the anti-Lean3-leakage training
+    intervention (corruption/repair SFT rows, see `lean3.corrupt_tail`) is
+    meant to drive toward zero, tracked here so a run-over-run comparison
+    doesn't require re-scanning every ``candidate_proof`` by hand.
+
+    Name-level relic detection (the ``lean3-name`` rule in `find_relics`,
+    e.g. ``supr_le`` -> ``iSup_le``) additionally requires the
+    ``lean3_align.json.gz`` asset (`lean3.AlignMap.load`); when it has not
+    been built yet, `l3` gracefully degrades to parse-level-only detection
+    (Lean 3 tactic *syntax* -- ``refl``, ``existsi``, stray binder/trailing
+    commas, ``begin``/``end``) and a marker line is written into
+    ``analysis.txt`` immediately after the table header so a reader (human
+    or machine) of an older run knows name-level relics were never counted,
+    rather than silently under-reporting `l3` with no indication why.
+    """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
         return
+
+    # Design: loaded once per call, not once per row -- `AlignMap.load`
+    # does a gzip+JSON read from disk, and a sweep's `all_rows.jsonl` can
+    # have thousands of cell rows sharing the same align map.
+    align = lean3.AlignMap.load()
 
     cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0,
+            "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
         }
     )
     n_sanity_pass = 0
@@ -617,6 +672,8 @@ def write_run_analysis(run_dir: Path) -> None:
             c["tok_in"] += r.get("prompt_tokens", 0)
             c["tok_out"] += r.get("completion_tokens", 0)
             c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+            if lean3.find_relics(r.get("candidate_proof") or "", align):
+                c["l3"] += 1
 
     out: list[str] = []
     out.append(f"# {n_rows} cells; sanity {n_sanity_pass} pass / {n_sanity_fail} fail\n")
@@ -628,11 +685,17 @@ def write_run_analysis(run_dir: Path) -> None:
 
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'l3':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
     )
     out.append(header)
     out.append("-" * len(header))
+    if align is None:
+        # Graceful-degrade marker (see the docstring's Notes): without the
+        # align asset, `l3` only ever reflects parse-level relics -- a run
+        # analyzed before/without `scripts/build_lean3_align_map.py` having
+        # been run must not be silently mistaken for a true leak-free run.
+        out.append(f"# l3 = parse-level only ({lean3.ALIGN_ASSET_NAME} not built)")
     for (rung, model), c in sorted(cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])):
         n = c["n"]
         rate = c["success"] / n if n else 0
@@ -642,23 +705,24 @@ def write_run_analysis(run_dir: Path) -> None:
         out.append(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['l3']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
         )
 
     out.append("\n# per-model totals")
     by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0}
+        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
     )
     for (_, model), c in cells.items():
         by_model[model]["n"] += c["n"]
         by_model[model]["success"] += c["success"]
         by_model[model]["tok_in"] += c["tok_in"]
         by_model[model]["tok_out"] += c["tok_out"]
+        by_model[model]["l3"] += c["l3"]
     for model, m in sorted(by_model.items()):
         rate = m["success"] / m["n"] if m["n"] else 0
         out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  l3={m['l3']}")
     (run_dir / "analysis.txt").write_text("\n".join(out) + "\n")
 
 

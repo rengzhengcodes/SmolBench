@@ -105,10 +105,13 @@ from smolbench.deduction.lean.decontam import HoldoutIndex  # noqa: E402
 _DATA_SFT = _REPO_ROOT / "notebooks" / "lean" / "data" / "sft"
 _DEFAULT_DATASET = _DATA_SFT / "novel_premises_train_stepk1_decontam.jsonl"
 
-#: Default Bedrock inference-profile id for the annotator. A flag (not a
-#: constant) because the exact profile id in the target account/region is
-#: resolved live later -- see the coordination constants in the plan.
-_DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+#: Default Bedrock model id for the annotator. DeepSeek V3.2 (open-weight,
+#: ON_DEMAND, no inference profile needed) won the 2026-07-12 head-to-head
+#: canary judgment over DeepSeek-R1 and Claude Haiku 4.5: R1's rationales
+#: were fluent but confabulated lemma statements / inverted order relations
+#: on the mathematically substantive rows, while V3.2's stayed faithful --
+#: and Haiku's Bedrock use-case grant never propagated on this account.
+_DEFAULT_MODEL = "deepseek.v3.2"
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +133,26 @@ _ANNOTATION_SUFFIX_TEMPLATE = (
     "Write the internal reasoning (at most 250 words) that would lead from the proof "
     "state to exactly this completion: identify the goal shape, the relevant "
     "hypotheses/premises, and why each tactic applies, in order. Plain prose; inline "
-    "backticks for identifiers are fine. Do NOT restate the completion at the end, do "
-    "NOT use code fences, do NOT use <think> tags."
+    "backticks for identifiers are fine.\n\n"
+    "Accuracy rules -- a subtly wrong justification is worse than a shallow one:\n"
+    "- Copy any hypothesis, inequality, or implication you use exactly as displayed "
+    "in the state above, preserving its direction; never quote it from memory.\n"
+    "- Only assert what a named lemma states if you are certain of its exact "
+    "statement, including any coercions (`↑`, `.toNat`, ...); otherwise describe "
+    "just the transformation the step performs on this goal.\n"
+    "- Do not invent internal mechanisms for tactics such as `simp`; describe what "
+    "changes about the goal instead.\n"
+    "- Describe the goal in your own words rather than restating it verbatim, and "
+    "commit to the lemmas you name -- no hedging like 'or similar', no discarded "
+    "false starts.\n"
+    "- For a term-mode completion (e.g. `exact ...`), give the proof idea -- which "
+    "hypotheses combine to close the goal and why -- without narrating how the "
+    "term typechecks, unless every sub-term's type is visible in the state above.\n"
+    "- Never hedge: if you do not know a lemma's exact statement, say what the "
+    "step does to the goal and move on. The words 'likely', 'probably', "
+    "'perhaps', 'maybe', and 'or similar' must not appear.\n\n"
+    "Do NOT restate the completion at the end, do NOT use code fences or markdown "
+    "headings/lists, do NOT use <think> tags."
 )
 
 #: sha256 over (system, suffix template) -- NOT over any composed prompt
@@ -374,6 +395,22 @@ def _is_restatement(rationale: str, tail: str) -> bool:
     return (hits / len(tail_lines)) >= _RESTATEMENT_LINE_FRACTION
 
 
+#: Case-insensitive hedging tripwire (third-round prompt hardening,
+#: 2026-07-12): two canary rounds showed the annotator filling API-knowledge
+#: gaps either with confident fabrication (only catchable by LLM/human
+#: review) or with overt hedging language -- the latter IS mechanically
+#: detectable, and a hedged rationale is by definition not the committed
+#: reasoning trace the trainee should imitate. Word-boundary phrases only;
+#: deliberately excludes bare "should"/"might" (too common in benign
+#: mathematical prose). "unlikely"/"maybes" etc. do not match (no interior
+#: word boundary).
+_HEDGING_RE = re.compile(
+    r"\b(?:or similar|likely|probably|presumably|perhaps|maybe|"
+    r"i think|not sure|some form of|something like)\b",
+    re.IGNORECASE,
+)
+
+
 def _qc_gate(rationale: str, tail: str, *, max_rationale_chars: int) -> Optional[str]:
     """Run the fixed per-row QC gate sequence; return the first failing reason.
 
@@ -382,7 +419,8 @@ def _qc_gate(rationale: str, tail: str, *, max_rationale_chars: int) -> Optional
     forbidden markup (a code fence or a ``<think>``/``</think>`` tag, either
     of which would break `compose_target`'s round-trip guarantee through
     `extract_tactic_block`); rationale too long; rationale is a restatement
-    of the tail rather than an explanation of it.
+    of the tail rather than an explanation of it; rationale hedges
+    (`_HEDGING_RE`) instead of committing to its explanation.
 
     Parameters
     ----------
@@ -399,7 +437,8 @@ def _qc_gate(rationale: str, tail: str, *, max_rationale_chars: int) -> Optional
     -------
     str or None
         One of ``"empty_rationale"``, ``"forbidden_markup"``, ``"too_long"``,
-        ``"restatement"`` -- or None if `rationale` passes every gate.
+        ``"restatement"``, ``"hedging"`` -- or None if `rationale` passes
+        every gate.
     """
     rationale = rationale.strip()
     if not rationale:
@@ -410,6 +449,8 @@ def _qc_gate(rationale: str, tail: str, *, max_rationale_chars: int) -> Optional
         return "too_long"
     if _is_restatement(rationale, tail):
         return "restatement"
+    if _HEDGING_RE.search(rationale):
+        return "hedging"
     return None
 
 
@@ -594,8 +635,14 @@ class BedrockAnnotator:
         Returns
         -------
         str
-            The raw text of the model's first (and only requested) content
-            block -- NOT yet stripped/QC-gated; callers handle that.
+            The concatenated ``text`` content blocks of the model's reply --
+            NOT yet stripped/QC-gated; callers handle that. Non-text blocks
+            (e.g. the ``reasoningContent`` thinking block that reasoning
+            models such as DeepSeek-R1 emit before their answer) are
+            discarded: the annotation is the answer, never the scratchwork.
+            If the reply holds no text block at all (a reasoning model that
+            hit ``maxTokens`` mid-think), returns ``""`` -- the caller's
+            empty-rationale QC gate rejects and counts the row.
 
         Raises
         ------
@@ -632,7 +679,8 @@ class BedrockAnnotator:
                     messages=[{"role": "user", "content": [{"text": user_text}]}],
                     inferenceConfig={"temperature": 0.0, "maxTokens": self.max_tokens},
                 )
-                return response["output"]["message"]["content"][0]["text"]
+                blocks = response["output"]["message"]["content"]
+                return "".join(b["text"] for b in blocks if "text" in b)
             except Exception as exc:  # noqa: BLE001 -- reclassified via isinstance just below
                 from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError
 

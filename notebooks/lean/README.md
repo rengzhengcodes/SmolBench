@@ -325,6 +325,7 @@ via the EC2 vLLM provider and swept like any other model.
 | `scripts/build_lean_synth_sft.py --arm real` | `novel_premises_train_stepk1_decontam.jsonl` | the real set re-filtered through the content-level keys below (stage-2 anneal set) |
 | `scripts/build_lean_synth_sft.py --arm goedel` | `synth_goedel_v2_24k.jsonl` | SYNTHETIC arm A: 24k seeded-sampled rows of `Goedel-LM/SFT_dataset_v2` (autoformalized competition problems, compiler-verified proofs; statements mathlib-independent), declarations converted to pseudo initial tactic states, CoT stripped |
 | `scripts/build_lean_synth_sft.py --arm leannavigator` | `synth_leannavigator_24k.jsonl` | SYNTHETIC arm B: 24k seeded-sampled `(state, tactic)` pairs of LeanNavigator (Zenodo `13989482`; mathlib state-graph traversal -- mathlib-derived by construction, the high-leak-risk arm) |
+| `scripts/build_lean3_repair_sft.py` | `lean3_repair_stepk1_1k6.jsonl` | AUXILIARY: 1,600 Lean3-corruption→repair rows + 160 identity rows from the decontam real set, re-gated through `HoldoutIndex`; see "Anti-Lean3 repair mix-in (L3R)" below |
 
 Raw synthetic corpora download to `data/synth/` (gitignored): the Goedel-V2
 HF snapshot (~6 GB parquet) and the LeanNavigator Zenodo tar (~2.7 GB
@@ -439,17 +440,27 @@ plan's "Gate asymmetry" decision) before annotating or training the other
 two. Each step is a separate spend/go decision; stop and read the previous
 step's output before starting the next.
 
-1. **Annotate.** A Bedrock Claude call per row writes a retrospective
+1. **Annotate.** A Bedrock Converse call per row writes a retrospective
    rationale around each row's byte-identical ground-truth tail (see
    `scripts/annotate_lean_cot.py`'s module docstring); boto3 SigV4 needs no
-   bearer minting, just a profile:
+   bearer minting, just a profile. The default annotator is **DeepSeek
+   V3.2** (`deepseek.v3.2`, open-weight, ON_DEMAND): it won the 2026-07-12
+   adversarial canary judgment over DeepSeek-R1 (fluent but confabulated
+   lemma statements / inverted order relations on the hard rows) and over
+   Claude Haiku 4.5 (use-case grant never propagated on this account).
+   Accepted canary record: `cot_stepk1_think_12.*` — 1 major faithfulness
+   defect in 10 emitted rows, concentrated on term-mode proofs with
+   unfamiliar API; the `hedging` QC gate drops overtly-uncommitted
+   rationales mechanically (expect ~15-20% total drops at scale, so an
+   8000-row subsample emits roughly 6.5-7k rows; the bare sibling pairs
+   with whatever is emitted).
 
    ```bash
    # Preview composed prompts/targets first -- no AWS client, no network:
    .venv/bin/python scripts/annotate_lean_cot.py --style think --limit 5 --dry-run
 
-   # The smoke annotation (~$15 at Haiku-tier pricing, temperature 0):
-   AWS_PROFILE=rengz .venv/bin/python scripts/annotate_lean_cot.py --style think --limit 8000
+   # The smoke annotation (a few dollars at V3.2 pricing, temperature 0):
+   AWS_PROFILE=rengz .venv/bin/python scripts/annotate_lean_cot.py --style think --limit 8000 --workers 16
    ```
 
    Writes `notebooks/lean/data/sft/cot_stepk1_think_8k.jsonl` plus
@@ -460,8 +471,14 @@ step's output before starting the next.
    `rationale_length_chars` percentiles look like prose, not a one-liner;
    `distinct_5gram_ratio` isn't near-zero (boilerplate rationale);
    `grounding_rate` is well above zero (rationales actually cite goal/hyp
-   symbols); `holdout_name_mentions.total == 0`. The `.manifest.json`'s
-   `decontamination.preflight_bare_facet_rescan` must read `"passed"`.
+   symbols); `holdout_name_mentions` is a DIAGNOSTIC, not a gate — most
+   mentions are lemma names already present in the ground-truth tail
+   (inherent to the dataset, identically paired in the bare-control arm).
+   Post-filter any row whose RATIONALE cites a holdout name absent from its
+   tail (record the drops under `post_filter` in the qc.json; the 2026-07-12
+   8k run dropped 8/7313 such rows) so rationale-only mentions end at 0.
+   The `.manifest.json`'s `decontamination.preflight_bare_facet_rescan`
+   must read `"passed"`.
 
 3. **Provision the training box + attach S3:**
 
@@ -519,6 +536,57 @@ step's output before starting the next.
    cheap dense fenced micro-smoke (a few hundred fenced rows, tiny
    train+serve) before any abandon decision — not decisive on Qwen alone
    given the gate-asymmetry caveat.
+
+### Anti-Lean3 repair mix-in (L3R)
+
+The 2026-07-12 failure taxonomy (`research/2026-07-12_failure_taxonomy.md`)
+found a persistent Lean 3 leakage slice: base models emit Lean 3 syntax
+(`refl`, `existsi`, `λ x,`-commas, trailing commas) and mathlib3 lemma names
+(`supr_le`, `iso.inv_comp_eq`); the earlier r=16 LoRA arms retain a residue
+(nemotron-lora l3=7/77 — see the regenerated pilot `analysis.txt` `l3`
+column). The L3R mix-in trains it out with deterministic corruption→repair
+rows — zero model calls:
+
+1. Build the Lean3→Lean4 name map once (mines the traced mathlib4's ~130k
+   `#align` directives from the LeanDojo cache; the ~1.1 MB
+   `data/lean3_align.json.gz` asset + manifest are committed, sidecar-style
+   beside the gitignored dataset dir):
+
+   ```bash
+   .venv/bin/python scripts/build_lean3_align_map.py
+   ```
+
+2. Build the repair dataset (defaults: 1,600 corrupted + 160 identity rows):
+
+   ```bash
+   .venv/bin/python scripts/build_lean3_repair_sft.py
+   ```
+
+   Each row is the eval-format context plus a "Previous attempt" section
+   showing a Lean3-corrupted version of the true tail (reverse-`#align`
+   renames, `rfl`→`refl`, `fun x ↦`→`λ x,`, trailing commas,
+   `use`→`existsi`) and a synthesized Lean-style error; the target is the
+   original Lean 4 tail. Identity rows (10%) show an already-correct
+   attempt with no error, so the model doesn't learn "always change
+   something".
+
+3. `lean_cot_recipe.sh` mixes it in via the `L3R` env var: `L3R=1` forces
+   on, `L3R=0` off, unset = auto (on iff
+   `/opt/train/lean3_repair_stepk1_1k6.jsonl` was uploaded by `setup` —
+   it's in `OPTIONAL_DATASETS`). When on, every stage gets `--extra-dataset
+   …/lean3_repair_stepk1_1k6.jsonl` (extra rows ride on top of the stage's
+   `--max-examples` cap; the no-extras path is byte-identical to before)
+   and the stage name gains a `-l3r` infix (`cot8k-l3r-r128`), so S3
+   checkpoints from L3R and non-L3R runs can never resume into each other.
+   Mix it into BOTH arms of a paired comparison (bare vs cot) to preserve
+   attribution.
+
+Endpoint: the analyzer's `l3` column (`analysis.txt`, regenerable over old
+runs via `cli report`) counts cells whose emitted proof contains ≥1 Lean 3
+relic (`smolbench.deduction.lean.lean3.find_relics`; name-level detection
+needs the align asset, else it degrades to parse-level with a marker line).
+Success criterion for a treated arm: `l3` → ~0 with pass rate non-inferior
+to its untreated pair.
 
 ### Sizing
 

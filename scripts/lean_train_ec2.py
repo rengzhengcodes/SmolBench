@@ -147,11 +147,15 @@ DEFAULT_DATASET = "novel_premises_train_stepk1_decontam.jsonl"
 #: docstring, Pipeline step 5): lean_cot_recipe.sh's ``bare8k-r128`` stage
 #: trains on it so the bare/CoT smoke-gate arms are attributable to target
 #: format alone, not to which theorems each arm happened to sample.
+#: ``lean3_repair_stepk1_1k6.jsonl`` is built by
+#: ``scripts/build_lean3_repair_sft.py`` and mixed in by
+#: ``lean_cot_recipe.sh`` (via ``--extra-dataset``) when L3R is on.
 OPTIONAL_DATASETS: Dict[str, Path] = {
     "cot_stepk1_think_8k.jsonl": _SFT_DIR / "cot_stepk1_think_8k.jsonl",
     "cot_stepk1_think_full.jsonl": _SFT_DIR / "cot_stepk1_think_full.jsonl",
     "cot_stepk1_fenced_full.jsonl": _SFT_DIR / "cot_stepk1_fenced_full.jsonl",
     "cot_stepk1_bare_8k.jsonl": _SFT_DIR / "cot_stepk1_bare_8k.jsonl",
+    "lean3_repair_stepk1_1k6.jsonl": _SFT_DIR / "lean3_repair_stepk1_1k6.jsonl",
 }
 TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "lean_lora_sft.py"
 REQUIREMENTS = _REPO_ROOT / "scripts" / "requirements-train.txt"

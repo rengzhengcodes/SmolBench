@@ -1,0 +1,51 @@
+{
+  "config": {
+    "dataset": "/workspace/SmolBench/notebooks/lean/data/sft/novel_premises_train_stepk1_decontam.jsonl",
+    "style": "think",
+    "limit": 8000,
+    "seed": 1776,
+    "model": "deepseek.v3.2",
+    "region": "us-west-2",
+    "max_annotation_tokens": 4000,
+    "max_retries": 6,
+    "max_rationale_chars": 2500,
+    "workers": 16,
+    "prompt_template_sha256": "9666f47c9c78c3ff1ea6a1dd0d7f56537f13720e76c937d9b9f91a7ccc08546b"
+  },
+  "stats": {
+    "subsample_size": 8000,
+    "already_done_skipped": 2589,
+    "processed_this_run": 5411,
+    "emitted_this_run": 4724,
+    "dropped_this_run_total": 687,
+    "dropped_this_run": {
+      "forbidden_markup": 2,
+      "hedging": 529,
+      "restatement": 45,
+      "too_long": 111
+    },
+    "holdout_name_mention_rows_this_run": 10,
+    "holdout_name_mentions_total_this_run": 18,
+    "total_rows_in_out": 7313
+  },
+  "decontamination": {
+    "holdout_size": 4000,
+    "holdout_fingerprint": "6708b9253b524648607b9db8c8455750d55288ba7f4381f76f5ca3978540d598",
+    "index": {
+      "names": 4000,
+      "statements": 3981,
+      "states": 19157,
+      "chains": 1208,
+      "tactic_ngrams": 7729,
+      "pairs": 23303
+    },
+    "preflight_bare_facet_rescan": "passed"
+  },
+  "aborted": false,
+  "abort_error": null,
+  "output_jsonl": "cot_stepk1_think_8k.jsonl",
+  "bare_sibling": {
+    "path": "cot_stepk1_bare_8k.jsonl",
+    "rows": 7313
+  }
+}

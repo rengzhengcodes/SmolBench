@@ -57,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-model", required=True, help="HF repo of the base model to LoRA-tune")
     p.add_argument("--dataset", type=Path, required=True, help="SFT JSONL from scripts/build_lean_sft.py")
+    p.add_argument(
+        "--extra-dataset",
+        action="append",
+        type=Path,
+        default=None,
+        help="auxiliary SFT JSONL to mix in (repeatable); appended AFTER --max-examples caps "
+             "the main --dataset, every extra row is always included, and one final seeded "
+             "shuffle mixes them (e.g. the Lean3-relic repair set from "
+             "scripts/build_lean3_repair_sft.py, mixed in by lean_cot_recipe.sh when L3R is on)",
+    )
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--push-to-hub", default=None, help="HF repo id to push the trained adapter to")
     p.add_argument("--private", action="store_true", help="push as a private repo")
@@ -167,18 +177,38 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _load_chat_dataset(path: Path, max_examples: int = 0, seed: int = 1776):
-    """Read the SFT JSONL into a `datasets.Dataset` of chat-message rows.
+def _read_chat_rows(path: Path) -> list[dict]:
+    """Read one SFT JSONL into a list of chat-message row dicts.
 
-    Each row becomes ``{"messages": [system, user, assistant]}`` so trl's
-    SFTTrainer applies the base model's own chat template (train/serve format
-    parity) and, with ``assistant_only_loss``, masks the prompt from the loss.
+    Pure row-reading step factored out of `_load_chat_dataset` so it has NO
+    ``datasets`` import and can be unit-tested (row shape, empty-file
+    behavior) without the training stack installed -- see
+    ``tests/test_lean_lora_dataset.py``. `_load_chat_dataset` calls this once
+    per file (the main ``--dataset`` and each ``--extra-dataset``) and hands
+    the combined rows to ``Dataset.from_list``.
 
-    ``max_examples > 0`` subsamples to that many rows after a seeded shuffle --
-    a reproducible first-run cost cap (see ``--max-examples``).
+    Parameters
+    ----------
+    path : Path
+        SFT JSONL file; each line is a JSON object with ``system``, ``user``,
+        and ``assistant`` string fields (the format ``scripts/build_lean_sft.py``
+        and ``scripts/build_lean3_repair_sft.py`` both emit).
+
+    Returns
+    -------
+    list of dict
+        One ``{"messages": [{"role": ..., "content": ...}, ...]}`` dict per
+        input line, in FILE ORDER -- no shuffling here, so a single seeded
+        shuffle downstream can span rows read from multiple files.
+
+    Raises
+    ------
+    SystemExit
+        If `path` contains zero rows: an empty dataset is almost always a
+        config mistake (wrong path, or an upstream builder that produced
+        nothing), so fail loudly here instead of handing an empty split to
+        the trainer.
     """
-    from datasets import Dataset  # local import: training-only dep
-
     rows = []
     with path.open() as f:
         for line in f:
@@ -194,10 +224,75 @@ def _load_chat_dataset(path: Path, max_examples: int = 0, seed: int = 1776):
             )
     if not rows:
         raise SystemExit(f"empty dataset: {path}")
+    return rows
+
+
+def _load_chat_dataset(
+    path: Path,
+    max_examples: int = 0,
+    seed: int = 1776,
+    extra_paths: tuple[Path, ...] = (),
+):
+    """Read the SFT JSONL(s) into a `datasets.Dataset` of chat-message rows.
+
+    Each row becomes ``{"messages": [system, user, assistant]}`` so trl's
+    SFTTrainer applies the base model's own chat template (train/serve format
+    parity) and, with ``assistant_only_loss``, masks the prompt from the loss.
+
+    ``max_examples > 0`` subsamples to that many rows after a seeded shuffle --
+    a reproducible first-run cost cap (see ``--max-examples``).
+
+    Parameters
+    ----------
+    path : Path
+        Main SFT JSONL (``--dataset``).
+    max_examples : int, default 0
+        Subsample the MAIN dataset to this many seeded rows (0 = all). Never
+        applied to `extra_paths` -- every extra row is always included.
+    seed : int, default 1776
+        Shuffle seed, shared by the main-only subsample AND the combined
+        main+extra shuffle below, so a run is reproducible end to end.
+    extra_paths : tuple of Path, default ()
+        Auxiliary SFT JSONLs (``--extra-dataset``, repeatable) mixed into the
+        main dataset AFTER `max_examples` capping -- e.g. the Lean3-relic
+        repair coordination set `scripts/build_lean3_repair_sft.py` builds,
+        which `scripts/lean_cot_recipe.sh` appends when L3R is on. Every row
+        from every extra path is always included (never capped/subsampled):
+        these auxiliary sets are deliberately small and every row earns its
+        keep. When non-empty, ONE final seeded shuffle mixes main+extra rows
+        together so the auxiliary rows are spread through training instead of
+        landing as a solid tail block.
+
+    Returns
+    -------
+    datasets.Dataset
+        Chat-message rows ready for `SFTTrainer`.
+
+    Notes
+    -----
+    CRITICAL BACKWARD-COMPAT INVARIANT: with `extra_paths` empty (the
+    default), this returns a dataset BYTE-IDENTICAL in rows and order to the
+    pre-``--extra-dataset`` code path (``Dataset.from_list(rows)
+    .shuffle(seed).select(range(max_examples))``) -- a mid-flight training
+    run resumed from a checkpoint (``data_seed=seed``) depends on this exact
+    row order never changing. Do not reorder or otherwise touch this branch
+    without re-verifying that invariant.
+    """
+    from datasets import Dataset, concatenate_datasets  # local import: training-only dep
+
+    rows = _read_chat_rows(path)
     ds = Dataset.from_list(rows)
     if max_examples and max_examples < len(ds):
         ds = ds.shuffle(seed=seed).select(range(max_examples))
-    return ds
+    if not extra_paths:
+        return ds
+
+    extra_rows: list[dict] = []
+    for extra_path in extra_paths:
+        extra_rows.extend(_read_chat_rows(extra_path))
+    extra_ds = Dataset.from_list(extra_rows)
+    print(f"rows: main={len(ds)} extra={len(extra_ds)}")
+    return concatenate_datasets([ds, extra_ds]).shuffle(seed=seed)
 
 
 def _resolve_sft_kwargs(args: argparse.Namespace, sft_fields: set[str]) -> dict:
@@ -299,7 +394,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001
             _gu.NEED_SETUP_CACHE_CLASSES_MAPPING = {}
 
-    dataset = _load_chat_dataset(args.dataset, max_examples=args.max_examples, seed=args.seed)
+    dataset = _load_chat_dataset(
+        args.dataset,
+        max_examples=args.max_examples,
+        seed=args.seed,
+        extra_paths=tuple(args.extra_dataset or ()),
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=args.trust_remote_code)
 

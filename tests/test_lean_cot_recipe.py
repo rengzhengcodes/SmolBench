@@ -211,16 +211,19 @@ def test_train_cmd_tolerates_namespace_missing_new_attrs():
 
 
 def test_optional_datasets_registered_with_coordination_constant_names():
-    """These four names are a cross-package coordination constant (shared
-    with the annotation/CoT-recipe packages) -- pin them exactly.
+    """These five names are a cross-package coordination constant (shared
+    with the annotation/CoT-recipe/L3R packages) -- pin them exactly.
     ``cot_stepk1_bare_8k.jsonl`` is the paired bare-control sibling
     annotate_lean_cot.py now emits alongside ``cot_stepk1_think_8k.jsonl``
-    (Fix 1 / paired attribution control)."""
+    (Fix 1 / paired attribution control). ``lean3_repair_stepk1_1k6.jsonl``
+    is the Lean3-relic repair auxiliary set (WP-A2's L3R) mixed in by
+    lean_cot_recipe.sh via --extra-dataset."""
     assert set(lt.OPTIONAL_DATASETS) == {
         "cot_stepk1_think_8k.jsonl",
         "cot_stepk1_think_full.jsonl",
         "cot_stepk1_fenced_full.jsonl",
         "cot_stepk1_bare_8k.jsonl",
+        "lean3_repair_stepk1_1k6.jsonl",
     }
     assert all(p.parent == lt._SFT_DIR for p in lt.OPTIONAL_DATASETS.values())
 
@@ -345,6 +348,76 @@ def test_dryrun_full_mode_prints_trio_stages():
     assert "--trust-remote-code" in lines["nemotron-ultra-253b"]
     assert all("--max-examples 0" in l for l in lines.values())  # cap 0 = all rows
     assert "COT_RECIPE_FULL_DONE" in out
+
+
+# ---------------------------------------------------------------------------
+# L3R: --extra-dataset mixing + -l3r stage-name infix (WP-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_dryrun_l3r_forced_on_smoke_mode():
+    """L3R=1: both smoke stages get the -l3r infix (before the trailing
+    -r128) and --extra-dataset pointing at the repair set, so their S3
+    checkpoint identity can never collide with a non-L3R run of the same
+    stage."""
+    proc = _run_dryrun({"L3R": "1"})
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+
+    assert "bare8k-l3r-r128" in out
+    assert "cot8k-l3r-r128" in out
+    assert "bare8k-r128:" not in out  # original (non-suffixed) name must not remain
+    assert "cot8k-r128:" not in out
+
+    bare_line = next(l for l in out.splitlines() if "bare8k-l3r-r128:" in l)
+    cot_line = next(l for l in out.splitlines() if "cot8k-l3r-r128:" in l)
+    for line in (bare_line, cot_line):
+        assert "--extra-dataset /opt/train/lean3_repair_stepk1_1k6.jsonl" in line
+    assert "L3R=on (forced)" in out
+
+
+def test_dryrun_l3r_forced_on_full_mode():
+    """FULL=1 L3R=1: the trio's single cot-full-r128 stage per model gets
+    the same -l3r infix + --extra-dataset treatment."""
+    proc = _run_dryrun({"FULL": "1", "L3R": "1"})
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+
+    assert "cot-full-l3r-r128" in out
+    assert "cot-full-r128:" not in out
+    for name in ("qwen3-235b-a22b", "llama-31-405b", "nemotron-ultra-253b"):
+        line = next(l for l in out.splitlines() if f"{name}/cot-full-l3r-r128:" in l)
+        assert "--extra-dataset /opt/train/lean3_repair_stepk1_1k6.jsonl" in line
+    assert "L3R=on (forced)" in out
+
+
+def test_dryrun_l3r_forced_off():
+    """L3R=0: forced off even though nothing about the environment implies
+    it -- original stage names, no --extra-dataset anywhere."""
+    proc = _run_dryrun({"L3R": "0"})
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+
+    assert "bare8k-r128" in out and "bare8k-l3r-r128" not in out
+    assert "cot8k-r128" in out and "cot8k-l3r-r128" not in out
+    assert "--extra-dataset" not in out
+    assert "L3R=off (forced)" in out
+
+
+def test_dryrun_l3r_unset_defaults_off_offbox():
+    """L3R unset (auto): off-box (this test host has no
+    /opt/train/lean3_repair_stepk1_1k6.jsonl) the auto-detect must resolve
+    to OFF -- identical output to the script's behavior before L3R existed.
+    This is the invariant that keeps DRYRUN-off-box tests with L3R unset
+    passing unchanged."""
+    proc = _run_dryrun({})
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+
+    assert "bare8k-r128" in out and "bare8k-l3r-r128" not in out
+    assert "cot8k-r128" in out and "cot8k-l3r-r128" not in out
+    assert "--extra-dataset" not in out
+    assert "L3R=off (auto: dataset absent)" in out
 
 
 def test_dryrun_never_touches_filesystem_or_aws(tmp_path):
