@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.Presieve.factorsThruAlong_id",
+  "file_path": "Mathlib/CategoryTheory/Sites/Coverage.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp [FactorsThruAlong, FactorsThru]",
+  "ground_truth_remaining_from_k": "simp [FactorsThruAlong, FactorsThru]",
+  "true_premises_at_k": [
+    "CategoryTheory.Presieve.FactorsThruAlong",
+    "CategoryTheory.Presieve.FactorsThru"
+  ],
+  "state_before_k": "C : Type u_2\ninst✝ : Category.{u_1, u_2} C\nX : C\nS T : Presieve X\n⊢ FactorsThruAlong S T (𝟙 X) ↔ FactorsThru S T"
+}

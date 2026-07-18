@@ -1,0 +1,16 @@
+{
+  "full_name": "RatFunc.ofFractionRing_zero",
+  "file_path": "Mathlib/FieldTheory/RatFunc.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [Zero.zero, OfNat.ofNat, RatFunc.zero]",
+  "ground_truth_remaining_from_k": "simp only [Zero.zero, OfNat.ofNat, RatFunc.zero]",
+  "true_premises_at_k": [
+    "Zero.zero",
+    "OfNat.ofNat",
+    "RatFunc.zero"
+  ],
+  "state_before_k": "K : Type u\ninst✝ : CommRing K\n⊢ { toFractionRing := 0 } = 0"
+}

@@ -1,0 +1,18 @@
+# 1016 cells; sanity 39 pass / 261 fail
+
+!! 261 sanity-gate failures — pipeline may have rotted
+
+rung       model                                 pass/N      rate  lerr  incp  gvup  rplf  exc    l3  avg_in avg_out  avg_s
+---------------------------------------------------------------------------------------------------------------------------
+stepk:1    qwen3-235b-a22b-base                     3/68     4.4%    63     0     0     0    2    15     307    5094  130.3
+stepk:1    qwen3-lean-cot-r128                     16/216    7.4%   166    22     0     0   12     3     356     339   84.8
+hint:2     qwen3-235b-a22b-base                     5/60     8.3%    51     4     0     0    0     8     884    4005  104.5
+hint:2     qwen3-lean-cot-r128                     31/192   16.1%   138    15     0     0    8     0     961     324  189.7
+hint:3     qwen3-235b-a22b-base                     8/56    14.3%    47     0     0     0    1     8    2146    4382  174.9
+hint:3     qwen3-lean-cot-r128                     28/184   15.2%   138     9     0     0    9     0    2329     326  387.7
+noise:3    qwen3-235b-a22b-base                     9/56    16.1%    45     2     0     0    0     8    2208    4501  116.8
+noise:3    qwen3-lean-cot-r128                     26/184   14.1%   140    10     0     0    8     0    2359     669  375.2
+
+# per-model totals
+  qwen3-235b-a22b-base                    25/240    10.4%  (317,724 in / 1,084,141 out tokens)  l3=39
+  qwen3-lean-cot-r128                    101/776    13.0%  (1,124,216 in / 318,438 out tokens)  l3=3

@@ -1,0 +1,288 @@
+# CategoryTheory.Limits.coprodComparison_natural   (k=0, 1 tactics total)
+
+file: `Mathlib/CategoryTheory/Limits/Shapes/BinaryProducts.lean`  
+
+**Ground-truth tail (from k):**
+```lean
+rw [coprodComparison, coprodComparison, coprod.map_desc, ← F.map_comp, ← F.map_comp,
+  coprod.desc_comp, ← F.map_comp, coprod.inl_map, ← F.map_comp, coprod.inr_map]
+```
+
+**True premises at k:** `CategoryTheory.Limits.coprodComparison`, `CategoryTheory.Limits.coprodComparison`, `CategoryTheory.Limits.coprod.map_desc`, `CategoryTheory.Limits.coprod.desc_comp`, `CategoryTheory.Limits.coprod.inl_map`, `CategoryTheory.Limits.coprod.inr_map`
+
+## Verdict matrix
+
+| rung | qwen3-lean-bare-r128 |
+| --- | --- |
+| `stepk:1` | · · · ✘ |
+| `hint:2` | · ✘ ✘ ✘ |
+| `hint:3` | · · · ✘ |
+| `noise:3` | · · ✘ · |
+
+## Per-cell detail
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **incomplete**  (gen 1.0s, verify 0.2s, in=386, out=11)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **incomplete**  (gen 1.6s, verify 0.2s, in=386, out=11)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **incomplete**  (gen 3.1s, verify 0.2s, in=386, out=16)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [coprodComparison, Iso.eq_inv_comp]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 33.8s, verify 0.6s, in=386, out=6)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 0.7s, verify 0.3s, in=1991, out=10)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+ext <;> simp
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.8s, verify 0.1s, in=1991, out=12)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coprod.ext_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp [coprod.ext_iff]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.9s, verify 1.2s, in=1991, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+ext <;> simp [← F.map_comp]
+```
+
+**lean_error:** tail step 1/1 ('ext <;> simp [← F.map_comp]'): tactic 'simp' failed, nested error:
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 4.0s, verify 0.6s, in=1991, out=17)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coprodComparison, ← coprod.map_desc]
+```
+
+**lean_error:** tail step 1/1 ('simp [coprodComparison, ← coprod.map_desc]'): tactic 'simp' failed, nested error:
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 4.6s, verify 0.3s, in=2858, out=10)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+ext <;> simp
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **incomplete**  (gen 5.0s, verify 0.2s, in=2858, out=11)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **incomplete**  (gen 5.2s, verify 25.5s, in=2858, out=15)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+ext <;> simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 30.7s, verify 1.8s, in=2858, out=23)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [coprodComparison, ← coprod.map_desc, ← coprod.desc_comp]
+```
+
+**lean_error:** tail step 1/1 ('simp [coprodComparison, ← coprod.map_desc, ← coprod.desc_comp]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 1.2s, verify 0.2s, in=2882, out=10)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext <;> simp
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **incomplete**  (gen 1.4s, verify 0.2s, in=2882, out=11)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 3.3s, verify 0.7s, in=2882, out=17)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [coprodComparison, ← coprod.map_desc]
+```
+
+**lean_error:** tail step 1/1 ('simp [coprodComparison, ← coprod.map_desc]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **incomplete**  (gen 32.5s, verify 1.3s, in=2882, out=15)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext <;> simp [coprodComparison]
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```

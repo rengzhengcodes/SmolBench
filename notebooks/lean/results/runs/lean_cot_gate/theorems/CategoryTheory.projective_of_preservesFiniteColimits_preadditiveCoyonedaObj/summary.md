@@ -1,0 +1,58 @@
+# CategoryTheory.projective_of_preservesFiniteColimits_preadditiveCoyonedaObj   (k=2, 3 tactics total)
+
+file: `Mathlib/CategoryTheory/Abelian/Projective.lean`  
+
+**Ground-truth tail (from k):**
+```lean
+infer_instance
+```
+
+**True premises at k:** _(none recorded)_
+
+## Verdict matrix
+
+| rung | qwen3-lean-bare-r128 |
+| --- | --- |
+| `stepk:1` | ✓ ✘ ✘ ✓ |
+
+## Per-cell detail
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 0.5s, verify 0.1s, in=297, out=7)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+infer_instance
+```
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 0.6s, verify 0.1s, in=297, out=16)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply preservesFiniteColimits.reflectsEpimorphisms
+```
+
+**lean_error:** tail step 1/1 ('apply preservesFiniteColimits.reflectsEpimorphisms'): unknown identifier 'preservesFiniteColimits.reflectsEpimorphisms'
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.8s, verify 0.1s, in=297, out=23)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact (hP.preservesColimitsOfShape _).preservesEpimorphisms
+```
+
+**lean_error:** tail step 1/1 ('exact (hP.preservesColimitsOfShape _).preservesEpimorphisms'): invalid field 'preservesColimitsOfShape', the environment does not contain 'CategoryTheory.Limits.PreservesFiniteColimits.preservesColimitsOfShape'
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 3.1s, verify 0.1s, in=297, out=7)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+infer_instance
+```

@@ -187,6 +187,15 @@ def _qwen_4way_variants(args, ec2) -> list[dict]:
                 *base.get("vllm_args", []),
                 "--enable-lora",
                 "--max-lora-rank", str(args.lora_rank),
+                # At rank >= 64 the per-GPU LoRA buffers no longer fit the
+                # ~30 MiB of VRAM left after the BF16 235B weights load at
+                # TP=8 (torch.OutOfMemoryError in _create_lora_modules,
+                # root-caused live 2026-07-13: the rank-128 buffer wants
+                # 128 MiB where the rank-16 pilot's 16 MiB just fit; same
+                # OOM on vLLM v0.23.0 and v0.25.0). Fully-sharded LoRA
+                # splits the buffers across TP ranks (~1/8th per GPU) and
+                # is vLLM's recommended mode for high ranks anyway.
+                *(["--fully-sharded-loras"] if args.lora_rank >= 64 else []),
                 "--lora-modules", f"{key}={container_path}",
             ],
             "adapters": [{"name": key, "s3": f"{prefix}/qwen3-235b-a22b/{sub}",
@@ -241,6 +250,15 @@ def _cot_smoke_variants(args, ec2) -> list[dict]:
                 *base.get("vllm_args", []),
                 "--enable-lora",
                 "--max-lora-rank", str(args.lora_rank),
+                # At rank >= 64 the per-GPU LoRA buffers no longer fit the
+                # ~30 MiB of VRAM left after the BF16 235B weights load at
+                # TP=8 (torch.OutOfMemoryError in _create_lora_modules,
+                # root-caused live 2026-07-13: the rank-128 buffer wants
+                # 128 MiB where the rank-16 pilot's 16 MiB just fit; same
+                # OOM on vLLM v0.23.0 and v0.25.0). Fully-sharded LoRA
+                # splits the buffers across TP ranks (~1/8th per GPU) and
+                # is vLLM's recommended mode for high ranks anyway.
+                *(["--fully-sharded-loras"] if args.lora_rank >= 64 else []),
                 "--lora-modules", f"{key}={container_path}",
             ],
             "adapters": [{"name": key, "s3": f"{prefix}/qwen3-235b-a22b/{sub}",

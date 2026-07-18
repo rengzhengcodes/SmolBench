@@ -1,0 +1,192 @@
+# Lagrange.eval_basis_of_ne   (k=1, 2 tactics total)
+
+file: `Mathlib/LinearAlgebra/Lagrange.lean`  
+
+**Ground-truth tail (from k):**
+```lean
+exact ⟨j, ⟨mem_erase.mpr ⟨hij.symm, hj⟩, eval_basisDivisor_right⟩⟩
+```
+
+**True premises at k:** `Lagrange.eval_basisDivisor_right`
+
+## Verdict matrix
+
+| rung | qwen3-lean-bare-r128 |
+| --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✓ ✘ |
+| `hint:3` | ✘ ✓ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✓ ✘ |
+
+## Per-cell detail
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.1s, verify 0.1s, in=294, out=36)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.2 ⟨hij.symm, hj⟩, eval_basisDivisor_eq_zero _ _ hij.symm⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.2 ⟨hij.symm, hj⟩, eval_basisDivisor_eq_zero _ _ hij.symm⟩'): unknown identifier 'eval_basisDivisor_eq_zero'
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.2s, verify 0.1s, in=294, out=35)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_self' (v i) (v j) hij⟩
+```
+
+**lean_error:** tail step 1/1 ("exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_self' (v i) (v j) hij⟩"): unknown constant 'Finset.erase_of_ne'
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 6.4s, verify 0.1s, in=294, out=38)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.mpr ⟨hij.symm, hj⟩, eval_basisDivisor_self (v i) (v j)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.mpr ⟨hij.symm, hj⟩, eval_basisDivisor_self (v i) (v j)⟩'): unknown identifier 'eval_basisDivisor_self'
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 6.5s, verify 0.1s, in=294, out=39)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem (ne.symm hij) hj, eval_basisDivisor_self (v j) (v i)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem (ne.symm hij) hj, eval_basisDivisor_self (v j) (v i)⟩'): unknown identifier 'ne.symm'
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.8s, verify 0.1s, in=513, out=26)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩'): application type mismatch
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 0.9s, verify 0.1s, in=513, out=25)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_right⟩'): unknown constant 'Finset.erase_of_ne'
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 6.1s, verify 0.1s, in=513, out=31)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem (Ne.symm hij) hj, eval_basisDivisor_right⟩
+```
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 6.1s, verify 0.1s, in=513, out=34)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.4s, verify 0.1s, in=668, out=26)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩'): application type mismatch
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 1.5s, verify 0.1s, in=668, out=31)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem (Ne.symm hij) hj, eval_basisDivisor_right⟩
+```
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 1.6s, verify 0.1s, in=668, out=34)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.8s, verify 0.1s, in=668, out=46)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.erase_mem_of_ne_of_mem (fun h => hij (h.symm.trans (Finset.mem_erase.mp hj).1))
+  hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/2 ('exact ⟨j, Finset.erase_mem_of_ne_of_mem (fun h => hij (h.symm.trans (Finset.mem_erase.mp hj).1))'): <stdin>:1:96: unexpected end of input; expected '⟩'
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 0.8s, verify 0.1s, in=693, out=25)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.erase_of_ne hij.symm hj, eval_basisDivisor_right⟩'): unknown constant 'Finset.erase_of_ne'
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.0s, verify 0.1s, in=693, out=26)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right⟩'): application type mismatch
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 6.0s, verify 0.1s, in=693, out=31)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem (Ne.symm hij) hj, eval_basisDivisor_right⟩
+```
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 6.3s, verify 0.1s, in=693, out=34)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch

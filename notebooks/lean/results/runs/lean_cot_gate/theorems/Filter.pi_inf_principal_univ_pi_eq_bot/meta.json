@@ -1,0 +1,16 @@
+{
+  "full_name": "Filter.pi_inf_principal_univ_pi_eq_bot",
+  "file_path": "Mathlib/Order/Filter/Pi.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 10,
+  "k": 9,
+  "ground_truth_full_proof": "constructor\nsimp only [inf_principal_eq_bot, mem_pi]\ncontrapose!\nrintro (hsf : ∀ i, ∃ᶠ x in f i, x ∈ s i) I - t htf hts\nhave : ∀ i, (s i ∩ t i).Nonempty := fun i => ((hsf i).and_eventually (htf i)).exists\nchoose x hxs hxt using this\nexact hts (fun i _ => hxt i) (mem_univ_pi.2 hxs)\nsimp only [inf_principal_eq_bot]\nrintro ⟨i, hi⟩\nfilter_upwards [mem_pi_of_mem i hi] with x using mt fun h => h i trivial",
+  "ground_truth_remaining_from_k": "filter_upwards [mem_pi_of_mem i hi] with x using mt fun h => h i trivial",
+  "true_premises_at_k": [
+    "Filter.mem_pi_of_mem",
+    "mt",
+    "trivial"
+  ],
+  "state_before_k": "case mpr.intro\nι : Type u_1\nα : ι → Type u_2\nf f₁ f₂ : (i : ι) → Filter (α i)\ns : (i : ι) → Set (α i)\np : (i : ι) → α i → Prop\ni : ι\nhi : (s i)ᶜ ∈ f i\n⊢ (Set.pi univ s)ᶜ ∈ pi f"
+}

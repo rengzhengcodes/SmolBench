@@ -1,0 +1,15 @@
+{
+  "full_name": "LinearMap.proj_comp_stdBasis",
+  "file_path": "Mathlib/LinearAlgebra/StdBasis.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [stdBasis_eq_pi_diag, proj_pi]",
+  "ground_truth_remaining_from_k": "rw [stdBasis_eq_pi_diag, proj_pi]",
+  "true_premises_at_k": [
+    "LinearMap.stdBasis_eq_pi_diag",
+    "LinearMap.proj_pi"
+  ],
+  "state_before_k": "R : Type u_1\nι : Type u_2\ninst✝³ : Semiring R\nφ : ι → Type u_3\ninst✝² : (i : ι) → AddCommMonoid (φ i)\ninst✝¹ : (i : ι) → Module R (φ i)\ninst✝ : DecidableEq ι\ni j : ι\n⊢ proj i ∘ₗ stdBasis R φ j = diag j i"
+}

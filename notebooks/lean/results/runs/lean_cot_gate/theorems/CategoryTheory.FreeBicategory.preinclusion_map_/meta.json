@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.FreeBicategory.preinclusion_map₂",
+  "file_path": "Mathlib/CategoryTheory/Bicategory/Coherence.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "rcases η with ⟨⟨⟩⟩\ncases Discrete.ext _ _ (by assumption)\nconvert (inclusionPath a b).map_id _\nassumption",
+  "ground_truth_remaining_from_k": "assumption",
+  "true_premises_at_k": [],
+  "state_before_k": "B : Type u\ninst✝ : Quiver B\na b : B\nf g : Discrete (Path a b)\ndown✝ : f.as = g.as\n⊢ ?m.3959.as = ?m.3960.as"
+}

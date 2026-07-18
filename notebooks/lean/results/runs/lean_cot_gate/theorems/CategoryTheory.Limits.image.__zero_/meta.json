@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Limits.image.ι_zero'",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/ZeroMorphisms.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [image.eq_fac h]\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝⁵ : Category.{v, u} C\nD : Type u'\ninst✝⁴ : Category.{v', u'} D\ninst✝³ : HasZeroMorphisms C\ninst✝² : HasZeroObject C\ninst✝¹ : HasEqualizers C\nX Y : C\nf : X ⟶ Y\nh : f = 0\ninst✝ : HasImage f\n⊢ (eqToIso h).hom ≫ ι 0 = 0"
+}

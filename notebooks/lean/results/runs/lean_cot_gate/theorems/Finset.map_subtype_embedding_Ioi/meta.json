@@ -1,0 +1,16 @@
+{
+  "full_name": "Finset.map_subtype_embedding_Ioi",
+  "file_path": "Mathlib/Order/LocallyFinite.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [subtype_Ioi_eq]\nexact Finset.subtype_map_of_mem fun x hx => hp (mem_Ioi.1 hx).le a.prop",
+  "ground_truth_remaining_from_k": "exact Finset.subtype_map_of_mem fun x hx => hp (mem_Ioi.1 hx).le a.prop",
+  "true_premises_at_k": [
+    "Finset.subtype_map_of_mem",
+    "Finset.mem_Ioi",
+    "LT.lt.le"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\ninst✝² : Preorder α\np : α → Prop\ninst✝¹ : DecidablePred p\ninst✝ : LocallyFiniteOrderTop α\na : Subtype p\nhp : ∀ ⦃a x : α⦄, a ≤ x → p a → p x\n⊢ map (Embedding.subtype p) (Finset.subtype p (Ioi ↑a)) = Ioi ↑a"
+}

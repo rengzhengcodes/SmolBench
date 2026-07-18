@@ -173,7 +173,8 @@ class Handler(BaseHTTPRequestHandler):
             rg = " --region " + shlex.quote(str(ad["region"])) if ad.get("region") else ""
             script += "mkdir -p %s\naws s3 sync%s --only-show-errors --exclude 'checkpoint-*/*' %s %s\n" % (
                 d, rg, shlex.quote(str(ad["s3"])), d)
-        script += shlex.join(cmd)
+        # an orphaned launcher may have re-created vllm since our rm -f above
+        script += "docker rm -f vllm >/dev/null 2>&1\n" + shlex.join(cmd)
         log = open(SERVE_LOG, "wb")
         SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
         self._reply(202, {"ok": True, "launching": name})

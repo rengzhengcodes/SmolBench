@@ -4,6 +4,11 @@ Evaluate LLM ability to complete Lean 4 proofs as a function of how much context
 is supplied about the proof. Given an intermediate state at step `k` of a known
 theorem, the eval varies context and measures pass rate.
 
+This file is the runbook (how to run each stage). For an inventory and
+narrative of everything built on the lean side — harness changes, training
+infrastructure, datasets, research findings, experiment history — see
+[CHANGES.md](CHANGES.md).
+
 ## Two ways of varying context
 
 **`stepk` — progressively more *step-k* information** with no answer-conditional

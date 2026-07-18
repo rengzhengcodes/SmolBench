@@ -1,0 +1,15 @@
+{
+  "full_name": "Function.Injective.map_atTop_finset_prod_eq",
+  "file_path": "Mathlib/Order/Filter/AtTopBot.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 13,
+  "k": 12,
+  "ground_truth_full_proof": "haveI := Classical.decEq β\napply le_antisymm <;> refine' map_atTop_finset_prod_le_of_prod_eq fun s => _\nrefine' ⟨s.preimage g (hg.injOn _), fun t ht => _⟩\nrefine' ⟨t.image g ∪ s, Finset.subset_union_right _ _, _⟩\nrw [← Finset.prod_image (hg.injOn _)]\nrefine' (prod_subset (subset_union_left _ _) _).symm\nsimp only [Finset.mem_union, Finset.mem_image]\nrefine' fun y hy hyt => hf y (mt _ hyt)\nrintro ⟨x, rfl⟩\nexact ⟨x, ht (Finset.mem_preimage.2 <| hy.resolve_left hyt), rfl⟩\nrefine' ⟨s.image g, fun t ht => _⟩\nsimp only [← prod_preimage _ _ (hg.injOn _) _ fun x _ => hf x]\nexact ⟨_, (image_subset_iff_subset_preimage _).1 ht, rfl⟩",
+  "ground_truth_remaining_from_k": "exact ⟨_, (image_subset_iff_subset_preimage _).1 ht, rfl⟩",
+  "true_premises_at_k": [
+    "Finset.image_subset_iff_subset_preimage",
+    "rfl"
+  ],
+  "state_before_k": "case a\nι : Type u_1\nι' : Type u_2\nα : Type u_3\nβ : Type u_4\nγ : Type u_5\ninst✝ : CommMonoid α\ng : γ → β\nhg : Injective g\nf : β → α\nhf : ∀ x ∉ Set.range g, f x = 1\nthis : DecidableEq β\ns : Finset γ\nt : Finset β\nht : Finset.image g s ⊆ t\n⊢ ∃ u', s ⊆ u' ∧ ∏ x in u', f (g x) = ∏ x in Finset.preimage t g ⋯, f (g x)"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "Order.le_succ_iterate",
+  "file_path": "Mathlib/Order/SuccPred/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "conv_lhs => rw [(by simp only [Function.iterate_id, id.def] : x = id^[k] x)]\nexact Monotone.le_iterate_of_le succ_mono le_succ k x\nsimp only [Function.iterate_id, id.def]",
+  "ground_truth_remaining_from_k": "simp only [Function.iterate_id, id.def]",
+  "true_premises_at_k": [
+    "Function.iterate_id",
+    "id.def"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\ninst✝¹ : Preorder α\ninst✝ : SuccOrder α\na b : α\nk : ℕ\nx : α\n⊢ x = id^[k] x"
+}

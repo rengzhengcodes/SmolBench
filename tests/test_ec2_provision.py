@@ -11,6 +11,8 @@ three files cover ec2.py's offline-testable surface; the live AWS lifecycle
 this offline suite.
 """
 
+import pytest
+
 from smolbench.evals import ec2
 
 
@@ -167,3 +169,97 @@ def test_instance_state_passes_region_and_instance_id_through(monkeypatch):
     result = ec2._instance_state("eu-west-1", "i-abc")
     assert result == "terminated"
     assert captured == {"region": "eu-west-1", "instance_id": "i-abc"}
+
+
+# ---------------------------------------------------------------------------
+# _ensure_bucket -- 403 disambiguation. HEAD -> 403 usually means the name is
+# squatted in another account, but scoped credentials (the EC2-only operator
+# key, which has no s3:*) get the same 403 on our own bucket. The account-id
+# suffix in the bucket name is the tie-breaker, proven via sts (policy-free).
+# ---------------------------------------------------------------------------
+
+
+def _client_error(code):
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": ""}}, "HeadBucket")
+
+
+class _FakeS3:
+    def __init__(self, head_error=None):
+        self.head_error = head_error
+        self.created = []
+
+    def head_bucket(self, Bucket):
+        if self.head_error is not None:
+            raise self.head_error
+
+    def create_bucket(self, **kwargs):
+        self.created.append(kwargs)
+
+
+class _FakeSts:
+    def __init__(self, account):
+        self.account = account
+
+    def get_caller_identity(self):
+        return {"Account": self.account}
+
+
+def _patch_clients(monkeypatch, s3, sts):
+    def fake_fresh_client(service, region):
+        return {"s3": s3, "sts": sts}[service]
+
+    monkeypatch.setattr(ec2._aws, "fresh_client", fake_fresh_client)
+
+
+def test_ensure_bucket_403_with_account_suffix_proceeds(monkeypatch):
+    s3 = _FakeS3(head_error=_client_error("403"))
+    _patch_clients(monkeypatch, s3, _FakeSts("414266451290"))
+    ec2._ensure_bucket("smolbench-model-cache-414266451290", "us-west-2")
+    assert s3.created == []  # exists; never tries to create
+
+
+def test_ensure_bucket_403_foreign_name_still_raises(monkeypatch):
+    s3 = _FakeS3(head_error=_client_error("403"))
+    _patch_clients(monkeypatch, s3, _FakeSts("999999999999"))
+    with pytest.raises(RuntimeError, match="not accessible"):
+        ec2._ensure_bucket("smolbench-model-cache-414266451290", "us-west-2")
+
+
+def test_ensure_bucket_404_creates(monkeypatch):
+    s3 = _FakeS3(head_error=_client_error("404"))
+    _patch_clients(monkeypatch, s3, _FakeSts("414266451290"))
+    ec2._ensure_bucket("some-new-bucket", "us-west-2")
+    assert s3.created == [
+        {
+            "Bucket": "some-new-bucket",
+            "CreateBucketConfiguration": {"LocationConstraint": "us-west-2"},
+        }
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _run_instances_kwargs -- capacity-block launches. A purchased Capacity
+# Block replaces the Spot market options (the API mandates MarketType=
+# "capacity-block") and pins the instance to the reservation.
+# ---------------------------------------------------------------------------
+
+
+def test_run_instances_kwargs_capacity_block_swaps_market_and_pins_reservation():
+    kwargs = _base_kwargs(capacity_reservation_id="cr-0123456789abcdef0")
+    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
+    assert kwargs["CapacityReservationSpecification"] == {
+        "CapacityReservationTarget": {
+            "CapacityReservationId": "cr-0123456789abcdef0"
+        }
+    }
+    # everything else keeps the pinned spot-launch shape
+    assert kwargs["InstanceInitiatedShutdownBehavior"] == "terminate"
+    assert kwargs["MinCount"] == 1 and kwargs["MaxCount"] == 1
+
+
+def test_run_instances_kwargs_no_reservation_keeps_spot_shape():
+    kwargs = _base_kwargs()
+    assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
+    assert "CapacityReservationSpecification" not in kwargs

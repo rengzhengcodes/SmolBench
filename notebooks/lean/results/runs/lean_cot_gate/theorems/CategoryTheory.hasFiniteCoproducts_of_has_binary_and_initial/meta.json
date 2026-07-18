@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.hasFiniteCoproducts_of_has_binary_and_initial",
+  "file_path": "Mathlib/CategoryTheory/Limits/Constructions/FiniteProductsOfBinaryProducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "refine' ⟨fun n => ⟨fun K => _⟩⟩\nletI := hasCoproduct_fin n fun n => K.obj ⟨n⟩\nlet that : K ≅ Discrete.functor fun n => K.obj ⟨n⟩ := Discrete.natIso fun ⟨i⟩ => Iso.refl _\napply @hasColimitOfIso _ _ _ _ _ _ this that",
+  "ground_truth_remaining_from_k": "apply @hasColimitOfIso _ _ _ _ _ _ this that",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.hasColimitOfIso"
+  ],
+  "state_before_k": "J : Type v\ninst✝⁴ : SmallCategory J\nC : Type u\ninst✝³ : Category.{v, u} C\nD : Type u'\ninst✝² : Category.{v', u'} D\ninst✝¹ : HasBinaryCoproducts C\ninst✝ : HasInitial C\nn : ℕ\nK : Discrete (Fin n) ⥤ C\nthis : HasCoproduct fun n_1 => K.obj { as := n_1 } := CategoryTheory.hasCoproduct_fin n fun n_1 => K.obj { as := n_1 }\nthat : K ≅ Discrete.functor fun n_1 => K.obj { as := n_1 } :=\n  Discrete.natIso fun x =>\n    match x with\n    | { as := i } => Iso.refl (K.obj { as := i })\n⊢ HasColimit K"
+}

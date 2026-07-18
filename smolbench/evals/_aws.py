@@ -287,6 +287,18 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
         iam.create_role(RoleName=name, AssumeRolePolicyDocument=_json.dumps(trust))
         created = True
     except ClientError as err:
+        if error_code(err) == "AccessDenied":
+            # Scoped credentials (e.g. the EC2-only operator key) cannot
+            # manage IAM at all -- create_role is the first IAM call, so it
+            # fails here even when the role/profile already exist from prior
+            # admin-credentialed runs (the common case: the name is fixed).
+            # Proceed optimistically; if the profile genuinely doesn't
+            # exist, RunInstances fails cleanly when it references it.
+            logging.info(
+                f"ensure_instance_profile: iam:CreateRole denied for scoped "
+                f"credentials; assuming role/profile {name!r} already exists"
+            )
+            return name
         if error_code(err) != "EntityAlreadyExists":
             raise
     # put_role_policy overwrites idempotently, so the grant tracks the bucket.

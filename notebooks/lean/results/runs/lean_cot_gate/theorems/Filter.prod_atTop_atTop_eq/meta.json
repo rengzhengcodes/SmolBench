@@ -1,0 +1,18 @@
+{
+  "full_name": "Filter.prod_atTop_atTop_eq",
+  "file_path": "Mathlib/Order/Filter/AtTopBot.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "cases isEmpty_or_nonempty α\nexact Subsingleton.elim _ _\ncases isEmpty_or_nonempty β\nexact Subsingleton.elim _ _\nsimpa [atTop, prod_iInf_left, prod_iInf_right, iInf_prod] using iInf_comm",
+  "ground_truth_remaining_from_k": "simpa [atTop, prod_iInf_left, prod_iInf_right, iInf_prod] using iInf_comm",
+  "true_premises_at_k": [
+    "Filter.atTop",
+    "Filter.prod_iInf_left",
+    "Filter.prod_iInf_right",
+    "iInf_prod",
+    "iInf_comm"
+  ],
+  "state_before_k": "case inr.inr\nι : Type u_1\nι' : Type u_2\nα : Type u_3\nβ : Type u_4\nγ : Type u_5\ninst✝¹ : Preorder α\ninst✝ : Preorder β\nh✝¹ : Nonempty α\nh✝ : Nonempty β\n⊢ atTop ×ˢ atTop = atTop"
+}

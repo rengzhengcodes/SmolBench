@@ -1,0 +1,12 @@
+{
+  "full_name": "Set.chainHeight_eq_iSup_Iic",
+  "file_path": "Mathlib/Order/Height.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "simp_rw [← chainHeight_dual (_ ∩ _)]\nrw [← chainHeight_dual, chainHeight_eq_iSup_Ici]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\ns t : Set α\ninst✝ : Preorder α\n⊢ ⨆ i ∈ ⇑ofDual ⁻¹' s, chainHeight (⇑ofDual ⁻¹' s ∩ Ici i) = ⨆ i ∈ s, chainHeight (⇑ofDual ⁻¹' (s ∩ Iic i))"
+}

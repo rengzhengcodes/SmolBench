@@ -727,8 +727,23 @@ def _ensure_bucket(bucket: str, region: str) -> None:
     except ClientError as err:
         code = _error_code(err)
         if code not in ("404", "NoSuchBucket"):
-            # 403/301: the name exists in another account/region -- creating
-            # would fail confusingly, so surface it.
+            # 403/301 is ambiguous: either the name exists in another
+            # account/region (creating would fail confusingly, so surface
+            # it), or HEAD is simply denied to scoped credentials (the
+            # EC2-only operator key has no s3:*; instances reach the cache
+            # via their instance profile, not the caller's credentials).
+            # An account-id suffix in the bucket name proves it is ours --
+            # sts:GetCallerIdentity needs no policy, so it works even for
+            # the most restricted principal.
+            if code == "403":
+                account = _aws.fresh_client("sts", region).get_caller_identity()["Account"]
+                if bucket.endswith(account):
+                    logging.info(
+                        f"_ensure_bucket: HEAD s3://{bucket} -> 403 under scoped "
+                        f"credentials; bucket name is suffixed with this account "
+                        f"({account}), proceeding"
+                    )
+                    return
             raise RuntimeError(
                 f"S3 bucket {bucket!r} exists but is not accessible from this "
                 f"account/region (HEAD -> {code}); pick another EC2_S3_MODEL_CACHE."
@@ -1188,6 +1203,7 @@ def _run_instances_kwargs(
     user_data: str,
     key_name: str,
     iam_profile: Optional[str],
+    capacity_reservation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Builds the ``run_instances`` kwargs for one launch attempt.
 
@@ -1221,6 +1237,13 @@ def _run_instances_kwargs(
     iam_profile : Optional[str]
         Instance-profile name for the S3 model cache, or ``None``/``""`` to
         omit the ``IamInstanceProfile`` kwarg (no S3 cache configured).
+    capacity_reservation_id : Optional[str]
+        A purchased EC2 Capacity Block reservation id. When set, the launch
+        targets the reservation instead of the Spot market: MarketType
+        becomes ``"capacity-block"`` (the API requires it for block-backed
+        launches) and a ``CapacityReservationSpecification`` pins the
+        instance to the block. The caller must pass the block's own AZ
+        subnet and instance type -- a mismatch is rejected by RunInstances.
 
     Returns
     -------
@@ -1277,6 +1300,13 @@ def _run_instances_kwargs(
         ],
         "UserData": user_data,
     }
+    if capacity_reservation_id:
+        kwargs["InstanceMarketOptions"] = {"MarketType": "capacity-block"}
+        kwargs["CapacityReservationSpecification"] = {
+            "CapacityReservationTarget": {
+                "CapacityReservationId": capacity_reservation_id
+            }
+        }
     if key_name:
         kwargs["KeyName"] = key_name
     if iam_profile:
@@ -1379,6 +1409,74 @@ def _launch_fresh(
     )
 
     from botocore.exceptions import ClientError  # lazy: keep the inference path boto3-free
+
+    # A purchased Capacity Block short-circuits the Spot hunt entirely: the
+    # block fixes region, AZ, and instance type, so there is nothing to hunt.
+    # Read at call time (not import) so the supervisor can set it per launch.
+    cb_id = os.getenv("EC2_CAPACITY_RESERVATION", "")
+    if cb_id:
+        cb_region = os.getenv("EC2_CAPACITY_RESERVATION_REGION", "")
+        if not cb_region:
+            raise RuntimeError(
+                "EC2_CAPACITY_RESERVATION is set but EC2_CAPACITY_RESERVATION_REGION "
+                "is not; the reservation's region cannot be inferred."
+            )
+        cr = _ec2_client(cb_region).describe_capacity_reservations(
+            CapacityReservationIds=[cb_id]
+        )["CapacityReservations"][0]
+        if cr["State"] != "active":
+            # Matches the supervisor's drought grep so a block that has not
+            # reached its start time is retried on the slow no-cap cadence.
+            raise RuntimeError(
+                f"InsufficientInstanceCapacity (capacity block {cb_id} is "
+                f"{cr['State']!r}, not active yet; starts {cr.get('StartDate')})"
+            )
+        cb_type, cb_az = cr["InstanceType"], cr["AvailabilityZone"]
+        vpc_id, subnets = _default_vpc_subnets(cb_region)
+        subnet_id = next((s for s, az in subnets or [] if az == cb_az), None)
+        if vpc_id is None or subnet_id is None:
+            raise RuntimeError(f"no default-VPC subnet in {cb_az} for capacity block {cb_id}")
+        ami, root_device = _resolve_ami(cb_region)
+        group_id = _ensure_security_group(cb_region, vpc_id, my_ip)
+        kwargs = _run_instances_kwargs(
+            ami=ami,
+            instance_type=cb_type,
+            subnet_id=subnet_id,
+            group_id=group_id,
+            root_device=root_device,
+            volume_gb=volume_gb,
+            user_data=user_data,
+            key_name=EC2_KEY_NAME,
+            iam_profile=iam_profile,
+            capacity_reservation_id=cb_id,
+        )
+        logging.info(
+            f"provision_spot_instance: launching {cb_type} into capacity block "
+            f"{cb_id} @ {cb_az} (no Spot hunt)"
+        )
+        instance_id = _try_launch(cb_region, kwargs)
+        public_ip = _wait_public_ip(cb_region, instance_id)
+        state = {
+            "instance_id": instance_id,
+            "region": cb_region,
+            "availability_zone": cb_az,
+            "instance_type": cb_type,
+            "public_ip": public_ip,
+            "security_group_id": group_id,
+            "control_token": control_token,
+            "vllm_api_key": vllm_api_key,
+            "idle_timeout_min": idle_timeout_min,
+            "s3_cache": EC2_S3_MODEL_CACHE,
+            "capacity_reservation_id": cb_id,
+            "launched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _save_state(state)
+        logging.info(
+            f"provision_spot_instance: launched {instance_id} "
+            f"({cb_type} @ {cb_az}, {public_ip}); waiting for its agent ..."
+        )
+        _wait_agent(state)
+        return state
 
     region_info: Dict[str, Optional[Dict[str, Any]]] = {}  # cached per-region lookups
     attempts: List[str] = []
@@ -1559,10 +1657,14 @@ def _wait_model_ready(
                 f"vLLM container for {model!r} exited during startup; docker logs tail:\n"
                 f"{status.get('log_tail', '')}"
             )
-        if container == "absent" and serve_rc not in (None, 0):
+        # "created" alongside a failed launcher rc is equally terminal: the
+        # container exists but nothing will ever start it (seen live
+        # 2026-07-14: an orphaned launcher's docker run raced a swap's rm -f,
+        # leaving a name-conflicted "created" container and rc=125).
+        if container in ("absent", "created") and serve_rc not in (None, 0):
             raise RuntimeError(
-                f"docker run for {model!r} failed (rc={serve_rc}); launcher output:\n"
-                f"{status.get('serve_log_tail', '')}"
+                f"docker run for {model!r} failed (rc={serve_rc}, container={container}); "
+                f"launcher output:\n{status.get('serve_log_tail', '')}"
             )
         return None
 

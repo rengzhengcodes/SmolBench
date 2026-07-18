@@ -1,0 +1,17 @@
+{
+  "full_name": "Filter.tendsto_lift'",
+  "file_path": "Mathlib/Order/Filter/Lift.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [Filter.lift', tendsto_lift, tendsto_principal, comp]",
+  "ground_truth_remaining_from_k": "simp only [Filter.lift', tendsto_lift, tendsto_principal, comp]",
+  "true_premises_at_k": [
+    "Filter.lift'",
+    "Filter.tendsto_lift",
+    "Filter.tendsto_principal",
+    "Function.comp"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nγ : Type u_3\nι : Sort u_4\nf f₁ f₂ : Filter α\nh h₁ h₂ : Set α → Set β\nm : γ → β\nl : Filter γ\n⊢ Tendsto m l (Filter.lift' f h) ↔ ∀ s ∈ f, ∀ᶠ (a : γ) in l, m a ∈ h s"
+}

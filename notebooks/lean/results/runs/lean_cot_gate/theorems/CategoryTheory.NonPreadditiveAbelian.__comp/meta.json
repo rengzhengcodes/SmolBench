@@ -1,0 +1,16 @@
+{
+  "full_name": "CategoryTheory.NonPreadditiveAbelian.σ_comp",
+  "file_path": "Mathlib/CategoryTheory/Abelian/NonPreadditive.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 9,
+  "k": 8,
+  "ground_truth_full_proof": "obtain ⟨g, hg⟩ :=\n  CokernelCofork.IsColimit.desc' isColimitσ (Limits.prod.map f f ≫ σ) (by\n    rw [prod.diag_map_assoc, diag_σ, comp_zero])\nsuffices hfg : f = g by rw [← hg, Cofork.π_ofπ, hfg]\ncalc\n  f = f ≫ prod.lift (𝟙 Y) 0 ≫ σ := by rw [lift_σ, Category.comp_id]\n  _ = prod.lift (𝟙 X) 0 ≫ Limits.prod.map f f ≫ σ := by rw [lift_map_assoc]\n  _ = prod.lift (𝟙 X) 0 ≫ σ ≫ g := by rw [← hg, CokernelCofork.π_ofπ]\n  _ = g := by rw [← Category.assoc, lift_σ, Category.id_comp]\nrw [prod.diag_map_assoc, diag_σ, comp_zero]\nrw [← hg, Cofork.π_ofπ, hfg]\nrw [lift_σ, Category.comp_id]\nrw [lift_map_assoc]\nrw [← hg, CokernelCofork.π_ofπ]\nrw [← Category.assoc, lift_σ, Category.id_comp]",
+  "ground_truth_remaining_from_k": "rw [← Category.assoc, lift_σ, Category.id_comp]",
+  "true_premises_at_k": [
+    "CategoryTheory.Category.assoc",
+    "CategoryTheory.NonPreadditiveAbelian.lift_σ",
+    "CategoryTheory.Category.id_comp"
+  ],
+  "state_before_k": "C : Type u\ninst✝¹ : Category.{v, u} C\ninst✝ : NonPreadditiveAbelian C\nX Y : C\nf : X ⟶ Y\ng : (CokernelCofork.ofπ σ ⋯).pt ⟶ Y\nhg : Cofork.π (CokernelCofork.ofπ σ ⋯) ≫ g = prod.map f f ≫ σ\n⊢ prod.lift (𝟙 X) 0 ≫ σ ≫ g = g"
+}

@@ -1,0 +1,12 @@
+{
+  "full_name": "Polynomial.span_singleton_annIdealGenerator",
+  "file_path": "Mathlib/LinearAlgebra/AnnihilatingPolynomial.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "by_cases h : annIdealGenerator 𝕜 a = 0\nrw [h, annIdealGenerator_eq_zero_iff.mp h, Set.singleton_zero, Ideal.span_zero]\nrw [annIdealGenerator, Ideal.span_singleton_mul_right_unit, Ideal.span_singleton_generator]\napply Polynomial.isUnit_C.mpr\napply IsUnit.mk0\napply inv_eq_zero.not.mpr\napply Polynomial.leadingCoeff_eq_zero.not.mpr\napply (mul_ne_zero_iff.mp h).1",
+  "ground_truth_remaining_from_k": "apply (mul_ne_zero_iff.mp h).1",
+  "true_premises_at_k": [],
+  "state_before_k": "case neg.h2.hx\n𝕜 : Type u_1\nA : Type u_2\ninst✝² : Field 𝕜\ninst✝¹ : Ring A\ninst✝ : Algebra 𝕜 A\na : A\nh : ¬annIdealGenerator 𝕜 a = 0\n⊢ ¬IsPrincipal.generator (annIdeal 𝕜 a) = 0"
+}

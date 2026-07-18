@@ -1,0 +1,12 @@
+{
+  "full_name": "Finset.supIndep_attach",
+  "file_path": "Mathlib/Order/SupIndep.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 7,
+  "k": 6,
+  "ground_truth_full_proof": "refine' ⟨fun h t ht i his hit => _, SupIndep.attach⟩\nclassical\nconvert h (filter_subset (fun (i : { x // x ∈ s }) => (i : ι) ∈ t) _) (mem_attach _ ⟨i, ‹_›⟩)\n  fun hi => hit <| by simpa using hi using 1\nrefine' eq_of_forall_ge_iff _\nsimp only [Finset.sup_le_iff, mem_filter, mem_attach, true_and_iff, Function.comp_apply,\n  Subtype.forall, Subtype.coe_mk]\nexact fun a => forall_congr' fun j => ⟨fun h _ => h, fun h hj => h (ht hj) hj⟩\nconvert h (filter_subset (fun (i : { x // x ∈ s }) => (i : ι) ∈ t) _) (mem_attach _ ⟨i, ‹_›⟩)\n  fun hi => hit <| by simpa using hi using 1\nrefine' eq_of_forall_ge_iff _\nsimp only [Finset.sup_le_iff, mem_filter, mem_attach, true_and_iff, Function.comp_apply,\n  Subtype.forall, Subtype.coe_mk]\nexact fun a => forall_congr' fun j => ⟨fun h _ => h, fun h hj => h (ht hj) hj⟩\nsimpa using hi",
+  "ground_truth_remaining_from_k": "simpa using hi",
+  "true_premises_at_k": [],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nι : Type u_3\nι' : Type u_4\ninst✝¹ : Lattice α\ninst✝ : OrderBot α\ns t✝ : Finset ι\nf : ι → α\ni✝ : ι\nh : SupIndep (attach s) fun a => f ↑a\nt : Finset ι\nht : t ⊆ s\ni : ι\nhis : i ∈ s\nhit : i ∉ t\nhi : { val := i, property := his } ∈ filter (fun i => ↑i ∈ t) (attach s)\n⊢ i ∈ t"
+}

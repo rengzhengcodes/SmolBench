@@ -352,14 +352,15 @@ def test_ensure_instance_profile_created_flag_true_when_only_profile_is_new(monk
 
 def test_ensure_instance_profile_reraises_unexpected_client_error(monkeypatch):
     """A ClientError code OTHER than the tolerated ones must propagate, not
-    be silently swallowed -- e.g. a genuine permissions problem must be loud."""
+    be silently swallowed. (AccessDenied is no longer in this bucket -- it
+    gets the scoped-credentials early return, pinned by its own test below.)"""
 
-    class _AccessDeniedIam(FakeEc2ProfileIam):
+    class _ThrottledIam(FakeEc2ProfileIam):
         def create_role(self, **kwargs):
             self.calls.append(("create_role", kwargs))
-            raise _client_error("AccessDenied")
+            raise _client_error("Throttling")
 
-    fake = _AccessDeniedIam(role_exists=False, profile_exists=False, role_already_attached=False)
+    fake = _ThrottledIam(role_exists=False, profile_exists=False, role_already_attached=False)
     monkeypatch.setattr(_aws, "fresh_client", lambda service, region=None: fake)
 
     with pytest.raises(ClientError):
@@ -455,3 +456,28 @@ def test_best_effort_teardown_does_not_raise():
         raise ValueError("nope")
 
     _aws.best_effort_teardown([("only", always_fails)], log_prefix="test_teardown")  # must not raise
+
+
+def test_ensure_instance_profile_access_denied_returns_early_no_sleep(monkeypatch):
+    """Scoped credentials (EC2-only operator key) get AccessDenied on the
+    very first IAM call even when the role/profile already exist from prior
+    admin runs -> return the fixed name optimistically, touch nothing else,
+    never sleep (RunInstances is the arbiter of whether the profile exists)."""
+
+    class AccessDeniedIam(FakeEc2ProfileIam):
+        def create_role(self, **kwargs):
+            self.calls.append(("create_role", kwargs))
+            raise _client_error("AccessDenied")
+
+    fake = AccessDeniedIam(role_exists=False, profile_exists=False, role_already_attached=False)
+    monkeypatch.setattr(_aws, "fresh_client", lambda service, region=None: fake)
+    sleeps = []
+    monkeypatch.setattr(_aws.time, "sleep", lambda s: sleeps.append(s))
+
+    name = _aws.ensure_instance_profile(
+        "smolbench-ec2-role", "smolbench-model-cache-000000000000", 12
+    )
+
+    assert name == "smolbench-ec2-role"
+    assert [c[0] for c in fake.calls] == ["create_role"]  # stopped at the denial
+    assert sleeps == []

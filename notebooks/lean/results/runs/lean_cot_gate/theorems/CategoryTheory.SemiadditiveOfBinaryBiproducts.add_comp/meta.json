@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.SemiadditiveOfBinaryBiproducts.add_comp",
+  "file_path": "Mathlib/CategoryTheory/Preadditive/OfBiproducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "simp only [add_eq_right_addition, Category.assoc]\ncongr\next <;> simp",
+  "ground_truth_remaining_from_k": "ext <;> simp",
+  "true_premises_at_k": [],
+  "state_before_k": "case e_a\nC : Type u\ninst✝² : Category.{v, u} C\ninst✝¹ : HasZeroMorphisms C\ninst✝ : HasBinaryBiproducts C\nX Y Z : C\nf g : X ⟶ Y\nh : Y ⟶ Z\n⊢ biprod.desc f g ≫ h = biprod.desc (f ≫ h) (g ≫ h)"
+}

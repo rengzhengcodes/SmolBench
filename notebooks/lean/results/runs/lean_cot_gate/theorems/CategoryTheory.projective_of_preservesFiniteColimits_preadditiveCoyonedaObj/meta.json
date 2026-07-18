@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.projective_of_preservesFiniteColimits_preadditiveCoyonedaObj",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Projective.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "rw [projective_iff_preservesEpimorphisms_preadditiveCoyoneda_obj']\ndsimp only [preadditiveCoyoneda]\ninfer_instance",
+  "ground_truth_remaining_from_k": "infer_instance",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝¹ : Category.{v, u} C\ninst✝ : Abelian C\nP : C\nhP : PreservesFiniteColimits (preadditiveCoyonedaObj (op P))\n⊢ Functor.PreservesEpimorphisms (preadditiveCoyonedaObj (op P) ⋙ forget₂ (ModuleCat (End (op P))) AddCommGroupCat)"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "AlternatingMap.eq_smul_basis_det",
+  "file_path": "Mathlib/LinearAlgebra/Determinant.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "refine' Basis.ext_alternating e fun i h => _\nlet σ : Equiv.Perm ι := Equiv.ofBijective i (Finite.injective_iff_bijective.1 h)\nchange f (e ∘ σ) = (f e • e.det) (e ∘ σ)\nsimp [AlternatingMap.map_perm, Basis.det_self]",
+  "ground_truth_remaining_from_k": "simp [AlternatingMap.map_perm, Basis.det_self]",
+  "true_premises_at_k": [
+    "AlternatingMap.map_perm",
+    "Basis.det_self"
+  ],
+  "state_before_k": "R : Type u_1\ninst✝⁶ : CommRing R\nM : Type u_2\ninst✝⁵ : AddCommGroup M\ninst✝⁴ : Module R M\nM' : Type u_3\ninst✝³ : AddCommGroup M'\ninst✝² : Module R M'\nι : Type u_4\ninst✝¹ : DecidableEq ι\ninst✝ : Fintype ι\ne : Basis ι R M\nf : M [⋀^ι]→ₗ[R] R\ni : ι → ι\nh : Injective i\nσ : Equiv.Perm ι := Equiv.ofBijective i ⋯\n⊢ f (⇑e ∘ ⇑σ) = (f ⇑e • Basis.det e) (⇑e ∘ ⇑σ)"
+}

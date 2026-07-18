@@ -1,0 +1,14 @@
+{
+  "full_name": "FiniteField.sum_subgroup_units",
+  "file_path": "Mathlib/FieldTheory/Finite/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "by_cases G_bot : G = ⊥\nsubst G_bot\nsimp only [ite_true, Subgroup.mem_bot, Fintype.card_ofSubsingleton, Nat.cast_ite, Nat.cast_one,\n  Nat.cast_zero, univ_unique, Set.default_coe_singleton, sum_singleton, Units.val_one]\nsimp only [G_bot, ite_false]\nexact sum_subgroup_units_eq_zero G_bot",
+  "ground_truth_remaining_from_k": "exact sum_subgroup_units_eq_zero G_bot",
+  "true_premises_at_k": [
+    "FiniteField.sum_subgroup_units_eq_zero"
+  ],
+  "state_before_k": "case neg\nK : Type u_1\nR : Type u_2\ninst✝³ : Ring K\ninst✝² : NoZeroDivisors K\nG : Subgroup Kˣ\ninst✝¹ : Fintype ↥G\ninst✝ : Decidable (G = ⊥)\nG_bot : ¬G = ⊥\n⊢ ∑ x : ↥G, ↑↑x = 0"
+}

@@ -1,0 +1,17 @@
+{
+  "full_name": "Prod.swap_iInf",
+  "file_path": "Mathlib/Order/CompleteLattice.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp_rw [iInf, swap_sInf, ← range_comp, Function.comp]",
+  "ground_truth_remaining_from_k": "simp_rw [iInf, swap_sInf, ← range_comp, Function.comp]",
+  "true_premises_at_k": [
+    "iInf",
+    "Prod.swap_sInf",
+    "Set.range_comp",
+    "Function.comp"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nβ₂ : Type u_3\nγ : Type u_4\nι : Sort u_5\nι' : Sort u_6\nκ : ι → Sort u_7\nκ' : ι' → Sort u_8\ninst✝¹ : InfSet α\ninst✝ : InfSet β\nf : ι → α × β\n⊢ swap (iInf f) = ⨅ i, swap (f i)"
+}
