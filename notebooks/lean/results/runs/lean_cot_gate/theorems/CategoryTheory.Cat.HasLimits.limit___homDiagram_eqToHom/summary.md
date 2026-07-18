@@ -11,11 +11,55 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✓ ✓ ✓ · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ · |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 20.6s, verify 0.1s, in=254, out=1032)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 65.5s, verify 0.1s, in=254, out=3219)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 85.2s, verify 0.1s, in=254, out=4103)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refl
+```
+
+**lean_error:** tail step 1/1 ('refl'): <stdin>:1:1: unknown tactic
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 88.1s, verify 0.1s, in=254, out=4212)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 0.3s, verify 0.1s, in=254, out=6)
 

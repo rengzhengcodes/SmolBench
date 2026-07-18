@@ -11,14 +11,74 @@ rw [smul_add, (liftAux φ).map_add, ihz, ihy, (liftAux φ).map_add, smul_add]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✓ ✓ ✓ ✓ |
-| `hint:2` | ✘ ✘ · · |
-| `hint:3` | ✓ ✘ ✘ · |
-| `noise:3` | ✘ ✘ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| `hint:2` | ✘ ✘ · ✘ | ✘ ✘ · · |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ · |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 72.3s, verify 0.7s, in=476, out=2640)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [smul_add]
+rw [(liftAux φ).map_add]
+rw [ihz, ihy]
+rw [add_smul]
+rw [← (liftAux φ).map_add]
+```
+
+**lean_error:** tail step 4/5 ('rw [add_smul]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 87.2s, verify 0.1s, in=476, out=3228)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw smul_add,
+rw (liftAux φ).map_add,
+rw [ihz, ihy],
+rw add_smul,
+rw (liftAux φ).map_add,
+```
+
+**lean_error:** tail step 1/5 ('rw smul_add,'): <stdin>:1:3: expected '['
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 142.0s, verify 0.4s, in=476, out=5413)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [smul_add]
+rw [LinearMap.map_add]
+rw [ihz, ihy]
+rw [← smul_add]
+rw [LinearMap.map_add]
+```
+
+**lean_error:** tail step 2/5 ('rw [LinearMap.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 144.7s, verify 0.3s, in=476, out=5530)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [smul_add]
+rw [liftAux_add]
+rw [ihz, ihy]
+rw [← smul_add]
+rw [← liftAux_add φ z y]
+```
+
+**lean_error:** tail step 2/5 ('rw [liftAux_add]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 0.8s, verify 0.3s, in=476, out=17)
 
@@ -55,6 +115,59 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```lean
 simp [smul_add, ihz, ihy]
 ```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 10.0s, verify 0.2s, in=1583, out=347)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, ← AddMonoidHom.map_add, ← smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, ← AddMonoidHom.map_add, ← smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 15.2s, verify 0.2s, in=1583, out=533)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [AddMonoidHom.map_add, smul_add, ihz, ihy, AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [AddMonoidHom.map_add, smul_add, ihz, ihy, AddMonoidHom.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 137.4s, verify 0.2s, in=1583, out=5220)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, ← smul_add]
+```
+
+**final state (truncated):**
+```
+case refine'_2
+ι : Type u_1
+ι₂ : Type u_2
+ι₃ : Type u_3
+R : Type u_4
+inst✝⁷ : CommSemiring R
+...
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 216.7s, verify 0.2s, in=1583, out=8796)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, liftAux.map_add, ihz, ihy, liftAux.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, liftAux.map_add, ihz, ihy, liftAux.map_add, smul_add]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 1.5s, verify 0.1s, in=1583, out=21)
 
@@ -118,6 +231,54 @@ inst✝⁷ : CommSemiring R
 ...
 ```
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 73.0s, verify 0.2s, in=2615, out=2091)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 77.8s, verify 0.2s, in=2615, out=1211)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, AddMonoidHom.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 88.3s, verify 0.7s, in=2615, out=2920)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add]
+rw [AddMonoidHom.map_add]
+rw [ihz, ihy]
+rw [smul_add]
+rw [← AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 4/5 ('rw [smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 167.8s, verify 0.7s, in=2615, out=4802)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, ← AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, ← AddMonoidHom.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 2.7s, verify 0.1s, in=2615, out=17)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -168,6 +329,57 @@ R : Type u_4
 inst✝⁷ : CommSemiring R
 ...
 ```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 45.0s, verify 0.7s, in=2643, out=1622)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add]
+rw [AddMonoidHom.map_add]
+rw [ihz, ihy]
+rw [smul_add]
+rw [AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 4/5 ('rw [smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 51.1s, verify 0.2s, in=2643, out=1852)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, PiTensorProduct.liftAux.map_add, ihz, ihy, smul_add, ← PiTensorProduct.liftAux.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, PiTensorProduct.liftAux.map_add, ihz, ihy, smul_add, ← PiTensorProduct.liftAux.map_add]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 119.5s, verify 0.2s, in=2643, out=4482)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, ← AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add, ← AddMonoidHom.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 138.4s, verify 0.1s, in=2643, out=5264)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw smul_add
+rw [AddMonoidHom.map_add (liftAux φ)]
+rw [ihz, ihy]
+rw ← smul_add
+```
+
+**lean_error:** tail step 1/4 ('rw smul_add'): <stdin>:1:3: expected '['
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.6s, verify 0.1s, in=2643, out=24)
 

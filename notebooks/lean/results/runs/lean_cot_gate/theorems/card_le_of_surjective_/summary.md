@@ -13,14 +13,67 @@ exact
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 42.4s, verify 0.1s, in=338, out=1998)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h := rank_le_rank_of_surjective f i
+have hβ := rank_finsupp R β
+have hα := rank_finsupp R α
+rw [hβ, hα] at h
+exact h
+```
+
+**lean_error:** tail step 1/5 ('have h := rank_le_rank_of_surjective f i'): internal exception #7
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 81.9s, verify 0.1s, in=338, out=3825)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h := rank_le_of_surjective i
+rwa [Finsupp.rank_eq_card α, Finsupp.rank_eq_card β] at h
+exact h
+```
+
+**lean_error:** tail step 1/3 ('have h := rank_le_of_surjective i'): internal exception #7
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 123.9s, verify 0.1s, in=338, out=5953)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h : Surjective (P.toLinearMap ∘ₗ f ∘ₗ Q.toLinearMap) := linear_map.surjective_comp (linear_map.surjective_comp i (linear_equiv.surjective Q)) (linear_equiv.surjective P)
+apply RankCondition.card_le_of_surjective R h
+```
+
+**lean_error:** tail step 1/2 ('have h : Surjective (P.toLinearMap ∘ₗ f ∘ₗ Q.toLinearMap) := linear_map.surjective_comp (linear_map.surjective_comp i (linear_equiv.surjective Q)) (linear_equiv.surjective P)'): unknown identifier 'linear_map.surjective_comp'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 124.2s, verify 0.1s, in=338, out=5968)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h1 : Surjective (Q ≫ₗ f) := LinearMap.surjective_of_surjective_comp_right (LinearEquiv.surjective Q) i
+have h2 : Surjective (Q ≫ₗ f ≫ₗ P) := LinearMap.surjective_of_surjective_comp_right h1 (LinearEquiv.surjective P)
+apply RankCondition.le_of_surjective R h2
+```
+
+**lean_error:** tail step 1/3 ('have h1 : Surjective (Q ≫ₗ f) := LinearMap.surjective_of_surjective_comp_right (LinearEquiv.surjective Q) i'): <stdin>:1:24: expected token
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.3s, verify 0.4s, in=338, out=10)
 
@@ -161,6 +214,52 @@ exact
 ```
 
 **lean_error:** tail step 1/5 ('exact'): <stdin>:1:5: unexpected end of input
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 92.9s, verify 0.2s, in=1114, out=4356)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))
+```
+
+**lean_error:** tail step 1/1 ('exact card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))'): application type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 103.1s, verify 0.1s, in=1114, out=4843)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))
+exact Function.Surjective.comp (LinearEquiv.surjective P) (Function.Surjective.comp i (LinearEquiv.surjective Q))
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))'): application type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 122.2s, verify 0.1s, in=1114, out=5850)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp f).comp Q.toLinearMap
+exact P.surjective.comp (i.comp Q.surjective)
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp f).comp Q.toLinearMap'): application type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 124.6s, verify 0.2s, in=1114, out=5991)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))
+```
+
+**lean_error:** tail step 1/1 ('exact card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))'): application type mismatch
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 4.0s, verify 0.1s, in=1114, out=26)
 
@@ -304,6 +403,52 @@ exact card_le_of_surjective (Q.comp f.comp P) ((Function.Surjective.comp Q.surje
 
 **lean_error:** tail step 1/1 ('exact card_le_of_surjective (Q.comp f.comp P) ((Function.Surjective.comp Q.surjective i).comp P.surjective)'): application type mismatch
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 186.7s, verify 0.1s, in=3501, out=4887)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp f).comp Q.toLinearMap
+  (Function.Surjective.comp (LinearEquiv.surjective P) (Function.Surjective.comp i (LinearEquiv.surjective Q)))
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp f).comp Q.toLinearMap'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 193.5s, verify 0.1s, in=3501, out=7590)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) ((P.surjective.comp i).comp Q.surjective)
+```
+
+**lean_error:** tail step 1/1 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) ((P.surjective.comp i).comp Q.surjective)'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 200.3s, verify 0.1s, in=3501, out=6101)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))
+exact Function.Surjective.comp P.surjective (Function.Surjective.comp i Q.surjective)
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 211.9s, verify 0.1s, in=3501, out=5666)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))
+```
+
+**lean_error:** tail step 1/1 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))'): application type mismatch
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 4.9s, verify 0.2s, in=3501, out=39)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -446,6 +591,55 @@ exact card_le_of_surjective ((P.toLinearMap.comp f).comp Q.toLinearMap) (P.surje
 ```
 
 **lean_error:** tail step 1/1 ('exact card_le_of_surjective ((P.toLinearMap.comp f).comp Q.toLinearMap) (P.surjective.comp (Q.surjective.comp i))'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 104.7s, verify 0.1s, in=3530, out=4930)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))
+```
+
+**lean_error:** tail step 1/1 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)) (P.surjective.comp (i.comp Q.surjective))'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 114.1s, verify 0.1s, in=3530, out=5441)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)), 
+exact (LinearEquiv.surjective P).comp (f.surjective.comp (LinearEquiv.surjective Q))
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap)),'): <stdin>:1:71: expected end of input
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 117.6s, verify 0.1s, in=3530, out=5617)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))
+apply Function.Surjective.comp P.surjective
+apply Function.Surjective.comp i
+apply Q.surjective
+```
+
+**lean_error:** tail step 1/4 ('apply card_le_of_surjective (P.toLinearMap.comp (f.comp Q.toLinearMap))'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 131.0s, verify 0.1s, in=3530, out=6374)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply card_le_of_surjective (P.toLinearMap.comp f.comp Q.toLinearMap)
+exact P.surjective.comp (i.comp Q.surjective)
+```
+
+**lean_error:** tail step 1/2 ('apply card_le_of_surjective (P.toLinearMap.comp f.comp Q.toLinearMap)'): application type mismatch
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 4.3s, verify 0.1s, in=3530, out=43)
 

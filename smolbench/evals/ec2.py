@@ -311,6 +311,28 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     "olmo-3.1-32b-instruct": {"hf_model_id": "allenai/Olmo-3.1-32B-Instruct",   "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
     "olmo-3.1-32b-think":    {"hf_model_id": "allenai/Olmo-3.1-32B-Think",      "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
     "granite-4.0-h-small":   {"hf_model_id": "ibm-granite/granite-4.0-h-small", "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
+    # notebooks/periodic_moe archetypes: an all-Mixture-of-Experts trio for the
+    # follow-on all-MoE induction study -- the sibling to the periodic
+    # decode/cot/moe archetype control (notebooks/periodic). All three are the
+    # strongest open-weight GENERALISTS with a measured Lean 4 miniF2F number in
+    # the UW study (arXiv 2606.05632). At tp=8 all fit one p5 (640 GB): Qwen3.5
+    # FP8 ~397 GB (~243 GB KV headroom at 131072 ctx), GPT-OSS MXFP4 ~63 GB,
+    # Nemotron ~120-240 GB. Precision is necessarily heterogeneous (GPT-OSS
+    # ships MXFP4-only), so unlike the periodic trio these are NOT uniform-FP8 --
+    # carry that as a cross-model comparison caveat.
+    "qwen3.5-397b-a17b":          {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072},
+    "gpt-oss-120b":               {"hf_model_id": "openai/gpt-oss-120b", "tp": 8, "max_model_len": 131072},
+    # TODO(VERIFY BEFORE A LIVE RUN): the exact repo id for
+    # Nemotron-3-Super-120B-A12B is UNCONFIRMED. huggingface.co/nvidia/
+    # Nemotron-3-Super-120B-A12B returned HTTP 401 unauthenticated (repo exists
+    # but is GATED, or the path differs), and the WebSearch budget was exhausted
+    # when this was wired. The id below is the best-guess path (BF16 base
+    # ~240 GB, still fits p5 at tp=8). If gated: set a real HF_TOKEN in
+    # notebooks/periodic_moe/keys.env and accept the license on its HF page. If
+    # an official FP8 build exists, prefer it for precision parity. Nemotron may
+    # also need a reasoning system_prompt (cf. nemotron-ultra-253b's "detailed
+    # thinking on") -- confirm and add here if so.
+    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/Nemotron-3-Super-120B-A12B", "tp": 8, "max_model_len": 131072},
 }
 
 
@@ -1578,6 +1600,11 @@ def provision_spot_instance(
     reuse), ``_recover_tagged_instance`` (state-file lost but a live tagged
     instance exists), ``_launch_fresh`` (neither -- hunt capacity and launch).
 
+    When ``EC2_CAPACITY_RESERVATION`` is set, the reservation is authoritative:
+    a live instance OUTSIDE that block is terminated rather than reused (it
+    would bill Spot rates on top of the already-paid block), and the launch
+    goes straight into the reservation via ``_launch_fresh``.
+
     Returns the state dict (also persisted to ``EC2_STATE_FILE``): instance_id,
     region, public_ip, instance_type, control_token, vllm_api_key, ...
     """
@@ -1588,19 +1615,29 @@ def provision_spot_instance(
     max_lifetime_min = max_lifetime_min or EC2_MAX_LIFETIME_MIN
 
     my_ip = _my_public_ip()
+    cb_id = os.getenv("EC2_CAPACITY_RESERVATION", "")
 
     # 1) Reattach to the instance in the state file when it is still alive.
     state = _reattach_existing_instance(my_ip)
+    if state is None:
+        # 2) A live tagged instance without a state file: rebuild the state
+        #    from the instance itself -- its secrets ride in its user-data
+        #    (readable via DescribeInstanceAttribute; see the security model
+        #    note up top), so losing the local file must not strand a
+        #    $30-45/h box.
+        state = _recover_tagged_instance(my_ip)
     if state is not None:
-        return state
-
-    # 2) A live tagged instance without a state file: rebuild the state from
-    #    the instance itself -- its secrets ride in its user-data (readable
-    #    via DescribeInstanceAttribute; see the security model note up top),
-    #    so losing the local file must not strand a $30-45/h box.
-    state = _recover_tagged_instance(my_ip)
-    if state is not None:
-        return state
+        if not cb_id or state.get("capacity_reservation_id") == cb_id:
+            return state
+        logging.info(
+            f"provision_spot_instance: {state['instance_id']} is outside "
+            f"capacity block {cb_id}; terminating it and launching in the "
+            "block instead."
+        )
+        # wait=False: the block's capacity is independent of the dying box,
+        # and p5-class teardown can outlast botocore's 10-min waiter (seen
+        # live 2026-07-18: WaiterError killed the whole provision).
+        shutdown_instance(wait=False)
 
     # 3) Fresh launch.
     return _launch_fresh(

@@ -11,14 +11,71 @@ exact ⟨_, (image_subset_iff_subset_preimage _).1 ht, rfl⟩
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 74.8s, verify 0.1s, in=361, out=2946)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi Finset.preimage t g hg
+split
+· exact (Finset.image_subset_iff hg s t).mp ht
+· rfl
+```
+
+**lean_error:** tail step 1/4 ('existsi Finset.preimage t g hg'): application type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 89.9s, verify 0.1s, in=361, out=3454)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+split
+· rintro x hx
+  rw Finset.mem_preimage
+  exact ht (Finset.mem_image_of_mem g hx)
+· rfl
+```
+
+**lean_error:** tail step 1/5 ('split'): tactic 'split' failed
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 108.8s, verify 0.1s, in=361, out=4159)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g hg
+split
+· exact (Finset.image_subset_iff hg).mp ht
+· rfl
+```
+
+**lean_error:** tail step 1/4 ('use Finset.preimage t g hg'): application type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 127.4s, verify 0.1s, in=361, out=4793)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi Finset.preimage t g this
+split
+exact Finset.image_subset_iff.mp ht
+rfl
+```
+
+**lean_error:** tail step 1/4 ('existsi Finset.preimage t g this'): application type mismatch
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.3s, verify 0.1s, in=361, out=24)
 
@@ -64,6 +121,51 @@ exact ⟨Finset.preimage t g this, fun x hx => mem_preimage.2 (ht <| mem_image_o
 ```
 
 **lean_error:** tail step 1/2 ('exact ⟨Finset.preimage t g this, fun x hx => mem_preimage.2 (ht <| mem_image_of_mem _ hx),'): <stdin>:1:90: unexpected end of input; expected '⟩'
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 59.9s, verify 0.1s, in=1092, out=2392)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact (Finset.image_subset_iff_subset_preimage hg.injOn).mpr ht
+```
+
+**lean_error:** tail step 1/1 ('exact (Finset.image_subset_iff_subset_preimage hg.injOn).mpr ht'): type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 77.7s, verify 0.1s, in=1092, out=3052)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn _), split, exact Finset.image_subset_iff_subset_preimage.mp ht, rfl
+```
+
+**lean_error:** tail step 1/1 ('use Finset.preimage t g (hg.injOn _), split, exact Finset.image_subset_iff_subset_preimage.mp ht, rfl'): too many arguments supplied to `use`
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 105.8s, verify 0.1s, in=1092, out=4054)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨Finset.preimage t g (hg.injOn _), Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨Finset.preimage t g (hg.injOn _), Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 118.3s, verify 0.1s, in=1092, out=4480)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply Finset.image_subset_iff_subset_preimage.mp
+exact ht
+```
+
+**lean_error:** tail step 1/2 ('apply Finset.image_subset_iff_subset_preimage.mp'): invalid field notation, type is not of the form (C ...) where C is a constant
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.9s, verify 0.1s, in=1092, out=20)
 
@@ -111,6 +213,60 @@ simp only [Finset.prod_preimage _ _ (hg.injOn _), Finset.prod_image (hg.injOn _)
 
 **lean_error:** tail step 1/3 ('simp only [Finset.prod_preimage _ _ (hg.injOn _), Finset.prod_image (hg.injOn _),'): <stdin>:1:81: unexpected end of input; expected ']'
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 147.7s, verify 0.2s, in=2095, out=3180)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn _)
+split
+apply Finset.image_subset_iff_subset_preimage.1
+exact ht
+rfl
+```
+
+**lean_error:** tail step 2/5 ('split'): tactic 'split' failed
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 154.2s, verify 0.3s, in=2095, out=2766)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn _)
+split
+apply Finset.image_subset_iff_subset_preimage.2 ht
+rfl
+```
+
+**lean_error:** tail step 2/4 ('split'): tactic 'split' failed
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 161.0s, verify 0.1s, in=2095, out=3125)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn (Set.injOn_preimage_t t g hg))
+split
+apply image_subset_iff_subset_preimage.mp hg ht
+rfl
+```
+
+**lean_error:** tail step 1/4 ('use Finset.preimage t g (hg.injOn (Set.injOn_preimage_t t g hg))'): unknown constant 'Set.injOn_preimage_t'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 200.3s, verify 0.1s, in=2095, out=4448)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn _), exact ⟨Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('use Finset.preimage t g (hg.injOn _), exact ⟨Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩'): unknown identifier 'exact'
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.9s, verify 0.1s, in=2095, out=14)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -156,6 +312,52 @@ simp only [Finset.image_subset_iff_subset_preimage, hg.injOn, Finset.preimage_im
 ```
 
 **lean_error:** tail step 1/3 ('simp only [Finset.image_subset_iff_subset_preimage, hg.injOn, Finset.preimage_image,'): <stdin>:1:84: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 85.9s, verify 0.1s, in=2122, out=3301)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+refine' ⟨Finset.preimage t g (hg.injOn _), image_subset_iff_subset_preimage.mp ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ("refine' ⟨Finset.preimage t g (hg.injOn _), image_subset_iff_subset_preimage.mp ht, rfl⟩"): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 115.4s, verify 0.2s, in=2122, out=4339)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+use Finset.preimage t g (hg.injOn _)
+exact ⟨Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩
+```
+
+**lean_error:** tail step 2/2 ('exact ⟨Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 126.2s, verify 0.1s, in=2122, out=4711)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+refine' ⟨Finset.preimage t g (hg.injOn _), Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ("refine' ⟨Finset.preimage t g (hg.injOn _), Finset.image_subset_iff_subset_preimage.mp ht, rfl⟩"): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 164.8s, verify 0.1s, in=2122, out=6224)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact image_subset_iff_subset_preimage.mp hg.injOn ht
+rfl
+```
+
+**lean_error:** tail step 1/2 ('exact image_subset_iff_subset_preimage.mp hg.injOn ht'): invalid field notation, type is not of the form (C ...) where C is a constant
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 1.4s, verify 0.1s, in=2122, out=25)
 

@@ -11,14 +11,65 @@ simp only [ιMapObjOrZero_eq_zero _ _ _ _ h, zero_comp, comp_zero]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✓ ✓ ✓ · |
-| `hint:2` | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ · |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 55.0s, verify 0.1s, in=417, out=2102)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero_of_ne h], rw [ιMapObjOrZero_eq_zero_of_ne h], simp [zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/1 ('rw [ιMapObjOrZero_eq_zero_of_ne h], rw [ιMapObjOrZero_eq_zero_of_ne h], simp [zero_comp, comp_zero]'): <stdin>:1:34: expected end of input
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 79.7s, verify 0.2s, in=417, out=3002)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero_of_ne h, ιMapObjOrZero_eq_zero_of_ne h]
+rw [zero_comp, comp_zero]
+refl
+```
+
+**lean_error:** tail step 1/3 ('rw [ιMapObjOrZero_eq_zero_of_ne h, ιMapObjOrZero_eq_zero_of_ne h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 126.2s, verify 4.9s, in=417, out=4764)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero_of_ne h]
+rw [zero_comp]
+rw [comp_zero]
+rfl
+```
+
+**lean_error:** tail step 1/4 ('rw [ιMapObjOrZero_eq_zero_of_ne h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 131.2s, verify 17.1s, in=417, out=4776)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero, if_neg h]
+rw [zero_comp, comp_zero]
+rfl
+```
+
+**lean_error:** tail step 1/3 ('rw [ιMapObjOrZero, if_neg h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **success**  (gen 0.8s, verify 0.1s, in=417, out=15)
 
@@ -67,6 +118,55 @@ inst✝⁵ : Category.{u_5, u_4} C
 ...
 ```
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 41.3s, verify 0.7s, in=1037, out=1600)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]
+simp only [zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/2 ('rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 82.4s, verify 0.4s, in=1037, out=3105)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [X.ιMapObjOrZero_eq_zero h, Y.ιMapObjOrZero_eq_zero h]
+simp
+```
+
+**lean_error:** tail step 1/2 ('rw [X.ιMapObjOrZero_eq_zero h, Y.ιMapObjOrZero_eq_zero h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 148.3s, verify 34.7s, in=1037, out=5146)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]
+simp [zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/2 ('rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 193.4s, verify 0.6s, in=1037, out=6989)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero X h]
+rw [ιMapObjOrZero_eq_zero Y h]
+simp only [zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/3 ('rw [ιMapObjOrZero_eq_zero X h]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.2s, verify 0.1s, in=1037, out=22)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -111,6 +211,50 @@ simp only [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]
 
 **lean_error:** tail step 1/1 ('simp only [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]'): application type mismatch
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 77.3s, verify 0.3s, in=1438, out=1623)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]
+```
+
+**lean_error:** tail step 1/1 ('simp only [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 79.4s, verify 0.2s, in=1438, out=1375)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [ιMapObjOrZero_eq_zero h]
+```
+
+**lean_error:** tail step 1/1 ('simp [ιMapObjOrZero_eq_zero h]'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 96.3s, verify 0.3s, in=1438, out=1528)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ιMapObjOrZero_eq_zero h, zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/1 ('simp only [ιMapObjOrZero_eq_zero h, zero_comp, comp_zero]'): application type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 183.1s, verify 10.3s, in=1438, out=3452)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [ιMapObjOrZero_eq_zero h]
+```
+
+**lean_error:** tail step 1/1 ('simp [ιMapObjOrZero_eq_zero h]'): application type mismatch
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.8s, verify 0.1s, in=1438, out=16)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -154,6 +298,52 @@ simp only [ιMapObjOrZero_eq_zero h, zero_comp, comp_zero]
 ```
 
 **lean_error:** tail step 1/1 ('simp only [ιMapObjOrZero_eq_zero h, zero_comp, comp_zero]'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 32.4s, verify 0.6s, in=1462, out=1265)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]
+simp only [zero_comp, comp_zero]
+```
+
+**lean_error:** tail step 1/2 ('rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 56.6s, verify 0.7s, in=1462, out=2160)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]
+simp
+```
+
+**lean_error:** tail step 1/2 ('rw [ιMapObjOrZero_eq_zero h, ιMapObjOrZero_eq_zero h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 73.0s, verify 0.3s, in=1462, out=2743)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [ιMapObjOrZero_eq_zero h]
+```
+
+**lean_error:** tail step 1/1 ('simp [ιMapObjOrZero_eq_zero h]'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 92.7s, verify 0.3s, in=1462, out=3503)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]
+```
+
+**lean_error:** tail step 1/1 ('simp [ιMapObjOrZero_eq_zero h, comp_zero, zero_comp]'): application type mismatch
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.0s, verify 0.1s, in=1462, out=22)
 

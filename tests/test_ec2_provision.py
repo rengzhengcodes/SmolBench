@@ -263,3 +263,70 @@ def test_run_instances_kwargs_no_reservation_keeps_spot_shape():
     kwargs = _base_kwargs()
     assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
     assert "CapacityReservationSpecification" not in kwargs
+
+
+# ---------------------------------------------------------------------------
+# provision_spot_instance -- reservation authority over live instances. When
+# EC2_CAPACITY_RESERVATION is set, a live box outside the block (e.g. a Spot
+# instance from an earlier hunt) must be terminated and relaunched inside the
+# block, never reused: the block is already paid for and the Spot box bills
+# on top of it. All AWS-touching helpers are monkeypatched out.
+# ---------------------------------------------------------------------------
+
+
+def _patch_provision(monkeypatch, reattach=None, recover=None):
+    calls = {"shutdown": 0, "launch_fresh": 0}
+    monkeypatch.setattr(ec2, "_my_public_ip", lambda: "203.0.113.7")
+    monkeypatch.setattr(ec2, "_reattach_existing_instance", lambda my_ip: reattach)
+    monkeypatch.setattr(ec2, "_recover_tagged_instance", lambda my_ip: recover)
+
+    def fake_shutdown(wait=True):
+        calls["shutdown"] += 1
+        # The guard must not block on full termination: p5-class teardown can
+        # outlast botocore's 10-min instance_terminated waiter, and the block
+        # launch does not depend on the dying box.
+        assert wait is False
+
+    def fake_launch_fresh(*args, **kwargs):
+        calls["launch_fresh"] += 1
+        return {"instance_id": "i-fresh", "capacity_reservation_id": "cr-block1"}
+
+    monkeypatch.setattr(ec2, "shutdown_instance", fake_shutdown)
+    monkeypatch.setattr(ec2, "_launch_fresh", fake_launch_fresh)
+    return calls
+
+
+_SPOT_STATE = {"instance_id": "i-spot", "region": "us-west-2"}
+_BLOCK_STATE = {"instance_id": "i-block", "capacity_reservation_id": "cr-block1"}
+
+
+def test_provision_no_reservation_env_reuses_live_instance(monkeypatch):
+    monkeypatch.delenv("EC2_CAPACITY_RESERVATION", raising=False)
+    calls = _patch_provision(monkeypatch, reattach=_SPOT_STATE)
+    assert ec2.provision_spot_instance() is _SPOT_STATE
+    assert calls == {"shutdown": 0, "launch_fresh": 0}
+
+
+def test_provision_reservation_env_reuses_instance_already_in_block(monkeypatch):
+    monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
+    calls = _patch_provision(monkeypatch, reattach=_BLOCK_STATE)
+    assert ec2.provision_spot_instance() is _BLOCK_STATE
+    assert calls == {"shutdown": 0, "launch_fresh": 0}
+
+
+def test_provision_reservation_env_terminates_off_block_instance(monkeypatch):
+    monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
+    calls = _patch_provision(monkeypatch, reattach=_SPOT_STATE)
+    state = ec2.provision_spot_instance()
+    assert calls == {"shutdown": 1, "launch_fresh": 1}
+    assert state["capacity_reservation_id"] == "cr-block1"
+
+
+def test_provision_reservation_env_terminates_off_block_recovered_instance(monkeypatch):
+    """The tag-recovery branch (state file lost) is subject to the same
+    authority: a recovered off-block box is torn down, not reused."""
+    monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
+    calls = _patch_provision(monkeypatch, reattach=None, recover=_SPOT_STATE)
+    state = ec2.provision_spot_instance()
+    assert calls == {"shutdown": 1, "launch_fresh": 1}
+    assert state["instance_id"] == "i-fresh"

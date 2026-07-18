@@ -11,14 +11,64 @@ exact isCompl_of_proj h.codRestrict_apply_cod
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ · ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ · ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:2` | · · · ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ · ✘ ✘ |
+| `hint:3` | · ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ · ✘ ✘ ✘ |
+| `noise:3` | · · · ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 64.4s, verify 0.1s, in=1063, out=3194)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsCompl.symm (h.isCompl)
+```
+
+**lean_error:** tail step 1/1 ('exact IsCompl.symm (h.isCompl)'): application type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 91.1s, verify 0.1s, in=1063, out=4632)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [LinearMap.ker_codRestrict]
+apply is_proj.is_compl_ker_image h
+exact h
+trivial
+```
+
+**lean_error:** tail step 1/4 ('simp only [LinearMap.ker_codRestrict]'): simp made no progress
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 105.5s, verify 0.2s, in=1063, out=5383)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply IsProj.isCompl h
+```
+
+**lean_error:** tail step 1/1 ('apply IsProj.isCompl h'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 148.3s, verify 0.1s, in=1063, out=7564)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw ker_codRestrict
+exact IsCompl_of_is_proj h
+apply IsProj_of_ker h
+apply Submodule.ker
+```
+
+**lean_error:** tail step 1/4 ('rw ker_codRestrict'): <stdin>:1:3: expected '['
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.9s, verify 0.1s, in=1063, out=10)
 
@@ -151,6 +201,81 @@ exact ⟨h.isCompl_ker, h.isCompl_ker.1, p⟩
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨h.isCompl_ker, h.isCompl_ker.1, p⟩'): invalid field 'isCompl_ker', the environment does not contain 'LinearMap.IsProj.isCompl_ker'
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **incomplete**  (gen 11.1s, verify 0.4s, in=1407, out=532)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj
+simp [h]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+F : Type u_3
+...
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 20.3s, verify 0.2s, in=1407, out=953)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 66.0s, verify 0.2s, in=1407, out=3273)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 145.2s, verify 0.7s, in=1407, out=7386)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+intro x
+ext
+exact h x
+```
+
+**lean_error:** tail step 4/4 ('exact h x'): function expected at
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.0s, verify 0.1s, in=1407, out=12)
 
@@ -293,6 +418,72 @@ exact isCompl_of_proj fun x => LinearMap.congr_arg Subtype.val (h.2.2 ⟨x, rfl�
 
 **lean_error:** tail step 1/1 ('exact isCompl_of_proj fun x => LinearMap.congr_arg Subtype.val (h.2.2 ⟨x, rfl⟩)'): application type mismatch
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 20.7s, verify 0.2s, in=2028, out=414)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 29.4s, verify 0.3s, in=2028, out=440)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+exact h
+```
+
+**lean_error:** tail step 2/2 ('exact h'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 73.5s, verify 0.3s, in=2028, out=2709)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+exact h.idempotent
+exact h.image_le
+exact h.range_eq
+exact h.ker_eq
+exact h.le_ker
+exact h.ker_le
+```
+
+**lean_error:** tail step 2/7 ('exact h.idempotent'): invalid field 'idempotent', the environment does not contain 'LinearMap.IsProj.idempotent'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 141.4s, verify 0.1s, in=2028, out=6342)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj (codRestrict f p)
+intros x
+ext
+have h_mem : x ∈ p := x.2
+obtain ⟨y, rfl⟩ := h.image ▸ h_mem
+rw [← h.idem, LinearMap.comp_apply]
+rfl
+```
+
+**lean_error:** tail step 1/7 ('apply isCompl_of_proj (codRestrict f p)'): application type mismatch
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.9s, verify 0.1s, in=2028, out=21)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -434,6 +625,80 @@ exact isCompl_of_proj fun x ↦ h.self_mem ⟨x, h.mem_ker.mp (mem_ker.mpr (h.se
 ```
 
 **lean_error:** tail step 1/2 ('rw [← codRestrict_ker] <;>'): <stdin>:1:26: unexpected end of input; expected '['
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **incomplete**  (gen 18.3s, verify 0.2s, in=2056, out=857)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 27.4s, verify 0.2s, in=2056, out=1294)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 57.8s, verify 0.2s, in=2056, out=2864)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply LinearMap.isCompl_of_proj
+```
+
+**final state (truncated):**
+```
+case hf
+R : Type u_1
+inst✝⁹ : Ring R
+E : Type u_2
+inst✝⁸ : AddCommGroup E
+inst✝⁷ : Module R E
+...
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 67.0s, verify 0.4s, in=2056, out=3330)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply isCompl_of_proj
+intro x hx
+apply Subtype.eq
+exact h.2 hx
+```
+
+**lean_error:** tail step 2/4 ('intro x hx'): tactic 'introN' failed, insufficient number of binders
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.2s, verify 0.1s, in=2056, out=12)
 

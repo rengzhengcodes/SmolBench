@@ -12,14 +12,67 @@ exact ⟨φ, (DFunLike.congr_fun hφ <| AdjoinSimple.gen F x).trans <|
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 119.6s, verify 0.9s, in=471, out=6126)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+use φ
+apply congr_fun at hφ
+have := hφ x
+dsimp at this
+rwa algHomAdjoinIntegralEquiv_symm_apply_eval at this
+```
+
+**lean_error:** tail step 3/5 ('have := hφ x'): internal exception #7
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 125.5s, verify 0.3s, in=471, out=6411)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exists φ
+apply (algHomAdjoinIntegralEquiv F ix).symm_apply_spec.1
+exact hφ
+```
+
+**lean_error:** tail step 2/3 ('apply (algHomAdjoinIntegralEquiv F ix).symm_apply_spec.1'): invalid field 'symm_apply_spec', the environment does not contain 'Equiv.symm_apply_spec'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 187.2s, verify 0.5s, in=471, out=6819)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+use φ
+trivial
+```
+
+**lean_error:** tail step 2/2 ('trivial'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 224.2s, verify 0.3s, in=471, out=8600)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi φ
+rw ← hφ
+simp
+```
+
+**lean_error:** tail step 2/3 ('rw ← hφ'): <stdin>:1:3: expected '['
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.2s, verify 0.1s, in=471, out=12)
 
@@ -152,6 +205,59 @@ simpa [hφ] using (algHomAdjoinIntegralEquiv F ix).symm_apply_apply _ y
 ```
 
 **lean_error:** tail step 1/1 ('simpa [hφ] using (algHomAdjoinIntegralEquiv F ix).symm_apply_apply _ y'): function expected at
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 83.1s, verify 0.5s, in=1564, out=4252)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+use φ
+apply DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply, algHomAdjoinIntegralEquiv_symm_apply_gen]
+```
+
+**lean_error:** tail step 2/3 ('apply DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)'): tactic 'apply' failed, failed to unify
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 99.9s, verify 0.1s, in=1564, out=5121)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply] at h
+rw [IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen] at h
+exact ⟨φ, h⟩
+```
+
+**lean_error:** tail step 1/4 ('have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 121.9s, verify 0.1s, in=1564, out=6231)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+have := congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply, algHomAdjoinIntegralEquiv_symm_apply_gen] at this
+use φ; exact this
+```
+
+**lean_error:** tail step 1/3 ('have := congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)'): application type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 162.4s, verify 0.5s, in=1564, out=5752)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+use φ
+apply Eq.trans (DFunLike.congr_fun hφ (AdjoinSimple.gen F x))
+exact algHomAdjoinIntegralEquiv_symm_apply_gen ix ⟨y, mem_aroots.mpr ⟨minpoly.ne_zero ix, hy⟩⟩
+```
+
+**lean_error:** tail step 3/3 ('exact algHomAdjoinIntegralEquiv_symm_apply_gen ix ⟨y, mem_aroots.mpr ⟨minpoly.ne_zero ix, hy⟩⟩'): application type mismatch
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 2.1s, verify 0.1s, in=1564, out=31)
 
@@ -290,6 +396,63 @@ exact Eq.trans (DFunLike.congr_fun hφ (AdjoinSimple.gen F { val := x, property 
 ```
 
 **lean_error:** tail step 1/2 ('exact Eq.trans (DFunLike.congr_fun hφ (AdjoinSimple.gen F { val := x, property := hx })) <|'): <stdin>:1:91: unexpected end of input
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 95.6s, verify 0.1s, in=4289, out=3228)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+have h' := IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen ix ⟨y, mem_aroots.mpr ⟨minpoly.ne_zero ix, hy⟩⟩
+rw [h'] at h
+exact ⟨φ, h⟩
+```
+
+**lean_error:** tail step 1/4 ('have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 105.3s, verify 0.1s, in=4289, out=3582)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+have h := DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply] at h
+rw [algHomAdjoinIntegralEquiv_symm_apply_gen] at h
+use φ
+exact h
+```
+
+**lean_error:** tail step 1/5 ('have h := DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 127.6s, verify 0.3s, in=4289, out=4413)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply, inclusion_apply]
+rw [IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen]
+exact ⟨φ, this⟩
+```
+
+**lean_error:** tail step 1/4 ('apply DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): tactic 'apply' failed, failed to unify
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 135.0s, verify 0.5s, in=4289, out=4706)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+use φ
+apply DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply] at this
+rwa [algHomAdjoinIntegralEquiv_symm_apply_gen] at this
+```
+
+**lean_error:** tail step 2/4 ('apply DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): tactic 'apply' failed, failed to unify
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 2.9s, verify 0.5s, in=4289, out=33)
 
@@ -430,6 +593,60 @@ exact ⟨_, Eq.trans (DFunLike.congr_fun hφ _) (IntermediateField.algHomAdjoinI
 ```
 
 **lean_error:** tail step 1/2 ('exact ⟨_, Eq.trans (DFunLike.congr_fun hφ _) (IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen'): <stdin>:1:104: unexpected end of input; expected ')', ',' or ':'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 84.5s, verify 0.1s, in=4318, out=4314)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply] at h
+rw [IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen] at h
+exact ⟨φ, h⟩
+```
+
+**lean_error:** tail step 1/4 ('have h := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 115.4s, verify 0.4s, in=4318, out=5911)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+use φ
+rw [← hφ]
+rw [AlgHom.comp_apply]
+apply algHomAdjoinIntegralEquiv_symm_apply_gen
+```
+
+**lean_error:** tail step 2/4 ('rw [← hφ]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 119.1s, verify 0.1s, in=4318, out=6099)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+have h₁ := DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)
+rw [AlgHom.comp_apply] at h₁
+rw [algHomAdjoinIntegralEquiv_symm_apply_gen] at h₁
+exact ⟨φ, h₁⟩
+```
+
+**lean_error:** tail step 1/4 ('have h₁ := DFunLike.congr_fun hφ (AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 140.4s, verify 0.1s, in=4318, out=4906)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+have key := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)
+rwa [IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen ix] at key
+```
+
+**lean_error:** tail step 1/2 ('have key := DFunLike.congr_fun hφ (IntermediateField.AdjoinSimple.gen F ⟨x, hx⟩)'): invalid constructor ⟨...⟩, expected type must be an inductive type 
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 2.2s, verify 0.5s, in=4318, out=33)
 

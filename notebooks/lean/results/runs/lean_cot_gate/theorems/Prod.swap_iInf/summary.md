@@ -11,14 +11,64 @@ simp_rw [iInf, swap_sInf, ← range_comp, Function.comp]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ · ✘ · · |
-| `hint:2` | · · ✘ ✘ | · ✘ ✓ ✘ ✘ ✘ · ✓ |
-| `hint:3` | · ✘ · · | ✘ · ✘ ✓ · · ✓ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ ✓ · · · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ · ✘ · · |
+| `hint:2` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | · ✘ ✓ ✘ ✘ ✘ · ✓ |
+| `hint:3` | ✘ ✘ ✘ · | · ✘ · · | ✘ · ✘ ✓ · · ✓ · |
+| `noise:3` | ✘ ✘ · ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ ✓ · · · |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 38.8s, verify 0.1s, in=292, out=1936)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext; rfl
+```
+
+**lean_error:** tail step 1/1 ('ext; rfl'): <stdin>:1:3: expected end of input
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 66.2s, verify 0.2s, in=292, out=3328)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext
+rfl
+```
+
+**lean_error:** tail step 2/2 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 106.3s, verify 0.2s, in=292, out=5331)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+split
+· simp [swap, iInf_def, prod.inf_iInf]
+· simp [swap, iInf_def, prod.inf_iInf]
+```
+
+**lean_error:** tail step 1/3 ('split'): tactic 'split' failed
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 159.8s, verify 0.2s, in=292, out=8090)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext
+split
+· rw [iInf_snd, iInf_fst]; rfl
+· rw [iInf_fst, iInf_snd]; rfl
+```
+
+**lean_error:** tail step 2/4 ('split'): tactic 'split' failed
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.5s, verify 0.1s, in=292, out=6)
 
@@ -178,6 +228,51 @@ simp [iInf]
 ι' : Sort u_6
 ...
 ```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 26.2s, verify 0.1s, in=1106, out=1306)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, Set.range_comp]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf, Prod.swap_sInf, Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 44.3s, verify 0.1s, in=1106, out=2219)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, Set.range_comp, iInf]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf, Prod.swap_sInf, Set.range_comp, iInf]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 137.3s, verify 0.1s, in=1106, out=6897)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, Set.range_comp]
+rfl
+```
+
+**lean_error:** tail step 1/2 ('rw [iInf, Prod.swap_sInf, Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 139.4s, verify 0.1s, in=1106, out=7008)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, Set.range_comp]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf, Prod.swap_sInf, Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 1.2s, verify 0.1s, in=1106, out=19)
 
@@ -341,6 +436,63 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 rw [iInf, iInf, Prod.swap_sInf, ← Set.range_comp, Function.comp]
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 33.8s, verify 0.3s, in=2511, out=448)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+unfold iInf
+rw [Prod.swap_sInf]
+rw [Set.range_comp]
+congr_arg sInf (Prod.swap '' range f) (range (swap ∘ f)) using Set.range_comp _ _ ▸ rfl
+rfl
+```
+
+**lean_error:** tail step 3/5 ('rw [Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 34.3s, verify 0.1s, in=2511, out=1233)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, Set.range_comp, iInf]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf, Prod.swap_sInf, Set.range_comp, iInf]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 88.9s, verify 0.1s, in=2511, out=3124)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [swap_sInf, ← Set.range_comp]
+```
+
+**lean_error:** tail step 1/1 ('rw [swap_sInf, ← Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **incomplete**  (gen 128.6s, verify 0.1s, in=2511, out=4765)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [iInf, swap_sInf, ← Set.range_comp swap f]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+β₂ : Type u_3
+γ : Type u_4
+ι : Sort u_5
+ι' : Sort u_6
+...
 ```
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **incomplete**  (gen 1.9s, verify 0.1s, in=2511, out=19)
@@ -533,6 +685,63 @@ simp [iInf, Prod.swap_sInf, Set.range_comp, Function.comp]
 ι' : Sort u_6
 ...
 ```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 9.4s, verify 0.2s, in=2531, out=450)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf]
+rw [Set.range_comp]
+```
+
+**lean_error:** tail step 2/2 ('rw [Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 24.1s, verify 0.4s, in=2531, out=1209)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+unfold iInf
+rw [swap_sInf]
+rw [← Set.range_comp Prod.swap f]
+refl
+```
+
+**lean_error:** tail step 4/4 ('refl'): <stdin>:1:1: unknown tactic
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 67.3s, verify 0.1s, in=2531, out=3381)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [iInf, swap_sInf, ← Set.range_comp Prod.swap f]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+β₂ : Type u_3
+γ : Type u_4
+ι : Sort u_5
+ι' : Sort u_6
+...
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 108.9s, verify 0.1s, in=2531, out=5462)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [iInf, Prod.swap_sInf, iInf, Set.range_comp]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf, Prod.swap_sInf, iInf, Set.range_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 1.3s, verify 0.1s, in=2531, out=22)
 

@@ -13,14 +13,58 @@ simp only [reindex, domDomCongrLinearEquiv', LinearEquiv.coe_symm_mk, LinearEqui
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ · |
-| `hint:2` | ✓ ✓ ✓ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ · |
+| `hint:2` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✓ ✘ | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `noise:3` | ✓ ✘ ✘ ✓ | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 47.0s, verify 0.1s, in=443, out=2199)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 57.0s, verify 0.1s, in=443, out=2042)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← reindex_symm]
+```
+
+**lean_error:** tail step 1/1 ('rw [← reindex_symm]'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 67.7s, verify 0.1s, in=443, out=2440)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw reindex_symm
+```
+
+**lean_error:** tail step 1/1 ('rw reindex_symm'): <stdin>:1:3: expected '['
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 101.4s, verify 0.2s, in=443, out=3697)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.6s, verify 0.1s, in=443, out=6)
 
@@ -162,6 +206,49 @@ R : Type u_4
 inst✝⁷ : CommSemiring R
 ...
 ```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 146.2s, verify 0.1s, in=2700, out=5412)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 160.3s, verify 1.1s, in=2700, out=6002)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [LinearEquiv.ofLinear_symm_apply, PiTensorProduct.reindex]
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 225.8s, verify 0.2s, in=2700, out=8976)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.ofLinear_symm_apply]
+rfl
+```
+
+**lean_error:** tail step 1/2 ('rw [LinearEquiv.ofLinear_symm_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 236.6s, verify 0.1s, in=2700, out=9112)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [LinearEquiv.coe_symm_mk, LinearEquiv.ofLinear_symm_apply, domDomCongrLinearEquiv'.symm_apply, piCongrLeft'_symm, Equiv.symm_symm_apply]
+```
+
+**lean_error:** tail step 1/1 ("simp [LinearEquiv.coe_symm_mk, LinearEquiv.ofLinear_symm_apply, domDomCongrLinearEquiv'.symm_apply, piCongrLeft'_symm, Equiv.symm_symm_apply]"): unknown constant 'MultilinearMap.domDomCongrLinearEquiv'.symm_apply'
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 1.0s, verify 0.8s, in=2700, out=10)
 
@@ -308,6 +395,48 @@ simp only [MultilinearMap.domDomCongrLinearEquiv'_apply, MultilinearMap.domDomCo
 ```
 
 **lean_error:** tail step 1/6 ("simp only [PiTensorProduct.reindex, MultilinearMap.domDomCongrLinearEquiv',"): <stdin>:1:75: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 152.7s, verify 0.1s, in=6985, out=3601)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [reindex, domDomCongrLinearEquiv'_symm]
+```
+
+**lean_error:** tail step 1/1 ("simp [reindex, domDomCongrLinearEquiv'_symm]"): unknown identifier 'domDomCongrLinearEquiv'_symm'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 216.2s, verify 0.2s, in=6985, out=6156)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.ofLinear_symm_apply, PiTensorProduct.reindex_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [LinearEquiv.ofLinear_symm_apply, PiTensorProduct.reindex_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 226.0s, verify 10.6s, in=6985, out=8979)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [reindex, domDomCongrLinearEquiv', Function.comp, Equiv.symm_symm_apply, Equiv.apply_symm_apply]
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 277.4s, verify 0.2s, in=6985, out=7566)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.ofLinear_symm_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [LinearEquiv.ofLinear_symm_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 2.7s, verify 0.2s, in=6985, out=7)
 
@@ -459,6 +588,46 @@ simp only [reindex, LinearEquiv.symm, LinearEquiv.coe_symm_mk, LinearEquiv.coe_m
 ```
 
 **lean_error:** tail step 1/5 ('simp only [reindex, LinearEquiv.symm, LinearEquiv.coe_symm_mk, LinearEquiv.coe_mk,'): <stdin>:1:82: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 167.1s, verify 8.7s, in=7002, out=6305)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [reindex, domDomCongrLinearEquiv', Equiv.symm_symm_apply]
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 184.2s, verify 0.2s, in=7002, out=7061)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.ofLinear_symm_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [LinearEquiv.ofLinear_symm_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 200.2s, verify 0.2s, in=7002, out=7840)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.ofLinear_symm_apply, PiTensorProduct.reindex, domDomCongrLinearEquiv'_symm_apply, Equiv.symm_symm_apply]
+```
+
+**lean_error:** tail step 1/1 ("rw [LinearEquiv.ofLinear_symm_apply, PiTensorProduct.reindex, domDomCongrLinearEquiv'_symm_apply, Equiv.symm_symm_apply]"): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 216.4s, verify 9.4s, in=7002, out=8603)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [LinearEquiv.coe_symm_mk, PiTensorProduct.reindex, MultilinearMap.domDomCongrLinearEquiv', Equiv.piCongrLeft'_symm]
+```
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 0.7s, verify 0.2s, in=7002, out=7)
 

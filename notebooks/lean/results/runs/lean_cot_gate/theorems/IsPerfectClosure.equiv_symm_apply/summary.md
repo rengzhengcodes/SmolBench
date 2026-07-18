@@ -11,14 +11,68 @@ rw [equiv_symm, equiv_apply j i p _ _ _ h]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | · ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ · ✘ | ✘ ✘ ✘ ✘ ✘ ✘ · ✘ |
-| `hint:3` | ✘ · ✘ ✘ | ✘ ✘ ✘ ✘ ✓ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✘ ✘ | ✘ ✘ · ✘ | ✘ ✘ ✘ ✘ ✘ ✘ · ✘ |
+| `hint:3` | ✘ ✓ ✘ ✘ | ✘ · ✘ ✘ | ✘ ✘ ✘ ✘ ✓ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 175.9s, verify 0.1s, in=449, out=8853)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply (PerfectRing.pow_p_injective L p n).mp
+rw [equiv.symm.map_pow, h, RingEquiv.apply_symm_apply]
+rw [equiv.symm.map_pow, RingEquiv.apply_symm_apply]
+```
+
+**lean_error:** tail step 1/3 ('apply (PerfectRing.pow_p_injective L p n).mp'): unknown constant 'PerfectRing.pow_p_injective'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 182.0s, verify 0.3s, in=449, out=9154)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply (equiv i j p).injective
+apply (Function.Injective (fun a => a ^ p ^ n)).mp
+rw [RingEquiv.map_pow, symm_apply_apply, iterateFrobeniusEquiv_apply, equiv_apply_i, h]
+rfl
+```
+
+**lean_error:** tail step 2/4 ('apply (Function.Injective (fun a => a ^ p ^ n)).mp'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 201.4s, verify 0.2s, in=449, out=10093)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [symm_apply_eq, symm_apply_eq]
+apply (equiv i j p).injective
+rw [map_pow, symm_apply_eq.1 (is_Some_spec (iterateFrobeniusEquiv L p n) (i y)), equiv_i_j_p_i_eq_j, h]
+```
+
+**lean_error:** tail step 1/3 ('rw [symm_apply_eq, symm_apply_eq]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 206.7s, verify 0.1s, in=449, out=10353)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply (RingEquiv.symm_bijective.injective),
+apply (perfect_ring.pow_p_injective L p n),
+rw [← (equiv i j p).map_pow, RingEquiv.apply_symm_apply, h, (equiv i j p).comp_i j],
+apply (iterateFrobeniusEquiv L p n).apply_symm_apply
+```
+
+**lean_error:** tail step 1/4 ('apply (RingEquiv.symm_bijective.injective),'): <stdin>:1:42: expected end of input
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **incomplete**  (gen 0.7s, verify 0.2s, in=449, out=15)
 
@@ -165,6 +219,49 @@ simp only [equiv_symm_apply, equiv_apply]
 ```
 
 **lean_error:** tail step 1/1 ('simp only [equiv_symm_apply, equiv_apply]'): simp made no progress
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 38.1s, verify 0.2s, in=814, out=1860)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [equiv_symm, equiv_apply _ _ _ h]
+```
+
+**lean_error:** tail step 1/1 ('rw [equiv_symm, equiv_apply _ _ _ h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 41.9s, verify 0.1s, in=814, out=2062)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply IsPerfectClosure.equiv_apply j i p x n y h
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 50.2s, verify 0.2s, in=814, out=2553)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [equiv_symm, equiv_apply x n y h]
+```
+
+**lean_error:** tail step 1/1 ('rw [equiv_symm, equiv_apply x n y h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 127.3s, verify 0.3s, in=814, out=6630)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [equiv_symm]
+exact equiv_apply j i p n x y h
+```
+
+**lean_error:** tail step 2/2 ('exact equiv_apply j i p n x y h'): type mismatch
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.0s, verify 0.1s, in=814, out=21)
 
@@ -316,6 +413,51 @@ simp only [equiv_symm, iterateFrobeniusEquiv.symm_symm, equiv_apply _ _ _ h]
 
 **lean_error:** tail step 1/1 ('simp only [equiv_symm, iterateFrobeniusEquiv.symm_symm, equiv_apply _ _ _ h]'): unknown constant 'iterateFrobeniusEquiv.symm_symm'
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 108.4s, verify 0.3s, in=1532, out=3828)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm]
+rw [equiv_apply x n y h]
+```
+
+**lean_error:** tail step 2/2 ('rw [equiv_apply x n y h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 119.0s, verify 0.2s, in=1532, out=4164)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm]
+apply (equiv_apply j i p x n y h)
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 165.9s, verify 0.3s, in=1532, out=5561)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [equiv_symm]
+rw [equiv_apply _ _ _ h]
+```
+
+**lean_error:** tail step 2/2 ('rw [equiv_apply _ _ _ h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 258.8s, verify 0.2s, in=1532, out=10607)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm, equiv_apply h]
+```
+
+**lean_error:** tail step 1/1 ('rw [equiv_symm, equiv_apply h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 2.1s, verify 0.2s, in=1532, out=22)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -454,6 +596,52 @@ rw [equiv_symm, equiv_apply x n y h]
 ```
 
 **lean_error:** tail step 1/1 ('rw [equiv_symm, equiv_apply x n y h]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 54.0s, verify 0.7s, in=1556, out=2798)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [equiv_symm]
+exact (equiv_apply x n y h)
+```
+
+**lean_error:** tail step 2/2 ('exact (equiv_apply x n y h)'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 120.8s, verify 0.2s, in=1556, out=6322)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm, equiv_apply h]
+```
+
+**lean_error:** tail step 1/1 ('rw [equiv_symm, equiv_apply h]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 149.6s, verify 0.3s, in=1556, out=7635)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm]
+apply equiv_apply x n y h
+```
+
+**lean_error:** tail step 2/2 ('apply equiv_apply x n y h'): application type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 188.0s, verify 0.1s, in=1556, out=9440)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [equiv_symm], rw [equiv_apply x n y h]
+```
+
+**lean_error:** tail step 1/1 ('rw [equiv_symm], rw [equiv_apply x n y h]'): <stdin>:1:15: expected end of input
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.9s, verify 0.1s, in=1556, out=21)
 

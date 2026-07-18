@@ -11,14 +11,59 @@ simpa [coconeOfRepresentable_ι_app] using FunctorToTypes.naturality _ _ α f.op
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | · · ✘ · |
-| `hint:2` | · ✓ ✓ ✓ |
-| `hint:3` | · · · ✘ |
-| `noise:3` | · ✘ · ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ · |
+| `hint:2` | ✘ ✓ ✘ ✓ | · ✓ ✓ ✓ |
+| `hint:3` | ✘ ✘ ✓ ✘ | · · · ✘ |
+| `noise:3` | ✓ ✓ ✘ ✘ | · ✘ · ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 154.6s, verify 0.1s, in=369, out=6407)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+cases j with ⟨c, x⟩
+rw [← α.naturality f]
+```
+
+**lean_error:** tail step 1/2 ('cases j with ⟨c, x⟩'): <stdin>:1:13: expected '|'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 193.8s, verify 0.1s, in=369, out=7839)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+erw [coconeOfRepresentable_natural α j, Functor.op_map_map, CategoryOfElements.map_ι_app]
+```
+
+**lean_error:** tail step 1/1 ('erw [coconeOfRepresentable_natural α j, Functor.op_map_map, CategoryOfElements.map_ι_app]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 213.1s, verify 0.2s, in=369, out=8537)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← α.naturality f]
+```
+
+**lean_error:** tail step 1/1 ('rw [← α.naturality f]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 245.2s, verify 0.2s, in=369, out=9752)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← α.naturality (f.op)]
+```
+
+**lean_error:** tail step 1/1 ('rw [← α.naturality (f.op)]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 0.5s, verify 0.1s, in=369, out=6)
 
@@ -91,6 +136,50 @@ A : C ⥤ ℰ
 ...
 ```
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 137.0s, verify 0.3s, in=823, out=5741)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+rw [CategoryTheory.FunctorToTypes.naturality α f]
+```
+
+**lean_error:** tail step 2/2 ('rw [CategoryTheory.FunctorToTypes.naturality α f]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 219.0s, verify 0.2s, in=823, out=8769)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+apply FunctorToTypes.naturality
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 226.9s, verify 0.2s, in=823, out=9063)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+exact α.naturality f.op (j.unop.2)
+```
+
+**lean_error:** tail step 2/2 ('exact α.naturality f.op (j.unop.2)'): function expected at
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 243.2s, verify 0.2s, in=823, out=9679)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+apply FunctorToTypes.naturality
+```
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 1.3s, verify 0.2s, in=823, out=16)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -137,6 +226,54 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```lean
 simp [coconeOfRepresentable_ι_app, ← FunctorToTypes.naturality _]
 ```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 344.8s, verify 0.4s, in=1459, out=8253)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+rw [← FunctorToTypes.naturality α f.op (j.unop.2)]
+```
+
+**lean_error:** tail step 2/2 ('rw [← FunctorToTypes.naturality α f.op (j.unop.2)]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 436.6s, verify 0.4s, in=1459, out=10104)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+exact FunctorToTypes.naturality (f.op) (j.unop.2)
+```
+
+**lean_error:** tail step 2/2 ('exact FunctorToTypes.naturality (f.op) (j.unop.2)'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 495.2s, verify 0.4s, in=1459, out=14441)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [CategoryTheory.coconeOfRepresentable_ι_app P₁ j]
+rw [CategoryTheory.coconeOfRepresentable_ι_app P₂ ((CategoryOfElements.map α).op.obj j)]
+apply CategoryTheory.FunctorToTypes.naturality
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 521.9s, verify 0.2s, in=1459, out=14308)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app P₁ j, coconeOfRepresentable_ι_app P₂ ((CategoryOfElements.map α).op.obj j)]
+naturality f x using α.naturality f.op
+simp [yonedaSectionsSmall]
+```
+
+**lean_error:** tail step 2/3 ('naturality f x using α.naturality f.op'): <stdin>:1:1: unknown tactic
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 2.0s, verify 0.1s, in=1459, out=16)
 
@@ -208,6 +345,50 @@ simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_hom, yonedaSectionsSmall
 ```
 
 **lean_error:** tail step 1/1 ('simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_hom, yonedaSectionsSmall_inv]'): unknown identifier 'yonedaSectionsSmall_inv'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 200.0s, verify 0.2s, in=1491, out=8072)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app P₁ j, coconeOfRepresentable_ι_app P₂]
+apply FunctorToTypes.naturality
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 221.5s, verify 0.2s, in=1491, out=8862)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+apply FunctorToTypes.naturality
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 228.1s, verify 0.3s, in=1491, out=9098)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app, coconeOfRepresentable_ι_app]
+rw [FunctorToTypes.naturality f.op (j.unop.2)]
+```
+
+**lean_error:** tail step 2/2 ('rw [FunctorToTypes.naturality f.op (j.unop.2)]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 267.3s, verify 0.4s, in=1491, out=10670)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coconeOfRepresentable_ι_app P₁ j, coconeOfRepresentable_ι_app P₂]
+rw [CategoryTheory.FunctorToTypes.naturality α f j.unop.2]
+```
+
+**lean_error:** tail step 2/2 ('rw [CategoryTheory.FunctorToTypes.naturality α f j.unop.2]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 1.1s, verify 0.1s, in=1491, out=16)
 

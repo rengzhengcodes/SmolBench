@@ -11,14 +11,58 @@ apply hasColimitOfIso (e.invFunIdAssoc F).symm
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 52.0s, verify 0.1s, in=284, out=2594)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply has_colimit_of_equivalence F e
+```
+
+**lean_error:** tail step 1/1 ('apply has_colimit_of_equivalence F e'): unknown identifier 'has_colimit_of_equivalence'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 87.3s, verify 0.1s, in=284, out=4470)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply HasColimit.of_iso (e.counit_iso whisker_right F), exact this
+```
+
+**lean_error:** tail step 1/1 ('apply HasColimit.of_iso (e.counit_iso whisker_right F), exact this'): <stdin>:1:54: expected end of input
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 95.3s, verify 0.1s, in=284, out=4906)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply HasColimit.of_nat_iso (e.counitIso.wiskerRight F), exact this
+```
+
+**lean_error:** tail step 1/1 ('apply HasColimit.of_nat_iso (e.counitIso.wiskerRight F), exact this'): <stdin>:1:55: expected end of input
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 171.2s, verify 0.1s, in=284, out=8857)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply final.has_colimit (equivalence.final e.functor) inst✝
+```
+
+**lean_error:** tail step 1/1 ('apply final.has_colimit (equivalence.final e.functor) inst✝'): <stdin>:1:58: expected end of input
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.0s, verify 0.1s, in=284, out=21)
 
@@ -161,6 +205,50 @@ exact IsEquivalence.hasColimit_iff e <.> HasColimit_of_iso (e.counitIso.symm.app
 
 **lean_error:** tail step 1/1 ('exact IsEquivalence.hasColimit_iff e <.> HasColimit_of_iso (e.counitIso.symm.app F).symm'): <stdin>:1:39: expected end of input
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 163.6s, verify 0.1s, in=731, out=8500)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.counit.whiskerRight F).symm
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.counit.whiskerRight F).symm'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.NatTrans.whiskerRight'
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 163.2s, verify 0.1s, in=731, out=5986)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.counitIso.symm.whiskerRight F)
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.counitIso.symm.whiskerRight F)'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.Iso.whiskerRight'
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 163.6s, verify 0.1s, in=731, out=6002)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.unit.iso ◾ F)
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.unit.iso ◾ F)'): <stdin>:1:34: expected token
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 281.9s, verify 0.1s, in=731, out=11334)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.counit whiskerRight F)
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.counit whiskerRight F)'): function expected at
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.9s, verify 0.1s, in=731, out=20)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -293,6 +381,51 @@ exact hasColimitOfIso (e.counitIso.app F).symm
 
 **lean_error:** tail step 1/1 ('exact hasColimitOfIso (e.counitIso.app F).symm'): internal exception #7
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 186.5s, verify 0.1s, in=1019, out=6989)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.unit.whiskerRight F)
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.unit.whiskerRight F)'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.NatTrans.whiskerRight'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 189.5s, verify 0.1s, in=1019, out=7139)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso
+exact (CategoryTheory.whiskerRight e.unit F).symm
+```
+
+**lean_error:** tail step 1/2 ('apply hasColimitOfIso'): failed to synthesize
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 271.7s, verify 0.1s, in=1019, out=10922)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.counit.isIso.compRight F).symm
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.counit.isIso.compRight F).symm'): invalid field 'isIso', the environment does not contain 'CategoryTheory.NatTrans.isIso'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 343.8s, verify 0.1s, in=1019, out=13737)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (Iso.symm (e.counit whisker F))
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (Iso.symm (e.counit whisker F))'): function expected at
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 2.3s, verify 0.1s, in=1019, out=25)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -424,6 +557,51 @@ exact hasColimitOfIso (e.coununitIso.symm)
 ```
 
 **lean_error:** tail step 1/1 ('exact hasColimitOfIso (e.coununitIso.symm)'): internal exception #7
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 102.9s, verify 0.1s, in=1043, out=5299)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.unitIso.whiskerRight F)
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.unitIso.whiskerRight F)'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.Iso.whiskerRight'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 158.7s, verify 0.1s, in=1043, out=5783)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (iso.symm (e.unit ◫ F))
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (iso.symm (e.unit ◫ F))'): unknown identifier 'iso.symm'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 254.1s, verify 0.1s, in=1043, out=10194)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.unit.whiskerRight F).symm
+```
+
+**lean_error:** tail step 1/1 ('apply hasColimitOfIso (e.unit.whiskerRight F).symm'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.NatTrans.whiskerRight'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 275.3s, verify 0.1s, in=1043, out=11065)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply hasColimitOfIso (e.counit.whiskerRight F).iso.symm
+apply_instance
+```
+
+**lean_error:** tail step 1/2 ('apply hasColimitOfIso (e.counit.whiskerRight F).iso.symm'): invalid field 'whiskerRight', the environment does not contain 'CategoryTheory.NatTrans.whiskerRight'
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 1.3s, verify 0.1s, in=1043, out=24)
 

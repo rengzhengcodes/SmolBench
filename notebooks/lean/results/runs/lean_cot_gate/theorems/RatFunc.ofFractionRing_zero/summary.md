@@ -11,14 +11,59 @@ simp only [Zero.zero, OfNat.ofNat, RatFunc.zero]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 33.1s, verify 0.1s, in=204, out=1649)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext
+rfl
+```
+
+**lean_error:** tail step 1/2 ('ext'): no applicable extensionality theorem found for
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 74.0s, verify 0.1s, in=204, out=3824)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 86.0s, verify 0.1s, in=204, out=4494)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 89.7s, verify 0.1s, in=204, out=4712)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 0.5s, verify 0.1s, in=204, out=6)
 
@@ -152,6 +197,50 @@ simp [zero_toFractionRing]
 
 **lean_error:** tail step 1/1 ('simp [zero_toFractionRing]'): unknown identifier 'zero_toFractionRing'
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 10.9s, verify 0.1s, in=439, out=497)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 13.6s, verify 0.1s, in=439, out=623)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 14.4s, verify 0.1s, in=439, out=661)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 17.8s, verify 0.1s, in=439, out=840)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.8s, verify 0.1s, in=439, out=7)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -284,6 +373,51 @@ simp [RatFunc.ofFractionRing_zero]
 
 **lean_error:** tail step 1/1 ('simp [RatFunc.ofFractionRing_zero]'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 22.2s, verify 0.1s, in=604, out=549)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 24.8s, verify 0.1s, in=604, out=532)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact rfl
+```
+
+**lean_error:** tail step 1/1 ('exact rfl'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 30.6s, verify 0.1s, in=604, out=879)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 80.7s, verify 0.1s, in=604, out=3716)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+ext
+refl
+```
+
+**lean_error:** tail step 1/2 ('ext'): no applicable extensionality theorem found for
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.4s, verify 0.1s, in=604, out=7)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -415,6 +549,52 @@ simp
 ```
 
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 8.9s, verify 0.1s, in=628, out=402)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 14.1s, verify 0.1s, in=628, out=644)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext
+rfl
+```
+
+**lean_error:** tail step 1/2 ('ext'): no applicable extensionality theorem found for
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 15.9s, verify 0.1s, in=628, out=739)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 62.3s, verify 0.1s, in=628, out=3213)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext
+rfl
+```
+
+**lean_error:** tail step 1/2 ('ext'): no applicable extensionality theorem found for
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.7s, verify 0.1s, in=628, out=7)
 

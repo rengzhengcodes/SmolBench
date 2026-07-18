@@ -11,11 +11,66 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✓ ✘ | ✘ ✘ ✓ ✘ ✘ ✓ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ | ✘ ✘ ✓ ✘ ✘ ✓ ✓ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 211.3s, verify 0.1s, in=442, out=10910)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [prod.map_snd, category.id_comp],  
+rw [prod.comparison_snd],  
+rw [prod.map_snd, category_theory.functor.map_comp],  
+rw [← category.assoc],  
+rw [h.triangle_left, category.comp_id],  
+rfl
+```
+
+**lean_error:** tail step 1/6 ('rw [prod.map_snd, category.id_comp],'): <stdin>:1:35: expected end of input
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 222.2s, verify 0.2s, in=442, out=11419)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [prod_comparison_comp_snd, ← functor.map_comp]
+dsimp only [prod.snd]
+rw [← category.assoc, h.left_triangle, category.comp_id]
+```
+
+**lean_error:** tail step 1/3 ('rw [prod_comparison_comp_snd, ← functor.map_comp]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 226.1s, verify 0.2s, in=442, out=11620)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [category_theory.prod.map_snd, category_theory.prod.comparison_snd]
+rw [category_theory.prod.map_snd]
+rw [category_theory.functor.map_comp]
+rw [h.triangle_right]
+simp
+```
+
+**lean_error:** tail step 1/5 ('rw [category_theory.prod.map_snd, category_theory.prod.comparison_snd]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 314.1s, verify 0.2s, in=442, out=16349)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← functor.map_comp, triangle_right_id_app, productComparison_s snd, prod.map_s snd]
+```
+
+**lean_error:** tail step 1/1 ('rw [← functor.map_comp, triangle_right_id_app, productComparison_s snd, prod.map_s snd]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.4s, verify 0.1s, in=442, out=14)
 

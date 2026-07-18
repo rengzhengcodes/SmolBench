@@ -11,11 +11,57 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 78.3s, verify 0.2s, in=523, out=3237)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [adj.counit_eq_homEquiv_symm_id]
+```
+
+**lean_error:** tail step 1/1 ('rw [adj.counit_eq_homEquiv_symm_id]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 105.5s, verify 0.1s, in=523, out=4340)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+erw adj.homEquiv_symm_𝟙
+```
+
+**lean_error:** tail step 1/1 ('erw adj.homEquiv_symm_𝟙'): <stdin>:1:4: expected '['
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 143.3s, verify 0.2s, in=523, out=5825)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [category_theory.coequalizer.fac, category_theory.coequalizer.fac]
+erw [adj.homEquiv_symm_id]
+rfl
+```
+
+**lean_error:** tail step 1/3 ('rw [category_theory.coequalizer.fac, category_theory.coequalizer.fac]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 206.5s, verify 0.1s, in=523, out=8276)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [adj.homEquiv_symm_id_counit], rfl
+```
+
+**lean_error:** tail step 1/1 ('rw [adj.homEquiv_symm_id_counit], rfl'): <stdin>:1:32: expected end of input
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 0.4s, verify 0.1s, in=523, out=15)
 

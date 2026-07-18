@@ -11,14 +11,64 @@ simp [AlternatingMap.map_perm, Basis.det_self]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ · · ✘ |
-| `hint:2` | · ✘ ✘ ✓ |
-| `hint:3` | ✓ ✓ ✘ ✘ |
-| `noise:3` | ✓ ✓ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✓ |
+| `hint:3` | ✓ ✘ ✘ · | ✓ ✓ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 91.3s, verify 0.2s, in=378, out=4091)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [f.map_perm σ e, Basis.det_perm σ e]
+rw smul_eq_mul
+apply mul_comm
+```
+
+**lean_error:** tail step 1/3 ('rw [f.map_perm σ e, Basis.det_perm σ e]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 112.9s, verify 0.1s, in=378, out=4937)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [e.alternating_map_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [e.alternating_map_apply]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 149.6s, verify 0.1s, in=378, out=6529)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [f.map_permute σ, Basis.det_permute σ]
+rw [smul_eq_mul]
+rw [mul_comm]
+```
+
+**lean_error:** tail step 1/3 ('rw [f.map_permute σ, Basis.det_permute σ]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 184.0s, verify 0.1s, in=378, out=7890)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [LinearMap.Alternating.map_perm σ]
+rw [Basis.det_apply_compose_perm σ]
+simp only [smul_eq_mul, mul_comm]
+```
+
+**lean_error:** tail step 1/3 ('rw [LinearMap.Alternating.map_perm σ]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 0.9s, verify 0.1s, in=378, out=11)
 
@@ -82,6 +132,58 @@ simp [Basis.det_apply_eq, det_isAlternatingMap, Equiv.Perm.coe_ofBijective]
 
 **lean_error:** tail step 1/1 ('simp [Basis.det_apply_eq, det_isAlternatingMap, Equiv.Perm.coe_ofBijective]'): unknown constant 'Basis.det_apply_eq'
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 112.0s, verify 0.1s, in=871, out=4925)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map_perm f e σ], 
+rw [map_perm e.det e σ, Basis.det_self], 
+simp, 
+rw [smul_eq_mul, mul_comm]
+```
+
+**lean_error:** tail step 1/4 ('rw [map_perm f e σ],'): <stdin>:1:19: expected end of input
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 142.6s, verify 0.1s, in=871, out=6238)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map_perm, map_perm, det_self], simp [smul_eq_mul], rw [mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm, map_perm, det_self], simp [smul_eq_mul], rw [mul_comm]'): <stdin>:1:33: expected end of input
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 152.9s, verify 0.2s, in=871, out=6660)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map_perm f σ]
+rw [smul_apply]
+rw [map_perm e.det σ, det_self]
+simp
+rw [smul_eq_mul]
+rfl
+```
+
+**lean_error:** tail step 1/6 ('rw [map_perm f σ]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 173.5s, verify 0.2s, in=871, out=7499)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map_perm, map_perm, Basis.det_self, smul_eq_mul, mul_one, mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm, map_perm, Basis.det_self, smul_eq_mul, mul_one, mul_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **incomplete**  (gen 1.5s, verify 0.2s, in=871, out=15)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -133,6 +235,58 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [e.det_self, map_perm]
 ```
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 184.5s, verify 0.3s, in=2001, out=2985)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [AlternatingMap.map_perm, AlternatingMap.smul_apply, AlternatingMap.map_perm, Basis.det_self]
+simp [smul_eq_mul]
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 194.9s, verify 0.1s, in=2001, out=3583)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [map_perm f, map_perm (det e), det_self, mul_one], simp [smul_eq_mul, mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm f, map_perm (det e), det_self, mul_one], simp [smul_eq_mul, mul_comm]'): <stdin>:1:52: expected end of input
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 236.2s, verify 0.2s, in=2001, out=5569)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [AlternatingMap.map_perm, smul_apply, AlternatingMap.map_perm, Basis.det_self, mul_one, mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [AlternatingMap.map_perm, smul_apply, AlternatingMap.map_perm, Basis.det_self, mul_one, mul_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 257.0s, verify 0.1s, in=2001, out=6735)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [map_perm, smul_apply, map_perm, Basis.det_self, smul_eq_mul, mul_comm]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+inst✝⁶ : CommRing R
+M : Type u_2
+inst✝⁵ : AddCommGroup M
+inst✝⁴ : Module R M
+M' : Type u_3
+...
+```
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 2.1s, verify 0.2s, in=2001, out=14)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -172,6 +326,51 @@ simp [map_perm, Basis.det_self, sign]
 ```
 
 **lean_error:** tail step 1/1 ('simp [map_perm, Basis.det_self, sign]'): unknown identifier 'sign'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 100.3s, verify 0.1s, in=2029, out=4462)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [map_perm f σ, map_perm (e.det) σ, det_self], rw [smul_eq_mul]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm f σ, map_perm (e.det) σ, det_self], rw [smul_eq_mul]'): <stdin>:1:47: expected end of input
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 106.3s, verify 0.2s, in=2029, out=4694)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [map_perm, map_perm e.det, det_self, smul_eq_mul, mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm, map_perm e.det, det_self, smul_eq_mul, mul_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 127.5s, verify 0.2s, in=2029, out=5541)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [map_perm, map_perm, det_self, mul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm, map_perm, det_self, mul_comm]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 139.2s, verify 0.1s, in=2029, out=6078)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [map_perm f σ, LinearMap.smul_apply, map_perm det e σ, det_self, smul_eq_mul]
+apply mul_comm
+```
+
+**lean_error:** tail step 1/2 ('rw [map_perm f σ, LinearMap.smul_apply, map_perm det e σ, det_self, smul_eq_mul]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 1.1s, verify 0.4s, in=2029, out=14)
 

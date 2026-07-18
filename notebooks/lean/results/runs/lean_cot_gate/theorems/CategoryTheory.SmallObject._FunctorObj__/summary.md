@@ -11,14 +11,67 @@ simp [πFunctorObj]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✓ |
-| `hint:2` | ✘ ✓ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✘ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✓ |
+| `hint:2` | ✘ ✓ ✓ ✘ | ✘ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✘ · ✘ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✘ ✓ ✘ ✘ | ✘ ✓ ✓ ✓ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 72.1s, verify 0.1s, in=404, out=3006)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply colimit.fac
+```
+
+**lean_error:** tail step 1/1 ('apply colimit.fac'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 90.4s, verify 0.1s, in=404, out=3743)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply ρ_π_eq_π'
+```
+
+**lean_error:** tail step 1/1 ("apply ρ_π_eq_π'"): unknown identifier 'ρ_π_eq_π''
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 106.1s, verify 0.7s, in=404, out=4495)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply colimit.hom_ext
+intros i
+cases i
+· simp [functorObjTop]
+  rfl
+· simp [functorObjLeft]
+  rfl
+```
+
+**lean_error:** tail step 4/7 ('· simp [functorObjTop]'): unsolved goals
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 122.9s, verify 0.3s, in=404, out=5215)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext
+apply (HasPushout.pushout_uniq (functorObjTop f πX) (functorObjLeft f πX))
+dsimp only [ρFunctorObj]
+rw [assoc, πFunctorObj_property, π'FunctorObj_property]
+```
+
+**lean_error:** tail step 2/4 ('apply (HasPushout.pushout_uniq (functorObjTop f πX) (functorObjLeft f πX))'): invalid field notation, type is not of the form (C ...) where C is a constant
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.4s, verify 0.1s, in=404, out=6)
 
@@ -62,6 +115,47 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp [πFunctorObj, ρFunctorObj, π'FunctorObj]
 ```
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 52.0s, verify 0.1s, in=622, out=2211)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply pushout.fac_inr
+```
+
+**lean_error:** tail step 1/1 ('apply pushout.fac_inr'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 113.6s, verify 0.1s, in=622, out=4835)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj, ρFunctorObj]
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 123.8s, verify 0.1s, in=622, out=5294)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 173.4s, verify 0.1s, in=622, out=7734)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw πFunctorObj
+apply pushout.fac_inr
+```
+
+**lean_error:** tail step 1/2 ('rw πFunctorObj'): <stdin>:1:3: expected '['
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.3s, verify 0.1s, in=622, out=6)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -100,6 +194,61 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [πFunctorObj, ρFunctorObj, π'FunctorObj]
 ```
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 128.4s, verify 0.2s, in=780, out=2503)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [πFunctorObj]
+apply pushout.fac_right
+```
+
+**lean_error:** tail step 2/2 ('apply pushout.fac_right'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 160.5s, verify 0.1s, in=780, out=4934)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact (Pushout.fac_right _ _ _).symm
+```
+
+**lean_error:** tail step 1/1 ('exact (Pushout.fac_right _ _ _).symm'): unknown identifier 'Pushout.fac_right'
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **incomplete**  (gen 214.1s, verify 0.1s, in=780, out=5934)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [πFunctorObj]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁴ : Category.{v, u} C
+I : Type w
+A B : I → C
+f : (i : I) → A i ⟶ B i
+S X Y Z : C
+...
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 236.6s, verify 0.2s, in=780, out=7451)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [πFunctorObj]
+apply (pushout.fac_right _ _ _).symm
+```
+
+**lean_error:** tail step 2/2 ('apply (pushout.fac_right _ _ _).symm'): invalid field notation, type is not of the form (C ...) where C is a constant
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **success**  (gen 1.2s, verify 0.1s, in=780, out=12)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -135,6 +284,49 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 ```lean
 simp [πFunctorObj, ρFunctorObj]
 ```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 77.2s, verify 0.1s, in=804, out=3218)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply pushout.fac_inr
+```
+
+**lean_error:** tail step 1/1 ('apply pushout.fac_inr'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 87.7s, verify 0.1s, in=804, out=3642)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 159.2s, verify 0.3s, in=804, out=7075)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [πFunctorObj]
+apply (pushout.fac_right _ _ _)
+```
+
+**lean_error:** tail step 2/2 ('apply (pushout.fac_right _ _ _)'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 176.3s, verify 0.1s, in=804, out=7871)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply pushout.fac_right
+```
+
+**lean_error:** tail step 1/1 ('apply pushout.fac_right'): invalid field notation, type is not of the form (C ...) where C is a constant
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 0.4s, verify 0.1s, in=804, out=6)
 

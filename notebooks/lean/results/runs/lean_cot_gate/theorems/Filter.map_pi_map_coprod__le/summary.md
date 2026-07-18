@@ -11,11 +11,69 @@ exact ⟨{ x : α i | m i x ∈ t }, H, fun x hx => hH hx⟩
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 183.1s, verify 0.3s, in=421, out=8154)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi m i ⁻¹' t, H
+rintro k hk
+exact hH (λ j, m j (k j)) hk
+```
+
+**lean_error:** tail step 3/3 ('exact hH (λ j, m j (k j)) hk'): <stdin>:1:13: expected '↦', '=>'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 201.8s, verify 0.1s, in=421, out=9027)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+use t
+exact H
+intros k hk
+dsimp
+apply hH
+exact hk
+```
+
+**lean_error:** tail step 1/6 ('use t'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 243.2s, verify 0.2s, in=421, out=10809)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi (m i ⁻¹' t)
+exact H
+apply preimage_mono
+exact hH
+```
+
+**lean_error:** tail step 2/4 ('exact H'): type mismatch
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 244.4s, verify 0.2s, in=421, out=10859)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+existsi m i ⁻¹' t
+exact H
+intros k hk
+apply hH
+exact hk
+```
+
+**lean_error:** tail step 2/5 ('exact H'): type mismatch
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 0.5s, verify 0.1s, in=421, out=19)
 

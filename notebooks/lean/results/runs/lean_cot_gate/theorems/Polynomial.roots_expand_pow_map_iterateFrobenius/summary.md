@@ -12,14 +12,84 @@ simp_rw [← coe_iterateFrobeniusEquiv, roots_expand_pow, Multiset.map_nsmul,
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 236.7s, verify 0.1s, in=288, out=9339)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Multiset.ext
+intro β
+rw [Multiset.count_map (iterateFrobenius.injective R p n)]
+have h_unique := perfect.exists_unique_p_n_root β p n
+obtain ⟨α, rfl⟩ := perfect.exists_p_n_root β n
+rw count_multiplicity
+rw multiplicity_expand
+rw count_multiplicity
+congr 1
+rw (show α ^ p ^ n = β by rw [h_unique α rfl])
+```
+
+**lean_error:** tail step 1/10 ('apply Multiset.ext'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 297.7s, verify 0.1s, in=288, out=11669)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext a
+simp only [Multiset.count_map, iterateFrobenius, Function.comp_app]
+have h_unique : ∃! β, β ^ p ^ n = a := perfect_ring.exists_unique_pth_root R p n a
+obtain ⟨β, rfl⟩ := h_unique.exists_unique
+rw [Multiset.sum_eq_single β]
+{ rw [count_roots_expand, map_pow_frobenius, count_pnsmul] }
+{ rintro b _ rfl; contradiction }
+{ exact h_unique.unique }
+```
+
+**lean_error:** tail step 1/8 ('ext a'): no applicable extensionality theorem found for
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 321.3s, verify 0.1s, in=288, out=12504)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [roots_map_iterateFrobenius_eq_smul]
+apply PerfectRing.induction_on_polynomial
+· intro a, simp [roots_expand_C, roots_smul, Multiset.map_zero, smul_zero]
+· intro p q hp hq, simp [hp, hq, smul_add, map_add]
+· intro f h, simp [roots_expand_X_pow, roots_smul, Multiset.map_cons, smul_cons]
+done
+```
+
+**lean_error:** tail step 1/6 ('rw [roots_map_iterateFrobenius_eq_smul]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 340.7s, verify 0.1s, in=288, out=13161)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Multiset.ext
+intros a
+simp only [Multiset.count_map, smul_eq_scalar_mul, Multiset.count_smul', Nat.mul_comm]
+rw [count_roots_expand R (p ^ n) f a]
+congr
+apply iterateFrobenius_surjective.bijective.to_equiv.apply_eq_iff_eq_symm_apply
+```
+
+**lean_error:** tail step 1/6 ('apply Multiset.ext'): tactic 'apply' failed, failed to unify
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 0.9s, verify 0.1s, in=288, out=18)
 
@@ -64,6 +134,63 @@ rw [roots_expand, map_multiset_map, ← iterateFrobenius_map, map_multiset_map, 
 ```
 
 **lean_error:** tail step 1/1 ('rw [roots_expand, map_multiset_map, ← iterateFrobenius_map, map_multiset_map, ← pow_smul]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 84.6s, verify 0.1s, in=1402, out=3450)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map], simp [apply_symm_apply], rw [map_id']
+```
+
+**lean_error:** tail step 1/1 ("rw [roots_expand_pow, map_nsmul, map_map], simp [apply_symm_apply], rw [map_id']"): <stdin>:1:41: expected end of input
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 91.7s, verify 0.4s, in=1402, out=3729)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [Multiset.map_nsmul]
+rw [Multiset.map_map]
+rw [Function.comp_apply]
+rw [RingEquiv.apply_symm_apply]
+rw [Multiset.map_id']
+```
+
+**lean_error:** tail step 4/6 ('rw [Function.comp_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 115.0s, verify 0.6s, in=1402, out=4699)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [Multiset.map_nsmul]
+rw [Multiset.map_map]
+simp [RingEquiv.apply_symm_apply]
+rw [Multiset.map_id']
+```
+
+**lean_error:** tail step 5/5 ("rw [Multiset.map_id']"): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 186.1s, verify 0.6s, in=1402, out=7502)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [map_nsmul, map_map]
+have : (λ x, iterateFrobenius R p n ((iterateFrobeniusEquiv R p n).symm x)) = id := by
+  funext x; rw apply_symm_apply
+rw [this, map_id']
+```
+
+**lean_error:** tail step 2/5 ('rw [map_nsmul, map_map]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 2.0s, verify 0.1s, in=1402, out=43)
 
@@ -122,6 +249,62 @@ calc
 
 **lean_error:** tail step 1/10 ('calc'): <stdin>:1:4: unexpected end of input
 
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 232.0s, verify 0.1s, in=3009, out=5420)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map], congr, rw [Function.comp_apply], rw [coe_iterateFrobeniusEquiv], simp [RingEquiv.apply_symm_apply], rw [map_id'], rfl
+```
+
+**lean_error:** tail step 1/1 ("rw [roots_expand_pow, map_nsmul, map_map], congr, rw [Function.comp_apply], rw [coe_iterateFrobeniusEquiv], simp [RingEquiv.apply_symm_apply], rw [map_id'], rfl"): <stdin>:1:41: expected end of input
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 239.6s, verify 0.1s, in=3009, out=5141)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, comp_apply, apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/1 ("rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, comp_apply, apply_symm_apply, map_id']"): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 246.7s, verify 0.1s, in=3009, out=6289)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw roots_expand_pow
+rw map_nsmul
+rw map_map
+congr
+apply map_congr
+intros x
+rw coe_iterateFrobeniusEquiv
+apply apply_symm_apply
+rw map_id'
+```
+
+**lean_error:** tail step 1/9 ('rw roots_expand_pow'): <stdin>:1:3: expected '['
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 248.2s, verify 0.2s, in=3009, out=5894)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [map_nsmul]
+rw [map_map]
+simp [coe_iterateFrobeniusEquiv, apply_symm_apply]
+rw [map_id']
+```
+
+**lean_error:** tail step 2/5 ('rw [map_nsmul]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 2.5s, verify 0.1s, in=3009, out=49)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -169,6 +352,65 @@ simp only [roots_expand_pow, coe_iterateFrobeniusEquiv, map_nsmul, map_map, Func
 ```
 
 **lean_error:** tail step 1/2 ('simp only [roots_expand_pow, coe_iterateFrobeniusEquiv, map_nsmul, map_map, Function.comp,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 96.5s, verify 0.1s, in=3032, out=3930)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow], rw [Multiset.map_nsmul], rw [Multiset.map_map], simp [Function.comp_apply, RingEquiv.apply_symm_apply], rw [Multiset.map_id']
+```
+
+**lean_error:** tail step 1/1 ("rw [roots_expand_pow], rw [Multiset.map_nsmul], rw [Multiset.map_map], simp [Function.comp_apply, RingEquiv.apply_symm_apply], rw [Multiset.map_id']"): <stdin>:1:21: expected end of input
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 106.6s, verify 0.1s, in=3032, out=4340)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw roots_expand_pow
+rw Multiset.map_nsmul
+rw Multiset.map_map
+simp [Function.comp_apply, apply_symm_apply]
+rw Multiset.map_id'
+```
+
+**lean_error:** tail step 1/5 ('rw roots_expand_pow'): <stdin>:1:3: expected '['
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 136.1s, verify 0.2s, in=3032, out=5554)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [map_nsmul]
+rw [map_map]
+rw [Function.comp_apply]
+rw [apply_symm_apply]
+rw [map_id']
+```
+
+**lean_error:** tail step 2/6 ('rw [map_nsmul]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 143.9s, verify 0.2s, in=3032, out=5868)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow]
+rw [map_nsmul]
+rw [map_map]
+rw [coe_iterateFrobeniusEquiv]
+rw [Function.comp_apply]
+rw [apply_symm_apply]
+rw [map_id']
+```
+
+**lean_error:** tail step 2/7 ('rw [map_nsmul]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 1.9s, verify 0.1s, in=3032, out=43)
 

@@ -11,14 +11,78 @@ rw [← prodMap_comap_prod, Submodule.prod_bot]
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
-| --- | --- | --- |
-| `stepk:1` | · · ✘ ✘ | ✘ · · · ✘ · · ✘ |
-| `hint:2` | ✘ · ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ · |
-| `hint:3` | · · ✘ ✘ | · ✘ ✘ ✘ ✓ ✘ ✘ X |
-| `noise:3` | · ✘ · · | · ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | ✘ · · · ✘ · · ✘ |
+| `hint:2` | ✓ ✓ ✘ ✘ | ✘ · ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ · |
+| `hint:3` | ✘ ✓ ✘ ✓ | · · ✘ ✘ | · ✘ ✘ ✘ ✓ ✘ ✘ X |
+| `noise:3` | ✘ ✘ ✓ ✘ | · ✘ · · | · ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 61.9s, verify 0.2s, in=498, out=3083)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext
+simp [Submodule.mem_comap, Submodule.mem_prod, mem_bot, LinearMap.prodMap]
+split <;> intro h <;> exact h
+```
+
+**lean_error:** tail step 2/3 ('simp [Submodule.mem_comap, Submodule.mem_prod, mem_bot, LinearMap.prodMap]'): unknown identifier 'mem_bot'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 95.3s, verify 0.5s, in=498, out=4906)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Submodule.ext
+intro x
+split
+· intro h
+  rw [Submodule.mem_comap, mem_bot, prodMap, prod.ext_iff] at h
+  exact ⟨Submodule.mem_comap.2 h.1, Submodule.mem_comap.2 h.2⟩
+· intro h
+  rcases h with ⟨h₁, h₂⟩
+  rw [Submodule.mem_comap, mem_bot, prodMap, prod.ext_iff]
+  exact ⟨Submodule.mem_comap.1 h₁, Submodule.mem_comap.1 h₂⟩
+```
+
+**lean_error:** tail step 3/10 ('split'): tactic 'split' failed
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 119.0s, verify 0.1s, in=498, out=6036)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext (x, y),
+split,
+· simp [Submodule.mem_comap, Submodule.mem_prod, Submodule.mem_bot],
+  intro h,
+  exact h,
+· simp [Submodule.mem_comap, Submodule.mem_prod, Submodule.mem_bot],
+  intro h,
+  exact h
+```
+
+**lean_error:** tail step 1/8 ('ext (x, y),'): <stdin>:1:6: expected ')'
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 149.1s, verify 0.1s, in=498, out=7585)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ext ⟨x, y⟩,
+simp only [Submodule.mem_comap, Submodule.mem_prod, bot_coe, mem_bot],
+exact Prod.mk_eq_zero
+```
+
+**lean_error:** tail step 1/3 ('ext ⟨x, y⟩,'): <stdin>:1:10: expected end of input
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 0.6s, verify 0.2s, in=498, out=6)
 
@@ -215,6 +279,48 @@ simp [Submodule.comap_prodMap]
 
 **lean_error:** tail step 1/1 ('simp [Submodule.comap_prodMap]'): unknown constant 'Submodule.comap_prodMap'
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 31.6s, verify 0.1s, in=940, out=1551)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [←Submodule.prod_bot, prodMap_comap_prod]
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 90.4s, verify 0.2s, in=940, out=4647)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [←Submodule.prod_bot]
+rw [LinearMap.prodMap_comap_prod]
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 164.5s, verify 0.2s, in=940, out=8402)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Submodule.prod_bot]
+exact LinearMap.prodMap_comap_prod f g ⊥ ⊥
+```
+
+**lean_error:** tail step 1/2 ('rw [Submodule.prod_bot]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 200.0s, verify 0.1s, in=940, out=10273)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [LinearMap.prodMap_comap_prod f g ⊥ ⊥], rw [Submodule.prod_bot]
+```
+
+**lean_error:** tail step 1/1 ('rw [LinearMap.prodMap_comap_prod f g ⊥ ⊥], rw [Submodule.prod_bot]'): <stdin>:1:41: expected end of input
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 1.9s, verify 0.2s, in=940, out=16)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -363,6 +469,47 @@ V : Type v'
 M₂ : Type w
 V₂ : Type w'
 ...
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 105.9s, verify 0.1s, in=1471, out=2288)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact LinearMap.prodMap_comap_prod f g ⊥ ⊥
+```
+
+**lean_error:** tail step 1/1 ('exact LinearMap.prodMap_comap_prod f g ⊥ ⊥'): type mismatch
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 108.9s, verify 0.3s, in=1471, out=3974)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← Submodule.prod_bot]
+exact prodMap_comap_prod f g ⊥ ⊥
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 115.8s, verify 0.3s, in=1471, out=3970)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [prodMap_comap_prod ⊥ ⊥]
+```
+
+**lean_error:** tail step 1/1 ('rw [prodMap_comap_prod ⊥ ⊥]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 132.5s, verify 0.1s, in=1471, out=3226)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← Submodule.prod_bot, LinearMap.prodMap_comap_prod]
 ```
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 2.8s, verify 0.2s, in=1471, out=15)
@@ -521,6 +668,49 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance i-077d8082814a9172d is running). If the instance is running, your public IP probably changed and the security group is blocking you: re-run provision_spot_instance() to re-authorize your current IP.
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 38.2s, verify 0.1s, in=1498, out=1881)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Submodule.prod_bot], rw [LinearMap.prodMap_comap_prod]
+```
+
+**lean_error:** tail step 1/1 ('rw [Submodule.prod_bot], rw [LinearMap.prodMap_comap_prod]'): <stdin>:1:23: expected end of input
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 69.7s, verify 0.2s, in=1498, out=3502)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [prodMap_comap_prod f g ⊥ ⊥]
+```
+
+**lean_error:** tail step 1/1 ('rw [prodMap_comap_prod f g ⊥ ⊥]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 76.5s, verify 0.2s, in=1498, out=3862)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← Submodule.prod_bot]
+apply prodMap_comap_prod
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 107.2s, verify 0.2s, in=1498, out=5450)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [prodMap_comap_prod, prod_bot]
+```
+
+**lean_error:** tail step 1/1 ('rw [prodMap_comap_prod, prod_bot]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 1.1s, verify 0.2s, in=1498, out=15)
 

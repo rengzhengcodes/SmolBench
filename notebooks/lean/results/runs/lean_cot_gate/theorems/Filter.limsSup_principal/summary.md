@@ -11,14 +11,76 @@ exact csInf_upper_bounds_eq_csSup h hs
 
 ## Verdict matrix
 
-| rung | qwen3-lean-bare-r128 |
-| --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✘ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
+| --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✓ ✘ ✘ ✓ | ✓ ✓ ✘ ✘ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
 
 ## Per-cell detail
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 117.5s, verify 0.3s, in=271, out=4552)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply le_antisymm
+apply sInf_le
+use sSup s
+exact fun x hx => le_sSup hx
+apply le_sInf
+intro a ha
+exact sSup_le ha
+```
+
+**lean_error:** tail step 2/7 ('apply sInf_le'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 152.1s, verify 0.1s, in=271, out=6129)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h1 := csInf_le _ (sSup_upper_bound hs h)
+have h2 := le_csInf (by rcases h with ⟨a, ha⟩; use a; exact ha) (fun a ha => sSup_le ha)
+exact le_antisymm h1 h2
+```
+
+**lean_error:** tail step 1/3 ('have h1 := csInf_le _ (sSup_upper_bound hs h)'): internal exception #7
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 177.0s, verify 1.0s, in=271, out=7198)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply le_antisymm
+apply sInf_le
+exact is_ub_sSup h hs
+apply IsLowerBound.le_sInf
+intros a ha
+exact sSup_le ha
+```
+
+**lean_error:** tail step 2/6 ('apply sInf_le'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 210.9s, verify 0.2s, in=271, out=8578)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply le_antisymm
+· apply sInf_le
+  · exact fun x xs => le_sSup h hs xs
+· apply le_sInf
+  · intro a ha
+    exact sSup_le ha
+```
+
+**lean_error:** tail step 2/6 ('· apply sInf_le'): tactic 'apply' failed, failed to unify
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 1.2s, verify 0.1s, in=271, out=19)
 
@@ -64,6 +126,42 @@ exact sInf_Ici_eq_cSup s
 
 **lean_error:** tail step 1/1 ('exact sInf_Ici_eq_cSup s'): unknown identifier 'sInf_Ici_eq_cSup'
 
+### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 6.5s, verify 0.1s, in=529, out=235)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 7.0s, verify 0.1s, in=529, out=242)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 7.8s, verify 0.1s, in=529, out=281)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact csInf_upper_bounds_eq_csSup h hs
+```
+
+### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 10.8s, verify 0.1s, in=529, out=386)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 0.8s, verify 0.1s, in=529, out=15)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -94,6 +192,46 @@ exact csInf_upper_bounds_eq_csSup h hs
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **success**  (gen 1.2s, verify 0.1s, in=529, out=15)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact csInf_upper_bounds_eq_csSup h hs
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 10.8s, verify 0.1s, in=854, out=162)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 13.0s, verify 0.1s, in=854, out=212)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [csInf_upper_bounds_eq_csSup h hs]
+```
+
+**lean_error:** tail step 1/1 ('rw [csInf_upper_bounds_eq_csSup h hs]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 13.6s, verify 0.1s, in=854, out=253)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [csInf_upper_bounds_eq_csSup h hs]
+```
+
+**lean_error:** tail step 1/1 ('rw [csInf_upper_bounds_eq_csSup h hs]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 13.7s, verify 0.1s, in=854, out=261)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 
 **candidate:**
 ```lean
@@ -139,6 +277,42 @@ simp only [sInf_eq_csInf, sSup_eq_csSup, csInf_upper_bounds_eq_csSup h hs]
 ```
 
 **lean_error:** tail step 1/1 ('simp only [sInf_eq_csInf, sSup_eq_csSup, csInf_upper_bounds_eq_csSup h hs]'): unknown identifier 'sInf_eq_csInf'
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 6.1s, verify 0.1s, in=879, out=215)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 6.4s, verify 0.1s, in=879, out=226)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 7.8s, verify 0.1s, in=879, out=284)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact csInf_upper_bounds_eq_csSup h hs
+```
+
+### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 8.4s, verify 0.1s, in=879, out=305)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply csInf_upper_bounds_eq_csSup h hs
+```
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 1.0s, verify 0.1s, in=879, out=15)
 
