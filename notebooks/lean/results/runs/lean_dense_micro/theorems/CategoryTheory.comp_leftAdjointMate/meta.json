@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.comp_leftAdjointMate",
+  "file_path": "Mathlib/CategoryTheory/Monoidal/Rigid/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 17,
+  "k": 16,
+  "ground_truth_full_proof": "rw [leftAdjointMate_comp]\nsimp only [leftAdjointMate, MonoidalCategory.whiskerLeft_comp]\nsimp only [← Category.assoc]\ncongr 3\nsimp only [Category.assoc]\nsimp only [← comp_whiskerRight]\ncongr 2\nsymm\ncalc\n  _ = 𝟙 _ ⊗≫ ((𝟙_ C) ◁ η_ (ᘁY) Y ≫ η_ (ᘁX) X ▷ ((ᘁY) ⊗ Y)) ⊗≫ (ᘁX) ◁ f ▷ (ᘁY) ▷ Y ⊗≫\n      (ᘁX) ◁ ε_ (ᘁY) Y ▷ Y ⊗≫ (ᘁX) ◁ g := by\n    rw [tensorHom_def]; coherence\n  _ = η_ (ᘁX) X ⊗≫ (((ᘁX) ⊗ X) ◁ η_ (ᘁY) Y ≫ ((ᘁX) ◁ f) ▷ ((ᘁY) ⊗ Y)) ⊗≫\n      (ᘁX) ◁ ε_ (ᘁY) Y ▷ Y ⊗≫ (ᘁX) ◁ g := by\n    rw [whisker_exchange]; coherence\n  _ = η_ (ᘁX) X ⊗≫ ((ᘁX) ◁ f) ⊗≫ (ᘁX) ◁ (Y ◁ η_ (ᘁY) Y ⊗≫ ε_ (ᘁY) Y ▷ Y) ⊗≫ (ᘁX) ◁ g := by\n    rw [whisker_exchange]; coherence\n  _ = η_ (ᘁX) X ≫ (ᘁX) ◁ f ≫ (ᘁX) ◁ g := by\n    rw [coevaluation_evaluation'']; coherence\nrw [tensorHom_def]\ncoherence\nrw [whisker_exchange]\ncoherence\nrw [whisker_exchange]\ncoherence\nrw [coevaluation_evaluation'']\ncoherence",
+  "ground_truth_remaining_from_k": "coherence",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u₁\ninst✝⁴ : Category.{v₁, u₁} C\ninst✝³ : MonoidalCategory C\nX Y Z : C\ninst✝² : HasLeftDual X\ninst✝¹ : HasLeftDual Y\ninst✝ : HasLeftDual Z\nf : X ⟶ Y\ng : Y ⟶ Z\n⊢ η_ (ᘁX) X ⊗≫ ᘁX ◁ f ⊗≫ ᘁX ◁ ⊗𝟙 ⊗≫ ᘁX ◁ g = η_ (ᘁX) X ≫ ᘁX ◁ f ≫ ᘁX ◁ g"
+}

@@ -1,0 +1,14 @@
+{
+  "full_name": "minpoly.two_le_natDegree_subalgebra",
+  "file_path": "Mathlib/FieldTheory/Minpoly/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [two_le_natDegree_iff int, Iff.not]\napply Set.ext_iff.mp Subtype.range_val_subtype",
+  "ground_truth_remaining_from_k": "apply Set.ext_iff.mp Subtype.range_val_subtype",
+  "true_premises_at_k": [
+    "Subtype.range_val_subtype"
+  ],
+  "state_before_k": "A : Type u_1\nB✝ : Type u_2\nB' : Type u_3\ninst✝⁶ : CommRing A\ninst✝⁵ : Ring B✝\ninst✝⁴ : Algebra A B✝\nx✝ : B✝\ninst✝³ : Nontrivial B✝\nB : Type u_4\ninst✝² : CommRing B\ninst✝¹ : Algebra A B\ninst✝ : Nontrivial B\nS : Subalgebra A B\nx : B\nint : IsIntegral (↥S) x\n⊢ x ∈ RingHom.range (algebraMap (↥S) B) ↔ x ∈ S"
+}

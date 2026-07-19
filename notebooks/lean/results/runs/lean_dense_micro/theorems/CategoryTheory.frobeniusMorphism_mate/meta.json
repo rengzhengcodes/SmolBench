@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.frobeniusMorphism_mate",
+  "file_path": "Mathlib/CategoryTheory/Closed/Functor.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 14,
+  "k": 13,
+  "ground_truth_full_proof": "rw [← Equiv.eq_symm_apply]\next B : 2\ndsimp [frobeniusMorphism, transferNatTransSelf, transferNatTrans, Adjunction.comp]\nsimp only [id_comp, comp_id]\nrw [← L.map_comp_assoc, prod.map_id_comp, assoc]\nerw [expComparison_ev]\nrw [prod.map_id_comp, assoc, ← F.map_id, ← prodComparison_inv_natural_assoc, ← F.map_comp]\nerw [exp.ev_coev]\nrw [F.map_id (A ⨯ L.obj B), comp_id]\next\nrw [assoc, assoc, ← h.counit_naturality, ← L.map_comp_assoc, assoc, inv_prodComparison_map_fst]\nsimp\nrw [assoc, assoc, ← h.counit_naturality, ← L.map_comp_assoc, assoc, inv_prodComparison_map_snd]\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "case w.h.h₂\nC : Type u\ninst✝⁶ : Category.{v, u} C\nD : Type u'\ninst✝⁵ : Category.{v, u'} D\ninst✝⁴ : HasFiniteProducts C\ninst✝³ : HasFiniteProducts D\nF : C ⥤ D\nL : D ⥤ C\ninst✝² : CartesianClosed C\ninst✝¹ : CartesianClosed D\ninst✝ : PreservesLimitsOfShape (Discrete WalkingPair) F\nh : L ⊣ F\nA : C\nB : D\n⊢ prodComparison L (F.obj A) B ≫ prod.map (h.counit.app A) (𝟙 (L.obj B)) ≫ prod.snd =\n    L.map (prod.map (F.map (𝟙 A)) (h.unit.app B) ≫ prod.snd) ≫ h.counit.app (L.obj B)"
+}

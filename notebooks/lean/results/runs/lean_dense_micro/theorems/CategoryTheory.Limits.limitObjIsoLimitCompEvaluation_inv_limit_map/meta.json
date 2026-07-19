@@ -1,0 +1,17 @@
+{
+  "full_name": "CategoryTheory.Limits.limitObjIsoLimitCompEvaluation_inv_limit_map",
+  "file_path": "Mathlib/CategoryTheory/Limits/FunctorCategory.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [Iso.inv_comp_eq, ← Category.assoc, Iso.eq_comp_inv,\n  limit_map_limitObjIsoLimitCompEvaluation_hom]",
+  "ground_truth_remaining_from_k": "rw [Iso.inv_comp_eq, ← Category.assoc, Iso.eq_comp_inv,\n  limit_map_limitObjIsoLimitCompEvaluation_hom]",
+  "true_premises_at_k": [
+    "CategoryTheory.Iso.inv_comp_eq",
+    "CategoryTheory.Category.assoc",
+    "CategoryTheory.Iso.eq_comp_inv",
+    "CategoryTheory.Limits.limit_map_limitObjIsoLimitCompEvaluation_hom"
+  ],
+  "state_before_k": "C : Type u\ninst✝⁴ : Category.{v, u} C\nD : Type u'\ninst✝³ : Category.{v', u'} D\nJ : Type u₁\ninst✝² : Category.{v₁, u₁} J\nK : Type u₂\ninst✝¹ : Category.{v₂, u₂} K\ninst✝ : HasLimitsOfShape J C\ni j : K\nF : J ⥤ K ⥤ C\nf : i ⟶ j\n⊢ (limitObjIsoLimitCompEvaluation F i).inv ≫ (limit F).map f =\n    limMap (whiskerLeft F ((evaluation K C).map f)) ≫ (limitObjIsoLimitCompEvaluation F j).inv"
+}

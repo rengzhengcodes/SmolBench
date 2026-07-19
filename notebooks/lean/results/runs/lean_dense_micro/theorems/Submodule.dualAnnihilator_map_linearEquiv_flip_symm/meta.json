@@ -1,0 +1,15 @@
+{
+  "full_name": "Submodule.dualAnnihilator_map_linearEquiv_flip_symm",
+  "file_path": "Mathlib/LinearAlgebra/PerfectPairing.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "have : IsReflexive R N := e.isReflexive_of_equiv_dual_of_isReflexive\nrw [← map_dualCoannihilator_linearEquiv_flip, flip_flip]",
+  "ground_truth_remaining_from_k": "rw [← map_dualCoannihilator_linearEquiv_flip, flip_flip]",
+  "true_premises_at_k": [
+    "Submodule.map_dualCoannihilator_linearEquiv_flip",
+    "LinearEquiv.flip_flip"
+  ],
+  "state_before_k": "R : Type u_1\nM : Type u_2\nN : Type u_3\ninst✝⁵ : CommRing R\ninst✝⁴ : AddCommGroup M\ninst✝³ : Module R M\ninst✝² : AddCommGroup N\ninst✝¹ : Module R N\ninst✝ : IsReflexive R M\ne : N ≃ₗ[R] Dual R M\np : Submodule R (Dual R N)\nthis : IsReflexive R N\n⊢ dualAnnihilator (map (LinearEquiv.symm (LinearEquiv.flip e)) p) = map e (dualCoannihilator p)"
+}

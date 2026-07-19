@@ -128,6 +128,20 @@ PHASES = {
                      "split": "val", "limit": 150, "seed": 1776},
         "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
     },
+    # Dense fenced micro-smoke (the cot-gate's pre-registered RED follow-up,
+    # 2026-07-19): llama-31-405b base vs the paired 500-row bare/fenced r128
+    # adapters (build_lean_cot_micro.py). A directional smoke, NOT a powered
+    # gate: rungs = stepk:1 (where the Qwen gate's entire effect lived) plus
+    # hint:2 as a generalization probe. Verdict informs abandon-vs-continue
+    # for CoT targets on the dense trio arms.
+    "dense-micro": {
+        **_COMMON,
+        "run_name": "lean_dense_micro",
+        "n_rollouts": 4,
+        "theorems": {"source": "replay_passing", "kind": "novel_premises",
+                     "split": "val", "limit": 150, "seed": 1776},
+        "rungs": ["stepk:1", "hint:2"],
+    },
     # Expert-iteration harvest pass: sample pass@8 rollouts on TRAIN theorems
     # (never val/test -- see below) at temperature 1.0 for diversity, so
     # scripts/harvest_expert_iter.py has a genuine choice of distinct correct
@@ -268,6 +282,56 @@ def _cot_smoke_variants(args, ec2) -> list[dict]:
                 "--lora-modules", f"{key}={container_path}",
             ],
             "adapters": [{"name": key, "s3": f"{prefix}/qwen3-235b-a22b/{sub}",
+                          "region": args.lora_region}],
+        }
+        variants.append({"key": key, "display": key})
+    return variants
+
+
+#: The dense micro-smoke arms: ``(variant key, adapter subprefix under
+#: <lora-s3-prefix>/llama-31-405b/)``. None = the base arm. The adapters were
+#: trained on the BF16 mirror and are served on the FP8-dynamic base -- the
+#: same cross-precision serving the r16 pilot validated (405B was the arm the
+#: pilot's adapter helped most, 3.7x).
+DENSE_MICRO_ARMS: list[tuple[str, str | None]] = [
+    ("llama-31-405b", None),
+    ("llama-lean-bare-micro-r128", "bare-micro500-r128"),
+    ("llama-lean-fenced-micro-r128", "fenced-micro500-r128"),
+]
+
+
+def _dense_micro_variants(args, ec2) -> list[dict]:
+    """The 3 dense micro-smoke arms as serve-swappable variants.
+
+    Pattern-copy of `_cot_smoke_variants` over `DENSE_MICRO_ARMS` (see that
+    function's docstring for why each experiment keeps its own textually
+    adjacent arms/variants pair). Unlike the Qwen arms there is NO base
+    hf_model_id override: 405B BF16 (~810 GB) cannot fit the box, so the
+    adapters serve on the FP8-dynamic base exactly like the r16 pilot did.
+    """
+    base = ec2.EC2_DEPLOY_SPECS["llama-31-405b"]
+    prefix = args.lora_s3_prefix.rstrip("/")
+    variants: list[dict] = []
+    for key, sub in DENSE_MICRO_ARMS:
+        if sub is None:
+            variants.append({"key": key, "display": f"{key}-base"})
+            continue
+        container_path = f"/root/.cache/huggingface/lora/{key}"
+        ec2.EC2_DEPLOY_SPECS[key] = {
+            "hf_model_id": base["hf_model_id"],
+            "tp": base.get("tp", 8),
+            "max_model_len": base.get("max_model_len", 131072),
+            "vllm_args": [
+                *base.get("vllm_args", []),
+                "--enable-lora",
+                "--max-lora-rank", str(args.lora_rank),
+                # Fully-sharded LoRA at high rank: same reasoning as the
+                # Qwen cot arms (per-GPU LoRA buffers), and vLLM's
+                # recommended mode for rank >= 64 regardless.
+                *(["--fully-sharded-loras"] if args.lora_rank >= 64 else []),
+                "--lora-modules", f"{key}={container_path}",
+            ],
+            "adapters": [{"name": key, "s3": f"{prefix}/llama-31-405b/{sub}",
                           "region": args.lora_region}],
         }
         variants.append({"key": key, "display": key})
@@ -423,7 +487,7 @@ def _resolve_config(args: argparse.Namespace) -> tuple[dict, list[dict], Path]:
         # cover their rank. Default to 128 only when --cot-smoke selected
         # that arm list; the trio/qwen-4way arms keep their historical
         # rank-16 default.
-        args.lora_rank = 128 if args.cot_smoke else 16
+        args.lora_rank = 128 if (args.cot_smoke or args.phase == "dense-micro") else 16
 
     config = dict(PHASES[args.phase])
     # Override the result run-name (dir under notebooks/lean/results/runs/) so a
@@ -446,6 +510,8 @@ def _resolve_config(args: argparse.Namespace) -> tuple[dict, list[dict], Path]:
         variants = _qwen_4way_variants(args, ec2)
     elif args.cot_smoke:
         variants = _cot_smoke_variants(args, ec2)
+    elif args.phase == "dense-micro":
+        variants = _dense_micro_variants(args, ec2)
     else:
         variants = _variants(args, ec2)
 

@@ -778,3 +778,39 @@ def test_only_filter_error_under_cot_smoke_lists_cot_smoke_keys_not_trio(isolate
     assert "qwen3-lean-cot-r128" in msg
     assert "llama-31-405b" not in msg
     assert "nemotron-ultra-253b" not in msg
+
+
+# ---------------------------------------------------------------------------
+# dense-micro phase (the cot-gate's pre-registered RED follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_dense_micro_phase_resolves_three_llama_arms(isolated_ec2_deploy_specs):
+    args = sweep.build_parser().parse_args(["--phase", "dense-micro"])
+    config, variants, run_dir = sweep._resolve_config(args)
+    assert config["run_name"] == "lean_dense_micro"
+    assert config["n_rollouts"] == 4
+    assert config["rungs"] == ["stepk:1", "hint:2"]
+    assert [v["key"] for v in variants] == [
+        "llama-31-405b",
+        "llama-lean-bare-micro-r128",
+        "llama-lean-fenced-micro-r128",
+    ]
+    # rank defaults to 128 (the micro adapters' training rank), which also
+    # switches the serve args to fully-sharded LoRA buffers
+    assert args.lora_rank == 128
+    from smolbench.evals import ec2
+
+    spec = ec2.EC2_DEPLOY_SPECS["llama-lean-fenced-micro-r128"]
+    assert "--fully-sharded-loras" in spec["vllm_args"]
+    assert spec["adapters"][0]["s3"].endswith("/llama-31-405b/fenced-micro500-r128")
+    # LoRA arms serve on the FP8 base -- NO BF16 override (405B BF16 can't fit)
+    assert spec["hf_model_id"] == ec2.EC2_DEPLOY_SPECS["llama-31-405b"]["hf_model_id"]
+
+
+def test_dense_micro_respects_only_filter(isolated_ec2_deploy_specs):
+    args = sweep.build_parser().parse_args(
+        ["--phase", "dense-micro", "--only", "llama-lean-bare-micro-r128"]
+    )
+    _config, variants, _run_dir = sweep._resolve_config(args)
+    assert [v["key"] for v in variants] == ["llama-lean-bare-micro-r128"]

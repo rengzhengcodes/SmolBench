@@ -1,0 +1,19 @@
+{
+  "full_name": "CategoryTheory.Limits.coprodComparison_natural",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/BinaryProducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [coprodComparison, coprodComparison, coprod.map_desc, ← F.map_comp, ← F.map_comp,\n  coprod.desc_comp, ← F.map_comp, coprod.inl_map, ← F.map_comp, coprod.inr_map]",
+  "ground_truth_remaining_from_k": "rw [coprodComparison, coprodComparison, coprod.map_desc, ← F.map_comp, ← F.map_comp,\n  coprod.desc_comp, ← F.map_comp, coprod.inl_map, ← F.map_comp, coprod.inr_map]",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.coprodComparison",
+    "CategoryTheory.Limits.coprodComparison",
+    "CategoryTheory.Limits.coprod.map_desc",
+    "CategoryTheory.Limits.coprod.desc_comp",
+    "CategoryTheory.Limits.coprod.inl_map",
+    "CategoryTheory.Limits.coprod.inr_map"
+  ],
+  "state_before_k": "C : Type u\ninst✝⁵ : Category.{v, u} C\nX Y : C\nD : Type u₂\ninst✝⁴ : Category.{w, u₂} D\nF : C ⥤ D\nA A' B B' : C\ninst✝³ : HasBinaryCoproduct A B\ninst✝² : HasBinaryCoproduct A' B'\ninst✝¹ : HasBinaryCoproduct (F.obj A) (F.obj B)\ninst✝ : HasBinaryCoproduct (F.obj A') (F.obj B')\nf : A ⟶ A'\ng : B ⟶ B'\n⊢ coprodComparison F A B ≫ F.map (coprod.map f g) = coprod.map (F.map f) (F.map g) ≫ coprodComparison F A' B'"
+}

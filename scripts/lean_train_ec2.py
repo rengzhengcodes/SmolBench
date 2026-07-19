@@ -156,6 +156,10 @@ OPTIONAL_DATASETS: Dict[str, Path] = {
     "cot_stepk1_fenced_full.jsonl": _SFT_DIR / "cot_stepk1_fenced_full.jsonl",
     "cot_stepk1_bare_8k.jsonl": _SFT_DIR / "cot_stepk1_bare_8k.jsonl",
     "lean3_repair_stepk1_1k6.jsonl": _SFT_DIR / "lean3_repair_stepk1_1k6.jsonl",
+    # Dense fenced micro-smoke pair (build_lean_cot_micro.py): 500 identical
+    # (full_name, k) rows, fenced vs bare targets -- the RED-gate follow-up.
+    "cot_stepk1_fenced_micro500.jsonl": _SFT_DIR / "cot_stepk1_fenced_micro500.jsonl",
+    "cot_stepk1_bare_micro500.jsonl": _SFT_DIR / "cot_stepk1_bare_micro500.jsonl",
 }
 TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "lean_lora_sft.py"
 REQUIREMENTS = _REPO_ROOT / "scripts" / "requirements-train.txt"
@@ -900,11 +904,22 @@ def _ssh(state: Dict[str, Any], remote_cmd: str, *, check: bool = True,
 
 
 def _scp(state: Dict[str, Any], local: Path, remote: str) -> None:
-    subprocess.run(
-        ["scp", "-i", str(KEY_PATH), *_SSH_OPTS, str(local),
-         f"{SSH_USER}@{state['public_ip']}:{remote}"],
-        check=True,
-    )
+    # The session egress NAT drops long-lived connections after a few hundred
+    # MB of sustained transfer (two consecutive `setup` runs died mid-upload
+    # at different files, live 2026-07-19). scp restarts a file cleanly, so
+    # per-file retries fix the class for the <=90 MB files shipped here.
+    for attempt in range(3):
+        try:
+            subprocess.run(
+                ["scp", "-i", str(KEY_PATH), *_SSH_OPTS, str(local),
+                 f"{SSH_USER}@{state['public_ip']}:{remote}"],
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            time.sleep(10)
 
 
 def _wait_ssh(state: Dict[str, Any], timeout_s: int) -> None:

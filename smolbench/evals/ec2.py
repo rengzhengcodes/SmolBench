@@ -1691,9 +1691,15 @@ def _wait_model_ready(
         container = status.get("container")
         serve_rc = status.get("serve_rc")
         if container in ("exited", "dead"):
+            # Include the launcher's own output too: a container that dies
+            # pre-entrypoint (bad mount, missing adapter file, OOM-kill)
+            # leaves docker logs EMPTY, and the docker-run error then lives
+            # only in the serve script's output (seen live 2026-07-19: an
+            # adapter arm failed with a blank log_tail and no diagnosis).
             raise RuntimeError(
                 f"vLLM container for {model!r} exited during startup; docker logs tail:\n"
-                f"{status.get('log_tail', '')}"
+                f"{status.get('log_tail', '')}\n"
+                f"launcher output tail:\n{status.get('serve_log_tail', '')}"
             )
         # "created" alongside a failed launcher rc is equally terminal: the
         # container exists but nothing will ever start it (seen live

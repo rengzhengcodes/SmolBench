@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Monad.MonadicityInternal.comparisonAdjunction_counit_app",
+  "file_path": "Mathlib/CategoryTheory/Monad/Monadicity.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "apply coequalizer.hom_ext\nchange\n  coequalizer.π _ _ ≫ coequalizer.desc (((adj).homEquiv _ B).symm (𝟙 _)) _ =\n    coequalizer.π _ _ ≫ coequalizer.desc _ _\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "case h\nC : Type u₁\nD : Type u₂\ninst✝³ : Category.{v₁, u₁} C\ninst✝² : Category.{v₁, u₂} D\nG : D ⥤ C\ninst✝¹ : IsRightAdjoint G\ninst✝ : ∀ (A : Algebra (Adjunction.toMonad adj)), HasCoequalizer (F.map A.a) (adj.counit.app (F.obj A.A))\nB : D\n⊢ coequalizer.π (F.map ((comparison adj).obj B).a) (adj.counit.app (F.obj ((comparison adj).obj B).A)) ≫\n      coequalizer.desc ((adj.homEquiv (G.obj B) B).symm (𝟙 (G.obj B))) ⋯ =\n    coequalizer.π (F.map ((comparison adj).obj B).a) (adj.counit.app (F.obj ((comparison adj).obj B).A)) ≫\n      coequalizer.desc (adj.counit.app B) ⋯"
+}

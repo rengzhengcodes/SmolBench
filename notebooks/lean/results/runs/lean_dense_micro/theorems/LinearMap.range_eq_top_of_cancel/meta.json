@@ -1,0 +1,14 @@
+{
+  "full_name": "LinearMap.range_eq_top_of_cancel",
+  "file_path": "Mathlib/LinearAlgebra/Quotient.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "have h₁ : (0 : M₂ →ₗ[R₂] M₂ ⧸ (range f)).comp f = 0 := zero_comp _\nrw [← Submodule.ker_mkQ (range f), ← h 0 f.range.mkQ (Eq.trans h₁ (range_mkQ_comp _).symm)]\nexact ker_zero",
+  "ground_truth_remaining_from_k": "exact ker_zero",
+  "true_premises_at_k": [
+    "LinearMap.ker_zero"
+  ],
+  "state_before_k": "R : Type u_1\nM : Type u_2\nR₂ : Type u_3\nM₂ : Type u_4\nR₃ : Type u_5\nM₃ : Type u_6\ninst✝¹⁰ : Ring R\ninst✝⁹ : Ring R₂\ninst✝⁸ : Ring R₃\ninst✝⁷ : AddCommMonoid M\ninst✝⁶ : AddCommGroup M₂\ninst✝⁵ : AddCommMonoid M₃\ninst✝⁴ : Module R M\ninst✝³ : Module R₂ M₂\ninst✝² : Module R₃ M₃\nτ₁₂ : R →+* R₂\nτ₂₃ : R₂ →+* R₃\nτ₁₃ : R →+* R₃\ninst✝¹ : RingHomCompTriple τ₁₂ τ₂₃ τ₁₃\ninst✝ : RingHomSurjective τ₁₂\nf : M →ₛₗ[τ₁₂] M₂\nh : ∀ (u v : M₂ →ₗ[R₂] M₂ ⧸ range f), comp u f = comp v f → u = v\nh₁ : comp 0 f = 0\n⊢ ker 0 = ⊤"
+}

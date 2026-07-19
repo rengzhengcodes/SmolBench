@@ -1,0 +1,14 @@
+{
+  "full_name": "IsCompl.bihimp_eq_bot",
+  "file_path": "Mathlib/Order/SymmDiff.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [h.eq_compl, compl_bihimp_self]",
+  "ground_truth_remaining_from_k": "rw [h.eq_compl, compl_bihimp_self]",
+  "true_premises_at_k": [
+    "compl_bihimp_self"
+  ],
+  "state_before_k": "ι : Type u_1\nα : Type u_2\nβ : Type u_3\nπ : ι → Type u_4\ninst✝ : HeytingAlgebra α\na✝ a b : α\nh : IsCompl a b\n⊢ a ⇔ b = ⊥"
+}

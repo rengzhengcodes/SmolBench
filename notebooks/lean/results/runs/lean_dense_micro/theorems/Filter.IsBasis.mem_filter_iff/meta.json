@@ -1,0 +1,17 @@
+{
+  "full_name": "Filter.IsBasis.mem_filter_iff",
+  "file_path": "Mathlib/Order/Filter/Bases.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,\n  exists_exists_and_eq_and]",
+  "ground_truth_remaining_from_k": "simp only [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,\n  exists_exists_and_eq_and]",
+  "true_premises_at_k": [
+    "Filter.IsBasis.filter",
+    "FilterBasis.mem_filter_iff",
+    "Filter.IsBasis.mem_filterBasis_iff",
+    "exists_exists_and_eq_and"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nγ : Type u_3\nι : Sort u_4\nι' : Sort u_5\np : ι → Prop\ns : ι → Set α\nh : IsBasis p s\nU : Set α\n⊢ U ∈ IsBasis.filter h ↔ ∃ i, p i ∧ s i ⊆ U"
+}

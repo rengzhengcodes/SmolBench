@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.NatTrans.rightDerived_id",
+  "file_path": "Mathlib/CategoryTheory/Abelian/RightDerived.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "dsimp only [rightDerived]\nsimp only [rightDerivedToHomotopyCategory_id, whiskerRight_id']\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝⁵ : Category.{v, u} C\nD : Type u_1\ninst✝⁴ : Category.{u_2, u_1} D\ninst✝³ : Abelian C\ninst✝² : HasInjectiveResolutions C\ninst✝¹ : Abelian D\nF : C ⥤ D\ninst✝ : Functor.Additive F\nn : ℕ\n⊢ 𝟙 (Functor.rightDerivedToHomotopyCategory F ⋙ HomotopyCategory.homologyFunctor D (ComplexShape.up ℕ) n) =\n    𝟙 (Functor.rightDerived F n)"
+}

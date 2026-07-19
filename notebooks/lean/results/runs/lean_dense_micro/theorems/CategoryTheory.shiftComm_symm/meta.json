@@ -1,0 +1,17 @@
+{
+  "full_name": "CategoryTheory.shiftComm_symm",
+  "file_path": "Mathlib/CategoryTheory/Shift/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "ext\nexact NatTrans.congr_app (congr_arg Iso.hom (shiftFunctorComm_symm C i j)) X",
+  "ground_truth_remaining_from_k": "exact NatTrans.congr_app (congr_arg Iso.hom (shiftFunctorComm_symm C i j)) X",
+  "true_premises_at_k": [
+    "CategoryTheory.NatTrans.congr_app",
+    "congr_arg",
+    "CategoryTheory.Iso.hom",
+    "CategoryTheory.shiftFunctorComm_symm"
+  ],
+  "state_before_k": "case w\nC : Type u\nA : Type u_1\ninst✝² : Category.{v, u} C\ninst✝¹ : AddCommMonoid A\ninst✝ : HasShift C A\nX Y : C\nf : X ⟶ Y\ni j : A\n⊢ (shiftComm X i j).symm.hom = (shiftComm X j i).hom"
+}
