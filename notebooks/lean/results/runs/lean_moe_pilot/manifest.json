@@ -36,5 +36,11 @@
         "display_name": "qwen3.5-397b-a17b-base"
       }
     ]
+  },
+  "finished_at": "2026-07-19T05:40:26",
+  "counts": {
+    "written": 77,
+    "skipped": 0,
+    "success": 23
   }
 }

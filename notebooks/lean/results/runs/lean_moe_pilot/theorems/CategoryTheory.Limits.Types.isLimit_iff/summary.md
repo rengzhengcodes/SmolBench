@@ -12,12 +12,12 @@ exact ⟨x, fun c j ↦ funext fun y ↦ (hx c y).1 j,
 
 ## Verdict matrix
 
-| rung | gpt-oss-120b-base | nemotron-3-super-120b-a12b-base |
-| --- | --- | --- |
-| `stepk:1` | ✘ | X |
-| `hint:2` | ✘ | ✘ |
-| `hint:3` | ✘ | ✘ |
-| `noise:3` | ✘ | X |
+| rung | gpt-oss-120b-base | nemotron-3-super-120b-a12b-base | qwen3.5-397b-a17b-base |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ | X | X |
+| `hint:2` | ✘ | ✘ | X |
+| `hint:3` | ✘ | ✘ | X |
+| `noise:3` | ✘ | X | X |
 
 ## Per-cell detail
 
@@ -92,6 +92,26 @@ constructor
       exact h₄
     exact h₆
   exact h₁
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 28.4s, verify 300.2s, in=384, out=579)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _
+intro c'
+use x c'
+constructor
+· intro y j
+  exact (hx c' y).1 j
+· intro f hf y
+  apply (hx c' y).2
+  intro j
+  apply hf
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
@@ -207,6 +227,24 @@ refine ⟨fun t => x t, _, _⟩
 
 **lean_error:** tail step 1/83 ('refine ⟨fun t => x t, _, _⟩'): internal exception #7
 
+### `hint:2` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 928.9s, verify 300.1s, in=1580, out=886)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+refine ⟨fun t s hs ↦ ⟨x t s, ?_, ?_⟩, fun h' ↦ ?_⟩
+· have := (hx t s).1
+  exact this
+· intro y hy
+  have := (hx t s).2 (fun j ↦ congr_fun (h' y) j)
+  exact this
+· have := hx c_1 (h' c_1)
+  exact funext fun j ↦ congr_fun (this.1) j
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
 ### `hint:3` · gpt-oss-120b-base · rollout 0 → **lean_error**  (gen 32.4s, verify 0.7s, in=5340, out=4807)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -237,6 +275,26 @@ exact h
 ```
 
 **lean_error:** tail step 1/2 ('rw [CategoryTheory.Limits.Types.isLimit_iff]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 628.8s, verify 300.1s, in=5293, out=740)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+intro c₁
+refine ⟨fun y ↦ x c₁ y, ?_, ?_⟩
+· intro j y
+  exact (hx c₁ y).1 j
+· intro f hf
+  apply (hx c₁ (f ⟨⟩)).2
+  intro j
+  apply funext
+  intro y
+  apply congr_fun (hf j) y
+```
+
+**lean_error:** DojoTacticTimeoutError: 
 
 ### `noise:3` · gpt-oss-120b-base · rollout 0 → **lean_error**  (gen 46.3s, verify 0.5s, in=4965, out=6943)
 
@@ -291,6 +349,26 @@ have h : IsLimit c := ⟨fun t => x t, by
     rw [h₄]
   exact h₅⟩
 exact h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 328.6s, verify 300.1s, in=5253, out=632)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+intro t
+use x t
+constructor
+· intro j
+  have := (hx t ⟨⟩).1
+  exact congr_fun this j
+· intro y hy
+  apply (hx t ⟨⟩).2
+  intro j
+  exact congr_fun hy j
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
