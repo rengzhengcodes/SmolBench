@@ -330,3 +330,44 @@ def test_provision_reservation_env_terminates_off_block_recovered_instance(monke
     state = ec2.provision_spot_instance()
     assert calls == {"shutdown": 1, "launch_fresh": 1}
     assert state["instance_id"] == "i-fresh"
+
+
+# ---------------------------------------------------------------------------
+# shutdown_instance -- the instance_terminated waiter expiring is NOT a
+# failure. TerminateInstances has already succeeded by then, so the box is
+# dying regardless; p5-class teardown routinely outlasts botocore's 10-min
+# waiter (seen live 2026-07-18, twice), and crashing stranded callers AFTER
+# the only action that matters had been taken.
+# ---------------------------------------------------------------------------
+
+
+def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
+    from botocore.exceptions import WaiterError
+
+    class _FakeWaiter:
+        def wait(self, **kwargs):
+            raise WaiterError("InstanceTerminated", "Max attempts exceeded", {})
+
+    class _FakeEc2:
+        def __init__(self):
+            self.terminated = []
+
+        def terminate_instances(self, InstanceIds):
+            self.terminated.append(InstanceIds)
+
+        def get_waiter(self, name):
+            return _FakeWaiter()
+
+    fake = _FakeEc2()
+    cleared = []
+    monkeypatch.setattr(
+        ec2, "_load_state", lambda: {"instance_id": "i-slow", "region": "us-west-2"}
+    )
+    monkeypatch.setattr(ec2, "_agent", lambda *a, **k: {})
+    monkeypatch.setattr(ec2, "_ec2_client", lambda region: fake)
+    monkeypatch.setattr(ec2, "_clear_state", lambda: cleared.append(True))
+
+    ec2.shutdown_instance(wait=True)  # must not raise
+
+    assert fake.terminated == [["i-slow"]]
+    assert cleared == [True]  # state cleared despite the expired waiter

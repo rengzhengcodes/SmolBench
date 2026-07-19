@@ -315,24 +315,25 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # follow-on all-MoE induction study -- the sibling to the periodic
     # decode/cot/moe archetype control (notebooks/periodic). All three are the
     # strongest open-weight GENERALISTS with a measured Lean 4 miniF2F number in
-    # the UW study (arXiv 2606.05632). At tp=8 all fit one p5 (640 GB): Qwen3.5
-    # FP8 ~397 GB (~243 GB KV headroom at 131072 ctx), GPT-OSS MXFP4 ~63 GB,
-    # Nemotron ~120-240 GB. Precision is necessarily heterogeneous (GPT-OSS
-    # ships MXFP4-only), so unlike the periodic trio these are NOT uniform-FP8 --
-    # carry that as a cross-model comparison caveat.
-    "qwen3.5-397b-a17b":          {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072},
+    # the UW study (arXiv 2606.05632). Each id is the HIGHEST-PRECISION OFFICIAL
+    # release (per user directive), so precision is heterogeneous: Qwen BF16,
+    # Nemotron BF16, GPT-OSS MXFP4 (its only/native format -- OpenAI ships no
+    # higher-precision build). All three repos are UNGATED (verified via the HF
+    # models API, 2026-07-18). SERVING: gpt-oss (GptOssForCausalLM) + Nemotron-3
+    # (NemotronForCausalLM) serve on stable vLLM v0.25.1, but Qwen3.5 (hybrid
+    # Gated-DeltaNet MoE, multimodal) needs vLLM from main -> the nightly image
+    # (vllm/vllm-openai:nightly). Qwen is served as its official FP8 (~397 GB) so
+    # it FITS p5 (640 GB), matching the widened p5 capacity (BF16 ~794 GB would
+    # force scarce p5e); FP8 still needs the nightly image (the ARCH, not the
+    # precision, is the gate). Models serve one at a time, so the box holds only
+    # the largest single model. Qwen flags: --reasoning-parser qwen3 (split its
+    # <think> so the grader sees only the answer) + --language-model-only
+    # (text-only; skip the vision tower to save memory). If the study needs BF16
+    # precision parity, switch back to Qwen/Qwen3.5-397B-A17B and re-pin p5e.
+    "qwen3.5-397b-a17b":          {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072,
+                                  "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only"]},
+    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", "tp": 8, "max_model_len": 131072},
     "gpt-oss-120b":               {"hf_model_id": "openai/gpt-oss-120b", "tp": 8, "max_model_len": 131072},
-    # TODO(VERIFY BEFORE A LIVE RUN): the exact repo id for
-    # Nemotron-3-Super-120B-A12B is UNCONFIRMED. huggingface.co/nvidia/
-    # Nemotron-3-Super-120B-A12B returned HTTP 401 unauthenticated (repo exists
-    # but is GATED, or the path differs), and the WebSearch budget was exhausted
-    # when this was wired. The id below is the best-guess path (BF16 base
-    # ~240 GB, still fits p5 at tp=8). If gated: set a real HF_TOKEN in
-    # notebooks/periodic_moe/keys.env and accept the license on its HF page. If
-    # an official FP8 build exists, prefer it for precision parity. Nemotron may
-    # also need a reasoning system_prompt (cf. nemotron-ultra-253b's "detailed
-    # thinking on") -- confirm and add here if so.
-    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/Nemotron-3-Super-120B-A12B", "tp": 8, "max_model_len": 131072},
 }
 
 
@@ -1879,6 +1880,18 @@ def shutdown_instance(wait: bool = True) -> None:
         return
     logging.info(f"shutdown_instance: terminating {instance_id} ({region}) ...")
     if wait:
-        _ec2_client(region).get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
-        logging.info(f"shutdown_instance: {instance_id} terminated.")
+        from botocore.exceptions import WaiterError
+
+        try:
+            _ec2_client(region).get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
+            logging.info(f"shutdown_instance: {instance_id} terminated.")
+        except WaiterError:
+            # TerminateInstances already succeeded above, so the instance IS
+            # dying; p5-class teardown just outlasts botocore's 10-min waiter
+            # (seen live 2026-07-18, twice). Crashing here would strand the
+            # caller AFTER the only action that matters has been taken.
+            logging.warning(
+                f"shutdown_instance: {instance_id} still shutting down after the "
+                "waiter's max attempts; termination is already issued, proceeding."
+            )
     _clear_state()
