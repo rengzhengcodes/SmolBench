@@ -11,12 +11,12 @@ rw [le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ · |
-| `hint:2` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✘ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ · | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✘ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -153,6 +153,50 @@ a b c : α
 ⊢ a ⩿ b ↔ a = b ∨ a < b ∧ ∀ ⦃c : α⦄, a < c → ¬c < b
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.9s, verify 0.1s, in=229, out=371)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [covby_iff_le_not_le, le_iff_lt_or_eq, lt_or_eq_of_le]
+```
+
+**lean_error:** tail step 1/1 ('simp only [covby_iff_le_not_le, le_iff_lt_or_eq, lt_or_eq_of_le]'): unknown identifier 'covby_iff_le_not_le'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.0s, verify 0.1s, in=229, out=465)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [covBy_iff_le_and_ne, lt_iff_le_and_ne, or_iff_left_iff_imp]
+```
+
+**lean_error:** tail step 1/1 ('simp only [covBy_iff_le_and_ne, lt_iff_le_and_ne, or_iff_left_iff_imp]'): unknown identifier 'covBy_iff_le_and_ne'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.6s, verify 0.3s, in=229, out=620)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← lt_iff_coe_nonempty, covby]
+```
+
+**lean_error:** tail step 1/1 ('rw [← lt_iff_coe_nonempty, covby]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.3s, verify 0.1s, in=229, out=708)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [lt_or_eq_of_le] using Covby
+```
+
+**lean_error:** tail step 1/1 ('simpa only [lt_or_eq_of_le] using Covby'): unknown identifier 'Covby'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 95.3s, verify 0.1s, in=644, out=3752)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -236,6 +280,42 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 6.5s, verify 0.3s, in=644, out=217)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa [le_antisymm_iff] using wcovBy_iff_covBy_or_le_and_le
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.3s, verify 0.1s, in=644, out=280)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.6s, verify 0.1s, in=644, out=294)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.6s, verify 0.1s, in=644, out=327)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 166.8s, verify 0.1s, in=786, out=2613)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -314,6 +394,42 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 **candidate:**
 ```lean
 simp [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 12.9s, verify 0.1s, in=786, out=258)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, ← le_antisymm_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 13.4s, verify 0.1s, in=786, out=217)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, ← le_antisymm_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 14.4s, verify 0.1s, in=786, out=297)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [← le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 15.1s, verify 0.1s, in=786, out=291)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
 ```
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 94.6s, verify 0.2s, in=810, out=3729)
@@ -395,3 +511,41 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```lean
 simp [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 5.8s, verify 0.1s, in=810, out=197)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, ← le_antisymm_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 7.6s, verify 0.1s, in=810, out=257)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 7.7s, verify 0.1s, in=810, out=256)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [wcovBy_iff_covBy_or_le_and_le, le_antisymm_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.7s, verify 0.1s, in=810, out=295)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]
+```
+
+**lean_error:** tail step 1/1 ('rw [← le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

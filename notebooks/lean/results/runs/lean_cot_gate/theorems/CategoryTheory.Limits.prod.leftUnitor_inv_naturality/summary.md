@@ -16,7 +16,7 @@ rw [Iso.inv_comp_eq, ← Category.assoc, Iso.eq_comp_inv, prod.leftUnitor_hom_na
 | `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✓ | ✓ ✘ ✓ ✓ ✓ ✓ ✘ ✘ |
 | `hint:2` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✓ ✘ ✘ ✘ ✘ |
 | `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✓ ✘ X |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ ✘ ✓ ✘ X ✘ |
 
 ## Per-cell detail
 
@@ -721,3 +721,15 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance i-077d8082814a9172d is running). If the instance is running, your public IP probably changed and the security group is blocking you: re-run provision_spot_instance() to re-authorize your current IP.
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 21.2s, verify 0.1s, in=1134, out=347)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,
+  prod.leftUnitor_hom_naturality]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:60: unexpected end of input; expected ']'

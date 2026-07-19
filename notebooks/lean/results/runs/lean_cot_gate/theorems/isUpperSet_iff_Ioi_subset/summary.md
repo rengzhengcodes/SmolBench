@@ -11,12 +11,12 @@ simp [isUpperSet_iff_forall_lt, subset_def, @forall_swap (_ ∈ s)]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -137,6 +137,60 @@ simp [IsUpperSet, Subset_def, @forall_swap (_ ∈ s)]
 
 **lean_error:** tail step 1/1 ('simp [IsUpperSet, Subset_def, @forall_swap (_ ∈ s)]'): unknown identifier 'Subset_def'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.3s, verify 0.1s, in=270, out=236)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [IsUpperSet, Ioi_subset_iff, le_iff_not_lt]
+```
+
+**lean_error:** tail step 1/1 ('simp [IsUpperSet, Ioi_subset_iff, le_iff_not_lt]'): unknown identifier 'Ioi_subset_iff'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 11.2s, verify 0.1s, in=270, out=359)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [IsUpperSet, le_iff_lt_or_eq, or_imp]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+γ : Type u_3
+ι : Sort u_4
+κ : ι → Sort u_5
+inst✝ : PartialOrder α
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.2s, verify 0.1s, in=270, out=399)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [IsUpperSet, Ioi_subset_iff, le_iff_lt_or_eq]
+```
+
+**lean_error:** tail step 1/1 ('simp only [IsUpperSet, Ioi_subset_iff, le_iff_lt_or_eq]'): unknown identifier 'Ioi_subset_iff'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 20.4s, verify 0.1s, in=270, out=721)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [isUpperSet_iff_Ici_subset, Ioi_subset_iff, lt_or_eq_of_le] using
+  forall₂_congr fun a ha => ⟨fun h x hx => h x <| le_of_lt hx, fun h x hx => hx.eq_or_lt.elim (fun e => e.symm ▸ ha) (h _)⟩
+```
+
+**lean_error:** tail step 1/2 ('simpa only [isUpperSet_iff_Ici_subset, Ioi_subset_iff, lt_or_eq_of_le] using'): <stdin>:1:76: unexpected end of input
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 174.9s, verify 0.2s, in=708, out=7731)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -248,6 +302,50 @@ simp [isUpperSet_iff_forall_lt, subset_def, Ioi_subset_iff, forall_swap]
 
 **lean_error:** tail step 1/1 ('simp [isUpperSet_iff_forall_lt, subset_def, Ioi_subset_iff, forall_swap]'): unknown identifier 'Ioi_subset_iff'
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.3s, verify 0.1s, in=708, out=332)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [isUpperSet_iff_forall_lt, Set.subset_def, Ioi_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('rw [isUpperSet_iff_forall_lt, Set.subset_def, Ioi_def, forall_swap]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.7s, verify 0.1s, in=708, out=347)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [isUpperSet_iff_forall_lt, subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [isUpperSet_iff_forall_lt, subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.4s, verify 1.4s, in=708, out=407)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.7s, verify 0.1s, in=708, out=423)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [isUpperSet_iff_forall_lt, subset_def, ← forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [isUpperSet_iff_forall_lt, subset_def, ← forall_swap]'): tactic 'simp' failed, nested error:
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 194.3s, verify 0.2s, in=1216, out=8660)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -348,6 +446,50 @@ simp [isUpperSet_iff_forall_lt, subset_def, @forall_swap (_ < _), ← and_forall
 ```
 
 **lean_error:** tail step 1/1 ('simp [isUpperSet_iff_forall_lt, subset_def, @forall_swap (_ < _), ← and_forall]'): unknown identifier 'and_forall'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 19.3s, verify 0.1s, in=1216, out=370)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 19.5s, verify 0.8s, in=1216, out=361)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 20.4s, verify 0.1s, in=1216, out=491)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp only [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 21.6s, verify 0.1s, in=1216, out=446)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [isUpperSet_iff_forall_lt, subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp only [isUpperSet_iff_forall_lt, subset_def, forall_swap]'): tactic 'simp' failed, nested error:
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 105.1s, verify 0.2s, in=1241, out=4758)
 
@@ -452,3 +594,47 @@ simp [isUpperSet_iff_forall_lt, subset_def, Ioi, @forall_swap α α]
 ```
 
 **lean_error:** tail step 1/1 ('simp [isUpperSet_iff_forall_lt, subset_def, Ioi, @forall_swap α α]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.5s, verify 0.7s, in=1241, out=307)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.6s, verify 0.1s, in=1241, out=375)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.0s, verify 0.1s, in=1241, out=392)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp only [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.1s, verify 0.1s, in=1241, out=393)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [isUpperSet_iff_forall_lt, Set.subset_def, forall_swap]'): tactic 'simp' failed, nested error:

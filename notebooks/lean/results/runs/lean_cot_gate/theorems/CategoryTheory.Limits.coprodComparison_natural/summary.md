@@ -12,12 +12,12 @@ rw [coprodComparison, coprodComparison, coprod.map_desc, ← F.map_comp, ← F.m
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · · ✘ |
-| `hint:2` | ✘ ✘ ✘ · | · ✘ ✘ ✘ |
-| `hint:3` | · ✘ ✘ ✘ | · · · ✘ |
-| `noise:3` | · · ✘ ✘ | · · ✘ · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · · ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ · | · ✘ ✘ ✘ | · · ✘ · |
+| `hint:3` | · ✘ ✘ ✘ | · · · ✘ | · · ✘ ✘ |
+| `noise:3` | · · ✘ ✘ | · · ✘ · | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -144,6 +144,50 @@ simp
 
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.3s, verify 0.1s, in=386, out=242)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.7s, verify 0.1s, in=386, out=306)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Category.assoc, Functor.map_comp]
+```
+
+**lean_error:** tail step 1/1 ('simp [Category.assoc, Functor.map_comp]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.8s, verify 0.1s, in=386, out=305)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.9s, verify 0.1s, in=386, out=307)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [coprod.map_eq, F.map_comp, F.map_inl, F.map_inr, coprodComparison_naturality, Category.assoc]
+```
+
+**lean_error:** tail step 1/1 ('simp only [coprod.map_eq, F.map_comp, F.map_inl, F.map_inr, coprodComparison_naturality, Category.assoc]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 118.4s, verify 0.1s, in=1991, out=4610)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -254,6 +298,78 @@ simp [coprodComparison, ← coprod.map_desc]
 ```
 
 **lean_error:** tail step 1/1 ('simp [coprodComparison, ← coprod.map_desc]'): tactic 'simp' failed, nested error:
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 9.4s, verify 0.2s, in=1991, out=267)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+ext <;> simp [coprod.inl_map, coprod.inr_map, coprod.map_desc, coprod.desc_comp]
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 15.0s, verify 0.2s, in=1991, out=433)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map, coprod.inr_map]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 20.5s, verify 0.1s, in=1991, out=611)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply coprod.hom_ext <;> simp [coprodComparison, coprod.map_desc, coprod.desc_comp,
+  coprod.inl_map, coprod.inr_map]
+```
+
+**lean_error:** tail step 1/2 ('apply coprod.hom_ext <;> simp [coprodComparison, coprod.map_desc, coprod.desc_comp,'): <stdin>:1:83: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 21.8s, verify 0.1s, in=1991, out=655)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map, coprod.inr_map]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 218.5s, verify 0.5s, in=2858, out=4498)
 
@@ -383,6 +499,70 @@ simp [coprodComparison, ← coprod.map_desc, ← coprod.desc_comp]
 ```
 
 **lean_error:** tail step 1/1 ('simp [coprodComparison, ← coprod.map_desc, ← coprod.desc_comp]'): tactic 'simp' failed, nested error:
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 18.2s, verify 0.3s, in=2858, out=286)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+ext <;> simp [coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map, coprod.inr_map]
+```
+
+**final state (truncated):**
+```
+case h₁
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 20.1s, verify 0.1s, in=2858, out=328)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [coprodComparison, coprod.inl_map, coprod.inr_map, coprod.map_desc, coprod.desc_comp]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+X Y : C
+D : Type u₂
+inst✝⁴ : Category.{w, u₂} D
+F : C ⥤ D
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 29.9s, verify 0.1s, in=2858, out=666)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [coprod.hom_ext, coprodComparison, coprod.inl_desc, coprod.inr_desc, F.map_comp,
+  coprod.inl_map, coprod.inr_map, coprod.map_desc]
+```
+
+**lean_error:** tail step 1/2 ('simp only [coprod.hom_ext, coprodComparison, coprod.inl_desc, coprod.inr_desc, F.map_comp,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 34.5s, verify 0.1s, in=2858, out=891)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Limits.coprodComparison, coprod.map_desc, coprod.desc_comp,
+  coprod.inl_map, coprod.inr_map, ← F.map_comp]
+```
+
+**lean_error:** tail step 1/2 ('simp only [CategoryTheory.Limits.coprodComparison, coprod.map_desc, coprod.desc_comp,'): <stdin>:1:85: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 104.3s, verify 0.5s, in=2882, out=4034)
 
@@ -518,3 +698,52 @@ D : Type u₂
 inst✝⁴ : Category.{w, u₂} D
 ...
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.2s, verify 0.1s, in=2882, out=351)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext <;> simp only [coprodComparison, coprod.inl_map, coprod.inr_map, coprod.map_desc,
+  coprod.desc_comp]
+```
+
+**lean_error:** tail step 1/2 ('ext <;> simp only [coprodComparison, coprod.inl_map, coprod.inr_map, coprod.map_desc,'): <stdin>:1:85: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.1s, verify 0.1s, in=2882, out=381)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply coprod.hom_ext <;> ext <;>
+  simp [coprodComparison, coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map,
+    coprod.inr_map]
+```
+
+**lean_error:** tail step 1/3 ('apply coprod.hom_ext <;> ext <;>'): <stdin>:1:32: unexpected end of input; expected '['
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.7s, verify 0.1s, in=2882, out=486)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map, coprod.inr_map,
+  coprod.hom_ext]
+```
+
+**lean_error:** tail step 1/2 ('simp only [coprodComparison, coprod.map_desc, coprod.desc_comp, coprod.inl_map, coprod.inr_map,'): <stdin>:1:95: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 19.7s, verify 0.1s, in=2882, out=581)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [← F.map_comp, coprodComparison, coprod.inl_desc, coprod.inr_desc, F.map_coprod_inl,
+  F.map_coprod_inr, F.map_id, coprod.inl_map, coprod.inr_map, coprod.map_desc, coprod.desc_comp]
+```
+
+**lean_error:** tail step 1/2 ('simp only [← F.map_comp, coprodComparison, coprod.inl_desc, coprod.inr_desc, F.map_coprod_inl,'): <stdin>:1:94: unexpected end of input; expected ']'

@@ -14,7 +14,7 @@ exact ⟨⟨_, hf⟩, rfl⟩
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
 | `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ X X | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ X X ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 | `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 | `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
@@ -288,6 +288,28 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance-state check failed: ClientError: An error occurred (RequestExpired) when calling the DescribeInstances operation: Request has expired.). If the instance is running, your public IP probably changed and the
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 3.7s, verify 0.1s, in=627, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨⟨f✝, hf⟩, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨⟨f✝, hf⟩, rfl⟩'): <stdin>:1:9: expected token
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **lean_error**  (gen 9.0s, verify 0.1s, in=627, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨⟨f✝, hf⟩, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨⟨f✝, hf⟩, rfl⟩'): <stdin>:1:9: expected token
 
 ### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.7s, verify 0.1s, in=627, out=146)
 

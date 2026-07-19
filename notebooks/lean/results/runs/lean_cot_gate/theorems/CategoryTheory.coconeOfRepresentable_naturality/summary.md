@@ -11,12 +11,12 @@ simpa [coconeOfRepresentable_ι_app] using FunctorToTypes.naturality _ _ α f.op
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ · |
-| `hint:2` | ✘ ✓ ✘ ✓ | · ✓ ✓ ✓ |
-| `hint:3` | ✘ ✘ ✓ ✘ | · · · ✘ |
-| `noise:3` | ✓ ✓ ✘ ✘ | · ✘ · ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ · | ✘ ✘ · · |
+| `hint:2` | ✘ ✓ ✘ ✓ | · ✓ ✓ ✓ | ✘ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✘ ✓ ✘ | · · · ✘ | · ✓ ✓ ✓ |
+| `noise:3` | ✓ ✓ ✘ ✘ | · ✘ · ✘ | ✘ ✓ · ✘ |
 
 ## Per-cell detail
 
@@ -136,6 +136,68 @@ A : C ⥤ ℰ
 ...
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.2s, verify 0.1s, in=369, out=293)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.9s, verify 0.1s, in=369, out=316)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 13.1s, verify 0.1s, in=369, out=409)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+case w.h.h
+C : Type u₁
+inst✝¹ : SmallCategory C
+ℰ : Type u₂
+inst✝ : Category.{u₁, u₂} ℰ
+A : C ⥤ ℰ
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 14.0s, verify 0.1s, in=369, out=458)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+case w.h.h
+C : Type u₁
+inst✝¹ : SmallCategory C
+ℰ : Type u₂
+inst✝ : Category.{u₁, u₂} ℰ
+A : C ⥤ ℰ
+...
+```
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 137.0s, verify 0.3s, in=823, out=5741)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -225,6 +287,44 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simp [coconeOfRepresentable_ι_app, ← FunctorToTypes.naturality _]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.7s, verify 0.1s, in=823, out=215)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.coconeOfRepresentable_naturality]
+```
+
+**lean_error:** tail step 1/1 ('simp [CategoryTheory.coconeOfRepresentable_naturality]'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 9.0s, verify 0.1s, in=823, out=255)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.9s, verify 0.1s, in=823, out=403)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_naturality, coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 13.9s, verify 0.1s, in=823, out=426)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
 ```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 344.8s, verify 0.4s, in=1459, out=8253)
@@ -346,6 +446,53 @@ simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_hom, yonedaSectionsSmall
 
 **lean_error:** tail step 1/1 ('simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_hom, yonedaSectionsSmall_inv]'): unknown identifier 'yonedaSectionsSmall_inv'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 15.4s, verify 0.1s, in=1459, out=285)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+**final state (truncated):**
+```
+case w.h.h
+C : Type u₁
+inst✝¹ : SmallCategory C
+ℰ : Type u₂
+inst✝ : Category.{u₁, u₂} ℰ
+A : C ⥤ ℰ
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 19.1s, verify 0.1s, in=1459, out=368)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 21.1s, verify 0.1s, in=1459, out=425)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 24.2s, verify 0.1s, in=1459, out=588)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 200.0s, verify 0.2s, in=1491, out=8072)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -451,3 +598,55 @@ simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_inv_app, FunctorToTypes.
 ```
 
 **lean_error:** tail step 1/1 ('simp [coconeOfRepresentable_ι_app, yonedaSectionsSmall_inv_app, FunctorToTypes.naturality]'): unknown identifier 'yonedaSectionsSmall_inv_app'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 14.6s, verify 0.1s, in=1491, out=451)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality, yonedaSectionsSmall_inv_naturality]
+```
+
+**lean_error:** tail step 1/1 ('simp only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality, yonedaSectionsSmall_inv_naturality]'): unknown identifier 'yonedaSectionsSmall_inv_naturality'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 17.6s, verify 0.1s, in=1491, out=562)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 18.6s, verify 0.1s, in=1491, out=635)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality]
+```
+
+**final state (truncated):**
+```
+case w.h.h
+C : Type u₁
+inst✝¹ : SmallCategory C
+ℰ : Type u₂
+inst✝ : Category.{u₁, u₂} ℰ
+A : C ⥤ ℰ
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 19.2s, verify 0.1s, in=1491, out=657)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality] using
+  yonedaSectionsSmall.naturality (𝟙 _) _
+```
+
+**lean_error:** tail step 1/2 ('simpa only [coconeOfRepresentable_ι_app, FunctorToTypes.naturality] using'): <stdin>:1:73: unexpected end of input

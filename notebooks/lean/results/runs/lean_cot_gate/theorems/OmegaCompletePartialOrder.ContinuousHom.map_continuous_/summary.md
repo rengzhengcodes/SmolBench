@@ -11,12 +11,12 @@ apply const_continuous'
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ | ✘ ✓ ✓ ✓ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ | ✘ ✓ ✘ ✘ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ | ✘ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -108,6 +108,50 @@ exact continuous'_pure.comp continuous'_id
 
 **lean_error:** tail step 1/1 ("exact continuous'_pure.comp continuous'_id"): unknown identifier 'continuous'_pure.comp'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 3.9s, verify 0.1s, in=318, out=92)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Continuous'.const
+```
+
+**lean_error:** tail step 1/1 ("apply Continuous'.const"): invalid field notation, function 'Function.const' does not have argument with type (Function ...) that can be used, it must be explicit or implicit with a unique name
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 6.4s, verify 0.1s, in=318, out=148)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact continuous_const
+```
+
+**lean_error:** tail step 1/1 ('exact continuous_const'): typeclass instance problem is stuck, it is often due to metavariables
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.4s, verify 0.1s, in=318, out=149)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply continuous'_const
+```
+
+**lean_error:** tail step 1/1 ("apply continuous'_const"): unknown identifier 'continuous'_const'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.9s, verify 0.1s, in=318, out=168)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 60.4s, verify 0.1s, in=521, out=3017)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -180,6 +224,44 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 exact const_continuous' _
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.2s, verify 0.2s, in=521, out=174)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact bind_continuous' (const_continuous' _) hg
+```
+
+**lean_error:** tail step 1/1 ("exact bind_continuous' (const_continuous' _) hg"): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.7s, verify 0.1s, in=521, out=192)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact const_continuous' _
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 17.7s, verify 0.1s, in=521, out=591)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact const_continuous' _
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 27.2s, verify 0.1s, in=521, out=1039)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply const_continuous'
 ```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 89.2s, verify 0.1s, in=1120, out=1321)
@@ -256,6 +338,48 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 apply const_continuous'
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.3s, verify 0.1s, in=1120, out=186)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact bind_continuous' (const_continuous' f) _ hg
+```
+
+**lean_error:** tail step 1/1 ("exact bind_continuous' (const_continuous' f) _ hg"): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 11.0s, verify 0.1s, in=1120, out=194)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply const_continuous'
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.8s, verify 0.2s, in=1120, out=197)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact bind_continuous' (const_continuous' _) hg
+```
+
+**lean_error:** tail step 1/1 ("exact bind_continuous' (const_continuous' _) hg"): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.2s, verify 0.2s, in=1120, out=393)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact bind_continuous' (const_continuous' _) hg
+```
+
+**lean_error:** tail step 1/1 ("exact bind_continuous' (const_continuous' _) hg"): type mismatch
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 51.2s, verify 0.1s, in=1141, out=2540)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -331,3 +455,41 @@ exact const_continuous' (pure ())
 ```
 
 **lean_error:** tail step 1/1 ("exact const_continuous' (pure ())"): typeclass instance problem is stuck, it is often due to metavariables
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 5.6s, verify 0.1s, in=1141, out=120)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact fun a => const_continuous' (pure (f a))
+```
+
+**lean_error:** tail step 1/1 ("exact fun a => const_continuous' (pure (f a))"): typeclass instance problem is stuck, it is often due to metavariables
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 7.4s, verify 0.1s, in=1141, out=178)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply const_continuous'
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.8s, verify 0.1s, in=1141, out=180)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact const_continuous' _
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 10.1s, verify 0.1s, in=1141, out=282)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact const_continuous' (pure ∘ f)
+```

@@ -11,12 +11,12 @@ simpa only [mk.injEq, heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] using
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · · · |
-| `hint:2` | · ✘ ✓ ✓ | · · ✓ · |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✘ · · |
-| `noise:3` | ✘ ✘ ✘ ✘ | · ✓ · ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · · · | ✘ ✘ · · |
+| `hint:2` | · ✘ ✓ ✓ | · · ✓ · | · ✘ ✘ · |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✘ · · | ✘ · · ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | · ✓ · ✘ | ✘ ✘ · ✘ |
 
 ## Per-cell detail
 
@@ -141,6 +141,68 @@ idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
 ```
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **incomplete**  (gen 7.5s, verify 0.1s, in=356, out=7)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+congr
+```
+
+**final state (truncated):**
+```
+case mk.mk.e_p
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.0s, verify 0.1s, in=356, out=243)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+congr_arg p✝¹
+```
+
+**lean_error:** tail step 1/1 ('congr_arg p✝¹'): <stdin>:1:1: unknown tactic
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.2s, verify 0.1s, in=356, out=278)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+congr <;> simp [h_p, comp_id, id_comp]
+```
+
+**lean_error:** tail step 1/1 ('congr <;> simp [h_p, comp_id, id_comp]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 10.0s, verify 0.1s, in=356, out=302)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h_p]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 13.3s, verify 0.1s, in=356, out=417)
 
 prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 
@@ -290,6 +352,70 @@ idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
 ...
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 10.5s, verify 0.1s, in=900, out=321)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] at h_p
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.7s, verify 0.1s, in=900, out=328)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:78: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.1s, verify 0.1s, in=900, out=375)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:78: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 12.2s, verify 0.1s, in=900, out=378)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] at h_p
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 317.4s, verify 0.2s, in=2045, out=7588)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -403,6 +529,70 @@ p✝¹ : X✝ ⟶ X✝
 idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
 ...
 ```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.7s, verify 0.1s, in=2045, out=236)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:73: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 19.1s, verify 0.1s, in=2045, out=315)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, Category.comp_id, Category.id_comp] at h_p
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 20.1s, verify 0.1s, in=2045, out=432)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, Category.comp_id, Category.id_comp] at h_p
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 23.2s, verify 0.1s, in=2045, out=533)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [heq_eq_eq, true_and, CategoryTheory.eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp [heq_eq_eq, true_and, CategoryTheory.eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:88: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 114.5s, verify 0.2s, in=2070, out=4547)
 
@@ -521,3 +711,57 @@ simp [h_p] at idem✝¹
 ```
 
 **lean_error:** tail step 1/1 ('simp [h_p] at idem✝¹'): <stdin>:1:18: expected end of input
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.7s, verify 0.1s, in=2070, out=360)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, CategoryTheory.eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp only [heq_eq_eq, true_and, CategoryTheory.eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:93: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.8s, verify 0.1s, in=2070, out=363)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, Category.comp_id, Category.id_comp, *]
+```
+
+**lean_error:** tail step 1/1 ('simp only [heq_eq_eq, true_and, eqToHom_refl, Category.comp_id, Category.id_comp, *]'): simp made no progress
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 12.4s, verify 0.1s, in=2070, out=388)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] at h_p
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.2s, verify 0.1s, in=2070, out=412)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [h_p, heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp]
+```
+
+**lean_error:** tail step 1/1 ('simp only [h_p, heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp]'): simp made no progress

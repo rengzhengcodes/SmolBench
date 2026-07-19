@@ -11,9 +11,9 @@ aesop
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -105,3 +105,45 @@ rw [← equivShrink_symm_apply, w, equivShrink_symm_apply]
 ```
 
 **lean_error:** tail step 1/1 ('rw [← equivShrink_symm_apply, w, equivShrink_symm_apply]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 5.5s, verify 0.1s, in=263, out=197)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [Equiv.apply_symm_apply]
+```
+
+**lean_error:** tail step 1/1 ('simpa only [Equiv.apply_symm_apply]'): tactic 'assumption' failed
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 5.7s, verify 0.1s, in=263, out=204)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Equiv.eq_symm_apply w
+```
+
+**lean_error:** tail step 1/1 ('apply Equiv.eq_symm_apply w'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 6.1s, verify 0.4s, in=263, out=215)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa using w
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.0s, verify 0.1s, in=263, out=260)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact (equivShrink _).symm.injective.eq_iff.2 w
+```
+
+**lean_error:** tail step 1/1 ('exact (equivShrink _).symm.injective.eq_iff.2 w'): application type mismatch

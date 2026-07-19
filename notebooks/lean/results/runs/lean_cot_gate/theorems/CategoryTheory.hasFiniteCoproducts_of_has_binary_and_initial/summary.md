@@ -11,12 +11,12 @@ apply @hasColimitOfIso _ _ _ _ _ _ this that
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ | ✘ ✓ ✘ ✓ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✓ ✘ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -112,6 +112,50 @@ exact hasColimit_of_hasColimit_of_natIso that.symm
 
 **lean_error:** tail step 1/1 ('exact hasColimit_of_hasColimit_of_natIso that.symm'): unknown identifier 'hasColimit_of_hasColimit_of_natIso'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 6.3s, verify 0.1s, in=362, out=177)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact that.hasColimit
+```
+
+**lean_error:** tail step 1/1 ('exact that.hasColimit'): invalid field 'hasColimit', the environment does not contain 'CategoryTheory.Iso.hasColimit'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.7s, verify 0.1s, in=362, out=267)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa using this
+```
+
+**lean_error:** tail step 1/1 ('simpa using this'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.7s, verify 0.1s, in=362, out=357)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hasColimit_of_iso that.symm (HasCoproduct.hasColimit _)
+```
+
+**lean_error:** tail step 1/1 ('exact hasColimit_of_iso that.symm (HasCoproduct.hasColimit _)'): unknown identifier 'hasColimit_of_iso'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.6s, verify 0.1s, in=362, out=449)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hasColimit_ofIso that ⟨⟩
+```
+
+**lean_error:** tail step 1/1 ('exact hasColimit_ofIso that ⟨⟩'): unknown identifier 'hasColimit_ofIso'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 15.3s, verify 0.1s, in=721, out=631)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -194,6 +238,42 @@ exact ⟨_, hasColimitOfIso that⟩
 
 **lean_error:** tail step 1/1 ('exact ⟨_, hasColimitOfIso that⟩'): internal exception #7
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.9s, verify 0.1s, in=721, out=221)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.1s, verify 0.1s, in=721, out=227)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 8.4s, verify 0.1s, in=721, out=230)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.5s, verify 0.1s, in=721, out=231)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 35.8s, verify 0.1s, in=1009, out=528)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -272,6 +352,46 @@ exact hasColimitOfIso that.symm
 
 **lean_error:** tail step 1/1 ('exact hasColimitOfIso that.symm'): internal exception #7
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.6s, verify 0.1s, in=1009, out=208)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that.symm
+```
+
+**lean_error:** tail step 1/1 ('exact hasColimitOfIso that.symm'): internal exception #7
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 14.8s, verify 0.1s, in=1009, out=200)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+refine' hasColimitOfIso that
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.6s, verify 0.1s, in=1009, out=260)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that.symm
+```
+
+**lean_error:** tail step 1/1 ('exact hasColimitOfIso that.symm'): internal exception #7
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 19.4s, verify 0.1s, in=1009, out=324)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 23.1s, verify 0.1s, in=1033, out=961)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -349,3 +469,39 @@ exact hasColimitOfIso that.symm
 ```
 
 **lean_error:** tail step 1/1 ('exact hasColimitOfIso that.symm'): internal exception #7
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.8s, verify 0.1s, in=1033, out=218)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 8.4s, verify 0.1s, in=1033, out=228)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.6s, verify 0.1s, in=1033, out=241)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 9.4s, verify 0.1s, in=1033, out=259)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact hasColimitOfIso that
+```

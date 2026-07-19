@@ -11,12 +11,12 @@ simp only [Filter.lift', tendsto_lift, tendsto_principal, comp]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ · ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✘ ✘ ✘ ✘ | · ✓ ✓ ✓ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ · ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ · | ✘ ✘ ✘ ✓ |
 
 ## Per-cell detail
 
@@ -130,6 +130,50 @@ simp only [Filter.lift'_tendsto_iff, tendsto_iff_eventually]
 
 **lean_error:** tail step 1/1 ("simp only [Filter.lift'_tendsto_iff, tendsto_iff_eventually]"): unknown constant 'Filter.lift'_tendsto_iff'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.4s, verify 0.1s, in=296, out=236)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [tendsto_lift'_iff]
+```
+
+**lean_error:** tail step 1/1 ("simp [tendsto_lift'_iff]"): unknown identifier 'tendsto_lift'_iff'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.4s, verify 0.1s, in=296, out=339)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [Tendsto_def, mem_lift'_sets]
+```
+
+**lean_error:** tail step 1/1 ("simp only [Tendsto_def, mem_lift'_sets]"): unknown identifier 'Tendsto_def'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.8s, verify 0.1s, in=296, out=352)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [Tendsto, Filter.lift'_le_iff, preimage_principal, principal_le_iff]
+```
+
+**lean_error:** tail step 1/1 ("rw [Tendsto, Filter.lift'_le_iff, preimage_principal, principal_le_iff]"): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.0s, verify 0.1s, in=296, out=423)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [tendsto_lift'_iff]
+```
+
+**lean_error:** tail step 1/1 ("simp [tendsto_lift'_iff]"): unknown identifier 'tendsto_lift'_iff'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 47.3s, verify 0.1s, in=1211, out=2082)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -213,6 +257,46 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```lean
 simp only [Filter.lift', tendsto_lift, tendsto_principal, Function.comp_apply]
 ```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 10.0s, verify 0.1s, in=1211, out=268)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Function.comp_apply, Filter.tendsto_lift, Filter.tendsto_principal]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.1s, verify 0.1s, in=1211, out=302)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [lift', tendsto_lift, tendsto_principal, Function.comp]
+```
+
+**lean_error:** tail step 1/1 ("simp only [lift', tendsto_lift, tendsto_principal, Function.comp]"): unknown identifier 'lift''
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.7s, verify 0.1s, in=1211, out=347)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Filter.tendsto_lift, Filter.tendsto_principal, Function.comp]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.3s, verify 0.1s, in=1211, out=371)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [lift', tendsto_lift, tendsto_principal, Function.comp]
+```
+
+**lean_error:** tail step 1/1 ("simp only [lift', tendsto_lift, tendsto_principal, Function.comp]"): unknown identifier 'lift''
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 159.6s, verify 0.1s, in=3868, out=5463)
 
@@ -312,6 +396,44 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 simp [Filter.lift', tendsto_lift, tendsto_principal]
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 18.1s, verify 0.1s, in=3868, out=251)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Filter.tendsto_lift, Function.comp, Filter.tendsto_principal]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 19.0s, verify 0.1s, in=3868, out=320)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Filter.tendsto_lift, Function.comp, Filter.tendsto_principal]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 20.3s, verify 0.1s, in=3868, out=336)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [Filter.lift', Filter.tendsto_lift, Function.comp, Filter.tendsto_principal]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 21.5s, verify 0.1s, in=3868, out=365)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [lift', tendsto_lift, Function.comp_apply, tendsto_principal]
+```
+
+**lean_error:** tail step 1/1 ("simp_rw [lift', tendsto_lift, Function.comp_apply, tendsto_principal]"): unknown identifier 'lift''
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 27.3s, verify 0.1s, in=3895, out=1230)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -405,4 +527,47 @@ simp only [Filter.lift', tendsto_lift, tendsto_principal]
 f f₁ f₂ : Filter α
 h h₁ h₂ : Set α → Set β
 ...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.3s, verify 0.1s, in=3895, out=274)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Filter.tendsto_lift, Function.comp_apply, Filter.tendsto_principal,
+  forall_prop_of_true]
+```
+
+**lean_error:** tail step 1/2 ("simp only [Filter.lift', Filter.tendsto_lift, Function.comp_apply, Filter.tendsto_principal,"): <stdin>:1:92: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.5s, verify 0.1s, in=3895, out=281)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [lift', tendsto_lift, tendsto_principal, Function.comp]
+```
+
+**lean_error:** tail step 1/1 ("simp only [lift', tendsto_lift, tendsto_principal, Function.comp]"): unknown identifier 'lift''
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.3s, verify 0.1s, in=3895, out=306)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [lift', tendsto_lift, tendsto_principal, comp_apply, forall_mem_image_iff]
+```
+
+**lean_error:** tail step 1/1 ("simp only [lift', tendsto_lift, tendsto_principal, comp_apply, forall_mem_image_iff]"): unknown identifier 'lift''
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.7s, verify 0.1s, in=3895, out=349)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.lift', Filter.tendsto_lift, Filter.tendsto_principal, Function.comp]
 ```

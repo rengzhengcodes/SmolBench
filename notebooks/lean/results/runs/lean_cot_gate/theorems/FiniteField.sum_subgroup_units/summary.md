@@ -11,12 +11,12 @@ exact sum_subgroup_units_eq_zero G_bot
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ X |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | · ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ X ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | · ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -169,6 +169,61 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance-state check failed: ClientError: An error occurred (RequestExpired) when calling the DescribeInstances operation: Request has expired.). If the instance is running, your public IP probably changed and the
 
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 0.9s, verify 0.2s, in=270, out=34)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa using sum_mul_coe_eq_zero_of_card_ne_one_of_sum_eq_zero G (card_ne_one_of_ne_bot G G_bot)
+```
+
+**lean_error:** tail step 1/1 ('simpa using sum_mul_coe_eq_zero_of_card_ne_one_of_sum_eq_zero G (card_ne_one_of_ne_bot G G_bot)'): unknown identifier 'sum_mul_coe_eq_zero_of_card_ne_one_of_sum_eq_zero'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.0s, verify 0.1s, in=270, out=179)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply sum_self_eq_zero
+```
+
+**lean_error:** tail step 1/1 ('apply sum_self_eq_zero'): unknown identifier 'sum_self_eq_zero'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.0s, verify 0.1s, in=270, out=210)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Units.sum_eq_zero_of_mul_left (nontrivial_iff_exists_ne_one.mp G_bot)
+```
+
+**lean_error:** tail step 1/1 ('exact Units.sum_eq_zero_of_mul_left (nontrivial_iff_exists_ne_one.mp G_bot)'): unknown constant 'Units.sum_eq_zero_of_mul_left'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.8s, verify 0.1s, in=270, out=277)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Subgroup.sum_coe_eq_zero_of_mul_left_inj G_bot fun a _ ↦ left_mul_injective a
+```
+
+**lean_error:** tail step 1/1 ('exact Subgroup.sum_coe_eq_zero_of_mul_left_inj G_bot fun a _ ↦ left_mul_injective a'): unknown constant 'Subgroup.sum_coe_eq_zero_of_mul_left_inj'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 18.1s, verify 0.1s, in=270, out=596)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact sum_inv_eq_zero G G_bot
+```
+
+**lean_error:** tail step 1/1 ('exact sum_inv_eq_zero G G_bot'): unknown identifier 'sum_inv_eq_zero'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 10.9s, verify 0.1s, in=995, out=405)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -240,6 +295,42 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 exact sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.4s, verify 0.1s, in=995, out=169)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.8s, verify 0.1s, in=995, out=203)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.9s, verify 0.1s, in=995, out=208)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 10.1s, verify 0.1s, in=995, out=252)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply FiniteField.sum_subgroup_units_eq_zero G_bot
 ```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 22.4s, verify 0.1s, in=2859, out=500)
@@ -325,6 +416,42 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 exact FiniteField.sum_subgroup_units_eq_zero G_bot
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 11.9s, verify 0.1s, in=2859, out=121)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 13.0s, verify 0.1s, in=2859, out=193)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 13.5s, verify 0.1s, in=2859, out=203)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 13.6s, verify 0.1s, in=2859, out=182)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 7.3s, verify 0.1s, in=2883, out=275)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -389,6 +516,42 @@ exact sum_subgroup_units_eq_zero G_bot
 ```
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 4.5s, verify 0.1s, in=2883, out=16)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.5s, verify 0.1s, in=2883, out=192)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact sum_subgroup_units_eq_zero G_bot
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 8.8s, verify 0.1s, in=2883, out=207)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 9.0s, verify 0.1s, in=2883, out=213)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply FiniteField.sum_subgroup_units_eq_zero G_bot
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 9.4s, verify 0.1s, in=2883, out=224)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 

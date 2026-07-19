@@ -11,12 +11,12 @@ rw [sub_sub_sub, add_def, ← neg_def, neg_neg b, neg_def]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ | ✘ · · · |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ | · ✘ · · |
+| `noise:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ | · ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -107,6 +107,50 @@ simp
 ```
 
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 6.4s, verify 0.1s, in=241, out=182)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.9s, verify 0.1s, in=241, out=219)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.7s, verify 0.1s, in=241, out=312)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [sub_eq_add_neg, neg_zero, sub_eq_add_neg, neg_add, neg_neg, neg_neg, zero_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [sub_eq_add_neg, neg_zero, sub_eq_add_neg, neg_add, neg_neg, neg_neg, zero_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.6s, verify 0.1s, in=241, out=342)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← neg_add_rev, zero_sub, ← neg_neg, sub_self]
+```
+
+**lean_error:** tail step 1/1 ('rw [← neg_add_rev, zero_sub, ← neg_neg, sub_self]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 122.0s, verify 0.1s, in=1108, out=4998)
 
@@ -210,6 +254,74 @@ simp
 
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.8s, verify 0.1s, in=1108, out=279)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [neg_sub, neg_def, add_def, add_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [neg_sub, neg_def, add_def, add_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 15.6s, verify 0.1s, in=1108, out=474)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [sub_self, add_def]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ 0 - (-b - a) = b - -a
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 17.1s, verify 0.1s, in=1108, out=519)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [add_comm]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ 0 - 0 - (-b - a) = a + b
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 22.8s, verify 0.1s, in=1108, out=707)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [← neg_def]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ -0 - (-b - a) = b + a
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 177.8s, verify 0.1s, in=2931, out=6159)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -307,6 +419,74 @@ rw [neg_def, ← neg_def, neg_neg, neg_def, ← neg_def, neg_neg, ← neg_def, n
 ```
 
 **lean_error:** tail step 1/1 ('rw [neg_def, ← neg_def, neg_neg, neg_def, ← neg_def, neg_neg, ← neg_def, neg_neg]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 14.2s, verify 0.1s, in=2931, out=246)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [add_comm]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ 0 - 0 - (-b - a) = a + b
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 20.0s, verify 0.1s, in=2931, out=392)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def]
+```
+
+**lean_error:** tail step 1/1 ('rw [neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def, neg_def]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 32.9s, verify 0.1s, in=2931, out=767)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← neg_def]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ -0 - (-b - a) = b + a
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 86.9s, verify 0.1s, in=2931, out=2958)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [add_comm]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ 0 - 0 - (-b - a) = a + b
+```
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 149.8s, verify 0.3s, in=2956, out=6113)
 
@@ -408,3 +588,55 @@ rw [sub_zero, neg_def, neg_def, neg_neg]
 ```
 
 **lean_error:** tail step 1/1 ('rw [sub_zero, neg_def, neg_def, neg_neg]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 9.7s, verify 0.1s, in=2956, out=272)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← neg_def, neg_sub]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝¹ : Category.{v, u} C
+inst✝ : NonPreadditiveAbelian C
+X Y : C
+a b : X ⟶ Y
+⊢ -(-b - a) - 0 = b + a
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.9s, verify 0.1s, in=2956, out=281)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [sub_sub_sub, neg_def, neg_def, neg_neg, add_def]
+```
+
+**lean_error:** tail step 1/1 ('rw [sub_sub_sub, neg_def, neg_def, neg_neg, add_def]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 17.9s, verify 0.1s, in=2956, out=545)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [add_comm, sub_self, sub_self, neg_def, neg_neg]
+```
+
+**lean_error:** tail step 1/1 ('rw [add_comm, sub_self, sub_self, neg_def, neg_neg]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 48.4s, verify 0.1s, in=2956, out=1688)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← neg_def, neg_def, neg_sub, sub_self, neg_def, ← neg_def, neg_neg]
+```
+
+**lean_error:** tail step 1/1 ('rw [← neg_def, neg_def, neg_sub, sub_self, neg_def, ← neg_def, neg_neg]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

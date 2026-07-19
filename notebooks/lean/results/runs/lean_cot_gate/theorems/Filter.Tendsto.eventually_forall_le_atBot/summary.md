@@ -11,12 +11,12 @@ exact (h_evtl.comap f).filter_mono hf.le_comap
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✓ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ |
+| `hint:2` | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✓ ✘ ✘ |
+| `hint:3` | ✓ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✘ ✘ | ✓ ✘ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -119,6 +119,46 @@ filter_upwards [hf h_evtl] with x hx using hx _
 
 **lean_error:** tail step 1/1 ('filter_upwards [hf h_evtl] with x hx using hx _'): type mismatch
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 7.7s, verify 0.1s, in=315, out=264)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hf.eventually h_evtl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 8.1s, verify 0.1s, in=315, out=278)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hf.eventually h_evtl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.0s, verify 0.1s, in=315, out=298)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hf h_evtl
+```
+
+**lean_error:** tail step 1/1 ('exact hf h_evtl'): kernel type check failed: application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.1s, verify 0.1s, in=315, out=341)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hf.eventually_eventually_le h_evtl
+```
+
+**lean_error:** tail step 1/1 ('exact hf.eventually_eventually_le h_evtl'): invalid field 'eventually_eventually_le', the environment does not contain 'Filter.Tendsto.eventually_eventually_le'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 109.3s, verify 0.1s, in=567, out=4793)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -208,6 +248,48 @@ exact hf <| h_evtl.filter_mono (pure_le_nhds _)
 
 **lean_error:** tail step 1/1 ('exact hf <| h_evtl.filter_mono (pure_le_nhds _)'): unknown identifier 'pure_le_nhds'
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.7s, verify 0.1s, in=567, out=266)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hf.eventually_forall_le_atBot h_evtl
+```
+
+**lean_error:** tail step 1/1 ('exact hf.eventually_forall_le_atBot h_evtl'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 9.0s, verify 0.1s, in=567, out=310)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact h_evtl.filter_mono hf
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.3s, verify 0.1s, in=567, out=318)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact (hf.eventually_forall_le_atBot h_evtl).filter_mono h
+```
+
+**lean_error:** tail step 1/1 ('exact (hf.eventually_forall_le_atBot h_evtl).filter_mono h'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.1s, verify 0.1s, in=567, out=571)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hf.eventually_forall_le_atBot h_evtl
+```
+
+**lean_error:** tail step 1/1 ('exact hf.eventually_forall_le_atBot h_evtl'): application type mismatch
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 165.2s, verify 0.1s, in=819, out=2722)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -295,6 +377,48 @@ exact hf h_evtl
 
 **lean_error:** tail step 1/1 ('exact hf h_evtl'): kernel type check failed: application type mismatch
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 15.6s, verify 0.1s, in=819, out=285)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact h_evtl.filter_mono hf
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.8s, verify 0.1s, in=819, out=318)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact h_evtl.mono hf
+```
+
+**lean_error:** tail step 1/1 ('exact h_evtl.mono hf'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 18.2s, verify 0.1s, in=819, out=382)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rwa [← Filter.eventually_forall_le_atBot] at h_evtl using h_evtl.filter_mono hf
+```
+
+**lean_error:** tail step 1/1 ('rwa [← Filter.eventually_forall_le_atBot] at h_evtl using h_evtl.filter_mono hf'): <stdin>:1:52: expected end of input
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 34.9s, verify 0.1s, in=819, out=983)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact forall_eventually.mpr fun a => hf (h_evtl.filter_mono $ eventually_le_atBot a)
+```
+
+**lean_error:** tail step 1/1 ('exact forall_eventually.mpr fun a => hf (h_evtl.filter_mono $ eventually_le_atBot a)'): unknown identifier 'forall_eventually.mpr'
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 71.0s, verify 0.1s, in=843, out=3200)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -374,3 +498,43 @@ exact hf <| h_evtl.mono fun x hx y hy => hx y hy
 ```
 
 **lean_error:** tail step 1/1 ('exact hf <| h_evtl.mono fun x hx y hy => hx y hy'): kernel type check failed: application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.9s, verify 0.1s, in=843, out=303)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact h_evtl.filter_mono hf
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.4s, verify 0.8s, in=843, out=357)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact hf.filter_mono h_evtl
+```
+
+**lean_error:** tail step 1/1 ('exact hf.filter_mono h_evtl'): invalid field 'filter_mono', the environment does not contain 'Filter.Tendsto.filter_mono'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 11.2s, verify 0.1s, in=843, out=371)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact h_evtl.filter_mono hf
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.3s, verify 0.2s, in=843, out=368)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa using (hf.eventually_le a).filter_mono (h_evtl.eventually_le)
+```
+
+**lean_error:** tail step 1/1 ('simpa using (hf.eventually_le a).filter_mono (h_evtl.eventually_le)'): invalid field 'eventually_le', the environment does not contain 'Filter.Tendsto.eventually_le'

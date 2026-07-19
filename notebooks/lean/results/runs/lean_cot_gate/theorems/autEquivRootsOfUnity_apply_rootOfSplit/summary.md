@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ · |
 
 ## Per-cell detail
 
@@ -91,4 +91,51 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 **candidate:**
 ```lean
 rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 6.8s, verify 0.5s, in=364, out=258)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 7.4s, verify 0.5s, in=364, out=275)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.9s, verify 0.5s, in=364, out=349)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 10.0s, verify 0.2s, in=364, out=399)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Algebra.smul_def]
+```
+
+**final state (truncated):**
+```
+case intro
+K : Type u
+inst✝³ : Field K
+n : ℕ
+hζ : (primitiveRoots n K).Nonempty
+hn : 0 < n
+...
 ```

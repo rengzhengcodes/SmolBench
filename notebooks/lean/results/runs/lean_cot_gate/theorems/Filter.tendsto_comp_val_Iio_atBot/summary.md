@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✓ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -91,6 +91,42 @@ rfl
 ```
 
 ### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **success**  (gen 1.3s, verify 0.1s, in=297, out=7)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 4.9s, verify 0.1s, in=297, out=169)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 5.0s, verify 0.1s, in=297, out=174)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 6.4s, verify 0.1s, in=297, out=217)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 6.4s, verify 0.1s, in=297, out=173)
 
 prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 

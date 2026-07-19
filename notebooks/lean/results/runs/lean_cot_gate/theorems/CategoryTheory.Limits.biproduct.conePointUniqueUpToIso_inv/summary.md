@@ -12,12 +12,12 @@ rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_ap
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ |
-| `hint:2` | · ✘ ✘ ✘ | · ✘ ✘ · |
-| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ · · | · ✘ · ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ | ✘ · · ✘ |
+| `hint:2` | · ✘ ✘ ✘ | · ✘ ✘ · | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ · · | · ✘ · ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -127,6 +127,68 @@ simp [hb.desc_ι]
 ```
 
 **lean_error:** tail step 1/1 ('simp [hb.desc_ι]'): invalid field 'desc_ι', the environment does not contain 'CategoryTheory.Limits.Bicone.IsBilimit.desc_ι'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.9s, verify 0.3s, in=408, out=295)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+aesop_cat
+```
+
+**lean_error:** tail step 1/1 ('aesop_cat'): tactic 'aesop' failed, failed to prove the goal after exhaustive search.
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 10.6s, verify 0.8s, in=408, out=307)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+J : Type w
+C : Type u
+inst✝⁴ : Category.{v, u} C
+inst✝³ : HasZeroMorphisms C
+D : Type uD
+inst✝² : Category.{uD', uD} D
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 15.3s, verify 0.1s, in=408, out=462)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+J : Type w
+C : Type u
+inst✝⁴ : Category.{v, u} C
+inst✝³ : HasZeroMorphisms C
+D : Type uD
+inst✝² : Category.{uD', uD} D
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 27.5s, verify 0.1s, in=408, out=868)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [hb.ι_π]
+```
+
+**lean_error:** tail step 1/1 ('simp [hb.ι_π]'): invalid field 'ι_π', the environment does not contain 'CategoryTheory.Limits.Bicone.IsBilimit.ι_π'
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 169.5s, verify 0.1s, in=1668, out=6582)
 
@@ -246,6 +308,54 @@ inst✝² : Category.{uD', uD} D
 ...
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 14.8s, verify 0.1s, in=1668, out=446)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [CategoryTheory.Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,
+  Bicone.toCone_π_app, biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [CategoryTheory.Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,'): <stdin>:1:80: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.0s, verify 0.1s, in=1668, out=494)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,
+  Bicone.toCone_π_app, biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,'): <stdin>:1:67: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 17.9s, verify 0.1s, in=1668, out=539)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit, biproduct.bicone_π,
+  Bicone.toCone_π_app, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit, biproduct.bicone_π,'): <stdin>:1:89: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 27.7s, verify 0.1s, in=1668, out=878)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [← Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,
+  biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp only [← Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,'): <stdin>:1:90: unexpected end of input; expected ']'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 344.2s, verify 0.2s, in=3436, out=9365)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -352,6 +462,58 @@ simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCon
 ```
 
 **lean_error:** tail step 1/2 ('simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,'): <stdin>:1:88: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 29.1s, verify 0.1s, in=3436, out=605)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,
+  Bicone.toCone_π_app, biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π, congr_arg, eqToHom_trans,
+  eqToHom_refl, dif_neg, Discrete.as_inj]
+```
+
+**lean_error:** tail step 1/3 ('simp_rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp,'): <stdin>:1:65: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 29.2s, verify 0.1s, in=3436, out=633)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,
+  biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,'): <stdin>:1:88: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 38.4s, verify 0.1s, in=3436, out=832)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Category.assoc,
+  CategoryTheory.Limits.IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit,
+  CategoryTheory.Limits.Bicone.toCone_π_app, CategoryTheory.Limits.biproduct.bicone_π,
+  CategoryTheory.Limits.biproduct.ι_desc, CategoryTheory.Limits.biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/4 ('simp only [CategoryTheory.Category.assoc,'): <stdin>:1:41: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 43.3s, verify 0.1s, in=3436, out=981)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f),
+  Bicone.toCone_π_app, biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π,
+  hb.isColimit.fac, Category.assoc]
+```
+
+**lean_error:** tail step 1/3 ('simp_rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f),'): <stdin>:1:88: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 252.9s, verify 0.2s, in=3469, out=10275)
 
@@ -479,3 +641,52 @@ simp [hb.toCone_π_app]
 ```
 
 **lean_error:** tail step 1/1 ('simp [hb.toCone_π_app]'): invalid field 'toCone_π_app', the environment does not contain 'CategoryTheory.Limits.Bicone.IsBilimit.toCone_π_app'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 17.3s, verify 0.1s, in=3469, out=525)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f) j',
+  biproduct.bicone_π, toCone_π_app, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ("simp [CategoryTheory.Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f) j',"): <stdin>:1:103: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.8s, verify 0.1s, in=3469, out=556)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp, biproduct.ι_desc, toCone_π_app,
+  biproduct.bicone_π, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ('simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp, biproduct.ι_desc, toCone_π_app,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 21.4s, verify 0.1s, in=3469, out=656)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.Category.assoc, CategoryTheory.Limits.IsLimit.conePointUniqueUpToIso_inv_comp,
+  CategoryTheory.Limits.Bicone.toCone_π_app, hb.π, hb.ι, CategoryTheory.Limits.biproduct.ι_desc,
+  CategoryTheory.Limits.biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/3 ('simp [CategoryTheory.Category.assoc, CategoryTheory.Limits.IsLimit.conePointUniqueUpToIso_inv_comp,'): <stdin>:1:99: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 42.4s, verify 0.1s, in=3469, out=1425)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f) j',
+  toCone_π_app, biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π]
+```
+
+**lean_error:** tail step 1/2 ("simp only [assoc, IsLimit.conePointUniqueUpToIso_inv_comp hb.isLimit (isLimit f) j',"): <stdin>:1:84: unexpected end of input; expected ']'

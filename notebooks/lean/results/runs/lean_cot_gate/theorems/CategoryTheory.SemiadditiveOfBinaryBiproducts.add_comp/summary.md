@@ -11,9 +11,9 @@ ext <;> simp
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -107,3 +107,47 @@ simp [biprod.desc_eq_zero_iff]
 ```
 
 **lean_error:** tail step 1/1 ('simp [biprod.desc_eq_zero_iff]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 5.5s, verify 0.1s, in=280, out=206)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [biprod.desc_comp]
+```
+
+**lean_error:** tail step 1/1 ('rw [biprod.desc_comp]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.7s, verify 0.1s, in=280, out=209)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.5s, verify 0.1s, in=280, out=424)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [biprod.hom_ext]
+```
+
+**lean_error:** tail step 1/1 ('simp [biprod.hom_ext]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 26.8s, verify 0.1s, in=280, out=1134)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [biprod.lift_desc]
+```
+
+**lean_error:** tail step 1/1 ('simp [biprod.lift_desc]'): invalid field notation, type is not of the form (C ...) where C is a constant

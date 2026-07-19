@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ · |
 
 ## Per-cell detail
 
@@ -103,4 +103,55 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 **candidate:**
 ```lean
 simp [MapsTo, Set.subset_def]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 4.3s, verify 0.1s, in=354, out=161)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 4.8s, verify 0.1s, in=354, out=179)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 5.1s, verify 0.1s, in=354, out=190)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [mapsTo_iff_subset_image]
+```
+
+**lean_error:** tail step 1/1 ('simp only [mapsTo_iff_subset_image]'): unknown identifier 'mapsTo_iff_subset_image'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 9.6s, verify 0.2s, in=354, out=386)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [MapsTo]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+γ : Type u_3
+ι : Sort u_4
+ι' : Sort u_5
+la : Filter α
+...
 ```

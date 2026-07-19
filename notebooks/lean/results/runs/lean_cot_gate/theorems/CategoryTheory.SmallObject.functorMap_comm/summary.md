@@ -13,12 +13,12 @@ simp only [ι_colimMap_assoc, Discrete.natTrans_app, ι_colimMap,
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · · ✓ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · · · · |
-| `hint:3` | ✘ ✘ ✘ ✘ | · · ✓ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | · · · · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · · ✓ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · · · · | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · · ✓ · | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | · · · · | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -143,6 +143,51 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```lean
 simp [functorMapSrc, functorMapTgt]
 ```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 5.3s, verify 0.1s, in=608, out=165)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [functorMapSrc_ι_assoc]
+```
+
+**lean_error:** tail step 1/1 ('simp [functorMapSrc_ι_assoc]'): unknown identifier 'functorMapSrc_ι_assoc'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.2s, verify 0.2s, in=608, out=218)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.4s, verify 0.1s, in=608, out=430)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [functorMapSrc_ι, functorMapTgt_ι]
+```
+
+**lean_error:** tail step 1/1 ('simp [functorMapSrc_ι, functorMapTgt_ι]'): unknown identifier 'functorMapSrc_ι'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 23.6s, verify 0.1s, in=608, out=820)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [functorMapSrc, functorMapTgt, assoc, Sigma.ι_desc_assoc, Sigma.ι_desc, Category.assoc,
+  cancel_epi, w, hφ, functorObjLeft, functorObjTgt]
+```
+
+**lean_error:** tail step 1/2 ('simp only [functorMapSrc, functorMapTgt, assoc, Sigma.ι_desc_assoc, Sigma.ι_desc, Category.assoc,'): <stdin>:1:97: unexpected end of input; expected ']'
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 167.1s, verify 0.1s, in=1927, out=6641)
 
@@ -272,6 +317,54 @@ f : (i : I) → A i ⟶ B i
 ...
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.6s, verify 0.1s, in=1927, out=269)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [ι_functorMapTgt, ι_colimMap, Discrete.natTrans_app, rfl, ι_functorMapSrc_assoc,
+  rfl]
+```
+
+**lean_error:** tail step 1/2 ('simp only [ι_functorMapTgt, ι_colimMap, Discrete.natTrans_app, rfl, ι_functorMapSrc_assoc,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 15.2s, verify 0.1s, in=1927, out=488)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Limits.ι_colimMap_assoc, CategoryTheory.Discrete.natTrans_app,
+  CategoryTheory.Limits.ι_colimMap, CategoryTheory.SmallObject.ι_functorMapTgt,
+  rfl, CategoryTheory.SmallObject.ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/3 ('simp only [CategoryTheory.Limits.ι_colimMap_assoc, CategoryTheory.Discrete.natTrans_app,'): <stdin>:1:88: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.6s, verify 0.1s, in=1927, out=538)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [ι_colimMap, ι_functorMapTgt, rfl, Discrete.natTrans_app, ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp [ι_colimMap, ι_functorMapTgt, rfl, Discrete.natTrans_app, ι_functorMapSrc_assoc, rfl]'): invalid `simp` theorem, equation is equivalent to
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 18.0s, verify 0.1s, in=1927, out=592)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [ι_functorMapTgt, ι_functorMapSrc_assoc, ι_colimMap, ι_colimMap_assoc,
+  CategoryTheory.Discrete.natTrans_app, rfl]
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [ι_functorMapTgt, ι_functorMapSrc_assoc, ι_colimMap, ι_colimMap_assoc,'): <stdin>:1:78: unexpected end of input; expected ']'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 278.1s, verify 0.3s, in=3048, out=7158)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -387,6 +480,51 @@ A B : I → C
 f : (i : I) → A i ⟶ B i
 ...
 ```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 17.6s, verify 0.1s, in=3048, out=400)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [ι_colimMap, ι_functorMapTgt, rfl, ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp [ι_colimMap, ι_functorMapTgt, rfl, ι_functorMapSrc_assoc, rfl]'): invalid `simp` theorem, equation is equivalent to
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.4s, verify 0.1s, in=3048, out=327)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [ι_functorMapTgt, ι_colimMap, Discrete.natTrans_app, rfl,
+  ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/2 ('simp [ι_functorMapTgt, ι_colimMap, Discrete.natTrans_app, rfl,'): <stdin>:1:62: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 22.1s, verify 0.1s, in=3048, out=368)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [ι_colimMap, ι_functorMapTgt, ι_colimMap, ι_functorMapSrc_assoc, rfl, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp [ι_colimMap, ι_functorMapTgt, ι_colimMap, ι_functorMapSrc_assoc, rfl, rfl]'): invalid `simp` theorem, equation is equivalent to
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 31.7s, verify 0.1s, in=3048, out=950)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [ι_colimMap_assoc, ι_functorMapTgt, rfl, ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [ι_colimMap_assoc, ι_functorMapTgt, rfl, ι_functorMapSrc_assoc, rfl]'): simp made no progress
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 96.8s, verify 0.4s, in=3073, out=4106)
 
@@ -516,3 +654,52 @@ A B : I → C
 f : (i : I) → A i ⟶ B i
 ...
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.7s, verify 0.1s, in=3073, out=369)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.Limits.ι_colimMap_assoc, CategoryTheory.Discrete.natTrans_app,
+  CategoryTheory.Limits.ι_colimMap, CategoryTheory.SmallObject.ι_functorMapTgt,
+  rfl, CategoryTheory.SmallObject.ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/3 ('simp [CategoryTheory.Limits.ι_colimMap_assoc, CategoryTheory.Discrete.natTrans_app,'): <stdin>:1:83: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.5s, verify 0.1s, in=3073, out=394)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [ι_functorMapTgt _ _ _ _ _ _ rfl, ι_colimMap, Discrete.natTrans_app, rfl, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [ι_functorMapTgt _ _ _ _ _ _ rfl, ι_colimMap, Discrete.natTrans_app, rfl, rfl]'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.6s, verify 0.1s, in=3073, out=403)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [ι_colimMap, ι_functorMapTgt, Discrete.natTrans_app, rfl, ι_functorMapSrc_assoc,
+  assoc]
+```
+
+**lean_error:** tail step 1/2 ('simp only [ι_colimMap, ι_functorMapTgt, Discrete.natTrans_app, rfl, ι_functorMapSrc_assoc,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 14.5s, verify 0.1s, in=3073, out=470)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Limits.ι_colimMap, CategoryTheory.Discrete.natTrans_app,
+  CategoryTheory.Limits.ι_colimMap_assoc, CategoryTheory.SmallObject.ι_functorMapTgt,
+  rfl, CategoryTheory.SmallObject.ι_functorMapSrc_assoc, rfl]
+```
+
+**lean_error:** tail step 1/3 ('simp only [CategoryTheory.Limits.ι_colimMap, CategoryTheory.Discrete.natTrans_app,'): <stdin>:1:82: unexpected end of input; expected ']'

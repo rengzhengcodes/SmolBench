@@ -12,12 +12,12 @@ simp_rw [nodal, natDegree_prod_of_monic (h := fun i _ => monic_X_sub_C (v i)),
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ | · · ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -145,6 +145,69 @@ simp [nodal, Finset.prod_natDegree, Fintype.card_fin]
 
 **lean_error:** tail step 1/1 ('simp [nodal, Finset.prod_natDegree, Fintype.card_fin]'): unknown constant 'Finset.prod_natDegree'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 7.0s, verify 0.1s, in=236, out=188)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [nodal]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+inst✝¹ : CommRing R
+ι : Type u_2
+s : Finset ι
+v : ι → R
+inst✝ : Nontrivial R
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 10.0s, verify 0.1s, in=236, out=272)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [nodal, Polynomial.natDegree_prod, Polynomial.natDegree_X_sub_C, Finset.sum_const]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+inst✝¹ : CommRing R
+ι : Type u_2
+s : Finset ι
+v : ι → R
+inst✝ : Nontrivial R
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.7s, verify 0.1s, in=236, out=290)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact congr_arg natDegree nodal_degree.2
+```
+
+**lean_error:** tail step 1/1 ('exact congr_arg natDegree nodal_degree.2'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.1s, verify 0.1s, in=236, out=306)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [nodal_def, natDegree_multiset_prod, Multiset.sum_map_const 1, s.card_eq_sum_one,
+  Multiset.sum_map_const, natDegree_X_sub_C]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal_def, natDegree_multiset_prod, Multiset.sum_map_const 1, s.card_eq_sum_one,'): <stdin>:1:84: unexpected end of input; expected ']'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 89.2s, verify 0.2s, in=1233, out=3452)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -252,6 +315,54 @@ simp [nodal, Polynomial.natDegree_prod_of_monic _ (Polynomial.monic_X_sub_C _),
 
 **lean_error:** tail step 1/2 ('simp [nodal, Polynomial.natDegree_prod_of_monic _ (Polynomial.monic_X_sub_C _),'): <stdin>:1:79: unexpected end of input; expected ']'
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.8s, verify 0.1s, in=1233, out=295)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C _), Finset.sum_const,
+  smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C _), Finset.sum_const,'): <stdin>:1:82: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.0s, verify 0.1s, in=1233, out=298)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [nodal, natDegree_prod_of_monic (fun _ _ ↦ monic_X_sub_C _),
+  natDegree_X_sub_C, Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simp only [nodal, natDegree_prod_of_monic (fun _ _ ↦ monic_X_sub_C _),'): <stdin>:1:70: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.3s, verify 0.1s, in=1233, out=314)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa only [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C _),
+  natDegree_X_sub_C, Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simpa only [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C _),'): <stdin>:1:72: unexpected end of input; expected '*' or '-'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.3s, verify 0.1s, in=1233, out=348)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa only [nodal, Polynomial.natDegree_prod_of_monic (fun _ _ => monic_X_sub_C _),
+  Polynomial.monic_X_sub_C, Polynomial.natDegree_X_sub_C, Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simpa only [nodal, Polynomial.natDegree_prod_of_monic (fun _ _ => monic_X_sub_C _),'): <stdin>:1:83: unexpected end of input; expected '*' or '-'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 98.8s, verify 0.2s, in=2152, out=355)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -355,6 +466,54 @@ simp [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C (v i)), Finset.su
 ```
 
 **lean_error:** tail step 1/2 ('simp [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C (v i)), Finset.sum_const,'): <stdin>:1:88: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 17.0s, verify 0.1s, in=2152, out=321)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [nodal, natDegree_prod_of_monic, monic_X_sub_C, natDegree_X_sub_C, Finset.sum_const,
+  smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simp [nodal, natDegree_prod_of_monic, monic_X_sub_C, natDegree_X_sub_C, Finset.sum_const,'): <stdin>:1:89: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 19.6s, verify 0.1s, in=2152, out=305)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [nodal, natDegree_prod_of_monic (fun _ _ ↦ monic_X_sub_C _), natDegree_X_sub_C,
+  Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simp [nodal, natDegree_prod_of_monic (fun _ _ ↦ monic_X_sub_C _), natDegree_X_sub_C,'): <stdin>:1:84: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 21.7s, verify 0.1s, in=2152, out=392)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), Finset.sum_const,
+  smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), Finset.sum_const,'): <stdin>:1:84: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 22.3s, verify 0.1s, in=2152, out=442)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C (v i)),
+  natDegree_X_sub_C, Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simp only [nodal, natDegree_prod_of_monic (fun i _ => monic_X_sub_C (v i)),'): <stdin>:1:75: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 77.6s, verify 0.1s, in=2176, out=2989)
 
@@ -460,3 +619,51 @@ simp [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), sum_const, 
 ```
 
 **lean_error:** tail step 1/2 ('simp [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), sum_const, smul_eq_mul,'): <stdin>:1:92: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.8s, verify 0.1s, in=2176, out=361)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [nodal, natDegree_prod_of_monic (fun i hi => monic_X_sub_C (v i)),
+  Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal, natDegree_prod_of_monic (fun i hi => monic_X_sub_C (v i)),'): <stdin>:1:69: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.4s, verify 0.1s, in=2176, out=379)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [nodal, natDegree_prod_of_monic fun i _hi => monic_X_sub_C _, natDegree_X_sub_C, Finset.sum_const,
+  smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [nodal, natDegree_prod_of_monic fun i _hi => monic_X_sub_C _, natDegree_X_sub_C, Finset.sum_const,'): <stdin>:1:106: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.5s, verify 0.1s, in=2176, out=387)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [nodal, Polynomial.natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i),
+  Polynomial.natDegree_X_sub_C, Finset.sum_const, smul_eq_mul, mul_one]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal, Polynomial.natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i),'): <stdin>:1:77: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.0s, verify 0.1s, in=2176, out=439)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), sum_const, smul_eq_mul,
+  mul_one]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodal, natDegree_prod_of_monic fun i _ => monic_X_sub_C (v i), sum_const, smul_eq_mul,'): <stdin>:1:90: unexpected end of input; expected ']'

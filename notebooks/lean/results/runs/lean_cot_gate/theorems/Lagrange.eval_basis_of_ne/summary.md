@@ -11,12 +11,12 @@ exact ⟨j, ⟨mem_erase.mpr ⟨hij.symm, hj⟩, eval_basisDivisor_right⟩⟩
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✓ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -123,6 +123,50 @@ exact ⟨j, Finset.mem_erase_of_ne_of_mem (ne.symm hij) hj, eval_basisDivisor_se
 
 **lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem (ne.symm hij) hj, eval_basisDivisor_self (v j) (v i)⟩'): unknown identifier 'ne.symm'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.3s, verify 0.1s, in=294, out=273)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, hj, hj.erase_of_ne hij, basisDivisor.eval_self hij⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, hj, hj.erase_of_ne hij, basisDivisor.eval_self hij⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.8s, verify 0.1s, in=294, out=294)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, basisDivisor.eval_at_right hij⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, basisDivisor.eval_at_right hij⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.7s, verify 0.1s, in=294, out=370)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij.symm⟩, basisDivisor⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij.symm⟩, basisDivisor⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.8s, verify 0.1s, in=294, out=405)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.mpr ⟨hij.symm, hj⟩, basisDivisor.eval_self (hij.symm)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.mpr ⟨hij.symm, hj⟩, basisDivisor.eval_self (hij.symm)⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 58.9s, verify 0.2s, in=513, out=2221)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -216,6 +260,50 @@ exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) 
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.4s, verify 0.1s, in=513, out=270)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.6s, verify 0.1s, in=513, out=258)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+use j, Finset.mem_erase.2 ⟨hj, hij⟩ <;> simp
+```
+
+**lean_error:** tail step 1/1 ('use j, Finset.mem_erase.2 ⟨hj, hij⟩ <;> simp'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.9s, verify 0.1s, in=513, out=293)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨j, hj, hij, Lagrange.eval_basisDivisor_right (v i) (v j)⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, hj, hij, Lagrange.eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.0s, verify 0.1s, in=513, out=297)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+use j, hj, hij, simpa using Lagrange.eval_basisDivisor_right (v i) (v j)
+```
+
+**lean_error:** tail step 1/1 ('use j, hj, hij, simpa using Lagrange.eval_basisDivisor_right (v i) (v j)'): <stdin>:1:22: expected end of input
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 118.8s, verify 0.2s, in=668, out=1740)
 
@@ -316,6 +404,50 @@ exact ⟨j, Finset.erase_mem_of_ne_of_mem (fun h => hij (h.symm.trans (Finset.me
 
 **lean_error:** tail step 1/2 ('exact ⟨j, Finset.erase_mem_of_ne_of_mem (fun h => hij (h.symm.trans (Finset.mem_erase.mp hj).1))'): <stdin>:1:96: unexpected end of input; expected '⟩'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.2s, verify 0.1s, in=668, out=223)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, eval_basisDivisor_right _ _⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, eval_basisDivisor_right _ _⟩'): application type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 14.4s, verify 0.2s, in=668, out=231)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, hj.erase hij, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, hj.erase hij, Lagrange.eval_basisDivisor_right⟩'): invalid field 'erase', the environment does not contain 'Membership.mem.erase'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.9s, verify 0.1s, in=668, out=302)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 17.4s, verify 0.1s, in=668, out=270)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.mpr ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩'): application type mismatch
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 47.9s, verify 0.2s, in=693, out=1817)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -412,3 +544,47 @@ exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) 
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase_of_ne_of_mem hij hj, eval_basisDivisor_right (v i) (v j)⟩'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.9s, verify 0.1s, in=693, out=263)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, mem_erase_of_ne_of_mem hij hj, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, mem_erase_of_ne_of_mem hij hj, Lagrange.eval_basisDivisor_right⟩'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.2s, verify 0.1s, in=693, out=271)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, Lagrange.eval_basisDivisor_right⟩'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.5s, verify 0.1s, in=693, out=253)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, Finset.mem_erase.2 ⟨hj, hij⟩, eval_basisDivisor_right⟩'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.4s, verify 0.1s, in=693, out=300)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨j, hj, hj.erase_of_ne hij.symm, Lagrange.eval_basisDivisor_right⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨j, hj, hj.erase_of_ne hij.symm, Lagrange.eval_basisDivisor_right⟩'): application type mismatch

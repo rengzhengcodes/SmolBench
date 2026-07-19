@@ -11,12 +11,12 @@ exact not_irreducible_pow (Fact.out : p.Prime).ne_one
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
+| `noise:3` | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -129,6 +129,50 @@ exact (map (frobeniusEquiv R p).symm f).not_irreducible_pow _ one_lt_pow _ (Nat.
 
 **lean_error:** tail step 1/2 ('exact (map (frobeniusEquiv R p).symm f).not_irreducible_pow _ one_lt_pow _ (Nat.pos_iff_ne_zero.mpr'): <stdin>:1:99: unexpected end of input; expected ')', ',' or ':'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.4s, verify 0.1s, in=327, out=298)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [map_frobeniusEquiv_symm_pow, not_irreducible_frobenius]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_frobeniusEquiv_symm_pow, not_irreducible_frobenius]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.6s, verify 0.1s, in=327, out=331)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [map_pow_frobeniusEquiv_symm, irreducible_pow_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp [map_pow_frobeniusEquiv_symm, irreducible_pow_iff]'): unknown identifier 'map_pow_frobeniusEquiv_symm'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.2s, verify 0.1s, in=327, out=367)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact irreducible_pow (irreducible_of_map_ringEquiv (frobeniusEquiv R p).symm f)
+```
+
+**lean_error:** tail step 1/1 ('exact irreducible_pow (irreducible_of_map_ringEquiv (frobeniusEquiv R p).symm f)'): unknown identifier 'irreducible_pow'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.0s, verify 0.1s, in=327, out=437)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact fun h => irreducible_map_frobeniusEquiv_symm_pow h
+```
+
+**lean_error:** tail step 1/1 ('exact fun h => irreducible_map_frobeniusEquiv_symm_pow h'): unknown identifier 'irreducible_map_frobeniusEquiv_symm_pow'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 57.0s, verify 0.1s, in=741, out=2590)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -221,6 +265,48 @@ exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹p.Prime›))
 
 **lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹p.Prime›))'): function expected at
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 6.5s, verify 0.1s, in=741, out=213)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply not_irreducible_pow (Nat.Prime.ne_one Fact.out)
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.2s, verify 0.1s, in=741, out=257)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out (Nat.Prime p)))
+```
+
+**lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out (Nat.Prime p)))'): function expected at
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.8s, verify 0.1s, in=741, out=274)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply not_irreducible_pow (Nat.Prime.ne_one (Fact.out p))
+```
+
+**lean_error:** tail step 1/1 ('apply not_irreducible_pow (Nat.Prime.ne_one (Fact.out p))'): function expected at
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.6s, verify 0.1s, in=741, out=342)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa using not_irreducible_pow (Nat.Prime.ne_one (Fact.out (prime p)))
+```
+
+**lean_error:** tail step 1/1 ('simpa using not_irreducible_pow (Nat.Prime.ne_one (Fact.out (prime p)))'): function expected at
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 27.9s, verify 0.2s, in=1444, out=934)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -309,6 +395,48 @@ exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹_›))
 ```
 
 **lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹_›))'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.5s, verify 0.1s, in=1444, out=203)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply not_irreducible_pow <;> exact Fact.out (Nat.Prime.ne_one p)
+```
+
+**lean_error:** tail step 1/1 ('apply not_irreducible_pow <;> exact Fact.out (Nat.Prime.ne_one p)'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 14.0s, verify 0.1s, in=1444, out=260)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out (prime p)))
+```
+
+**lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out (prime p)))'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 14.3s, verify 0.1s, in=1444, out=232)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply not_irreducible_pow (Nat.Prime.ne_one (Fact.out : p.Prime))
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.0s, verify 0.1s, in=1444, out=343)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [not_irreducible_pow, Fact.out (Nat.Prime p), Nat.Prime.ne_one] using not_irreducible_expand
+```
+
+**lean_error:** tail step 1/1 ('simpa [not_irreducible_pow, Fact.out (Nat.Prime p), Nat.Prime.ne_one] using not_irreducible_expand'): function expected at
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 7.4s, verify 0.3s, in=1468, out=351)
 
@@ -399,3 +527,45 @@ exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹_›))
 ```
 
 **lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out ‹_›))'): function expected at
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 6.3s, verify 0.1s, in=1468, out=203)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact not_irreducible_pow (Nat.Prime.ne_one Fact.out)
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.9s, verify 0.1s, in=1468, out=218)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact not_irreducible_pow hn := Nat.Prime.ne_one Fact.out
+```
+
+**lean_error:** tail step 1/1 ('exact not_irreducible_pow hn := Nat.Prime.ne_one Fact.out'): <stdin>:1:29: expected end of input
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.7s, verify 0.1s, in=1468, out=227)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out p))
+```
+
+**lean_error:** tail step 1/1 ('exact not_irreducible_pow (Nat.Prime.ne_one (Fact.out p))'): function expected at
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.9s, verify 0.1s, in=1468, out=284)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply not_irreducible_pow (hn := (Fact.out (Nat.Prime p)).ne_one)
+```
+
+**lean_error:** tail step 1/1 ('apply not_irreducible_pow (hn := (Fact.out (Nat.Prime p)).ne_one)'): function expected at

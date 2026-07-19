@@ -11,9 +11,9 @@ exact ⟨fun i => s i, fun i => (s i).2, hsd.set_of_subtype _ _⟩
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -119,3 +119,47 @@ exact ⟨fun i => ↑(s ⟨i, mem_coe.mpr (hsd.mono fun _ _ _ _ => ‹_›)⟩),
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨fun i => ↑(s ⟨i, mem_coe.mpr (hsd.mono fun _ _ _ _ => ‹_›)⟩), fun i => (s ⟨i, _⟩).2, hsd⟩'): invalid constructor ⟨...⟩, expected type must be an inductive type 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.1s, verify 0.1s, in=351, out=238)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨s, fun i => (s i).2, hsd⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨s, fun i => (s i).2, hsd⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.2s, verify 0.1s, in=351, out=282)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨fun i => ↑(s i), fun i => (s i).2, hsd⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨fun i => ↑(s i), fun i => (s i).2, hsd⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.7s, verify 0.1s, in=351, out=297)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨fun i => (s i).val, fun i => (s i).property, hsd⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨fun i => (s i).val, fun i => (s i).property, hsd⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.2s, verify 0.1s, in=351, out=478)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨s, fun i => (s i).2, hsd⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨s, fun i => (s i).2, hsd⟩'): application type mismatch

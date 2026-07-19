@@ -11,9 +11,9 @@ infer_instance
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -108,3 +108,47 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```lean
 infer_instance
 ```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 4.4s, verify 0.1s, in=297, out=167)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact PreservesFiniteColimits.preservesEpimorphisms _
+```
+
+**lean_error:** tail step 1/1 ('exact PreservesFiniteColimits.preservesEpimorphisms _'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.5s, verify 0.1s, in=297, out=283)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hP.preservesEpimorphisms.comp forget₂_preservesEpimorphisms
+```
+
+**lean_error:** tail step 1/1 ('exact hP.preservesEpimorphisms.comp forget₂_preservesEpimorphisms'): invalid field 'preservesEpimorphisms', the environment does not contain 'CategoryTheory.Limits.PreservesFiniteColimits.preservesEpimorphisms'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.6s, verify 0.1s, in=297, out=332)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact PreservesEpimorphisms.comp hP.preservesEpimorphisms
+```
+
+**lean_error:** tail step 1/1 ('exact PreservesEpimorphisms.comp hP.preservesEpimorphisms'): unknown identifier 'PreservesEpimorphisms.comp'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.6s, verify 0.1s, in=297, out=416)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hP.functorPreservesEpimorphismsOfPreservesFiniteColimits
+```
+
+**lean_error:** tail step 1/1 ('exact hP.functorPreservesEpimorphismsOfPreservesFiniteColimits'): invalid field 'functorPreservesEpimorphismsOfPreservesFiniteColimits', the environment does not contain 'CategoryTheory.Limits.PreservesFiniteColimits.functorPreservesEpimorphismsOfPreservesFiniteColimits'

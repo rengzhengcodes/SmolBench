@@ -12,12 +12,12 @@ convert (whisker_eq Limits.coprod.inl pushout.condition :
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · · |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ · · · |
-| `hint:3` | ✘ ✘ ✘ ✘ | · · · ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · · | ✘ · ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ · · · | ✘ ✘ · · |
+| `hint:3` | ✘ ✘ ✘ ✘ | · · · ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -132,6 +132,59 @@ inst✝¹ : HasBinaryCoproducts C
 ...
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.7s, verify 0.1s, in=262, out=196)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [pushoutInl_parallelPair]
+```
+
+**lean_error:** tail step 1/1 ('rw [pushoutInl_parallelPair]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 9.0s, verify 0.1s, in=262, out=240)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [pushoutInl]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝³ : Category.{v, u} C
+D : Type u'
+inst✝² : Category.{v', u'} D
+G : C ⥤ D
+inst✝¹ : HasBinaryCoproducts C
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.1s, verify 0.1s, in=262, out=255)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 18.1s, verify 0.1s, in=262, out=566)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 165.4s, verify 0.1s, in=1090, out=7052)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -243,6 +296,71 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simp [pushoutInl, constructCoequalizer]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝³ : Category.{v, u} C
+D : Type u'
+inst✝² : Category.{v', u'} D
+G : C ⥤ D
+inst✝¹ : HasBinaryCoproducts C
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.6s, verify 0.1s, in=1090, out=274)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.whisker_eq (coprod.inl : _) (pushoutInl_eq_pushout_inr F),
+  CategoryTheory.Limits.coprod.inl, CategoryTheory.Limits.pushout.condition,
+  CategoryTheory.Limits.HasCoequalizersOfHasPushoutsAndBinaryCoproducts.constructCoequalizer]
+```
+
+**lean_error:** tail step 1/3 ('simp only [CategoryTheory.whisker_eq (coprod.inl : _) (pushoutInl_eq_pushout_inr F),'): <stdin>:1:84: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.3s, verify 0.1s, in=1090, out=326)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Limits.coprod.inl, constructCoequalizer, pushout.condition,
+  whisker_eq]
+```
+
+**lean_error:** tail step 1/2 ('simp only [CategoryTheory.Limits.coprod.inl, constructCoequalizer, pushout.condition,'): <stdin>:1:85: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 14.0s, verify 0.1s, in=1090, out=410)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [pushoutInl, constructCoequalizer, coprod.inl, whisker_eq, pushout.condition]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝³ : Category.{v, u} C
+D : Type u'
+inst✝² : Category.{v', u'} D
+G : C ⥤ D
+inst✝¹ : HasBinaryCoproducts C
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 27.5s, verify 0.1s, in=1090, out=938)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [pushoutInl, whisker_eq, pushout.condition]
 ```
 
 **final state (truncated):**
@@ -383,6 +501,50 @@ aesop_cat
 
 **lean_error:** tail step 1/1 ('aesop_cat'): tactic 'aesop' failed, failed to prove the goal after exhaustive search.
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.8s, verify 0.2s, in=1703, out=200)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+aesop_cat
+```
+
+**lean_error:** tail step 1/1 ('aesop_cat'): tactic 'aesop' failed, failed to prove the goal after exhaustive search.
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.6s, verify 0.1s, in=1703, out=186)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rwa [pushoutInl_eq_pushout_inr]
+```
+
+**lean_error:** tail step 1/1 ('rwa [pushoutInl_eq_pushout_inr]'): no goals to be solved
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.2s, verify 0.1s, in=1703, out=292)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [pushout.condition]
+```
+
+**lean_error:** tail step 1/1 ('simp [pushout.condition]'): simp made no progress
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 58.4s, verify 0.1s, in=1703, out=1783)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← assoc, ← whisker_eq coprod.inl pushout.condition, assoc, constructCoequalizer, coprod.inl]
+```
+
+**lean_error:** tail step 1/1 ('rw [← assoc, ← whisker_eq coprod.inl pushout.condition, assoc, constructCoequalizer, coprod.inl]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 237.3s, verify 0.1s, in=1728, out=10184)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -501,3 +663,50 @@ G : C ⥤ D
 inst✝¹ : HasBinaryCoproducts C
 ...
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 6.3s, verify 1.3s, in=1728, out=168)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact pushoutInl_eq_pushout_inr F
+```
+
+**lean_error:** tail step 1/1 ('exact pushoutInl_eq_pushout_inr F'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.9s, verify 0.1s, in=1728, out=351)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [pushoutInl, whisker_eq coprod.inl pushout.condition, coprod.inl,
+  whisker_eq (coprod.desc (𝟙 _) (F.map WalkingParallelPairHom.left)) pushout.condition]
+```
+
+**lean_error:** tail step 1/2 ('rw [pushoutInl, whisker_eq coprod.inl pushout.condition, coprod.inl,'): <stdin>:1:68: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.5s, verify 0.1s, in=1728, out=403)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [CategoryTheory.Limits.coprod.inl,
+  CategoryTheory.Limits.HasCoequalizersOfHasPushoutsAndBinaryCoproducts.constructCoequalizer] using
+  CategoryTheory.whisker_eq coprod.inl CategoryTheory.Limits.pushout.condition
+```
+
+**lean_error:** tail step 1/3 ('simpa only [CategoryTheory.Limits.coprod.inl,'): <stdin>:1:45: unexpected end of input; expected '*' or '-'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 77.2s, verify 0.2s, in=1728, out=2785)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [pushoutInl, whisker_eq coprod.inl pushout.condition, simp]
+```
+
+**lean_error:** tail step 1/1 ('rw [pushoutInl, whisker_eq coprod.inl pushout.condition, simp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

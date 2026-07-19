@@ -11,12 +11,12 @@ rw [boundary, hnot_inf_distrib, sup_hnot_self]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✘ ✘ ✓ | ✓ ✘ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✓ ✓ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✘ ✘ ✓ | ✓ ✘ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✘ ✘ ✓ ✓ | ✓ ✓ ✓ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -108,6 +108,50 @@ rw [nbot_eq_top, top_boundedIff]
 
 **lean_error:** tail step 1/1 ('rw [nbot_eq_top, top_boundedIff]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.1s, verify 0.1s, in=208, out=224)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [boundary_eq, neg_inf_eq, neg_neg, sup_neg_eq]
+```
+
+**lean_error:** tail step 1/1 ('rw [boundary_eq, neg_inf_eq, neg_neg, sup_neg_eq]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.2s, verify 0.1s, in=208, out=228)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [not_inf, not_not, not_sup_self]
+```
+
+**lean_error:** tail step 1/1 ('rw [not_inf, not_not, not_sup_self]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.3s, verify 0.1s, in=208, out=230)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [boundary, neg_inf, neg_neg, sup_neg_eq_top]
+```
+
+**lean_error:** tail step 1/1 ('rw [boundary, neg_inf, neg_neg, sup_neg_eq_top]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.5s, verify 0.1s, in=208, out=234)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [not_inf, not_not, not_boundary]
+```
+
+**lean_error:** tail step 1/1 ('rw [not_inf, not_not, not_boundary]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 19.8s, verify 0.2s, in=650, out=900)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -190,6 +234,42 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [Coheyting.boundary, hnot_inf_distrib]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.5s, verify 0.1s, in=650, out=206)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 7.6s, verify 0.1s, in=650, out=208)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.1s, verify 0.1s, in=650, out=253)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 11.1s, verify 0.1s, in=650, out=331)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 71.8s, verify 0.1s, in=1117, out=1696)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -268,6 +348,44 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 ```lean
 simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
 ```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 12.5s, verify 0.1s, in=1117, out=178)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.9s, verify 0.1s, in=1117, out=189)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 13.0s, verify 0.1s, in=1117, out=208)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.4s, verify 0.1s, in=1117, out=210)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact Coheyting.hnot_boundary a
+```
+
+**lean_error:** tail step 1/1 ('exact Coheyting.hnot_boundary a'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 33.8s, verify 0.1s, in=1147, out=1571)
 
@@ -350,4 +468,40 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [Coheyting.boundary, hnot_inf_distrib]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 6.8s, verify 0.1s, in=1147, out=170)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 7.4s, verify 0.1s, in=1147, out=203)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.0s, verify 0.1s, in=1147, out=215)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.4s, verify 0.1s, in=1147, out=233)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Coheyting.boundary, hnot_inf_distrib, sup_hnot_self]
 ```

@@ -11,12 +11,12 @@ simp [AlternatingMap.map_perm, Basis.det_self]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✓ |
-| `hint:3` | ✓ ✘ ✘ · | ✓ ✓ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ | ✘ · ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✓ | ✓ ✘ ✘ ✘ |
+| `hint:3` | ✓ ✘ ✘ · | ✓ ✓ ✘ ✘ | ✘ ✘ ✓ ✓ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -132,6 +132,59 @@ simp [Basis.det_apply_eq, det_isAlternatingMap, Equiv.Perm.coe_ofBijective]
 
 **lean_error:** tail step 1/1 ('simp [Basis.det_apply_eq, det_isAlternatingMap, Equiv.Perm.coe_ofBijective]'): unknown constant 'Basis.det_apply_eq'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.7s, verify 0.1s, in=378, out=371)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← map_smul, det_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [← map_smul, det_apply]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 22.8s, verify 0.2s, in=378, out=662)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [LinearMap.smul_apply]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+inst✝⁶ : CommRing R
+M : Type u_2
+inst✝⁵ : AddCommGroup M
+inst✝⁴ : Module R M
+M' : Type u_3
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 31.3s, verify 0.1s, in=378, out=955)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [LinearMap.smul_apply, Basis.det_apply]
+```
+
+**lean_error:** tail step 1/1 ('simp only [LinearMap.smul_apply, Basis.det_apply]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 37.0s, verify 0.1s, in=378, out=1164)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [LinearMap.smul_apply, Basis.det_apply_self, smul_eq_mul]
+```
+
+**lean_error:** tail step 1/1 ('rw [LinearMap.smul_apply, Basis.det_apply_self, smul_eq_mul]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 112.0s, verify 0.1s, in=871, out=4925)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -235,6 +288,48 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [e.det_self, map_perm]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 11.3s, verify 0.1s, in=871, out=322)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [map_perm, smul_comm, Basis.det_self]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.9s, verify 0.2s, in=871, out=340)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map_perm, LinearMap.smul_apply, Basis.det.map_perm, det_self, smul_one, smul_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_perm, LinearMap.smul_apply, Basis.det.map_perm, det_self, smul_one, smul_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.1s, verify 0.2s, in=871, out=414)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [smul_apply, map_perm, Basis.det_self, smul_comm, smul_one_smul]
+```
+
+**lean_error:** tail step 1/1 ('simp only [smul_apply, map_perm, Basis.det_self, smul_comm, smul_one_smul]'): tactic 'simp' failed, nested error:
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 14.4s, verify 0.1s, in=871, out=421)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [map_perm, det_self]
+```
+
+**lean_error:** tail step 1/1 ('simp [map_perm, det_self]'): unknown identifier 'det_self'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 184.5s, verify 0.3s, in=2001, out=2985)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -327,6 +422,46 @@ simp [map_perm, Basis.det_self, sign]
 
 **lean_error:** tail step 1/1 ('simp [map_perm, Basis.det_self, sign]'): unknown identifier 'sign'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 21.9s, verify 0.1s, in=2001, out=308)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [map_perm, det_self]
+```
+
+**lean_error:** tail step 1/1 ('simp [map_perm, det_self]'): unknown identifier 'det_self'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 23.0s, verify 0.1s, in=2001, out=316)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [map_perm, map_perm, det_self]
+```
+
+**lean_error:** tail step 1/1 ('simp only [map_perm, map_perm, det_self]'): unknown identifier 'det_self'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 24.5s, verify 0.1s, in=2001, out=343)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [map_perm, e.det_self] using f.map_perm e σ
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 29.4s, verify 0.1s, in=2001, out=585)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [*, Basis.det_self, AlternatingMap.map_perm] using h
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 100.3s, verify 0.1s, in=2029, out=4462)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -411,3 +546,47 @@ simp [map_perm, e.det_self, f.map_perm, Equiv.Perm.sign_apply]
 ```
 
 **lean_error:** tail step 1/1 ('simp [map_perm, e.det_self, f.map_perm, Equiv.Perm.sign_apply]'): unknown constant 'Equiv.Perm.sign_apply'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.1s, verify 0.4s, in=2029, out=292)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [eq_smul_basis_det]
+```
+
+**lean_error:** tail step 1/1 ('rw [eq_smul_basis_det]'): tactic 'rewrite' failed, pattern is a metavariable
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.5s, verify 0.3s, in=2029, out=397)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa [e.det_self] using (map_perm f e σ).trans ((smul_smul _ _ _).trans (map_perm _ e σ).symm)
+```
+
+**lean_error:** tail step 1/1 ('simpa [e.det_self] using (map_perm f e σ).trans ((smul_smul _ _ _).trans (map_perm _ e σ).symm)'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 14.5s, verify 0.1s, in=2029, out=430)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [map_perm, det_self]
+```
+
+**lean_error:** tail step 1/1 ('simp [map_perm, det_self]'): unknown identifier 'det_self'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.8s, verify 0.2s, in=2029, out=454)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [smul_apply, e.det.map_perm e σ, e.det_self, smul_comm] using f.map_perm e σ
+```
+
+**lean_error:** tail step 1/1 ('simpa only [smul_apply, e.det.map_perm e σ, e.det_self, smul_comm] using f.map_perm e σ'): tactic 'simp' failed, nested error:

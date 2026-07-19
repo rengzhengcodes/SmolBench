@@ -14,8 +14,8 @@ exact ⟨φ, (DFunLike.congr_fun hφ <| AdjoinSimple.gen F x).trans <|
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ X ✘ ✘ |
 | `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 | `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 
@@ -205,6 +205,18 @@ simpa [hφ] using (algHomAdjoinIntegralEquiv F ix).symm_apply_apply _ y
 ```
 
 **lean_error:** tail step 1/1 ('simpa [hφ] using (algHomAdjoinIntegralEquiv F ix).symm_apply_apply _ y'): function expected at
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.7s, verify 0.6s, in=471, out=423)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+use φ
+exact congr_arg (fun f : _ →ₐ[F] _ => f ⟨x, hx⟩) hφ
+```
+
+**lean_error:** tail step 2/2 ('exact congr_arg (fun f : _ →ₐ[F] _ => f ⟨x, hx⟩) hφ'): type mismatch
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 83.1s, verify 0.5s, in=1564, out=4252)
 
@@ -396,6 +408,20 @@ exact Eq.trans (DFunLike.congr_fun hφ (AdjoinSimple.gen F { val := x, property 
 ```
 
 **lean_error:** tail step 1/2 ('exact Eq.trans (DFunLike.congr_fun hφ (AdjoinSimple.gen F { val := x, property := hx })) <|'): <stdin>:1:91: unexpected end of input
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.9s, verify 0.1s, in=1564, out=530)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact
+  Eq.trans
+    (DFunLike.congr_fun hφ ⟨x, hx⟩)
+    (Eq.trans (congr_arg _ (IntermediateField.AdjoinSimple.gen F x).2) (minpoly_gen hx).symm)
+```
+
+**lean_error:** tail step 1/4 ('exact'): <stdin>:1:5: unexpected end of input
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 95.6s, verify 0.1s, in=4289, out=3228)
 

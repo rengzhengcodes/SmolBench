@@ -11,10 +11,10 @@ exact ker_zero
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✓ |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -94,6 +94,42 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 3.8s, verify 0.1s, in=454, out=109)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 3.9s, verify 0.1s, in=454, out=109)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [ker_zero]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 4.3s, verify 0.1s, in=454, out=133)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 4.4s, verify 0.1s, in=454, out=135)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact LinearMap.ker_zero
+```
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 8.9s, verify 0.1s, in=713, out=330)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -168,4 +204,40 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simp
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 3.7s, verify 0.1s, in=713, out=112)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact LinearMap.ker_zero
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 3.8s, verify 0.1s, in=713, out=112)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact LinearMap.ker_zero
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 4.5s, verify 0.1s, in=713, out=145)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [ker_zero]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 6.0s, verify 0.1s, in=713, out=195)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [ker_zero]
 ```

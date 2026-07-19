@@ -11,12 +11,12 @@ apply appHom_restrict
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✘ | ✓ ✘ ✓ ✘ |
-| `hint:3` | ✘ ✓ ✓ ✘ | ✘ ✓ ✘ ✓ |
-| `noise:3` | ✓ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✘ | ✓ ✘ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✓ ✓ ✘ | ✘ ✓ ✘ ✓ | ✘ ✓ ✘ ✓ |
+| `noise:3` | ✓ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✓ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -150,6 +150,50 @@ exact whiskerLeft_eq_appHom G.op ℱ ℱ'.val α f a✝
 
 **lean_error:** tail step 1/1 ("exact whiskerLeft_eq_appHom G.op ℱ ℱ'.val α f a✝"): <stdin>:1:47: expected end of input
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.9s, verify 0.2s, in=465, out=190)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [α.naturality f]
+```
+
+**lean_error:** tail step 1/1 ('rw [α.naturality f]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.4s, verify 0.2s, in=465, out=205)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [α.naturality f]
+```
+
+**lean_error:** tail step 1/1 ('rw [α.naturality f]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.4s, verify 0.2s, in=465, out=275)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply NatTrans.naturality
+```
+
+**lean_error:** tail step 1/1 ('apply NatTrans.naturality'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.1s, verify 0.1s, in=465, out=483)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [appHom_naturality, Functor.map_id]
+```
+
+**lean_error:** tail step 1/1 ('simp [appHom_naturality, Functor.map_id]'): unknown identifier 'appHom_naturality'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 11.6s, verify 0.1s, in=804, out=394)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -228,6 +272,42 @@ exact appHom_restrict f a✝
 
 **lean_error:** tail step 1/1 ('exact appHom_restrict f a✝'): <stdin>:1:25: expected end of input
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 5.0s, verify 0.1s, in=804, out=165)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 5.7s, verify 0.1s, in=804, out=180)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 5.8s, verify 0.1s, in=804, out=184)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [appHom_restrict]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 6.7s, verify 0.1s, in=804, out=208)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 27.2s, verify 0.2s, in=2044, out=404)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -300,6 +380,46 @@ exact appHom_restrict f _
 **lean_error:** tail step 1/1 ('exact appHom_restrict f _'): stuck at solving universe constraint
 
 ### `hint:3` · qwen3-lean-bare-r128 · rollout 3 → **success**  (gen 70.9s, verify 0.1s, in=2044, out=11)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [appHom_restrict]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.8s, verify 0.1s, in=2044, out=154)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [appHom_restrict f a✝]
+```
+
+**lean_error:** tail step 1/1 ('rw [appHom_restrict f a✝]'): <stdin>:1:23: expected token
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 9.9s, verify 0.1s, in=2044, out=166)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply appHom_restrict
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.9s, verify 0.1s, in=2044, out=171)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [appHom_restrict]
+```
+
+**lean_error:** tail step 1/1 ('simp only [appHom_restrict]'): simp made no progress
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 10.4s, verify 0.1s, in=2044, out=190)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 
@@ -383,3 +503,43 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```lean
 simp [appHom_restrict]
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 5.0s, verify 0.2s, in=2074, out=166)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [appHom_restrict]
+```
+
+**lean_error:** tail step 1/1 ('rw [appHom_restrict]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 5.3s, verify 0.1s, in=2074, out=170)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [appHom_restrict]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 5.6s, verify 0.1s, in=2074, out=178)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [appHom_restrict]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 6.6s, verify 0.1s, in=2074, out=205)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+appHom_restrict
+```
+
+**lean_error:** tail step 1/1 ('appHom_restrict'): <stdin>:1:1: unknown tactic

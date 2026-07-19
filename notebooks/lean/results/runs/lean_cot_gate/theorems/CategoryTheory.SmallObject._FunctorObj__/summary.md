@@ -11,12 +11,12 @@ simp [πFunctorObj]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✓ |
-| `hint:2` | ✘ ✓ ✓ ✘ | ✘ ✓ ✓ ✓ |
-| `hint:3` | ✘ ✘ · ✘ | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✘ ✓ ✘ ✘ | ✘ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✓ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✓ ✘ | ✘ ✓ ✓ ✓ | ✘ ✓ ✘ ✓ |
+| `hint:3` | ✘ ✘ · ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ |
+| `noise:3` | ✘ ✓ ✘ ✘ | ✘ ✓ ✓ ✓ | ✘ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -115,6 +115,50 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp [πFunctorObj, ρFunctorObj, π'FunctorObj]
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 5.8s, verify 0.1s, in=404, out=188)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ρFunctorObj_πFunctorObj f πX
+```
+
+**lean_error:** tail step 1/1 ('exact ρFunctorObj_πFunctorObj f πX'): unknown identifier 'ρFunctorObj_πFunctorObj'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 5.8s, verify 0.3s, in=404, out=191)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+aesop_cat
+```
+
+**lean_error:** tail step 1/1 ('aesop_cat'): tactic 'aesop' failed, failed to prove the goal after exhaustive search.
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 6.1s, verify 0.1s, in=404, out=194)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.0s, verify 0.3s, in=404, out=225)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+aesop_cat
+```
+
+**lean_error:** tail step 1/1 ('aesop_cat'): tactic 'aesop' failed, failed to prove the goal after exhaustive search.
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 52.0s, verify 0.1s, in=622, out=2211)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -192,6 +236,46 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simp [πFunctorObj, ρFunctorObj, π'FunctorObj]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 3.9s, verify 0.1s, in=622, out=126)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ρFunctorObj_π f πX
+```
+
+**lean_error:** tail step 1/1 ('exact ρFunctorObj_π f πX'): function expected at
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 9.0s, verify 0.1s, in=622, out=297)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.2s, verify 0.1s, in=622, out=341)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.9s, verify 0.1s, in=622, out=445)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
 ```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 128.4s, verify 0.2s, in=780, out=2503)
@@ -285,6 +369,46 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 simp [πFunctorObj, ρFunctorObj]
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 10.0s, verify 0.1s, in=780, out=206)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 12.1s, verify 0.1s, in=780, out=215)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.SmallObject.πFunctorObj]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.0s, verify 0.1s, in=780, out=432)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ρFunctorObj_π f πX
+```
+
+**lean_error:** tail step 1/1 ('exact ρFunctorObj_π f πX'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.6s, verify 0.1s, in=780, out=402)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 77.2s, verify 0.1s, in=804, out=3218)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -364,4 +488,42 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [πFunctorObj, ρFunctorObj]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 4.0s, verify 0.1s, in=804, out=126)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ρFunctorObj_π f πX
+```
+
+**lean_error:** tail step 1/1 ('exact ρFunctorObj_π f πX'): function expected at
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 6.3s, verify 0.1s, in=804, out=206)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 9.1s, verify 0.1s, in=804, out=294)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.SmallObject.πFunctorObj]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 22.8s, verify 0.1s, in=804, out=863)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [πFunctorObj, CategoryTheory.SmallObject.ρFunctorObj_π]
 ```

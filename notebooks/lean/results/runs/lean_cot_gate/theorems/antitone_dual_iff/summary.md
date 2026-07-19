@@ -11,12 +11,12 @@ rw [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✓ ✘ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✓ ✘ · ✘ |
+| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ · ✓ |
+| `noise:3` | ✓ ✘ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -123,6 +123,57 @@ simp [Antitone, monotone_comp_iff]
 
 **lean_error:** tail step 1/1 ('simp [Antitone, monotone_comp_iff]'): unknown identifier 'monotone_comp_iff'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 8.1s, verify 0.1s, in=283, out=233)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.7s, verify 0.1s, in=283, out=286)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [antitone_comp_ofDual_iff, monotone_toDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('rw [antitone_comp_ofDual_iff, monotone_toDual_iff]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 10.5s, verify 0.2s, in=283, out=303)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Antitone]
+```
+
+**final state (truncated):**
+```
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+δ : Type u_2
+π : ι → Type u_3
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.2s, verify 0.1s, in=283, out=390)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [antitone_comp_iff, antitone_toDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp only [antitone_comp_iff, antitone_toDual_iff]'): unknown identifier 'antitone_comp_iff'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 35.1s, verify 0.1s, in=600, out=1261)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -199,6 +250,44 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp only [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 7.5s, verify 0.1s, in=600, out=217)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.0s, verify 0.1s, in=600, out=262)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 9.8s, verify 0.1s, in=600, out=286)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa using (antitone_toDual_comp_iff.trans monotone_comp_ofDual_iff)
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 22.5s, verify 0.6s, in=600, out=762)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp only [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]'): unknown identifier 'Function.comp_assoc'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 89.3s, verify 0.1s, in=933, out=1290)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -269,6 +358,53 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 **candidate:**
 ```lean
 simp [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 15.5s, verify 0.1s, in=933, out=245)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 15.9s, verify 0.1s, in=933, out=243)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 16.4s, verify 0.1s, in=933, out=234)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Function.comp, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+**final state (truncated):**
+```
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+δ : Type u_2
+π : ι → Type u_3
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 20.0s, verify 0.1s, in=933, out=427)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
 ```
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **success**  (gen 25.6s, verify 0.1s, in=958, out=930)
@@ -345,3 +481,45 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```lean
 simp
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 7.5s, verify 0.1s, in=958, out=218)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.3s, verify 0.1s, in=958, out=273)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('rw [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.5s, verify 0.1s, in=958, out=365)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('rw [Function.comp_assoc, antitone_toDual_comp_iff, monotone_comp_ofDual_iff]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.1s, verify 0.1s, in=958, out=385)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [← antitone_toDual_comp_iff, ← monotone_comp_ofDual_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [← antitone_toDual_comp_iff, ← monotone_comp_ofDual_iff]'): simp made no progress

@@ -11,12 +11,12 @@ rw [inf_comm, inf_himp, inf_comm]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -125,6 +125,50 @@ rw [inf_comm, sdiff_inf_self]
 
 **lean_error:** tail step 1/1 ('rw [inf_comm, sdiff_inf_self]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 4.9s, verify 0.1s, in=241, out=135)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact hi_inf_eq a b
+```
+
+**lean_error:** tail step 1/1 ('exact hi_inf_eq a b'): unknown identifier 'hi_inf_eq'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.4s, verify 0.1s, in=241, out=190)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_ihp_eq_left, inf_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [inf_comm, inf_ihp_eq_left, inf_comm]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.2s, verify 0.1s, in=241, out=323)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [inf_le_iff, le_iff_inf_le]
+```
+
+**lean_error:** tail step 1/1 ('simp only [inf_le_iff, le_iff_inf_le]'): unknown identifier 'le_iff_inf_le'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.2s, verify 0.1s, in=241, out=363)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp_self]
+```
+
+**lean_error:** tail step 1/1 ('rw [inf_comm, inf_himp_self]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 11.4s, verify 0.1s, in=636, out=535)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -191,6 +235,42 @@ rw [inf_comm, inf_himp, inf_comm]
 ```
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 2.5s, verify 0.1s, in=636, out=17)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 4.4s, verify 0.1s, in=636, out=127)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.2s, verify 0.1s, in=636, out=201)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 7.9s, verify 0.1s, in=636, out=239)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 9.0s, verify 0.1s, in=636, out=274)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 
@@ -273,6 +353,42 @@ simp_rw [inf_comm, inf_himp, inf_comm]
 
 **lean_error:** tail step 1/1 ('simp_rw [inf_comm, inf_himp, inf_comm]'): no goals to be solved
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.5s, verify 0.1s, in=1078, out=156)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 10.1s, verify 0.1s, in=1078, out=187)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 12.5s, verify 0.1s, in=1078, out=213)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 13.5s, verify 0.1s, in=1078, out=258)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 11.4s, verify 0.1s, in=1102, out=534)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -337,6 +453,42 @@ rw [inf_comm, inf_himp, inf_comm]
 ```
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 3.5s, verify 0.1s, in=1102, out=17)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 6.6s, verify 0.1s, in=1102, out=196)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 7.0s, verify 0.1s, in=1102, out=210)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.2s, verify 0.1s, in=1102, out=248)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.9s, verify 0.1s, in=1102, out=267)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 

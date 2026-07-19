@@ -11,12 +11,12 @@ rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✓ ✓ | ✓ ✓ ✘ ✓ |
-| `hint:3` | ✘ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✘ | ✓ ✓ ✘ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✓ ✓ | ✓ ✓ ✘ ✓ | ✓ ✓ ✘ ✘ |
+| `hint:3` | ✘ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ | ✓ ✘ ✓ ✘ |
+| `noise:3` | ✓ ✓ ✓ ✘ | ✓ ✓ ✘ ✓ | ✘ ✓ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -117,6 +117,51 @@ simp [Separable, separable_def, hf, ← map_map, ← Nodup.coe_toMultiset, ←
 
 **lean_error:** tail step 1/3 ('simp [Separable, separable_def, hf, ← map_map, ← Nodup.coe_toMultiset, ←'): <stdin>:1:72: unexpected end of input
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 5.9s, verify 0.1s, in=266, out=182)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Multiset.Nodup.aroots_iff hf h
+```
+
+**lean_error:** tail step 1/1 ('exact Multiset.Nodup.aroots_iff hf h'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.1s, verify 0.1s, in=266, out=282)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Separable.nodup_roots h
+```
+
+**lean_error:** tail step 1/1 ('exact Separable.nodup_roots h'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.7s, verify 0.1s, in=266, out=334)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [nodup_roots_iff_separable (map (algebraMap F K) f) h, separable_map_iff]
+```
+
+**lean_error:** tail step 1/1 ('rw [nodup_roots_iff_separable (map (algebraMap F K) f) h, separable_map_iff]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 15.4s, verify 0.1s, in=266, out=497)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [mem_roots_of_splits (RingHom.id K) h] using
+  separable_iff_derivative_ne_zero_and_roots_nodup (map (algebraMap F K) f) (map_ne_zero hf)
+```
+
+**lean_error:** tail step 1/2 ('simpa only [mem_roots_of_splits (RingHom.id K) h] using'): <stdin>:1:55: unexpected end of input
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 86.3s, verify 0.1s, in=1086, out=3494)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -196,6 +241,47 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 10.6s, verify 0.1s, in=1086, out=332)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa only [aroots, nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 10.8s, verify 0.1s, in=1086, out=337)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map (algebraMap F K)]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.8s, verify 0.1s, in=1086, out=406)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa only [aroots, RingHom.id_comp] using
+  (nodup_roots_iff_of_splits (map_ne_zero hf) h).trans (separable_map <| algebraMap F K)
+```
+
+**lean_error:** tail step 1/2 ('simpa only [aroots, RingHom.id_comp] using'): <stdin>:1:42: unexpected end of input
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.5s, verify 0.1s, in=1086, out=500)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [← nodup_roots_iff_of_splits (map_ne_zero hf) h, ← Separable.map_iff]
+```
+
+**lean_error:** tail step 1/1 ('rw [← nodup_roots_iff_of_splits (map_ne_zero hf) h, ← Separable.map_iff]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 62.0s, verify 0.1s, in=3423, out=1545)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -274,6 +360,46 @@ exact (nodup_roots_iff_of_splits (map_ne_zero hf) h).trans (separable_map (algeb
 
 **lean_error:** tail step 1/1 ('exact (nodup_roots_iff_of_splits (map_ne_zero hf) h).trans (separable_map (algebraMap F K)).symm'): application type mismatch
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 17.7s, verify 0.1s, in=3423, out=298)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map] using nodup_roots_iff_of_splits (map_ne_zero hf) h
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 19.2s, verify 0.1s, in=3423, out=302)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← map_ne_zero hf, nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
+```
+
+**lean_error:** tail step 1/1 ('rw [← map_ne_zero hf, nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 19.7s, verify 0.1s, in=3423, out=322)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [Polynomial.separable_map] using nodup_roots_iff_of_splits (map_ne_zero hf) h
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 20.2s, verify 0.1s, in=3423, out=494)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa only [map_ne_zero hf, separable_map, ← aroots] using nodup_roots_iff_of_splits (map_ne_zero hf) h
+```
+
+**lean_error:** tail step 1/1 ('simpa only [map_ne_zero hf, separable_map, ← aroots] using nodup_roots_iff_of_splits (map_ne_zero hf) h'): invalid '←' modifier, 'Polynomial.aroots' is a declaration name to be unfolded
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 23.4s, verify 0.1s, in=3449, out=924)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -349,3 +475,44 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```lean
 rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.8s, verify 0.1s, in=3449, out=372)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]
+```
+
+**lean_error:** tail step 1/1 ('rw [← nodup_roots_iff_of_splits (map_ne_zero hf) h, separable_map]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 12.1s, verify 0.1s, in=3449, out=380)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [separable_map, nodup_roots_iff_of_splits (map_ne_zero hf) h]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 13.2s, verify 0.1s, in=3449, out=419)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact (nodup_roots_iff_of_splits (map_ne_zero hf) h).trans (separable_map (algebraMap F K))
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 21.9s, verify 0.1s, in=3449, out=749)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, roots_map, Multiset.nodup_map_iff,
+  separable_map]
+```
+
+**lean_error:** tail step 1/2 ('rw [nodup_roots_iff_of_splits (map_ne_zero hf) h, roots_map, Multiset.nodup_map_iff,'): <stdin>:1:84: unexpected end of input; expected ']'

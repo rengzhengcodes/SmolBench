@@ -11,9 +11,9 @@ exact smul_comm _ _ _
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -106,3 +106,47 @@ simp [mul_smul, ← Algebra.smul_mul_assoc]
 ```
 
 **lean_error:** tail step 1/1 ('simp [mul_smul, ← Algebra.smul_mul_assoc]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.5s, verify 0.1s, in=451, out=226)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply smul_autEquivRootsOfUnity
+```
+
+**lean_error:** tail step 1/1 ('apply smul_autEquivRootsOfUnity'): unknown identifier 'smul_autEquivRootsOfUnity'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.3s, verify 0.1s, in=451, out=256)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact AlgEquiv.map_smul _ _ _
+```
+
+**lean_error:** tail step 1/1 ('exact AlgEquiv.map_smul _ _ _'): typeclass instance problem is stuck, it is often due to metavariables
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 10.0s, verify 0.1s, in=451, out=310)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Aut.coeFn_mul]
+```
+
+**lean_error:** tail step 1/1 ('simp [Aut.coeFn_mul]'): unknown identifier 'Aut.coeFn_mul'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.2s, verify 0.2s, in=451, out=318)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [Aut.smul_def, AlgEquiv.commutes]
+```
+
+**lean_error:** tail step 1/1 ('rw [Aut.smul_def, AlgEquiv.commutes]'): tactic 'rewrite' failed, equality or iff proof expected

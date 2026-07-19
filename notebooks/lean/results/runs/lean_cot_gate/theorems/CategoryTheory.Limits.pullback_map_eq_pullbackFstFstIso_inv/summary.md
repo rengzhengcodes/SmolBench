@@ -11,12 +11,12 @@ simp only [pullbackFstFstIso_inv, lift_snd_assoc, lift_fst]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | · ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | · ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -117,6 +117,48 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 9.6s, verify 0.1s, in=423, out=263)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 11.3s, verify 0.1s, in=423, out=319)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 30.7s, verify 0.1s, in=423, out=947)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [pullback.hom_ext, assoc, Iso.inv_hom_id, pullback.condition,
+  pullbackFstFstIso_hom_snd, pullbackFstFstIso_hom_fst, map_fst, map_snd,
+  pullbackFstFstIso_inv_snd, pullbackFstFstIso_inv_fst, Iso.hom_inv_id, pullback.condition]
+```
+
+**lean_error:** tail step 1/3 ('simp only [pullback.hom_ext, assoc, Iso.inv_hom_id, pullback.condition,'): <stdin>:1:71: unexpected end of input; expected ']'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 37.7s, verify 0.1s, in=423, out=1180)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [pullbackFstFstIso_hom, map_fst]
+```
+
+**lean_error:** tail step 1/1 ('simp [pullbackFstFstIso_hom, map_fst]'): unknown identifier 'map_fst'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 109.9s, verify 0.4s, in=870, out=4042)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -207,6 +249,42 @@ simp only [← cancel_mono i₃, assoc, pullbackFstFstIso_inv, pullback.lift_fst
 
 **lean_error:** tail step 1/2 ('simp only [← cancel_mono i₃, assoc, pullbackFstFstIso_inv, pullback.lift_fst,'): <stdin>:1:77: unexpected end of input; expected ']'
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 10.2s, verify 0.1s, in=870, out=282)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [pullback.lift_fst, e₁]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 14.5s, verify 0.1s, in=870, out=423)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [pullback.lift_fst]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 14.7s, verify 0.1s, in=870, out=429)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [map, pullbackFstFstIso_inv, pullback.lift_snd_assoc, pullback.lift_fst]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 20.7s, verify 0.1s, in=870, out=634)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [map, pullbackFstFstIso_inv, pullback.lift_snd_assoc, pullback.lift_fst]
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 221.3s, verify 0.1s, in=1006, out=4976)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -294,6 +372,42 @@ pullback.lift_snd, ← e₁, ← e₂]
 
 **lean_error:** tail step 1/2 ("simp only [← cancel_mono f', Category.assoc, pullbackFstFstIso_inv, pullback.lift_fst,"): <stdin>:1:86: unexpected end of input; expected ']'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 17.2s, verify 0.6s, in=1006, out=222)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [pullbackFstFstIso_inv, pullback.lift_snd_assoc, pullback.lift_fst]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 20.2s, verify 0.1s, in=1006, out=348)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [pullback.lift_snd_assoc, pullback.lift_fst]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 20.5s, verify 0.1s, in=1006, out=359)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [pullback.lift_fst, pullback.lift_snd_assoc, pullbackFstFstIso_inv]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 24.9s, verify 0.1s, in=1006, out=476)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [pullback.lift_snd_assoc, pullbackFstFstIso_inv, pullback.lift_fst]
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 102.2s, verify 0.1s, in=1030, out=3763)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -378,4 +492,40 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [pullback.map, pullbackFstFstIso_inv]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.7s, verify 0.1s, in=1030, out=264)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [pullback.lift_fst, pullback.lift_snd_assoc, pullbackFstFstIso_inv]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 10.9s, verify 0.1s, in=1030, out=304)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [← Category.assoc, pullbackFstFstIso_inv, pullback.lift_fst] <;> aesop_cat
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 15.1s, verify 0.1s, in=1030, out=442)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [map, pullbackFstFstIso_inv, pullback.lift_fst, pullback.lift_snd_assoc]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 17.8s, verify 0.2s, in=1030, out=517)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+ext <;> simp [pullback.lift_fst, pullback.lift_snd_assoc, pullbackFstFstIso_inv]
 ```

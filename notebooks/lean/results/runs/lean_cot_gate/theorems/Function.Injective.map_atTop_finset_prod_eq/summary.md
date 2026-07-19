@@ -11,12 +11,12 @@ exact ⟨_, (image_subset_iff_subset_preimage _).1 ht, rfl⟩
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -122,6 +122,50 @@ exact ⟨Finset.preimage t g this, fun x hx => mem_preimage.2 (ht <| mem_image_o
 
 **lean_error:** tail step 1/2 ('exact ⟨Finset.preimage t g this, fun x hx => mem_preimage.2 (ht <| mem_image_of_mem _ hx),'): <stdin>:1:90: unexpected end of input; expected '⟩'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.1s, verify 0.1s, in=361, out=287)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨Finset.preimage t g ..., image_subset_iff.1 ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨Finset.preimage t g ..., image_subset_iff.1 ht, rfl⟩'): <stdin>:1:27: expected '⟩'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.8s, verify 0.1s, in=361, out=375)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [ht, hg]
+```
+
+**lean_error:** tail step 1/1 ('simp [ht, hg]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.9s, verify 0.1s, in=361, out=457)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨_, Finset.subset_preimage_image g s, prod_preimage_of_image_subset ht hg hf⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨_, Finset.subset_preimage_image g s, prod_preimage_of_image_subset ht hg hf⟩'): internal exception #7
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.4s, verify 0.1s, in=361, out=514)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨s, Finset.subset.refl s, rw [prod_image', prod_subset ht fun x _ hx ↦ hf x <| hx.mt <| Set.mem_range.2 ⟨x, hx⟩, prod_preimage_of_image_subset]⟩
+```
+
+**lean_error:** tail step 1/1 ("exact ⟨s, Finset.subset.refl s, rw [prod_image', prod_subset ht fun x _ hx ↦ hf x <| hx.mt <| Set.mem_range.2 ⟨x, hx⟩, prod_preimage_of_image_subset]⟩"): unknown constant 'Finset.subset.refl'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 59.9s, verify 0.1s, in=1092, out=2392)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -212,6 +256,50 @@ simp only [Finset.prod_preimage _ _ (hg.injOn _), Finset.prod_image (hg.injOn _)
 ```
 
 **lean_error:** tail step 1/3 ('simp only [Finset.prod_preimage _ _ (hg.injOn _), Finset.prod_image (hg.injOn _),'): <stdin>:1:81: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.0s, verify 0.1s, in=1092, out=191)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact image_subset_iff_subset_preimage ht rfl
+```
+
+**lean_error:** tail step 1/1 ('exact image_subset_iff_subset_preimage ht rfl'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.1s, verify 0.1s, in=1092, out=216)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa using Finset.image_subset_iff_subset_preimage (hg.injOn _) ht
+```
+
+**lean_error:** tail step 1/1 ('simpa using Finset.image_subset_iff_subset_preimage (hg.injOn _) ht'): function expected at
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.4s, verify 0.1s, in=1092, out=319)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨_, Finset.image_subset_iff_subset_preimage hg.injOn.1 ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨_, Finset.image_subset_iff_subset_preimage hg.injOn.1 ht, rfl⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.7s, verify 0.1s, in=1092, out=373)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨ht.image_subset_iff_subset_preimage.1 rfl, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨ht.image_subset_iff_subset_preimage.1 rfl, rfl⟩'): invalid field 'image_subset_iff_subset_preimage', the environment does not contain 'HasSubset.Subset.image_subset_iff_subset_preimage'
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 147.7s, verify 0.2s, in=2095, out=3180)
 
@@ -313,6 +401,50 @@ simp only [Finset.image_subset_iff_subset_preimage, hg.injOn, Finset.preimage_im
 
 **lean_error:** tail step 1/3 ('simp only [Finset.image_subset_iff_subset_preimage, hg.injOn, Finset.preimage_image,'): <stdin>:1:84: unexpected end of input; expected ']'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 14.0s, verify 0.1s, in=2095, out=255)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [Finset.image_subset_iff_subset_preimage _ (hg.injOn _), ht, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp [Finset.image_subset_iff_subset_preimage _ (hg.injOn _), ht, rfl]'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.4s, verify 0.1s, in=2095, out=297)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [Finset.image_subset_iff_subset_preimage (hg.injOn _)]
+```
+
+**lean_error:** tail step 1/1 ('rw [Finset.image_subset_iff_subset_preimage (hg.injOn _)]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.8s, verify 0.1s, in=2095, out=311)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact image_subset_iff_subset_preimage _ rfl
+```
+
+**lean_error:** tail step 1/1 ('exact image_subset_iff_subset_preimage _ rfl'): function expected at
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 20.1s, verify 0.1s, in=2095, out=427)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨s.preimage g (hg.injOn _), Finset.image_subset_iff_subset_preimage (hg.injOn _).rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨s.preimage g (hg.injOn _), Finset.image_subset_iff_subset_preimage (hg.injOn _).rfl⟩'): application type mismatch
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 85.9s, verify 0.1s, in=2122, out=3301)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -403,3 +535,47 @@ simp only [Finset.image_subset_iff_subset_preimage, subset_iff, Finset.mem_preim
 ```
 
 **lean_error:** tail step 1/2 ('simp only [Finset.image_subset_iff_subset_preimage, subset_iff, Finset.mem_preimage, exists_imp,'): <stdin>:1:96: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.0s, verify 0.1s, in=2122, out=214)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [Finset.image_subset_iff_subset_preimage hg.injOn, rfl]
+```
+
+**lean_error:** tail step 1/1 ('simp only [Finset.image_subset_iff_subset_preimage hg.injOn, rfl]'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.0s, verify 0.1s, in=2122, out=284)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Finset.image_subset_iff_subset_preimage _ rfl, rfl]
+```
+
+**lean_error:** tail step 1/1 ('rw [Finset.image_subset_iff_subset_preimage _ rfl, rfl]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.2s, verify 0.1s, in=2122, out=319)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨ht.image_subset_iff_subset_preimage (hg.injOn _), rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨ht.image_subset_iff_subset_preimage (hg.injOn _), rfl⟩'): invalid field 'image_subset_iff_subset_preimage', the environment does not contain 'HasSubset.Subset.image_subset_iff_subset_preimage'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.1s, verify 0.1s, in=2122, out=387)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact ⟨_, Finset.image_subset_iff_subset_preimage (hg.injOn _).mono left_subset_univ ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨_, Finset.image_subset_iff_subset_preimage (hg.injOn _).mono left_subset_univ ht, rfl⟩'): application type mismatch

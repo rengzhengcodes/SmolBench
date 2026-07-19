@@ -12,12 +12,12 @@ rw [Iso.inv_comp_eq, ← Category.assoc, Iso.eq_comp_inv,
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ · |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ · | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -135,6 +135,50 @@ inst✝² : Category.{v₁, u₁} J
 ...
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.6s, verify 0.1s, in=379, out=237)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.4s, verify 0.1s, in=379, out=290)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [limitObjIsoLimitCompEvaluation, limitObjIsoOfFaithful_map]
+```
+
+**lean_error:** tail step 1/1 ('simp only [limitObjIsoLimitCompEvaluation, limitObjIsoOfFaithful_map]'): unknown identifier 'limitObjIsoOfFaithful_map'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.9s, verify 0.1s, in=379, out=412)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [whiskerLeft_eq_comp, limitObjIsoLimitCompEvaluation_inv_naturality F i j f]
+```
+
+**lean_error:** tail step 1/1 ('simp only [whiskerLeft_eq_comp, limitObjIsoLimitCompEvaluation_inv_naturality F i j f]'): unknown identifier 'whiskerLeft_eq_comp'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 17.1s, verify 0.1s, in=379, out=550)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [limMap_eq, Iso.naturality_1]
+```
+
+**lean_error:** tail step 1/1 ('simp only [limMap_eq, Iso.naturality_1]'): unknown identifier 'limMap_eq'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 162.4s, verify 0.2s, in=1136, out=6133)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -233,6 +277,54 @@ simp only [limit_map_limitObjIsoLimitCompEvaluation_hom, Iso.inv_hom_id_assoc]
 ```
 
 **lean_error:** tail step 1/1 ('simp only [limit_map_limitObjIsoLimitCompEvaluation_hom, Iso.inv_hom_id_assoc]'): simp made no progress
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.3s, verify 0.1s, in=1136, out=491)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:60: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.4s, verify 0.1s, in=1136, out=529)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:75: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.8s, verify 0.1s, in=1136, out=539)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom F f]
+```
+
+**lean_error:** tail step 1/2 ('rw [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:53: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 26.1s, verify 0.1s, in=1136, out=913)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [← Iso.eq_comp_inv, Category.assoc, Category.assoc, Iso.inv_hom_id_assoc,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('rw [← Iso.eq_comp_inv, Category.assoc, Category.assoc, Iso.inv_hom_id_assoc,'): <stdin>:1:76: unexpected end of input; expected ']'
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 269.1s, verify 0.1s, in=1739, out=4391)
 
@@ -335,6 +427,51 @@ simp [limit_map_limitObjIsoLimitCompEvaluation_hom]
 
 **lean_error:** tail step 1/1 ('simp [limit_map_limitObjIsoLimitCompEvaluation_hom]'): simp made no progress
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 19.6s, verify 0.1s, in=1739, out=403)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:70: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 22.5s, verify 0.1s, in=1739, out=436)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [← CategoryTheory.Iso.eq_comp_inv, CategoryTheory.Category.assoc]
+```
+
+**lean_error:** tail step 1/1 ('simp [← CategoryTheory.Iso.eq_comp_inv, CategoryTheory.Category.assoc]'): simp made no progress
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 23.3s, verify 0.2s, in=1739, out=487)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inv_comp_eq, Category.assoc, eq_comp_inv, limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/1 ('rw [inv_comp_eq, Category.assoc, eq_comp_inv, limit_map_limitObjIsoLimitCompEvaluation_hom]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 23.5s, verify 0.2s, in=1739, out=375)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [inv_comp_eq, Category.assoc, eq_comp_inv, limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/1 ('rw [inv_comp_eq, Category.assoc, eq_comp_inv, limit_map_limitObjIsoLimitCompEvaluation_hom]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 173.8s, verify 0.2s, in=1763, out=6624)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -426,3 +563,51 @@ simp [← Iso.inv_comp_eq, ← Category.assoc, limit_map_limitObjIsoLimitCompEva
 ```
 
 **lean_error:** tail step 1/1 ('simp [← Iso.inv_comp_eq, ← Category.assoc, limit_map_limitObjIsoLimitCompEvaluation_hom]'): simp made no progress
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.2s, verify 0.1s, in=1763, out=316)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp [Iso.inv_comp_eq, CategoryTheory.Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:70: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.0s, verify 0.1s, in=1763, out=409)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [CategoryTheory.Iso.inv_comp_eq, CategoryTheory.Category.assoc,
+  CategoryTheory.Iso.eq_comp_inv, CategoryTheory.Limits.limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp only [CategoryTheory.Iso.inv_comp_eq, CategoryTheory.Category.assoc,'): <stdin>:1:73: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.1s, verify 0.1s, in=1763, out=517)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← Category.assoc, Iso.eq_comp_inv, Category.assoc, limit_map_limitObjIsoLimitCompEvaluation_hom,
+    Iso.inv_comp_eq]
+```
+
+**lean_error:** tail step 1/2 ('rw [← Category.assoc, Iso.eq_comp_inv, Category.assoc, limit_map_limitObjIsoLimitCompEvaluation_hom,'): <stdin>:1:100: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 23.7s, verify 0.1s, in=1763, out=795)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,
+  limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Iso.inv_comp_eq, Category.assoc, Iso.eq_comp_inv,'): <stdin>:1:60: unexpected end of input; expected ']'

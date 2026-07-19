@@ -12,12 +12,12 @@ simp_rw [← coe_iterateFrobeniusEquiv, roots_expand_pow, Multiset.map_nsmul,
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -135,6 +135,50 @@ rw [roots_expand, map_multiset_map, ← iterateFrobenius_map, map_multiset_map, 
 
 **lean_error:** tail step 1/1 ('rw [roots_expand, map_multiset_map, ← iterateFrobenius_map, map_multiset_map, ← pow_smul]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.3s, verify 0.1s, in=288, out=216)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [map_const_mul]
+```
+
+**lean_error:** tail step 1/1 ('rw [map_const_mul]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 11.4s, verify 0.1s, in=288, out=299)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [← roots_expand, map_frobenius_pow_nsmul]
+```
+
+**lean_error:** tail step 1/1 ('simp only [← roots_expand, map_frobenius_pow_nsmul]'): unknown identifier 'map_frobenius_pow_nsmul'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 19.8s, verify 0.1s, in=288, out=553)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [roots_expand, map_smul]
+```
+
+**lean_error:** tail step 1/1 ('simp [roots_expand, map_smul]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 22.5s, verify 0.1s, in=288, out=625)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [roots_expand R p n f, zsmul_eq_pow]
+```
+
+**lean_error:** tail step 1/1 ('rw [roots_expand R p n f, zsmul_eq_pow]'): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 84.6s, verify 0.1s, in=1402, out=3450)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -249,6 +293,54 @@ calc
 
 **lean_error:** tail step 1/10 ('calc'): <stdin>:1:4: unexpected end of input
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.6s, verify 0.1s, in=1402, out=405)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,
+  coe_iterateFrobeniusEquiv, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,'): <stdin>:1:80: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.3s, verify 0.1s, in=1402, out=427)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,
+  RingEquiv.apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,'): <stdin>:1:89: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.4s, verify 0.1s, in=1402, out=455)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [coe_iterateFrobeniusEquiv, roots_expand_pow, Multiset.map_nsmul, Multiset.map_map,
+  Function.comp_apply, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('simp only [coe_iterateFrobeniusEquiv, roots_expand_pow, Multiset.map_nsmul, Multiset.map_map,'): <stdin>:1:93: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 24.7s, verify 0.1s, in=1402, out=696)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,
+  RingEquiv.apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,'): <stdin>:1:89: unexpected end of input; expected ']'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 232.0s, verify 0.1s, in=3009, out=5420)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -352,6 +444,54 @@ simp only [roots_expand_pow, coe_iterateFrobeniusEquiv, map_nsmul, map_map, Func
 ```
 
 **lean_error:** tail step 1/2 ('simp only [roots_expand_pow, coe_iterateFrobeniusEquiv, map_nsmul, map_map, Function.comp,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 23.2s, verify 0.1s, in=3009, out=427)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map, Function.comp_apply, coe_iterateFrobeniusEquiv,
+  RingEquiv.apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, map_nsmul, map_map, Function.comp_apply, coe_iterateFrobeniusEquiv,'): <stdin>:1:89: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 24.0s, verify 0.1s, in=3009, out=366)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,
+  RingEquiv.apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, map_nsmul, map_map, coe_iterateFrobeniusEquiv, Function.comp_apply,'): <stdin>:1:89: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 30.2s, verify 0.1s, in=3009, out=478)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,
+  Function.comp_apply, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,'): <stdin>:1:86: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 30.8s, verify 0.1s, in=3009, out=475)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,
+  coe_iterateFrobeniusEquiv, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,'): <stdin>:1:80: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 96.5s, verify 0.1s, in=3032, out=3930)
 
@@ -459,3 +599,51 @@ rw [roots_expand_pow, ← map_nsmul, ← map_map, Function.comp_apply,
 ```
 
 **lean_error:** tail step 1/2 ('rw [roots_expand_pow, ← map_nsmul, ← map_map, Function.comp_apply,'): <stdin>:1:66: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.6s, verify 0.1s, in=3032, out=439)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,
+  Function.comp_apply, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,'): <stdin>:1:91: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.7s, verify 0.1s, in=3032, out=441)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Polynomial.roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,
+  Function.comp_apply, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('rw [Polynomial.roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, coe_iterateFrobeniusEquiv,'): <stdin>:1:97: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 18.3s, verify 0.1s, in=3032, out=483)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [roots_expand_pow, map_nsmul, map_map, Function.comp_apply,
+  coe_iterateFrobeniusEquiv, RingEquiv.apply_symm_apply, map_id']
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [roots_expand_pow, map_nsmul, map_map, Function.comp_apply,'): <stdin>:1:67: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 23.8s, verify 0.1s, in=3032, out=666)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,
+  coe_iterateFrobeniusEquiv, RingEquiv.apply_symm_apply, Multiset.map_id']
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [roots_expand_pow, Multiset.map_nsmul, Multiset.map_map, Function.comp_apply,'): <stdin>:1:85: unexpected end of input; expected ']'

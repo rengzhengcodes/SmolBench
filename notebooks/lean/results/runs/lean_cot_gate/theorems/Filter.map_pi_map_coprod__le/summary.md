@@ -11,9 +11,9 @@ exact ⟨{ x : α i | m i x ∈ t }, H, fun x hx => hH hx⟩
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -118,3 +118,45 @@ exact ⟨t, H, fun x hx => hH hx⟩
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨t, H, fun x hx => hH hx⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.1s, verify 0.1s, in=421, out=285)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa using H
+```
+
+**lean_error:** tail step 1/1 ('simpa using H'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.7s, verify 0.1s, in=421, out=327)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨_, H, preimage_mono hH⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨_, H, preimage_mono hH⟩'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 37.5s, verify 0.1s, in=421, out=1440)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨_, H, λ k hk => hH (by simpa using hk)⟩
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 1025.1s, verify 0.0s, in=421, out=32768)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+(empty)
+```
+
+**lean_error:** empty tail

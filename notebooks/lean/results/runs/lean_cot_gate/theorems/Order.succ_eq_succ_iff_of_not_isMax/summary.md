@@ -12,12 +12,12 @@ rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✘ |
-| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -139,6 +139,51 @@ rw [← pred_succ a, ← pred_succ b, pred_inj (succ_ne_min _)]
 
 **lean_error:** tail step 1/1 ('rw [← pred_succ a, ← pred_succ b, pred_inj (succ_ne_min _)]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.8s, verify 0.1s, in=236, out=225)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨succ_injective ha hb, congr_arg succ⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨succ_injective ha hb, congr_arg succ⟩'): unknown identifier 'succ_injective'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.3s, verify 0.1s, in=236, out=332)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [eq_succ_iff, eq_comm, and_comm] using SuccOrder.succ_injective
+```
+
+**lean_error:** tail step 1/1 ('simpa only [eq_succ_iff, eq_comm, and_comm] using SuccOrder.succ_injective'): unknown identifier 'eq_succ_iff'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.5s, verify 0.1s, in=236, out=340)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [iff_iff_impls, Succ_injective <| succ_ne_isMax ha, congr_arg succ]
+```
+
+**lean_error:** tail step 1/1 ('simp only [iff_iff_impls, Succ_injective <| succ_ne_isMax ha, congr_arg succ]'): unknown identifier 'iff_iff_impls'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 23.6s, verify 0.1s, in=236, out=771)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [Ne.eq_iff, Ne.eq_iff, Ne.eq_iff, Ne.eq_iff, not_iff_comm, or_comm,
+  lt_succ.1 ha.not_eq', lt_succ.1 hb.not_eq']
+```
+
+**lean_error:** tail step 1/2 ('rw [Ne.eq_iff, Ne.eq_iff, Ne.eq_iff, Ne.eq_iff, not_iff_comm, or_comm,'): <stdin>:1:70: unexpected end of input; expected ']'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 62.9s, verify 0.1s, in=907, out=2711)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -232,6 +277,54 @@ simp only [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
 
 **lean_error:** tail step 1/2 ('simp only [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:65: unexpected end of input; expected ']'
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.5s, verify 0.1s, in=907, out=270)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,
+  Order.succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:82: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.3s, verify 0.1s, in=907, out=295)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
+  succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:76: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.4s, verify 0.1s, in=907, out=305)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rwa [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax,
+  Order.succ_lt_succ_iff_of_not_isMax]
+```
+
+**lean_error:** tail step 1/2 ('rwa [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax,'): <stdin>:1:77: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.7s, verify 0.1s, in=907, out=352)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, @and_congr _ _ (succ_le_succ_iff_of_not_isMax ha hb),
+  @succ_lt_succ_iff_of_not_isMax _ _ _ _ ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, @and_congr _ _ (succ_le_succ_iff_of_not_isMax ha hb),'): <stdin>:1:93: unexpected end of input; expected ']'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 158.9s, verify 0.2s, in=1618, out=4960)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -317,6 +410,54 @@ simp only [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
 ```
 
 **lean_error:** tail step 1/2 ('simp only [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:65: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.5s, verify 0.1s, in=1618, out=247)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt,
+    Order.succ_le_succ_iff_of_not_isMax ha hb, Order.succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt,'): <stdin>:1:39: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 16.5s, verify 0.1s, in=1618, out=250)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,
+  Order.succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:82: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 17.5s, verify 0.1s, in=1618, out=325)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
+  succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:76: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 22.9s, verify 0.1s, in=1618, out=454)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax,
+    Order.succ_lt_succ_iff_of_not_isMax]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax,'): <stdin>:1:76: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 47.2s, verify 0.2s, in=1645, out=2066)
 
@@ -406,3 +547,51 @@ simp_rw [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
 ```
 
 **lean_error:** tail step 1/2 ('simp_rw [eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:63: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.5s, verify 0.1s, in=1645, out=272)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,
+  Order.succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('simp only [eq_iff_le_not_lt, Order.succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:71: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.9s, verify 0.1s, in=1645, out=288)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
+  succ_lt_succ_iff_of_not_isMax ha hb, rfl]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:76: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.2s, verify 0.1s, in=1645, out=295)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
+  succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:76: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.4s, verify 0.1s, in=1645, out=339)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,
+  succ_lt_succ_iff_of_not_isMax ha hb]
+```
+
+**lean_error:** tail step 1/2 ('rw [eq_iff_le_not_lt, eq_iff_le_not_lt, succ_le_succ_iff_of_not_isMax ha hb,'): <stdin>:1:76: unexpected end of input; expected ']'

@@ -11,12 +11,12 @@ filter_upwards [mem_pi_of_mem i hi] with x using mt fun h => h i trivial
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -124,6 +124,51 @@ exact mem_pi.2 (Set.forall_mem_univ.2 fun i => mem_compl_iff.2 (mem_pi.1 (mem_un
 
 **lean_error:** tail step 1/1 ('exact mem_pi.2 (Set.forall_mem_univ.2 fun i => mem_compl_iff.2 (mem_pi.1 (mem_univ i) hi))'): unknown constant 'Set.forall_mem_univ'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.9s, verify 0.1s, in=276, out=412)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [compl_pi_univ, mem_pi.2 fun j => if h : j = i then h.symm ▸ hi else univ_mem]
+```
+
+**lean_error:** tail step 1/1 ('simp [compl_pi_univ, mem_pi.2 fun j => if h : j = i then h.symm ▸ hi else univ_mem]'): unknown identifier 'compl_pi_univ'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.3s, verify 0.1s, in=276, out=458)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [Set.compl_pi_univ]
+  using Set.pi_mem_pi (fun j => if h : j = i then h.symm ▸ hi else Filter.univ_mem (f j))
+```
+
+**lean_error:** tail step 1/2 ('simpa only [Set.compl_pi_univ]'): unknown constant 'Set.compl_pi_univ'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 32.2s, verify 1.0s, in=276, out=1040)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact compl_mem_pi s i hi
+```
+
+**lean_error:** tail step 1/1 ('exact compl_mem_pi s i hi'): unknown identifier 'compl_mem_pi'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 59.4s, verify 0.1s, in=276, out=2047)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [Set.compl_pi univ s] using pi_mem_pi fun i _ => hi i
+```
+
+**lean_error:** tail step 1/1 ('simpa only [Set.compl_pi univ s] using pi_mem_pi fun i _ => hi i'): unknown constant 'Set.compl_pi'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 79.5s, verify 0.2s, in=801, out=3253)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -217,6 +262,50 @@ exact mt (fun h => mem_pi_of_mem i h hi) trivial
 ```
 
 **lean_error:** tail step 1/1 ('exact mt (fun h => mem_pi_of_mem i h hi) trivial'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.5s, verify 0.1s, in=801, out=209)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact mem_pi_of_mem i hi
+```
+
+**lean_error:** tail step 1/1 ('exact mem_pi_of_mem i hi'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.8s, verify 0.1s, in=801, out=217)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact trivial (mt (Filter.mem_pi_of_mem i hi) _)
+```
+
+**lean_error:** tail step 1/1 ('exact trivial (mt (Filter.mem_pi_of_mem i hi) _)'): function expected at
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.7s, verify 0.1s, in=801, out=312)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact mt (fun h => False.elim trivial) (mem_pi_of_mem i hi)
+```
+
+**lean_error:** tail step 1/1 ('exact mt (fun h => False.elim trivial) (mem_pi_of_mem i hi)'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.5s, verify 0.2s, in=801, out=364)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact (mem_pi_of_mem i hi).mono (fun x hx => hx i (mem_univ _))
+```
+
+**lean_error:** tail step 1/1 ('exact (mem_pi_of_mem i hi).mono (fun x hx => hx i (mem_univ _))'): invalid field 'mono', the environment does not contain 'Membership.mem.mono'
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 194.0s, verify 0.1s, in=973, out=3237)
 
@@ -313,6 +402,50 @@ exact mt (mem_pi_of_mem i hi) trivial
 ```
 
 **lean_error:** tail step 1/1 ('exact mt (mem_pi_of_mem i hi) trivial'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.3s, verify 0.1s, in=973, out=214)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact mt (Filter.mem_pi_of_mem i hi) trivial
+```
+
+**lean_error:** tail step 1/1 ('exact mt (Filter.mem_pi_of_mem i hi) trivial'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.3s, verify 0.1s, in=973, out=259)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact mt (mem_pi_of_mem i hi) trivial
+```
+
+**lean_error:** tail step 1/1 ('exact mt (mem_pi_of_mem i hi) trivial'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 17.1s, verify 0.1s, in=973, out=265)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact mt trivial (mem_pi_of_mem i hi)
+```
+
+**lean_error:** tail step 1/1 ('exact mt trivial (mem_pi_of_mem i hi)'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 21.9s, verify 0.1s, in=973, out=464)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact mt (trivial : (Set.pi univ s)ᶜ ⊆ eval i ⁻¹' (s i)ᶜ) (mem_pi_of_mem i hi)
+```
+
+**lean_error:** tail step 1/1 ("exact mt (trivial : (Set.pi univ s)ᶜ ⊆ eval i ⁻¹' (s i)ᶜ) (mem_pi_of_mem i hi)"): type mismatch
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 112.3s, verify 0.2s, in=997, out=4499)
 
@@ -412,3 +545,47 @@ exact mt (fun h => mem_pi_of_mem i h) hi
 ```
 
 **lean_error:** tail step 1/1 ('exact mt (fun h => mem_pi_of_mem i h) hi'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.0s, verify 0.1s, in=997, out=194)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact mem_pi_of_mem i hi
+```
+
+**lean_error:** tail step 1/1 ('exact mem_pi_of_mem i hi'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.3s, verify 0.1s, in=997, out=205)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact mt ((mem_pi_of_mem i hi).and trivial)
+```
+
+**lean_error:** tail step 1/1 ('exact mt ((mem_pi_of_mem i hi).and trivial)'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.1s, verify 0.1s, in=997, out=226)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact trivial
+```
+
+**lean_error:** tail step 1/1 ('exact trivial'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.7s, verify 0.1s, in=997, out=367)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact mt (mem_pi_of_mem i hi) trivial
+```
+
+**lean_error:** tail step 1/1 ('exact mt (mem_pi_of_mem i hi) trivial'): type mismatch

@@ -11,12 +11,12 @@ simp [toRightDerivedZero']
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | · ✘ ✘ ✘ | · ✓ ✓ ✘ |
-| `hint:2` | ✘ ✓ ✓ ✘ | · ✓ ✓ ✓ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✓ · ✓ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | · ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | · ✘ ✘ ✘ | · ✓ ✓ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✓ ✘ | · ✓ ✓ ✓ | ✓ ✓ ✓ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✓ · ✓ · | · ✓ ✓ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | · ✓ ✓ ✓ | ✓ · · ✓ |
 
 ## Per-cell detail
 
@@ -124,6 +124,50 @@ simp [P.toRightDerivedZero'_def]
 
 **lean_error:** tail step 1/1 ("simp [P.toRightDerivedZero'_def]"): invalid field 'toRightDerivedZero'_def', the environment does not contain 'CategoryTheory.InjectiveResolution.toRightDerivedZero'_def'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.5s, verify 0.1s, in=366, out=176)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply toRightDerivedZero'_iso_hom'_iCycles
+```
+
+**lean_error:** tail step 1/1 ("apply toRightDerivedZero'_iso_hom'_iCycles"): unknown identifier 'toRightDerivedZero'_iso_hom'_iCycles'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.7s, verify 0.1s, in=366, out=238)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero', iNext_ι_eq_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("simp [toRightDerivedZero', iNext_ι_eq_iCycles]"): unknown identifier 'iNext_ι_eq_iCycles'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.9s, verify 0.1s, in=366, out=244)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero'_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("simp [toRightDerivedZero'_iCycles]"): unknown identifier 'toRightDerivedZero'_iCycles'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 22.0s, verify 0.1s, in=366, out=815)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [toRightDerivedZero', iCycles_zero_map, extend'_ι]
+```
+
+**lean_error:** tail step 1/1 ("simp only [toRightDerivedZero', iCycles_zero_map, extend'_ι]"): unknown identifier 'iCycles_zero_map'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 9.2s, verify 0.2s, in=761, out=372)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -211,6 +255,44 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```lean
 simp [toRightDerivedZero']
 ```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.7s, verify 0.1s, in=761, out=240)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 7.8s, verify 0.1s, in=761, out=241)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [CategoryTheory.InjectiveResolution.toRightDerivedZero']
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.6s, verify 0.1s, in=761, out=265)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.8s, verify 0.2s, in=761, out=265)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [HomologicalComplex.liftCycles_comp_iCycles]
+```
+
+**lean_error:** tail step 1/1 ('rw [HomologicalComplex.liftCycles_comp_iCycles]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 90.7s, verify 0.3s, in=1474, out=2839)
 
@@ -318,6 +400,55 @@ inst✝² : HasInjectiveResolutions C
 ...
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 12.7s, verify 0.1s, in=1474, out=241)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 14.5s, verify 0.1s, in=1474, out=265)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 15.6s, verify 0.1s, in=1474, out=292)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.8s, verify 0.2s, in=1474, out=344)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [InjectiveResolution.toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("rw [InjectiveResolution.toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]"): tactic 'rewrite' failed, equality or iff proof expected
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 7.5s, verify 0.2s, in=1499, out=308)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -402,6 +533,64 @@ simp [toRightDerivedZero']
 ```
 
 ### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **success**  (gen 7.5s, verify 0.1s, in=1499, out=12)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 7.2s, verify 0.1s, in=1499, out=225)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [InjectiveResolution.toRightDerivedZero']
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 8.0s, verify 0.1s, in=1499, out=249)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 8.7s, verify 0.1s, in=1499, out=270)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 10.0s, verify 0.1s, in=1499, out=324)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 

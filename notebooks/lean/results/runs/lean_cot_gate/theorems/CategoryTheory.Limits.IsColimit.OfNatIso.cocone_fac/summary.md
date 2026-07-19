@@ -13,7 +13,7 @@ apply (coconeOfHom_fac _ _).symm
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · | ✘ ✘ · ✘ · ✘ ✘ X |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · | ✘ ✘ · ✘ · ✘ ✘ X ✘ |
 | `hint:2` | ✓ ✘ ✘ ✓ | ✘ ✘ · ✓ | ✓ ✓ ✘ ✓ ✓ ✓ ✓ ✘ |
 | `hint:3` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✘ ✓ ✘ ✘ ✘ |
 | `noise:3` | ✓ ✓ ✘ ✓ | ✓ ✘ ✓ ✓ | · ✓ ✓ ✘ ✓ ✓ ✓ ✓ |
@@ -245,6 +245,17 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance i-077d8082814a9172d is running). If the instance is running, your public IP probably changed and the security group is blocking you: re-run provision_spot_instance() to re-authorize your current IP.
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 22.9s, verify 0.2s, in=351, out=471)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [homOfCocone_eq]
+```
+
+**lean_error:** tail step 1/1 ('rw [homOfCocone_eq]'): tactic 'rewrite' failed, equality or iff proof expected
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **success**  (gen 79.6s, verify 0.1s, in=1068, out=3016)
 

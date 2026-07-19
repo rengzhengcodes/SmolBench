@@ -11,12 +11,12 @@ rw [coe_sInf, ← Set.image, sInf_image]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ · ✘ ✘ | · · ✘ ✘ |
-| `hint:2` | ✘ ✓ ✘ ✘ | ✘ · ✓ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✓ · |
-| `noise:3` | ✘ ✘ ✘ ✓ | ✘ · ✘ · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ · ✘ ✘ | · · ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✘ ✘ | ✘ · ✓ ✘ | ✓ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✓ · | ✘ · ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✓ | ✘ · ✘ · | ✓ ✘ ✓ · |
 
 ## Per-cell detail
 
@@ -135,6 +135,50 @@ rw [coe_sInf, sInf_image]
 
 **lean_error:** tail step 1/1 ('rw [coe_sInf, sInf_image]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.1s, verify 0.1s, in=257, out=202)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact coe_iInf (fun N => N) S
+```
+
+**lean_error:** tail step 1/1 ('exact coe_iInf (fun N => N) S'): unknown identifier 'coe_iInf'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.4s, verify 0.1s, in=257, out=211)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact coe_iInf S
+```
+
+**lean_error:** tail step 1/1 ('exact coe_iInf S'): unknown identifier 'coe_iInf'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.9s, verify 0.1s, in=257, out=297)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [sInf_def]
+```
+
+**lean_error:** tail step 1/1 ('simp [sInf_def]'): unknown identifier 'sInf_def'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 9.7s, verify 0.1s, in=257, out=328)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [sInf_def, mem_image, ← exists_prop, and_comm, iInf_exists]
+```
+
+**lean_error:** tail step 1/1 ('simp only [sInf_def, mem_image, ← exists_prop, and_comm, iInf_exists]'): unknown identifier 'sInf_def'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 50.3s, verify 0.1s, in=745, out=1850)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -228,6 +272,48 @@ simp_rw [coe_sInf S, Set.image, sInf_image]
 ```
 
 **lean_error:** tail step 1/1 ('simp_rw [coe_sInf S, Set.image, sInf_image]'): simp made no progress
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 4.9s, verify 0.1s, in=745, out=162)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, ← Set.image, sInf_image]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.2s, verify 0.1s, in=745, out=233)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('rw [coe_sInf, Set.image, sInf_image]'): failed to rewrite using equation theorems for 'Set.image'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.7s, verify 0.1s, in=745, out=253)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [coe_sInf, Set.image, sInf_image, Subtype.val_eq_coe]
+```
+
+**lean_error:** tail step 1/1 ('simp [coe_sInf, Set.image, sInf_image, Subtype.val_eq_coe]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.8s, verify 0.1s, in=745, out=292)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('rw [coe_sInf, Set.image, sInf_image]'): failed to rewrite using equation theorems for 'Set.image'
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 50.5s, verify 0.1s, in=844, out=943)
 
@@ -333,6 +419,59 @@ L : CompleteSublattice α
 ...
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.3s, verify 0.1s, in=844, out=223)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('rw [coe_sInf, Set.image, sInf_image]'): failed to rewrite using equation theorems for 'Set.image'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 12.9s, verify 0.1s, in=844, out=287)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [coe_sInf, Set.image, sInf_image]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+inst✝¹ : CompleteLattice α
+inst✝ : CompleteLattice β
+f : CompleteLatticeHom α β
+L : CompleteSublattice α
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.4s, verify 0.1s, in=844, out=234)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('rw [coe_sInf, Set.image, sInf_image]'): failed to rewrite using equation theorems for 'Set.image'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.1s, verify 0.1s, in=844, out=331)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [coe_sInf, Set.image, sInf_image]'): simp made no progress
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 41.5s, verify 0.1s, in=868, out=1510)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -425,6 +564,55 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [coe_sInf, sInf_image]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+inst✝¹ : CompleteLattice α
+inst✝ : CompleteLattice β
+f : CompleteLatticeHom α β
+L : CompleteSublattice α
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.2s, verify 0.1s, in=868, out=237)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, ← Set.image, sInf_image]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.1s, verify 0.1s, in=868, out=267)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [coe_sInf, Set.image, sInf_image]
+```
+
+**lean_error:** tail step 1/1 ('simpa only [coe_sInf, Set.image, sInf_image]'): tactic 'assumption' failed
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.2s, verify 0.1s, in=868, out=271)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [coe_sInf, ← Set.image, sInf_image]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 8.4s, verify 0.2s, in=868, out=278)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [coe_sInf, sInf_image, Set.image]
 ```
 
 **final state (truncated):**

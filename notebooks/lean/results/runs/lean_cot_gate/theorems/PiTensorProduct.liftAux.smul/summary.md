@@ -11,12 +11,12 @@ rw [smul_add, (liftAux φ).map_add, ihz, ihy, (liftAux φ).map_add, smul_add]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
-| `hint:2` | ✘ ✘ · ✘ | ✘ ✘ · · |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✘ · ✘ |
+| `hint:2` | ✘ ✘ · ✘ | ✘ ✘ · · | ✘ ✘ · ✓ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ · | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ | ✘ ✓ · ✘ |
 
 ## Per-cell detail
 
@@ -115,6 +115,59 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```lean
 simp [smul_add, ihz, ihy]
 ```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.6s, verify 0.2s, in=476, out=261)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [smul_add, map_add, ihz, ihy, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, map_add, ihz, ihy, smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.0s, verify 0.2s, in=476, out=266)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [smul_add, liftAux_add, ihz, ihy, ← smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, liftAux_add, ihz, ihy, ← smul_add]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 11.9s, verify 0.2s, in=476, out=316)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [smul_add, ihz, ihy]
+```
+
+**final state (truncated):**
+```
+case refine'_2
+ι : Type u_1
+ι₂ : Type u_2
+ι₃ : Type u_3
+R : Type u_4
+inst✝⁷ : CommSemiring R
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.4s, verify 0.1s, in=476, out=435)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [smul_add, liftAux φ (r • z), liftAux φ (r • y), ihz, ihy]
+```
+
+**lean_error:** tail step 1/1 ('simp only [smul_add, liftAux φ (r • z), liftAux φ (r • y), ihz, ihy]'): invalid 'simp', proposition expected
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 10.0s, verify 0.2s, in=1583, out=347)
 
@@ -231,6 +284,58 @@ inst✝⁷ : CommSemiring R
 ...
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.9s, verify 0.1s, in=1583, out=352)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,
+  AddMonoidHom.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/2 ('rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,'): <stdin>:1:85: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 13.8s, verify 0.1s, in=1583, out=383)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, smul_add]'): failed to rewrite using equation theorems for 'PiTensorProduct.liftAux'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 14.2s, verify 0.2s, in=1583, out=394)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [smul_add, liftAux, AddMonoidHom.map_add, ihz, ihy]
+```
+
+**final state (truncated):**
+```
+case refine'_2
+ι : Type u_1
+ι₂ : Type u_2
+ι₃ : Type u_3
+R : Type u_4
+inst✝⁷ : CommSemiring R
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 14.5s, verify 0.1s, in=1583, out=401)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, AddMonoidHom.map_add, smul_add]
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 73.0s, verify 0.2s, in=2615, out=2091)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -330,6 +435,51 @@ inst✝⁷ : CommSemiring R
 ...
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 22.5s, verify 0.3s, in=2615, out=409)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, PiTensorProduct.liftAux, ihz, ihy, smul_add, AddMonoidHom.map_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, PiTensorProduct.liftAux, ihz, ihy, smul_add, AddMonoidHom.map_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 23.1s, verify 0.1s, in=2615, out=427)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,
+  AddMonoidHom.map_add, ihz, ihy, smul_add]
+```
+
+**lean_error:** tail step 1/2 ('rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,'): <stdin>:1:85: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 23.2s, verify 0.2s, in=2615, out=384)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [liftAux.map_add, smul_add, ihz, ihy, liftAux.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [liftAux.map_add, smul_add, ihz, ihy, liftAux.map_add, smul_add]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 23.7s, verify 0.1s, in=2615, out=395)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, smul_add]'): failed to rewrite using equation theorems for 'PiTensorProduct.liftAux'
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 45.0s, verify 0.7s, in=2643, out=1622)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -422,3 +572,55 @@ simp_rw [smul_add, liftAux.map_add, ← ihz, ← ihy, ← AddMonoidHom.map_add, 
 ```
 
 **lean_error:** tail step 1/1 ('simp_rw [smul_add, liftAux.map_add, ← ihz, ← ihy, ← AddMonoidHom.map_add, smul_add]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.5s, verify 0.2s, in=2643, out=313)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add]
+```
+
+**lean_error:** tail step 1/1 ('rw [smul_add, AddMonoidHom.map_add, ihz, ihy, smul_add]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 11.7s, verify 0.1s, in=2643, out=315)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, AddMonoidHom.map_add, AddMonoidHom.map_add, ihz, ihy, ← smul_add]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 13.0s, verify 0.2s, in=2643, out=354)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [PiTensorProduct.liftAux, AddMonoidHom.map_add, smul_add]
+```
+
+**final state (truncated):**
+```
+case refine'_2
+ι : Type u_1
+ι₂ : Type u_2
+ι₃ : Type u_3
+R : Type u_4
+inst✝⁷ : CommSemiring R
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.5s, verify 0.1s, in=2643, out=534)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,
+  AddMonoidHom.map_add, smul_add]
+```
+
+**lean_error:** tail step 1/2 ('rw [smul_add, PiTensorProduct.liftAux, AddMonoidHom.map_add, PiTensorProduct.liftAux,'): <stdin>:1:85: unexpected end of input; expected ']'

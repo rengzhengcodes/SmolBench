@@ -12,12 +12,12 @@ simp only [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -124,6 +124,50 @@ simp [h.mem_filter, exists_prop]
 
 **lean_error:** tail step 1/1 ('simp [h.mem_filter, exists_prop]'): invalid field 'mem_filter', the environment does not contain 'Filter.IsBasis.mem_filter'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 3.4s, verify 0.1s, in=274, out=86)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact h.mem_filter
+```
+
+**lean_error:** tail step 1/1 ('exact h.mem_filter'): invalid field 'mem_filter', the environment does not contain 'Filter.IsBasis.mem_filter'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.0s, verify 0.1s, in=274, out=133)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact h.mem_filter
+```
+
+**lean_error:** tail step 1/1 ('exact h.mem_filter'): invalid field 'mem_filter', the environment does not contain 'Filter.IsBasis.mem_filter'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.5s, verify 0.1s, in=274, out=276)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [h.mem_filter]; rfl
+```
+
+**lean_error:** tail step 1/1 ('rw [h.mem_filter]; rfl'): <stdin>:1:17: expected end of input
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.6s, verify 0.1s, in=274, out=318)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [h.mem_filter, Set.nonempty_iff_exists_mem, exists_prop, and_assoc]
+```
+
+**lean_error:** tail step 1/1 ('simp only [h.mem_filter, Set.nonempty_iff_exists_mem, exists_prop, and_assoc]'): invalid field 'mem_filter', the environment does not contain 'Filter.IsBasis.mem_filter'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 64.8s, verify 0.1s, in=967, out=2930)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -215,6 +259,53 @@ simp only [h.mem_filterBasis_iff, h.filter, mem_filter_iff, exists_exists_and_eq
 
 **lean_error:** tail step 1/1 ('simp only [h.mem_filterBasis_iff, h.filter, mem_filter_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.4s, verify 0.1s, in=967, out=276)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [h.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('rw [h.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.8s, verify 0.1s, in=967, out=291)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:97: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.0s, verify 0.1s, in=967, out=294)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:97: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.0s, verify 1.2s, in=967, out=334)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('rw [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:77: unexpected end of input; expected ']'
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 117.2s, verify 0.1s, in=1792, out=1811)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -302,6 +393,53 @@ simp [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff, 
 ```
 
 **lean_error:** tail step 1/1 ('simp [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.6s, verify 0.1s, in=1792, out=275)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('simp only [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:97: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 15.5s, verify 0.1s, in=1792, out=390)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [h.filter, mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('simp only [h.filter, mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.9s, verify 0.1s, in=1792, out=305)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 17.1s, verify 0.1s, in=1792, out=318)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:90: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 75.8s, verify 0.1s, in=1816, out=3408)
 
@@ -391,3 +529,48 @@ simp only [h.filterBasis.mem_filter_iff, h.mem_filterBasis_iff, exists_exists_an
 ```
 
 **lean_error:** tail step 1/1 ('simp only [h.filterBasis.mem_filter_iff, h.mem_filterBasis_iff, exists_exists_and_eq_and]'): simp made no progress
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.9s, verify 0.1s, in=1816, out=294)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and] using exists_exists_and_eq_and
+```
+
+**lean_error:** tail step 1/1 ('simpa only [mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and] using exists_exists_and_eq_and'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.3s, verify 0.1s, in=1816, out=308)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [h.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.7s, verify 0.1s, in=1816, out=323)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('simp_rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, Filter.IsBasis.mem_filterBasis_iff,'): <stdin>:1:95: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.3s, verify 0.3s, in=1816, out=353)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [h.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('simp only [h.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected

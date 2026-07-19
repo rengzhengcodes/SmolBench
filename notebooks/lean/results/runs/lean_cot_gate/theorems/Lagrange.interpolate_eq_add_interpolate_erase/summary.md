@@ -11,9 +11,9 @@ exact insert_subset_iff.mpr ⟨hi, singleton_subset_iff.mpr hj⟩
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ · ✘ ✘ |
 
 ## Per-cell detail
 
@@ -112,3 +112,56 @@ simp [hi, hj]
 ```
 
 **lean_error:** tail step 1/1 ('simp [hi, hj]'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 3.7s, verify 0.1s, in=271, out=142)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 7.8s, verify 0.1s, in=271, out=302)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [subset_iff, mem_insert, mem_singleton, or_imp, hi, hj]
+```
+
+**final state (truncated):**
+```
+F : Type u_1
+inst✝¹ : Field F
+ι : Type u_2
+inst✝ : DecidableEq ι
+s t : Finset ι
+i j : ι
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.4s, verify 0.1s, in=271, out=326)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rwa [subset_iff, mem_insert]
+```
+
+**lean_error:** tail step 1/1 ('rwa [subset_iff, mem_insert]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.6s, verify 0.1s, in=271, out=338)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa [subset_iff, mem_insert, mem_singleton]
+```
+
+**lean_error:** tail step 1/1 ('simpa [subset_iff, mem_insert, mem_singleton]'): tactic 'assumption' failed

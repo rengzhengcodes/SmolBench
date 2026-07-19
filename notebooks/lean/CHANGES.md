@@ -170,8 +170,16 @@ sibling is emitted from the final file's keys so pairing survives QC drops.
    4 rungs × 4 rollouts × 3 arms (base / bare-r128 / cot-r128); unit =
    (theorem, k, rung) group; outcome pass@4; GREEN iff cot > bare AND
    cot > base, one-sided exact McNemar α=0.05 each; exceptions = missing.
-   **RESULT: pending — run in flight as of 2026-07-14; verdict and RESULTS.md
-   will be added when it lands.**
+   **RESULT (2026-07-18): RED** — see `results/runs/lean_cot_gate/RESULTS.md`.
+   cot-r128 did not beat bare-r128 (−1.3pt pass@4, p=0.80); its edge over
+   base (+3.2pt, p=0.049) is attributable to the shared r128 recipe, since
+   bare-r128 ALSO significantly beats base (+4.3pt, p=0.017) — reversing the
+   original r16 null. The gain concentrates in the stepk:1 rung
+   (0.145 → 0.329/0.272); hint/noise rungs are flat. No CoT output collapse.
+   Per the pre-registered follow-up, RED on Qwen attention-only is not
+   decisive for the dense trio arms: next step is the dense fenced
+   micro-smoke; expert iteration on the working bare-r128 recipe is the
+   secondary round-2 axis.
 
 ## 8. Results-integrity rules learned the hard way
 

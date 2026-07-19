@@ -11,12 +11,12 @@ simpa [atTop, prod_iInf_left, prod_iInf_right, iInf_prod] using iInf_comm
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ · | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | · ✘ ✘ · | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -132,6 +132,50 @@ simp [prod_atTop_atTop_eq]
 
 **lean_error:** tail step 1/1 ('simp [prod_atTop_atTop_eq]'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.0s, verify 0.1s, in=260, out=122)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact atTop_prod_atTop
+```
+
+**lean_error:** tail step 1/1 ('exact atTop_prod_atTop'): unknown identifier 'atTop_prod_atTop'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 5.9s, verify 0.1s, in=260, out=139)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact atTop_prod_atTop
+```
+
+**lean_error:** tail step 1/1 ('exact atTop_prod_atTop'): unknown identifier 'atTop_prod_atTop'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.9s, verify 0.1s, in=260, out=169)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact prod_atTop
+```
+
+**lean_error:** tail step 1/1 ('exact prod_atTop'): unknown identifier 'prod_atTop'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.2s, verify 0.1s, in=260, out=245)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Filter.prod, atTop, prod_atTop_atTop]
+```
+
+**lean_error:** tail step 1/1 ('simp [Filter.prod, atTop, prod_atTop_atTop]'): unknown identifier 'prod_atTop_atTop'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 161.4s, verify 0.3s, in=1187, out=6549)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -246,6 +290,51 @@ case inr.inr
 ...
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 11.6s, verify 0.1s, in=1187, out=320)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [atTop, atTop, prod_iInf_left, prod_iInf_right, SProd.sprod, iInf_prod, iInf_comm, iInf_prod]
+```
+
+**lean_error:** tail step 1/1 ('rw [atTop, atTop, prod_iInf_left, prod_iInf_right, SProd.sprod, iInf_prod, iInf_comm, iInf_prod]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.4s, verify 0.1s, in=1187, out=346)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp_rw [atTop, prod_iInf_right, prod_iInf_left, ← iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [atTop, prod_iInf_right, prod_iInf_left, ← iInf_prod, iInf_comm]'): simp made no progress
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.2s, verify 0.1s, in=1187, out=376)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Filter.atTop, Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, principal_prod_principal,
+  Ici_prod_Ici, iInf_comm]
+```
+
+**lean_error:** tail step 1/2 ('rw [Filter.atTop, Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, principal_prod_principal,'): <stdin>:1:101: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.6s, verify 0.1s, in=1187, out=459)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [atTop, atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [atTop, atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 233.1s, verify 0.1s, in=3609, out=8239)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -348,6 +437,51 @@ case inr.inr
 γ : Type u_5
 ...
 ```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.9s, verify 0.2s, in=3609, out=273)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp only [Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]'): tactic 'simp' failed, nested error:
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 19.0s, verify 0.1s, in=3609, out=452)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [atTop, prod_iInf_left, prod_iInf_right, Filter.prod, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [atTop, prod_iInf_left, prod_iInf_right, Filter.prod, iInf_prod, iInf_comm]'): simp made no progress
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 20.2s, verify 0.1s, in=3609, out=447)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp_rw [atTop, prod_iInf_left h✝¹, prod_iInf_right h✝, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [atTop, prod_iInf_left h✝¹, prod_iInf_right h✝, iInf_prod, iInf_comm]'): <stdin>:1:32: expected token
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 22.7s, verify 0.1s, in=3609, out=572)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [atTop, atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm, iInf_prod,
+  iInf_inf, Filter.prod, iInf_inf, prod_Ici, Set.Ici, iInf_inf, prod_Ici, Filter.prod]
+```
+
+**lean_error:** tail step 1/2 ('rw [atTop, atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm, iInf_prod,'): <stdin>:1:83: unexpected end of input; expected ']'
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 139.3s, verify 0.2s, in=3634, out=5717)
 
@@ -464,3 +598,48 @@ case inr.inr
 γ : Type u_5
 ...
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.8s, verify 0.2s, in=3634, out=198)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp only [atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.8s, verify 0.2s, in=3634, out=327)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp_rw [atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]'): tactic 'simp' failed, nested error:
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.5s, verify 0.1s, in=3634, out=453)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [atTop, atTop, prod_iInf_left, prod_iInf_right, principal_prod_principal, Ici_prod_Ici,
+  iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/2 ('rw [atTop, atTop, prod_iInf_left, prod_iInf_right, principal_prod_principal, Ici_prod_Ici,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.5s, verify 0.1s, in=3634, out=493)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [Filter.atTop, Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]
+```
+
+**lean_error:** tail step 1/1 ('rw [Filter.atTop, Filter.atTop, prod_iInf_left, prod_iInf_right, iInf_prod, iInf_comm]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

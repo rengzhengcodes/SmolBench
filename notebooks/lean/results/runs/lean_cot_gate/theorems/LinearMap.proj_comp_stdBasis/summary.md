@@ -13,7 +13,7 @@ rw [stdBasis_eq_pi_diag, proj_pi]
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · | ✘ ✘ ✘ ✘ ✘ ✘ X X |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · | ✘ ✘ ✘ ✘ ✘ ✘ X X ✘ |
 | `hint:2` | ✘ ✘ ✓ ✘ | · ✓ ✓ ✓ | ✓ ✘ ✓ ✓ ✓ ✓ ✓ ✓ |
 | `hint:3` | ✓ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✓ ✓ ✓ ✓ X |
 | `noise:3` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ | ✘ ✓ ✘ ✓ ✓ ✓ ✘ ✓ |
@@ -233,6 +233,18 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance i-077d8082814a9172d is running). If the instance is running, your public IP probably changed and the security group is blocking you: re-run provision_spot_instance() to re-authorize your current IP.
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 16.2s, verify 0.1s, in=285, out=410)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [coeFn, LinearMap.coe_comp, LinearMap.coe_stdBasis, Pi.single_eq_pi_single,
+  LinearMap.coe_proj]
+```
+
+**lean_error:** tail step 1/2 ('simp only [coeFn, LinearMap.coe_comp, LinearMap.coe_stdBasis, Pi.single_eq_pi_single,'): <stdin>:1:85: unexpected end of input; expected ']'
 
 ### `hint:2` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 19.9s, verify 0.1s, in=671, out=909)
 

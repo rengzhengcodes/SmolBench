@@ -14,10 +14,10 @@ exact ⟨x, fun c j ↦ funext fun y ↦ (hx c y).1 j,
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X X X X X X X X |
-| `hint:2` | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ | ✘ X X X X X X X |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X ✘ X X X X X X |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X X X X X X ✘ ✘ |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X X X X X X X X ✘ X X X ✘ X X |
+| `hint:2` | ✘ ✘ ✓ ✘ | ✘ ✘ ✘ ✘ | ✘ X X X X X X X X X X X X X |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X ✘ X X X X X X X X X X X X X X |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | X X X X X X ✘ ✘ ✘ X X ✘ X |
 
 ## Per-cell detail
 
@@ -206,6 +206,83 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 **candidate:**
 ```lean
 exact IsLimit.mk fun c₁ y => h _ (sectionOfCone_mem c₁ y)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 17.4s, verify 0.1s, in=374, out=231)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact isLimit_of_sections h hx
+```
+
+**lean_error:** tail step 1/1 ('exact isLimit_of_sections h hx'): unknown identifier 'isLimit_of_sections'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 18.4s, verify 300.1s, in=374, out=263)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk _ _
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 318.5s, verify 300.1s, in=374, out=264)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk fun s f => hx _ _
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 618.6s, verify 300.1s, in=374, out=318)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk fun s => hx s.1 s.2.1
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.0s, verify 1.0s, in=374, out=194)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk x hx
+```
+
+**lean_error:** tail step 1/1 ('exact IsLimit.mk x hx'): application type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 14.9s, verify 300.1s, in=374, out=299)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk _ h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 915.3s, verify 300.1s, in=374, out=377)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsLimit.mk' hx.1 hx.2
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
@@ -401,6 +478,76 @@ let cs := coneOfSection hs
 exact ⟨t.lift cs ⟨⟩, fun j ↦ congr_fun (t.fac cs j) ⟨⟩,
   fun x hx ↦ congr_fun (t.uniq cs (fun _ ↦ x) fun j ↦ funext fun _ ↦ hx j) ⟨⟩⟩
 choose x hx using fun c y ↦ h _ (sectionOfCone c y).2
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 1819.2s, verify 300.1s, in=1539, out=452)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exacts [funext fun j ↦ funext fun _ ↦ hx.2 _ (congr_fun h j), funext fun j ↦ funext fun _ ↦ hx.2 _ (congr_fun h j)]
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **exception**  (gen 2119.3s, verify 300.1s, in=1539, out=480)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact funext fun y ↦ ⟨x s y, funext fun j ↦ congr_fun (hx.1 s y).1 j, (hx.1 s y).2⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 2719.6s, verify 300.1s, in=1539, out=531)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+refine ⟨fun ⟨t⟩ s hs ↦ let cs := coneOfSection hs <;>
+  exact ⟨t.lift cs ⟨⟩, fun j ↦ congr_fun (t.fac cs j) ⟨⟩,
+    fun x hx ↦ congr_fun (t.uniq cs (fun _ ↦ x) fun j ↦ funext fun _ ↦ hx j) ⟨⟩⟩,
+  fun h ↦ ⟨choose x hx using fun c y ↦ h _ (sectionOfCone c y).2⟩⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **exception**  (gen 1215.4s, verify 300.1s, in=1539, out=399)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+refine ⟨funext fun _ ↦ funext fun j ↦ congr_fun (hx _ _).1 j, funext fun _ ↦ funext fun j ↦
+  congr_fun (hx _ _).2 <| funext fun _ ↦ congr_fun (h _).2 funext⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 2115.8s, verify 300.1s, in=1539, out=478)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+refine funext fun y ↦ congr_fun (h.uniq (coneOfSection _) (fun _ ↦ y) fun j ↦ funext fun _ ↦ _) _
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 2716.0s, verify 300.1s, in=1539, out=634)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+funext fun _ ↦ funext fun _ ↦ congr_fun (funext fun _ ↦ funext fun _ ↦ congr_fun)
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
@@ -603,6 +750,103 @@ exact ⟨funext hx.1, funext hx.2⟩
 
 **lean_error:** DojoTacticTimeoutError: 
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 918.8s, verify 300.1s, in=5145, out=346)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact fun s y ↦ ⟨x s y, funext fun j ↦ hx _ _ (fun j ↦ congr_fun (t.fac s j) y)⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 1519.0s, verify 300.1s, in=5145, out=442)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact Types.isLimit_iff.mpr fun s ↦ ⟨x s ⟨⟩, hx.1 s ⟨⟩, fun h ↦ funext fun j ↦ hx.2 s ⟨⟩ (congr_fun h j)⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 3019.8s, verify 300.1s, in=5145, out=275)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨funext funext congr_fun, funext funext hx⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **exception**  (gen 3319.9s, verify 300.1s, in=5145, out=333)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact funext (congr_fun (hx.2 _ hx) ())
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 615.2s, verify 300.1s, in=5145, out=382)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact ⟨congr_arg _ funext funext, funext funext, funext funext⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **exception**  (gen 1515.6s, verify 300.1s, in=5145, out=401)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact funext fun _ ↦ t.uniq cs (fun _ ↦ x c_1 y) fun j ↦ funext fun _ ↦ hx c_1 y j
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 1815.7s, verify 300.1s, in=5145, out=444)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+refine ⟨fun ⟨t⟩ s hs ↦ ?_, fun h ↦ ⟨?_⟩⟩
+let cs := coneOfSection hs
+exact ⟨t.lift cs ⟨⟩, fun j ↦ congr_fun (t.fac cs j) ⟨⟩,
+  fun x hx ↦ congr_fun (t.uniq cs (fun _ ↦ x) fun j ↦ funext fun _ ↦ hx j) ⟨⟩⟩
+choose x hx using fun c y ↦ h _ (sectionOfCone c y).2
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **exception**  (gen 2416.0s, verify 300.1s, in=5145, out=576)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+refine ⟨fun ⟨t⟩ s hs ↦ ?_, fun h ↦ ⟨?_⟩⟩
+let cs := coneOfSection hs
+exact ⟨t.lift cs ⟨⟩, fun j ↦ congr_fun (t.fac cs j) ⟨⟩,
+  fun x hx ↦ congr_fun (t.uniq cs (fun _ ↦ x) fun j ↦ funext fun _ ↦ hx j) ⟨⟩⟩
+choose x hx using fun c y ↦ h _ (sectionOfCone c y).2
+exact ⟨funext funext⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 88.5s, verify 0.1s, in=5175, out=3116)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -793,3 +1037,61 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```
 
 **lean_error:** empty tail
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.1s, verify 0.2s, in=5175, out=260)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simpa only [funext, funext, congr_fun]
+```
+
+**lean_error:** tail step 1/1 ('simpa only [funext, funext, congr_fun]'): tactic 'assumption' failed
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 1218.9s, verify 300.1s, in=5175, out=400)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact funext fun _ ↦ congr_fun (funext fun _ ↦ hx _ _) _
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **exception**  (gen 2419.5s, verify 300.1s, in=5175, out=512)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+refine ⟨fun ⟨t⟩ s hs ↦ ?_, fun h ↦ ⟨?_⟩⟩
+let cs := coneOfSection hs
+exact ⟨t.lift cs ⟨⟩, fun j ↦ congr_fun (t.fac cs j) ⟨⟩,
+  fun x hx ↦ congr_fun (t.uniq cs (fun _ ↦ x) fun j ↦ funext fun _ ↦ hx j) ⟨⟩⟩
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 13.0s, verify 0.1s, in=5175, out=189)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact Types.isLimit_iff.2 hx
+```
+
+**lean_error:** tail step 1/1 ('exact Types.isLimit_iff.2 hx'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **exception**  (gen 315.0s, verify 300.1s, in=5175, out=350)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply isLimit_iff <;> funext <;> funext <;> apply congr_fun
+```
+
+**lean_error:** DojoTacticTimeoutError: 

@@ -11,9 +11,9 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✓ ✘ | ✘ ✓ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -112,3 +112,46 @@ simp only [MonoidalFunctor.μIso_hom, Iso.inv_hom_id_app, Category.comp_id, Iso.
 ```
 
 **lean_error:** tail step 1/3 ('simp only [MonoidalFunctor.μIso_hom, Iso.inv_hom_id_app, Category.comp_id, Iso.app_inv,'): <stdin>:1:87: unexpected end of input; expected ']'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 6.0s, verify 0.1s, in=537, out=190)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [MonoidalFunctor.associator_naturality]
+```
+
+**lean_error:** tail step 1/1 ('simp [MonoidalFunctor.associator_naturality]'): unknown constant 'CategoryTheory.MonoidalFunctor.associator_naturality'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 6.3s, verify 0.2s, in=537, out=200)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [Category.assoc]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.0s, verify 0.1s, in=537, out=429)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [MonoidalFunctor.associator_hom_naturality, MonoidalFunctor.associator_inv_naturality,
+  MonoidalFunctor.right_unitor_hom_naturality, MonoidalFunctor.εIso]
+```
+
+**lean_error:** tail step 1/2 ('simp [MonoidalFunctor.associator_hom_naturality, MonoidalFunctor.associator_inv_naturality,'): <stdin>:1:91: unexpected end of input; expected ']'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.1s, verify 0.1s, in=537, out=524)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact F.μ_natural_right _ _ (𝟙_ M) (ρ_ m₁)
+```
+
+**lean_error:** tail step 1/1 ('exact F.μ_natural_right _ _ (𝟙_ M) (ρ_ m₁)'): function expected at

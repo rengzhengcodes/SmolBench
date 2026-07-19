@@ -11,12 +11,12 @@ simp [iSup_apply]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ ✓ ✓ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✓ |
-| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✓ ✘ |
-| `noise:3` | · ✘ · ✘ | · ✘ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ ✓ ✓ | ✘ ✘ · ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✓ | ✘ ✘ ✓ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · ✘ ✓ ✘ | ✘ · ✘ ✓ |
+| `noise:3` | · ✘ · ✘ | · ✘ ✓ ✓ | ✘ ✓ ✘ ✓ |
 
 ## Per-cell detail
 
@@ -113,6 +113,59 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp [iSup_apply]
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 6.6s, verify 0.1s, in=270, out=194)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.0s, verify 0.1s, in=270, out=200)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [supr_apply]
+```
+
+**lean_error:** tail step 1/1 ('rw [supr_apply]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 7.2s, verify 0.1s, in=270, out=212)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [iSup_apply, iSup]
+```
+
+**final state (truncated):**
+```
+case h
+α : Type u_1
+β : Type u_2
+inst✝¹ : Preorder α
+ι : Sort u_3
+inst✝ : CompleteLattice β
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.1s, verify 0.1s, in=270, out=437)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp_rw [← iSup_comp, iSup_apply, comp_apply]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [← iSup_comp, iSup_apply, comp_apply]'): unknown identifier 'iSup_comp'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 7.6s, verify 0.1s, in=509, out=339)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -208,6 +261,48 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 simp [iSup_apply]
 ```
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 5.4s, verify 0.1s, in=509, out=159)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact OrderHom.iSup_apply f x
+```
+
+**lean_error:** tail step 1/1 ('exact OrderHom.iSup_apply f x'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 6.8s, verify 0.1s, in=509, out=199)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact OrderHom.iSup_apply f x
+```
+
+**lean_error:** tail step 1/1 ('exact OrderHom.iSup_apply f x'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 7.1s, verify 0.1s, in=509, out=203)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa using OrderHom.iSup_apply f x
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.3s, verify 0.1s, in=509, out=287)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply OrderHom.iSup_apply
+```
+
+**lean_error:** tail step 1/1 ('apply OrderHom.iSup_apply'): tactic 'apply' failed, failed to unify
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 18.0s, verify 0.1s, in=1072, out=330)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -302,6 +397,57 @@ exact iSup_apply f x
 ```
 
 **lean_error:** tail step 1/1 ('exact iSup_apply f x'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.3s, verify 0.1s, in=1072, out=170)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+apply OrderHom.iSup_apply
+```
+
+**lean_error:** tail step 1/1 ('apply OrderHom.iSup_apply'): tactic 'apply' failed, failed to unify
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 11.4s, verify 0.1s, in=1072, out=181)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [OrderHom.iSup_apply]
+```
+
+**final state (truncated):**
+```
+case h
+α : Type u_1
+β : Type u_2
+inst✝¹ : Preorder α
+ι : Sort u_3
+inst✝ : CompleteLattice β
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.1s, verify 0.1s, in=1072, out=224)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact OrderHom.iSup_apply f x
+```
+
+**lean_error:** tail step 1/1 ('exact OrderHom.iSup_apply f x'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 12.8s, verify 0.1s, in=1072, out=223)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [OrderHom.iSup_apply]
+```
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 3 → **incomplete**  (gen 7.3s, verify 0.1s, in=1099, out=327)
 
@@ -412,4 +558,44 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [iSup_apply]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.3s, verify 0.1s, in=1099, out=184)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+apply OrderHom.iSup_apply
+```
+
+**lean_error:** tail step 1/1 ('apply OrderHom.iSup_apply'): tactic 'apply' failed, failed to unify
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 6.6s, verify 0.1s, in=1099, out=193)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [OrderHom.iSup_apply]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.2s, verify 0.1s, in=1099, out=212)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact OrderHom.iSup_apply f x
+```
+
+**lean_error:** tail step 1/1 ('exact OrderHom.iSup_apply f x'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.4s, verify 0.1s, in=1099, out=254)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [OrderHom.iSup_apply]
 ```

@@ -11,9 +11,9 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | · ✘ · ✘ |
 
 ## Per-cell detail
 
@@ -106,3 +106,65 @@ simp [adj.homEquiv_counit]
 ```
 
 **lean_error:** tail step 1/1 ('simp [adj.homEquiv_counit]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 9.0s, verify 0.1s, in=523, out=349)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+congr
+```
+
+**final state (truncated):**
+```
+case h.e_a.e_k
+C : Type u₁
+D : Type u₂
+inst✝³ : Category.{v₁, u₁} C
+inst✝² : Category.{v₁, u₂} D
+G : D ⥤ C
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 9.9s, verify 0.1s, in=523, out=359)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [coequalizer.π_desc, adjunction.homEquiv_counit]
+```
+
+**lean_error:** tail step 1/1 ('simp only [coequalizer.π_desc, adjunction.homEquiv_counit]'): unknown identifier 'adjunction.homEquiv_counit'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 10.7s, verify 0.1s, in=523, out=390)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+congr
+```
+
+**final state (truncated):**
+```
+case h.e_a.e_k
+C : Type u₁
+D : Type u₂
+inst✝³ : Category.{v₁, u₁} C
+inst✝² : Category.{v₁, u₂} D
+G : D ⥤ C
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 12.7s, verify 0.1s, in=523, out=458)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [← coequalizer.π_desc, adj.homEquiv_apply, ← Equiv.symm_apply_eq]
+```
+
+**lean_error:** tail step 1/1 ('simp only [← coequalizer.π_desc, adj.homEquiv_apply, ← Equiv.symm_apply_eq]'): invalid field notation, type is not of the form (C ...) where C is a constant

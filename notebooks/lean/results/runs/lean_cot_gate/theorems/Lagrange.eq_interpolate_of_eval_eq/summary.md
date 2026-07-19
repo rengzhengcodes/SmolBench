@@ -13,10 +13,10 @@ exact interpolate_eq_of_values_eq_on _ _ eval_f
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · · X | ✘ · ✘ ✘ ✘ ✘ · · |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · · X · | ✘ · ✘ ✘ ✘ ✘ · · |
 | `hint:2` | ✓ ✘ ✘ ✘ | · ✘ · ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
 | `hint:3` | ✓ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✓ ✘ ✓ | ✘ ✘ ✘ X | ✘ ✘ ✘ ✘ · ✘ ✘ · |
+| `noise:3` | ✘ ✓ ✘ ✓ | ✘ ✘ ✘ X ✘ | ✘ ✘ ✘ ✘ · ✘ ✘ · |
 
 ## Per-cell detail
 
@@ -139,6 +139,26 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance-state check failed: ClientError: An error occurred (RequestExpired) when calling the DescribeInstances operation: Request has expired.). If the instance is running, your public IP probably changed and the
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **incomplete**  (gen 3.7s, verify 0.1s, in=317, out=14)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [interpolate_apply, eval_f]
+```
+
+**final state (truncated):**
+```
+F : Type u_1
+inst✝¹ : Field F
+ι : Type u_2
+inst✝ : DecidableEq ι
+s t : Finset ι
+i j : ι
+...
+```
 
 ### `stepk:1` · qwen3-lean-cot-r128 · rollout 7 → **lean_error**  (gen 6.1s, verify 0.1s, in=317, out=196)
 
@@ -707,6 +727,17 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```
 
 **lean_error:** RuntimeError: Inference endpoint unreachable after 10 consecutive connection failures (instance-state check failed: ClientError: An error occurred (RequestExpired) when calling the DescribeInstances operation: Request has expired.). If the instance is running, your public IP probably changed and the
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **lean_error**  (gen 11.7s, verify 0.1s, in=1574, out=20)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact interpolate_eq_of_values_eq_on fun i hi => eval_f i hi
+```
+
+**lean_error:** tail step 1/1 ('exact interpolate_eq_of_values_eq_on fun i hi => eval_f i hi'): typeclass instance problem is stuck, it is often due to metavariables
 
 ### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.8s, verify 0.1s, in=1574, out=130)
 

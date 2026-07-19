@@ -11,12 +11,12 @@ simp only [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · |
-| `hint:2` | ✘ ✓ ✓ ✘ | ✓ · ✓ ✓ |
-| `hint:3` | ✘ ✘ ✘ ✘ | · ✓ ✘ · |
-| `noise:3` | ✓ ✘ ✘ ✓ | ✓ ✓ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · ✘ · · | ✘ ✘ · ✘ |
+| `hint:2` | ✘ ✓ ✓ ✘ | ✓ · ✓ ✓ | · · ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | · ✓ ✘ · | · · · ✘ |
+| `noise:3` | ✓ ✘ ✘ ✓ | ✓ ✓ ✘ ✘ | · ✓ · ✘ |
 
 ## Per-cell detail
 
@@ -135,6 +135,59 @@ X : OppositeShift C A
 ...
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 6.1s, verify 0.1s, in=338, out=166)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact shiftFunctorAdd'_op
+```
+
+**lean_error:** tail step 1/1 ("exact shiftFunctorAdd'_op"): unknown identifier 'shiftFunctorAdd'_op'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.3s, verify 0.1s, in=338, out=200)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [shiftFunctorAdd'_op]
+```
+
+**lean_error:** tail step 1/1 ("simp [shiftFunctorAdd'_op]"): unknown identifier 'shiftFunctorAdd'_op'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 8.1s, verify 0.1s, in=338, out=231)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.0s, verify 0.1s, in=338, out=291)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [shiftFunctorAdd'_hom_app]
+```
+
+**lean_error:** tail step 1/1 ("simp [shiftFunctorAdd'_hom_app]"): unknown identifier 'shiftFunctorAdd'_hom_app'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 55.3s, verify 0.2s, in=801, out=2243)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -224,6 +277,69 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```lean
 simp only [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
 ```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 7.4s, verify 0.1s, in=801, out=212)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 7.6s, verify 0.1s, in=801, out=216)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.3s, verify 0.1s, in=801, out=272)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, shiftFunctorAdd'_eq_shiftFunctorAdd,
+  oppositeShiftFunctorAdd_hom_app]
+```
+
+**lean_error:** tail step 1/2 ("rw [shiftFunctorAdd'_eq_shiftFunctorAdd, shiftFunctorAdd'_eq_shiftFunctorAdd,"): <stdin>:1:77: unexpected end of input; expected ']'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.5s, verify 0.1s, in=801, out=309)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rwa [shiftFunctorAdd'_eq_shiftFunctorAdd, shiftFunctorAdd'_eq_shiftFunctorAdd]
+```
+
+**lean_error:** tail step 1/1 ("rwa [shiftFunctorAdd'_eq_shiftFunctorAdd, shiftFunctorAdd'_eq_shiftFunctorAdd]"): tactic 'assumption' failed
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 100.7s, verify 0.3s, in=1222, out=2080)
 
@@ -334,6 +450,77 @@ X : OppositeShift C A
 ...
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 16.1s, verify 0.1s, in=1222, out=257)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 17.7s, verify 0.1s, in=1222, out=345)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 17.9s, verify 0.1s, in=1222, out=309)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 18.2s, verify 0.1s, in=1222, out=311)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← shiftFunctorAdd'_eq_shiftFunctorAdd]
+```
+
+**lean_error:** tail step 1/1 ("rw [← shiftFunctorAdd'_eq_shiftFunctorAdd]"): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 34.4s, verify 0.4s, in=1254, out=1406)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -419,3 +606,64 @@ rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app, ←
 ```
 
 **lean_error:** tail step 1/2 ("rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app, ←"): <stdin>:1:75: unexpected end of input
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 8.2s, verify 0.1s, in=1254, out=229)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.7s, verify 0.1s, in=1254, out=246)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app, shiftFunctorAdd'_eq_shiftFunctorAdd]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 9.5s, verify 0.1s, in=1254, out=279)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]
+```
+
+**final state (truncated):**
+```
+C : Type u_1
+inst✝² : Category.{u_3, u_1} C
+A : Type u_2
+inst✝¹ : AddMonoid A
+inst✝ : HasShift C A
+X : OppositeShift C A
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 14.5s, verify 0.1s, in=1254, out=418)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [shiftFunctorAdd'_eq_shiftFunctorAdd a b, shiftFunctorAdd'_eq_shiftFunctorAdd a b,
+  oppositeShiftFunctorAdd_hom_app]
+```
+
+**lean_error:** tail step 1/2 ("rw [shiftFunctorAdd'_eq_shiftFunctorAdd a b, shiftFunctorAdd'_eq_shiftFunctorAdd a b,"): <stdin>:1:85: unexpected end of input; expected ']'

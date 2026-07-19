@@ -11,12 +11,12 @@ simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, h.not_lt, h.ne']
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
-| `hint:2` | · · · · | · ✘ ✓ ✘ |
-| `hint:3` | · · · · | ✓ · · ✘ |
-| `noise:3` | · · · · | ✘ ✓ ✓ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | · · · · |
+| `hint:2` | · · · · | · ✘ ✓ ✘ | · · ✘ · |
+| `hint:3` | · · · · | ✓ · · ✘ | · ✘ · · |
+| `noise:3` | · · · · | ✘ ✓ ✓ ✘ | · · · ✘ |
 
 ## Per-cell detail
 
@@ -152,6 +152,86 @@ simp [ltTrichotomy, h, Ne.symm (lt_asymm h), false_and_iff, or_false_iff]
 
 **lean_error:** tail step 1/1 ('simp [ltTrichotomy, h, Ne.symm (lt_asymm h), false_and_iff, or_false_iff]'): application type mismatch
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 7.7s, verify 0.1s, in=322, out=244)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 7.8s, verify 0.1s, in=322, out=247)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 9.3s, verify 0.1s, in=322, out=287)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 11.1s, verify 0.1s, in=322, out=341)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [ltTrichotomy, h, h.not_lt, h.ne]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **incomplete**  (gen 57.8s, verify 0.1s, in=899, out=2549)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -282,6 +362,77 @@ simp only [ltTrichotomy_gt h, false_and, true_and, false_or, h, h.not_eq, h.not_
 ```
 
 **lean_error:** tail step 1/1 ('simp only [ltTrichotomy_gt h, false_and, true_and, false_or, h, h.not_eq, h.not_lt]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 12.3s, verify 0.1s, in=899, out=379)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, h.not_lt, h.ne]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 12.4s, verify 0.1s, in=899, out=383)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.6s, verify 0.1s, in=899, out=389)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or]
+```
+
+**lean_error:** tail step 1/1 ('simp only [ltTrichotomy_gt, false_and, true_and, false_or]'): simp made no progress
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 14.3s, verify 0.1s, in=899, out=431)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, h.not_lt, h.ne]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 55.5s, verify 0.1s, in=1632, out=1654)
 
@@ -424,6 +575,77 @@ simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, not_lt_of_gt h, h.
 
 **lean_error:** tail step 1/2 ('simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, not_lt_of_gt h, h.ne,'): <stdin>:1:83: unexpected end of input; expected ']'
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 18.0s, verify 0.1s, in=1632, out=316)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 20.2s, verify 0.1s, in=1632, out=315)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or]
+```
+
+**lean_error:** tail step 1/1 ('simp only [ltTrichotomy_gt, false_and, true_and, false_or]'): simp made no progress
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **incomplete**  (gen 22.1s, verify 0.1s, in=1632, out=454)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 22.9s, verify 0.1s, in=1632, out=550)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_lt, false_and, true_and, or_false, h, h.not_lt, h.ne]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **incomplete**  (gen 19.6s, verify 0.1s, in=1656, out=788)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -544,3 +766,74 @@ simp only [ltTrichotomy_gt h, false_and, true_and, false_or, h, not_lt_of_ge (le
 ```
 
 **lean_error:** tail step 1/2 ('simp only [ltTrichotomy_gt h, false_and, true_and, false_or, h, not_lt_of_ge (le_of_lt h),'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 13.5s, verify 0.1s, in=1656, out=408)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 14.2s, verify 0.1s, in=1656, out=429)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h, h.not_lt, h.ne]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 14.4s, verify 0.1s, in=1656, out=433)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or, h]
+```
+
+**final state (truncated):**
+```
+case refine_3
+ι : Type u_1
+α : Type u
+β : Type v
+γ : Type w
+π : ι → Type u_2
+...
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 16.1s, verify 0.1s, in=1656, out=496)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp only [ltTrichotomy_gt, false_and, true_and, false_or]
+```
+
+**lean_error:** tail step 1/1 ('simp only [ltTrichotomy_gt, false_and, true_and, false_or]'): simp made no progress

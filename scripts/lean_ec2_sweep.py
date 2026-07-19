@@ -63,7 +63,13 @@ os.environ.setdefault("EC2_VLLM_IMAGE", "vllm/vllm-openai:v0.23.0")
 
 # The base-model trio (EC2_DEPLOY_SPECS keys). Each has a LoRA adapter in S3
 # under <lora-s3-prefix>/<base_key>/ (adapter_config.json + adapter_model.safetensors).
-TRIO = ["llama-31-405b", "nemotron-ultra-253b", "qwen3-235b-a22b"]
+# Default: the >200B LoRA trio. Override via LEAN_TRIO (comma-separated
+# EC2_DEPLOY_SPECS keys) to sweep a different base set base-only, e.g. the all-MoE
+# generalists: LEAN_TRIO=gpt-oss-120b,nemotron-3-super-120b-a12b,qwen3.5-397b-a17b
+# with --no-lora (those have no adapters). Non-breaking: the gate uses the default.
+TRIO = os.environ.get(
+    "LEAN_TRIO", "llama-31-405b,nemotron-ultra-253b,qwen3-235b-a22b"
+).split(",")
 
 #: Where the trained adapters live (same bucket as the model cache; the serving
 #: box's instance profile grants read). Overridable via --lora-s3-prefix.
@@ -420,6 +426,11 @@ def _resolve_config(args: argparse.Namespace) -> tuple[dict, list[dict], Path]:
         args.lora_rank = 128 if args.cot_smoke else 16
 
     config = dict(PHASES[args.phase])
+    # Override the result run-name (dir under notebooks/lean/results/runs/) so a
+    # different base set (e.g. the all-MoE LEAN_TRIO) writes to its own dir rather
+    # than mixing into the default trio run.
+    if os.environ.get("LEAN_RUN_NAME"):
+        config["run_name"] = os.environ["LEAN_RUN_NAME"]
     if args.limit is not None:
         # Override the phase's theorem count (seeded sample); e.g. --limit 1 smoke.
         config["theorems"] = {**config["theorems"], "limit": args.limit, "seed": config["theorems"].get("seed", 1776)}

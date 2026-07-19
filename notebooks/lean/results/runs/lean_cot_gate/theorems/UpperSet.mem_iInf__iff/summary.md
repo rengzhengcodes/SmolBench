@@ -11,12 +11,12 @@ simp_rw [mem_iInf_iff]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✘ ✓ ✘ ✘ | ✓ ✘ ✘ ✓ |
-| `noise:3` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✓ ✘ ✘ | ✓ ✘ ✘ ✓ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✘ ✓ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -122,6 +122,50 @@ simp only [mem_iInf, exists_prop]
 
 **lean_error:** tail step 1/1 ('simp only [mem_iInf, exists_prop]'): unknown identifier 'mem_iInf'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.3s, verify 0.1s, in=301, out=300)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [mem_iInf, UpperSet.mem_iInf]
+```
+
+**lean_error:** tail step 1/1 ('simp only [mem_iInf, UpperSet.mem_iInf]'): unknown identifier 'mem_iInf'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.5s, verify 0.1s, in=301, out=306)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [mem_iInf, exists_prop]
+```
+
+**lean_error:** tail step 1/1 ('simp only [mem_iInf, exists_prop]'): unknown identifier 'mem_iInf'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.2s, verify 0.1s, in=301, out=361)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [mem_iInf]
+```
+
+**lean_error:** tail step 1/1 ('simp [mem_iInf]'): unknown identifier 'mem_iInf'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 29.9s, verify 0.1s, in=301, out=905)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [mem_iInf]
+```
+
+**lean_error:** tail step 1/1 ('simp [mem_iInf]'): unknown identifier 'mem_iInf'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 46.0s, verify 0.1s, in=533, out=1749)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -194,6 +238,42 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simp only [mem_iInf_iff, exists_exists_and_eq_and]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 7.4s, verify 0.1s, in=533, out=208)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simpa only [mem_iInf_iff] using iInf_iInf_eq_iInf₂
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.8s, verify 0.1s, in=533, out=254)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 10.2s, verify 0.1s, in=533, out=296)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [UpperSet.mem_iInf_iff]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 10.3s, verify 0.1s, in=533, out=301)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff]
 ```
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 133.9s, verify 0.3s, in=713, out=3657)
@@ -279,6 +359,42 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 simp
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 15.7s, verify 0.1s, in=713, out=252)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [mem_iInf_iff, SetLike.mem_coe]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 18.6s, verify 0.1s, in=713, out=297)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp only [mem_iInf_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 18.9s, verify 0.1s, in=713, out=306)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 20.8s, verify 0.1s, in=713, out=339)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff, exists_exists_and_eq_and]
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 37.0s, verify 0.2s, in=737, out=1408)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -357,3 +473,43 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 ```lean
 simp_rw [mem_iInf_iff]
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 8.9s, verify 0.1s, in=737, out=254)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.9s, verify 0.1s, in=737, out=283)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [iInf₂_eq_iInf_iInf, mem_iInf_iff, exists_sigma]
+```
+
+**lean_error:** tail step 1/1 ('rw [iInf₂_eq_iInf_iInf, mem_iInf_iff, exists_sigma]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 13.6s, verify 0.1s, in=737, out=397)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 15.4s, verify 0.1s, in=737, out=451)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [mem_iInf_iff, exists_exists_exists_and]
+```
+
+**lean_error:** tail step 1/1 ('simp [mem_iInf_iff, exists_exists_exists_and]'): unknown identifier 'exists_exists_exists_and'

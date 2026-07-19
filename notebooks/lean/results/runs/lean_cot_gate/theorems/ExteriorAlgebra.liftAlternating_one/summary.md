@@ -11,12 +11,12 @@ rw [foldl_one]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✓ ✓ ✓ |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
-| `noise:3` | ✓ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✓ ✓ ✓ | ✘ ✓ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✘ ✓ ✓ |
+| `hint:3` | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
+| `noise:3` | ✓ ✓ ✓ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -102,6 +102,48 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 simp [CliffordAlgebra.foldl]
 ```
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 4.7s, verify 0.1s, in=437, out=143)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 6.6s, verify 0.2s, in=437, out=200)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [*]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.7s, verify 0.1s, in=437, out=248)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [LinearMap.mk₂_apply, AlternatingMap.curryLeft_apply, map_zero]
+```
+
+**lean_error:** tail step 1/1 ('simp [LinearMap.mk₂_apply, AlternatingMap.curryLeft_apply, map_zero]'): unknown constant 'AlternatingMap.curryLeft_apply'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.7s, verify 0.1s, in=437, out=249)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [foldl_zero]
+```
+
+**lean_error:** tail step 1/1 ('simp [foldl_zero]'): unknown identifier 'foldl_zero'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 3 → **success**  (gen 66.4s, verify 0.2s, in=690, out=2883)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -167,6 +209,44 @@ simp
 ```
 
 ### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **success**  (gen 3.2s, verify 0.3s, in=690, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 11.9s, verify 0.2s, in=690, out=351)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 12.1s, verify 0.1s, in=690, out=357)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [CliffordAlgebra.foldl_one, LinearMap.mk₂_apply, AlternatingMap.curryLeft_apply, Fin.val_zero]
+```
+
+**lean_error:** tail step 1/1 ('rw [CliffordAlgebra.foldl_one, LinearMap.mk₂_apply, AlternatingMap.curryLeft_apply, Fin.val_zero]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 14.8s, verify 0.2s, in=690, out=436)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 21.3s, verify 0.2s, in=690, out=652)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 
@@ -248,6 +328,42 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 simp [liftAlternating, foldl_one]
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 11.6s, verify 0.2s, in=1199, out=190)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [foldl_one]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 18.5s, verify 0.2s, in=1199, out=308)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 18.7s, verify 0.2s, in=1199, out=358)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 19.4s, verify 0.2s, in=1199, out=351)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [foldl_one]
+```
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 28.5s, verify 0.2s, in=1223, out=1337)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -323,4 +439,40 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simp [CliffordAlgebra.foldl_one]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 8.1s, verify 0.2s, in=1223, out=230)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 9.2s, verify 0.2s, in=1223, out=264)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [foldl_one]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 11.2s, verify 0.2s, in=1223, out=327)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [CliffordAlgebra.foldl_one]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 13.8s, verify 0.2s, in=1223, out=401)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+simp [foldl_one, map_zero]
 ```

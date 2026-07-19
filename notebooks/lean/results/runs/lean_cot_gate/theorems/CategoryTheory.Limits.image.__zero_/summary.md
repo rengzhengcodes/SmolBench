@@ -11,9 +11,9 @@ simp
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✘ ✓ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -94,3 +94,43 @@ prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 ```lean
 simp
 ```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.4s, verify 0.1s, in=293, out=221)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Category.comp_zero
+```
+
+**lean_error:** tail step 1/1 ('apply Category.comp_zero'): unknown constant 'CategoryTheory.Category.comp_zero'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 10.5s, verify 0.1s, in=293, out=291)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 16.2s, verify 0.1s, in=293, out=525)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h]
+```
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 19.7s, verify 0.1s, in=293, out=678)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply eqToIso.hom_trans
+```
+
+**lean_error:** tail step 1/1 ('apply eqToIso.hom_trans'): invalid field notation, type is not of the form (C ...) where C is a constant

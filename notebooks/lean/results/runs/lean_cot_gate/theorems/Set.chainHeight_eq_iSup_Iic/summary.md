@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -126,3 +126,47 @@ simp_rw [← preimage_inter_of_inverse ofDual toDual, dual_Ici]
 ```
 
 **lean_error:** tail step 1/1 ('simp_rw [← preimage_inter_of_inverse ofDual toDual, dual_Ici]'): unknown identifier 'preimage_inter_of_inverse'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 9.8s, verify 0.1s, in=311, out=371)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [ofDual_preimage_Ici, mem_ofDual_preimage]
+```
+
+**lean_error:** tail step 1/1 ('rw [ofDual_preimage_Ici, mem_ofDual_preimage]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.9s, verify 0.1s, in=311, out=376)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp_rw [← preimage_Ici_ofDual, preimage_inter]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [← preimage_Ici_ofDual, preimage_inter]'): unknown identifier 'preimage_Ici_ofDual'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 11.6s, verify 0.2s, in=311, out=453)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [← preimage_inter]
+```
+
+**lean_error:** tail step 1/1 ('simp [← preimage_inter]'): tactic 'simp' failed, nested error:
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 12.8s, verify 0.1s, in=311, out=508)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [bijective_ofDual, preimage_inter, mem_preimage]
+```
+
+**lean_error:** tail step 1/1 ('simp [bijective_ofDual, preimage_inter, mem_preimage]'): unknown identifier 'bijective_ofDual'

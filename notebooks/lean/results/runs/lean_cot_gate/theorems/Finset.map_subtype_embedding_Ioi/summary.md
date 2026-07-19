@@ -11,12 +11,12 @@ exact Finset.subtype_map_of_mem fun x hx => hp (mem_Ioi.1 hx).le a.prop
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ |
-| `hint:3` | ✓ ✓ ✓ ✘ | ✘ ✘ ✓ ✘ |
-| `noise:3` | ✓ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | ✘ ✘ ✘ · |
+| `hint:2` | ✘ ✘ ✘ ✘ | · ✘ ✘ ✘ | ✘ ✘ ✘ · |
+| `hint:3` | ✓ ✓ ✓ ✘ | ✘ ✘ ✓ ✘ | ✘ ✘ · ✘ |
+| `noise:3` | ✓ ✓ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✓ ✘ |
 
 ## Per-cell detail
 
@@ -143,6 +143,59 @@ simp [Finset.subtype_eq, Finset.map_finset_subtype]
 
 **lean_error:** tail step 1/1 ('simp [Finset.subtype_eq, Finset.map_finset_subtype]'): unknown constant 'Finset.subtype_eq'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.7s, verify 0.1s, in=296, out=178)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact map_subtype_Ioi_eq_Ioi hp
+```
+
+**lean_error:** tail step 1/1 ('exact map_subtype_Ioi_eq_Ioi hp'): unknown identifier 'map_subtype_Ioi_eq_Ioi'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.4s, verify 0.1s, in=296, out=185)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact map_subtype_of_monotone hp
+```
+
+**lean_error:** tail step 1/1 ('exact map_subtype_of_monotone hp'): unknown identifier 'map_subtype_of_monotone'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.6s, verify 0.1s, in=296, out=228)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Finset.subtype_map_Ioi hp
+```
+
+**lean_error:** tail step 1/1 ('exact Finset.subtype_map_Ioi hp'): unknown constant 'Finset.subtype_map_Ioi'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **incomplete**  (gen 11.2s, verify 0.1s, in=296, out=360)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [hp]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+inst✝² : Preorder α
+p : α → Prop
+inst✝¹ : DecidablePred p
+inst✝ : LocallyFiniteOrderTop α
+...
+```
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 20.0s, verify 0.2s, in=802, out=930)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -250,6 +303,59 @@ exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le h.2
 
 **lean_error:** tail step 1/1 ('exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le h.2'): invalid projection, structure expected
 
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.7s, verify 0.1s, in=802, out=231)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply subtype_map_of_mem fun x hx => hp (LT.lt.le hx) a.2
+```
+
+**lean_error:** tail step 1/1 ('apply subtype_map_of_mem fun x hx => hp (LT.lt.le hx) a.2'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 10.7s, verify 0.1s, in=802, out=321)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Finset.subtype_map_of_mem fun x hx => hp (a.le_of_lt <| mem_Ioi.mp hx) a.prop]
+```
+
+**lean_error:** tail step 1/1 ('rw [Finset.subtype_map_of_mem fun x hx => hp (a.le_of_lt <| mem_Ioi.mp hx) a.prop]'): invalid field 'le_of_lt', the environment does not contain 'Subtype.le_of_lt'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 11.1s, verify 0.1s, in=802, out=358)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact subtype_map_of_mem fun x hx => hp (LT.lt.le (Finset.mem_Ioi.1 hx).2) a.2
+```
+
+**lean_error:** tail step 1/1 ('exact subtype_map_of_mem fun x hx => hp (LT.lt.le (Finset.mem_Ioi.1 hx).2) a.2'): invalid projection, structure expected
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **incomplete**  (gen 11.9s, verify 0.1s, in=802, out=383)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [Finset.subtype_map_of_mem, Finset.mem_Ioi, LT.lt.le, hp _ a.property]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+inst✝² : Preorder α
+p : α → Prop
+inst✝¹ : DecidablePred p
+inst✝ : LocallyFiniteOrderTop α
+...
+```
+
 ### `hint:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 48.1s, verify 0.3s, in=1901, out=1618)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -339,6 +445,59 @@ exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le (val a).2
 ```
 
 **lean_error:** tail step 1/1 ('exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le (val a).2'): application type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 16.6s, verify 0.1s, in=1901, out=331)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simpa [subtype_map_of_mem] using fun x hx => hp (LT.lt.le hx) a.2
+```
+
+**lean_error:** tail step 1/1 ('simpa [subtype_map_of_mem] using fun x hx => hp (LT.lt.le hx) a.2'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 16.9s, verify 0.1s, in=1901, out=382)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [Finset.map_subtype_embedding_Ioi, Finset.subtype_map_of_mem fun x hx => hp hx.le a.prop]
+```
+
+**lean_error:** tail step 1/1 ('rw [Finset.map_subtype_embedding_Ioi, Finset.subtype_map_of_mem fun x hx => hp hx.le a.prop]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **incomplete**  (gen 17.2s, verify 0.1s, in=1901, out=408)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+simp [hp (LT.lt.le _), Finset.mem_Ioi, LT.lt.le]
+```
+
+**final state (truncated):**
+```
+α : Type u_1
+β : Type u_2
+inst✝² : Preorder α
+p : α → Prop
+inst✝¹ : DecidablePred p
+inst✝ : LocallyFiniteOrderTop α
+...
+```
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 18.7s, verify 0.1s, in=1901, out=422)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact Finset.subtype_map_of_mem fun x hx => hp (LT.lt.le hx) a.2
+```
+
+**lean_error:** tail step 1/1 ('exact Finset.subtype_map_of_mem fun x hx => hp (LT.lt.le hx) a.2'): application type mismatch
 
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **success**  (gen 11.1s, verify 0.3s, in=1924, out=524)
 
@@ -432,3 +591,46 @@ exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le (mem_coe.2
 ```
 
 **lean_error:** tail step 1/1 ('exact Finset.subtype_map_of_mem fun _ h => hp (Finset.mem_Ioi.1 h).le (mem_coe.2 h)'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.6s, verify 0.1s, in=1924, out=269)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [map_subtype_embedding_Ioi, subtype_map_of_mem fun x hx =>
+  hp (LT.lt.le hx) (a.prop)]
+```
+
+**lean_error:** tail step 1/2 ('rw [map_subtype_embedding_Ioi, subtype_map_of_mem fun x hx =>'): <stdin>:1:61: unexpected end of input
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 8.8s, verify 0.1s, in=1924, out=275)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [mem_Ioi, LT.lt.le, forall_mem_Ioi.mpr fun _ h ↦ hp h a.prop]
+```
+
+**lean_error:** tail step 1/1 ('rw [mem_Ioi, LT.lt.le, forall_mem_Ioi.mpr fun _ h ↦ hp h a.prop]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **success**  (gen 12.5s, verify 0.1s, in=1924, out=407)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [subtype_map_of_mem fun x hx => hp (LT.lt.le (mem_Ioi.mp hx)) a.2]
+```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 14.6s, verify 0.1s, in=1924, out=471)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [subtype_Ioi_eq, Finset.subtype_map_of_mem, Ioi, Finset.mem_Ioi, LT.lt.le]
+```
+
+**lean_error:** tail step 1/1 ('rw [subtype_Ioi_eq, Finset.subtype_map_of_mem, Ioi, Finset.mem_Ioi, LT.lt.le]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

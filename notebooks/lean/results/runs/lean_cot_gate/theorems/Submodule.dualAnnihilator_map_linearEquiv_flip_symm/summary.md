@@ -11,12 +11,12 @@ rw [← map_dualCoannihilator_linearEquiv_flip, flip_flip]
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✓ ✘ ✘ | ✘ ✘ · ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✓ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✓ ✘ ✘ | ✘ ✘ · ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -136,6 +136,52 @@ rw [← dualAnnihilator_flip (LinearEquiv.symm e) p, LinearEquiv.symm_symm, dual
 
 **lean_error:** tail step 1/1 ('rw [← dualAnnihilator_flip (LinearEquiv.symm e) p, LinearEquiv.symm_symm, dualAnnihilator_flip]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 10.3s, verify 0.1s, in=341, out=308)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact LinearEquiv.dualAnnihilator_map_symm_flip e this
+```
+
+**lean_error:** tail step 1/1 ('exact LinearEquiv.dualAnnihilator_map_symm_flip e this'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 14.0s, verify 0.1s, in=341, out=416)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact this.dualAnnihilator_flip p
+```
+
+**lean_error:** tail step 1/1 ('exact this.dualAnnihilator_flip p'): invalid field 'dualAnnihilator_flip', the environment does not contain 'Module.IsReflexive.dualAnnihilator_flip'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 18.5s, verify 0.1s, in=341, out=536)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← LinearEquiv.map_dualAnnihilator_symm, dualAnnihilator_dualCoannihilator,
+  LinearEquiv.map_symm_flip]
+```
+
+**lean_error:** tail step 1/2 ('rw [← LinearEquiv.map_dualAnnihilator_symm, dualAnnihilator_dualCoannihilator,'): <stdin>:1:78: unexpected end of input; expected ']'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 29.5s, verify 0.1s, in=341, out=892)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [← dualAnnihilator_map, LinearEquiv.flip, LinearEquiv.dualMap_symm,
+  dualAnnihilator_eq_dualCoannihilator_flip, dualCoannihilator_comap]
+```
+
+**lean_error:** tail step 1/2 ('simp only [← dualAnnihilator_map, LinearEquiv.flip, LinearEquiv.dualMap_symm,'): <stdin>:1:77: unexpected end of input; expected ']'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 240.8s, verify 68.0s, in=901, out=9317)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -224,6 +270,48 @@ rw [← dualCoannihilator_map_linearEquiv_flip, LinearEquiv.flip_flip]
 ```
 
 **lean_error:** tail step 1/1 ('rw [← dualCoannihilator_map_linearEquiv_flip, LinearEquiv.flip_flip]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 17.3s, verify 0.2s, in=901, out=497)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [← map_dualCoannihilator_linearEquiv_flip, ← flip_flip, LinearEquiv.map_symm]
+```
+
+**lean_error:** tail step 1/1 ('simp only [← map_dualCoannihilator_linearEquiv_flip, ← flip_flip, LinearEquiv.map_symm]'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **success**  (gen 17.5s, verify 0.1s, in=901, out=524)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+erw [← map_dualCoannihilator_linearEquiv_flip, flip_flip]
+```
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 47.1s, verify 0.2s, in=901, out=1434)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [← map_dualCoannihilator_linearEquiv_flip, ← LinearEquiv.flip_flip, ← map_comp, simp]
+```
+
+**lean_error:** tail step 1/1 ('rw [← map_dualCoannihilator_linearEquiv_flip, ← LinearEquiv.flip_flip, ← map_comp, simp]'): tactic 'rewrite' failed, pattern is a metavariable
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 136.7s, verify 0.2s, in=901, out=4790)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [← flip_flip, ← map_dualCoannihilator_linearEquiv_flip]
+```
+
+**lean_error:** tail step 1/1 ('simp [← flip_flip, ← map_dualCoannihilator_linearEquiv_flip]'): tactic 'simp' failed, nested error:
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 3 → **lean_error**  (gen 257.9s, verify 0.1s, in=1830, out=11062)
 
@@ -326,6 +414,55 @@ simp [Submodule.map_dualCoannihilator_linearEquiv_flip, e.flip_flip]
 
 **lean_error:** tail step 1/1 ('simp [Submodule.map_dualCoannihilator_linearEquiv_flip, e.flip_flip]'): simp made no progress
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 26.9s, verify 0.2s, in=1830, out=339)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [← map_dualCoannihilator_linearEquiv_flip _ _ this, flip_flip]
+```
+
+**lean_error:** tail step 1/1 ('rw [← map_dualCoannihilator_linearEquiv_flip _ _ this, flip_flip]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 33.8s, verify 0.1s, in=1830, out=735)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+erw [← dualCoannihilator_map_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp] <;>
+  simp [-coe_toLinearMap_flip]
+```
+
+**lean_error:** tail step 1/2 ('erw [← dualCoannihilator_map_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp] <;>'): <stdin>:1:85: unexpected end of input; expected '['
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 39.8s, verify 0.1s, in=1830, out=795)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+suffices (p.map e.symm).dualAnnihilator.map e.flip.symm =
+    (p.dualCoannihilator.map e.flip).map e.flip.symm by
+  exact (Submodule.map_injective_of_injective e.flip.symm.injective this).symm
+erw [← dualCoannihilator_map_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp]
+simp [-coe_toLinearMap_flip]
+```
+
+**lean_error:** tail step 1/5 ('suffices (p.map e.symm).dualAnnihilator.map e.flip.symm ='): <stdin>:1:57: unexpected end of input
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 45.3s, verify 0.2s, in=1830, out=866)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+erw [← dualCoannihilator_map_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp]
+```
+
+**lean_error:** tail step 1/1 ('erw [← dualCoannihilator_map_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 313.9s, verify 0.3s, in=1849, out=9796)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -421,3 +558,50 @@ rw [← dualCoannihilator_map_linearEquiv_flip, LinearEquiv.map_symm, flip_flip]
 ```
 
 **lean_error:** tail step 1/1 ('rw [← dualCoannihilator_map_linearEquiv_flip, LinearEquiv.map_symm, flip_flip]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 15.8s, verify 0.1s, in=1849, out=452)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+erw [LinearEquiv.symm_flip, map_dualCoannihilator_linearEquiv_flip, LinearEquiv.flip_flip,
+  LinearEquiv.symm_congr]
+```
+
+**lean_error:** tail step 1/2 ('erw [LinearEquiv.symm_flip, map_dualCoannihilator_linearEquiv_flip, LinearEquiv.flip_flip,'): <stdin>:1:90: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 23.9s, verify 0.1s, in=1849, out=701)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+erw [← map_dualCoannihilator_linearEquiv_flip (e.flip.symm), ← flip_flip, ←
+  LinearEquiv.flip_flip e.flip.symm]
+```
+
+**lean_error:** tail step 1/2 ('erw [← map_dualCoannihilator_linearEquiv_flip (e.flip.symm), ← flip_flip, ←'): <stdin>:1:75: unexpected end of input
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 39.9s, verify 1.5s, in=1849, out=1198)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [LinearEquiv.symm_flip, dualAnnihilator_map_linearEquiv_flip, LinearEquiv.flip_flip,
+  Submodule.map_dualCoannihilator_linearEquiv_flip, dualAnnihilator_dualCoannihilator]
+```
+
+**lean_error:** tail step 1/2 ('rw [LinearEquiv.symm_flip, dualAnnihilator_map_linearEquiv_flip, LinearEquiv.flip_flip,'): <stdin>:1:87: unexpected end of input; expected ']'
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 59.9s, verify 0.2s, in=1849, out=1923)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← map_dualCoannihilator_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp, -coe_toLinearMap_flip]
+```
+
+**lean_error:** tail step 1/1 ('rw [← map_dualCoannihilator_linearEquiv_flip, flip_flip, ← map_comp, ← map_comp, -coe_toLinearMap_flip]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression

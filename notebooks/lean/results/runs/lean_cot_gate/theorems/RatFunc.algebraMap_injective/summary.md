@@ -11,12 +11,12 @@ exact ofFractionRing_injective.comp (IsFractionRing.injective _ _)
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -114,6 +114,50 @@ exact Function.Injective.comp (IsFractionRing.injective K[X] _) (ofFractionRing_
 
 **lean_error:** tail step 1/1 ('exact Function.Injective.comp (IsFractionRing.injective K[X] _) (ofFractionRing_injective K)'): application type mismatch
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 5.2s, verify 0.1s, in=236, out=156)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Function.Injective.comp (IsFractionRing.injective_algebraMap K[X] (FractionRing K[X]))
+```
+
+**lean_error:** tail step 1/1 ('apply Function.Injective.comp (IsFractionRing.injective_algebraMap K[X] (FractionRing K[X]))'): unknown constant 'IsFractionRing.injective_algebraMap'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.0s, verify 0.1s, in=236, out=182)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Function.Injective.comp RingHom.injective_ofFractionRing RingHom.injective_algebraMap
+```
+
+**lean_error:** tail step 1/1 ('exact Function.Injective.comp RingHom.injective_ofFractionRing RingHom.injective_algebraMap'): unknown constant 'RingHom.injective_ofFractionRing'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.9s, verify 0.1s, in=236, out=206)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact Function.Injective.comp ofFractionRing_injective (algebraMap_injective_of_isDomain _)
+```
+
+**lean_error:** tail step 1/1 ('exact Function.Injective.comp ofFractionRing_injective (algebraMap_injective_of_isDomain _)'): unknown identifier 'algebraMap_injective_of_isDomain'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 13.9s, verify 0.1s, in=236, out=461)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact injective_of_left_inverse (ofFractionRing_bijective.2 _)
+```
+
+**lean_error:** tail step 1/1 ('exact injective_of_left_inverse (ofFractionRing_bijective.2 _)'): unknown identifier 'injective_of_left_inverse'
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 4.3s, verify 0.1s, in=410, out=219)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -201,6 +245,50 @@ exact RatFunc.injective_ofFractionRing.comp (IsFractionRing.injective K[X])
 ```
 
 **lean_error:** tail step 1/1 ('exact RatFunc.injective_ofFractionRing.comp (IsFractionRing.injective K[X])'): unknown constant 'RatFunc.injective_ofFractionRing.comp'
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 4.2s, verify 0.1s, in=410, out=125)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('apply RatFunc.algebraMap_injective'): tactic 'apply' failed, failed to unify
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.7s, verify 0.1s, in=410, out=172)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('exact RatFunc.algebraMap_injective'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 7.2s, verify 0.1s, in=410, out=214)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('exact RatFunc.algebraMap_injective'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.6s, verify 0.1s, in=410, out=271)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('apply RatFunc.algebraMap_injective'): tactic 'apply' failed, failed to unify
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 21.0s, verify 0.1s, in=773, out=523)
 
@@ -290,6 +378,50 @@ exact IsFractionRing.injective K[X] (FractionRing K[X])
 
 **lean_error:** tail step 1/1 ('exact IsFractionRing.injective K[X] (FractionRing K[X])'): type mismatch
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 9.3s, verify 0.1s, in=773, out=167)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact IsFractionRing.injective
+```
+
+**lean_error:** tail step 1/1 ('exact IsFractionRing.injective'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 10.3s, verify 0.1s, in=773, out=173)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact IsFractionRing.injective
+```
+
+**lean_error:** tail step 1/1 ('exact IsFractionRing.injective'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 12.1s, verify 0.1s, in=773, out=240)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('exact RatFunc.algebraMap_injective'): type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 13.6s, verify 0.1s, in=773, out=273)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact IsFractionRing.injective
+```
+
+**lean_error:** tail step 1/1 ('exact IsFractionRing.injective'): type mismatch
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 5.4s, verify 0.1s, in=798, out=277)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -377,3 +509,47 @@ exact IsFractionRing.injective K[X] (FractionRing K[X])
 ```
 
 **lean_error:** tail step 1/1 ('exact IsFractionRing.injective K[X] (FractionRing K[X])'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 5.1s, verify 0.1s, in=798, out=151)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact IsFractionRing.injective
+```
+
+**lean_error:** tail step 1/1 ('exact IsFractionRing.injective'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.8s, verify 0.1s, in=798, out=199)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [← ofFractionRing_comp_algebraMap, IsFractionRing.injective]
+```
+
+**lean_error:** tail step 1/1 ('rw [← ofFractionRing_comp_algebraMap, IsFractionRing.injective]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.9s, verify 0.1s, in=798, out=210)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact IsFractionRing.injective
+```
+
+**lean_error:** tail step 1/1 ('exact IsFractionRing.injective'): type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 7.3s, verify 0.1s, in=798, out=225)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact RatFunc.algebraMap_injective
+```
+
+**lean_error:** tail step 1/1 ('exact RatFunc.algebraMap_injective'): type mismatch

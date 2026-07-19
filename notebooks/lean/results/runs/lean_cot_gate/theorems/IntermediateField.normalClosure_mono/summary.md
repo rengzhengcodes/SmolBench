@@ -13,10 +13,10 @@ exact iSup_mono (fun f ↦ map_mono f h)
 
 | rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | X X X | ✘ ✘ ✘ ✓ ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | X X X X | ✓ ✘ ✓ ✓ ✘ ✓ ✓ ✓ |
-| `hint:3` | ✘ ✘ ✓ ✘ | · | ✓ ✓ ✘ ✓ ✘ ✓ ✓ · |
-| `noise:3` | ✘ ✘ ✘ ✘ | X X X | ✓ ✓ ✓ ✘ ✓ ✓ ✘ ✓ |
+| `stepk:1` | ✘ ✘ ✘ ✘ | X X X ✘ ✘ X X X X | ✘ ✘ ✘ ✓ ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | X X X X ✓ ✘ ✓ ✓ | ✓ ✘ ✓ ✓ ✘ ✓ ✓ ✓ |
+| `hint:3` | ✘ ✘ ✓ ✘ | X X X X X X X X | ✓ ✓ ✘ ✓ ✘ ✓ ✓ · |
+| `noise:3` | ✘ ✘ ✘ ✘ | X X X ✓ ✘ X X X X | ✓ ✓ ✓ ✘ ✓ ✓ ✘ ✓ |
 
 ## Per-cell detail
 
@@ -110,6 +110,72 @@ exact iSup_mono fun _ => map_mono h
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 3.2s, verify 0.1s, in=289, out=15)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun _ => map_mono h
+```
+
+**lean_error:** tail step 1/1 ('exact iSup_mono fun _ => map_mono h'): application type mismatch
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 2 → **lean_error**  (gen 8.9s, verify 0.1s, in=289, out=16)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono h
+```
+
+**lean_error:** tail step 1/1 ('exact iSup_mono fun f ↦ map_mono h'): application type mismatch
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 9.5s, verify 300.1s, in=289, out=17)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup₂_mono' fun _ => map_mono h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **exception**  (gen 910.0s, verify 303.1s, in=289, out=18)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup₂_mono' fun _ ↦ map_mono h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 3 → **exception**  (gen 6.9s, verify 300.1s, in=289, out=18)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup₂_mono' fun _ ↦ map_mono h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 1782.6s, verify 0.0s, in=289, out=17)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact iSup₂_mono' fun _ => map_mono h
+```
+
+**lean_error:** DojoCrashError: OOM
 
 ### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 7.5s, verify 0.1s, in=289, out=206)
 
@@ -293,6 +359,44 @@ exact iSup_mono fun f => map_mono f h
 
 **lean_error:** DojoTacticTimeoutError: 
 
+### `hint:2` · qwen3-lean-bare-r128 · rollout 3 → **success**  (gen 8.6s, verify 0.3s, in=630, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono f h
+```
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 9.0s, verify 0.1s, in=630, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun _ ↦ map_mono h
+```
+
+**lean_error:** tail step 1/1 ('exact iSup_mono fun _ ↦ map_mono h'): application type mismatch
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 1 → **success**  (gen 9.2s, verify 0.1s, in=630, out=16)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono f h
+```
+
+### `hint:2` · qwen3-lean-bare-r128 · rollout 2 → **success**  (gen 9.4s, verify 0.1s, in=630, out=17)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono f h
+```
+
 ### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **success**  (gen 8.3s, verify 0.1s, in=630, out=233)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -414,6 +518,94 @@ apply iSup_mono (map_mono h)
 ```
 
 **lean_error:** tail step 1/1 ('apply iSup_mono (map_mono h)'): application type mismatch
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **exception**  (gen 1213.5s, verify 308.7s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono f h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 1543.2s, verify 309.5s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono _ h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **exception**  (gen 1865.2s, verify 2.7s, in=3385, out=17)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono f h
+```
+
+**lean_error:** DojoCrashError: Unexpected EOF
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 3 → **exception**  (gen 1867.9s, verify 0.0s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono _ h
+```
+
+**lean_error:** DojoCrashError: OOM
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 307.1s, verify 300.1s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono _ h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 3 → **exception**  (gen 607.3s, verify 300.2s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono _ h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 0 → **exception**  (gen 1207.7s, verify 300.5s, in=3385, out=16)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono f h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3-lean-bare-r128 · rollout 2 → **exception**  (gen 1782.6s, verify 0.0s, in=3385, out=17)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono f h
+```
+
+**lean_error:** DojoCrashError: OOM
 
 ### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 24.1s, verify 0.1s, in=3385, out=274)
 
@@ -585,6 +777,70 @@ exact iSup_mono fun _ ↦ map_mono h
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 3 → **success**  (gen 8.5s, verify 0.1s, in=3414, out=16)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f => map_mono _ h
+```
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 0 → **lean_error**  (gen 9.3s, verify 0.1s, in=3414, out=16)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun _ ↦ map_mono h
+```
+
+**lean_error:** tail step 1/1 ('exact iSup_mono fun _ ↦ map_mono h'): application type mismatch
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 309.6s, verify 300.1s, in=3414, out=17)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono _ h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **exception**  (gen 609.8s, verify 300.1s, in=3414, out=17)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono f h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 1 → **exception**  (gen 907.5s, verify 300.2s, in=3414, out=16)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun _ ↦ map_mono h
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3-lean-bare-r128 · rollout 2 → **exception**  (gen 1509.3s, verify 273.1s, in=3414, out=17)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact iSup_mono fun f ↦ map_mono f h
+```
+
+**lean_error:** DojoCrashError: Unexpected EOF
 
 ### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **success**  (gen 18.2s, verify 0.1s, in=3414, out=234)
 

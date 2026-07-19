@@ -11,12 +11,12 @@ exact (Algebra.adjoin_root_eq_top_of_isSplittingField hζ H hα).symm
 
 ## Verdict matrix
 
-| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
-| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · |
-| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · |
+| rung | qwen3-235b-a22b-base | qwen3-lean-bare-r128 | qwen3-lean-cot-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ · ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · | ✘ ✘ ✘ ✘ |
+| `noise:3` | ✘ ✘ ✘ ✘ | ✘ ✘ · · | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -249,6 +249,50 @@ exact (IsSplittingField.adjoin_roots hζ hn H).symm
 
 **lean_error:** tail step 1/1 ('exact (IsSplittingField.adjoin_roots hζ hn H).symm'): unknown constant 'Polynomial.IsSplittingField.adjoin_roots'
 
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 8.2s, verify 0.1s, in=310, out=262)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact adjoin_root_eq_top_of_irreducible H hα
+```
+
+**lean_error:** tail step 1/1 ('exact adjoin_root_eq_top_of_irreducible H hα'): unknown identifier 'adjoin_root_eq_top_of_irreducible'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 8.2s, verify 0.1s, in=310, out=257)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [eval₂_X_pow_sub_C] using adjoin_root_eq_top H hα
+```
+
+**lean_error:** tail step 1/1 ('simpa only [eval₂_X_pow_sub_C] using adjoin_root_eq_top H hα'): unknown identifier 'eval₂_X_pow_sub_C'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 14.2s, verify 0.1s, in=310, out=531)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact (minpoly.eq_of_dvd H.monic H.dvd_of_root).symm
+```
+
+**lean_error:** tail step 1/1 ('exact (minpoly.eq_of_dvd H.monic H.dvd_of_root).symm'): unknown constant 'minpoly.eq_of_dvd'
+
+### `stepk:1` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 15.2s, verify 0.1s, in=310, out=574)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [Algebra.adjoin_eq_span, Algebra.top_toSubmodule]
+```
+
+**lean_error:** tail step 1/1 ('rw [Algebra.adjoin_eq_span, Algebra.top_toSubmodule]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
 ### `hint:2` · qwen3-235b-a22b-base · rollout 1 → **lean_error**  (gen 8.4s, verify 0.1s, in=985, out=382)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -354,6 +398,50 @@ exact Algebra.adjoin_root_eq_top_of_isSplittingField
 ```
 
 **lean_error:** tail step 1/1 ('exact Algebra.adjoin_root_eq_top_of_isSplittingField'): typeclass instance problem is stuck, it is often due to metavariables
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 6.1s, verify 0.2s, in=985, out=195)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 6.6s, verify 0.2s, in=985, out=207)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 7.4s, verify 0.2s, in=985, out=243)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+apply Eq.symm (Algebra.adjoin_root_eq_top_of_isSplittingField : Algebra.adjoin K {α} = ⊤)
+```
+
+**lean_error:** tail step 1/1 ('apply Eq.symm (Algebra.adjoin_root_eq_top_of_isSplittingField : Algebra.adjoin K {α} = ⊤)'): type mismatch
+
+### `hint:2` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 8.0s, verify 0.2s, in=985, out=255)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
 
 ### `hint:3` · qwen3-235b-a22b-base · rollout 2 → **lean_error**  (gen 20.8s, verify 0.1s, in=3868, out=508)
 
@@ -461,6 +549,50 @@ a : K
 ...
 ```
 
+### `hint:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 215.6s, verify 0.1s, in=3868, out=138)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact (Algebra.adjoin_root_eq_top_of_isSplittingField K hζ H hα).symm
+```
+
+**lean_error:** tail step 1/1 ('exact (Algebra.adjoin_root_eq_top_of_isSplittingField K hζ H hα).symm'): application type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 215.9s, verify 0.2s, in=3868, out=144)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 217.3s, verify 0.2s, in=3868, out=188)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 218.7s, verify 0.2s, in=3868, out=234)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+refine ((Algebra.adjoin_root_eq_top_of_isSplittingField : Algebra.adjoin K {α} = ⊤).symm)
+```
+
+**lean_error:** tail step 1/1 ('refine ((Algebra.adjoin_root_eq_top_of_isSplittingField : Algebra.adjoin K {α} = ⊤).symm)'): type mismatch
+
 ### `noise:3` · qwen3-235b-a22b-base · rollout 0 → **lean_error**  (gen 7.0s, verify 0.1s, in=3901, out=322)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -567,3 +699,47 @@ hn : 0 < n
 a : K
 ...
 ```
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 3 → **lean_error**  (gen 217.6s, verify 0.2s, in=3901, out=197)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 0 → **lean_error**  (gen 218.5s, verify 0.1s, in=3901, out=228)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact Algebra.adjoin_root_eq_top_of_isSplittingField.symm
+```
+
+**lean_error:** tail step 1/1 ('exact Algebra.adjoin_root_eq_top_of_isSplittingField.symm'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 1 → **lean_error**  (gen 218.9s, verify 0.1s, in=3901, out=239)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+exact Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Algebra.adjoin_root_eq_top_of_isSplittingField'): typeclass instance problem is stuck, it is often due to metavariables
+
+### `noise:3` · qwen3-lean-cot-r128 · rollout 2 → **lean_error**  (gen 219.5s, verify 0.1s, in=3901, out=256)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+refine (IntermediateField.eq_adjoin_of_eq_algebra_adjoin _ _ _ Algebra.adjoin_root_eq_top_of_isSplittingField).symm
+```
+
+**lean_error:** tail step 1/1 ('refine (IntermediateField.eq_adjoin_of_eq_algebra_adjoin _ _ _ Algebra.adjoin_root_eq_top_of_isSplittingField).symm'): type mismatch
