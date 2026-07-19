@@ -287,6 +287,35 @@ def get_periodic_numeric_quiz(
     return quizzes_from_prompts(get_periodic_prompts(config, prompter), Numeric)
 
 
+def get_periodic_zero_info_numeric_quiz(
+    config: PeriodicConfig,
+    prompter: Prompter,
+) -> Quiz:
+    """Zero-information baseline: the same numeric queries/answers as
+    ``get_periodic_numeric_quiz``, but rendered with an EMPTY ``positive_info``
+    context -- the model gets no rules and no listing, so the count is not
+    computable from the prompt (a chance floor at the bottom of the
+    amount-of-positive-information gradient).
+
+    Standalone: returns ONE Quiz and does not touch the 3-condition
+    ``get_periodic_numeric_quiz`` or the shared
+    ``(intens, extens, noise_intens)`` tuple shape, so existing callers and
+    the chromatic benchmark are unaffected.
+    """
+    period_to_label, pos_to_compound = generate_sequence(config)
+    return tuple(
+        Numeric(
+            prompt=prompter.template.safe_substitute(
+                build_substitution(query, prompter, "")
+            ),
+            answer=answer,
+        )
+        for query, answer in prompter.query_gen(
+            period_to_label, pos_to_compound, config.seed
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Built-in query generators
 # ---------------------------------------------------------------------------

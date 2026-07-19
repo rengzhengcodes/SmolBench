@@ -2,11 +2,14 @@
 
 Reads ``notebooks/periodic_moe/results/{model}_{info}/rep_*.yaml`` and plots
 accuracy over GRADEABLE marks (``acc_valid = correct / (correct + incorrect)``)
-for the three MoE models x three information types at R=28. Invalid marks
-(empty/truncated completions -- the reasoning models over-run their token
-budget on the ~21k-token EXTENSIONAL listing) are EXCLUDED, not counted as
-failures; the excluded count is annotated. The story: on extensional counting
-Nemotron-3 collapses while gpt-oss and Qwen3.5 hold.
+for the three MoE models x FOUR information types at R=30: the three
+positive-information amounts (intensional rules / extensional full listing /
+noise-padded intensional) plus a ZERO-info baseline (empty context -> chance
+floor). Invalid marks (empty/truncated completions -- the reasoning models
+over-run their token budget on the ~21k-token EXTENSIONAL listing) are
+EXCLUDED, not counted as failures; the excluded cells are annotated. The story:
+on extensional counting Nemotron-3 collapses while gpt-oss and Qwen3.5 hold,
+and with no rules at all every model drops to the floor.
 
 Colors: Okabe-Ito CVD-safe categorical palette, assigned to models in a FIXED
 order (never cycled).
@@ -30,7 +33,12 @@ MODELS = [
     ("nemotron3", "Nemotron-3-Super-120B", "#E69F00"),
     ("qwen35", "Qwen3.5-397B", "#009E73"),
 ]
-INFOS = [("intens", "Intensional"), ("extens", "Extensional"), ("noise_intens", "Noise")]
+INFOS = [
+    ("intens", "Intensional"),
+    ("extens", "Extensional"),
+    ("noise_intens", "Noise"),
+    ("zero", "Zero-info"),  # empty-context baseline -> chance floor
+]
 
 
 def stats(tag: str, info: str) -> tuple[float, int]:
@@ -50,7 +58,7 @@ def stats(tag: str, info: str) -> tuple[float, int]:
 def main() -> None:
     data = {tag: [stats(tag, info) for info, _ in INFOS] for tag, _, _ in MODELS}
 
-    fig, ax = plt.subplots(figsize=(8.2, 4.9))
+    fig, ax = plt.subplots(figsize=(9.8, 4.9))
     x = np.arange(len(INFOS))
     w = 0.26
     for k, (tag, label, color) in enumerate(MODELS):
@@ -62,27 +70,45 @@ def main() -> None:
 
     ax.set_xticks(x)
     ax.set_xticklabels([lbl for _, lbl in INFOS])
-    ax.set_ylim(0, 1.10)
+    ax.set_ylim(0, 1.18)
     ax.set_ylabel("Accuracy (gradeable marks)")
-    ax.set_title("All-MoE periodic induction: accuracy by information type (R=28)")
+    ax.set_title("All-MoE periodic induction: accuracy by information type (R=30)")
     ax.grid(axis="y", color="#ececec", zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.20))
 
-    # Call out the one interesting cell.
+    # Call out the one interesting positive-info cell.
     je = [i for i, (k, _) in enumerate(INFOS) if k == "extens"][0]
+    # Placed in the clear column above the SHORT Nemotron bar (its tall gpt-oss
+    # and Qwen neighbours leave no mid-height gap), lifted above their tops.
     ax.annotate(
         "Nemotron-3 alone collapses\non extensional counting",
         xy=(x[je], data["nemotron3"][je][0] + 0.02),
-        xytext=(x[je] - 0.42, 0.66), fontsize=8.5, color="#8a5a00",
+        xytext=(x[je], 1.02), fontsize=8.5, color="#8a5a00",
+        ha="center", va="bottom",
         arrowprops=dict(arrowstyle="->", color="#8a5a00", lw=1.1),
     )
 
-    inv = {tag: data[tag][je][1] for tag, _, _ in MODELS}
+    # Mark the zero-info floor: with no rules given, all three sit near chance.
+    jz = [i for i, (k, _) in enumerate(INFOS) if k == "zero"][0]
+    ax.annotate(
+        "Zero-info baseline\n(no rules -> chance floor)",
+        xy=(x[jz], 0.06), xytext=(x[jz], 0.30), fontsize=8.5, color="#555",
+        ha="center", arrowprops=dict(arrowstyle="->", color="#999", lw=1.0),
+    )
+
+    # Invalid (empty/truncated) marks are EXCLUDED from accuracy, never counted
+    # as failures; list every nonzero cell so the exclusion stays auditable.
+    reps = 30
+    nz = [f"{mlabel} {ilabel.lower()} n={data[tag][j][1]}"
+          for tag, mlabel, _ in MODELS
+          for j, (_, ilabel) in enumerate(INFOS) if data[tag][j][1]]
     fig.text(0.01, 0.005,
-             f"Extensional invalid (truncated) marks excluded from accuracy -- "
-             f"gpt-oss n={inv['gptoss']}, Nemotron-3 n={inv['nemotron3']}, Qwen3.5 n={inv['qwen35']} "
-             f"(of 252 each). Intensional/Noise: 0 invalid across all models.",
+             f"acc = correct / (correct + incorrect); invalid (empty/truncated) "
+             f"completions excluded, of {reps * 9} marks per cell "
+             f"(R={reps} x 9 harmonics). "
+             + ("Nonzero invalids: " + "; ".join(nz) + "."
+                if nz else "No invalid marks in any cell."),
              fontsize=6.3, color="#999")
     fig.tight_layout()
     fig.savefig(OUT, dpi=150, bbox_inches="tight")

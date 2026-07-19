@@ -45,6 +45,7 @@ from smolbench.induction.periodic import (  # noqa: E402  (env first; see notebo
     PeriodicConfig,
     Prompter,
     get_periodic_numeric_quiz,
+    get_periodic_zero_info_numeric_quiz,
     numeric_count_query_gen,
 )
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
@@ -72,36 +73,32 @@ template = string.Template(
 )
 
 BASE_SEED: int = 1776
-INFO_TYPES: tuple[str, ...] = ("intens", "extens", "noise_intens")
+# 4 conditions = 3 amounts of positive information (intensional rules /
+# extensional full listing / noise-padded intensional, a length control) + a
+# ZERO-info baseline (empty context -> chance floor). Adding "zero" is
+# non-breaking for the existing intens/extens/noise replicates: those three come
+# from the same get_periodic_numeric_quiz call as before, and the zero quiz is a
+# separate deterministic call, so rep_1776..1803 resume-skip unchanged.
+INFO_TYPES: tuple[str, ...] = ("intens", "extens", "noise_intens", "zero")
 
 
 def make_quizzes(seed: int) -> dict[str, tuple]:
-    """Generates one replicate's three info-type quizzes, keyed by info type."""
-    return dict(
-        zip(
-            INFO_TYPES,
-            get_periodic_numeric_quiz(
-                PeriodicConfig(
-                    n=9,
-                    labels=9,
-                    seed=seed,
-                ),
-                Prompter(
-                    template,
-                    {},
-                    numeric_count_query_gen,
-                ),
-            ),
-        )
-    )
+    """Generates one replicate's four info-type quizzes, keyed by info type."""
+    cfg = PeriodicConfig(n=9, labels=9, seed=seed)
+    prompter = Prompter(template, {}, numeric_count_query_gen)
+    intens, extens, noise_intens = get_periodic_numeric_quiz(cfg, prompter)
+    zero = get_periodic_zero_info_numeric_quiz(cfg, prompter)
+    return {"intens": intens, "extens": extens, "noise_intens": noise_intens, "zero": zero}
 
 
 EXPERIMENT = InductionExperiment(
     notebook_dir="periodic_moe",
     archetype_tags={MODEL_QWEN: "qwen35", MODEL_NEMOTRON: "nemotron3", MODEL_GPTOSS: "gptoss"},
     make_quizzes=make_quizzes,
-    # 1 = pilot (seed 1776 only). Set MOE_N_REPLICATES=28 for the full run:
-    # replicates resume-skip, so the full run extends the pilot (1776..1803).
+    info_types=INFO_TYPES,  # 4 conditions incl. the zero-info baseline
+    # 1 = pilot (seed 1776 only). Set MOE_N_REPLICATES=30 for the full run:
+    # replicates resume-skip, so it extends the existing intens/extens/noise
+    # 1776..1803, adds seeds 1804/1805, and fills the new zero-info condition.
     n_replicates=int(os.environ.get("MOE_N_REPLICATES", "1")),
     base_seed=BASE_SEED,
     state_file=".ec2_state_periodic_moe.json",

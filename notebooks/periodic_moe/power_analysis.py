@@ -14,8 +14,13 @@ preliminary results:
 
   1. between the three MoE models (qwen35 / nemotron3 / gptoss) within each
      information type, and
-  2. between information types (intens / extens / noise_intens) within each
-     model.
+  2. between information types (intens / extens / noise_intens / zero) within
+     each model.
+
+The zero-info condition (empty context) is a chance-floor baseline; its
+contrasts against the positive-info types are huge-effect and powered at R=1,
+but it is kept in the same Bonferroni family (30 planned tests, not 18) so the
+multiplicity correction stays honest.
 
 Design notes
 ------------
@@ -72,9 +77,6 @@ from itertools import combinations
 
 from _power_common import (
     ALPHA,
-    ALPHA_CORRECTED,
-    INFOS,
-    N_TESTS,
     POWER_TARGETS,
     SEED,
     fmt_r,
@@ -82,22 +84,39 @@ from _power_common import (
 )
 
 # This all-MoE study reuses the periodic induction task verbatim (identical
-# quizzes, harmonic strata, and stratified-CMH statistics), so ONLY the model
-# set differs from notebooks/periodic. MODELS and build_contrasts are defined
-# locally rather than imported from _power_common (which pins the shared
-# decode/cot/moe archetypes); every downstream function reads the module-global
-# MODELS, so the sizing, omnibus, and loaders all pick these up. The contrast
-# family is unchanged in SHAPE (3 models x 3 infos -> 9 + 9), so N_TESTS still
-# imports as 18.
+# quizzes, harmonic strata, and stratified-CMH statistics), so only the model
+# set and the addition of a fourth information condition differ from
+# notebooks/periodic. MODELS, INFOS, and build_contrasts are defined locally
+# rather than imported from _power_common (which pins the shared decode/cot/moe
+# archetypes AND the three positive-info types); every downstream function reads
+# the module-global MODELS/INFOS, so sizing, omnibus, and loaders all pick these
+# up.
 MODELS = ("qwen35", "nemotron3", "gptoss")
+
+# Four conditions: the three positive-information amounts plus a ZERO-info
+# baseline (empty context -> chance floor). Overriding INFOS here (rather than
+# importing the shared 3-tuple) grows the planned pairwise family from 18 to 30
+# contrasts -- 3 model-pairs x 4 infos = 12 model-within-info, plus C(4,2)=6
+# info-pairs x 3 models = 18 info-within-model -- so N_TESTS and the
+# Bonferroni-corrected alpha are recomputed locally to match. Defined BEFORE the
+# functions below so their `alpha=ALPHA_CORRECTED` default args bind to THIS
+# corrected value, not the shared 3-info one (main() asserts build_contrasts()
+# has exactly N_TESTS entries as a guard against drift).
+INFOS = ("intens", "extens", "noise_intens", "zero")
+N_TESTS = (
+    len(INFOS) * len(list(combinations(MODELS, 2)))   # model-within-info
+    + len(MODELS) * len(list(combinations(INFOS, 2)))  # info-within-model
+)  # = 12 + 18 = 30
+ALPHA_CORRECTED = ALPHA / N_TESTS
 
 
 def build_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
-    """The 18 planned pairwise contrasts: 9 model-within-info + 9 info-within-model.
+    """The 30 planned pairwise contrasts: 12 model-within-info + 18 info-within-model.
 
     Structurally identical to _power_common.build_contrasts, but over this
-    study's MoE model set (order: 9 model contrasts grouped by info in INFOS
-    order, then 9 info contrasts grouped by model in MODELS order).
+    study's MoE model set AND four info conditions (order: model contrasts
+    grouped by info in INFOS order, then info contrasts grouped by model in
+    MODELS order).
     """
     contrasts = []
     for info in INFOS:
@@ -357,6 +376,7 @@ def main() -> None:
     # chromatic's build_contrasts -- structural identity verified when this
     # module was introduced).
     contrasts = build_contrasts()
+    assert len(contrasts) == N_TESTS, (len(contrasts), N_TESTS)
 
     header = (
         f"{'contrast':38s} {'rates':13s} {'R(80%)':>7s} {'R(90%)':>7s} "
