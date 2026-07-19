@@ -1,0 +1,15 @@
+{
+  "full_name": "Filter.comap_abs_atTop",
+  "file_path": "Mathlib/Order/Filter/AtTopBot.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "refine'\n  le_antisymm (((atTop_basis.comap _).le_basis_iff (atBot_basis.sup atTop_basis)).2 _)\n    (sup_le tendsto_abs_atBot_atTop.le_comap tendsto_abs_atTop_atTop.le_comap)\nrintro ⟨a, b⟩ -\nrefine' ⟨max (-a) b, trivial, fun x hx => _⟩\nrw [mem_preimage, mem_Ici, le_abs', max_le_iff, ← min_neg_neg, le_min_iff, neg_neg] at hx\nexact hx.imp And.left And.right",
+  "ground_truth_remaining_from_k": "exact hx.imp And.left And.right",
+  "true_premises_at_k": [
+    "And.left",
+    "And.right"
+  ],
+  "state_before_k": "case mk\nι : Type u_1\nι' : Type u_2\nα : Type u_3\nβ : Type u_4\nγ : Type u_5\ninst✝ : LinearOrderedAddCommGroup α\na b x : α\nhx : x ≤ a ∧ x ≤ -b ∨ -a ≤ x ∧ b ≤ x\n⊢ x ∈ Iic (a, b).1 ∪ Ici (a, b).2"
+}

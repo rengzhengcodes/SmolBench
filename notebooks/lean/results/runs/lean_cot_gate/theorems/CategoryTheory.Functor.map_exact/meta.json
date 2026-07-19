@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Functor.map_exact",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Exact.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "let hcoker := isColimitOfHasCokernelOfPreservesColimit L f\nlet hker := isLimitOfHasKernelOfPreservesLimit L g\nrefine' (exact_iff' _ _ hker hcoker).2 ⟨by simp [← L.map_comp, e1.1], _⟩\nsimp only [Fork.ι_ofι, Cofork.π_ofπ, ← L.map_comp, kernel_comp_cokernel _ _ e1, L.map_zero]\nsimp [← L.map_comp, e1.1]",
+  "ground_truth_remaining_from_k": "simp [← L.map_comp, e1.1]",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u₁\ninst✝⁷ : Category.{v₁, u₁} C\ninst✝⁶ : Abelian C\nA : Type u₁\nB : Type u₂\ninst✝⁵ : Category.{v₁, u₁} A\ninst✝⁴ : Category.{v₂, u₂} B\ninst✝³ : Abelian A\ninst✝² : Abelian B\nL : A ⥤ B\ninst✝¹ : PreservesFiniteLimits L\ninst✝ : PreservesFiniteColimits L\nX Y Z : A\nf : X ⟶ Y\ng : Y ⟶ Z\ne1 : Exact f g\nhcoker : IsColimit (Cofork.ofπ (L.map (cokernel.π f)) ⋯) := isColimitOfHasCokernelOfPreservesColimit L f\nhker : IsLimit (Fork.ofι (L.map (kernel.ι g)) ⋯) := isLimitOfHasKernelOfPreservesLimit L g\n⊢ L.map f ≫ L.map g = 0"
+}

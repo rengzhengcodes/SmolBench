@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.LocalizerMorphism.IsLocalizedEquivalence.of_isLocalization_of_isLocalization",
+  "file_path": "Mathlib/CategoryTheory/Localization/LocalizerMorphism.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "have : CatCommSq Φ.functor (Φ.functor ⋙ L₂) L₂ (𝟭 D₂) :=\n  CatCommSq.mk (Functor.rightUnitor _).symm\nexact IsLocalizedEquivalence.mk' Φ (Φ.functor ⋙ L₂) L₂ (𝟭 D₂)",
+  "ground_truth_remaining_from_k": "exact IsLocalizedEquivalence.mk' Φ (Φ.functor ⋙ L₂) L₂ (𝟭 D₂)",
+  "true_premises_at_k": [
+    "CategoryTheory.LocalizerMorphism.IsLocalizedEquivalence.mk'"
+  ],
+  "state_before_k": "C₁ : Type u₁\nC₂ : Type u₂\nC₃ : Type u₃\nD₁ : Type u₄\nD₂ : Type u₅\nD₃ : Type u₆\ninst✝⁸ : Category.{v₁, u₁} C₁\ninst✝⁷ : Category.{v₂, u₂} C₂\ninst✝⁶ : Category.{v₃, u₃} C₃\ninst✝⁵ : Category.{v₄, u₄} D₁\ninst✝⁴ : Category.{v₅, u₅} D₂\ninst✝³ : Category.{v₆, u₅} D₂\nW₁ : MorphismProperty C₁\nW₂ : MorphismProperty C₂\nW₃ : MorphismProperty C₃\nΦ : LocalizerMorphism W₁ W₂\nL₁ : C₁ ⥤ D₁\ninst✝² : Functor.IsLocalization L₁ W₁\nL₂ : C₂ ⥤ D₂\ninst✝¹ : Functor.IsLocalization L₂ W₂\nG : D₁ ⥤ D₂\ninst✝ : Functor.IsLocalization (Φ.functor ⋙ L₂) W₁\nthis : CatCommSq Φ.functor (Φ.functor ⋙ L₂) L₂ (𝟭 D₂)\n⊢ IsLocalizedEquivalence Φ"
+}

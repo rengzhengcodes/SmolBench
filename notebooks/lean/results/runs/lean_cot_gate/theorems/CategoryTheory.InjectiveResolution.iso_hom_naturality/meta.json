@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.InjectiveResolution.iso_hom_naturality",
+  "file_path": "Mathlib/CategoryTheory/Abelian/InjectiveResolution.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "apply HomotopyCategory.eq_of_homotopy\napply descHomotopy f\nall_goals aesop_cat\naesop_cat",
+  "ground_truth_remaining_from_k": "aesop_cat",
+  "true_premises_at_k": [],
+  "state_before_k": "case h.h_comm\nC : Type u\ninst✝² : Category.{v, u} C\ninst✝¹ : Abelian C\ninst✝ : HasInjectiveResolutions C\nX Y : C\nf : X ⟶ Y\nI : InjectiveResolution X\nJ : InjectiveResolution Y\nφ : I.cocomplex ⟶ J.cocomplex\ncomm : I.ι.f 0 ≫ φ.f 0 = f ≫ J.ι.f 0\n⊢ (injectiveResolution X).ι ≫ (homotopyEquiv (injectiveResolution X) I).hom ≫ φ = (CochainComplex.single₀ C).map f ≫ J.ι"
+}

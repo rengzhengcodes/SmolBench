@@ -1,0 +1,14 @@
+{
+  "full_name": "FixedPoints.minpoly.monic",
+  "file_path": "Mathlib/FieldTheory/Fixed.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp only [minpoly, Polynomial.monic_toSubring]\nexact prodXSubSMul.monic G F x",
+  "ground_truth_remaining_from_k": "exact prodXSubSMul.monic G F x",
+  "true_premises_at_k": [
+    "prodXSubSMul.monic"
+  ],
+  "state_before_k": "M : Type u\ninst✝⁵ : Monoid M\nG : Type u\ninst✝⁴ : Group G\nF : Type v\ninst✝³ : Field F\ninst✝² : MulSemiringAction M F\ninst✝¹ : MulSemiringAction G F\nm : M\ninst✝ : Fintype G\nx : F\n⊢ Polynomial.Monic (prodXSubSMul G F x)"
+}

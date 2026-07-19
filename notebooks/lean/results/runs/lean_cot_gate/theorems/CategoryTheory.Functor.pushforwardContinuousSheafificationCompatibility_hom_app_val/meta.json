@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.Functor.pushforwardContinuousSheafificationCompatibility_hom_app_val",
+  "file_path": "Mathlib/CategoryTheory/Sites/CoverLifting.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "apply sheafifyLift_unique\napply toSheafify_pullbackSheafificationCompatibility",
+  "ground_truth_remaining_from_k": "apply toSheafify_pullbackSheafificationCompatibility",
+  "true_premises_at_k": [
+    "CategoryTheory.Functor.toSheafify_pullbackSheafificationCompatibility"
+  ],
+  "state_before_k": "case a\nC D : Type u\ninst✝⁸ : Category.{v, u} C\ninst✝⁷ : Category.{v, u} D\nG : C ⥤ D\nA : Type w\ninst✝⁶ : Category.{max u v, w} A\ninst✝⁵ : HasLimits A\nJ : GrothendieckTopology C\nK : GrothendieckTopology D\ninst✝⁴ : IsCocontinuous G J K\ninst✝³ : HasWeakSheafify J A\ninst✝² : HasWeakSheafify K A\ninst✝¹ : IsCocontinuous G J K\ninst✝ : IsContinuous G J K\nF : Dᵒᵖ ⥤ A\n⊢ toSheafify J (((whiskeringLeft Cᵒᵖ Dᵒᵖ A).obj G.op).obj F) ≫\n      ((pushforwardContinuousSheafificationCompatibility G A J K).hom.app F).val =\n    whiskerLeft G.op (toSheafify K F)"
+}

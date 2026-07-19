@@ -1,0 +1,15 @@
+{
+  "full_name": "Filter.mul_eq_one_iff",
+  "file_path": "Mathlib/Order/Filter/Pointwise.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 10,
+  "k": 9,
+  "ground_truth_full_proof": "refine' ⟨fun hfg => _, _⟩\nobtain ⟨t₁, h₁, t₂, h₂, h⟩ : (1 : Set α) ∈ f * g := hfg.symm.subst one_mem_one\nhave hfg : (f * g).NeBot := hfg.symm.subst one_neBot\nrw [(hfg.nonempty_of_mem <| mul_mem_mul h₁ h₂).subset_one_iff, Set.mul_eq_one_iff] at h\nobtain ⟨a, b, rfl, rfl, h⟩ := h\nrefine' ⟨a, b, _, _, h⟩\nrwa [← hfg.of_mul_left.le_pure_iff, le_pure_iff]\nrwa [← hfg.of_mul_right.le_pure_iff, le_pure_iff]\nrintro ⟨a, b, rfl, rfl, h⟩\nrw [pure_mul_pure, h, pure_one]",
+  "ground_truth_remaining_from_k": "rw [pure_mul_pure, h, pure_one]",
+  "true_premises_at_k": [
+    "Filter.pure_mul_pure",
+    "Filter.pure_one"
+  ],
+  "state_before_k": "case refine'_2.intro.intro.intro.intro\nF : Type u_1\nα : Type u_2\nβ : Type u_3\nγ : Type u_4\nδ : Type u_5\nε : Type u_6\ninst✝ : DivisionMonoid α\na b : α\nh : a * b = 1\n⊢ pure a * pure b = 1"
+}

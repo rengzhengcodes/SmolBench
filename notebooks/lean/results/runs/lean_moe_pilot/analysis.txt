@@ -1,0 +1,18 @@
+# 154 cells; sanity 28 pass / 2 fail
+
+!! 2 sanity-gate failures — pipeline may have rotted
+
+rung       model                                 pass/N      rate  lerr  incp  gvup  rplf  exc    l3  avg_in avg_out  avg_s
+---------------------------------------------------------------------------------------------------------------------------
+stepk:1    gpt-oss-120b-base                        5/22    22.7%    17     0     0     0    0     0     440    1868   14.1
+stepk:1    nemotron-3-super-120b-a12b-base          1/22     4.5%    20     0     0     0    1     0     398   13794  133.9
+hint:2     gpt-oss-120b-base                        4/19    21.1%    15     0     0     0    0     1     971    1803   14.8
+hint:2     nemotron-3-super-120b-a12b-base          2/19    10.5%    17     0     0     0    0     0     946   11435  105.7
+hint:3     gpt-oss-120b-base                        6/18    33.3%    12     0     0     0    0     1    2264    2117   15.8
+hint:3     nemotron-3-super-120b-a12b-base          0/18     0.0%    18     0     0     0    0     1    2265    9095   86.5
+noise:3    gpt-oss-120b-base                        4/18    22.2%    13     1     0     0    0     1    2141    1785   15.1
+noise:3    nemotron-3-super-120b-a12b-base          2/18    11.1%    15     0     0     0    1     1    2464   14586  166.9
+
+# per-model totals
+  gpt-oss-120b-base                       19/77     24.7%  (107,425 in / 145,597 out tokens)  l3=3
+  nemotron-3-super-120b-a12b-base          5/77      6.5%  (111,856 in / 946,984 out tokens)  l3=2

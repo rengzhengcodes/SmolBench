@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.IsFiltered.small_fullSubcategory_filteredClosure",
+  "file_path": "Mathlib/CategoryTheory/Filtered/Small.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 16,
+  "k": 15,
+  "ground_truth_full_proof": "refine' small_of_injective_of_exists (FilteredClosureSmall.abstractFilteredClosureRealization f)\n  FullSubcategory.ext _\nrintro ⟨j, h⟩\ninduction h with\n| base x => exact ⟨⟨0, ⟨x⟩⟩, rfl⟩\n| max hj₁ hj₂ ih ih' =>\n  rcases ih with ⟨⟨n, x⟩, rfl⟩\n  rcases ih' with ⟨⟨m, y⟩, rfl⟩\n  refine' ⟨⟨(Max.max n m).succ, FilteredClosureSmall.InductiveStep.max _ _ x y⟩, rfl⟩\n  all_goals apply Nat.lt_succ_of_le\n  exacts [Nat.le_max_left _ _, Nat.le_max_right _ _]\n| coeq hj₁ hj₂ g g' ih ih' =>\n  rcases ih with ⟨⟨n, x⟩, rfl⟩\n  rcases ih' with ⟨⟨m, y⟩, rfl⟩\n  refine' ⟨⟨(Max.max n m).succ, FilteredClosureSmall.InductiveStep.coeq _ _ x y g g'⟩, rfl⟩\n  all_goals apply Nat.lt_succ_of_le\n  exacts [Nat.le_max_left _ _, Nat.le_max_right _ _]\nexact ⟨⟨0, ⟨x⟩⟩, rfl⟩\nrcases ih with ⟨⟨n, x⟩, rfl⟩\nrcases ih' with ⟨⟨m, y⟩, rfl⟩\nrefine' ⟨⟨(Max.max n m).succ, FilteredClosureSmall.InductiveStep.max _ _ x y⟩, rfl⟩\nall_goals apply Nat.lt_succ_of_le\nexacts [Nat.le_max_left _ _, Nat.le_max_right _ _]\napply Nat.lt_succ_of_le\nrcases ih with ⟨⟨n, x⟩, rfl⟩\nrcases ih' with ⟨⟨m, y⟩, rfl⟩\nrefine' ⟨⟨(Max.max n m).succ, FilteredClosureSmall.InductiveStep.coeq _ _ x y g g'⟩, rfl⟩\nall_goals apply Nat.lt_succ_of_le\nexacts [Nat.le_max_left _ _, Nat.le_max_right _ _]\napply Nat.lt_succ_of_le",
+  "ground_truth_remaining_from_k": "apply Nat.lt_succ_of_le",
+  "true_premises_at_k": [
+    "Nat.lt_succ_of_le"
+  ],
+  "state_before_k": "case mk.coeq.intro.mk.intro.mk.refine'_2\nC : Type u\ninst✝¹ : Category.{v, u} C\ninst✝ : IsFilteredOrEmpty C\nα : Type w\nf : α → C\nj : C\nn : ℕ\nx : (CategoryTheory.IsFiltered.FilteredClosureSmall.bundledAbstractFilteredClosure f n).fst\nhj₁ :\n  FilteredClosure f\n    (CategoryTheory.IsFiltered.FilteredClosureSmall.abstractFilteredClosureRealization f { fst := n, snd := x })\nm : ℕ\ny : (CategoryTheory.IsFiltered.FilteredClosureSmall.bundledAbstractFilteredClosure f m).fst\nhj₂ :\n  FilteredClosure f\n    (CategoryTheory.IsFiltered.FilteredClosureSmall.abstractFilteredClosureRealization f { fst := m, snd := y })\ng g' :\n  CategoryTheory.IsFiltered.FilteredClosureSmall.abstractFilteredClosureRealization f { fst := n, snd := x } ⟶\n    CategoryTheory.IsFiltered.FilteredClosureSmall.abstractFilteredClosureRealization f { fst := m, snd := y }\n⊢ m < Max.max n m + 1"
+}

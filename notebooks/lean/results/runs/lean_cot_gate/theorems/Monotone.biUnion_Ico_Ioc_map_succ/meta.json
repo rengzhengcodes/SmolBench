@@ -1,0 +1,15 @@
+{
+  "full_name": "Monotone.biUnion_Ico_Ioc_map_succ",
+  "file_path": "Mathlib/Order/SuccPred/IntervalSucc.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 9,
+  "k": 8,
+  "ground_truth_full_proof": "rcases le_total n m with hnm | hmn\nrw [Ico_eq_empty_of_le hnm, Ioc_eq_empty_of_le (hf hnm), biUnion_empty]\nrefine' Succ.rec _ _ hmn\nsimp only [Ioc_self, Ico_self, biUnion_empty]\nintro k hmk ihk\nrw [← Ioc_union_Ioc_eq_Ioc (hf hmk) (hf <| le_succ _), union_comm, ← ihk]\nby_cases hk : IsMax k\nrw [hk.succ_eq, Ioc_self, empty_union]\nrw [Ico_succ_right_eq_insert_of_not_isMax hmk hk, biUnion_insert]",
+  "ground_truth_remaining_from_k": "rw [Ico_succ_right_eq_insert_of_not_isMax hmk hk, biUnion_insert]",
+  "true_premises_at_k": [
+    "Order.Ico_succ_right_eq_insert_of_not_isMax",
+    "Set.biUnion_insert"
+  ],
+  "state_before_k": "case neg\nα : Type u_1\nβ : Type u_2\ninst✝³ : LinearOrder α\ninst✝² : SuccOrder α\ninst✝¹ : IsSuccArchimedean α\ninst✝ : LinearOrder β\nf : α → β\nhf : Monotone f\nm n : α\nhmn : m ≤ n\nk : α\nhmk : m ≤ k\nihk : ⋃ i ∈ Ico m k, Ioc (f i) (f (succ i)) = Ioc (f m) (f k)\nhk : ¬IsMax k\n⊢ ⋃ i ∈ Ico m (succ k), Ioc (f i) (f (succ i)) = Ioc (f k) (f (succ k)) ∪ ⋃ i ∈ Ico m k, Ioc (f i) (f (succ i))"
+}

@@ -1,0 +1,14 @@
+{
+  "full_name": "Filter.eventually_forall_ge_atTop",
+  "file_path": "Mathlib/Order/Filter/AtTopBot.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "refine ⟨fun h ↦ h.mono fun x hx ↦ hx x le_rfl, fun h ↦ ?_⟩\nrcases (hasBasis_iInf_principal_finite _).eventually_iff.1 h with ⟨S, hSf, hS⟩\nrefine mem_iInf_of_iInter hSf (V := fun x ↦ Ici x.1) (fun _ ↦ Subset.rfl) fun x hx y hy ↦ ?_\nsimp only [mem_iInter] at hS hx\nexact hS fun z hz ↦ le_trans (hx ⟨z, hz⟩) hy",
+  "ground_truth_remaining_from_k": "exact hS fun z hz ↦ le_trans (hx ⟨z, hz⟩) hy",
+  "true_premises_at_k": [
+    "le_trans"
+  ],
+  "state_before_k": "case intro.intro\nι : Type u_1\nι' : Type u_2\nα : Type u_3\nβ : Type u_4\nγ : Type u_5\ninst✝ : Preorder α\np : α → Prop\nh : ∀ᶠ (x : α) in atTop, p x\nS : Set α\nhSf : Set.Finite S\nx y : α\nhy : x ≤ y\nhS : ∀ ⦃x : α⦄, (∀ i ∈ S, x ∈ Ici i) → p x\nhx : ∀ (i : ↑S), x ∈ Ici ↑i\n⊢ p y"
+}

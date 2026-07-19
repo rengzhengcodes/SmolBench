@@ -1,0 +1,15 @@
+{
+  "full_name": "symmDiff_symmDiff_symmDiff_comm",
+  "file_path": "Mathlib/Order/SymmDiff.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp_rw [symmDiff_assoc, symmDiff_left_comm]",
+  "ground_truth_remaining_from_k": "simp_rw [symmDiff_assoc, symmDiff_left_comm]",
+  "true_premises_at_k": [
+    "symmDiff_assoc",
+    "symmDiff_left_comm"
+  ],
+  "state_before_k": "ι : Type u_1\nα : Type u_2\nβ : Type u_3\nπ : ι → Type u_4\ninst✝ : GeneralizedBooleanAlgebra α\na b c d : α\n⊢ a ∆ b ∆ (c ∆ d) = a ∆ c ∆ (b ∆ d)"
+}

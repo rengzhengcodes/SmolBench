@@ -1,0 +1,14 @@
+{
+  "full_name": "Interval.coe_iInf₂",
+  "file_path": "Mathlib/Order/Interval.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp_rw [coe_iInf]",
+  "ground_truth_remaining_from_k": "simp_rw [coe_iInf]",
+  "true_premises_at_k": [
+    "Interval.coe_iInf"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nγ : Type u_3\nδ : Type u_4\nι : Sort u_5\nκ : ι → Sort u_6\ninst✝¹ : CompleteLattice α\ninst✝ : DecidableRel fun x x_1 => x ≤ x_1\nf : (i : ι) → κ i → Interval α\n⊢ ↑(⨅ i, ⨅ j, f i j) = ⋂ i, ⋂ j, ↑(f i j)"
+}

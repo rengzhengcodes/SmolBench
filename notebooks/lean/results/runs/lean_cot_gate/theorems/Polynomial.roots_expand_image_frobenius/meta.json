@@ -1,0 +1,19 @@
+{
+  "full_name": "Polynomial.roots_expand_image_frobenius",
+  "file_path": "Mathlib/FieldTheory/Perfect.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [Finset.image_toFinset, roots_expand_map_frobenius,\n    (roots f).toFinset_nsmul _ (expChar_pos R p).ne']",
+  "ground_truth_remaining_from_k": "rw [Finset.image_toFinset, roots_expand_map_frobenius,\n    (roots f).toFinset_nsmul _ (expChar_pos R p).ne']",
+  "true_premises_at_k": [
+    "Finset.image_toFinset",
+    "Polynomial.roots_expand_map_frobenius",
+    "Polynomial.roots",
+    "Multiset.toFinset_nsmul",
+    "expChar_pos",
+    "LT.lt.ne'"
+  ],
+  "state_before_k": "R : Type u_1\ninst✝⁴ : CommRing R\ninst✝³ : IsDomain R\np n : ℕ\ninst✝² : ExpChar R p\nf : R[X]\ninst✝¹ : PerfectRing R p\ninst✝ : DecidableEq R\n⊢ Finset.image (⇑(frobenius R p)) (toFinset (roots ((expand R p) f))) = toFinset (roots f)"
+}

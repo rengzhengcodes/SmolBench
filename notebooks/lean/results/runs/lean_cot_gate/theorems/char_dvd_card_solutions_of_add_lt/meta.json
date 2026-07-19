@@ -1,0 +1,15 @@
+{
+  "full_name": "char_dvd_card_solutions_of_add_lt",
+  "file_path": "Mathlib/FieldTheory/ChevalleyWarning.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "let F : Bool → MvPolynomial σ K := fun b => cond b f₂ f₁\nhave : (∑ b : Bool, (F b).totalDegree) < Fintype.card σ := (add_comm _ _).trans_lt h\nsimpa only [Bool.forall_bool] using char_dvd_card_solutions_of_fintype_sum_lt p this",
+  "ground_truth_remaining_from_k": "simpa only [Bool.forall_bool] using char_dvd_card_solutions_of_fintype_sum_lt p this",
+  "true_premises_at_k": [
+    "Bool.forall_bool",
+    "char_dvd_card_solutions_of_fintype_sum_lt"
+  ],
+  "state_before_k": "K : Type u_1\nσ : Type u_2\nι : Type u_3\ninst✝⁵ : Fintype K\ninst✝⁴ : Field K\ninst✝³ : Fintype σ\ninst✝² : DecidableEq σ\ninst✝¹ : DecidableEq K\np : ℕ\ninst✝ : CharP K p\nf₁ f₂ : MvPolynomial σ K\nh : totalDegree f₁ + totalDegree f₂ < Fintype.card σ\nF : Bool → MvPolynomial σ K := fun b => bif b then f₂ else f₁\nthis : ∑ b : Bool, totalDegree (F b) < Fintype.card σ\n⊢ p ∣ Fintype.card { x // (eval x) f₁ = 0 ∧ (eval x) f₂ = 0 }"
+}

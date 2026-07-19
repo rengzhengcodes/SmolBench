@@ -1,0 +1,16 @@
+{
+  "full_name": "CategoryTheory.Abelian.imageIsoImage_hom_comp_image_ι",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [IsImage.isoExt_hom, IsImage.lift_ι, imageStrongEpiMonoFactorisation_m]",
+  "ground_truth_remaining_from_k": "simp only [IsImage.isoExt_hom, IsImage.lift_ι, imageStrongEpiMonoFactorisation_m]",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.IsImage.isoExt_hom",
+    "CategoryTheory.Limits.IsImage.lift_ι",
+    "CategoryTheory.Abelian.imageStrongEpiMonoFactorisation_m"
+  ],
+  "state_before_k": "C : Type u\ninst✝¹ : Category.{v, u} C\ninst✝ : Abelian C\nX Y : C\nf : X ⟶ Y\n⊢ (imageIsoImage f).hom ≫ Limits.image.ι f = kernel.ι (cokernel.π f)"
+}

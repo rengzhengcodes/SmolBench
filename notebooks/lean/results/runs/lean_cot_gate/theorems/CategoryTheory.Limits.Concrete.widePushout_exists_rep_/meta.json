@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Limits.Concrete.widePushout_exists_rep'",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/ConcreteCategory.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "rcases Concrete.widePushout_exists_rep f x with (⟨y, rfl⟩ | ⟨i, y, rfl⟩)\ninhabit α\nuse default, f _ y\nsimp only [← arrow_ι _ default, comp_apply]\nuse i, y",
+  "ground_truth_remaining_from_k": "use i, y",
+  "true_premises_at_k": [],
+  "state_before_k": "case inr.intro.intro\nC : Type u\ninst✝⁴ : Category.{v, u} C\ninst✝³ : ConcreteCategory C\nB : C\nα : Type v\ninst✝² : Nonempty α\nX : α → C\nf : (j : α) → B ⟶ X j\ninst✝¹ : HasWidePushout B X f\ninst✝ : PreservesColimit (wideSpan B X f) (forget C)\ni : α\ny : (forget C).obj (X i)\n⊢ ∃ i_1 y_1, (ι f i_1) y_1 = (ι f i) y"
+}

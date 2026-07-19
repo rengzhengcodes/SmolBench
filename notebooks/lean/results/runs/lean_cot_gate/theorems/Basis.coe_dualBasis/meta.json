@@ -1,0 +1,14 @@
+{
+  "full_name": "Basis.coe_dualBasis",
+  "file_path": "Mathlib/LinearAlgebra/Dual.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "ext i x\napply dualBasis_apply",
+  "ground_truth_remaining_from_k": "apply dualBasis_apply",
+  "true_premises_at_k": [
+    "Basis.dualBasis_apply"
+  ],
+  "state_before_k": "case h.h\nR : Type uR\nM : Type uM\nK : Type uK\nV : Type uV\nι : Type uι\ninst✝⁴ : CommRing R\ninst✝³ : AddCommGroup M\ninst✝² : Module R M\ninst✝¹ : DecidableEq ι\nb : Basis ι R M\ninst✝ : _root_.Finite ι\ni : ι\nx : M\n⊢ ((dualBasis b) i) x = (coord b i) x"
+}
