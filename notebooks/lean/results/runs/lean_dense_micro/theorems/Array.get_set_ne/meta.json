@@ -1,0 +1,16 @@
+{
+  "full_name": "Array.get_set_ne",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp [*]\nsimp only [set, getElem_eq_data_get, List.get_set_ne _ h]",
+  "ground_truth_remaining_from_k": "simp only [set, getElem_eq_data_get, List.get_set_ne _ h]",
+  "true_premises_at_k": [
+    "Array.set",
+    "Array.getElem_eq_data_get",
+    "List.get_set_ne"
+  ],
+  "state_before_k": "α : Type u_1\na : Array α\ni : Fin (size a)\nj : Nat\nv : α\nhj : j < size a\nh : ↑i ≠ j\n⊢ (set a i v)[j] = a[j]"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "Std.RBNode.exists_insert_toList_zoom_node",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "refine ⟨p.listL ++ l.toList, r.toList ++ p.listR, ?_⟩\nsimp [← zoom_toList e, insert_toList_zoom_node ht e]",
+  "ground_truth_remaining_from_k": "simp [← zoom_toList e, insert_toList_zoom_node ht e]",
+  "true_premises_at_k": [
+    "Std.RBNode.zoom_toList",
+    "Std.RBNode.insert_toList_zoom_node"
+  ],
+  "state_before_k": "α : Type u_1\nc : RBColor\nn : Nat\ncmp : α → α → Ordering\nc' : RBColor\nl : RBNode α\nv' : α\nr : RBNode α\np : Path α\nv : α\nt : RBNode α\nht : Balanced t c n\ne : zoom (cmp v) t = (node c' l v' r, p)\n⊢ toList t = Path.listL p ++ toList l ++ v' :: (toList r ++ Path.listR p) ∧\n    toList (insert cmp t v) = Path.listL p ++ toList l ++ v :: (toList r ++ Path.listR p)"
+}

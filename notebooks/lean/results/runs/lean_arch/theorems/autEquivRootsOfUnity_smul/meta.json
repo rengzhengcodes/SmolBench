@@ -1,0 +1,14 @@
+{
+  "full_name": "autEquivRootsOfUnity_smul",
+  "file_path": "Mathlib/FieldTheory/KummerExtension.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 7,
+  "k": 6,
+  "ground_truth_full_proof": "have ⟨ζ, hζ'⟩ := hζ\nrw [mem_primitiveRoots hn] at hζ'\nrw [← mem_nthRoots hn, (hζ'.map_of_injective (algebraMap K L).injective).nthRoots_eq\n  (rootOfSplitsXPowSubC_pow hn a L)] at hα\nsimp only [Finset.range_val, Multiset.mem_map, Multiset.mem_range] at hα\nobtain ⟨i, _, rfl⟩ := hα\nsimp only [map_mul, ← map_pow, ← Algebra.smul_def, AlgEquiv.map_smul,\n  autEquivRootsOfUnity_apply_rootOfSplit hζ hn H L]\nexact smul_comm _ _ _",
+  "ground_truth_remaining_from_k": "exact smul_comm _ _ _",
+  "true_premises_at_k": [
+    "SMulCommClass.smul_comm"
+  ],
+  "state_before_k": "case intro.intro\nK : Type u\ninst✝³ : Field K\nn : ℕ\nhζ : (primitiveRoots n K).Nonempty\nhn : 0 < n\na : K\nH : Irreducible (X ^ n - C a)\nL : Type u_1\ninst✝² : Field L\ninst✝¹ : Algebra K L\ninst✝ : IsSplittingField K L (X ^ n - C a)\nσ : L ≃ₐ[K] L\nζ : K\nhζ'✝ : ζ ∈ primitiveRoots n K\nhζ' : IsPrimitiveRoot ζ n\ni : ℕ\nleft✝ : i < n\n⊢ (autEquivRootsOfUnity ⋯ hn H L) σ • ζ ^ i • rootOfSplitsXPowSubC hn a L =\n    ζ ^ i • (autEquivRootsOfUnity hζ hn H L) σ • rootOfSplitsXPowSubC hn a L"
+}

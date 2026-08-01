@@ -1,0 +1,14 @@
+{
+  "full_name": "String.data_dropWhile",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [dropWhile_eq]",
+  "ground_truth_remaining_from_k": "rw [dropWhile_eq]",
+  "true_premises_at_k": [
+    "String.dropWhile_eq"
+  ],
+  "state_before_k": "p : Char → Bool\ns : String\n⊢ (dropWhile s p).data = List.dropWhile p s.data"
+}

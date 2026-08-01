@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.IsPushout.of_isBilimit",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/CommSq.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "convert IsPushout.of_is_coproduct' h.isColimit HasZeroObject.zeroIsInitial",
+  "ground_truth_remaining_from_k": "convert IsPushout.of_is_coproduct' h.isColimit HasZeroObject.zeroIsInitial",
+  "true_premises_at_k": [
+    "CategoryTheory.IsPushout.of_is_coproduct'",
+    "CategoryTheory.Limits.HasZeroObject.zeroIsInitial"
+  ],
+  "state_before_k": "C : Type u₁\ninst✝² : Category.{v₁, u₁} C\nZ X Y P : C\nf : Z ⟶ X\ng : Z ⟶ Y\ninl : X ⟶ P\ninr : Y ⟶ P\ninst✝¹ : HasZeroObject C\ninst✝ : HasZeroMorphisms C\nb : BinaryBicone X Y\nh : BinaryBicone.IsBilimit b\n⊢ IsPushout 0 0 b.inl b.inr"
+}

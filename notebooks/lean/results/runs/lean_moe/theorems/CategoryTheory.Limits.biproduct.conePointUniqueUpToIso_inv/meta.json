@@ -1,0 +1,19 @@
+{
+  "full_name": "CategoryTheory.Limits.biproduct.conePointUniqueUpToIso_inv",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/Biproducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "refine' biproduct.hom_ext' _ _ fun j => hb.isLimit.hom_ext fun j' => _\nrw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,\n  biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π, b.toCone_π_app, b.ι_π]",
+  "ground_truth_remaining_from_k": "rw [Category.assoc, IsLimit.conePointUniqueUpToIso_inv_comp, Bicone.toCone_π_app,\n  biproduct.bicone_π, biproduct.ι_desc, biproduct.ι_π, b.toCone_π_app, b.ι_π]",
+  "true_premises_at_k": [
+    "CategoryTheory.Category.assoc",
+    "CategoryTheory.Limits.IsLimit.conePointUniqueUpToIso_inv_comp",
+    "CategoryTheory.Limits.Bicone.toCone_π_app",
+    "CategoryTheory.Limits.biproduct.bicone_π",
+    "CategoryTheory.Limits.biproduct.ι_desc",
+    "CategoryTheory.Limits.biproduct.ι_π"
+  ],
+  "state_before_k": "J : Type w\nC : Type u\ninst✝⁴ : Category.{v, u} C\ninst✝³ : HasZeroMorphisms C\nD : Type uD\ninst✝² : Category.{uD', uD} D\ninst✝¹ : HasZeroMorphisms D\nf : J → C\ninst✝ : HasBiproduct f\nb : Bicone f\nhb : Bicone.IsBilimit b\nj : J\nj' : Discrete J\n⊢ (ι f j ≫ (IsLimit.conePointUniqueUpToIso hb.isLimit (isLimit f)).inv) ≫ (Bicone.toCone b).π.app j' =\n    (ι f j ≫ desc b.ι) ≫ (Bicone.toCone b).π.app j'"
+}

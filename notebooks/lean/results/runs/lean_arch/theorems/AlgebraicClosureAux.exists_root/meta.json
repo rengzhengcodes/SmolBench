@@ -1,0 +1,14 @@
+{
+  "full_name": "AlgebraicClosureAux.exists_root",
+  "file_path": "Mathlib/FieldTheory/IsAlgClosed/AlgebraicClosure.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "have : ∃ n p, Polynomial.map (ofStep k n) p = f := by\n  convert Ring.DirectLimit.Polynomial.exists_of f\nobtain ⟨n, p, rfl⟩ := this\nrw [monic_map_iff] at hfm\nhave := hfm.irreducible_of_irreducible_map (ofStep k n) p hfi\nobtain ⟨x, hx⟩ := toStepSucc.exists_root k hfm this\nrefine' ⟨ofStep k (n + 1) x, _⟩\nrw [← ofStep_succ k n, eval_map, ← hom_eval₂, hx, RingHom.map_zero]\nconvert Ring.DirectLimit.Polynomial.exists_of f",
+  "ground_truth_remaining_from_k": "convert Ring.DirectLimit.Polynomial.exists_of f",
+  "true_premises_at_k": [
+    "Ring.DirectLimit.Polynomial.exists_of"
+  ],
+  "state_before_k": "k : Type u\ninst✝ : Field k\nf : (AlgebraicClosureAux k)[X]\nhfm : Monic f\nhfi : Irreducible f\n⊢ ∃ n p, map (ofStep k n) p = f"
+}

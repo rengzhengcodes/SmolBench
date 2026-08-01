@@ -1,0 +1,14 @@
+{
+  "full_name": "covBy_sup_of_inf_covBy_of_inf_covBy_right",
+  "file_path": "Mathlib/Order/ModularLattice.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [inf_comm, sup_comm]\nexact fun ha hb => covBy_sup_of_inf_covBy_of_inf_covBy_left hb ha",
+  "ground_truth_remaining_from_k": "exact fun ha hb => covBy_sup_of_inf_covBy_of_inf_covBy_left hb ha",
+  "true_premises_at_k": [
+    "covBy_sup_of_inf_covBy_of_inf_covBy_left"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝¹ : Lattice α\ninst✝ : IsWeakUpperModularLattice α\na b : α\n⊢ b ⊓ a ⋖ a → b ⊓ a ⋖ b → b ⋖ b ⊔ a"
+}

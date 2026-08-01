@@ -1,0 +1,12 @@
+{
+  "full_name": "LinearMap.range_lt_top_of_det_eq_zero",
+  "file_path": "Mathlib/LinearAlgebra/Determinant.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "have : FiniteDimensional 𝕜 M := by simp [f.finiteDimensional_of_det_ne_one, hf]\ncontrapose hf\nsimp only [lt_top_iff_ne_top, Classical.not_not, ← isUnit_iff_range_eq_top] at hf\nexact isUnit_iff_ne_zero.1 (f.isUnit_det hf)\nsimp [f.finiteDimensional_of_det_ne_one, hf]",
+  "ground_truth_remaining_from_k": "simp [f.finiteDimensional_of_det_ne_one, hf]",
+  "true_premises_at_k": [],
+  "state_before_k": "R : Type u_1\ninst✝¹¹ : CommRing R\nM : Type u_2\ninst✝¹⁰ : AddCommGroup M\ninst✝⁹ : Module R M\nM' : Type u_3\ninst✝⁸ : AddCommGroup M'\ninst✝⁷ : Module R M'\nι : Type u_4\ninst✝⁶ : DecidableEq ι\ninst✝⁵ : Fintype ι\ne : Basis ι R M\nA : Type u_5\ninst✝⁴ : CommRing A\ninst✝³ : Module A M\nκ : Type u_6\ninst✝² : Fintype κ\n𝕜 : Type u_7\ninst✝¹ : Field 𝕜\ninst✝ : Module 𝕜 M\nf : M →ₗ[𝕜] M\nhf : LinearMap.det f = 0\n⊢ FiniteDimensional 𝕜 M"
+}

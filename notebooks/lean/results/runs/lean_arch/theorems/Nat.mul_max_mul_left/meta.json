@@ -1,0 +1,14 @@
+{
+  "full_name": "Nat.mul_max_mul_left",
+  "file_path": ".lake/packages/std/Std/Data/Nat/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "repeat rw [Nat.mul_comm a]\nexact Nat.mul_max_mul_right ..\nrw [Nat.mul_comm a]",
+  "ground_truth_remaining_from_k": "rw [Nat.mul_comm a]",
+  "true_premises_at_k": [
+    "Nat.mul_comm"
+  ],
+  "state_before_k": "a b c : Nat\n⊢ max (b * a) (c * a) = a * max b c"
+}

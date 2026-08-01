@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -94,6 +94,42 @@ rfl
 ```
 
 ### `stepk:1` · llama-lean-bare-micro-r128 · rollout 2 → **success**  (gen 0.6s, verify 0.1s, in=323, out=3)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **success**  (gen 6.3s, verify 0.1s, in=323, out=163)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **success**  (gen 6.4s, verify 0.1s, in=323, out=164)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **success**  (gen 7.4s, verify 0.1s, in=323, out=195)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 7.9s, verify 0.1s, in=323, out=211)
 
 prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 

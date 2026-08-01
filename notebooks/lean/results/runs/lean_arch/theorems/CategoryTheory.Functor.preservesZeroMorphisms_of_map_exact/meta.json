@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.Functor.preservesZeroMorphisms_of_map_exact",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Exact.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "replace h := (h (exact_of_zero (𝟙 0) (𝟙 0))).w\nrw [L.map_id, Category.comp_id] at h\nexact preservesZeroMorphisms_of_map_zero_object (idZeroEquivIsoZero _ h)",
+  "ground_truth_remaining_from_k": "exact preservesZeroMorphisms_of_map_zero_object (idZeroEquivIsoZero _ h)",
+  "true_premises_at_k": [
+    "CategoryTheory.Functor.preservesZeroMorphisms_of_map_zero_object",
+    "CategoryTheory.Limits.idZeroEquivIsoZero"
+  ],
+  "state_before_k": "C : Type u₁\ninst✝⁵ : Category.{v₁, u₁} C\ninst✝⁴ : Abelian C\nA : Type u₁\nB : Type u₂\ninst✝³ : Category.{v₁, u₁} A\ninst✝² : Category.{v₂, u₂} B\ninst✝¹ : Abelian A\ninst✝ : Abelian B\nL : A ⥤ B\nh : 𝟙 (L.obj 0) = 0\n⊢ PreservesZeroMorphisms L"
+}

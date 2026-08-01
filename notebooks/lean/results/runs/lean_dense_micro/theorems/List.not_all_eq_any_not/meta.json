@@ -1,0 +1,14 @@
+{
+  "full_name": "List.not_all_eq_any_not",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "induction l with simp | cons _ _ ih => rw [Bool.not_and, ih]\nrw [Bool.not_and, ih]",
+  "ground_truth_remaining_from_k": "rw [Bool.not_and, ih]",
+  "true_premises_at_k": [
+    "Bool.not_and"
+  ],
+  "state_before_k": "case cons\nα : Type u_1\np : α → Bool\nhead✝ : α\ntail✝ : List α\nih : (!all tail✝ p) = any tail✝ fun a => !p a\n⊢ (!(p head✝ && all tail✝ p)) = (!p head✝ || any tail✝ fun a => !p a)"
+}

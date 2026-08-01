@@ -1,0 +1,16 @@
+{
+  "full_name": "Ultrafilter.eventually_imp",
+  "file_path": "Mathlib/Order/Filter/Ultrafilter.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [imp_iff_not_or, eventually_or, eventually_not]",
+  "ground_truth_remaining_from_k": "simp only [imp_iff_not_or, eventually_or, eventually_not]",
+  "true_premises_at_k": [
+    "imp_iff_not_or",
+    "Ultrafilter.eventually_or",
+    "Ultrafilter.eventually_not"
+  ],
+  "state_before_k": "α : Type u\nβ : Type v\nγ : Type u_1\nf g : Ultrafilter α\ns t : Set α\np q : α → Prop\n⊢ (∀ᶠ (x : α) in ↑f, p x → q x) ↔ (∀ᶠ (x : α) in ↑f, p x) → ∀ᶠ (x : α) in ↑f, q x"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "List.modifyNth_eq_modifyNthTR",
+  "file_path": ".lake/packages/std/Std/Data/List/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "funext α f n l\nsimp [modifyNthTR, modifyNthTR_go_eq]",
+  "ground_truth_remaining_from_k": "simp [modifyNthTR, modifyNthTR_go_eq]",
+  "true_premises_at_k": [
+    "List.modifyNthTR",
+    "List.modifyNthTR_go_eq"
+  ],
+  "state_before_k": "case h.h.h.h\nα : Type u_1\nf : α → α\nn : Nat\nl : List α\n⊢ modifyNth f n l = modifyNthTR f n l"
+}

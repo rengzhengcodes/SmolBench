@@ -1,0 +1,20 @@
+{
+  "full_name": "CategoryTheory.Limits.biproduct.lift_desc",
+  "file_path": "Mathlib/CategoryTheory/Preadditive/Biproducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp [biproduct.lift_eq, biproduct.desc_eq, comp_sum, sum_comp, biproduct.ι_π_assoc, comp_dite,\n  dite_comp]",
+  "ground_truth_remaining_from_k": "simp [biproduct.lift_eq, biproduct.desc_eq, comp_sum, sum_comp, biproduct.ι_π_assoc, comp_dite,\n  dite_comp]",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.biproduct.lift_eq",
+    "CategoryTheory.Limits.biproduct.desc_eq",
+    "CategoryTheory.Preadditive.comp_sum",
+    "CategoryTheory.Preadditive.sum_comp",
+    "CategoryTheory.Limits.biproduct.ι_π_assoc",
+    "CategoryTheory.comp_dite",
+    "CategoryTheory.dite_comp"
+  ],
+  "state_before_k": "C : Type u\ninst✝³ : Category.{v, u} C\ninst✝² : Preadditive C\nJ : Type\ninst✝¹ : Fintype J\nf : J → C\ninst✝ : HasBiproduct f\nT U : C\ng : (j : J) → T ⟶ f j\nh : (j : J) → f j ⟶ U\n⊢ lift g ≫ desc h = ∑ j : J, g j ≫ h j"
+}

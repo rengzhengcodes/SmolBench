@@ -1,0 +1,93 @@
+## Current goal
+```
+⊢ PreservesZeroMorphisms L
+```
+
+## Full tactic state
+```
+C : Type u₁
+inst✝⁵ : Category.{v₁, u₁} C
+inst✝⁴ : Abelian C
+A : Type u₁
+B : Type u₂
+inst✝³ : Category.{v₁, u₁} A
+inst✝² : Category.{v₂, u₂} B
+inst✝¹ : Abelian A
+inst✝ : Abelian B
+L : A ⥤ B
+h : 𝟙 (L.obj 0) = 0
+⊢ PreservesZeroMorphisms L
+```
+
+## Proof so far (2 tactics)
+```lean
+replace h := (h (exact_of_zero (𝟙 0) (𝟙 0))).w
+rw [L.map_id, Category.comp_id] at h
+```
+
+## Theorem
+`CategoryTheory.Functor.preservesZeroMorphisms_of_map_exact` in `Mathlib/CategoryTheory/Abelian/Exact.lean`
+
+## Premises used in the next tactic
+- `CategoryTheory.Functor.preservesZeroMorphisms_of_map_zero_object`
+- `CategoryTheory.Limits.idZeroEquivIsoZero`
+
+## Premise signatures
+### `CategoryTheory.Functor.preservesZeroMorphisms_of_map_zero_object` (commanddeclaration)
+```lean
+theorem preservesZeroMorphisms_of_map_zero_object (i : F.obj 0 ≅ 0) : PreservesZeroMorphisms F where
+```
+
+### `CategoryTheory.Limits.idZeroEquivIsoZero` (commanddeclaration)
+```lean
+def idZeroEquivIsoZero (X : C) : 𝟙 X = 0 ≃ (X ≅ 0) where
+  toFun h
+```
+
+## Premise full source (with proof)
+### `CategoryTheory.Functor.preservesZeroMorphisms_of_map_zero_object` (commanddeclaration) at `Mathlib/CategoryTheory/Limits/Preserves/Shapes/Zero.lean`
+```lean
+theorem preservesZeroMorphisms_of_map_zero_object (i : F.obj 0 ≅ 0) : PreservesZeroMorphisms F where
+  map_zero X Y :=
+    calc
+      F.map (0 : X ⟶ Y) = F.map (0 : X ⟶ 0) ≫ F.map 0 := by rw [← Functor.map_comp, comp_zero]
+      _ = F.map 0 ≫ (i.hom ≫ i.inv) ≫ F.map 0 := by rw [Iso.hom_inv_id, Category.id_comp]
+      _ = 0 := by simp only [zero_of_to_zero i.hom, zero_comp, comp_zero]
+```
+
+### `CategoryTheory.Limits.idZeroEquivIsoZero` (commanddeclaration) at `Mathlib/CategoryTheory/Limits/Shapes/ZeroMorphisms.lean`
+```lean
+/-- An object `X` has `𝟙 X = 0` if and only if it is isomorphic to the zero object.
+
+Because `X ≅ 0` contains data (even if a subsingleton), we express this `↔` as an `≃`.
+-/
+def idZeroEquivIsoZero (X : C) : 𝟙 X = 0 ≃ (X ≅ 0) where
+  toFun h :=
+    { hom := 0
+      inv := 0 }
+  invFun i := zero_of_target_iso_zero (𝟙 X) i
+  left_inv := by aesop_cat
+  right_inv := by aesop_cat
+```
+
+## Transitive premise context (1-hop, 3/3 premises, ≈336 tokens)
+### `CategoryTheory.Functor.PreservesZeroMorphisms` (commanddeclaration) at `Mathlib/CategoryTheory/Limits/Preserves/Shapes/Zero.lean`
+```lean
+/-- A functor preserves zero morphisms if it sends zero morphisms to zero morphisms. -/
+class PreservesZeroMorphisms (F : C ⥤ D) : Prop where
+  /-- For any pair objects `F (0: X ⟶ Y) = (0 : F X ⟶ F Y)` -/
+  map_zero : ∀ X Y : C, F.map (0 : X ⟶ Y) = 0 := by aesop
+```
+
+### `CategoryTheory.Limits.zero_of_to_zero` (commanddeclaration) at `Mathlib/CategoryTheory/Limits/Shapes/ZeroMorphisms.lean`
+```lean
+/-- An arrow ending in the zero object is zero -/
+theorem zero_of_to_zero {X : C} (f : X ⟶ 0) : f = 0 := by ext
+```
+
+### `CategoryTheory.Limits.zero_of_target_iso_zero` (commanddeclaration) at `Mathlib/CategoryTheory/Limits/Shapes/ZeroMorphisms.lean`
+```lean
+theorem zero_of_target_iso_zero {X Y : C} (f : X ⟶ Y) (i : Y ≅ 0) : f = 0 := by
+  have h : f = f ≫ i.hom ≫ 𝟙 0 ≫ i.inv := by simp only [Iso.hom_inv_id, id_comp, comp_id]
+  simpa using h
+```

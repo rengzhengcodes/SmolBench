@@ -1,0 +1,15 @@
+{
+  "full_name": "wcovBy_iff_covBy_or_eq",
+  "file_path": "Mathlib/Order/Cover.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]",
+  "ground_truth_remaining_from_k": "rw [le_antisymm_iff, wcovBy_iff_covBy_or_le_and_le]",
+  "true_premises_at_k": [
+    "le_antisymm_iff",
+    "wcovBy_iff_covBy_or_le_and_le"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\ninst✝ : PartialOrder α\na b c : α\n⊢ a ⩿ b ↔ a ⋖ b ∨ a = b"
+}

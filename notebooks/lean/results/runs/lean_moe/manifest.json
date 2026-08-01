@@ -1,0 +1,40 @@
+{
+  "run_name": "lean_moe",
+  "started_at": "2026-07-19T22:57:29",
+  "config": {
+    "seed": 1776,
+    "temperature": 0.7,
+    "max_tokens": 32768,
+    "request_timeout": 1200,
+    "max_retries": 2,
+    "dojo_timeout": 300,
+    "concurrent_gen": true,
+    "skip_trivial": true,
+    "theorem_workers": 4,
+    "k": {
+      "strategy": "last"
+    },
+    "run_name": "lean_moe",
+    "n_rollouts": 1,
+    "theorems": {
+      "source": "replay_passing",
+      "kind": "novel_premises",
+      "split": "val",
+      "limit": 300,
+      "seed": 1776
+    },
+    "rungs": [
+      "stepk:1",
+      "hint:2",
+      "noise:3",
+      "hint:3"
+    ],
+    "models": [
+      {
+        "provider": "ec2",
+        "model": "nemotron-3-super-120b-a12b",
+        "display_name": "nemotron-3-super-120b-a12b-base"
+      }
+    ]
+  }
+}

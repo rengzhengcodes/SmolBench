@@ -1,6 +1,6 @@
 {
   "run_name": "lean_dense_micro",
-  "started_at": "2026-07-19T12:01:46",
+  "started_at": "2026-07-20T01:16:16",
   "config": {
     "seed": 1776,
     "temperature": 0.7,
@@ -30,15 +30,15 @@
     "models": [
       {
         "provider": "ec2",
-        "model": "llama-lean-bare-micro-r128",
-        "display_name": "llama-lean-bare-micro-r128"
+        "model": "llama-lean-fenced-micro-r128",
+        "display_name": "llama-lean-fenced-micro-r128"
       }
     ]
   },
-  "finished_at": "2026-07-19T12:27:04",
+  "finished_at": "2026-07-20T01:44:28",
   "counts": {
-    "written": 740,
-    "skipped": 0,
-    "success": 156
+    "written": 0,
+    "skipped": 80,
+    "success": 0
   }
 }

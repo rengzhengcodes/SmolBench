@@ -1,0 +1,17 @@
+{
+  "full_name": "CategoryTheory.isDetector_unop_iff",
+  "file_path": "Mathlib/CategoryTheory/Generator.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [IsDetector, IsCodetector, ← isDetecting_unop_iff, Set.singleton_unop]",
+  "ground_truth_remaining_from_k": "rw [IsDetector, IsCodetector, ← isDetecting_unop_iff, Set.singleton_unop]",
+  "true_premises_at_k": [
+    "CategoryTheory.IsDetector",
+    "CategoryTheory.IsCodetector",
+    "CategoryTheory.isDetecting_unop_iff",
+    "Set.singleton_unop"
+  ],
+  "state_before_k": "C : Type u₁\ninst✝¹ : Category.{v₁, u₁} C\nD : Type u₂\ninst✝ : Category.{v₂, u₂} D\nG : Cᵒᵖ\n⊢ IsDetector G.unop ↔ IsCodetector G"
+}

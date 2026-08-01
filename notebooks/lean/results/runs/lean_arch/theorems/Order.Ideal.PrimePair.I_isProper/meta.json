@@ -1,0 +1,12 @@
+{
+  "full_name": "Order.Ideal.PrimePair.I_isProper",
+  "file_path": "Mathlib/Order/PrimeIdeal.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "cases' IF.F.nonempty with w h\napply isProper_of_not_mem (_ : w ∉ IF.I)\nrwa [← IF.compl_I_eq_F] at h",
+  "ground_truth_remaining_from_k": "rwa [← IF.compl_I_eq_F] at h",
+  "true_premises_at_k": [],
+  "state_before_k": "P : Type u_1\ninst✝ : Preorder P\nIF : PrimePair P\nw : P\nh : w ∈ ↑IF.F\n⊢ w ∉ IF.I"
+}

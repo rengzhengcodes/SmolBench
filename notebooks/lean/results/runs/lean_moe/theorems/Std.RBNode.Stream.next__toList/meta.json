@@ -1,0 +1,15 @@
+{
+  "full_name": "Std.RBNode.Stream.next?_toList",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "cases s <;> simp [next?, toStream_toList']",
+  "ground_truth_remaining_from_k": "cases s <;> simp [next?, toStream_toList']",
+  "true_premises_at_k": [
+    "Std.RBNode.Stream.next?",
+    "Std.RBNode.toStream_toList'"
+  ],
+  "state_before_k": "α : Type u_1\ns : RBNode.Stream α\n⊢ Option.map\n      (fun x =>\n        match x with\n        | (a, b) => (a, toList b))\n      (next? s) =\n    List.next? (toList s)"
+}

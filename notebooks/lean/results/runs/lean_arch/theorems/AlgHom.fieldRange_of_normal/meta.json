@@ -1,0 +1,17 @@
+{
+  "full_name": "AlgHom.fieldRange_of_normal",
+  "file_path": "Mathlib/FieldTheory/Normal.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "letI : Algebra E E := Algebra.id E\nlet g := f.restrictNormal' E\nrw [← show E.val.comp ↑g = f from DFunLike.ext_iff.mpr (f.restrictNormal_commutes E),\n  ← AlgHom.map_fieldRange, AlgEquiv.fieldRange_eq_top g, ← AlgHom.fieldRange_eq_map,\n  IntermediateField.fieldRange_val]",
+  "ground_truth_remaining_from_k": "rw [← show E.val.comp ↑g = f from DFunLike.ext_iff.mpr (f.restrictNormal_commutes E),\n  ← AlgHom.map_fieldRange, AlgEquiv.fieldRange_eq_top g, ← AlgHom.fieldRange_eq_map,\n  IntermediateField.fieldRange_val]",
+  "true_premises_at_k": [
+    "AlgHom.map_fieldRange",
+    "AlgEquiv.fieldRange_eq_top",
+    "AlgHom.fieldRange_eq_map",
+    "IntermediateField.fieldRange_val"
+  ],
+  "state_before_k": "F : Type u_1\nK : Type u_2\ninst✝¹⁹ : Field F\ninst✝¹⁸ : Field K\ninst✝¹⁷ : Algebra F K\nK₁ : Type u_3\nK₂ : Type u_4\nK₃ : Type u_5\ninst✝¹⁶ : Field F\ninst✝¹⁵ : Field K₁\ninst✝¹⁴ : Field K₂\ninst✝¹³ : Field K₃\ninst✝¹² : Algebra F K₁\ninst✝¹¹ : Algebra F K₂\ninst✝¹⁰ : Algebra F K₃\nϕ : K₁ →ₐ[F] K₂\nχ : K₁ ≃ₐ[F] K₂\nψ : K₂ →ₐ[F] K₃\nω : K₂ ≃ₐ[F] K₃\nE✝ : Type u_6\ninst✝⁹ : Field E✝\ninst✝⁸ : Algebra F E✝\ninst✝⁷ : Algebra E✝ K₁\ninst✝⁶ : Algebra E✝ K₂\ninst✝⁵ : Algebra E✝ K₃\ninst✝⁴ : IsScalarTower F E✝ K₁\ninst✝³ : IsScalarTower F E✝ K₂\ninst✝² : IsScalarTower F E✝ K₃\ninst✝¹ : Algebra F K\nE : IntermediateField F K\ninst✝ : Normal F ↥E\nf : ↥E →ₐ[F] K\nthis : Algebra ↥E ↥E := Algebra.id ↥E\ng : ↥E ≃ₐ[F] ↥E := restrictNormal' f ↥E\n⊢ fieldRange f = E"
+}

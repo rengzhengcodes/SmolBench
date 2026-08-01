@@ -14,8 +14,8 @@ exact ⟨x, fun c j ↦ funext fun y ↦ (hx c y).1 j,
 
 | rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
 | --- | --- | --- |
-| `stepk:1` | X X X X | ✘ ✘ ✘ X |
-| `hint:2` | ✘ X X X | ✘ ✘ X X |
+| `stepk:1` | X X X X X X X X X X X X X X X X | ✘ ✘ ✘ X |
+| `hint:2` | ✘ X X X X X X X X X X X X | ✘ ✘ X X |
 
 ## Per-cell detail
 
@@ -90,6 +90,235 @@ apply hx
 intros j
 rw [←h]
 rfl
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 1 → **exception**  (gen 1.9s, verify 300.1s, in=398, out=32)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+· intro s
+  exact x s _
+· intro s m w
+  exact hx s m.1 w
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 0 → **exception**  (gen 302.0s, verify 300.1s, in=398, out=51)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intros c' y
+use x c' y
+exact hx c' y
+intros u hu v hv
+apply hx c' y
+intros j
+rw [← hu j, ← hv j]
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 2 → **exception**  (gen 902.3s, verify 300.1s, in=398, out=59)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intro s
+use x s.pt s.π.pt
+· intro j
+  specialize hx s s.π.pt
+  exact hx.1 j
+· intro m hm
+  specialize hx s m
+  exact hx.2 m hm
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 3 → **exception**  (gen 1802.7s, verify 300.1s, in=398, out=126)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _,
+intros s f hf,
+specialize hx s (f.app c.pt (𝟙 _)),
+use x s (f.app c.pt (𝟙 _)),
+split,
+. intro j,
+  rw [← hx.1 c j, ← hf],
+  change (f.app j (c.π.app j)) _ = _,
+  simp,
+. intros y hy,
+  apply hx.2,
+  intro j,
+  rw [← hy, ← hf],
+  change (f.app j (c.π.app j)) _ = _,
+  simp
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 1 → **exception**  (gen 1.6s, verify 300.1s, in=398, out=35)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+· intro s
+  exact x s _
+· intro s m w
+  exact hx s m.1 .fun _ w
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 0 → **exception**  (gen 301.8s, verify 300.1s, in=398, out=49)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intros c' y
+use x c' y
+constructor
+· intro j
+  exact (hx c' y).1 j
+· intro y'
+  exact hx c' y y'
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 2 → **exception**  (gen 902.1s, verify 300.1s, in=398, out=59)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intro s
+use x s.pt s.π.pt
+· intro j
+  specialize hx s s.π.pt
+  exact hx.1 j
+· intro m hm
+  specialize hx s m
+  exact hx.2 m hm
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 3 → **exception**  (gen 1802.5s, verify 300.1s, in=398, out=87)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk fun c_1 => ⟨x c_1, _⟩
+intro y
+specialize hx c_1 y
+rw [forall_and] at hx
+exact hx.2
+intros f h
+specialize hx c_1 (f y)
+rw [forall_and] at hx
+replace hx := hx.1
+apply hx
+intros j
+rw [←h]
+rfl
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 1 → **exception**  (gen 1.8s, verify 300.1s, in=398, out=32)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+· intro s
+  exact x s _
+· intro s m w
+  exact hx s m.1 w
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 0 → **exception**  (gen 302.0s, verify 300.2s, in=398, out=49)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intros c' y
+use x c' y
+constructor
+· intro j
+  exact (hx c' y).1 j
+· intro y'
+  exact hx c' y y'
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 2 → **exception**  (gen 902.3s, verify 300.1s, in=398, out=59)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _
+intro s
+use x s.pt s.π.pt
+· intro j
+  specialize hx s s.π.pt
+  exact hx.1 j
+· intro m hm
+  specialize hx s m
+  exact hx.2 m hm
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · llama-31-405b-base · rollout 3 → **exception**  (gen 1802.7s, verify 300.1s, in=398, out=126)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' IsLimit.mk _ _,
+intros s f hf,
+specialize hx s (f.app c.pt (𝟙 _)),
+use x s (f.app c.pt (𝟙 _)),
+split,
+. intro j,
+  rw [← hx.1 c j, ← hf],
+  change (f.app j (c.π.app j)) _ = _,
+  simp,
+. intros y hy,
+  apply hx.2,
+  intro j,
+  rw [← hy, ← hf],
+  change (f.app j (c.π.app j)) _ = _,
+  simp
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
@@ -192,6 +421,138 @@ exact fun j ↦ (hx c s hs.2 x hs.1).1 j,
 exact fun y hy ↦ (hx c s hs.2 y hy).2,
 exact fun c y ↦ x c y,
 exact fun c y y' h ↦ (hx c y h).2 y' (hx c y h).1
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 3 → **exception**  (gen 602.2s, verify 300.1s, in=1565, out=55)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact fun y => congr_fun (hx c y).2 y,
+funext,
+funext,
+congr_fun,
+exact hx c ⟨x c t.pt⟩.1,
+exact fun y => (hx c y).2 _,
+funext,
+congr_fun
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 2 → **exception**  (gen 1202.5s, verify 300.1s, in=1565, out=60)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx c s hs.2 x hs.1,
+exact fun y hy j ↦ (hx c y hy).1 j,
+exact fun y hy ↦ (hx c y hy).2 (fun j ↦ congr_fun (c.π.naturality j) y)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 0 → **exception**  (gen 1502.6s, verify 300.1s, in=1565, out=63)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx _ _ fun j ↦ hs j
+exact fun x hx ↦ hx _ fun j ↦ congr_fun (c.π.app j) (hx _)
+exact fun y hy ↦ hx _ y fun j ↦ congr_fun (c.π.app j) (hy j)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 3 → **exception**  (gen 601.9s, verify 300.1s, in=1565, out=55)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact fun y => congr_fun (hx c y).2 y,
+funext,
+funext,
+congr_fun,
+exact hx c ⟨x c t.pt⟩.1,
+exact fun y => (hx c y).2 _,
+funext,
+congr_fun
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 2 → **exception**  (gen 1202.2s, verify 300.1s, in=1565, out=60)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx c s hs.2 x hs.1,
+exact fun y hy j ↦ (hx c y hy).1 j,
+exact fun y hy ↦ (hx c y hy).2 (fun j ↦ congr_fun (c.π.naturality j) y)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 0 → **exception**  (gen 1502.4s, verify 300.1s, in=1565, out=63)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx _ _ fun j ↦ hs j
+exact fun x hx ↦ hx _ fun j ↦ congr_fun (c.π.app j) (hx _)
+exact fun y hy ↦ hx _ y fun j ↦ congr_fun (c.π.app j) (hy j)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 3 → **exception**  (gen 602.1s, verify 300.2s, in=1565, out=55)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact fun y => congr_fun (hx c y).2 y,
+funext,
+funext,
+congr_fun,
+exact hx c ⟨x c t.pt⟩.1,
+exact fun y => (hx c y).2 _,
+funext,
+congr_fun
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 2 → **exception**  (gen 1202.5s, verify 300.1s, in=1565, out=60)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx c s hs.2 x hs.1,
+exact fun y hy j ↦ (hx c y hy).1 j,
+exact fun y hy ↦ (hx c y hy).2 (fun j ↦ congr_fun (c.π.naturality j) y)
+```
+
+**lean_error:** DojoTacticTimeoutError: 
+
+### `hint:2` · llama-31-405b-base · rollout 0 → **exception**  (gen 1502.6s, verify 300.1s, in=1565, out=63)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact hx _ _ fun j ↦ hs j
+exact fun x hx ↦ hx _ fun j ↦ congr_fun (c.π.app j) (hx _)
+exact fun y hy ↦ hx _ y fun j ↦ congr_fun (c.π.app j) (hy j)
 ```
 
 **lean_error:** DojoTacticTimeoutError: 

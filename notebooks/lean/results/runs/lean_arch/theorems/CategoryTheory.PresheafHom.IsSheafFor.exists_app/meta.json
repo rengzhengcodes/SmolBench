@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.PresheafHom.IsSheafFor.exists_app",
+  "file_path": "Mathlib/CategoryTheory/Sites/SheafHom.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 14,
+  "k": 13,
+  "ground_truth_full_proof": "let c : Cone ((Presieve.diagram (Sieve.pullback g S).arrows).op ⋙ G) :=\n  { pt := F.obj (op Y)\n    π :=\n      { app := fun ⟨Z, hZ⟩ => F.map Z.hom.op ≫ (x _ hZ).app (op (Over.mk (𝟙 _)))\n        naturality := by\n          rintro ⟨Z₁, hZ₁⟩ ⟨Z₂, hZ₂⟩ ⟨f : Z₂ ⟶ Z₁⟩\n          dsimp\n          rw [id_comp, assoc]\n          have H := hx f.left (𝟙 _) hZ₁ hZ₂ (by simp)\n          simp only [presheafHom_obj, unop_op, Functor.id_obj, op_id,\n            FunctorToTypes.map_id_apply] at H\n          let φ : Over.mk f.left ⟶ Over.mk (𝟙 Z₁.left) := Over.homMk f.left\n          have H' := (x (Z₁.hom ≫ g) hZ₁).naturality φ.op\n          dsimp at H H' ⊢\n          erw [← H, ← H', presheafHom_map_app_op_mk_id, ← F.map_comp_assoc,\n            ← op_comp, Over.w f] } }\nuse (hG g).lift c\nintro Z p hp\nexact ((hG g).fac c ⟨Over.mk p, hp⟩)\nrintro ⟨Z₁, hZ₁⟩ ⟨Z₂, hZ₂⟩ ⟨f : Z₂ ⟶ Z₁⟩\ndsimp\nrw [id_comp, assoc]\nhave H := hx f.left (𝟙 _) hZ₁ hZ₂ (by simp)\nsimp only [presheafHom_obj, unop_op, Functor.id_obj, op_id,\n  FunctorToTypes.map_id_apply] at H\nlet φ : Over.mk f.left ⟶ Over.mk (𝟙 Z₁.left) := Over.homMk f.left\nhave H' := (x (Z₁.hom ≫ g) hZ₁).naturality φ.op\ndsimp at H H' ⊢\nerw [← H, ← H', presheafHom_map_app_op_mk_id, ← F.map_comp_assoc,\n  ← op_comp, Over.w f]\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝¹ : Category.{v, u} C\nJ : GrothendieckTopology C\nA : Type u'\ninst✝ : Category.{v', u'} A\nF G : Cᵒᵖ ⥤ A\nX : C\nS : Sieve X\nhG : ⦃Y : C⦄ → (f : Y ⟶ X) → IsLimit (G.mapCone (Cocone.op (Presieve.cocone (Sieve.pullback f S).arrows)))\nx : Presieve.FamilyOfElements (presheafHom F G) S.arrows\nhx : Presieve.FamilyOfElements.Compatible x\nY : C\ng : Y ⟶ X\nZ₁ : Over Y\nhZ₁ : (Sieve.pullback g S).arrows Z₁.hom\nZ₂ : Over Y\nhZ₂ : (Sieve.pullback g S).arrows Z₂.hom\nf : Z₂ ⟶ Z₁\n⊢ f.left ≫ Z₁.hom ≫ g = 𝟙 Z₂.left ≫ Z₂.hom ≫ g"
+}

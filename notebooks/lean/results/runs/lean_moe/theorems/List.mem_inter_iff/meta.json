@@ -1,0 +1,15 @@
+{
+  "full_name": "List.mem_inter_iff",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "cases l₁ <;> simp [List.inter_def, mem_filter]",
+  "ground_truth_remaining_from_k": "cases l₁ <;> simp [List.inter_def, mem_filter]",
+  "true_premises_at_k": [
+    "List.inter_def",
+    "List.mem_filter"
+  ],
+  "state_before_k": "α : Type u_1\nx✝ : DecidableEq α\nx : α\nl₁ l₂ : List α\n⊢ x ∈ l₁ ∩ l₂ ↔ x ∈ l₁ ∧ x ∈ l₂"
+}

@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.ColimitAdj.extendAlongYoneda_map",
+  "file_path": "Mathlib/CategoryTheory/Limits/Presheaf.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 6,
+  "k": 5,
+  "ground_truth_full_proof": "ext J\nerw [colimit.ι_pre ((CategoryOfElements.π Y).leftOp ⋙ A) (CategoryOfElements.map f).op]\ndsimp only [extendAlongYoneda, restrictYonedaHomEquiv, IsColimit.homIso', IsColimit.homIso,\n  uliftTrivial]\nsimp only [Adjunction.leftAdjointOfEquiv_map, Iso.symm_mk, Iso.toEquiv_comp, Equiv.coe_trans,\n  Equiv.coe_fn_mk, Iso.toEquiv_fun, Equiv.symm_trans_apply, Equiv.coe_fn_symm_mk,\n  Iso.toEquiv_symm_fun, id.def, colimit.isColimit_desc, colimit.ι_desc, FunctorToTypes.comp,\n  Cocone.extend_ι, Cocone.extensions_app, Functor.map_id, Category.comp_id, colimit.cocone_ι]\nsimp only [Functor.comp_obj, Functor.leftOp_obj, CategoryOfElements.π_obj, colimit.cocone_x,\n  Functor.comp_map, Functor.leftOp_map, CategoryOfElements.π_map, Opposite.unop_op,\n  Adjunction.leftAdjointOfEquiv_obj, Function.comp_apply, Functor.map_id, comp_id,\n  colimit.cocone_ι, Functor.op_obj]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "case w\nC : Type u₁\ninst✝² : SmallCategory C\nℰ : Type u₂\ninst✝¹ : Category.{u₁, u₂} ℰ\nA : C ⥤ ℰ\ninst✝ : HasColimits ℰ\nX Y : Cᵒᵖ ⥤ Type u₁\nf : X ⟶ Y\nJ : (Functor.Elements X)ᵒᵖ\n⊢ colimit.ι ((CategoryOfElements.π Y).leftOp ⋙ A)\n      (Opposite.op { fst := J.unop.fst, snd := f.app J.unop.fst J.unop.snd }) =\n    colimit.ι ((CategoryOfElements.π Y).leftOp ⋙ A) (Opposite.op ((CategoryOfElements.map f).obj J.unop))"
+}

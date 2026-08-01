@@ -1,0 +1,15 @@
+{
+  "full_name": "List.erase_append_left",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp [erase_eq_eraseP]\nexact eraseP_append_left (beq_self_eq_true a) l₂ h",
+  "ground_truth_remaining_from_k": "exact eraseP_append_left (beq_self_eq_true a) l₂ h",
+  "true_premises_at_k": [
+    "List.eraseP_append_left",
+    "beq_self_eq_true"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝¹ : BEq α\ninst✝ : LawfulBEq α\na : α\nl₁ l₂ : List α\nh : a ∈ l₁\n⊢ eraseP (fun x => a == x) (l₁ ++ l₂) = eraseP (fun x => a == x) l₁ ++ l₂"
+}

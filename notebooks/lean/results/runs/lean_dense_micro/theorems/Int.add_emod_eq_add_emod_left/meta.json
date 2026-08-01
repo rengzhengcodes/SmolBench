@@ -1,0 +1,16 @@
+{
+  "full_name": "Int.add_emod_eq_add_emod_left",
+  "file_path": ".lake/packages/std/Std/Data/Int/DivMod.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [Int.add_comm, add_emod_eq_add_emod_right _ H, Int.add_comm]",
+  "ground_truth_remaining_from_k": "rw [Int.add_comm, add_emod_eq_add_emod_right _ H, Int.add_comm]",
+  "true_premises_at_k": [
+    "Int.add_comm",
+    "Int.add_emod_eq_add_emod_right",
+    "Int.add_comm"
+  ],
+  "state_before_k": "m n k i : Int\nH : m % n = k % n\n⊢ (i + m) % n = (i + k) % n"
+}

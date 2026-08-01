@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.FreeMonoidalCategory.normalize_naturality",
+  "file_path": "Mathlib/CategoryTheory/Monoidal/Free/Coherence.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 17,
+  "k": 16,
+  "ground_truth_full_proof": "revert n\ninduction f using Hom.inductionOn\ncase comp f g ihf ihg => simp [ihg, reassoc_of% (ihf _)]\ncase whiskerLeft X' X Y f ih =>\n  intro n\n  dsimp only [normalizeObj_tensor, normalizeIsoApp', tensor_eq_tensor, Iso.trans_hom,\n    Iso.symm_hom, whiskerRightIso_hom, Function.comp_apply, inclusion_obj]\n  rw [associator_inv_naturality_right_assoc, whisker_exchange_assoc, ih]\n  simp\ncase whiskerRight X Y h η' ih =>\n  intro n\n  dsimp only [normalizeObj_tensor, normalizeIsoApp', tensor_eq_tensor, Iso.trans_hom,\n    Iso.symm_hom, whiskerRightIso_hom, Function.comp_apply, inclusion_obj]\n  rw [associator_inv_naturality_middle_assoc, ← comp_whiskerRight_assoc, ih]\n  have := dcongr_arg (fun x => (normalizeIsoApp' C η' x).hom) (normalizeObj_congr n h)\n  simp [this]\nall_goals simp\nsimp [ihg, reassoc_of% (ihf _)]\nintro n\ndsimp only [normalizeObj_tensor, normalizeIsoApp', tensor_eq_tensor, Iso.trans_hom,\n  Iso.symm_hom, whiskerRightIso_hom, Function.comp_apply, inclusion_obj]\nrw [associator_inv_naturality_right_assoc, whisker_exchange_assoc, ih]\nsimp\nintro n\ndsimp only [normalizeObj_tensor, normalizeIsoApp', tensor_eq_tensor, Iso.trans_hom,\n  Iso.symm_hom, whiskerRightIso_hom, Function.comp_apply, inclusion_obj]\nrw [associator_inv_naturality_middle_assoc, ← comp_whiskerRight_assoc, ih]\nhave := dcongr_arg (fun x => (normalizeIsoApp' C η' x).hom) (normalizeObj_congr n h)\nsimp [this]\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "case ρ_inv\nC : Type u\nX Y X✝ : F C\n⊢ ∀ (n : NormalMonoidalObject C),\n    inclusionObj n ◁ (ρ_ X✝).inv ≫ (normalizeIsoApp' C (X✝ ⊗ 𝟙_ (F C)) n).hom =\n      (normalizeIsoApp' C X✝ n).hom ≫ inclusion.map (eqToHom ⋯)"
+}

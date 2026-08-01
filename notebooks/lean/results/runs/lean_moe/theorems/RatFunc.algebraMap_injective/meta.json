@@ -1,0 +1,14 @@
+{
+  "full_name": "RatFunc.algebraMap_injective",
+  "file_path": "Mathlib/FieldTheory/RatFunc.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [← ofFractionRing_comp_algebraMap]\nexact ofFractionRing_injective.comp (IsFractionRing.injective _ _)",
+  "ground_truth_remaining_from_k": "exact ofFractionRing_injective.comp (IsFractionRing.injective _ _)",
+  "true_premises_at_k": [
+    "IsFractionRing.injective"
+  ],
+  "state_before_k": "K : Type u\ninst✝¹ : CommRing K\ninst✝ : IsDomain K\n⊢ Function.Injective (ofFractionRing ∘ ⇑(algebraMap K[X] (FractionRing K[X])))"
+}

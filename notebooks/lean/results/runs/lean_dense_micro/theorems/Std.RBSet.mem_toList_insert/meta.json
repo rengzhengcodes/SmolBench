@@ -1,0 +1,15 @@
+{
+  "full_name": "Std.RBSet.mem_toList_insert",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "let ⟨ht₁, _, _, ht₂⟩ := t.2.out\nsimpa [mem_toList] using RBNode.mem_insert ht₂ ht₁",
+  "ground_truth_remaining_from_k": "simpa [mem_toList] using RBNode.mem_insert ht₂ ht₁",
+  "true_premises_at_k": [
+    "Std.RBSet.mem_toList",
+    "Std.RBNode.mem_insert"
+  ],
+  "state_before_k": "α : Type u_1\ncmp : α → α → Ordering\nv' v : α\ninst✝ : TransCmp cmp\nt : RBSet α cmp\nht₁ : RBNode.Ordered cmp t.val\nw✝¹ : RBColor\nw✝ : Nat\nht₂ : RBNode.Balanced t.val w✝¹ w✝\n⊢ v' ∈ toList (insert t v) ↔ v' ∈ toList t ∧ find? t v ≠ some v' ∨ v' = v"
+}

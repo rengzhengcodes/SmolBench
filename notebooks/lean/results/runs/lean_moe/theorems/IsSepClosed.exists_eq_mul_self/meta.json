@@ -1,0 +1,14 @@
+{
+  "full_name": "IsSepClosed.exists_eq_mul_self",
+  "file_path": "Mathlib/FieldTheory/IsSepClosed.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rcases exists_pow_nat_eq x 2 with ⟨z, rfl⟩\nexact ⟨z, sq z⟩",
+  "ground_truth_remaining_from_k": "exact ⟨z, sq z⟩",
+  "true_premises_at_k": [
+    "sq"
+  ],
+  "state_before_k": "case intro\nk : Type u\ninst✝² : Field k\nK : Type v\ninst✝¹ : Field K\ninst✝ : IsSepClosed k\nh2 : NeZero 2\nz : k\n⊢ ∃ z_1, z ^ 2 = z_1 * z_1"
+}

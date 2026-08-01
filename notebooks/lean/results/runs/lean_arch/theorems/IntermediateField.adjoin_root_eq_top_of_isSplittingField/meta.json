@@ -1,0 +1,15 @@
+{
+  "full_name": "IntermediateField.adjoin_root_eq_top_of_isSplittingField",
+  "file_path": "Mathlib/FieldTheory/KummerExtension.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "refine (IntermediateField.eq_adjoin_of_eq_algebra_adjoin _ _ _ ?_).symm\nexact (Algebra.adjoin_root_eq_top_of_isSplittingField hζ H hα).symm",
+  "ground_truth_remaining_from_k": "exact (Algebra.adjoin_root_eq_top_of_isSplittingField hζ H hα).symm",
+  "true_premises_at_k": [
+    "Algebra.adjoin_root_eq_top_of_isSplittingField",
+    "Eq.symm"
+  ],
+  "state_before_k": "K : Type u\ninst✝³ : Field K\nn : ℕ\nhζ : (primitiveRoots n K).Nonempty\nhn : 0 < n\na : K\nH : Irreducible (X ^ n - C a)\nL : Type u_1\ninst✝² : Field L\ninst✝¹ : Algebra K L\ninst✝ : IsSplittingField K L (X ^ n - C a)\nα : L\nhα : α ^ n = (algebraMap K L) a\n⊢ ⊤.toSubalgebra = Algebra.adjoin K {α}"
+}

@@ -11,10 +11,10 @@ simpa only [mk.injEq, heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] using
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | · · · · |
+| `hint:2` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | ✘ ✘ · · |
 
 ## Per-cell detail
 
@@ -146,6 +146,86 @@ simpa only [eqToHom_refl] using h_p
 
 **lean_error:** tail step 2/2 ('simpa only [eqToHom_refl] using h_p'): type mismatch
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **incomplete**  (gen 8.7s, verify 0.1s, in=410, out=181)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **incomplete**  (gen 9.1s, verify 0.1s, in=410, out=187)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h_p]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **incomplete**  (gen 13.1s, verify 0.1s, in=410, out=289)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h_p]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **incomplete**  (gen 13.3s, verify 0.1s, in=410, out=296)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [h_p]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
 ### `hint:2` · llama-31-405b-base · rollout 0 → **lean_error**  (gen 1.2s, verify 0.1s, in=955, out=36)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -272,3 +352,67 @@ simpa only [heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] using h_p
 ```
 
 **lean_error:** tail step 1/1 ('simpa only [heq_eq_eq, true_and, eqToHom_refl, comp_id, id_comp] using h_p'): type mismatch
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 11.6s, verify 0.1s, in=955, out=250)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at h_p
+```
+
+**lean_error:** tail step 1/2 ('simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:78: unexpected end of input; expected ']'
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 13.2s, verify 0.1s, in=955, out=294)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,
+  CategoryTheory.Category.id_comp] at *
+```
+
+**lean_error:** tail step 1/2 ('simp only [heq_eq_eq, true_and, eqToHom_refl, CategoryTheory.Category.comp_id,'): <stdin>:1:78: unexpected end of input; expected ']'
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **incomplete**  (gen 14.2s, verify 0.1s, in=955, out=317)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [eqToHom_refl, comp_id, id_comp]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **incomplete**  (gen 19.6s, verify 0.1s, in=955, out=468)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [eqToHom_refl, CategoryTheory.Category.comp_id, CategoryTheory.Category.id_comp, h_p]
+```
+
+**final state (truncated):**
+```
+case mk.mk
+C : Type u_1
+inst✝ : Category.{u_2, u_1} C
+X✝ : C
+p✝¹ : X✝ ⟶ X✝
+idem✝¹ : p✝¹ ≫ p✝¹ = p✝¹
+...
+```

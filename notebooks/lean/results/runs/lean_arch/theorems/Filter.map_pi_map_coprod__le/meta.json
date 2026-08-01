@@ -1,0 +1,12 @@
+{
+  "full_name": "Filter.map_pi_map_coprodᵢ_le",
+  "file_path": "Mathlib/Order/Filter/Pi.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "simp only [le_def, mem_map, mem_coprodᵢ_iff]\nintro s h i\nobtain ⟨t, H, hH⟩ := h i\nexact ⟨{ x : α i | m i x ∈ t }, H, fun x hx => hH hx⟩",
+  "ground_truth_remaining_from_k": "exact ⟨{ x : α i | m i x ∈ t }, H, fun x hx => hH hx⟩",
+  "true_premises_at_k": [],
+  "state_before_k": "case intro.intro\nι : Type u_1\nα : ι → Type u_2\nf f₁ f₂ : (i : ι) → Filter (α i)\ns✝ : (i : ι) → Set (α i)\np : (i : ι) → α i → Prop\nβ : ι → Type u_3\nm : (i : ι) → α i → β i\ns : Set ((i : ι) → β i)\nh : ∀ (i : ι), ∃ t₁, m i ⁻¹' t₁ ∈ f i ∧ eval i ⁻¹' t₁ ⊆ s\ni : ι\nt : Set (β i)\nH : m i ⁻¹' t ∈ f i\nhH : eval i ⁻¹' t ⊆ s\n⊢ ∃ t₁ ∈ f i, eval i ⁻¹' t₁ ⊆ (fun k i => m i (k i)) ⁻¹' s"
+}

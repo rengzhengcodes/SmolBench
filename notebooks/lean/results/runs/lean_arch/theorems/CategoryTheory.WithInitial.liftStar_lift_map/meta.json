@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.WithInitial.liftStar_lift_map",
+  "file_path": "Mathlib/CategoryTheory/WithTerminal.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "erw [Category.id_comp, Category.comp_id]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝¹ : Category.{v, u} C\nD : Type u_1\ninst✝ : Category.{u_2, u_1} D\nZ : D\nF : C ⥤ D\nM : (x : C) → Z ⟶ F.obj x\nhM : ∀ (x y : C) (f : x ⟶ y), M x ≫ F.map f = M y\nx : C\n⊢ (lift F M hM).map (Limits.IsInitial.to starInitial (incl.obj x)) = M x"
+}

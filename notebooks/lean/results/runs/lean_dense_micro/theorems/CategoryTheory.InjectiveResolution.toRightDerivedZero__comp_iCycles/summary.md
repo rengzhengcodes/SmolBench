@@ -11,10 +11,10 @@ simp [toRightDerivedZero']
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ X |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · ✘ X | ✘ · · · |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ | ✘ ✓ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -141,6 +141,77 @@ exact HomologicalComplex.FunctorMapCyclesIso _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 **lean_error:** DojoCrashError: Unexpected EOF
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 16.2s, verify 0.1s, in=395, out=252)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero'_spec]
+```
+
+**lean_error:** tail step 1/1 ("simp [toRightDerivedZero'_spec]"): unknown identifier 'toRightDerivedZero'_spec'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **incomplete**  (gen 16.4s, verify 0.2s, in=395, out=259)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **incomplete**  (gen 22.6s, verify 0.8s, in=395, out=416)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **incomplete**  (gen 27.2s, verify 0.2s, in=395, out=527)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁵ : Category.{v, u} C
+D : Type u_1
+inst✝⁴ : Category.{u_2, u_1} D
+inst✝³ : Abelian C
+inst✝² : HasInjectiveResolutions C
+...
+```
+
 ### `hint:2` · llama-31-405b-base · rollout 1 → **lean_error**  (gen 0.9s, verify 0.4s, in=788, out=21)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -237,3 +308,45 @@ exact HomologicalComplex.liftCycles_spec _ _ _ _ _ _
 ```
 
 **lean_error:** tail step 1/1 ('exact HomologicalComplex.liftCycles_spec _ _ _ _ _ _'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 12.2s, verify 0.2s, in=788, out=161)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("rw [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]"): tactic 'rewrite' failed, equality or iff proof expected
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 12.4s, verify 0.1s, in=788, out=166)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero']
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 13.3s, verify 0.1s, in=788, out=187)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("simp only [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]"): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 13.5s, verify 0.1s, in=788, out=191)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]
+```
+
+**lean_error:** tail step 1/1 ("simp [toRightDerivedZero', HomologicalComplex.liftCycles_comp_iCycles]"): invalid field notation, type is not of the form (C ...) where C is a constant

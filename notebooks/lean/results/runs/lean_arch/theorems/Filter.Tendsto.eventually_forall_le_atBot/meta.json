@@ -1,0 +1,14 @@
+{
+  "full_name": "Filter.Tendsto.eventually_forall_le_atBot",
+  "file_path": "Mathlib/Order/Filter/AtTopBot.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [← Filter.eventually_forall_le_atBot] at h_evtl\nexact (h_evtl.comap f).filter_mono hf.le_comap",
+  "ground_truth_remaining_from_k": "exact (h_evtl.comap f).filter_mono hf.le_comap",
+  "true_premises_at_k": [
+    "Filter.Eventually.filter_mono"
+  ],
+  "state_before_k": "ι : Type u_1\nι' : Type u_2\nα✝ : Type u_3\nβ✝ : Type u_4\nγ : Type u_5\nα : Type u_6\nβ : Type u_7\ninst✝ : Preorder β\nl : Filter α\np : β → Prop\nf : α → β\nhf : Tendsto f l atBot\nh_evtl : ∀ᶠ (x : β) in atBot, ∀ y ≤ x, p y\n⊢ ∀ᶠ (x : α) in l, ∀ y ≤ f x, p y"
+}

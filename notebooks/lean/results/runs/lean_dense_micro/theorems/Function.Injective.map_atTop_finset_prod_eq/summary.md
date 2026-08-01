@@ -11,10 +11,10 @@ exact ⟨_, (image_subset_iff_subset_preimage _).1 ht, rfl⟩
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✓ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -134,6 +134,50 @@ exact ⟨Finset.preimage t g s, Finset.subset_preimage _ _, (prod_preimage _ _ _
 
 **lean_error:** tail step 1/1 ('exact ⟨Finset.preimage t g s, Finset.subset_preimage _ _, (prod_preimage _ _ _).symm⟩'): application type mismatch
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 10.7s, verify 0.1s, in=386, out=240)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨Finset.preimage t g _, Finset.subset_preimage _, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨Finset.preimage t g _, Finset.subset_preimage _, rfl⟩'): unknown constant 'Finset.subset_preimage'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 11.8s, verify 0.2s, in=386, out=270)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨preimage t g, ht.image_subset_iff.1, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨preimage t g, ht.image_subset_iff.1, rfl⟩'): overloaded, errors 
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 12.4s, verify 0.1s, in=386, out=283)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨Finset.subset_preimage_iff.2 ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨Finset.subset_preimage_iff.2 ht, rfl⟩'): unknown constant 'Finset.subset_preimage_iff'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 15.6s, verify 0.1s, in=386, out=375)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact ⟨Finset.preimage t g, _, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨Finset.preimage t g, _, rfl⟩'): internal exception #7
+
 ### `hint:2` · llama-31-405b-base · rollout 0 → **lean_error**  (gen 1.1s, verify 0.1s, in=1116, out=19)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -227,3 +271,45 @@ exact ⟨s.preimage g (hg.injOn _), fun t ht => ⟨t.image g ∪ s, Finset.subse
 ```
 
 **lean_error:** tail step 1/1 ('exact ⟨s.preimage g (hg.injOn _), fun t ht => ⟨t.image g ∪ s, Finset.subset_union_right _ _, (prod_subset (subset_union_left _ _) fun y hy hyt => hf y (mt (fun h => Exists.cases_on h fun a ha => ⟨a, ht (Finset.mem_preimage.2 (hy.resolve_left hyt)), rfl⟩) hyt)).symm⟩, fun t ht => ⟨t.p
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 11.2s, verify 0.1s, in=1116, out=255)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨t.preimage g (hg.injOn _), (Finset.image_subset_iff_subset_preimage _).1 ht, rfl⟩
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 13.6s, verify 0.1s, in=1116, out=308)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨t.preimage g (hg.injOn _), (image_subset_iff_subset_preimage.1 ht).1, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨t.preimage g (hg.injOn _), (image_subset_iff_subset_preimage.1 ht).1, rfl⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 14.7s, verify 0.2s, in=1116, out=348)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨t.preimage g (hg.injOn _), Finset.image_subset_iff_subset_preimage.1 ht rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨t.preimage g (hg.injOn _), Finset.image_subset_iff_subset_preimage.1 ht rfl⟩'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 15.3s, verify 0.1s, in=1116, out=366)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact ⟨t.preimage g hg, ht, rfl⟩
+```
+
+**lean_error:** tail step 1/1 ('exact ⟨t.preimage g hg, ht, rfl⟩'): application type mismatch

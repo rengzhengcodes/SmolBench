@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.oppositeShiftFunctorAdd'_hom_app",
+  "file_path": "Mathlib/CategoryTheory/Shift/Opposite.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "subst h\nsimp only [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]",
+  "ground_truth_remaining_from_k": "simp only [shiftFunctorAdd'_eq_shiftFunctorAdd, oppositeShiftFunctorAdd_hom_app]",
+  "true_premises_at_k": [
+    "CategoryTheory.shiftFunctorAdd'_eq_shiftFunctorAdd",
+    "CategoryTheory.oppositeShiftFunctorAdd_hom_app"
+  ],
+  "state_before_k": "C : Type u_1\ninst✝² : Category.{u_3, u_1} C\nA : Type u_2\ninst✝¹ : AddMonoid A\ninst✝ : HasShift C A\nX : OppositeShift C A\na b : A\n⊢ (shiftFunctorAdd' (OppositeShift C A) a b (a + b) ⋯).hom.app X =\n    ((shiftFunctorAdd' C a b (a + b) ⋯).inv.app X.unop).op"
+}

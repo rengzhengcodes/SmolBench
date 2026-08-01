@@ -11,9 +11,9 @@ rfl
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✘ | ✘ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -107,3 +107,41 @@ exact colimit.w _ (f.app _ _)
 ```
 
 **lean_error:** tail step 1/1 ('exact colimit.w _ (f.app _ _)'): type mismatch
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 9.0s, verify 0.2s, in=459, out=196)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [CategoryOfElements.map_obj]
+```
+
+**lean_error:** tail step 1/1 ('rw [CategoryOfElements.map_obj]'): tactic 'rewrite' failed, equality or iff proof expected
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **success**  (gen 9.3s, verify 0.6s, in=459, out=209)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 10.5s, verify 0.7s, in=459, out=242)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **success**  (gen 11.3s, verify 0.6s, in=459, out=254)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```

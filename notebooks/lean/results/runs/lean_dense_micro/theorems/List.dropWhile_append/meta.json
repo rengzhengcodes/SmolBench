@@ -1,0 +1,12 @@
+{
+  "full_name": "List.dropWhile_append",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "induction xs with\n| nil => simp\n| cons h t ih =>\n  simp only [cons_append, dropWhile_cons]\n  split <;> simp_all\nsimp\nsimp only [cons_append, dropWhile_cons]\nsplit <;> simp_all",
+  "ground_truth_remaining_from_k": "split <;> simp_all",
+  "true_premises_at_k": [],
+  "state_before_k": "case cons\nα : Type u_1\np : α → Bool\nys : List α\nh : α\nt : List α\nih : dropWhile p (t ++ ys) = if isEmpty (dropWhile p t) = true then dropWhile p ys else dropWhile p t ++ ys\n⊢ (if p h = true then dropWhile p (t ++ ys) else h :: (t ++ ys)) =\n    if isEmpty (if p h = true then dropWhile p t else h :: t) = true then dropWhile p ys\n    else (if p h = true then dropWhile p t else h :: t) ++ ys"
+}

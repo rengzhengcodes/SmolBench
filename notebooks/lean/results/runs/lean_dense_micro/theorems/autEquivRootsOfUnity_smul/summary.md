@@ -11,9 +11,9 @@ exact smul_comm _ _ _
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | · · ✘ ✘ | · ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -128,3 +128,56 @@ simp only [equiv_image, autEquivRootsOfUnity, Equiv.coe_fn_mk, zmod.cast_id', In
 ```
 
 **lean_error:** tail step 1/1 ("simp only [equiv_image, autEquivRootsOfUnity, Equiv.coe_fn_mk, zmod.cast_id', Int.cast_ofNat, Int.ofNat_eq_coe, Int.toNat_coe_nat, RingHom.id_apply, Int.toNat_ofNat_of_nonneg hn.le, zmod.nat_cast_self, zmod.cast_id, mul_comm ζ]"): unknown identifier 'equiv_image'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **incomplete**  (gen 9.0s, verify 0.5s, in=475, out=224)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+ring
+```
+
+**final state (truncated):**
+```
+case intro.intro
+K : Type u
+inst✝³ : Field K
+n : ℕ
+hζ : (primitiveRoots n K).Nonempty
+hn : 0 < n
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 11.4s, verify 0.1s, in=475, out=285)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [AlgEquiv.map_smul]
+```
+
+**lean_error:** tail step 1/1 ('simp only [AlgEquiv.map_smul]'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 11.6s, verify 0.2s, in=475, out=290)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply mul_smul_comm
+```
+
+**lean_error:** tail step 1/1 ('apply mul_smul_comm'): tactic 'apply' failed, failed to unify
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 24.5s, verify 0.2s, in=475, out=634)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [autEquivRootsOfUnity_apply, Algebra.smul_def, Algebra.smul_def, σ.map_mul, Algebra.smul_def, Algebra.smul_def]
+```
+
+**lean_error:** tail step 1/1 ('rw [autEquivRootsOfUnity_apply, Algebra.smul_def, Algebra.smul_def, σ.map_mul, Algebra.smul_def, Algebra.smul_def]'): tactic 'rewrite' failed, equality or iff proof expected

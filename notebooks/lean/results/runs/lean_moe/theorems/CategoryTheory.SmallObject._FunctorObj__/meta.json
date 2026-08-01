@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.SmallObject.ρFunctorObj_π",
+  "file_path": "Mathlib/CategoryTheory/SmallObject/Construction.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp [πFunctorObj]",
+  "ground_truth_remaining_from_k": "simp [πFunctorObj]",
+  "true_premises_at_k": [
+    "CategoryTheory.SmallObject.πFunctorObj"
+  ],
+  "state_before_k": "C : Type u\ninst✝⁴ : Category.{v, u} C\nI : Type w\nA B : I → C\nf : (i : I) → A i ⟶ B i\nS X Y Z : C\nπX : X ⟶ S\nπY : Y ⟶ S\nφ : X ⟶ Y\nhφ : φ ≫ πY = πX\ninst✝³ : HasColimitsOfShape (Discrete (FunctorObjIndex f πX)) C\ninst✝² : HasColimitsOfShape (Discrete (FunctorObjIndex f πY)) C\ninst✝¹ : HasPushout (functorObjTop f πX) (functorObjLeft f πX)\ninst✝ : HasPushout (functorObjTop f πY) (functorObjLeft f πY)\n⊢ ρFunctorObj f πX ≫ πFunctorObj f πX = π'FunctorObj f πX"
+}

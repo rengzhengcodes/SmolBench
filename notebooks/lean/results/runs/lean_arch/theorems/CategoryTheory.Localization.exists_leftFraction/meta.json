@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Localization.exists_leftFraction",
+  "file_path": "Mathlib/CategoryTheory/Localization/CalculusOfFractions.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "let E := Localization.uniq (MorphismProperty.LeftFraction.Localization.Q W) L W\nlet e : _ ⋙ E.functor ≅ L := Localization.compUniqFunctor _ _ _\nobtain ⟨f', rfl⟩ : ∃ (f' : E.functor.obj X ⟶ E.functor.obj Y),\n    f = e.inv.app _ ≫ f' ≫ e.hom.app _ := ⟨e.hom.app _ ≫ f ≫ e.inv.app _, by simp⟩\nobtain ⟨g, rfl⟩ := E.functor.map_surjective f'\nobtain ⟨g, rfl⟩ := MorphismProperty.LeftFraction.Localization.Hom.mk_surjective g\nrefine' ⟨g, _⟩\nrw [← MorphismProperty.LeftFraction.Localization.homMk_eq_hom_mk,\n  MorphismProperty.LeftFraction.Localization.homMk_eq g,\n  g.map_compatibility (MorphismProperty.LeftFraction.Localization.Q W) L,\n  assoc, assoc, Iso.inv_hom_id_app, comp_id, Iso.inv_hom_id_app_assoc]\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u_1\nD : Type u_2\ninst✝³ : Category.{u_4, u_1} C\ninst✝² : Category.{u_3, u_2} D\nL : C ⥤ D\nW : MorphismProperty C\ninst✝¹ : Functor.IsLocalization L W\ninst✝ : MorphismProperty.HasLeftCalculusOfFractions W\nX Y : C\nf : L.obj X ⟶ L.obj Y\nE : MorphismProperty.LeftFraction.Localization W ≌ D := uniq (MorphismProperty.LeftFraction.Localization.Q W) L W\ne : MorphismProperty.LeftFraction.Localization.Q W ⋙ E.functor ≅ L :=\n  compUniqFunctor (MorphismProperty.LeftFraction.Localization.Q W) L W\n⊢ f = e.inv.app X ≫ (e.hom.app X ≫ f ≫ e.inv.app Y) ≫ e.hom.app Y"
+}

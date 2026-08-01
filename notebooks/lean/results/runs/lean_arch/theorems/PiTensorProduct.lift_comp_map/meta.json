@@ -1,0 +1,19 @@
+{
+  "full_name": "PiTensorProduct.lift_comp_map",
+  "file_path": "Mathlib/LinearAlgebra/PiTensorProduct.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "ext\nsimp only [LinearMap.compMultilinearMap_apply, LinearMap.coe_comp, Function.comp_apply,\n  map_tprod, lift.tprod, MultilinearMap.compLinearMap_apply]",
+  "ground_truth_remaining_from_k": "simp only [LinearMap.compMultilinearMap_apply, LinearMap.coe_comp, Function.comp_apply,\n  map_tprod, lift.tprod, MultilinearMap.compLinearMap_apply]",
+  "true_premises_at_k": [
+    "LinearMap.compMultilinearMap_apply",
+    "LinearMap.coe_comp",
+    "Function.comp_apply",
+    "PiTensorProduct.map_tprod",
+    "PiTensorProduct.lift.tprod",
+    "MultilinearMap.compLinearMap_apply"
+  ],
+  "state_before_k": "case H.H\nι : Type u_1\nι₂ : Type u_2\nι₃ : Type u_3\nR : Type u_4\ninst✝¹¹ : CommSemiring R\nR₁ : Type u_5\nR₂ : Type u_6\ns : ι → Type u_7\ninst✝¹⁰ : (i : ι) → AddCommMonoid (s i)\ninst✝⁹ : (i : ι) → Module R (s i)\nM : Type u_8\ninst✝⁸ : AddCommMonoid M\ninst✝⁷ : Module R M\nE : Type u_9\ninst✝⁶ : AddCommMonoid E\ninst✝⁵ : Module R E\nF : Type u_10\ninst✝⁴ : AddCommMonoid F\nt : ι → Type u_11\nt' : ι → Type u_12\ninst✝³ : (i : ι) → AddCommMonoid (t i)\ninst✝² : (i : ι) → Module R (t i)\ninst✝¹ : (i : ι) → AddCommMonoid (t' i)\ninst✝ : (i : ι) → Module R (t' i)\ng : (i : ι) → t i →ₗ[R] t' i\nf : (i : ι) → s i →ₗ[R] t i\nh : MultilinearMap R t E\nx✝ : (i : ι) → s i\n⊢ (LinearMap.compMultilinearMap (lift h ∘ₗ map f) (tprod R)) x✝ =\n    (LinearMap.compMultilinearMap (lift (compLinearMap h f)) (tprod R)) x✝"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "Nat.gcd_gcd_self_left_right",
+  "file_path": ".lake/packages/std/Std/Data/Nat/Gcd.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [gcd_comm, gcd_gcd_self_right_right]",
+  "ground_truth_remaining_from_k": "rw [gcd_comm, gcd_gcd_self_right_right]",
+  "true_premises_at_k": [
+    "Nat.gcd_comm",
+    "Nat.gcd_gcd_self_right_right"
+  ],
+  "state_before_k": "m n : Nat\n⊢ gcd (gcd n m) m = gcd n m"
+}

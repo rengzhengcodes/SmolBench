@@ -1,0 +1,14 @@
+{
+  "full_name": "Array.contains_def",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [mem_def, contains, any_def, List.any_eq_true]\nsimp [and_comm]",
+  "ground_truth_remaining_from_k": "simp [and_comm]",
+  "true_premises_at_k": [
+    "and_comm"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝ : DecidableEq α\na : α\nas : Array α\n⊢ (∃ x, x ∈ as.data ∧ (a == x) = true) ↔ a ∈ as.data"
+}

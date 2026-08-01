@@ -11,10 +11,10 @@ exact (Algebra.adjoin_root_eq_top_of_isSplittingField hζ H hα).symm
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -161,6 +161,52 @@ rw [IsNormal.subalgebra' L L, IsSplittingField.splits, Polynomial.adjoin_roots_e
 
 **lean_error:** tail step 1/2 ("rw [IsNormal.subalgebra' L L, IsSplittingField.splits, Polynomial.adjoin_roots_eq_adjoin_of_splits"): <stdin>:1:98: unexpected end of input; expected ']'
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 11.0s, verify 0.1s, in=338, out=247)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact IsSplittingField.adjoin_root_eq_top L _ _ hα
+```
+
+**lean_error:** tail step 1/1 ('exact IsSplittingField.adjoin_root_eq_top L _ _ hα'): unknown constant 'Polynomial.IsSplittingField.adjoin_root_eq_top'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 11.8s, verify 0.1s, in=338, out=268)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simpa only [hα, IsSplittingField.adjoin_roots]
+```
+
+**lean_error:** tail step 1/1 ('simpa only [hα, IsSplittingField.adjoin_roots]'): unknown constant 'Polynomial.IsSplittingField.adjoin_roots'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 16.2s, verify 0.1s, in=338, out=384)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply eq_adjoin _ α <;> exact ⟨hα, IsSplittingField.adjoin_roots L _⟩
+```
+
+**lean_error:** tail step 1/1 ('apply eq_adjoin _ α <;> exact ⟨hα, IsSplittingField.adjoin_roots L _⟩'): unknown identifier 'eq_adjoin'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 70.5s, verify 0.1s, in=338, out=1784)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rw [← Algebra.adjoin_eq_top_iff, Algebra.adjoin_singleton_eq_range_aeval,
+  Algebra.adjoin_eq_range_subalgebra, IsSplittingField.adjoin_roots]
+exact ⟨Algebra.adjoin_contains _ _ ⟨Set.mem_singleton _, hα⟩, Algebra.adjoin_mono Set.singleton_subset⟩
+```
+
+**lean_error:** tail step 1/3 ('rw [← Algebra.adjoin_eq_top_iff, Algebra.adjoin_singleton_eq_range_aeval,'): <stdin>:1:73: unexpected end of input; expected ']'
+
 ### `hint:2` · llama-31-405b-base · rollout 1 → **lean_error**  (gen 0.9s, verify 0.2s, in=1013, out=15)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -248,3 +294,47 @@ exact Algebra.adjoin_root_eq_top_of_isSplittingField hn H hα |>.symm
 ```
 
 **lean_error:** tail step 1/1 ('exact Algebra.adjoin_root_eq_top_of_isSplittingField hn H hα |>.symm'): application type mismatch
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 9.5s, verify 0.2s, in=1013, out=203)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Algebra.adjoin_root_eq_top_of_isSplittingField.symm
+```
+
+**lean_error:** tail step 1/1 ('exact Algebra.adjoin_root_eq_top_of_isSplittingField.symm'): invalid field notation, type is not of the form (C ...) where C is a constant
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 10.7s, verify 0.2s, in=1013, out=239)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 11.3s, verify 0.2s, in=1013, out=254)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 12.0s, verify 0.2s, in=1013, out=274)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField
+```
+
+**lean_error:** tail step 1/1 ('exact Eq.symm Algebra.adjoin_root_eq_top_of_isSplittingField'): application type mismatch

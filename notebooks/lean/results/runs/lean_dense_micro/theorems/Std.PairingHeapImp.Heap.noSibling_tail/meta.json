@@ -1,0 +1,14 @@
+{
+  "full_name": "Std.PairingHeapImp.Heap.noSibling_tail",
+  "file_path": ".lake/packages/std/Std/Data/PairingHeap.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "simp only [Heap.tail]\nmatch eq : s.tail? le with\n| none => cases s with cases eq | nil => constructor\n| some tl => exact Heap.noSibling_tail? eq\ncases s with cases eq | nil => constructor\nconstructor\nexact Heap.noSibling_tail? eq",
+  "ground_truth_remaining_from_k": "exact Heap.noSibling_tail? eq",
+  "true_premises_at_k": [
+    "Std.PairingHeapImp.Heap.noSibling_tail?"
+  ],
+  "state_before_k": "α : Type u_1\nle : α → α → Bool\ns tl : Heap α\neq : tail? le s = some tl\n⊢ NoSibling (Option.getD (some tl) nil)"
+}

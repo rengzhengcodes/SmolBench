@@ -1,0 +1,17 @@
+{
+  "full_name": "Std.UnionFind.parent'_lt",
+  "file_path": ".lake/packages/std/Std/Data/UnionFind/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [← parentD_eq, parentD_lt, Fin.is_lt, Array.data_length]",
+  "ground_truth_remaining_from_k": "simp only [← parentD_eq, parentD_lt, Fin.is_lt, Array.data_length]",
+  "true_premises_at_k": [
+    "Std.UnionFind.parentD_eq",
+    "Std.UnionFind.parentD_lt",
+    "Fin.is_lt",
+    "Array.data_length"
+  ],
+  "state_before_k": "self : UnionFind\ni : Fin (size self)\n⊢ (Array.get self.arr i).parent < size self"
+}

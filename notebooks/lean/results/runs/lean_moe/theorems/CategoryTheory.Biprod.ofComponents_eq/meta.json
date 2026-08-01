@@ -1,0 +1,26 @@
+{
+  "full_name": "CategoryTheory.Biprod.ofComponents_eq",
+  "file_path": "Mathlib/CategoryTheory/Preadditive/Biproducts.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "ext <;>\n  simp only [Category.comp_id, biprod.inr_fst, biprod.inr_snd, biprod.inl_snd, add_zero, zero_add,\n    Biprod.inl_ofComponents, Biprod.inr_ofComponents, eq_self_iff_true, Category.assoc,\n    comp_zero, biprod.inl_fst, Preadditive.add_comp]",
+  "ground_truth_remaining_from_k": "ext <;>\n  simp only [Category.comp_id, biprod.inr_fst, biprod.inr_snd, biprod.inl_snd, add_zero, zero_add,\n    Biprod.inl_ofComponents, Biprod.inr_ofComponents, eq_self_iff_true, Category.assoc,\n    comp_zero, biprod.inl_fst, Preadditive.add_comp]",
+  "true_premises_at_k": [
+    "CategoryTheory.Category.comp_id",
+    "CategoryTheory.Limits.biprod.inr_fst",
+    "CategoryTheory.Limits.biprod.inr_snd",
+    "CategoryTheory.Limits.biprod.inl_snd",
+    "add_zero",
+    "zero_add",
+    "CategoryTheory.Biprod.inl_ofComponents",
+    "CategoryTheory.Biprod.inr_ofComponents",
+    "eq_self_iff_true",
+    "CategoryTheory.Category.assoc",
+    "CategoryTheory.Limits.comp_zero",
+    "CategoryTheory.Limits.biprod.inl_fst",
+    "CategoryTheory.Preadditive.add_comp"
+  ],
+  "state_before_k": "C : Type u\ninst✝² : Category.{v, u} C\ninst✝¹ : Preadditive C\ninst✝ : HasBinaryBiproducts C\nX₁ X₂ Y₁ Y₂ : C\nf₁₁ : X₁ ⟶ Y₁\nf₁₂ : X₁ ⟶ Y₂\nf₂₁ : X₂ ⟶ Y₁\nf₂₂ : X₂ ⟶ Y₂\nf : X₁ ⊞ X₂ ⟶ Y₁ ⊞ Y₂\n⊢ ofComponents (biprod.inl ≫ f ≫ biprod.fst) (biprod.inl ≫ f ≫ biprod.snd) (biprod.inr ≫ f ≫ biprod.fst)\n      (biprod.inr ≫ f ≫ biprod.snd) =\n    f"
+}

@@ -1,14 +1,15 @@
-# 1480 cells; sanity 122 pass / 28 fail
-
-!! 28 sanity-gate failures — pipeline may have rotted
+# 1755 cells; sanity 150 pass / 0 fail
 
 rung       model                                 pass/N      rate  lerr  incp  gvup  rplf  exc    l3  avg_in avg_out  avg_s
 ---------------------------------------------------------------------------------------------------------------------------
-stepk:1    llama-31-405b-base                       9/412    2.2%   393     6     0     0    4   125     372     208   15.2
-stepk:1    llama-lean-bare-micro-r128              54/412   13.1%   321    35     0     0    2    15     372      95    8.2
-hint:2     llama-31-405b-base                      74/328   22.6%   243     8     0     0    3    45     958     131   17.8
+stepk:1    llama-31-405b-base                      15/512    2.9%   472     9     0     0   16   137     355     176   37.4
+stepk:1    llama-lean-bare-micro-r128              54/411   13.1%   321    35     0     0    1    15     372      15    5.3
+stepk:1    llama-lean-fenced-micro-r128             8/52    15.4%    32    12     0     0    0     2     369     306   14.4
+hint:2     llama-31-405b-base                      91/417   21.8%   305     9     0     0   12    55     922     109   44.7
 hint:2     llama-lean-bare-micro-r128             102/328   31.1%   212    12     0     0    2     3     958      19    6.4
+hint:2     llama-lean-fenced-micro-r128            10/35    28.6%    21     4     0     0    0     0     944     286   13.7
 
 # per-model totals
-  llama-31-405b-base                      83/740    11.2%  (467,608 in / 128,666 out tokens)  l3=170
-  llama-lean-bare-micro-r128             156/740    21.1%  (467,608 in / 45,265 out tokens)  l3=18
+  llama-31-405b-base                     106/929    11.4%  (566,481 in / 135,681 out tokens)  l3=192
+  llama-lean-bare-micro-r128             156/739    21.1%  (467,213 in / 12,497 out tokens)  l3=18
+  llama-lean-fenced-micro-r128            18/87     20.7%  (52,250 in / 25,913 out tokens)  l3=2

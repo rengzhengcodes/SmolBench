@@ -12,10 +12,10 @@ rw [Iso.inv_comp_eq, ← Category.assoc, Iso.eq_comp_inv,
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ |
-| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ | ✘ ✘ · ✘ |
+| `hint:2` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -3793,6 +3793,59 @@ simp [Iso.inv_comp_eq, ← limMap_whiskerLeft_assoc]
 
 **lean_error:** tail step 1/1 ('simp [Iso.inv_comp_eq, ← limMap_whiskerLeft_assoc]'): unknown identifier 'limMap_whiskerLeft_assoc'
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 18.0s, verify 0.1s, in=406, out=296)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 19.3s, verify 0.1s, in=406, out=330)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **incomplete**  (gen 22.2s, verify 0.2s, in=406, out=405)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [limitObjIsoLimitCompEvaluation, limMap, whiskerLeft, assoc]
+```
+
+**final state (truncated):**
+```
+C : Type u
+inst✝⁴ : Category.{v, u} C
+D : Type u'
+inst✝³ : Category.{v', u'} D
+J : Type u₁
+inst✝² : Category.{v₁, u₁} J
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 22.5s, verify 0.1s, in=406, out=413)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
 ### `hint:2` · llama-31-405b-base · rollout 3 → **lean_error**  (gen 1.4s, verify 0.2s, in=1159, out=27)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -3889,3 +3942,47 @@ simp
 ```
 
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 12.5s, verify 0.1s, in=1159, out=169)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [inv_comp_eq, eq_comp_inv, assoc, limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/1 ('simp only [inv_comp_eq, eq_comp_inv, assoc, limit_map_limitObjIsoLimitCompEvaluation_hom]'): unknown identifier 'inv_comp_eq'
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 14.8s, verify 0.1s, in=1159, out=223)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/1 ('simp [limit_map_limitObjIsoLimitCompEvaluation_hom]'): simp made no progress
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 21.1s, verify 0.1s, in=1159, out=378)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 21.5s, verify 0.1s, in=1159, out=385)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [← inv_comp_eq, ← eq_comp_inv, assoc, limit_map_limitObjIsoLimitCompEvaluation_hom]
+```
+
+**lean_error:** tail step 1/1 ('simp only [← inv_comp_eq, ← eq_comp_inv, assoc, limit_map_limitObjIsoLimitCompEvaluation_hom]'): unknown identifier 'inv_comp_eq'

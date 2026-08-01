@@ -1,0 +1,15 @@
+{
+  "full_name": "LinearIndependent.map_pow_expChar_pow_of_isSeparable",
+  "file_path": "Mathlib/FieldTheory/PurelyInseparable.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 10,
+  "k": 9,
+  "ground_truth_full_proof": "classical\nhave halg := IsSeparable.isAlgebraic F E\nrw [linearIndependent_iff_finset_linearIndependent] at h ⊢\nintro s\nlet E' := adjoin F (s.image v : Set E)\nhaveI : FiniteDimensional F E' := finiteDimensional_adjoin fun x _ ↦ (halg x).isIntegral\nhaveI : IsSeparable F E' := isSeparable_tower_bot_of_isSeparable F E' E\nlet v' (i : s) : E' := ⟨v i.1, subset_adjoin F _ (Finset.mem_image.2 ⟨i.1, i.2, rfl⟩)⟩\nhave h' : LinearIndependent F v' := (h s).of_comp E'.val.toLinearMap\nexact (h'.map_pow_expChar_pow_of_fd_isSeparable q n).map'\n  E'.val.toLinearMap (LinearMap.ker_eq_bot_of_injective E'.val.injective)\nhave halg := IsSeparable.isAlgebraic F E\nrw [linearIndependent_iff_finset_linearIndependent] at h ⊢\nintro s\nlet E' := adjoin F (s.image v : Set E)\nhaveI : FiniteDimensional F E' := finiteDimensional_adjoin fun x _ ↦ (halg x).isIntegral\nhaveI : IsSeparable F E' := isSeparable_tower_bot_of_isSeparable F E' E\nlet v' (i : s) : E' := ⟨v i.1, subset_adjoin F _ (Finset.mem_image.2 ⟨i.1, i.2, rfl⟩)⟩\nhave h' : LinearIndependent F v' := (h s).of_comp E'.val.toLinearMap\nexact (h'.map_pow_expChar_pow_of_fd_isSeparable q n).map'\n  E'.val.toLinearMap (LinearMap.ker_eq_bot_of_injective E'.val.injective)",
+  "ground_truth_remaining_from_k": "exact (h'.map_pow_expChar_pow_of_fd_isSeparable q n).map'\n  E'.val.toLinearMap (LinearMap.ker_eq_bot_of_injective E'.val.injective)",
+  "true_premises_at_k": [
+    "LinearIndependent.map'",
+    "LinearMap.ker_eq_bot_of_injective"
+  ],
+  "state_before_k": "F : Type u\nE : Type v\ninst✝⁵ : Field F\ninst✝⁴ : Field E\ninst✝³ : Algebra F E\nK : Type w\ninst✝² : Field K\ninst✝¹ : Algebra F K\nq n : ℕ\nhF : ExpChar F q\nι : Type u_1\nv : ι → E\ninst✝ : IsSeparable F E\nh : ∀ (s : Finset ι), LinearIndependent F (v ∘ Subtype.val)\nhalg : Algebra.IsAlgebraic F E\ns : Finset ι\nE' : IntermediateField F E := adjoin F ↑(Finset.image v s)\nthis✝ : FiniteDimensional F ↥E'\nthis : IsSeparable F ↥E'\nv' : { x // x ∈ s } → ↥E' := fun i => { val := v ↑i, property := ⋯ }\nh' : LinearIndependent F v'\n⊢ LinearIndependent F ((fun x => v x ^ q ^ n) ∘ Subtype.val)"
+}

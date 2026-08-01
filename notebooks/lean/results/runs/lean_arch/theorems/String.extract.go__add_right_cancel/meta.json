@@ -1,0 +1,12 @@
+{
+  "full_name": "String.extract.go₁_add_right_cancel",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "apply utf8InductionOn s ⟨i⟩ ⟨b⟩ (motive := fun s i =>\n  go₁ s ⟨i.byteIdx + n⟩ ⟨b + n⟩ ⟨e + n⟩ = go₁ s i ⟨b⟩ ⟨e⟩) <;>\nsimp [go₁]\nintro c cs\napply go₂_add_right_cancel\nintro c cs ⟨i⟩ h ih\nsimp [Pos.ext_iff, Pos.addChar_eq] at h ih ⊢\nsimp [Nat.add_right_cancel_iff, h]\nrw [Nat.add_right_comm]\nexact ih",
+  "ground_truth_remaining_from_k": "exact ih",
+  "true_premises_at_k": [],
+  "state_before_k": "case ind\ns : List Char\ni✝ b e n : Nat\nc : Char\ncs : List Char\ni : Nat\nih :\n  go₁ cs { byteIdx := i + csize c + n } { byteIdx := b + n } { byteIdx := e + n } =\n    go₁ cs { byteIdx := i + csize c } { byteIdx := b } { byteIdx := e }\nh : ¬i = b\n⊢ go₁ cs { byteIdx := i + csize c + n } { byteIdx := b + n } { byteIdx := e + n } =\n    go₁ cs { byteIdx := i + csize c } { byteIdx := b } { byteIdx := e }"
+}

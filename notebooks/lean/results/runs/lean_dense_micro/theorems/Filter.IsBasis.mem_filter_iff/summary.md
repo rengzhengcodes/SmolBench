@@ -12,10 +12,10 @@ simp only [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ |
-| `hint:2` | ✘ ✓ ✘ ✘ | ✘ · ✘ ✓ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ · · ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✘ ✓ ✘ ✘ | ✘ · ✘ ✓ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -147,6 +147,50 @@ rw [mem_filter, h.mem_iff]
 
 **lean_error:** tail step 1/1 ('rw [mem_filter, h.mem_iff]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 8.0s, verify 0.1s, in=296, out=193)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp_rw [h.mem_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp_rw [h.mem_iff]'): invalid field 'mem_iff', the environment does not contain 'Filter.IsBasis.mem_iff'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 8.6s, verify 0.1s, in=296, out=207)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [IsBasis.filter, h.mem_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp [IsBasis.filter, h.mem_iff]'): invalid field 'mem_iff', the environment does not contain 'Filter.IsBasis.mem_iff'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 9.7s, verify 0.1s, in=296, out=235)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [mem_filter_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp [mem_filter_iff]'): kernel type check failed: (kernel) declaration has free variables '[anonymous]'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 11.7s, verify 0.1s, in=296, out=294)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [IsBasis.filter, mem_generate, generateSets_mem, bex_image_iff]
+```
+
+**lean_error:** tail step 1/1 ('simp only [IsBasis.filter, mem_generate, generateSets_mem, bex_image_iff]'): unknown identifier 'mem_generate'
+
 ### `hint:2` · llama-31-405b-base · rollout 1 → **lean_error**  (gen 1.2s, verify 0.1s, in=989, out=35)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -251,3 +295,48 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 ```lean
 simp only [IsBasis.filter, mem_filter_iff, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
 ```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 11.4s, verify 0.1s, in=989, out=285)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('rw [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 12.0s, verify 0.1s, in=989, out=300)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,
+  exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/2 ('rw [Filter.IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff,'): <stdin>:1:75: unexpected end of input; expected ']'
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 14.3s, verify 0.1s, in=989, out=362)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('rw [IsBasis.filter, FilterBasis.mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 16.4s, verify 0.1s, in=989, out=420)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [h.filter, mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]
+```
+
+**lean_error:** tail step 1/1 ('simp only [h.filter, mem_filter_iff, mem_filterBasis_iff, exists_exists_and_eq_and]'): invalid 'simp', proposition expected

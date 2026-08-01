@@ -1,0 +1,18 @@
+{
+  "full_name": "CategoryTheory.isLocallySurjective_iff_isIso",
+  "file_path": "Mathlib/CategoryTheory/Sites/Surjective.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [imageSheafι, isLocallySurjective_iff_imagePresheaf_sheafify_eq_top',\n  Subpresheaf.eq_top_iff_isIso]\nexact\n  ⟨fun h => @isIso_of_reflects_iso _ _ _ _ _ _ (imageSheafι f) (sheafToPresheaf J _) h _, fun h =>\n    @Functor.map_isIso _ _ _ _ _ _ (sheafToPresheaf J _) _ h⟩",
+  "ground_truth_remaining_from_k": "exact\n  ⟨fun h => @isIso_of_reflects_iso _ _ _ _ _ _ (imageSheafι f) (sheafToPresheaf J _) h _, fun h =>\n    @Functor.map_isIso _ _ _ _ _ _ (sheafToPresheaf J _) _ h⟩",
+  "true_premises_at_k": [
+    "CategoryTheory.isIso_of_reflects_iso",
+    "CategoryTheory.GrothendieckTopology.imageSheafι",
+    "CategoryTheory.sheafToPresheaf",
+    "CategoryTheory.Functor.map_isIso",
+    "CategoryTheory.sheafToPresheaf"
+  ],
+  "state_before_k": "C : Type u\ninst✝² : Category.{v, u} C\nJ : GrothendieckTopology C\nA : Type u'\ninst✝¹ : Category.{v', u'} A\ninst✝ : ConcreteCategory A\nF G : Sheaf J (Type w)\nf : F ⟶ G\n⊢ IsIso (Subpresheaf.ι (Subpresheaf.sheafify J (imagePresheaf f.val))) ↔\n    IsIso { val := Subpresheaf.ι (Subpresheaf.sheafify J (imagePresheaf f.val)) }"
+}

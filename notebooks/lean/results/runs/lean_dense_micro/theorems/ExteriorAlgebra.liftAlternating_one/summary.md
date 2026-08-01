@@ -11,10 +11,10 @@ rw [foldl_one]
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✓ ✓ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✓ ✓ | ✘ ✘ ✘ ✘ | ✘ ✘ · ✓ |
+| `hint:2` | ✓ ✓ ✓ ✓ | ✓ ✘ ✘ ✘ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -174,6 +174,57 @@ simp only [foldl, Nat.succ_ne_zero, LinearMap.mk₂_apply, zero_smul, add_zero, 
 
 **lean_error:** tail step 1/2 ('simp only [foldl, Nat.succ_ne_zero, LinearMap.mk₂_apply, zero_smul, add_zero, curryLeft_apply,'): <stdin>:1:94: unexpected end of input; expected ']'
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 8.1s, verify 0.1s, in=469, out=166)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact foldl_apply_zero
+```
+
+**lean_error:** tail step 1/1 ('exact foldl_apply_zero'): unknown identifier 'foldl_apply_zero'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 11.8s, verify 0.2s, in=469, out=251)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+rfl
+```
+
+**lean_error:** tail step 1/1 ('rfl'): type mismatch
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **incomplete**  (gen 14.9s, verify 0.2s, in=469, out=330)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+dsimp only [CliffordAlgebra.foldl, LinearMap.mk₂]
+```
+
+**final state (truncated):**
+```
+R : Type u_1
+M : Type u_2
+N : Type u_3
+N' : Type u_4
+inst✝⁶ : CommRing R
+inst✝⁵ : AddCommGroup M
+...
+```
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 20.3s, verify 0.2s, in=469, out=475)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
 ### `hint:2` · llama-31-405b-base · rollout 3 → **success**  (gen 0.7s, verify 0.1s, in=722, out=14)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -255,3 +306,39 @@ exact CliffordAlgebra.foldl_one _ _ _
 ```
 
 **lean_error:** tail step 1/1 ('exact CliffordAlgebra.foldl_one _ _ _'): typeclass instance problem is stuck, it is often due to metavariables
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **success**  (gen 8.0s, verify 0.1s, in=722, out=166)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp only [foldl_one]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **success**  (gen 9.6s, verify 0.1s, in=722, out=201)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [foldl_one]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 11.1s, verify 0.3s, in=722, out=234)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [foldl_one]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **success**  (gen 29.8s, verify 0.3s, in=722, out=741)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+simp [foldl_one]
+```

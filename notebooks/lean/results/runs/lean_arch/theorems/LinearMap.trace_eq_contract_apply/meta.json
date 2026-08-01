@@ -1,0 +1,15 @@
+{
+  "full_name": "LinearMap.trace_eq_contract_apply",
+  "file_path": "Mathlib/LinearAlgebra/Trace.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [← comp_apply, trace_eq_contract]",
+  "ground_truth_remaining_from_k": "rw [← comp_apply, trace_eq_contract]",
+  "true_premises_at_k": [
+    "LinearMap.comp_apply",
+    "LinearMap.trace_eq_contract"
+  ],
+  "state_before_k": "R : Type u_1\ninst✝¹² : CommRing R\nM : Type u_2\ninst✝¹¹ : AddCommGroup M\ninst✝¹⁰ : Module R M\nN : Type u_3\nP : Type u_4\ninst✝⁹ : AddCommGroup N\ninst✝⁸ : Module R N\ninst✝⁷ : AddCommGroup P\ninst✝⁶ : Module R P\nι : Type u_5\ninst✝⁵ : Module.Free R M\ninst✝⁴ : Module.Finite R M\ninst✝³ : Module.Free R N\ninst✝² : Module.Finite R N\ninst✝¹ : Module.Free R P\ninst✝ : Module.Finite R P\nx : Module.Dual R M ⊗[R] M\n⊢ (trace R M) ((dualTensorHom R M M) x) = (contractLeft R M) x"
+}

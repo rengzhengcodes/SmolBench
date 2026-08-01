@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.equivEssImageOfReflective_map_counitIso_app_hom",
+  "file_path": "Mathlib/CategoryTheory/Adjunction/Reflective.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp only [Functor.comp_obj, Functor.essImageInclusion_obj, Functor.toEssImage_obj_obj,\n  equivEssImageOfReflective_counitIso_app, asIso, Iso.symm_mk, Functor.essImageInclusion_map,\n  Functor.id_obj]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u₁\nD : Type u₂\nE : Type u₃\ninst✝³ : Category.{v₁, u₁} C\ninst✝² : Category.{v₂, u₂} D\ninst✝¹ : Category.{v₃, u₃} E\ni : D ⥤ C\ninst✝ : Reflective i\nX : Functor.EssImageSubcategory i\n⊢ inv ((ofRightAdjoint i).unit.app X.obj) = inv ((ofRightAdjoint i).unit.app X.obj)"
+}

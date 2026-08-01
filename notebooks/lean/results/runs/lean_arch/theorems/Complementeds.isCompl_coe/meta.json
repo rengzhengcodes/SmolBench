@@ -1,0 +1,16 @@
+{
+  "full_name": "Complementeds.isCompl_coe",
+  "file_path": "Mathlib/Order/Disjoint.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp_rw [isCompl_iff, disjoint_coe, codisjoint_coe]",
+  "ground_truth_remaining_from_k": "simp_rw [isCompl_iff, disjoint_coe, codisjoint_coe]",
+  "true_premises_at_k": [
+    "isCompl_iff",
+    "Complementeds.disjoint_coe",
+    "Complementeds.codisjoint_coe"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝¹ : DistribLattice α\ninst✝ : BoundedOrder α\na b : Complementeds α\n⊢ IsCompl ↑a ↑b ↔ IsCompl a b"
+}

@@ -1,0 +1,14 @@
+{
+  "full_name": "ExteriorAlgebra.liftAlternating_one",
+  "file_path": "Mathlib/LinearAlgebra/ExteriorAlgebra/OfAlternating.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "dsimp [liftAlternating]\nrw [foldl_one]",
+  "ground_truth_remaining_from_k": "rw [foldl_one]",
+  "true_premises_at_k": [
+    "CliffordAlgebra.foldl_one"
+  ],
+  "state_before_k": "R : Type u_1\nM : Type u_2\nN : Type u_3\nN' : Type u_4\ninst✝⁶ : CommRing R\ninst✝⁵ : AddCommGroup M\ninst✝⁴ : AddCommGroup N\ninst✝³ : AddCommGroup N'\ninst✝² : Module R M\ninst✝¹ : Module R N\ninst✝ : Module R N'\nf : (i : ℕ) → M [⋀^Fin i]→ₗ[R] N\n⊢ (((CliffordAlgebra.foldl 0 (LinearMap.mk₂ R (fun m f i => (AlternatingMap.curryLeft (f (Nat.succ i))) m) ⋯ ⋯ ⋯ ⋯) ⋯)\n          f)\n        1 0)\n      0 =\n    (f 0) 0"
+}

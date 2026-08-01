@@ -1,0 +1,16 @@
+{
+  "full_name": "Polynomial.monic_generator_eq_minpoly",
+  "file_path": "Mathlib/LinearAlgebra/AnnihilatingPolynomial.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 6,
+  "k": 5,
+  "ground_truth_full_proof": "by_cases h : p = 0\nrwa [h, annIdealGenerator_eq_zero_iff, ← p_gen, Ideal.span_singleton_eq_bot.mpr]\nrw [← span_singleton_annIdealGenerator, Ideal.span_singleton_eq_span_singleton] at p_gen\nrw [eq_comm]\napply eq_of_monic_of_associated p_monic _ p_gen\napply monic_annIdealGenerator _ _ ((Associated.ne_zero_iff p_gen).mp h)",
+  "ground_truth_remaining_from_k": "apply monic_annIdealGenerator _ _ ((Associated.ne_zero_iff p_gen).mp h)",
+  "true_premises_at_k": [
+    "Polynomial.monic_annIdealGenerator",
+    "Associated.ne_zero_iff",
+    "Iff.mp"
+  ],
+  "state_before_k": "𝕜 : Type u_1\nA : Type u_2\ninst✝² : Field 𝕜\ninst✝¹ : Ring A\ninst✝ : Algebra 𝕜 A\na : A\np : 𝕜[X]\np_monic : Monic p\np_gen : Associated p (annIdealGenerator 𝕜 a)\nh : ¬p = 0\n⊢ Monic (annIdealGenerator 𝕜 a)"
+}

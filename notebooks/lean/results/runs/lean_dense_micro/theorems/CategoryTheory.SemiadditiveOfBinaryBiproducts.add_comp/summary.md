@@ -11,9 +11,9 @@ ext <;> simp
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
 
 ## Per-cell detail
 
@@ -103,6 +103,52 @@ simp
 **lean_error:** tail step 1/1 ('simp'): simp made no progress
 
 ### `stepk:1` · llama-lean-bare-micro-r128 · rollout 3 → **lean_error**  (gen 0.5s, verify 0.1s, in=307, out=2)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 12.0s, verify 0.1s, in=307, out=136)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 16.0s, verify 0.1s, in=307, out=228)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp
+```
+
+**lean_error:** tail step 1/1 ('simp'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 17.5s, verify 0.1s, in=307, out=261)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp only [← cancel_epi (biprod.inl X X), ← cancel_epi (biprod.inr X X), Category.assoc,
+  biprod.inl_desc_assoc, biprod.inr_desc_assoc, comp_zero, zero_comp, biprod.inl_desc,
+  biprod.inr_desc]
+```
+
+**lean_error:** tail step 1/3 ('simp only [← cancel_epi (biprod.inl X X), ← cancel_epi (biprod.inr X X), Category.assoc,'): <stdin>:1:88: unexpected end of input; expected ']'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 18.2s, verify 0.1s, in=307, out=280)
 
 prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
 

@@ -1,0 +1,14 @@
+{
+  "full_name": "Filter.map_sigma_mk_comap",
+  "file_path": "Mathlib/Order/Filter/Bases.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "refine' (((basis_sets _).comap _).map _).eq_of_same_basis _\nconvert ((basis_sets l).map (Sigma.mk (f a))).comap (Sigma.map f g)\napply image_sigmaMk_preimage_sigmaMap hf",
+  "ground_truth_remaining_from_k": "apply image_sigmaMk_preimage_sigmaMap hf",
+  "true_premises_at_k": [
+    "Set.image_sigmaMk_preimage_sigmaMap"
+  ],
+  "state_before_k": "case h.e'_5.h\nα : Type u_1\nβ : Type u_2\nγ : Type u_3\nι : Sort u_4\nι' : Sort u_5\nπ : α → Type u_6\nπ' : β → Type u_7\nf : α → β\nhf : Function.Injective f\ng : (a : α) → π a → π' (f a)\na : α\nl : Filter (π' (f a))\nx✝ : Set (π' (f a))\n⊢ Sigma.mk a '' (g a ⁻¹' id x✝) = Sigma.map f g ⁻¹' (Sigma.mk (f a) '' id x✝)"
+}

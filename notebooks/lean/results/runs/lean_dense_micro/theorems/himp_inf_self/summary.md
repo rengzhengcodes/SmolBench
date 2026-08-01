@@ -11,10 +11,10 @@ rw [inf_comm, inf_himp, inf_comm]
 
 ## Verdict matrix
 
-| rung | llama-31-405b-base | llama-lean-bare-micro-r128 |
-| --- | --- | --- |
-| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
-| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ |
+| rung | llama-31-405b-base | llama-lean-bare-micro-r128 | llama-lean-fenced-micro-r128 |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ | ✘ ✘ ✘ ✘ |
+| `hint:2` | ✓ ✓ ✘ ✓ | ✓ ✓ ✓ ✓ | ✓ ✓ ✓ ✓ |
 
 ## Per-cell detail
 
@@ -116,6 +116,50 @@ rw [inf_comm, imp_inf_distrib, inf_comm, inf_assoc, inf_absorb_right, inf_comm]
 
 **lean_error:** tail step 1/1 ('rw [inf_comm, imp_inf_distrib, inf_comm, inf_assoc, inf_absorb_right, inf_comm]'): tactic 'rewrite' failed, equality or iff proof expected
 
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 2 → **lean_error**  (gen 5.2s, verify 0.1s, in=268, out=104)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply imp_inf_self
+```
+
+**lean_error:** tail step 1/1 ('apply imp_inf_self'): unknown identifier 'imp_inf_self'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 3 → **lean_error**  (gen 13.4s, verify 0.1s, in=268, out=301)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+simp [imp_iff_right]
+```
+
+**lean_error:** tail step 1/1 ('simp [imp_iff_right]'): simp made no progress
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 1 → **lean_error**  (gen 16.1s, verify 0.4s, in=268, out=372)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+exact antisymm imp_inf_le_comm (inf_le_inf_right _ (imp_le_of_left_le le_rfl))
+```
+
+**lean_error:** tail step 1/1 ('exact antisymm imp_inf_le_comm (inf_le_inf_right _ (imp_le_of_left_le le_rfl))'): unknown identifier 'imp_inf_le_comm'
+
+### `stepk:1` · llama-lean-fenced-micro-r128 · rollout 0 → **lean_error**  (gen 19.1s, verify 0.1s, in=268, out=447)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+le_inf (inf_le_of_right_le (imp_le_iff.mp le_rfl)) inf_le_right
+```
+
+**lean_error:** tail step 1/1 ('le_inf (inf_le_of_right_le (imp_le_iff.mp le_rfl)) inf_le_right'): <stdin>:1:1: unknown tactic
+
 ### `hint:2` · llama-31-405b-base · rollout 1 → **success**  (gen 0.9s, verify 0.1s, in=671, out=13)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -186,6 +230,42 @@ rw [inf_comm, inf_himp, inf_comm]
 ```
 
 ### `hint:2` · llama-lean-bare-micro-r128 · rollout 1 → **success**  (gen 1.2s, verify 0.1s, in=671, out=13)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 0 → **success**  (gen 9.6s, verify 0.1s, in=671, out=208)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 3 → **success**  (gen 10.7s, verify 0.1s, in=671, out=231)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 2 → **success**  (gen 11.5s, verify 0.1s, in=671, out=253)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [inf_comm, inf_himp, inf_comm]
+```
+
+### `hint:2` · llama-lean-fenced-micro-r128 · rollout 1 → **success**  (gen 13.5s, verify 0.1s, in=671, out=306)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 

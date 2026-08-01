@@ -1,0 +1,17 @@
+{
+  "full_name": "IntermediateField.exists_algHom_adjoin_of_splits_of_aeval",
+  "file_path": "Mathlib/FieldTheory/Extension.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "have ix := isAlgebraic_adjoin (fun s hs ↦ (hK s hs).1) ⟨x, hx⟩\nrw [isAlgebraic_iff_isIntegral, isIntegral_iff] at ix\nobtain ⟨φ, hφ⟩ := exists_algHom_adjoin_of_splits hK ((algHomAdjoinIntegralEquiv F ix).symm\n  ⟨y, mem_aroots.mpr ⟨minpoly.ne_zero ix, hy⟩⟩) (adjoin_simple_le_iff.mpr hx)\nexact ⟨φ, (DFunLike.congr_fun hφ <| AdjoinSimple.gen F x).trans <|\n  algHomAdjoinIntegralEquiv_symm_apply_gen F ix _⟩",
+  "ground_truth_remaining_from_k": "exact ⟨φ, (DFunLike.congr_fun hφ <| AdjoinSimple.gen F x).trans <|\n  algHomAdjoinIntegralEquiv_symm_apply_gen F ix _⟩",
+  "true_premises_at_k": [
+    "DFunLike.congr_fun",
+    "IntermediateField.AdjoinSimple.gen",
+    "Eq.trans",
+    "IntermediateField.algHomAdjoinIntegralEquiv_symm_apply_gen"
+  ],
+  "state_before_k": "case intro\nF : Type u_1\nE : Type u_2\nK : Type u_3\ninst✝⁴ : Field F\ninst✝³ : Field E\ninst✝² : Field K\ninst✝¹ : Algebra F E\ninst✝ : Algebra F K\nS : Set E\nhK : ∀ s ∈ S, IsIntegral F s ∧ Splits (algebraMap F K) (minpoly F s)\nhK' : ∀ (s : E), IsIntegral F s ∧ Splits (algebraMap F K) (minpoly F s)\nL : IntermediateField F E\nf : ↥L →ₐ[F] K\nhL : L ≤ adjoin F S\nhS : adjoin F S = ⊤\nx : E\nhx : x ∈ adjoin F S\ny : K\nhy : (aeval y) (minpoly F x) = 0\nix : IsIntegral F ↑{ val := x, property := hx }\nφ : ↥(adjoin F S) →ₐ[F] K\nhφ : AlgHom.comp φ (inclusion ⋯) = (algHomAdjoinIntegralEquiv F ix).symm { val := y, property := ⋯ }\n⊢ ∃ φ, φ { val := x, property := hx } = y"
+}

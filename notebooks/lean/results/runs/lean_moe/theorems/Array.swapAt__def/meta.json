@@ -1,0 +1,14 @@
+{
+  "full_name": "Array.swapAt!_def",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp [swapAt!, h]",
+  "ground_truth_remaining_from_k": "simp [swapAt!, h]",
+  "true_premises_at_k": [
+    "Array.swapAt!"
+  ],
+  "state_before_k": "α : Type u_1\na : Array α\ni : Nat\nv : α\nh : i < size a\n⊢ swapAt! a i v = (a[i], set a { val := i, isLt := h } v)"
+}

@@ -1,0 +1,15 @@
+{
+  "full_name": "ByteArray.extract_data",
+  "file_path": ".lake/packages/std/Std/Data/ByteArray.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "simp [extract]\nmatch Nat.le_total start stop with\n| .inl h => simp [h, Nat.add_sub_cancel']\n| .inr h => simp [h, Nat.sub_eq_zero_of_le, Array.extract_empty_of_stop_le_start]\nsimp [h, Nat.add_sub_cancel']\nsimp [h, Nat.sub_eq_zero_of_le, Array.extract_empty_of_stop_le_start]",
+  "ground_truth_remaining_from_k": "simp [h, Nat.sub_eq_zero_of_le, Array.extract_empty_of_stop_le_start]",
+  "true_premises_at_k": [
+    "Nat.sub_eq_zero_of_le",
+    "Array.extract_empty_of_stop_le_start"
+  ],
+  "state_before_k": "a : ByteArray\nstart stop : Nat\nh : stop ≤ start\n⊢ Array.extract a.data start (start + (stop - start)) = Array.extract a.data start stop"
+}

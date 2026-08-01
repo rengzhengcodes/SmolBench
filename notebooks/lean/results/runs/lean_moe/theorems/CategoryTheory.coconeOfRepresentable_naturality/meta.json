@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.coconeOfRepresentable_naturality",
+  "file_path": "Mathlib/CategoryTheory/Limits/Presheaf.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "ext T f\nsimpa [coconeOfRepresentable_ι_app] using FunctorToTypes.naturality _ _ α f.op _",
+  "ground_truth_remaining_from_k": "simpa [coconeOfRepresentable_ι_app] using FunctorToTypes.naturality _ _ α f.op _",
+  "true_premises_at_k": [
+    "CategoryTheory.coconeOfRepresentable_ι_app",
+    "CategoryTheory.FunctorToTypes.naturality"
+  ],
+  "state_before_k": "case w.h.h\nC : Type u₁\ninst✝¹ : SmallCategory C\nℰ : Type u₂\ninst✝ : Category.{u₁, u₂} ℰ\nA : C ⥤ ℰ\nP₁ P₂ : Cᵒᵖ ⥤ Type u₁\nα : P₁ ⟶ P₂\nj : (Functor.Elements P₁)ᵒᵖ\nT : Cᵒᵖ\nf : ((functorToRepresentables P₁).obj j).obj T\n⊢ ((coconeOfRepresentable P₁).ι.app j ≫ α).app T f =\n    ((coconeOfRepresentable P₂).ι.app ((CategoryOfElements.map α).op.obj j)).app T f"
+}

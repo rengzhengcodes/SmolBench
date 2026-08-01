@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.Limits.hasColimit_of_equivalence_comp",
+  "file_path": "Mathlib/CategoryTheory/Limits/HasLimits.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "haveI : HasColimit (e.inverse ⋙ e.functor ⋙ F) := Limits.hasColimit_equivalence_comp e.symm\napply hasColimitOfIso (e.invFunIdAssoc F).symm",
+  "ground_truth_remaining_from_k": "apply hasColimitOfIso (e.invFunIdAssoc F).symm",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.hasColimitOfIso",
+    "CategoryTheory.Iso.symm"
+  ],
+  "state_before_k": "J : Type u₁\ninst✝³ : Category.{v₁, u₁} J\nK : Type u₂\ninst✝² : Category.{v₂, u₂} K\nC : Type u\ninst✝¹ : Category.{v, u} C\nF : J ⥤ C\ne : K ≌ J\ninst✝ : HasColimit (e.functor ⋙ F)\nthis : HasColimit (e.inverse ⋙ e.functor ⋙ F)\n⊢ HasColimit F"
+}
