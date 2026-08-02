@@ -47,20 +47,20 @@ directly comparable)
 
 Where the numbers come from
 ---------------------------
-Unlike the gate sizer (which sweeps ASSUMED effects, having no pilot), this
-script reads a REAL pilot run's per-cell joint outcomes -- for the MoE trio,
-``results/runs/lean_moe_pilot`` (R=1, 30-theorem seeded sample of
-``novel_premises/val``); for the archetype trio,
-``results/runs/lean_arch_pilot`` once it has run. Two estimators use that data:
+Unlike the gate sizer (which sweeps ASSUMED effects, having no data), this
+script reads a REAL run's per-cell joint outcomes. By default it reads the full
+runs -- ``results/runs/lean_moe`` and ``results/runs/lean_arch`` (each ~252
+paired theorems of ``novel_premises/val`` at R=1); the 30-theorem pilots (e.g.
+``lean_moe_pilot``) can be analysed via ``--run``. Two estimators use that data:
 
 1. **n_theorems sizing = block bootstrap of the observed joint cells.**
    Resample whole THEOREMS with replacement (a theorem block carries all its
    rungs, preserving within-theorem cross-rung correlation) up to the target
    ``n_theorems``, recompute each pair's McNemar p, and report the rejection
    rate. This uses the effect sizes we actually observe -- no parametric
-   effect assumption -- and is the primary sizing. Its one caveat, stated in
-   the output, is that the pilot has only ~22 gradeable theorems, so the
-   bootstrap population is those 22 (a larger pilot would tighten the tail).
+   effect assumption -- and is the primary sizing. The bootstrap population is
+   the run's own paired theorems (a 30-theorem pilot leaves a coarse tail; the
+   full ~252-theorem runs tighten it).
 2. **n_rollouts (pass@N) advisory = the gate's Beta-mixture.** A single R=1
    draw per cell cannot reveal that cell's per-rollout probability, so the
    effect of ADDING rollouts is projected with the gate script's theorem-level
@@ -74,9 +74,9 @@ strip the notebook/dev extras; numpy/scipy only):
     uv run --no-project --with numpy --with scipy \
         python notebooks/lean/power_analysis.py
 
-    # a specific pilot / trio, or both:
-    python notebooks/lean/power_analysis.py --run lean_moe_pilot
-    python notebooks/lean/power_analysis.py --run lean_arch_pilot
+    # default analyses both full runs (lean_moe + lean_arch); or pick one:
+    python notebooks/lean/power_analysis.py --run lean_moe
+    python notebooks/lean/power_analysis.py --run lean_moe_pilot   # the 30-thm pilot
 """
 
 from __future__ import annotations
@@ -336,7 +336,7 @@ def passn_power(
 def analyze_run(run_name: str) -> None:
     run_dir = RESULTS_RUNS / run_name
     if not (run_dir / "all_rows.jsonl").exists():
-        print(f"\n=== {run_name}: no all_rows.jsonl yet (pilot not run) — skipping ===")
+        print(f"\n=== {run_name}: no all_rows.jsonl yet (run not present) — skipping ===")
         return
     models, blocks, rungs = load_joint_cells(run_dir)
     n_thm = len(blocks)
@@ -349,7 +349,7 @@ def analyze_run(run_name: str) -> None:
     alpha_bonf = ALPHA / n_tests
 
     print(f"\n{'=' * 78}\n=== {run_name}  ({n_thm} paired theorems, {n_cells} cells, "
-          f"{n_rungs} rungs, R=1 pilot) ===\n{'=' * 78}")
+          f"{n_rungs} rungs, R=1) ===\n{'=' * 78}")
     print(f"union-solvable fraction (any model): {frac_solv:.3f}")
     print("per-model pass@1 rate (pilot point estimate):")
     for m in sorted(models, key=lambda m: -rates[m]):
