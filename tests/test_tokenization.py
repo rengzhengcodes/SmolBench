@@ -105,6 +105,46 @@ def test_hf_tokenizer_wraps_an_existing_tokenizer_object():
     assert calls == [("hello", False)]
 
 
+def test_from_repo_disables_truncation_and_padding(monkeypatch, tmp_path):
+    """A ``truncation`` stanza in tokenizer.json must not cap ``count``.
+
+    Found live: ``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
+    ``truncation: {max_length: 512}``, and ``tokenizers`` honours it on every
+    encode -- so a ~26,000-token induction prompt counted as 512. Both the
+    extensional prompt and its noise pad would saturate at 512, the padding
+    search would declare them matched, and the length control would be
+    silently wrong by a factor of fifty. That is the failure mode the whole
+    token-matching change exists to remove, so the loader must switch
+    truncation (and padding) off, and this test must keep it off.
+    """
+    calls: list = []
+
+    class FakeTokenizer:
+        def no_truncation(self):
+            calls.append("no_truncation")
+
+        def no_padding(self):
+            calls.append("no_padding")
+
+    monkeypatch.setattr(
+        tokenization, "HFTokenizer", tokenization.HFTokenizer
+    )  # explicit: we exercise the real classmethod
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "huggingface_hub",
+        type("M", (), {"hf_hub_download": staticmethod(lambda **kw: str(tmp_path / "t.json"))}),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "tokenizers",
+        type("M", (), {"Tokenizer": type("T", (), {"from_file": staticmethod(lambda p: FakeTokenizer())})}),
+    )
+
+    tokenizer = tokenization.HFTokenizer.from_repo("fake/repo")
+    assert calls == ["no_truncation", "no_padding"]
+    assert tokenizer.name == "fake/repo"
+
+
 def test_vllm_tokenizer_calls_the_server_root_endpoint(stub_server):
     """``/tokenize`` lives at the SERVER root, not under ``/v1``.
 

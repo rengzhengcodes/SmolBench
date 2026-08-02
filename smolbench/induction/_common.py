@@ -283,8 +283,14 @@ WHITESPACE_UNITS: Tuple[str, ...] = (" \t", " \n\t", "\t ", " \n", "\t\n ")
 
 # Repetition counts probed by `choose_whitespace_unit`. Small and large, so a
 # unit that merges only once a run gets long (the failure mode that makes a
-# pad silently saturate below its target) is rejected.
-_UNIT_PROBES: Tuple[int, ...] = (1, 64, 256)
+# pad silently saturate below its target) is rejected. The top probe is
+# deliberately past 1024: a `tokenizer.json` can embed a `truncation` stanza
+# capping every count (Nemotron-Ultra ships max_length 512), which would make
+# a saturating tokenizer look linear at 256 and then silently refuse to grow.
+# Probing above any plausible cap turns that into a loud failure here rather
+# than a length control that is quietly wrong. `HFTokenizer` also disables
+# truncation on load -- this is the backstop for tokenizers built elsewhere.
+_UNIT_PROBES: Tuple[int, ...] = (1, 64, 256, 2048)
 
 # A unit qualifies if its marginal cost is within this factor of 1 token per
 # repetition at every probe. Slack allows a boundary token or a unit that

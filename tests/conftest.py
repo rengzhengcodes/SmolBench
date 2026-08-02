@@ -144,6 +144,29 @@ class StubTokenizer:
         return total
 
 
+class TruncatingTokenizer:
+    """`StubTokenizer` with a hard cap, like a tokenizer.json truncation stanza.
+
+    Models the live failure found in
+    ``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8``: its ``tokenizer.json``
+    embeds ``truncation: {max_length: 512}``, so every count above the cap
+    comes back AS the cap. A capped tokenizer looks perfectly linear right up
+    to the cap, which is why the pad-atom probe has to reach past any
+    plausible one -- a saturating counter would otherwise report a
+    26,000-token prompt and its pad as equal at 512.
+    """
+
+    name = "truncating-512"
+
+    def __init__(self, cap: int = 512):
+        self.cap = cap
+        self._inner = StubTokenizer()
+
+    def count(self, text: str) -> int:
+        """Returns the stub count, capped like a truncating tokenizer."""
+        return min(self._inner.count(text), self.cap)
+
+
 class MergeEverythingTokenizer:
     """Pathological tokenizer: ANY whitespace run is one token.
 

@@ -25,7 +25,7 @@ import string
 
 import pytest
 
-from conftest import MergeEverythingTokenizer, StubTokenizer
+from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
 
 from smolbench.induction._common import (
     WHITESPACE_UNITS,
@@ -193,6 +193,20 @@ def test_repeated_single_space_is_not_a_usable_pad(tokenizer):
     reintroduce the length confound, silently.
     """
     assert tokenizer.count(" " * 512) < 64
+
+
+def test_choose_whitespace_unit_rejects_a_truncating_tokenizer():
+    """A tokenizer that SATURATES is refused, not quietly accepted.
+
+    The dangerous case, and a live one: a capped tokenizer is perfectly
+    linear below its cap, so a probe that stops at 256 repetitions sees a
+    healthy atom and hands back a pad that can never grow past 512 tokens.
+    The extensional prompt and its pad would then both measure 512 and the
+    search would call them matched. The top probe exists to reach past any
+    plausible cap so this fails loudly here instead.
+    """
+    with pytest.raises(ValueError, match="1 token per repetition"):
+        choose_whitespace_unit(TruncatingTokenizer(cap=512))
 
 
 def test_choose_whitespace_unit_raises_when_everything_merges():

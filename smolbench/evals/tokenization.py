@@ -138,6 +138,19 @@ class HFTokenizer:
         Only ``tokenizer.json`` is fetched -- a few MB, versus hundreds of
         GB of weights -- into the ordinary ``~/.cache/huggingface`` hub
         cache, so the first call needs network and later calls do not.
+
+        TRUNCATION IS DISABLED on load, and this is load-bearing rather than
+        tidiness. A ``tokenizer.json`` may embed a ``truncation`` stanza,
+        and ``tokenizers`` honours it on every ``encode`` -- so ``count``
+        would SATURATE at that cap instead of measuring the string.
+        ``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
+        ``{"max_length": 512}``, which reported a ~26,000-token induction
+        prompt as 512 tokens. Both the extensional prompt and its noise pad
+        would then measure 512, the padding search would call them matched,
+        and the length control would be silently, wildly wrong -- the exact
+        failure this module exists to prevent. Padding is disabled for the
+        same reason in the other direction (a padded batch would count
+        tokens the model never sees).
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -157,7 +170,10 @@ class HFTokenizer:
                 "deploy spec's `tokenizer_hf_id` key at a repo that has the "
                 "tokenizer -- normally the unquantized base model."
             ) from exc
-        return cls(repo_id, HFTokenizerImpl.from_file(path))
+        tokenizer = HFTokenizerImpl.from_file(path)
+        tokenizer.no_truncation()
+        tokenizer.no_padding()
+        return cls(repo_id, tokenizer)
 
     def count(self, text: str) -> int:
         """Returns `text`'s token count under this checkpoint's tokenizer."""
