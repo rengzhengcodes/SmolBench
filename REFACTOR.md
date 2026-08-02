@@ -179,7 +179,9 @@ All changes byte-identical under the golden quiz tests (seeds 1776/1777).
 - **Calibration-critical logic hoisted into `_common.py`** (the module whose
   stated purpose is keeping the two benchmarks calibrated): `noise_pad`
   (the `seed + 1` noise-RNG derivation + pad-to-extensional-length math,
-  previously copy-pasted byte-identically), `random_labels` (the
+  previously copy-pasted byte-identically; **superseded 2026-08-02** by
+  `token_matched_noise_prompt` — whitespace matched on token count, no RNG
+  and no seed, see that function), `random_labels` (the
   `ceil(log_charset(count)) * LABEL_LENGTH_SAFETY_FACTOR` length formula,
   *parameterized* — periodic uses lowercase charset + `min_length=2`,
   chromatic `ascii_letters` + no floor; the two blocks were NOT identical and

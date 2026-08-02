@@ -106,6 +106,17 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
         for info in INFOS:
             nested = RESULTS_DIR / f"{model}_{info}" / f"rep_{PILOT_SEED}.yaml"
             flat = RESULTS_DIR / f"{model}_{info}.yaml"
+            if not nested.exists() and not flat.exists():
+                # A whole condition can legitimately be absent -- the
+                # noise_intens results were cleared when that arm switched to
+                # token-matched whitespace padding (2026-08-02) and have to be
+                # re-run. Say which condition is missing instead of dying on a
+                # bare FileNotFoundError deep in a read_text().
+                raise SystemExit(
+                    f"No pilot replicate for ({model}, {info}); expected\n  {nested}\n"
+                    f"This analysis SIZES R from the pilot (seed {PILOT_SEED}) -- run "
+                    "that condition in notebooks/periodic/induction_eval.ipynb first."
+                )
             text = (nested if nested.exists() else flat).read_text()
             scores = re.findall(r"^\s*score:\s*(\S+)", text, re.M)
             assert len(scores) == N_HARMONICS, (model, info, len(scores))

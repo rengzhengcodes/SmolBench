@@ -6,8 +6,14 @@ from smolbench.evals import Mark, Marks, Numeric, provider
 from smolbench.evals.replicates import ReplicateHarness
 
 
-def make_quizzes(seed: int):
-    """Two info types with different sizes so pooled slicing is observable."""
+def make_quizzes(seed: int, model: str):
+    """Two info types with different sizes so pooled slicing is observable.
+
+    Takes the model because the real quiz factories do: the induction noise
+    arm is token-matched with the tokenizer of the model under test. This
+    stub ignores it beyond recording that it arrives (see
+    ``test_run_replicates_passes_model_to_quiz_factory``).
+    """
     return {
         "intens": (Numeric(prompt=f"i1/{seed}", answer=1), Numeric(prompt=f"i2/{seed}", answer=2)),
         "extens": (Numeric(prompt=f"e1/{seed}", answer=3),),
@@ -74,6 +80,36 @@ def test_run_replicates_partial_resume(harness, fake_evaluate, tmp_path):
     harness.run_replicates("stub-model")
     # Only seed 2's missing extens (1 question) re-runs; intens is not redone.
     assert [c["n"] for c in fake_evaluate] == [1]
+
+
+def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
+    """The quiz factory receives (seed, model), not seed alone.
+
+    The induction benchmarks' noise arm is padded to an exact TOKEN count
+    under the tokenizer of the model being evaluated, so the factory cannot
+    build a replicate without knowing which model it is for. If the harness
+    ever went back to calling ``make_quizzes(seed)``, every noise prompt
+    would silently be sized against whatever tokenizer the factory guessed.
+    """
+    seen: list = []
+
+    def recording_factory(seed: int, model: str):
+        seen.append((seed, model))
+        return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
+
+    ReplicateHarness(
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=recording_factory,
+        seeds=(1, 2),
+        info_types=("intens",),
+    ).run_replicates("stub-model")
+
+    assert seen == [(1, "stub-model"), (2, "stub-model")]
+    # ... and the model-dependent prompt really is what got evaluated.
+    assert Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query == (
+        "i/1/stub-model"
+    )
 
 
 def test_run_replicates_unknown_model_raises_keyerror(harness):

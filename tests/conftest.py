@@ -1,11 +1,15 @@
-"""Shared fixtures: a local OpenAI-compatible stub server.
+"""Shared fixtures: a local OpenAI-compatible stub server + stub tokenizers.
 
 Everything in tests/ runs OFFLINE -- no AWS credentials, no network. The stub
-speaks just enough of the Chat Completions dialect to exercise the shared
-client in smolbench/evals/openai_compat.py through every provider module.
+server speaks just enough of the Chat Completions dialect to exercise the
+shared client in smolbench/evals/openai_compat.py through every provider
+module, and `StubTokenizer` stands in for the model tokenizers the induction
+generators would otherwise download.
 """
 
 import json
+import math
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -86,6 +90,82 @@ def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
     if usage is not None:
         body["usage"] = usage
     return body
+
+
+# ---------------------------------------------------------------------------
+# Stub tokenizers (smolbench.evals.tokenization.Tokenizer implementations)
+# ---------------------------------------------------------------------------
+# The induction generators need a tokenizer to size their token-matched noise
+# arm. Driving the offline suite with a REAL one would mean either a network
+# download (`HFTokenizer`) or a tiktoken BPE file that may or may not be in the
+# local cache -- neither acceptable for tests whose whole contract is that they
+# run offline and deterministically. These stubs are pure Python, exact, and
+# stable forever, which also makes them what the golden-hash fixture is
+# recorded against.
+
+_CHUNK_RE = re.compile(r"\s+|\S+")
+
+
+class StubTokenizer:
+    """Deterministic tokenizer that imitates the BPE behaviour that matters.
+
+    Two real-tokenizer properties drive the noise-padding machinery, and this
+    stub reproduces both so tests exercise the same code paths a served model
+    would:
+
+    1. **Whitespace runs merge.** A long run of ONE repeated whitespace
+       character collapses to a single token (``" " * 128`` really is one
+       token in ``cl100k_base``), which is why a naive space pad cannot reach
+       a large token target and why `choose_whitespace_unit` exists.
+    2. **Mixed whitespace does not.** Alternating characters defeat the run
+       merge, so ``" \\t" * n`` costs ~n tokens -- the property the pad atom
+       is selected for.
+
+    Everything else is a coarse length model (a token per 2 whitespace
+    characters, per 4 other characters). Boundary effects are real here too:
+    the pad fuses with adjacent whitespace in the template, so the count of a
+    padded prompt is NOT the sum of its parts -- exactly the second-order
+    behaviour the padding search has to absorb.
+    """
+
+    name = "stub"
+
+    def count(self, text: str) -> int:
+        """Returns the stub token count of `text`."""
+        total = 0
+        for chunk in _CHUNK_RE.findall(text):
+            if chunk.isspace():
+                if len(set(chunk)) == 1 and len(chunk) > 8:
+                    total += 1  # BPE-style run merge
+                else:
+                    total += math.ceil(len(chunk) / 2)
+            else:
+                total += math.ceil(len(chunk) / 4)
+        return total
+
+
+class MergeEverythingTokenizer:
+    """Pathological tokenizer: ANY whitespace run is one token.
+
+    No repeating whitespace atom can grow the count under it, so it is the
+    case `choose_whitespace_unit` must refuse rather than silently return a
+    pad that saturates far below its target.
+    """
+
+    name = "merge-everything"
+
+    def count(self, text: str) -> int:
+        """Returns the stub token count of `text`."""
+        return sum(
+            1 if chunk.isspace() else math.ceil(len(chunk) / 4)
+            for chunk in _CHUNK_RE.findall(text)
+        )
+
+
+@pytest.fixture
+def stub_tokenizer():
+    """A `StubTokenizer` instance (see that class for what it models)."""
+    return StubTokenizer()
 
 
 @pytest.fixture

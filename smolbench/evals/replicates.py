@@ -20,6 +20,13 @@ carried hand-copied versions of this harness that had already drifted
 (cwd-relative results dirs, missing pooling, divergent summaries). Notebooks
 now hold only their experiment config and templates.
 
+``make_quizzes`` is keyed on (seed, model), not seed alone: the induction
+benchmarks' ``noise_intens`` arm is a length control padded to an exact TOKEN
+count under the tokenizer of the model being tested, so that one arm's prompts
+are model-specific. The ``intens``/``extens`` arms remain byte-identical across
+models, so a cross-model comparison is still a paired comparison on identical
+prompts wherever it matters.
+
 Notebook cells no longer construct ``ReplicateHarness`` directly: each
 notebook builds one ``smolbench.induction.experiment.InductionExperiment``
 instead, which bundles a ``ReplicateHarness`` (unchanged, see its
@@ -49,10 +56,15 @@ class ReplicateHarness:
     #: model name -> short archetype tag used in result dir names
     #: (e.g. {"olmo-3.1-32b-instruct": "decode"}).
     archetype_tags: Mapping[str, str]
-    #: seed -> {info type: quiz}. Called on demand per outstanding seed --
-    #: never eagerly for all seeds -- to keep notebook memory bounded (a
-    #: chromatic replicate embeds the full interval history in ~120 prompts).
-    make_quizzes: Callable[[int], Dict[str, Quiz]]
+    #: (seed, model) -> {info type: quiz}. Called on demand per outstanding
+    #: seed -- never eagerly for all seeds -- to keep notebook memory bounded
+    #: (a chromatic replicate embeds the full interval history in ~120
+    #: prompts). It takes the MODEL as well as the seed because the induction
+    #: benchmarks' noise arm is a token-length control sized with the
+    #: tokenizer of the model under test, so its prompts differ per model
+    #: (the intensional and extensional arms do not -- see
+    #: ``smolbench.induction.periodic``'s tokenizer discipline).
+    make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Replicate seeds; each doubles as the per-request decoding seed.
     seeds: Sequence[int]
     #: Info types evaluated per replicate, in serialization order.
@@ -97,7 +109,7 @@ class ReplicateHarness:
             ]
             if not outstanding:
                 continue  # every info type for this seed already graded
-            quizzes = self.make_quizzes(seed)
+            quizzes = self.make_quizzes(seed, model)
             # Pooled evaluation across the outstanding info types; see the
             # module docstring. The shared decode seed is unchanged.
             combined: list = [q for info in outstanding for q in quizzes[info]]

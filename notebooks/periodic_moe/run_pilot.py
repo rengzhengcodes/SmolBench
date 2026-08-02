@@ -49,6 +49,7 @@ from smolbench.induction.periodic import (  # noqa: E402  (env first; see notebo
     numeric_count_query_gen,
 )
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
+from smolbench.evals.tokenization import for_model  # noqa: E402
 
 MODEL_QWEN = "qwen3.5-397b-a17b"
 MODEL_NEMOTRON = "nemotron-3-super-120b-a12b"
@@ -82,11 +83,20 @@ BASE_SEED: int = 1776
 INFO_TYPES: tuple[str, ...] = ("intens", "extens", "noise_intens", "zero")
 
 
-def make_quizzes(seed: int) -> dict[str, tuple]:
-    """Generates one replicate's four info-type quizzes, keyed by info type."""
+def make_quizzes(seed: int, model: str) -> dict[str, tuple]:
+    """Generates one replicate's four info-type quizzes, keyed by info type.
+
+    Takes the model because ``noise_intens`` is a TOKEN-length control: it is
+    padded with whitespace until its prompt has exactly as many tokens as the
+    matching extensional prompt, measured with that model's own tokenizer.
+    The other three conditions are model-independent and stay byte-identical
+    across the trio.
+    """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(template, {}, numeric_count_query_gen)
-    intens, extens, noise_intens = get_periodic_numeric_quiz(cfg, prompter)
+    intens, extens, noise_intens = get_periodic_numeric_quiz(
+        cfg, prompter, tokenizer=for_model(model)
+    )
     zero = get_periodic_zero_info_numeric_quiz(cfg, prompter)
     return {"intens": intens, "extens": extens, "noise_intens": noise_intens, "zero": zero}
 

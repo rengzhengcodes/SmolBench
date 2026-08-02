@@ -533,6 +533,16 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: one, uniquely, has no non-None default -- absence means "no
     #: provider-injected system prompt").
     system_prompt: str
+    #: EC2/vLLM ONLY: repo id to load this model's TOKENIZER from, when that
+    #: differs from ``hf_model_id``. Read via ``spec.get("tokenizer_hf_id")``
+    #: in ``smolbench.evals.tokenization.for_model``, which falls back to
+    #: ``hf_model_id`` when absent (the normal case). Exists because a
+    #: quantized redistribution occasionally ships weights without a
+    #: ``tokenizer.json``, while its unquantized base repo has one; the
+    #: tokenizer is identical either way, so pointing at the base repo costs
+    #: nothing and keeps token-matched prompts (the induction noise arm)
+    #: buildable for that checkpoint.
+    tokenizer_hf_id: str
 
 
 #: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use -- verified against the
@@ -549,7 +559,16 @@ SAGEMAKER_SPEC_KEYS: frozenset = frozenset(
 #: (``get_model_context_length``, ``serve_model``, ``_system_prompt``):
 #: ``hf_model_id`` is read unconditionally (``spec["hf_model_id"]``);
 #: ``tp``/``max_model_len``/``vllm_args``/``system_prompt`` are all read via
-#: ``.get(...)`` with documented defaults.
+#: ``.get(...)`` with documented defaults. ``tokenizer_hf_id`` is read the
+#: same way, one module over, by ``tokenization.for_model``.
 EC2_SPEC_KEYS: frozenset = frozenset(
-    {"hf_model_id", "tp", "max_model_len", "vllm_args", "system_prompt", "adapters"}
+    {
+        "hf_model_id",
+        "tp",
+        "max_model_len",
+        "vllm_args",
+        "system_prompt",
+        "adapters",
+        "tokenizer_hf_id",
+    }
 )

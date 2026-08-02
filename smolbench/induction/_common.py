@@ -5,8 +5,18 @@ The two benchmarks must stay CALIBRATED against each other: the noise-padding
 ablation is only comparable across evals if the noise profile is identical,
 and the random-label sampler fixes how fresh seeds map to fresh label sets.
 Keeping these here, once, is what enforces that.
+
+The noise pad is WHITESPACE sized in TOKENS (`token_matched_noise_prompt`),
+not random characters sized in characters. Characters were the wrong unit:
+models consume tokens, and random alphanumerics tokenize far worse than
+structured text, so a character-matched pad silently over-padded the control
+arm -- 42,639 tokens against a 26,279-token extensional target at the
+periodic production config, 1.62x the length it was supposed to match. The
+pad is now built against the tokenizer of the model under test and verified
+to hit its target exactly; see `smolbench.evals.tokenization`.
 """
 
+import logging
 import string
 from dataclasses import dataclass
 from typing import Any, Callable, Collection, Dict, Iterable, Optional, Tuple
@@ -101,6 +111,44 @@ def build_substitution(
     call order.
     """
     return query | prompter.substitution | {"positive_info": positive_info}
+
+
+def context_renderer(
+    prompter: "Prompter",
+    query: Dict[str, str],
+    template: Optional[string.Template] = None,
+) -> Callable[[str], str]:
+    """Builds one query's ``context -> rendered prompt`` function.
+
+    :func:`token_matched_noise_prompt` searches for a pad length by
+    repeatedly rendering candidate contexts into the full prompt, so it
+    needs the rendering for ONE query as a reusable callable. Binding
+    ``query`` here, in a function scope, rather than closing over a loop
+    variable at the call site also keeps the closure's capture unambiguous.
+
+    Parameters
+    ----------
+    prompter:
+        Supplies the template and the static substitutions.
+    query:
+        The single query's substitution dict.
+    template:
+        Template override (e.g. ``prompter.resolved_extens_template``).
+        Defaults to ``prompter.template``, which is what the intensional
+        and noise-padded arms both render with.
+
+    Returns
+    -------
+    Callable[[str], str]
+        ``context -> prompt``, deterministic and free of side effects, so
+        the caller may invoke it as many times as its search needs.
+    """
+    resolved: string.Template = template if template is not None else prompter.template
+
+    def render(context: str) -> str:
+        return resolved.safe_substitute(build_substitution(query, prompter, context))
+
+    return render
 
 
 def random_unique_strings(
@@ -222,66 +270,216 @@ def random_labels(
     )
 
 
-def make_noise(length: int, rng: np.random.Generator) -> str:
-    """Generates a random noise string of the given character length.
+# Whitespace units tried, in order, as the repeating pad atom. The unit must
+# cost ~1 token per repetition under the tokenizer in play, which rules out
+# the obvious candidates: BPE vocabularies carry dedicated tokens for RUNS of
+# a single whitespace character, so `" " * 128` is ONE token in cl100k_base
+# and a pure-space pad simply cannot reach a large target. Alternating two
+# different whitespace characters defeats those run-merges -- `" \t"` measures
+# at ~1 token per repetition in both cl100k_base and o200k_base. The rest are
+# fallbacks for tokenizers that merge `" \t"`; `choose_whitespace_unit`
+# verifies empirically rather than trusting this order.
+WHITESPACE_UNITS: Tuple[str, ...] = (" \t", " \n\t", "\t ", " \n", "\t\n ")
 
-    Draws uniformly from ASCII letters, digits, spaces, and newlines. This
-    profile is the length-matching pad for the noise-intensional ablation;
-    changing it de-calibrates every benchmark at once, which is exactly why
-    it lives here and nowhere else.
-    """
-    charset = list(string.ascii_letters + string.digits + "   \n")
-    return "".join(charset[i] for i in rng.integers(len(charset), size=length))
+# Repetition counts probed by `choose_whitespace_unit`. Small and large, so a
+# unit that merges only once a run gets long (the failure mode that makes a
+# pad silently saturate below its target) is rejected.
+_UNIT_PROBES: Tuple[int, ...] = (1, 64, 256)
+
+# A unit qualifies if its marginal cost is within this factor of 1 token per
+# repetition at every probe. Slack allows a boundary token or a unit that
+# costs 2 tokens for the first repetition and 1 thereafter, while rejecting
+# anything that compresses (cost -> 0) and would never reach the target.
+_UNIT_COST_TOLERANCE: float = 0.5
+
+# Bound on the `token_matched_noise_prompt` search. Each pass costs one full
+# re-encode of the prompt; the estimate-and-correct phase normally converges
+# in 2-3 passes, and the bisection fallback needs ~log2(pad length) ~= 15 more
+# in the worst case, so this bound is generous. Reaching it means the
+# tokenizer is behaving pathologically and an exception is the right outcome.
+_MAX_MATCH_ITERATIONS: int = 32
 
 
-def noise_pad(intension: str, extension: str, seed: int) -> str:
-    """Pads an intensional context with noise to match an extensional length.
+def choose_whitespace_unit(tokenizer) -> str:
+    """Picks a whitespace pad atom that costs ~1 token per repetition.
 
-    Appends random noise (see :func:`make_noise`) to ``intension`` so the
-    resulting string's length equals ``len(extension)`` (or ``intension``
-    unchanged if it is already at least as long). This produces the
-    "noise-padded intensional" context used to ablate context length as a
-    confound: the model sees the same rules as the plain intensional prompt,
-    padded to the same length as the extensional prompt, so any accuracy gap
-    between intensional and extensional cannot be attributed to length alone.
+    The token-matched noise pad is built by repeating one whitespace unit,
+    which only works if repeating it actually grows the token count roughly
+    linearly. Whether a given unit does depends entirely on the tokenizer's
+    merge table, and the induction benchmarks now run against whatever
+    tokenizer the model under test uses -- so this probes empirically
+    instead of hard-coding a unit that happened to work on the encodings
+    tested by hand.
 
     Parameters
     ----------
-    intension:
-        The intensional (rule-based) context to pad.
-    extension:
-        The extensional (enumerated) context whose length sets the pad
-        target.
-    seed:
-        The benchmark config's base seed. The noise RNG is seeded with
-        ``seed + 1``, NOT ``seed`` -- a deliberate, calibration-critical
-        offset. Every other generator in a benchmark run (label sampling,
-        interval/marker sampling, query sampling) is seeded from ``seed``
-        directly; using ``seed + 1`` here gives the noise stream its own
-        independent draw sequence so that consuming noise never perturbs --
-        and is never perturbed by -- the RNG call order of the rest of the
-        pipeline, while remaining fully reproducible from the single
-        ``seed`` field on the config. Both benchmarks (periodic, chromatic)
-        must derive the noise seed identically, or their noise profiles
-        stop being calibrated against each other -- which is the entire
-        reason this helper lives here instead of being duplicated per
-        benchmark.
+    tokenizer:
+        Any :class:`~smolbench.evals.tokenization.Tokenizer` (anything with
+        ``count(str) -> int``).
 
     Returns
     -------
     str
-        ``intension`` with noise appended so its length matches
-        ``len(extension)`` (unchanged if ``intension`` is already at least
-        that long).
+        The first unit in :data:`WHITESPACE_UNITS` whose measured cost is
+        within :data:`_UNIT_COST_TOLERANCE` of 1 token per repetition at
+        every probe in :data:`_UNIT_PROBES`.
+
+    Raises
+    ------
+    ValueError
+        If no candidate qualifies. Better a loud failure than a pad that
+        silently saturates: a unit that compresses to nothing would leave
+        the "length control" arm shorter than the arm it controls for,
+        which is the exact confound this machinery exists to remove.
+    """
+    for unit in WHITESPACE_UNITS:
+        if all(
+            abs(tokenizer.count(unit * n) - n) <= _UNIT_COST_TOLERANCE * n
+            for n in _UNIT_PROBES
+        ):
+            return unit
+    raise ValueError(
+        f"no candidate in {WHITESPACE_UNITS!r} costs ~1 token per repetition "
+        f"under tokenizer {getattr(tokenizer, 'name', tokenizer)!r}; a "
+        "whitespace pad cannot be sized against it. Add a unit this "
+        "tokenizer does not merge to WHITESPACE_UNITS."
+    )
+
+
+def token_matched_noise_prompt(
+    render: Callable[[str], str],
+    context: str,
+    target_tokens: int,
+    tokenizer,
+    unit: Optional[str] = None,
+) -> str:
+    """Renders `context` padded with whitespace to hit an exact token count.
+
+    This is the noise-padded ("length control") arm of both induction
+    benchmarks. ``render`` turns a context into the FULLY substituted
+    prompt, so the search measures the real thing -- template, query, and
+    context together -- rather than the context block alone. That matters
+    because the arms being length-matched do not share a template: chromatic
+    renders its extensional prompt from ``extens_template`` with an extra
+    ``$query_years`` block, so contexts of equal token count would still
+    produce prompts of unequal token count.
+
+    Matching happens per query rather than once per config for the same
+    reason: the query text substituted into each prompt differs in length,
+    so only a per-prompt search can make every noise prompt exactly as long
+    as its extensional counterpart.
+
+    Parameters
+    ----------
+    render:
+        ``context -> rendered prompt``. Called repeatedly (a handful of
+        times), so it should be a cheap string substitution and must be
+        deterministic -- a render that varied between calls would make the
+        measured count describe a prompt other than the one returned.
+    context:
+        The intensional context to pad (the pad is appended to it, so the
+        rules the model needs stay at the top of the prompt, exactly where
+        the unpadded intensional arm puts them).
+    target_tokens:
+        The token count to hit -- in practice ``tokenizer.count(extens)``
+        for the matching extensional prompt.
+    tokenizer:
+        The :class:`~smolbench.evals.tokenization.Tokenizer` defining
+        "token". Use the tokenizer of the model under test
+        (``tokenization.for_model(model)``); a different one silently
+        de-calibrates the control by however much the two disagree.
+    unit:
+        Whitespace atom to repeat. Defaults to `choose_whitespace_unit`'s
+        pick for this tokenizer; pass one explicitly to skip the probe when
+        padding many prompts with the same tokenizer.
+
+    Returns
+    -------
+    str
+        ``render(context + pad)``, whose token count under `tokenizer`
+        equals `target_tokens` EXACTLY -- verified before returning, never
+        assumed. The one exception is an unreachable target (see below),
+        where the unpadded render is returned.
+
+    Raises
+    ------
+    ValueError
+        If the search cannot land on `target_tokens`. Returning a close-but-
+        inexact prompt is not an option: the whole point of the arm is that
+        its length is not a confound, and an unverified pad would
+        reintroduce the confound invisibly.
 
     Notes
     -----
-    RNG call order: exactly one ``np.random.default_rng`` construction
-    followed by one ``make_noise`` call, matching the pre-hoist call sites
-    byte-for-byte -- this function performs no other RNG draws.
+    Unreachable target: when the unpadded prompt is ALREADY at least
+    `target_tokens` long, no amount of appending can shrink it, so the
+    unpadded render is returned and a warning is logged. This mirrors the
+    ``max(0, ...)`` floor of the character-matched implementation this
+    replaces, and in practice never fires -- the extensional context is
+    orders of magnitude longer than the intensional rules.
+
+    Determinism: whitespace padding needs no randomness, so unlike the
+    random-character pad it replaces, this function consumes no RNG and
+    takes no seed. A given (context, target, tokenizer) always yields the
+    same prompt, which keeps a replicate regenerable from its seed alone.
     """
-    noise_rng: np.random.Generator = np.random.default_rng(seed + 1)
-    return intension + make_noise(max(0, len(extension) - len(intension)), noise_rng)
+    base: str = render(context)
+    base_tokens: int = tokenizer.count(base)
+    if base_tokens >= target_tokens:
+        logging.warning(
+            f"token_matched_noise_prompt: unpadded prompt is already "
+            f"{base_tokens} tokens >= target {target_tokens}; returning it "
+            "unpadded (the length control cannot be built by appending)"
+        )
+        return base
+
+    pad_unit: str = unit if unit is not None else choose_whitespace_unit(tokenizer)
+
+    # Estimate, then correct, then (only if needed) bisect.
+    #
+    # The unit costs ~1 token, so the token deficit is itself a near-exact
+    # estimate of how many repetitions are missing -- the first probe usually
+    # lands within a token or two and the correction step finishes the job.
+    # Every pass re-measures the WHOLE rendered prompt, which is what absorbs
+    # the second-order effects no estimate can predict: merges where the pad
+    # abuts the context, and merges between the pad and whatever the template
+    # renders after it.
+    #
+    # Correction alone can oscillate (n -> n+3 -> n -> ...) when those merges
+    # make the local token cost jump around, so the probes also maintain a
+    # bracket: `lo` repetitions land below the target, `hi` above it. Once the
+    # bracket is established, any estimate that escapes it is replaced by the
+    # midpoint, which turns a potential oscillation into a bisection that must
+    # terminate. A bracket that closes to adjacent values without an exact hit
+    # means the token count JUMPS over the target -- no repetition count
+    # satisfies the request -- and that is a genuine failure, not something to
+    # paper over.
+    n: int = target_tokens - base_tokens
+    lo: int = 0  # f(0) = base_tokens < target_tokens, per the early return
+    hi: Optional[int] = None
+    for _ in range(_MAX_MATCH_ITERATIONS):
+        prompt: str = render(context + pad_unit * n)
+        got: int = tokenizer.count(prompt)
+        if got == target_tokens:
+            return prompt
+        if got < target_tokens:
+            lo = max(lo, n)
+        else:
+            hi = n if hi is None else min(hi, n)
+        if hi is not None and hi - lo <= 1:
+            break  # bracket exhausted: the count steps over the target
+        estimate: int = n + (target_tokens - got)
+        if estimate <= lo or (hi is not None and estimate >= hi):
+            estimate = (lo + hi) // 2 if hi is not None else lo + 1
+        n = estimate
+    raise ValueError(
+        f"could not pad to exactly {target_tokens} tokens with unit "
+        f"{pad_unit!r} under tokenizer "
+        f"{getattr(tokenizer, 'name', tokenizer)!r} "
+        f"(unpadded prompt: {base_tokens} tokens; search bracketed to "
+        f"{lo}..{hi} repetitions). The unit's token cost is not fine-grained "
+        "enough to hit an exact target; add a better one to WHITESPACE_UNITS."
+    )
 
 
 def quizzes_from_prompts(

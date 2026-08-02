@@ -20,6 +20,8 @@ module runs in well under a second.
 import re
 import string
 
+from conftest import StubTokenizer
+
 from smolbench.induction.chromatic import (
     ChromaticIntervalsConfig,
     anneal_intervals,
@@ -62,7 +64,7 @@ def test_periodic_tof_answers_match_divisibility_rule():
         "$positive_info\nDoes position $pos include '$label'? True/False."
     )
     intens_quiz, extens_quiz, noise_intens_quiz = get_periodic_quiz(
-        cfg, Prompter(template, {}, tof_membership_query_gen)
+        cfg, Prompter(template, {}, tof_membership_query_gen), tokenizer=StubTokenizer()
     )
     assert len(intens_quiz) > 0  # sanity: the generator actually yielded queries
 
@@ -109,7 +111,7 @@ def test_periodic_numeric_answers_match_independent_count():
         "$positive_info\nHow many of positions 1..$seq_len include '$label'?"
     )
     intens_quiz, _extens_quiz, _noise_quiz = get_periodic_numeric_quiz(
-        cfg, Prompter(template, {}, numeric_count_query_gen)
+        cfg, Prompter(template, {}, numeric_count_query_gen), tokenizer=StubTokenizer()
     )
     # numeric_count_query_gen yields exactly one query per harmonic (unlike
     # tof_membership_query_gen, it does not sample/exclude); n=4 -> 4 queries.

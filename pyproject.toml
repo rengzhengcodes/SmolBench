@@ -34,6 +34,14 @@ dependencies = [
     # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
     "ordered-set>=4.1.0",
     "requests>=2.33.1",
+    # smolbench.evals.tokenization loads the tokenizer of the model under test
+    # (its `tokenizer.json` off the HF hub) so smolbench.induction can pad its
+    # noise arm to an exact TOKEN count. Core, not optional: without a
+    # tokenizer the induction benchmarks cannot build one of their three
+    # conditions. Deliberately NOT `transformers` -- one file and the Rust BPE
+    # that reads it, no modeling stack and no torch.
+    "huggingface-hub>=0.30",
+    "tokenizers>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -61,7 +69,10 @@ aws = [
 
 # Lean theorem-proving eval (smolbench/deduction/lean/): corpus/context/prompt rendering
 # and the sweep runner need PyYAML (configs, results) and tiktoken (noise-rung
-# token matching, prompt-stats); verification additionally needs lean-dojo,
+# token matching, prompt-stats; also backs the optional
+# smolbench.evals.tokenization.TiktokenTokenizer, which the offline tests and
+# the module demos use in place of a downloaded model tokenizer);
+# verification additionally needs lean-dojo,
 # which pins Requires-Python <3.13 upstream -- the environment marker lets
 # `uv sync --all-extras` succeed on the 3.14 main venv (generation/analysis
 # modules import cleanly there) while the dedicated 3.12 venv (.venv-lean)
@@ -91,6 +102,11 @@ notebook = [
     # The analysis notebooks (e.g. notebooks/chromatic/induction_eval_analysis)
     # plot results with matplotlib; pinned to a cp314-wheel release.
     "matplotlib>=3.10.0",
+    # The three power-analysis scripts (notebooks/*/power_analysis.py) import
+    # scipy.stats for the CMH chi-square / Welch t reference distributions.
+    # Previously undeclared, so `uv sync` would silently strip it and leave
+    # those scripts failing on ModuleNotFoundError.
+    "scipy>=1.15",
 ]
 
 [tool.setuptools]

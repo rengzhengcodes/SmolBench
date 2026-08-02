@@ -176,6 +176,16 @@ def load_condition(model: str, info: str) -> list[Quiz]:
     else:
         flat = RESULTS_DIR / f"{model}_{info}.yaml"
         paths = [flat] if flat.exists() else []
+    if not paths:
+        # A whole condition can legitimately be absent -- the noise_intens
+        # results were cleared when that arm switched to token-matched
+        # whitespace padding (2026-08-02) and have to be re-run. Say which
+        # condition is missing instead of letting main()'s `qs[0]` die on an
+        # IndexError several frames away.
+        raise SystemExit(
+            f"No replicates for ({model}, {info}); expected\n  {nested_dir}/rep_*.yaml\n"
+            "Run that condition in notebooks/chromatic/induction_eval.ipynb first."
+        )
     return [parse_quiz(p.read_text()) for p in paths]
 
 

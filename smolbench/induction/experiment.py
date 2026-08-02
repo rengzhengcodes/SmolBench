@@ -21,8 +21,12 @@ see ``PeriodicConfig.seed`` / ``ChromaticIntervalsConfig.seed``) AND, in the
 very same call, is threaded through as the per-request decoding seed. This
 double duty is deliberate -- it is what makes a replicate's on-disk artifact
 (``rep_{seed}.yaml``) fully reproducible from its filename alone: regenerate
-``make_quizzes(seed)`` and you get byte-identical prompts, and the recorded
-decoding seed tells you exactly what was asked for. ``seeds`` is always
+``make_quizzes(seed, model)`` and you get byte-identical prompts, and the
+recorded decoding seed tells you exactly what was asked for. (The model is
+part of that call because the noise arm is padded to an exact token count
+under the model's own tokenizer; a rep file's DIRECTORY already names the
+archetype it belongs to, so a replicate stays regenerable from its path.)
+``seeds`` is always
 ``tuple(base_seed + r for r in range(n_replicates))`` -- replicate 0 uses
 ``base_seed`` itself, matching every notebook's original preliminary run.
 
@@ -130,10 +134,12 @@ class InductionExperiment:
     #: (e.g. ``{"olmo-3.1-32b-instruct": "decode"}``). Forwarded verbatim to
     #: ``ReplicateHarness``.
     archetype_tags: Mapping[str, str]
-    #: seed -> {info type: quiz}. Forwarded verbatim to ``ReplicateHarness``;
-    #: see that class for why this is called lazily per outstanding seed
-    #: rather than eagerly for every seed up front.
-    make_quizzes: Callable[[int], Dict[str, Quiz]]
+    #: (seed, model) -> {info type: quiz}. Forwarded verbatim to
+    #: ``ReplicateHarness``; see that class for why this is called lazily per
+    #: outstanding seed rather than eagerly for every seed up front, and why
+    #: it takes the model (the noise arm is token-matched with the tokenizer
+    #: of the model under test, so only that arm varies per model).
+    make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Number of replicate seeds. Every notebook currently uses 30 (see
     #: each notebook's ``power_analysis.py``-backed replication-setup
     #: comment for the derivation).
