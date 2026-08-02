@@ -14,7 +14,7 @@ Find four families of open-weight MoE models, each from a different frontier lab
 
 ## Recommended slate
 
-**FINAL (user decision, 2026-08-02): five families, 3 Chinese + 2 American.** After the US-exhaustive verdict (NVIDIA is the only US lab with a ≥3-rung reasoning-MoE ladder), the user accepted a 3+2 slate: three 3-rung ladders (Qwen3.5, Nemotron-3, DeepSeek V3/V4) plus two 2-rung ladders (GLM-4.5, gpt-oss — restored as the second US family). 13 checkpoints, all ungated, every load-bearing claim adversarially verified (3 lenses × opus refuters, all SURVIVES). The European slot stays empty — see [EU verdict](#eu-verdict-mistral--denied-for-now).
+**FINAL (user decisions, 2026-08-02): six families — five MoE (3 Chinese + 2 American) plus Llama 3.1 as a dense control arm.** After the US-exhaustive verdict (NVIDIA is the only US lab with a ≥3-rung reasoning-MoE ladder), the user accepted a 3+2 MoE slate — three 3-rung ladders (Qwen3.5, Nemotron-3, DeepSeek V3/V4) plus two 2-rung ladders (GLM-4.5, gpt-oss restored as the second US family) — and then added **Llama 3.1 (8B/70B/405B, dense)** as a sixth family: it fails the MoE and reasoning criteria by construction but supplies the canonical same-generation dense scaling ladder as a control. 16 checkpoints total, all ungated except the license-gated meta-llama repos; every load-bearing claim adversarially verified. The European slot stays empty — see [EU verdict](#eu-verdict-mistral--denied-for-now).
 
 | Family (lab) | Counted MoE tiers (total/active) | Span | Ctx (official) | Reasoning mechanism | License | Largest-tier p5e serving |
 |---|---|---|---|---|---|---|
@@ -23,21 +23,24 @@ Find four families of open-weight MoE models, each from a different frontier lab
 | **GLM-4.5** (Z.ai, CN) | Air 106B-A12B · 355B-A32B | 3.4× | 131,072 native | hybrid thinking/non-thinking, same weights | MIT | official FP8 ~358 GB (BF16 717 GB fits but little KV room) |
 | **DeepSeek V3/V4 assembly** (DeepSeek, CN) | V4-Flash 284B-A13B · V3.1 671B-A37B · V4-Pro 1.6T-A49B | 5.6× | 1M · 163,840 · 1M (all shipped configs) | same-weights think/non-think toggle on every rung | MIT | V4-Pro FP4-experts+FP8, 864.7 GB measured, ~263 GB KV headroom |
 | **gpt-oss** (OpenAI, US) | 20b (20.9B-A3.6B) · 120b (116.8B-A5.1B) | 5.6× | 131,072 (official YaRN) | reasoning-effort low/medium/high + native CoT | Apache-2.0 | MXFP4 65 GB |
+| **Llama 3.1 — dense control** (Meta, US) | 8B · 70B · 405B (all dense) | 50.6× | 131,072 (Meta launch docs; config gated) | **none** | Llama 3.1 Community (gated: manual) | official FP8 487 GB measured |
 
-### How the final five square against the restrictions
+### How the final six square against the restrictions
 
-| Restriction | Qwen3.5 | GLM-4.5 | DeepSeek V3/V4 | Nemotron-3 | gpt-oss |
-|---|---|---|---|---|---|
-| Open weights, ungated on HF | ✓ Apache-2.0 | ✓ MIT | ✓ MIT | ✓ Nemotron-Open (Nano/Super), OpenMDW-1.1 (Ultra) | ✓ Apache-2.0 |
-| Every rung MoE (config-verified experts) | ✓ 256/256/512 | ✓ 128+1/160+1 | ✓ 256+1/256+1/384+1 | ✓ 128+1/512+1/512+1 | ✓ 32/128 |
-| ≥3 rungs | ✓ 3 (11.3×) | **△ 2 (3.4×) — accepted** | ✓ 3 (5.6×) | ✓ 3 (18.3×) | **△ 2 (5.6×) — accepted** |
-| ≥128k shipped-config ctx per rung | ✓ 262,144 ×3 | ✓ 131,072 ×2 | ✓ 1M / 163,840 / 1M | ✓ 262,144 ×3 | ✓ 131,072 ×2 (official YaRN) |
-| Reasoning; thinking-toggle preferred | ✓ same-weights toggle (default-on) | ✓ same-weights toggle | ✓ same-weights toggle all rungs (**△ V4's off-switch lives in the Python encoder, not the shipped template**) | ✓ same-weights toggle + effort options | **△ effort-only (low/med/high, no true off)** |
-| Same generation | ✓ one wave (Feb 2026) | ✓ one wave (Jul 2025) | **△ adjacent gens** (V3.1 Aug 2025 + V4 Apr 2026) | ✓ one wave (Dec 2025–Jun 2026) | ✓ one wave (Aug 2025) |
-| Released ≥ 2024-08 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Largest rung on 1×p5e via upstream vLLM, official precision | ✓ FP8 406 GB (**△ nightly pin, vllm#36236**) | ✓ FP8 ~358 GB | ✓ 864.7 GB, ~263 GB free (**△ SM90 FP4 fallback; LoRA blocked on V4; "preview" cards**) | ✓ (**△ Ultra via NVFP4 327 GB only — BF16 1,121 GB doesn't fit**) | ✓ MXFP4 65 GB |
-| Distinct, reputable lab | ✓ Alibaba | ✓ Z.ai | ✓ DeepSeek | ✓ NVIDIA | ✓ OpenAI |
-| Country | CN | CN | CN | US | US |
+| Restriction | Qwen3.5 | GLM-4.5 | DeepSeek V3/V4 | Nemotron-3 | gpt-oss | Llama 3.1 (control) |
+|---|---|---|---|---|---|---|
+| Open weights, ungated on HF | ✓ Apache-2.0 | ✓ MIT | ✓ MIT | ✓ Nemotron-Open (Nano/Super), OpenMDW-1.1 (Ultra) | ✓ Apache-2.0 | **△ gated "manual"**, Llama 3.1 Community license (access already in place in our harness) |
+| Every rung MoE (config-verified experts) | ✓ 256/256/512 | ✓ 128+1/160+1 | ✓ 256+1/256+1/384+1 | ✓ 128+1/512+1/512+1 | ✓ 32/128 | **✗ dense ×3 — by design (control arm)** |
+| ≥3 rungs | ✓ 3 (11.3×) | **△ 2 (3.4×) — accepted** | ✓ 3 (5.6×) | ✓ 3 (18.3×) | **△ 2 (5.6×) — accepted** | ✓ 3 (50.6×) |
+| ≥128k shipped-config ctx per rung | ✓ 262,144 ×3 | ✓ 131,072 ×2 | ✓ 1M / 163,840 / 1M | ✓ 262,144 ×3 | ✓ 131,072 ×2 (official YaRN) | ✓ 131,072 ×3 (**△ config behind gate — per Meta docs + our own harness runs**) |
+| Reasoning; thinking-toggle preferred | ✓ same-weights toggle (default-on) | ✓ same-weights toggle | ✓ same-weights toggle all rungs (**△ V4's off-switch lives in the Python encoder, not the shipped template**) | ✓ same-weights toggle + effort options | **△ effort-only (low/med/high, no true off)** | **✗ none — no thinking variant in the org (API-verified)** |
+| Same generation | ✓ one wave (Feb 2026) | ✓ one wave (Jul 2025) | **△ adjacent gens** (V3.1 Aug 2025 + V4 Apr 2026) | ✓ one wave (Dec 2025–Jun 2026) | ✓ one wave (Aug 2025) | ✓ one wave (2024-07-23) |
+| Released ≥ 2024-08 | ✓ | ✓ | ✓ | ✓ | ✓ | **△ 2024-07-23, 9 days outside — waived** |
+| Largest rung on 1×p5e via upstream vLLM, official precision | ✓ FP8 406 GB (**△ nightly pin, vllm#36236**) | ✓ FP8 ~358 GB | ✓ 864.7 GB, ~263 GB free (**△ SM90 FP4 fallback; LoRA blocked on V4; "preview" cards**) | ✓ (**△ Ultra via NVFP4 327 GB only — BF16 1,121 GB doesn't fit**) | ✓ MXFP4 65 GB | ✓ official FP8 487 GB (BF16 ~811 GB also fits); most mature vLLM arch, LoRA ✅ |
+| Distinct, reputable lab | ✓ Alibaba | ✓ Z.ai | ✓ DeepSeek | ✓ NVIDIA | ✓ OpenAI | ✓ Meta |
+| Country | CN | CN | CN | US | US | US |
+
+Llama 3.1's role is explicitly the **dense control**: the canonical same-recipe dense ladder (widest span in the slate at 50.6×) against which the MoE families' scaling curves can be contrasted. Its ✗ cells are definitional, not oversights. Bonus continuity: `llama-31-405b` is already validated in this harness (deduction archetype trio; Lean LoRA fine-tune), and `LlamaForCausalLM` is the one slate architecture with first-class vLLM LoRA support. Verification notes: dense/params/gating/license/FP8-size/no-thinking-variant were API-verified 2026-08-02 (405B-Instruct-FP8 safetensors: 324.5B params F8 + 81.3B BF16 ≈ 487 GB); the 131,072-ctx config values could not be anonymously fetched (HTTP 401, gated) and rest on Meta's launch documentation plus our own prior serving runs.
 
 *(This seat changed twice. Round 2 — original criteria — retained gpt-oss (20b/120b, Apache-2.0, MXFP4 65 GB): no lab beat its ladder same-generation. Round 3 — revised criteria: ≥3 rungs hard, thinking-toggle then same-generation as priorities, reputable-lab bar — selects the DeepSeek cross-generation assembly; gpt-oss, now failing the 3-rung floor, becomes the documented fallback. Slate balance shifts to 3 CN + 1 US, accepted by the user's fallback instruction. See Addenda 1–2.)*
 
