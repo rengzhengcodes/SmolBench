@@ -145,12 +145,12 @@ RESULTS_RUNS = _REPO_ROOT / "notebooks" / "lean" / "results" / "runs"
 #: not assumed; order is just for stable printing). Values are the ``model``
 #: display strings the runner writes into all_rows.jsonl.
 TRIOS = {
-    "lean_moe_pilot": [
+    "lean_moe": [
         "gpt-oss-120b-base",
         "nemotron-3-super-120b-a12b-base",
         "qwen3.5-397b-a17b-base",
     ],
-    "lean_arch_pilot": [
+    "lean_arch": [
         "llama-31-405b-base",
         "nemotron-ultra-253b-base",
         "llama4-maverick-base",
@@ -430,8 +430,8 @@ def analyze_run(run_name: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run", action="append",
-                   help="pilot run-name under results/runs/ (repeatable). "
-                        "Default: both lean_moe_pilot and lean_arch_pilot.")
+                   help="run-name under results/runs/ (repeatable). "
+                        "Default: both lean_moe and lean_arch (the full n=300 runs).")
     args = p.parse_args(argv)
     runs = args.run or list(TRIOS.keys())
     print(f"Lean deduction model-comparison power analysis (seed {SEED}, {SIMS} sims/point)")
