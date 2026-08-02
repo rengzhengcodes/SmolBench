@@ -1006,16 +1006,36 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
 
 def _agent(
     state: Dict[str, Any], method: str, path: str, payload: Optional[Dict[str, Any]] = None,
-    timeout: int = 120,
+    timeout: int = 120, connect_retries: int = 40,
 ) -> Dict[str, Any]:
-    """One authenticated control-agent call; raises with the body on failure."""
-    response = requests.request(
-        method,
-        f"http://{state['public_ip']}:{EC2_AGENT_PORT}{path}",
-        headers={"Authorization": f"Bearer {state['control_token']}"},
-        json=payload,
-        timeout=timeout,
-    )
+    """One authenticated control-agent call; raises with the body on failure.
+
+    ``connect_retries``: extra attempts on CONNECT-level failures only
+    (``requests.ConnectionError``, which covers ConnectTimeout), 15s apart.
+    The caller's egress NAT drops/rotates connections in bursts (live
+    2026-07-19 and 2026-08-01: one-shot ``/serve`` calls died mid-sweep on
+    transient ConnectTimeouts while the box was healthy), and every agent
+    endpoint is idempotent, so a couple of minutes of connect patience is
+    always safe. The polling loops (``_wait_agent``/``_wait_model_ready``)
+    and the best-effort graceful shutdown pass 0 to keep their own cadence/
+    fail-fast semantics.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(connect_retries + 1):
+        try:
+            response = requests.request(
+                method,
+                f"http://{state['public_ip']}:{EC2_AGENT_PORT}{path}",
+                headers={"Authorization": f"Bearer {state['control_token']}"},
+                json=payload,
+                timeout=timeout,
+            )
+            break
+        except requests.exceptions.ConnectionError as exc:
+            last_exc = exc
+            if attempt == connect_retries:
+                raise
+            time.sleep(15)
     if not response.ok:
         raise RuntimeError(f"agent {method} {path} -> {response.status_code}: {response.text[:2000]}")
     return response.json()
@@ -1061,7 +1081,7 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     def check() -> Optional[bool]:
         nonlocal polls
         try:
-            _agent(state, "GET", "/status", timeout=5)
+            _agent(state, "GET", "/status", timeout=5, connect_retries=0)
             logging.info(f"control agent up at {state['public_ip']}:{EC2_AGENT_PORT}")
             return True
         except (requests.exceptions.RequestException, RuntimeError):
@@ -1675,7 +1695,7 @@ def _wait_model_ready(
         # SOLID stretch of unreachability (~8 min at the 15s poll) is treated
         # as the box being gone.
         try:
-            status = _agent(state, "GET", "/status", timeout=30)
+            status = _agent(state, "GET", "/status", timeout=30, connect_retries=0)
         except requests.exceptions.RequestException as exc:
             consec_failures += 1
             if consec_failures >= 20:
@@ -1847,7 +1867,7 @@ def shutdown_instance(wait: bool = True) -> None:
         region, instance_id = state["region"], state["instance_id"]
         if state.get("s3_cache"):
             try:  # warn when a cache upload would be cut short by the halt
-                status = _agent(state, "GET", "/status", timeout=10)
+                status = _agent(state, "GET", "/status", timeout=10, connect_retries=0)
                 if status.get("sync_started") and status.get("sync_rc") is None:
                     logging.warning(
                         "shutdown_instance: an S3 cache upload is still in flight and "
@@ -1857,7 +1877,7 @@ def shutdown_instance(wait: bool = True) -> None:
             except Exception:  # noqa: BLE001
                 pass
         try:  # best-effort graceful halt; termination below is authoritative
-            _agent(state, "POST", "/shutdown", timeout=10)
+            _agent(state, "POST", "/shutdown", timeout=10, connect_retries=0)
         except Exception as exc:  # noqa: BLE001
             logging.info(f"shutdown_instance: graceful shutdown skipped: {exc}")
     else:

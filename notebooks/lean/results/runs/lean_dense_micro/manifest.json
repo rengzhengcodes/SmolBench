@@ -1,6 +1,6 @@
 {
   "run_name": "lean_dense_micro",
-  "started_at": "2026-07-20T01:16:16",
+  "started_at": "2026-08-02T02:00:33",
   "config": {
     "seed": 1776,
     "temperature": 0.7,
@@ -30,15 +30,15 @@
     "models": [
       {
         "provider": "ec2",
-        "model": "llama-lean-fenced-micro-r128",
-        "display_name": "llama-lean-fenced-micro-r128"
+        "model": "llama-31-405b",
+        "display_name": "llama-31-405b-base"
       }
     ]
   },
-  "finished_at": "2026-07-20T01:44:28",
+  "finished_at": "2026-08-02T02:35:41",
   "counts": {
-    "written": 0,
-    "skipped": 80,
+    "written": 7,
+    "skipped": 901,
     "success": 0
   }
 }
