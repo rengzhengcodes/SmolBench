@@ -1,0 +1,14 @@
+{
+  "full_name": "Array.get_extract_loop_lt",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "apply Eq.trans _ (get_append_left (bs:=extract.loop as size start #[]) hlt)\nrw [size_append]\nexact Nat.lt_of_lt_of_le hlt (Nat.le_add_right ..)\ncongr\nrw [extract_loop_eq_aux]",
+  "ground_truth_remaining_from_k": "rw [extract_loop_eq_aux]",
+  "true_premises_at_k": [
+    "Array.extract_loop_eq_aux"
+  ],
+  "state_before_k": "case e_xs\nα : Type u_1\ni : Nat\nas bs : Array α\nsize start : Nat\nhlt : i < Array.size bs\nh : optParam (i < Array.size (extract.loop as size start bs)) ⋯\n⊢ extract.loop as size start bs = bs ++ extract.loop as size start #[]"
+}

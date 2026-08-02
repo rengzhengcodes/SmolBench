@@ -1,0 +1,14 @@
+{
+  "full_name": "List.Sublist.erase",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp [erase_eq_eraseP]\nexact Sublist.eraseP h",
+  "ground_truth_remaining_from_k": "exact Sublist.eraseP h",
+  "true_premises_at_k": [
+    "List.Sublist.eraseP"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝¹ : BEq α\ninst✝ : LawfulBEq α\na : α\nl₁ l₂ : List α\nh : l₁ <+ l₂\n⊢ List.eraseP (fun x => a == x) l₁ <+ List.eraseP (fun x => a == x) l₂"
+}

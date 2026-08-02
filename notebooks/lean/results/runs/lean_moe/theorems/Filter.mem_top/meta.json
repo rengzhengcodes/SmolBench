@@ -1,0 +1,15 @@
+{
+  "full_name": "Filter.mem_top",
+  "file_path": "Mathlib/Order/Filter/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [mem_top_iff_forall, eq_univ_iff_forall]",
+  "ground_truth_remaining_from_k": "rw [mem_top_iff_forall, eq_univ_iff_forall]",
+  "true_premises_at_k": [
+    "Filter.mem_top_iff_forall",
+    "Set.eq_univ_iff_forall"
+  ],
+  "state_before_k": "α : Type u\nβ : Type v\nγ : Type w\nδ : Type u_1\nι : Sort x\nf g : Filter α\ns✝ t s : Set α\n⊢ s ∈ ⊤ ↔ s = univ"
+}

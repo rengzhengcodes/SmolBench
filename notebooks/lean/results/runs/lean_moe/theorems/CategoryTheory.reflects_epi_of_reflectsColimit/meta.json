@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.reflects_epi_of_reflectsColimit",
+  "file_path": "Mathlib/CategoryTheory/Limits/Constructions/EpiMono.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "have := PushoutCocone.isColimitMkIdId (F.map f)\nsimp_rw [← F.map_id] at this\napply\n  PushoutCocone.epi_of_isColimitMkIdId _\n    (isColimitOfIsColimitPushoutCoconeMap F _ this)",
+  "ground_truth_remaining_from_k": "apply\n  PushoutCocone.epi_of_isColimitMkIdId _\n    (isColimitOfIsColimitPushoutCoconeMap F _ this)",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.PushoutCocone.epi_of_isColimitMkIdId",
+    "CategoryTheory.Limits.isColimitOfIsColimitPushoutCoconeMap"
+  ],
+  "state_before_k": "C : Type u₁\nD : Type u₂\ninst✝³ : Category.{v₁, u₁} C\ninst✝² : Category.{v₂, u₂} D\nF : C ⥤ D\nX Y : C\nf : X ⟶ Y\ninst✝¹ : ReflectsColimit (span f f) F\ninst✝ : Epi (F.map f)\nthis : IsColimit (PushoutCocone.mk (F.map (𝟙 Y)) (F.map (𝟙 Y)) ⋯)\n⊢ Epi f"
+}

@@ -11,12 +11,12 @@ rw [gcd_comm, gcd_gcd_self_right_right]
 
 ## Verdict matrix
 
-| rung | gpt-oss-120b-base |
-| --- | --- |
-| `stepk:1` | ✘ |
-| `hint:2` | ✓ |
-| `hint:3` | ✓ |
-| `noise:3` | ✓ |
+| rung | gpt-oss-120b-base | nemotron-3-super-120b-a12b-base | qwen3.5-397b-a17b-base |
+| --- | --- | --- | --- |
+| `stepk:1` | ✘ | ✘ | ✓ |
+| `hint:2` | ✓ | ✓ | ✓ |
+| `hint:3` | ✓ | ✓ | ✓ |
+| `noise:3` | ✓ | ✓ | ✓ |
 
 ## Per-cell detail
 
@@ -31,6 +31,31 @@ simpa [Nat.gcd_self] using (Nat.gcd_assoc n m m).symm
 
 **lean_error:** tail step 1/1 ('simpa [Nat.gcd_self] using (Nat.gcd_assoc n m m).symm'): type mismatch
 
+### `stepk:1` · nemotron-3-super-120b-a12b-base · rollout 0 → **lean_error**  (gen 5.1s, verify 0.1s, in=209, out=670)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+have h : gcd n m ∣ m := Nat.gcd_dvd_right n m
+have h₂ : gcd (gcd n m) m = gcd n m := by
+  rw [Nat.gcd_eq_left_iff_dvd]
+  <;> simpa using h
+exact h₂
+```
+
+**lean_error:** tail step 2/5 ('have h₂ : gcd (gcd n m) m = gcd n m := by'): <stdin>:1:41: unexpected end of input; expected '{'
+
+### `stepk:1` · qwen3.5-397b-a17b-base · rollout 0 → **success**  (gen 6.1s, verify 0.1s, in=204, out=611)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+apply Nat.gcd_eq_left
+apply Nat.gcd_dvd_right
+```
+
 ### `hint:2` · gpt-oss-120b-base · rollout 0 → **success**  (gen 3.4s, verify 0.1s, in=627, out=585)
 
 prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
@@ -38,6 +63,25 @@ prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
 **candidate:**
 ```lean
 simpa [Nat.gcd_comm] using Nat.gcd_gcd_self_right_right m n
+```
+
+### `hint:2` · nemotron-3-super-120b-a12b-base · rollout 0 → **success**  (gen 3.8s, verify 0.1s, in=598, out=478)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [Nat.gcd_comm]
+rw [Nat.gcd_gcd_self_right_right]
+```
+
+### `hint:2` · qwen3.5-397b-a17b-base · rollout 0 → **success**  (gen 4.2s, verify 0.1s, in=571, out=396)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+rw [gcd_comm (gcd n m) m, gcd_gcd_self_right_right]
 ```
 
 ### `hint:3` · gpt-oss-120b-base · rollout 0 → **success**  (gen 4.1s, verify 0.1s, in=1499, out=664)
@@ -49,6 +93,26 @@ prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
 simpa [Nat.gcd_comm] using Nat.gcd_gcd_self_right_right m n
 ```
 
+### `hint:3` · nemotron-3-super-120b-a12b-base · rollout 0 → **success**  (gen 3.9s, verify 0.1s, in=1507, out=503)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [gcd_comm]
+rw [Nat.gcd_gcd_self_right_right]
+```
+
+### `hint:3` · qwen3.5-397b-a17b-base · rollout 0 → **success**  (gen 5.4s, verify 0.1s, in=1450, out=518)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+rw [gcd_comm]
+exact gcd_gcd_self_right_right m n
+```
+
 ### `noise:3` · gpt-oss-120b-base · rollout 0 → **success**  (gen 4.9s, verify 0.1s, in=1424, out=985)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -56,4 +120,22 @@ prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
 **candidate:**
 ```lean
 simpa [gcd_comm] using Nat.gcd_gcd_self_right_right m n
+```
+
+### `noise:3` · nemotron-3-super-120b-a12b-base · rollout 0 → **success**  (gen 22.3s, verify 0.1s, in=1637, out=3030)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [gcd_comm, Nat.gcd_gcd_self_right_right]
+```
+
+### `noise:3` · qwen3.5-397b-a17b-base · rollout 0 → **success**  (gen 5.5s, verify 0.1s, in=1456, out=530)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+rw [gcd_comm, gcd_gcd_self_right_right]
 ```

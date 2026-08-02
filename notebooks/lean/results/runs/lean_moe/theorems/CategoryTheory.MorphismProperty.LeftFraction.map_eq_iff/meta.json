@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.MorphismProperty.LeftFraction.map_eq_iff",
+  "file_path": "Mathlib/CategoryTheory/Localization/CalculusOfFractions.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "constructor\nintro h\nrw [← MorphismProperty.LeftFraction.Localization.map_eq_iff]\napply map_eq_of_map_eq _ _ _ _ h\nintro h\nsimp only [← Localization.Hom.map_mk _ L (Localization.inverts _ _)]\ncongr 1\nexact Quot.sound h",
+  "ground_truth_remaining_from_k": "exact Quot.sound h",
+  "true_premises_at_k": [
+    "Quot.sound"
+  ],
+  "state_before_k": "case mpr.e_f\nC : Type u_1\nD : Type u_2\ninst✝³ : Category.{u_3, u_1} C\ninst✝² : Category.{u_4, u_2} D\nL : C ⥤ D\nW : MorphismProperty C\ninst✝¹ : Functor.IsLocalization L W\ninst✝ : HasLeftCalculusOfFractions W\nX Y : C\nφ ψ : LeftFraction W X Y\nh : LeftFractionRel φ ψ\n⊢ Localization.Hom.mk φ = Localization.Hom.mk ψ"
+}

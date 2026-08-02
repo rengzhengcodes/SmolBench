@@ -1,0 +1,12 @@
+{
+  "full_name": "Set.Finite.latticeClosure",
+  "file_path": "Mathlib/Order/SupClosed.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [← supClosure_infClosure]\nexact hs.infClosure.supClosure",
+  "ground_truth_remaining_from_k": "exact hs.infClosure.supClosure",
+  "true_premises_at_k": [],
+  "state_before_k": "F : Type u_1\nα : Type u_2\nβ : Type u_3\ninst✝¹ : DistribLattice α\ninst✝ : DistribLattice β\ns : Set α\nhs : Set.Finite s\n⊢ Set.Finite (supClosure (infClosure s))"
+}

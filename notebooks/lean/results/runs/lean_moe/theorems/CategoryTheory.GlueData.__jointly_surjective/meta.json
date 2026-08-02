@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.GlueData.ι_jointly_surjective",
+  "file_path": "Mathlib/CategoryTheory/GlueData.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 6,
+  "k": 5,
+  "ground_truth_full_proof": "let e := D.gluedIso F\nobtain ⟨i, y, eq⟩ := (D.mapGlueData F).types_ι_jointly_surjective (e.hom x)\nreplace eq := congr_arg e.inv eq\nchange ((D.mapGlueData F).ι i ≫ e.inv) y = (e.hom ≫ e.inv) x at eq\nrw [e.hom_inv_id, D.ι_gluedIso_inv] at eq\nexact ⟨i, y, eq⟩",
+  "ground_truth_remaining_from_k": "exact ⟨i, y, eq⟩",
+  "true_premises_at_k": [],
+  "state_before_k": "case intro.intro\nC : Type u₁\ninst✝⁵ : Category.{v, u₁} C\nC' : Type u₂\ninst✝⁴ : Category.{v, u₂} C'\nD : GlueData C\nF✝ : C ⥤ C'\nH : (i j k : D.J) → PreservesLimit (cospan (D.f i j) (D.f i k)) F✝\ninst✝³ : HasMulticoequalizer (diagram D)\ninst✝² : PreservesColimit (MultispanIndex.multispan (diagram D)) F✝\nF : C ⥤ Type v\ninst✝¹ : PreservesColimit (MultispanIndex.multispan (diagram D)) F\ninst✝ : (i j k : D.J) → PreservesLimit (cospan (D.f i j) (D.f i k)) F\nx : F.obj (glued D)\ne : F.obj (glued D) ≅ glued (mapGlueData D F) := gluedIso D F\ni : (mapGlueData D F).J\ny : (mapGlueData D F).U i\neq : F.map (ι D i) y = 𝟙 (F.obj (glued D)) x\n⊢ ∃ i y, F.map (ι D i) y = x"
+}

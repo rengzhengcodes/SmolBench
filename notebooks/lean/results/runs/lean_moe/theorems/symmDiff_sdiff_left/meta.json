@@ -1,0 +1,18 @@
+{
+  "full_name": "symmDiff_sdiff_left",
+  "file_path": "Mathlib/Order/SymmDiff.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [symmDiff_def, sup_sdiff, sdiff_idem, sdiff_sdiff_self, bot_sup_eq]",
+  "ground_truth_remaining_from_k": "rw [symmDiff_def, sup_sdiff, sdiff_idem, sdiff_sdiff_self, bot_sup_eq]",
+  "true_premises_at_k": [
+    "symmDiff_def",
+    "sup_sdiff",
+    "sdiff_idem",
+    "sdiff_sdiff_self",
+    "bot_sup_eq"
+  ],
+  "state_before_k": "ι : Type u_1\nα : Type u_2\nβ : Type u_3\nπ : ι → Type u_4\ninst✝ : GeneralizedBooleanAlgebra α\na b c d : α\n⊢ a ∆ b \\ a = b \\ a"
+}

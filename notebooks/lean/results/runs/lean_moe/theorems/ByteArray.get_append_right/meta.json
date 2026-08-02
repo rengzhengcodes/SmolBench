@@ -1,0 +1,14 @@
+{
+  "full_name": "ByteArray.get_append_right",
+  "file_path": ".lake/packages/std/Std/Data/ByteArray.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp [getElem_eq_data_getElem]\nexact Array.get_append_right hle",
+  "ground_truth_remaining_from_k": "exact Array.get_append_right hle",
+  "true_premises_at_k": [
+    "Array.get_append_right"
+  ],
+  "state_before_k": "i : Nat\na b : ByteArray\nhle : size a ≤ i\nh : i < size (a ++ b)\nh' : optParam (i - size a < size b) ⋯\n⊢ (a.data ++ b.data)[i] = b.data[i - size a]"
+}

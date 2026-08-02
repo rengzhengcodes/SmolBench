@@ -1,0 +1,15 @@
+{
+  "full_name": "CategoryTheory.Limits.isIso_of_source_target_iso_zero",
+  "file_path": "Mathlib/CategoryTheory/Limits/Shapes/ZeroMorphisms.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "rw [zero_of_source_iso_zero f i]\nexact (isIsoZeroEquivIsoZero _ _).invFun ⟨i, j⟩",
+  "ground_truth_remaining_from_k": "exact (isIsoZeroEquivIsoZero _ _).invFun ⟨i, j⟩",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.isIsoZeroEquivIsoZero",
+    "Equiv.invFun"
+  ],
+  "state_before_k": "C : Type u\ninst✝³ : Category.{v, u} C\nD : Type u'\ninst✝² : Category.{v', u'} D\ninst✝¹ : HasZeroMorphisms C\ninst✝ : HasZeroObject C\nX Y : C\nf : X ⟶ Y\ni : X ≅ 0\nj : Y ≅ 0\n⊢ IsIso 0"
+}

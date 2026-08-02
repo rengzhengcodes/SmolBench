@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.Subobject.map_pullback",
+  "file_path": "Mathlib/CategoryTheory/Subobject/Basic.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 14,
+  "k": 13,
+  "ground_truth_full_proof": "revert p\napply Quotient.ind'\nintro a\napply Quotient.sound\napply ThinSkeleton.equiv_of_both_ways\nrefine' MonoOver.homMk (pullback.lift pullback.fst _ _) (pullback.lift_snd _ _ _)\nchange _ ≫ a.arrow ≫ h = (pullback.snd ≫ g) ≫ _\nrw [assoc, ← comm, pullback.condition_assoc]\nrefine' MonoOver.homMk (pullback.lift pullback.fst\n  (PullbackCone.IsLimit.lift t (pullback.fst ≫ a.arrow) pullback.snd _)\n  (PullbackCone.IsLimit.lift_fst _ _ _ _).symm) _\nrw [← pullback.condition, assoc]\nrfl\ndsimp\nrw [pullback.lift_snd_assoc]\napply PullbackCone.IsLimit.lift_snd",
+  "ground_truth_remaining_from_k": "apply PullbackCone.IsLimit.lift_snd",
+  "true_premises_at_k": [
+    "CategoryTheory.Limits.PullbackCone.IsLimit.lift_snd"
+  ],
+  "state_before_k": "case h.a.g.refine'_2\nC : Type u₁\ninst✝⁴ : Category.{v₁, u₁} C\nX✝ Y✝ Z✝ : C\nD : Type u₂\ninst✝³ : Category.{v₂, u₂} D\ninst✝² : HasPullbacks C\nX Y Z W : C\nf : X ⟶ Y\ng : X ⟶ Z\nh : Y ⟶ W\nk : Z ⟶ W\ninst✝¹ : Mono h\ninst✝ : Mono g\ncomm : f ≫ h = g ≫ k\nt : IsLimit (PullbackCone.mk f g comm)\na : MonoOver Y\n⊢ PullbackCone.IsLimit.lift t (pullback.fst ≫ MonoOver.arrow a) pullback.snd ⋯ ≫ g = pullback.snd"
+}

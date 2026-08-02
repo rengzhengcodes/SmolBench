@@ -1,0 +1,12 @@
+{
+  "full_name": "Polynomial.natSepDegree_eq_natDegree_iff",
+  "file_path": "Mathlib/FieldTheory/SeparableDegree.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp_rw [← card_rootSet_eq_natDegree_iff_of_splits hf (SplittingField.splits f),\n  rootSet_def, Finset.coe_sort_coe, Fintype.card_coe]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "F : Type u\nE : Type v\ninst✝⁴ : Field F\ninst✝³ : Field E\ninst✝² : Algebra F E\nK : Type w\ninst✝¹ : Field K\ninst✝ : Algebra F K\nf : F[X]\nhf : f ≠ 0\n⊢ natSepDegree f = natDegree f ↔ (Multiset.toFinset (aroots f (SplittingField f))).card = natDegree f"
+}

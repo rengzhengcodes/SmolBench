@@ -1,0 +1,17 @@
+{
+  "full_name": "Fin.foldl_eq_foldl_list",
+  "file_path": ".lake/packages/std/Std/Data/Fin/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "induction n using Nat.recAux generalizing x with\n| zero => rfl\n| succ n ih => rw [foldl_succ, ih, list_succ, List.foldl_cons, List.foldl_map]\nrfl\nrw [foldl_succ, ih, list_succ, List.foldl_cons, List.foldl_map]",
+  "ground_truth_remaining_from_k": "rw [foldl_succ, ih, list_succ, List.foldl_cons, List.foldl_map]",
+  "true_premises_at_k": [
+    "Fin.foldl_succ",
+    "Fin.list_succ",
+    "List.foldl_cons",
+    "List.foldl_map"
+  ],
+  "state_before_k": "case succ\nα : Type u_1\nn : Nat\nih : ∀ (f : α → Fin n → α) (x : α), foldl n f x = List.foldl f x (list n)\nf : α → Fin (n + 1) → α\nx : α\n⊢ foldl (n + 1) f x = List.foldl f x (list (n + 1))"
+}

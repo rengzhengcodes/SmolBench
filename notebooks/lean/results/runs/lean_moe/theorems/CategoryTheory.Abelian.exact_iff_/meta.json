@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Abelian.exact_iff'",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Exact.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 8,
+  "k": 7,
+  "ground_truth_full_proof": "constructor\nintro h\nexact ⟨h.1, fork_ι_comp_cofork_π f g h cg cf⟩\nrw [exact_iff]\nrefine fun h => ⟨h.1, ?_⟩\napply zero_of_epi_comp (IsLimit.conePointUniqueUpToIso hg (limit.isLimit _)).hom\napply zero_of_comp_mono (IsColimit.coconePointUniqueUpToIso (colimit.isColimit _) hf).hom\nsimp [h.2]",
+  "ground_truth_remaining_from_k": "simp [h.2]",
+  "true_premises_at_k": [],
+  "state_before_k": "case mpr\nC : Type u₁\ninst✝¹ : Category.{v₁, u₁} C\ninst✝ : Abelian C\nX Y Z : C\nf : X ⟶ Y\ng : Y ⟶ Z\ncg : KernelFork g\nhg : IsLimit cg\ncf : CokernelCofork f\nhf : IsColimit cf\nh : f ≫ g = 0 ∧ Fork.ι cg ≫ Cofork.π cf = 0\n⊢ ((IsLimit.conePointUniqueUpToIso hg (limit.isLimit (parallelPair g 0))).hom ≫ kernel.ι g ≫ cokernel.π f) ≫\n      (IsColimit.coconePointUniqueUpToIso (colimit.isColimit (parallelPair f 0)) hf).hom =\n    0"
+}

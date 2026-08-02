@@ -1,0 +1,15 @@
+{
+  "full_name": "PerfectRing.lift_comp_lift_apply_eq_self",
+  "file_path": "Mathlib/FieldTheory/IsPerfectClosure.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [lift_comp_lift_apply, lift_self_apply]",
+  "ground_truth_remaining_from_k": "rw [lift_comp_lift_apply, lift_self_apply]",
+  "true_premises_at_k": [
+    "PerfectRing.lift_comp_lift_apply",
+    "PerfectRing.lift_self_apply"
+  ],
+  "state_before_k": "K : Type u_1\nL : Type u_2\nM : Type u_3\nN : Type u_4\ninst✝¹² : CommRing K\ninst✝¹¹ : CommRing L\ninst✝¹⁰ : CommRing M\ninst✝⁹ : CommRing N\ni : K →+* L\nj : K →+* M\nk : K →+* N\nf : L →+* M\ng : L →+* N\np : ℕ\ninst✝⁸ : ExpChar K p\ninst✝⁷ : ExpChar L p\ninst✝⁶ : ExpChar M p\ninst✝⁵ : ExpChar N p\ninst✝⁴ : PerfectRing M p\ninst✝³ : IsPRadical i p\ninst✝² : PerfectRing N p\ninst✝¹ : IsPRadical j p\ninst✝ : PerfectRing L p\nx : L\n⊢ (lift j i p) ((lift i j p) x) = x"
+}

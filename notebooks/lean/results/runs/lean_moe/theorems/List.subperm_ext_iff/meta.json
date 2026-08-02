@@ -1,0 +1,14 @@
+{
+  "full_name": "List.subperm_ext_iff",
+  "file_path": ".lake/packages/std/Std/Data/List/Perm.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "refine ⟨fun h x _ => h.count_le x, fun h => ?_⟩\nhave : l₁ <+~ l₂.diff l₁ ++ l₁ := (subperm_append_right l₁).mpr nil_subperm\nrefine this.trans (Perm.subperm ?_)\nexact perm_append_comm.trans (subperm_append_diff_self_of_count_le h)",
+  "ground_truth_remaining_from_k": "exact perm_append_comm.trans (subperm_append_diff_self_of_count_le h)",
+  "true_premises_at_k": [
+    "List.subperm_append_diff_self_of_count_le"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝ : DecidableEq α\nl₁ l₂ : List α\nh : ∀ (x : α), x ∈ l₁ → count x l₁ ≤ count x l₂\nthis : l₁ <+~ List.diff l₂ l₁ ++ l₁\n⊢ List.diff l₂ l₁ ++ l₁ ~ l₂"
+}

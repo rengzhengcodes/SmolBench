@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.final_toCostructuredArrow_comp_pre",
+  "file_path": "Mathlib/CategoryTheory/Limits/Presheaf.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 11,
+  "k": 10,
+  "ground_truth_full_proof": "apply Functor.cofinal_of_isTerminal_colimit_comp_yoneda\nsuffices IsTerminal (colimit ((c.toCostructuredArrow ⋙ CostructuredArrow.pre F yoneda c.pt) ⋙\n    CostructuredArrow.toOver yoneda c.pt)) by\n  apply IsTerminal.isTerminalOfObj (overEquivPresheafCostructuredArrow c.pt).inverse\n  apply IsTerminal.ofIso this\n  refine ?_ ≪≫ (preservesColimitIso (overEquivPresheafCostructuredArrow c.pt).inverse _).symm\n  apply HasColimit.isoOfNatIso\n  exact isoWhiskerLeft _\n    (CostructuredArrow.toOverCompOverEquivPresheafCostructuredArrow c.pt).isoCompInverse\napply IsTerminal.ofIso Over.mkIdTerminal\nlet isc : IsColimit ((Over.forget _).mapCocone _) := PreservesColimit.preserves\n  (colimit.isColimit ((c.toCostructuredArrow ⋙ CostructuredArrow.pre F yoneda c.pt) ⋙\n    CostructuredArrow.toOver yoneda c.pt))\nexact Over.isoMk (hc.coconePointUniqueUpToIso isc) (hc.hom_ext fun i => by simp)\napply IsTerminal.isTerminalOfObj (overEquivPresheafCostructuredArrow c.pt).inverse\napply IsTerminal.ofIso this\nrefine ?_ ≪≫ (preservesColimitIso (overEquivPresheafCostructuredArrow c.pt).inverse _).symm\napply HasColimit.isoOfNatIso\nexact isoWhiskerLeft _\n  (CostructuredArrow.toOverCompOverEquivPresheafCostructuredArrow c.pt).isoCompInverse\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u₁\ninst✝¹ : Category.{v₁, u₁} C\nP : Cᵒᵖ ⥤ Type v₁\nI : Type v₁\ninst✝ : SmallCategory I\nF : I ⥤ C\nc : Cocone (F ⋙ yoneda)\nhc : IsColimit c\nisc : IsColimit\n  ((Over.forget c.pt).mapCocone\n    (colimit.cocone\n      ((Cocone.toCostructuredArrow c ⋙ CostructuredArrow.pre F yoneda c.pt) ⋙ CostructuredArrow.toOver yoneda c.pt))) :=\n  PreservesColimit.preserves\n    (colimit.isColimit\n      ((Cocone.toCostructuredArrow c ⋙ CostructuredArrow.pre F yoneda c.pt) ⋙ CostructuredArrow.toOver yoneda c.pt))\ni : I\n⊢ c.ι.app i ≫\n      (IsColimit.coconePointUniqueUpToIso hc isc).hom ≫\n        (colimit\n            ((Cocone.toCostructuredArrow c ⋙ CostructuredArrow.pre F yoneda c.pt) ⋙\n              CostructuredArrow.toOver yoneda c.pt)).hom =\n    c.ι.app i ≫ (Over.mk (𝟙 c.pt)).hom"
+}

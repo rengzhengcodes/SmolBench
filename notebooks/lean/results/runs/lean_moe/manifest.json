@@ -1,6 +1,6 @@
 {
   "run_name": "lean_moe",
-  "started_at": "2026-07-19T22:57:29",
+  "started_at": "2026-08-01T23:17:46",
   "config": {
     "seed": 1776,
     "temperature": 0.7,
@@ -32,9 +32,15 @@
     "models": [
       {
         "provider": "ec2",
-        "model": "nemotron-3-super-120b-a12b",
-        "display_name": "nemotron-3-super-120b-a12b-base"
+        "model": "qwen3.5-397b-a17b",
+        "display_name": "qwen3.5-397b-a17b-base"
       }
     ]
+  },
+  "finished_at": "2026-08-01T23:45:41",
+  "counts": {
+    "written": 767,
+    "skipped": 73,
+    "success": 246
   }
 }

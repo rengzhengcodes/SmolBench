@@ -1,0 +1,17 @@
+{
+  "full_name": "Filter.smallSets_top",
+  "file_path": "Mathlib/Order/Filter/SmallSets.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [smallSets, lift'_top, powerset_univ, principal_univ]",
+  "ground_truth_remaining_from_k": "rw [smallSets, lift'_top, powerset_univ, principal_univ]",
+  "true_premises_at_k": [
+    "Filter.smallSets",
+    "Filter.lift'_top",
+    "Set.powerset_univ",
+    "Filter.principal_univ"
+  ],
+  "state_before_k": "α : Type u_1\nβ : Type u_2\nι : Sort u_3\nl l' la : Filter α\nlb : Filter β\n⊢ smallSets ⊤ = ⊤"
+}

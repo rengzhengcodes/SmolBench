@@ -1,0 +1,12 @@
+{
+  "full_name": "IntermediateField.adjoin_map",
+  "file_path": "Mathlib/FieldTheory/Adjoin.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 4,
+  "k": 3,
+  "ground_truth_full_proof": "ext x\nshow\n  x ∈ (Subfield.closure (Set.range (algebraMap F E) ∪ S)).map (f : E →+* E') ↔\n    x ∈ Subfield.closure (Set.range (algebraMap F E') ∪ f '' S)\nrw [RingHom.map_field_closure, Set.image_union, ← Set.range_comp, ← RingHom.coe_comp,\n  f.comp_algebraMap]\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "case h\nF : Type u_1\ninst✝⁴ : Field F\nE : Type u_2\ninst✝³ : Field E\ninst✝² : Algebra F E\nS : Set E\nE' : Type u_3\ninst✝¹ : Field E'\ninst✝ : Algebra F E'\nf : E →ₐ[F] E'\nx : E'\n⊢ x ∈ Subfield.closure (Set.range ⇑(algebraMap F E') ∪ ⇑↑f '' S) ↔\n    x ∈ Subfield.closure (Set.range ⇑(algebraMap F E') ∪ ⇑f '' S)"
+}

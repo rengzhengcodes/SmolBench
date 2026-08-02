@@ -1,0 +1,15 @@
+{
+  "full_name": "Module.surjective_piEquiv_apply_iff",
+  "file_path": "Mathlib/LinearAlgebra/StdBasis.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [← LinearMap.range_eq_top, range_piEquiv]",
+  "ground_truth_remaining_from_k": "rw [← LinearMap.range_eq_top, range_piEquiv]",
+  "true_premises_at_k": [
+    "LinearMap.range_eq_top",
+    "Module.range_piEquiv"
+  ],
+  "state_before_k": "ι : Type u_1\nR : Type u_2\nM : Type u_3\nN : Type u_4\ninst✝⁵ : Finite ι\ninst✝⁴ : CommSemiring R\ninst✝³ : AddCommMonoid M\ninst✝² : AddCommMonoid N\ninst✝¹ : Module R M\ninst✝ : Module R N\nv : ι → M\n⊢ Surjective ⇑((piEquiv ι R M) v) ↔ span R (range v) = ⊤"
+}

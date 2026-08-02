@@ -1,0 +1,17 @@
+{
+  "full_name": "Set.isPWO_insert",
+  "file_path": "Mathlib/Order/WellFoundedSet.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "simp only [← singleton_union, isPWO_union, isPWO_singleton, true_and_iff]",
+  "ground_truth_remaining_from_k": "simp only [← singleton_union, isPWO_union, isPWO_singleton, true_and_iff]",
+  "true_premises_at_k": [
+    "Set.singleton_union",
+    "Set.isPWO_union",
+    "Set.isPWO_singleton",
+    "true_and_iff"
+  ],
+  "state_before_k": "ι : Type u_1\nα : Type u_2\nβ : Type u_3\nγ : Type u_4\nπ : ι → Type u_5\ninst✝¹ : Preorder α\ninst✝ : Preorder β\ns t : Set α\na : α\n⊢ IsPWO (insert a s) ↔ IsPWO s"
+}

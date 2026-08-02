@@ -1,0 +1,12 @@
+{
+  "full_name": "Array.getElem_map",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 5,
+  "k": 4,
+  "ground_truth_full_proof": "have := map_spec as f (fun i b => b = f (as[i]))\nsimp only [implies_true, true_implies] at this\nobtain ⟨eq, w⟩ := this\napply w\nsimp_all",
+  "ground_truth_remaining_from_k": "simp_all",
+  "true_premises_at_k": [],
+  "state_before_k": "case intro.h\nα : Type u_1\nβ : Type u_2\nf : α → β\nas : Array α\ni : Nat\nh : i < size (map f as)\neq : size (map f as) = size as\nw : ∀ (i : Nat) (h : i < size as), (map f as)[i] = f as[{ val := i, isLt := h }]\n⊢ i < size as"
+}

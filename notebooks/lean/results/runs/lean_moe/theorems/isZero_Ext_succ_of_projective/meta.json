@@ -1,0 +1,12 @@
+{
+  "full_name": "isZero_Ext_succ_of_projective",
+  "file_path": "Mathlib/CategoryTheory/Abelian/Ext.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 9,
+  "k": 8,
+  "ground_truth_full_proof": "refine IsZero.of_iso ?_ ((ProjectiveResolution.self X).isoExt (n + 1) Y)\nrw [← HomologicalComplex.exactAt_iff_isZero_homology, HomologicalComplex.exactAt_iff]\nrefine ShortComplex.exact_of_isZero_X₂ _ ?_\ndsimp\nrw [IsZero.iff_id_eq_zero]\next (x : _ ⟶ _)\nobtain rfl : x = 0 := (HomologicalComplex.isZero_single_obj_X\n  (ComplexShape.down ℕ) 0 X (n + 1) (by simp)).eq_of_src _ _\nrfl\nsimp",
+  "ground_truth_remaining_from_k": "simp",
+  "true_premises_at_k": [],
+  "state_before_k": "R : Type u_1\ninst✝⁵ : Ring R\nC : Type u_2\ninst✝⁴ : Category.{u_3, u_2} C\ninst✝³ : Abelian C\ninst✝² : Linear R C\ninst✝¹ : EnoughProjectives C\nX Y : C\ninst✝ : Projective X\nn : ℕ\nx : ((ChainComplex.single₀ C).obj X).X (n + 1) ⟶ Y\n⊢ n + 1 ≠ 0"
+}

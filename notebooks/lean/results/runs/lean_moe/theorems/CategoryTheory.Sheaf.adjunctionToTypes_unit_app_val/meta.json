@@ -1,0 +1,12 @@
+{
+  "full_name": "CategoryTheory.Sheaf.adjunctionToTypes_unit_app_val",
+  "file_path": "Mathlib/CategoryTheory/Sites/Adjunction.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 3,
+  "k": 2,
+  "ground_truth_full_proof": "dsimp [adjunctionToTypes, Adjunction.comp]\nsimp\nrfl",
+  "ground_truth_remaining_from_k": "rfl",
+  "true_premises_at_k": [],
+  "state_before_k": "C : Type u\ninst✝⁶ : Category.{v, u} C\nJ : GrothendieckTopology C\nD : Type u_1\ninst✝⁵ : Category.{u_3, u_1} D\nE : Type u_2\ninst✝⁴ : Category.{?u.33983, u_2} E\nF : D ⥤ E\nG✝ : E ⥤ D\ninst✝³ : HasWeakSheafify J D\ninst✝² : HasSheafCompose J F\ninst✝¹ : ConcreteCategory D\ninst✝ : HasSheafCompose J (forget D)\nG : Type (max v u) ⥤ D\nadj : G ⊣ forget D\nY : SheafOfTypes J\n⊢ ((sheafEquivSheafOfTypes J).symm.unit.app Y).val ≫\n      ((Adjunction.whiskerRight Cᵒᵖ adj).homEquiv Y.val ((presheafToSheaf J D).obj (Y.val ⋙ G)).val)\n        (toSheafify J (Y.val ⋙ G)) =\n    (Adjunction.whiskerRight Cᵒᵖ adj).unit.app Y.val ≫ whiskerRight (toSheafify J (Y.val ⋙ G)) (forget D)"
+}

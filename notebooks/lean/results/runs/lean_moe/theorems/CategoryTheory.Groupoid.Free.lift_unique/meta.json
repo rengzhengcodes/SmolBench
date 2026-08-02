@@ -1,0 +1,14 @@
+{
+  "full_name": "CategoryTheory.Groupoid.Free.lift_unique",
+  "file_path": "Mathlib/CategoryTheory/Groupoid/FreeGroupoid.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 10,
+  "k": 9,
+  "ground_truth_full_proof": "apply Quotient.lift_unique\napply Paths.lift_unique\nfapply @Quiver.Symmetrify.lift_unique _ _ _ _ _ _ _ _ _\nrw [← Functor.toPrefunctor_comp]\nexact hΦ\nrintro X Y f\nsimp only [← Functor.toPrefunctor_comp, Prefunctor.comp_map, Paths.of_map, inv_eq_inv]\nchange Φ.map (inv ((Quotient.functor redStep).toPrefunctor.map f.toPath)) =\n  inv (Φ.map ((Quotient.functor redStep).toPrefunctor.map f.toPath))\nhave := Functor.map_inv Φ ((Quotient.functor redStep).toPrefunctor.map f.toPath)\nconvert this <;> simp only [inv_eq_inv]",
+  "ground_truth_remaining_from_k": "convert this <;> simp only [inv_eq_inv]",
+  "true_premises_at_k": [
+    "CategoryTheory.Groupoid.inv_eq_inv"
+  ],
+  "state_before_k": "V : Type u\ninst✝¹ : Quiver V\nV' : Type u'\ninst✝ : Groupoid V'\nφ✝ φ : V ⥤q V'\nΦ : FreeGroupoid V ⥤ V'\nhΦ : of V ⋙q Φ.toPrefunctor = φ\nX Y : Quiver.Symmetrify V\nf : X ⟶ Y\nthis :\n  Φ.map (CategoryTheory.inv ((Quotient.functor redStep).map (Quiver.Hom.toPath f))) =\n    CategoryTheory.inv (Φ.map ((Quotient.functor redStep).map (Quiver.Hom.toPath f)))\n⊢ Φ.map (inv ((Quotient.functor redStep).map (Quiver.Hom.toPath f))) =\n    inv (Φ.map ((Quotient.functor redStep).map (Quiver.Hom.toPath f)))"
+}

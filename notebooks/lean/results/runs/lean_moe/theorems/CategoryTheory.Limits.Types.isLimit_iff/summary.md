@@ -14,10 +14,10 @@ exact ⟨x, fun c j ↦ funext fun y ↦ (hx c y).1 j,
 
 | rung | gpt-oss-120b-base | nemotron-3-super-120b-a12b-base | qwen3.5-397b-a17b-base |
 | --- | --- | --- | --- |
-| `stepk:1` | ✘ | X | X |
-| `hint:2` | ✘ | ✘ | X |
-| `hint:3` | ✘ | ✘ | X |
-| `noise:3` | ✘ | X | X |
+| `stepk:1` | ✘ | X ✘ | X ✘ |
+| `hint:2` | ✘ | ✘ | X ✘ |
+| `hint:3` | ✘ | ✘ | X ✘ |
+| `noise:3` | ✘ | X ✘ | X ✘ |
 
 ## Per-cell detail
 
@@ -96,6 +96,73 @@ constructor
 
 **lean_error:** DojoTacticTimeoutError: 
 
+### `stepk:1` · nemotron-3-super-120b-a12b-base · rollout 0 → **lean_error**  (gen 250.4s, verify 0.4s, in=394, out=30881)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+refine' ⟨fun c' y => _, _, _⟩
+· -- First goal: produce c.pt for given c' and y
+  have h₁ : (fun j : J => c'.π.app j y) ∈ Functor.sections F :=
+    ⟨fun j => c'.π.app j y, by
+      intro j k f
+      have h₂ : c'.π.app k = F f ∘ c'.π.app j := by
+        apply c'.π.naturality
+      rw [h₂]
+      <;> simp [Function.comp_apply]
+    ⟩
+  have h₂ : ∃! (x : c.pt), ∀ (j : J), c.π.app j x = (fun j => c'.π.app j y) j := h h₁
+  obtain ⟨x, hx, hu⟩ := h₂
+  exact x
+· -- Second goal: prove the cone morphism condition
+  intro c' y j
+  have h₁ : (fun j : J => c'.π.app j y) ∈ Functor.sections F :=
+    ⟨fun j => c'.π.app j y, by
+      intro j k f
+      have h₂ : c'.π.app k = F f ∘ c'.π.app j := by
+        apply c'.π.naturality
+      rw [h₂]
+      <;> simp [Function.comp_apply]
+    ⟩
+  have h₂ : ∃! (x : c.pt), ∀ (j : J), c.π.app j x = (fun j => c'.π.app j y) j := h h₁
+  obtain ⟨x, hx, hu⟩ := h₂
+  have h₃ : ∀ (j : J), c.π.app j x = (fun j => c'.π.app j y) j := hx
+  have h₄ : (fun j : J => c'.π.app j y) j = c'.π.app j y := rfl
+  have h₅ : c.π.app j x = c'.π.app j y := by
+    rw [h₄] at h₃
+    exact h₃ j
+  exact h₅
+· -- Third goal: prove uniqueness
+  intro c' f hf
+  have h₁ : f = (fun c' y => _) := by
+    apply funext_2
+    intro c' y
+    have h₂ : (fun j : J => c'.π.app j y) ∈ Functor.sections F :=
+      ⟨fun j => c'.π.app j y, by
+        intro j k f
+          have h₃ : c'.π.app k = F f ∘ c'.π.app j := by
+            apply c'.π.naturality
+          rw [h₃]
+          <;> simp [Function.comp_apply]
+      ⟩
+    have h₃ : ∃! (x : c.pt), ∀ (j : J), c.π.app j x = (fun j => c'.π.app j y) j := h h₂
+    obtain ⟨x_lift, hx_lift, hu_lift⟩ := h₃
+    have h₄ : ∀ (j : J), c.π.app j (f c' y) = (fun j => c'.π.app j y) j := by
+      intro j
+      have h₅ : c.π.app j (f c' y) = c'.π.app j y := hf j (c' y)
+      have h₆ : (fun j : J => c'.π.app j y) j = c'.π.app j y := rfl
+      rw [h₆] at h₅
+      exact h₅
+    have h₅ : f c' y = x_lift := hu_lift h₄
+    exact h₅
+  exact h₁
+
+End of proof.
+```
+
+**lean_error:** tail step 2/56 ("· -- First goal: produce c.pt for given c' and y"): <stdin>:1:48: unexpected end of input; expected '{'
+
 ### `stepk:1` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 28.4s, verify 300.2s, in=384, out=579)
 
 prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
@@ -115,6 +182,17 @@ constructor
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
+
+### `stepk:1` · qwen3.5-397b-a17b-base · rollout 0 → **lean_error**  (gen 303.8s, verify 0.0s, in=384, out=32768)
+
+prompt: [`prompts/stepk-1.md`](prompts/stepk-1.md)
+
+**candidate:**
+```lean
+(empty)
+```
+
+**lean_error:** empty tail
 
 ### `hint:2` · gpt-oss-120b-base · rollout 0 → **lean_error**  (gen 29.5s, verify 0.1s, in=1667, out=4076)
 
@@ -245,6 +323,21 @@ refine ⟨fun t s hs ↦ ⟨x t s, ?_, ?_⟩, fun h' ↦ ?_⟩
 
 **lean_error:** DojoTacticTimeoutError: 
 
+### `hint:2` · qwen3.5-397b-a17b-base · rollout 0 → **lean_error**  (gen 13.6s, verify 0.1s, in=1580, out=662)
+
+prompt: [`prompts/hint-2.md`](prompts/hint-2.md)
+
+**candidate:**
+```lean
+refine ⟨fun ⟨t⟩ s hs ↦ x t s, ?_⟩
+intro h'
+have := hx t s
+simp at this
+exact this.2 _ h'
+```
+
+**lean_error:** tail step 1/5 ('refine ⟨fun ⟨t⟩ s hs ↦ x t s, ?_⟩'): invalid constructor ⟨...⟩, insufficient number of arguments, constructs 'CategoryTheory.Limits.IsLimit.mk' has #3 explicit fields, but only #2 provided
+
 ### `hint:3` · gpt-oss-120b-base · rollout 0 → **lean_error**  (gen 32.4s, verify 0.7s, in=5340, out=4807)
 
 prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
@@ -295,6 +388,24 @@ refine ⟨fun y ↦ x c₁ y, ?_, ?_⟩
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
+
+### `hint:3` · qwen3.5-397b-a17b-base · rollout 0 → **lean_error**  (gen 14.5s, verify 0.2s, in=5293, out=757)
+
+prompt: [`prompts/hint-3.md`](prompts/hint-3.md)
+
+**candidate:**
+```lean
+intro c₁
+refine ⟨fun y ↦ x c₁ y, ?_, ?_⟩
+· intro j y
+  exact (hx c₁ y).1 j
+· intro f hf y
+  apply (hx c₁ y).2
+  intro j
+  exact hf j y
+```
+
+**lean_error:** tail step 1/8 ('intro c₁'): tactic 'introN' failed, insufficient number of binders
 
 ### `noise:3` · gpt-oss-120b-base · rollout 0 → **lean_error**  (gen 46.3s, verify 0.5s, in=4965, out=6943)
 
@@ -353,6 +464,41 @@ exact h
 
 **lean_error:** DojoTacticTimeoutError: 
 
+### `noise:3` · nemotron-3-super-120b-a12b-base · rollout 0 → **lean_error**  (gen 112.8s, verify 0.1s, in=5953, out=13711)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+refine ⟨fun {c'} y => x c' y, ?, ?⟩
+· -- fac
+  intro {c'} y j
+  have h₁ : c.π j (x c' y) = c'.π j y := by
+    have h₂ := hx c' y
+    have h₃ : (fun x => ∀ (j : J), c.π.app j x = ↑(sectionOfCone c' y) j) (x c' y) := h₂.1
+    have h₄ : ∀ (j : J), c.π j (x c' y) = (sectionOfCone c' y) j := by simpa using h₃
+    have h₅ : (sectionOfCone c' y) j = c'.π j y := by
+      simp [sectionOfCone]
+      <;> aesop
+    rw [h₄ j]
+    rw [h₅]
+  have h₂ : c'.π j y = c.π j (x c' y) := by
+    rw [h₁ j]
+    <;> rfl
+  exact h₂
+· -- uniq
+  intro {c'} y z hz
+  have h₁ : x c' y = z := by
+    apply hx c' y.2
+    intro j
+    have h₂ : c'.π j y = c.π j z := hz j
+    have h₃ : c.π j z = c'.π j y := by linarith
+    exact h₃
+  exact h₁
+```
+
+**lean_error:** tail step 1/25 ("refine ⟨fun {c'} y => x c' y, ?, ?⟩"): <stdin>:1:31: expected '_' or identifier
+
 ### `noise:3` · qwen3.5-397b-a17b-base · rollout 0 → **exception**  (gen 328.6s, verify 300.1s, in=5253, out=632)
 
 prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
@@ -372,3 +518,16 @@ constructor
 ```
 
 **lean_error:** DojoTacticTimeoutError: 
+
+### `noise:3` · qwen3.5-397b-a17b-base · rollout 0 → **lean_error**  (gen 13.2s, verify 0.2s, in=5253, out=594)
+
+prompt: [`prompts/noise-3.md`](prompts/noise-3.md)
+
+**candidate:**
+```lean
+intro c₁ y
+have := hx c₁ y
+exact ⟨x c₁ y, this.1, fun z hz ↦ this.2 z hz⟩
+```
+
+**lean_error:** tail step 1/3 ('intro c₁ y'): tactic 'introN' failed, insufficient number of binders

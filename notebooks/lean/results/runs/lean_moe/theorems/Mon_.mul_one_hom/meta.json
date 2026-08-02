@@ -1,0 +1,15 @@
+{
+  "full_name": "Mon_.mul_one_hom",
+  "file_path": "Mathlib/CategoryTheory/Monoidal/Mon_.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 1,
+  "k": 0,
+  "ground_truth_full_proof": "rw [tensorHom_def_assoc, M.mul_one, rightUnitor_naturality]",
+  "ground_truth_remaining_from_k": "rw [tensorHom_def_assoc, M.mul_one, rightUnitor_naturality]",
+  "true_premises_at_k": [
+    "CategoryTheory.MonoidalCategory.tensorHom_def_assoc",
+    "CategoryTheory.MonoidalCategory.rightUnitor_naturality"
+  ],
+  "state_before_k": "C : Type u₁\ninst✝¹ : Category.{v₁, u₁} C\ninst✝ : MonoidalCategory C\nM : Mon_ C\nZ : C\nf : Z ⟶ M.X\n⊢ (f ⊗ M.one) ≫ M.mul = (ρ_ Z).hom ≫ f"
+}

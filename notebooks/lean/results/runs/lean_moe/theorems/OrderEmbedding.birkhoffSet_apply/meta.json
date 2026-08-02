@@ -1,0 +1,14 @@
+{
+  "full_name": "OrderEmbedding.birkhoffSet_apply",
+  "file_path": "Mathlib/Order/Birkhoff.lean",
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
+  "n_total_tactics": 2,
+  "k": 1,
+  "ground_truth_full_proof": "simp [birkhoffSet]\nconvert rfl",
+  "ground_truth_remaining_from_k": "convert rfl",
+  "true_premises_at_k": [
+    "rfl"
+  ],
+  "state_before_k": "α : Type u_1\ninst✝⁴ : DistribLattice α\ninst✝³ : OrderBot α\ninst✝² : Fintype α\ninst✝¹ : DecidablePred SupIrred\ninst✝ : DecidableEq α\na : α\n⊢ OrderIso.lowerSetSupIrred a = OrderIso.lowerSetSupIrred a"
+}
