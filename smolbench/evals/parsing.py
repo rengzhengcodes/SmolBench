@@ -99,6 +99,10 @@ _TAIL_WINDOW = 60
 #: A long response made of this few distinct characters is repetition collapse.
 _DEGENERATE_ALPHABET = 3
 _DEGENERATE_MIN_LEN = 500
+#: Tail examined for a collapse that begins partway through a response. Long
+#: enough that ordinary repetition (a rule of dashes, a run of newlines) does
+#: not trip it, short enough to catch a model that broke down near the end.
+_DEGENERATE_TAIL = 400
 
 _TOF_TOKEN = re.compile(r"\b(true|false)\b", re.IGNORECASE)
 _YES_NO = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
@@ -146,13 +150,36 @@ class ParseResult:
 def is_degenerate(text: str) -> bool:
     """True when `text` is repetition collapse rather than an answer.
 
-    Structural rather than pattern-based: a long response drawn from a tiny
+    Structural rather than pattern-based: a long stretch drawn from a tiny
     alphabet is degenerate whatever character it happens to repeat.
+
+    Two shapes, both observed live under the whitespace-padded noise arm:
+
+    * collapse from the start -- Nemotron-Ultra-253B emitted 24,576
+      characters of "0", the whole completion budget, with nothing else;
+    * collapse after a real beginning -- Olmo-3.1-32B-Think started
+      reasoning and then devolved into ~16,400 repeated U+2010 hyphens until
+      the budget ran out.
+
+    The second shape is why the tail is checked separately. Judging the whole
+    string would see a wide alphabet (the genuine prose at the front) and
+    mislabel the response `TRUNCATED`, which would blame the completion
+    budget for what is actually the model breaking down -- a materially
+    different finding.
     """
     stripped = text.strip()
-    return (
+    if not stripped:
+        return False
+    if (
         len(stripped) >= _DEGENERATE_MIN_LEN
         and len(set(stripped)) <= _DEGENERATE_ALPHABET
+    ):
+        return True
+    tail = stripped[-_DEGENERATE_TAIL:]
+    return (
+        len(stripped) >= _DEGENERATE_MIN_LEN
+        and len(tail) >= _DEGENERATE_TAIL
+        and len(set(tail)) <= _DEGENERATE_ALPHABET
     )
 
 

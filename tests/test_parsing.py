@@ -168,6 +168,28 @@ def test_degenerate_repetition_is_never_recovered():
         assert result.violation == DEGENERATE
 
 
+def test_collapse_after_a_real_beginning_is_degenerate_not_truncated():
+    """A response that starts fine and then devolves is a breakdown, not a cap.
+
+    Observed live: Olmo-3.1-32B-Think under the whitespace-padded noise arm
+    began reasoning and then emitted ~16,400 repeated U+2010 hyphens until the
+    16k completion budget ran out. Judging the whole string sees a wide
+    alphabet (the real prose at the front) and would call it TRUNCATED --
+    blaming the budget for the model breaking down, which is a materially
+    different finding.
+    """
+    response = "Okay, let me work through the intervals carefully. " * 5 + "‐" * 16000
+    result = parse_tof(response)
+    assert result.value is None
+    assert result.violation == DEGENERATE
+
+
+def test_ordinary_repetition_is_not_flagged_degenerate():
+    """A rule of dashes or trailing newlines must not trip the detector."""
+    assert parse_tof("Some reasoning. " * 40 + "\n" * 20 + "False").value is False
+    assert not parse_tof("-" * 60 + "\nTrue").violation == DEGENERATE
+
+
 def test_truncated_reasoning_is_not_mined_for_a_verdict():
     """A chain cut off mid-thought stays invalid.
 
