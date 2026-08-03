@@ -135,6 +135,24 @@ def robust_tof(ans: str) -> Tuple[Optional[bool], str]:
     return None, "unrecoverable"
 
 
+def is_degenerate(ans: str) -> bool:
+    """True when the response is repetition collapse rather than an answer.
+
+    A distinct failure class from a format break, and the reason it needs its
+    own label: no parser can recover it, because there is no answer in there.
+    Observed live -- Nemotron-Ultra-253B under the whitespace-padded noise arm
+    emitted 24,576 characters of "0" (8,192 tokens of "000", i.e. the entire
+    completion budget) instead of an integer, on every question.
+
+    Detected structurally rather than by pattern: a long response built from a
+    tiny alphabet is degenerate whatever character it repeats.
+    """
+    stripped = ans.strip()
+    if len(stripped) < 500:
+        return False
+    return len(set(stripped)) <= 3
+
+
 def robust_numeric(ans: str) -> Tuple[Optional[int], str]:
     """Extracts an integer, reporting which rule fired.
 
@@ -157,6 +175,11 @@ def robust_numeric(ans: str) -> Tuple[Optional[int], str]:
 
 def classify(mark, kind: str):
     """Returns (currently_valid, robust_value, tier) for one mark."""
+    if is_degenerate(mark.response):
+        # Labelled before anything else: repetition collapse is not a parsing
+        # problem, and counting it as one would overstate what a better parser
+        # can buy.
+        return False, None, "degenerate-repetition"
     if kind == "tof":
         try:
             ToF.condition(mark.response)
@@ -221,7 +244,7 @@ def main() -> int:
         long_invalids = Counter()
         examples = defaultdict(list)
         regressions = []
-        numeric_disagreements = 0
+        misgrades = []
 
         for cond_dir in sorted(results.glob("*_*")):
             if not cond_dir.is_dir():
@@ -239,15 +262,34 @@ def main() -> int:
                     stats = per_condition[cond]
                     stats["n"] += 1
                     if current_ok:
-                        # No-regression: a robust parser must not change a
-                        # grade that already parsed.
                         expected = (
                             ToF.condition(mark.response)
                             if kind == "tof"
                             else Numeric.condition(mark.response)
                         )
                         if value != expected:
-                            regressions.append((cond, rep.name, mark.response[:80]))
+                            # For ToF the current parser is strict, so any
+                            # disagreement really is a regression to justify.
+                            # For Numeric it is the opposite: condition()
+                            # grabs the FIRST integer, which on a worked
+                            # answer like "2520 // 8 = 315\n\n315" scores the
+                            # operand instead of the result. Those
+                            # disagreements are evidence of PRE-EXISTING
+                            # silent mis-grading, so they are reported as
+                            # candidate fixes with the truth value attached
+                            # rather than as regressions to be avoided.
+                            record = (
+                                cond,
+                                rep.name,
+                                repr(mark.response[:70]),
+                                expected,
+                                value,
+                                mark.answer,
+                            )
+                            if kind == "tof":
+                                regressions.append(record)
+                            else:
+                                misgrades.append(record)
                     else:
                         stats["invalid"] += 1
                         tiers[tier] += 1
@@ -262,12 +304,6 @@ def main() -> int:
                             # response, and the head of a reasoning chain says
                             # nothing about how it concluded.
                             examples[key].append(repr(mark.response[-110:]))
-                    # Numeric: does first-integer disagree with a more
-                    # defensible reading? That is SILENT mis-grading.
-                    if kind == "numeric" and current_ok:
-                        ints = _INT.findall(mark.response)
-                        if len(ints) > 1 and int(ints[0]) != value:
-                            numeric_disagreements += 1
 
         if not per_condition:
             print("  (no replicates yet)")
@@ -297,20 +333,33 @@ def main() -> int:
                     for ex in examples[(cond, tier)]:
                         print(f"          tail: {ex}")
 
-        if kind == "numeric" and numeric_disagreements:
-            print(
-                f"\n  !! {numeric_disagreements} responses were graded on the FIRST "
-                "integer while a later one is more defensible -- silent mis-grading"
+        if misgrades:
+            # How many of these actually flip correct/incorrect -- the number
+            # that matters, since a disagreement that lands on the same
+            # verdict changes nothing.
+            flips = sum(
+                1 for _c, _r, _s, cur, rob, truth in misgrades
+                if (cur == truth) != (rob == truth)
             )
+            print(
+                f"\n  !! {len(misgrades)} marks were graded on the FIRST integer while a "
+                f"later one is more defensible ({flips} change correct/incorrect):"
+            )
+            for cond, rep, resp, cur, rob, truth in misgrades[:5]:
+                verdict = "FIXES" if (rob == truth) and (cur != truth) else "changes"
+                print(
+                    f"     {cond}/{rep}: {resp}\n"
+                    f"        current={cur} robust={rob} truth={truth}  -> {verdict}"
+                )
 
         if regressions:
             grand_regressions += len(regressions)
-            print(f"\n  !! {len(regressions)} REGRESSIONS (robust parser changes an "
-                  "already-valid grade):")
-            for cond, rep, resp in regressions[:5]:
-                print(f"     {cond}/{rep}: {resp}")
+            print(f"\n  !! {len(regressions)} TRUE/FALSE REGRESSIONS (robust parser "
+                  "changes an already-valid verdict):")
+            for cond, rep, resp, cur, rob, truth in regressions[:5]:
+                print(f"     {cond}/{rep}: {resp} current={cur} robust={rob} truth={truth}")
         else:
-            print("\n  no-regression check: PASSED (every already-valid grade unchanged)")
+            print("\n  no-regression check: PASSED (no already-valid verdict changed)")
 
     print(f"\n{'=' * 78}")
     print(f"TOTAL invalid: {grand_invalid} | recoverable by a robust parser: "
