@@ -103,10 +103,13 @@ notebook = [
     # plot results with matplotlib; pinned to a cp314-wheel release.
     "matplotlib>=3.10.0",
     # The three power-analysis scripts (notebooks/*/power_analysis.py) import
-    # scipy.stats for the CMH chi-square / Welch t reference distributions.
-    # Previously undeclared, so `uv sync` would silently strip it and leave
-    # those scripts failing on ModuleNotFoundError.
+    # scipy.stats for the CMH chi-square / Welch t reference distributions,
+    # and periodic/periodic_moe additionally import statsmodels for the
+    # omnibus interaction test. Both were previously undeclared, so `uv sync`
+    # would silently strip them and leave those scripts failing on
+    # ModuleNotFoundError partway through a run.
     "scipy>=1.15",
+    "statsmodels>=0.14",
 ]
 
 [tool.setuptools]
