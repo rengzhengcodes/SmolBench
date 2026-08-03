@@ -49,7 +49,7 @@ from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
 import requests
 from joblib import Parallel, delayed
 
-from smolbench.evals import Answer, Quiz, Mark, Marks
+from smolbench.evals import Quiz, Mark, Marks
 
 #: HTTP timeout (seconds) for provider METADATA requests -- catalog listings
 #: (e.g. ``GET /models``) and context-length lookups -- as distinct from chat
@@ -189,10 +189,25 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
           log_invalid: bool = False) -> Marks:
     """Grades raw (content, reasoning) responses against a quiz.
 
-    Each response is conditioned by its question's ``QnA.condition``; a
-    ``ValueError`` there means the response could not be turned into an
-    ``Answer`` and the question is marked invalid (``score=None``) rather
-    than wrong -- ``Marks.invalid`` counts these separately downstream.
+    Each response goes through ``smolbench.evals.parsing.parse_for``, which
+    returns both the extracted answer and a label for how the response
+    disobeyed the prompt's output contract (None when it obeyed exactly).
+    Those two results are recorded independently: ``score`` says whether the
+    model was RIGHT, ``compliance`` says whether it followed the FORMAT.
+
+    That separation is the point. Grading used to call ``QnA.condition``
+    directly, so a right answer in the wrong shape (``"Answer: False"`` when
+    the prompt demanded a bare ``False``) raised and scored as invalid --
+    indistinguishable from a wrong answer. The induction ``noise_intens`` arm
+    made that costly: it is supposed to control for prompt LENGTH only, but
+    its whitespace padding measurably degrades instruction following, so a
+    chunk of its marks were failing on formatting rather than reasoning.
+    Recovering the answer while flagging the violation keeps both facts.
+
+    A response that genuinely yields no answer -- empty, repetition collapse,
+    or a reasoning chain truncated before any verdict -- still scores None.
+    Recovery is deliberately conservative about long responses; see
+    ``smolbench.evals.parsing``.
 
     Parameters
     ----------
@@ -203,25 +218,31 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
     model:
         Model identifier recorded on the returned ``Marks``.
     log_invalid:
-        When True, conditioning failures are logged at INFO level.
+        When True, unparseable responses are logged at INFO level.
 
     Returns
     -------
     A ``Marks`` with one ``Mark`` per question (score 1 correct / 0 wrong /
-    None invalid).
+    None invalid), each carrying its ``compliance`` label.
     """
+    from smolbench.evals.parsing import parse_for
+
     mark_list: List[Mark] = []
     for q, (raw, reasoning) in zip(quiz, responses):
-        try:
-            conditioned: Answer = q.condition(raw)
-        except ValueError as e:
+        parsed = parse_for(q, raw)
+        if parsed.value is None:
             if log_invalid:
-                logging.info(e)
+                logging.info(
+                    f"unparseable response ({parsed.violation}): {raw[:120]!r}"
+                )
             mark_list.append(Mark(query=q.prompt, answer=q.answer,
-                                  response=raw, reasoning=reasoning, score=None))
+                                  response=raw, reasoning=reasoning, score=None,
+                                  compliance=parsed.violation))
             continue
         mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
-                              reasoning=reasoning, score=int(q.score(conditioned))))
+                              reasoning=reasoning,
+                              score=int(q.score(parsed.value)),
+                              compliance=parsed.violation))
     return Marks(model=model, marks=tuple(mark_list))
 
 

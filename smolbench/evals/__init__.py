@@ -84,6 +84,16 @@ class Mark:
     score: Optional[int]
     #: Chain-of-thought reasoning returned by the model, if any.
     reasoning: Optional[str] = None
+    #: How the response disobeyed the prompt's output contract, or None when
+    #: it obeyed it exactly. See `smolbench.evals.parsing` for the labels.
+    #: Separating this from ``score`` is what lets an analysis distinguish
+    #: "the model was wrong" from "the model was right but ignored the
+    #: format" -- the two used to be the same event, because a response the
+    #: strict parser could not read scored as a failure. Optional with a None
+    #: default so replicate YAMLs written before this field existed still
+    #: load (``Marks.load`` builds each mark with ``Mark(**m)``); None there
+    #: means "not assessed", not "compliant".
+    compliance: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,18 @@ class Marks:
     @property
     def invalid(self) -> int:
         return sum(1 for m in self.marks if m.score is None)
+
+    @property
+    def noncompliant(self) -> int:
+        """Marks whose response disobeyed the prompt's output contract.
+
+        Counted independently of ``correct``/``incorrect``/``invalid``: a
+        response can be graded correct and still have ignored the format, and
+        that is exactly the population worth reporting when a condition (the
+        induction ``noise_intens`` arm, say) is suspected of degrading
+        instruction following rather than reasoning.
+        """
+        return sum(1 for m in self.marks if m.compliance is not None)
 
     # -- Serialization ------------------------------------------------------
     # Result files are plain-dict YAML (safe_dump of dataclasses.asdict), NOT
