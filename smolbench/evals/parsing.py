@@ -103,6 +103,20 @@ _DEGENERATE_MIN_LEN = 500
 #: enough that ordinary repetition (a rule of dashes, a run of newlines) does
 #: not trip it, short enough to catch a model that broke down near the end.
 _DEGENERATE_TAIL = 400
+#: Word-level collapse: how many trailing words to examine, and how few
+#: distinct ones among them means the model is looping on a phrase rather
+#: than writing. Sized so ordinary prose never qualifies -- 60 consecutive
+#: words of genuine text carry far more than 8 distinct tokens.
+_DEGENERATE_MIN_WORDS = 60
+_DEGENERATE_WORD_ALPHABET = 8
+#: Whole-response vocabulary collapse. Llama-4-Maverick looped "## Step 1"
+#: for thousands of words and then drifted into unrelated hallucinated text,
+#: so neither its tail nor its character alphabet looks wrong -- but it used
+#: 67 distinct words across 4,746 (1.4%). Genuine reasoning of that length
+#: runs an order of magnitude richer, so a ratio this low means the model
+#: stopped composing.
+_DEGENERATE_RATIO_MIN_WORDS = 200
+_DEGENERATE_WORD_RATIO = 0.05
 
 _TOF_TOKEN = re.compile(r"\b(true|false)\b", re.IGNORECASE)
 _YES_NO = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
@@ -159,13 +173,17 @@ def is_degenerate(text: str) -> bool:
       characters of "0", the whole completion budget, with nothing else;
     * collapse after a real beginning -- Olmo-3.1-32B-Think started
       reasoning and then devolved into ~16,400 repeated U+2010 hyphens until
-      the budget ran out.
+      the budget ran out;
+    * collapse onto a PHRASE rather than a character -- Llama-4-Maverick
+      looped ``"## Step 1\\n\\n"`` for the whole budget. Its alphabet is wide
+      (letters, digits, punctuation), so a character-level test sees nothing
+      wrong and the response gets mislabelled as a mere formatting problem.
 
-    The second shape is why the tail is checked separately. Judging the whole
-    string would see a wide alphabet (the genuine prose at the front) and
-    mislabel the response `TRUNCATED`, which would blame the completion
-    budget for what is actually the model breaking down -- a materially
-    different finding.
+    The second shape is why the tail is checked separately, and the third is
+    why words are checked as well as characters. Getting this wrong is not
+    cosmetic: calling a collapse `TRUNCATED` blames the completion budget,
+    and calling it `MULTIPLE_VALUES` blames the parser, when the finding is
+    that the condition breaks the model outright.
     """
     stripped = text.strip()
     if not stripped:
@@ -176,10 +194,25 @@ def is_degenerate(text: str) -> bool:
     ):
         return True
     tail = stripped[-_DEGENERATE_TAIL:]
-    return (
+    if (
         len(stripped) >= _DEGENERATE_MIN_LEN
         and len(tail) >= _DEGENERATE_TAIL
         and len(set(tail)) <= _DEGENERATE_ALPHABET
+    ):
+        return True
+    # Phrase-level looping: a long stretch of text drawing on only a handful
+    # of distinct words.
+    words = stripped.split()
+    if len(words) < _DEGENERATE_MIN_WORDS:
+        return False
+    word_tail = words[-_DEGENERATE_MIN_WORDS:]
+    if len(set(word_tail)) <= _DEGENERATE_WORD_ALPHABET:
+        return True
+    # Vocabulary collapse across the whole response, for a model that loops
+    # and then wanders instead of looping all the way to the end.
+    return (
+        len(words) >= _DEGENERATE_RATIO_MIN_WORDS
+        and len(set(words)) / len(words) <= _DEGENERATE_WORD_RATIO
     )
 
 

@@ -184,10 +184,60 @@ def test_collapse_after_a_real_beginning_is_degenerate_not_truncated():
     assert result.violation == DEGENERATE
 
 
+def test_phrase_level_collapse_is_degenerate():
+    """Looping a PHRASE is collapse even though the alphabet is wide.
+
+    Llama-4-Maverick under the whitespace-padded noise arm looped
+    ``"## Step 1"`` for thousands of words. Every character-level test sees a
+    normal alphabet (letters, digits, punctuation), so without a word-level
+    check this got labelled ``multiple-values`` -- blaming the parser for what
+    is the model breaking down.
+    """
+    result = parse_numeric("## Step 1\n\n" * 300)
+    assert result.value is None
+    assert result.violation == DEGENERATE
+
+
+def test_vocabulary_collapse_over_a_whole_response_is_degenerate():
+    """Loop-then-wander still counts, even when the tail looks varied.
+
+    Maverick's real responses looped a header for thousands of words and then
+    drifted into unrelated hallucinated text ending in a boxed number, so
+    neither the tail nor the alphabet looked wrong -- but the response used 67
+    distinct words across 4,746. A whole-response diversity ratio is what
+    catches that shape.
+    """
+    looped = "## Step 1\n\n" * 400
+    wandered = " ".join(f"unrelated token {i}" for i in range(20))
+    result = parse_numeric(looped + wandered + "\n\nThe final answer is: 1")
+    assert result.violation == DEGENERATE
+
+
+def test_long_genuine_reasoning_is_not_flagged_degenerate():
+    """Real reasoning of the same length must survive the ratio rule."""
+    from smolbench.evals.parsing import is_degenerate
+
+    prose = " ".join(
+        f"consider interval {i} where colour {i % 7} held the role until year {i * 3}"
+        for i in range(300)
+    )
+    assert not is_degenerate(prose)
+
+
 def test_ordinary_repetition_is_not_flagged_degenerate():
-    """A rule of dashes or trailing newlines must not trip the detector."""
-    assert parse_tof("Some reasoning. " * 40 + "\n" * 20 + "False").value is False
-    assert not parse_tof("-" * 60 + "\nTrue").violation == DEGENERATE
+    """Formatting artefacts must not trip the detector.
+
+    A horizontal rule, a run of trailing newlines, or varied prose that
+    happens to be long are all normal output. Only genuine looping counts --
+    a model that repeats one phrase for forty sentences has broken down, so
+    that case belongs in the degenerate tests above, not here.
+    """
+    varied = " ".join(
+        f"in year {i} the role passed to colour {i % 5}" for i in range(40)
+    )
+    assert parse_tof(varied + "\n\nFalse").value is False
+    assert parse_tof("-" * 60 + "\nTrue").violation != DEGENERATE
+    assert parse_tof("True" + "\n" * 40).violation != DEGENERATE
 
 
 def test_truncated_reasoning_is_not_mined_for_a_verdict():
