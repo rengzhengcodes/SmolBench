@@ -144,6 +144,13 @@ def test_apply_env_pops_state_file_when_none(monkeypatch, exp):
 
 
 def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
+    # run() now skips serving when the model has no outstanding replicates
+    # (serving means pulling the checkpoint, so doing it for no work is
+    # billed time). This test is about the serve/forward SEQUENCING, so it
+    # states the precondition explicitly rather than depending on whatever
+    # happens to be in the repo's real results tree -- which is what `exp`
+    # points at, and which is fully populated for this archetype.
+    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
     events = []
 
     @contextlib.contextmanager
@@ -189,7 +196,31 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
 
 
+def test_run_skips_serving_when_nothing_is_outstanding(monkeypatch, exp):
+    """No work => do not swap the instance's vLLM container.
+
+    Entering serve_model pulls and loads the checkpoint -- hundreds of GB for
+    the large archetypes -- so doing it only to find every replicate already
+    on disk is pure billed time. Hit for real on a resumed run, where the
+    finished arms are re-served before the outstanding one is reached.
+    """
+    served = []
+    monkeypatch.setattr(
+        ec2, "serve_model", lambda model: served.append(model) or contextlib.nullcontext(model)
+    )
+    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: False)
+    monkeypatch.setattr(
+        ReplicateHarness,
+        "run_replicates",
+        lambda *a, **k: pytest.fail("run_replicates must not run with no work"),
+    )
+
+    exp.run("stub-model")
+    assert served == []
+
+
 def test_run_forwards_no_kwargs_when_caller_passes_none(monkeypatch, exp):
+    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
     monkeypatch.setattr(ec2, "serve_model", lambda model: contextlib.nullcontext(model))
     captured_kwargs = {}
 

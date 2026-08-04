@@ -77,6 +77,36 @@ class ReplicateHarness:
     def _rep_path(self, tag: str, info: str, seed: int) -> Path:
         return self.results_dir / f"{self.prefix}{tag}_{info}" / f"rep_{seed}.yaml"
 
+    def has_outstanding(self, model: str) -> bool:
+        """Whether any replicate for `model` still needs to be evaluated.
+
+        Lets a caller skip SERVING a model it has no work for. That matters
+        on a resumed run: swapping vLLM to a finished archetype means pulling
+        and loading its checkpoint -- hundreds of GB for the large models --
+        only to discover every replicate is already on disk. Cheap to ask
+        (it is the same ``_rep_path`` existence check ``run_replicates``
+        makes) and it consults the filesystem each time, so it stays correct
+        as replicates land.
+
+        Parameters
+        ----------
+        model:
+            Model id; must be a key of ``archetype_tags``, as for
+            ``run_replicates``.
+
+        Returns
+        -------
+        bool
+            True when at least one (info type, seed) has no serialized
+            replicate yet.
+        """
+        tag: str = self.archetype_tags[model]
+        return any(
+            not self._rep_path(tag, info, seed).exists()
+            for seed in self.seeds
+            for info in self.info_types
+        )
+
     def run_replicates(
         self,
         model: str,

@@ -74,6 +74,7 @@ CALL time, not import time -- see that module's docstring.)
 """
 
 import functools
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -345,6 +346,18 @@ class InductionExperiment:
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
         from smolbench.evals import ec2
+
+        # Nothing to do => do not SERVE. Entering serve_model swaps the
+        # instance's vLLM container to this checkpoint, which for the large
+        # archetypes means pulling and loading hundreds of GB; doing that to
+        # then discover every replicate is already on disk is pure billed
+        # time. Hit for real on a resumed run, where the completed arms are
+        # re-served before the outstanding one is reached.
+        if not self.harness.has_outstanding(model):
+            logging.info(
+                f"run: {model!r} has no outstanding replicates; skipping serve"
+            )
+            return
 
         # Design: forward exactly what the caller passed, with no filtering
         # here -- ReplicateHarness.run_replicates already implements

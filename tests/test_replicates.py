@@ -168,6 +168,27 @@ def test_cot_chain_lengths_reports_word_counts(harness, capsys):
     assert "cot/extens: no reasoning chains found" in out
 
 
+def test_has_outstanding_tracks_serialized_replicates(harness, fake_evaluate):
+    """Reports whether a model has work left, so callers can skip SERVING it.
+
+    This is a spend guard, not an optimisation. ``InductionExperiment.run``
+    enters ``serve_model`` before looking for work, which swaps the
+    instance's vLLM container to that checkpoint -- hundreds of GB for the
+    large archetypes. On a resumed run the already-finished arms get served
+    first and the pull is billed to discover there is nothing to do.
+    """
+    assert harness.has_outstanding("stub-model")
+    harness.run_replicates("stub-model")
+    assert not harness.has_outstanding("stub-model")
+
+
+def test_has_outstanding_is_true_when_only_one_arm_is_missing(harness, fake_evaluate, tmp_path):
+    """A single missing (info, seed) is enough to require serving."""
+    harness.run_replicates("stub-model")
+    (tmp_path / "decode_extens" / "rep_2.yaml").unlink()
+    assert harness.has_outstanding("stub-model")
+
+
 def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
     prefixed = ReplicateHarness(
         results_dir=tmp_path,
