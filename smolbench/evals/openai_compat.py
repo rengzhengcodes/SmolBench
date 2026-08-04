@@ -229,7 +229,30 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
 
     mark_list: List[Mark] = []
     for q, (raw, reasoning) in zip(quiz, responses):
-        parsed = parse_for(q, raw)
+        try:
+            parsed = parse_for(q, raw)
+        except Exception as exc:  # noqa: BLE001 -- see below; deliberate
+            # A parser bug must not destroy a run. Grading happens after the
+            # expensive part -- hours of GPU time and every replicate already
+            # graded in this process -- so an exception here throws away work
+            # that cannot be recovered by retrying, and on a spot instance it
+            # keeps billing while nothing progresses. This happened: a model
+            # emitted a 20,379-digit number and int() raised (Python refuses
+            # int/str conversion past 4,300 digits), which propagated out of
+            # grade() and killed a live study mid-arm.
+            #
+            # An unreadable response is exactly what `score=None` means, so
+            # degrading to "invalid" loses nothing but the one mark, and the
+            # raw text is still stored for re-grading offline once the parser
+            # is fixed.
+            logging.warning(
+                f"grade: parser raised on a response, marking invalid: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
+                                  reasoning=reasoning, score=None,
+                                  compliance="parser-error"))
+            continue
         if parsed.value is None:
             if log_invalid:
                 logging.info(

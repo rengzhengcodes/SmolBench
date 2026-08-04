@@ -118,6 +118,14 @@ _DEGENERATE_WORD_ALPHABET = 8
 _DEGENERATE_RATIO_MIN_WORDS = 200
 _DEGENERATE_WORD_RATIO = 0.05
 
+#: Longest integer we will convert. Python raises ValueError above 4,300
+#: digits (int/str conversion limit), and a degenerating model really does
+#: emit numbers that long -- one response carried a 20,379-digit run, which
+#: crashed grading and took a live run down with it. The eval's answers are
+#: counts bounded by lcm(1..9) = 2520, so anything past this many digits is
+#: not an answer under any reading.
+_MAX_ANSWER_DIGITS = 40
+
 _TOF_TOKEN = re.compile(r"\b(true|false)\b", re.IGNORECASE)
 _YES_NO = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
 _INT = re.compile(r"-?\d+")
@@ -281,6 +289,25 @@ def _eval_arithmetic(text: str) -> Optional[int]:
     return int(value)
 
 
+def _safe_int(digits: str) -> Optional[int]:
+    """Converts `digits` to int, or returns None when it is absurdly long.
+
+    Guards two things at once. Python refuses int/str conversion beyond 4,300
+    digits and raises ValueError, so an unguarded ``int()`` in the grading
+    path is a crash rather than a bad grade -- one that took a live run down
+    when a model emitted a 20,379-digit run. And a number that long is not a
+    plausible answer regardless: these quizzes count occurrences, bounded by
+    lcm(1..9) = 2520.
+    """
+    stripped = digits.lstrip("-")
+    if len(stripped) > _MAX_ANSWER_DIGITS:
+        return None
+    try:
+        return int(digits)
+    except ValueError:  # pragma: no cover -- length check already covers it
+        return None
+
+
 def _preamble(text: str) -> Optional[str]:
     """Classifies a response that carries extra material around its answer."""
     return VERBOSE if len(text.strip()) > _LONG_RESPONSE else PREFIXED
@@ -354,17 +381,18 @@ def parse_numeric(text: str) -> ParseResult:
     stripped = text.strip()
 
     if re.fullmatch(r"-?\d+", stripped):
-        return ParseResult(int(stripped), None)
+        value = _safe_int(stripped)
+        return ParseResult(value, None if value is not None else DEGENERATE)
 
     # A bare integer wearing markup/punctuation, e.g. "**42**" or '"42".' --
     # the number alone, so only the "no punctuation" clause was broken.
     if re.fullmatch(r"[\s*_`\"'.]*-?\d+[\s*_`\"'.]*", stripped):
-        return ParseResult(int(_INT.search(stripped).group()), MARKUP)
+        return ParseResult(_safe_int(_INT.search(stripped).group()), MARKUP)
 
     # A bare integer in answer markup, e.g. "\boxed{280}".
     boxed = _TERMINAL_INT.fullmatch(stripped)
     if boxed:
-        return ParseResult(int(boxed.group(1)), MARKUP)
+        return ParseResult(_safe_int(boxed.group(1)), MARKUP)
 
     # A calculation rather than its result, e.g. "2520/2". Tried before any
     # integer-picking rule, because every such rule scores an operand.
@@ -377,20 +405,20 @@ def parse_numeric(text: str) -> ParseResult:
         return ParseResult(None, TRUNCATED if len(stripped) > _LONG_RESPONSE else UNPARSEABLE)
 
     if len(ints) == 1:
-        return ParseResult(int(ints[0]), _preamble(stripped))
+        return ParseResult(_safe_int(ints[0]), _preamble(stripped))
 
     # Several integers. A concluding "Answer: N" or a terminal integer is the
     # result; the earlier ones are working. Taking the FIRST (the old rule) is
     # what produced silent mis-grades.
     terminal = _TERMINAL_INT.search(stripped[-_TAIL_WINDOW:])
     if terminal:
-        return ParseResult(int(terminal.group(1)), MULTIPLE_VALUES)
+        return ParseResult(_safe_int(terminal.group(1)), MULTIPLE_VALUES)
     lead = _ANSWER_LEAD.split(stripped, maxsplit=1)
     if len(lead) > 1:
         after = _INT.findall(lead[1])
         if after:
-            return ParseResult(int(after[0]), MULTIPLE_VALUES)
-    return ParseResult(int(ints[-1]), MULTIPLE_VALUES)
+            return ParseResult(_safe_int(after[0]), MULTIPLE_VALUES)
+    return ParseResult(_safe_int(ints[-1]), MULTIPLE_VALUES)
 
 
 def parse_for(question: QnA, text: str) -> ParseResult:

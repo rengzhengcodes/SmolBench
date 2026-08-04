@@ -142,6 +142,52 @@ def test_numeric_refuses_unsafe_or_ill_formed_expressions(text):
     assert result.violation != "unevaluated-expression"
 
 
+@pytest.mark.parametrize(
+    "text", ["The count is " + "0" * 20379 + " items", "9" * 5000, "-" + "7" * 9000]
+)
+def test_absurdly_long_integers_do_not_raise(text):
+    """A giant digit run yields no answer instead of crashing.
+
+    Python refuses int/str conversion past 4,300 digits, so an unguarded
+    ``int()`` in the grading path is a crash, not a bad grade. A degenerating
+    model really does emit these: one response carried a 20,379-digit run,
+    which propagated out of grade() and killed a live study mid-arm after
+    hours of GPU time.
+    """
+    result = parse_numeric(text)
+    assert result.value is None
+    assert result.violation is not None
+
+
+def test_grade_survives_a_parser_exception():
+    """A parser bug degrades one mark to invalid; it must not kill the run.
+
+    Grading runs after the expensive part, so an exception here throws away
+    work that retrying cannot recover -- and on a spot instance the box keeps
+    billing while nothing progresses.
+    """
+    import smolbench.evals.openai_compat as oc
+    import smolbench.evals.parsing as parsing_mod
+
+    def exploding_parse(question, text):
+        raise RuntimeError("simulated parser bug")
+
+    # grade() imports parse_for from the module at call time, so patching the
+    # module attribute is what the running code will see.
+    saved = parsing_mod.parse_for
+    parsing_mod.parse_for = exploding_parse
+    try:
+        marks = oc.grade(
+            (ToF(prompt="q", answer=True),), [("True", None)], "stub-model"
+        )
+    finally:
+        parsing_mod.parse_for = saved
+
+    assert marks.marks[0].score is None
+    assert marks.marks[0].compliance == "parser-error"
+    assert marks.marks[0].response == "True"  # raw text kept for re-grading
+
+
 def test_arithmetic_evaluation_cannot_execute_code():
     """The evaluator walks a validated AST; it never calls ``eval``."""
     from smolbench.evals.parsing import _eval_arithmetic
