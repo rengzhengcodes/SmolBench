@@ -68,11 +68,52 @@ STUDIES: Dict[str, Dict] = {
 EXPECTED_SEEDS = list(range(1776, 1806))  # R=30, the notebooks' BASE_SEED..+29
 
 
+#: What to actually do about each failure class. A single "invalid rate is
+#: high" number is not actionable -- these three want opposite responses.
+_REMEDY = {
+    "prefixed": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "wrong-lexicon": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "verbose": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "markup": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "multiple-values": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "unevaluated-expression": "re-grade with scripts/regrade.py; the answers are recoverable",
+    "truncated": "raise max_completion_tokens -- chains are being cut off",
+    "degenerate-repetition": "NOT fixable by grading or budget -- this condition "
+    "collapses the model; report the arm as unusable",
+    "empty": "the endpoint may have been unreachable; check the run log",
+}
+
+
 def load_marks(path: Path):
     """Returns a replicate's Marks, or None when the file is absent."""
     from smolbench.evals import Marks
 
     return Marks.load(path) if path.exists() else None
+
+
+def dominant_violation(noise_dir: Path, seeds) -> tuple:
+    """Returns (most common violation label among invalids, its share).
+
+    Sampled over a few replicates rather than all of them: chromatic files
+    run ~8MB each and the label distribution within an arm is stable.
+    """
+    from collections import Counter
+
+    from smolbench.evals.parsing import parse_numeric, parse_tof
+
+    parse = parse_tof if "chromatic" in str(noise_dir) else parse_numeric
+    counts: Counter = Counter()
+    for seed in list(seeds)[:3]:
+        marks = load_marks(noise_dir / f"rep_{seed}.yaml")
+        if not marks:
+            continue
+        for mark in marks.marks:
+            if mark.score is None:
+                counts[parse(mark.response).violation] += 1
+    if not counts:
+        return "unknown", 0.0
+    label, count = counts.most_common(1)[0]
+    return label, count / sum(counts.values())
 
 
 def check_study(name: str, spec: Dict, sample_seeds: List[int]) -> List[str]:
@@ -116,9 +157,16 @@ def check_study(name: str, spec: Dict, sample_seeds: List[int]) -> List[str]:
                 end="",
             )
             if invalid / total > 0.15:
+                # Name the dominant cause rather than guessing. A high invalid
+                # rate has at least three very different fixes: format
+                # violations are recoverable by re-grading, truncation wants a
+                # bigger completion budget, and repetition collapse means the
+                # condition breaks the model and no amount of budget helps.
+                cause, share = dominant_violation(noise_dir, present)
                 problems.append(
                     f"{name}/{tag}: invalid rate {invalid / total:.1%} > 15% "
-                    "-- check the completion budget"
+                    f"-- dominant cause '{cause}' ({share:.0%} of invalids): "
+                    f"{_REMEDY.get(cause, 'inspect the responses')}"
                 )
         print()
 
