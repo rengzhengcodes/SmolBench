@@ -35,6 +35,19 @@ Run (repo root, main venv):
     .venv/bin/python notebooks/periodic/run_study.py
 Environment:
     PERIODIC_N_REPLICATES  replicate count (default 30, the notebook's R)
+    PERIODIC_MODELS        comma-separated archetype tags to run (default all
+                           three: cot,moe,decode). Exists so a live run can be
+                           resumed one archetype at a time. This matters
+                           because a single box serves the three checkpoints in
+                           turn, so anything that strands the run -- a spot
+                           reclaim, an endpoint that stops answering -- costs
+                           the whole remaining sweep. One run spent five hours
+                           retrying a box that had gone unreachable, on billing
+                           hardware, producing nothing; all 217 timeout lines
+                           named that one dead host. Re-running only the
+                           archetype that is actually short is the difference
+                           between finishing a study and re-paying for the
+                           arms that already landed.
 """
 
 import logging
@@ -128,13 +141,42 @@ EXPERIMENT = InductionExperiment(
 )
 
 
+#: Archetype tag -> model, for the PERIODIC_MODELS selector.
+_BY_TAG = {"cot": COT_MODEL, "moe": MOE_MODEL, "decode": DENSE_MODEL}
+
+
+def selected_models() -> tuple:
+    """Returns the (model, extra_args) pairs this invocation should run.
+
+    Honours ``PERIODIC_MODELS`` (comma-separated archetype tags); defaults to
+    all three in smallest-checkpoint-first order.
+    """
+    order = (
+        (COT_MODEL, {"max_completion_tokens": 8192}),
+        (MOE_MODEL, None),
+        (DENSE_MODEL, None),
+    )
+    wanted = os.environ.get("PERIODIC_MODELS", "").strip()
+    if not wanted:
+        return order
+    tags = [t.strip() for t in wanted.split(",") if t.strip()]
+    unknown = [t for t in tags if t not in _BY_TAG]
+    if unknown:
+        raise SystemExit(f"PERIODIC_MODELS: unknown tag(s) {unknown}; pick from {sorted(_BY_TAG)}")
+    chosen = {_BY_TAG[t] for t in tags}
+    return tuple((m, a) for m, a in order if m in chosen)
+
+
 def main() -> None:
     """Provisions one box, runs every outstanding replicate, tears down."""
+    models = selected_models()
+    logging.info(f"running archetypes: {[m for m, _ in models]}")
+
     # Warm every tokenizer BEFORE provisioning. make_quizzes resolves a
     # model's tokenizer from the HF hub, and doing that for the first time
     # inside the run loop would put a network download -- and its failure
     # modes -- between an already-billing GPU box and the first request.
-    for model in (DENSE_MODEL, COT_MODEL, MOE_MODEL):
+    for model, _ in models:
         logging.info(f"warming tokenizer for {model}: {for_model(model).name}")
 
     EXPERIMENT.provision()
@@ -148,11 +190,7 @@ def main() -> None:
     # Ultra's chain-of-thought comes from the "detailed thinking on" system
     # prompt its EC2_DEPLOY_SPECS entry injects, so user prompts stay
     # byte-identical across archetypes.
-    for model, extra_args in (
-        (COT_MODEL, {"max_completion_tokens": 8192}),
-        (MOE_MODEL, None),
-        (DENSE_MODEL, None),
-    ):
+    for model, extra_args in models:
         EXPERIMENT.run(model, **({"extra_args": extra_args} if extra_args else {}))
         EXPERIMENT.summarize(model)
     EXPERIMENT.teardown()
