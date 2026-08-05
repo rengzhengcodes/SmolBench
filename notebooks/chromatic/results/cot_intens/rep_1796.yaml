@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-17 22:26:34.752212+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: true
+marks:
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -432,8 +431,8 @@ marks: !!python/tuple
         \ True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -704,8 +703,8 @@ marks: !!python/tuple
         \ I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -1008,8 +1007,8 @@ marks: !!python/tuple
         \nTherefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -1394,8 +1393,8 @@ marks: !!python/tuple
         \ lt and Jb, so it's valid. \n\nThus, the output should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -1769,8 +1768,8 @@ marks: !!python/tuple
         \ \n\nTherefore, I think the correct answer is True, so output \"True\"."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -2101,8 +2100,8 @@ marks: !!python/tuple
         \ the output should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -2565,8 +2564,8 @@ marks: !!python/tuple
         Therefore, I think the correct answer is True. So I should output True.'
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -2735,8 +2734,8 @@ marks: !!python/tuple
         \ is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -3696,8 +3695,8 @@ marks: !!python/tuple
         Thus, I think the correct output is True.'
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -3954,8 +3953,8 @@ marks: !!python/tuple
         \ answer is True. So I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -4262,8 +4261,8 @@ marks: !!python/tuple
         \ the next person is different. Therefore, the answer is False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -4626,8 +4625,8 @@ marks: !!python/tuple
         \ the correct output should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -5044,8 +5043,8 @@ marks: !!python/tuple
         \ the answer is True."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -5233,8 +5232,8 @@ marks: !!python/tuple
         \ context allows that. So I think it's valid. Therefore, the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -5627,8 +5626,8 @@ marks: !!python/tuple
         \ True. \n\nTherefore, the correct output should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -5907,8 +5906,8 @@ marks: !!python/tuple
         \ \n\nTherefore, the answer is True. So I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -6107,8 +6106,8 @@ marks: !!python/tuple
         \ is possible, so the answer is True. So I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -6338,8 +6337,8 @@ marks: !!python/tuple
         \ True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -6575,8 +6574,8 @@ marks: !!python/tuple
         \ output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -6957,8 +6956,8 @@ marks: !!python/tuple
         impossible. So the answer is False.'
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -7448,8 +7447,8 @@ marks: !!python/tuple
         \ no later terms. \n\nThus, the final answer should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -7880,8 +7879,8 @@ marks: !!python/tuple
         \ output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -8174,8 +8173,8 @@ marks: !!python/tuple
         \ True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -8460,8 +8459,8 @@ marks: !!python/tuple
         \ did occur. Therefore, the answer should be True. So I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -8771,8 +8770,8 @@ marks: !!python/tuple
         \ output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -9159,8 +9158,8 @@ marks: !!python/tuple
         Therefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -9449,8 +9448,8 @@ marks: !!python/tuple
         \ answer is False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -9723,8 +9722,8 @@ marks: !!python/tuple
         \ should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -10004,8 +10003,8 @@ marks: !!python/tuple
         \ else."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -10216,8 +10215,8 @@ marks: !!python/tuple
         \ Therefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -10540,8 +10539,8 @@ marks: !!python/tuple
         \nTherefore, I think the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -10870,8 +10869,8 @@ marks: !!python/tuple
         \ is that it's impossible, so the answer is False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -11092,8 +11091,8 @@ marks: !!python/tuple
         \ So yes, it's a direct succession. \n\nTherefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -11389,8 +11388,8 @@ marks: !!python/tuple
         \ correct answer is True, so output \"True\"."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -12014,8 +12013,8 @@ marks: !!python/tuple
         \ overlap, making it impossible. Therefore, the answer is False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -12590,8 +12589,8 @@ marks: !!python/tuple
         \ then DC handed to kR.\n\nTherefore, the answer is True."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -12827,8 +12826,8 @@ marks: !!python/tuple
         So yes, no gap. So the handover happens. So the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -13216,8 +13215,8 @@ marks: !!python/tuple
         Therefore, the correct output should be True.'
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -13561,8 +13560,8 @@ marks: !!python/tuple
         \ DC2's ends, then it's valid. \n\nTherefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -14089,8 +14088,8 @@ marks: !!python/tuple
         \ the answer is False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -14473,8 +14472,8 @@ marks: !!python/tuple
         others, but never Lj. So the answer is False.'
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -14845,8 +14844,8 @@ marks: !!python/tuple
         \ the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -15215,8 +15214,8 @@ marks: !!python/tuple
         \ Fy. \n\nTherefore, the answer is True. So I should output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -15714,8 +15713,8 @@ marks: !!python/tuple
         \ next. So yes, Fy handed to nQ. \n\nTherefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -15901,8 +15900,8 @@ marks: !!python/tuple
         \ False."
     response: 'False'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -16088,8 +16087,8 @@ marks: !!python/tuple
         \ So the answer is True.\n\nTherefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -16523,8 +16522,8 @@ marks: !!python/tuple
         \ lg was twice). So no issue. \n\nFinal conclusion: True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -16768,8 +16767,8 @@ marks: !!python/tuple
         Therefore, the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -16986,8 +16985,8 @@ marks: !!python/tuple
         \ is allowed. \n\nTherefore, the correct output should be True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -17371,8 +17370,8 @@ marks: !!python/tuple
         Therefore, the correct output is True.'
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -17555,8 +17554,8 @@ marks: !!python/tuple
         \ answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -17863,8 +17862,8 @@ marks: !!python/tuple
         \ from GT to aJ is valid. So the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -18201,8 +18200,8 @@ marks: !!python/tuple
         \ I should output \"True\"."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -18399,8 +18398,8 @@ marks: !!python/tuple
         \ is correct. \n\nTherefore, the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -18695,8 +18694,8 @@ marks: !!python/tuple
         \ the answer is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -18943,8 +18942,8 @@ marks: !!python/tuple
         \ it's possible. So output True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -19306,8 +19305,8 @@ marks: !!python/tuple
         \ is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -19711,8 +19710,8 @@ marks: !!python/tuple
         \ is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: true
+-   answer: true
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -19940,8 +19939,8 @@ marks: !!python/tuple
         \ the correct output is True."
     response: 'True'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -20076,8 +20075,8 @@ marks: !!python/tuple
         \ the answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -20431,8 +20430,8 @@ marks: !!python/tuple
         Therefore, the correct output is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -20692,8 +20691,8 @@ marks: !!python/tuple
         \ the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -20987,8 +20986,8 @@ marks: !!python/tuple
         \ is not present in any of the Twislax entries. Therefore, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -21130,8 +21129,8 @@ marks: !!python/tuple
         \ Twislax, so couldn't have handed over the sceptre to anyone, including lg."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -21310,8 +21309,8 @@ marks: !!python/tuple
         \ is logically impossible."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -21505,8 +21504,8 @@ marks: !!python/tuple
         \ answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -21646,8 +21645,8 @@ marks: !!python/tuple
         \ holders, so the handover couldn't have happened according to the given data."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -21801,8 +21800,8 @@ marks: !!python/tuple
         \ QA's term began. So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -22109,8 +22108,8 @@ marks: !!python/tuple
         \ So no direct handover from nQ to sK.\n\nTherefore, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -22251,8 +22250,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -22490,8 +22489,8 @@ marks: !!python/tuple
         next, then no, it''s not possible for it to be bk. So the answer is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -22640,8 +22639,8 @@ marks: !!python/tuple
         \ False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -22879,8 +22878,8 @@ marks: !!python/tuple
         \ So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -23147,8 +23146,8 @@ marks: !!python/tuple
         \ lg or GT, not Fy. \n\nSo the answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -23328,8 +23327,8 @@ marks: !!python/tuple
         \ happen. So the correct output is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -23617,8 +23616,8 @@ marks: !!python/tuple
         it must be an individual. Therefore, the correct answer is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -23939,8 +23938,8 @@ marks: !!python/tuple
         \ in line.\n\nTherefore, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -24121,8 +24120,8 @@ marks: !!python/tuple
         \ it's impossible."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -24323,8 +24322,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -24530,8 +24529,8 @@ marks: !!python/tuple
         \ had the sceptre to pass on."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -24752,8 +24751,8 @@ marks: !!python/tuple
         \ before that. \n\nSo the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -24897,8 +24896,8 @@ marks: !!python/tuple
         \ isn't a valid holder. \n\nTherefore, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -25154,8 +25153,8 @@ marks: !!python/tuple
         Therefore, the correct output is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -25333,8 +25332,8 @@ marks: !!python/tuple
         \ immediate next in line after Jg.\n\nTherefore, the correct answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -25517,8 +25516,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -25771,8 +25770,8 @@ marks: !!python/tuple
         \nTherefore, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -26039,8 +26038,8 @@ marks: !!python/tuple
         \ was Lj, not yj, the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -26218,8 +26217,8 @@ marks: !!python/tuple
         \ because AN was never a Twislax, so couldn't have handed the sceptre to anyone."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -26345,8 +26344,8 @@ marks: !!python/tuple
         \ from GV to ZG is impossible. So the answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -26639,8 +26638,8 @@ marks: !!python/tuple
         \ Ac. Therefore the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -26990,8 +26989,8 @@ marks: !!python/tuple
         \ end years.\n\nTherefore, the correct output is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -27158,8 +27157,8 @@ marks: !!python/tuple
         \ \n\nTherefore, the answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -27356,8 +27355,8 @@ marks: !!python/tuple
         \ False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -27588,8 +27587,8 @@ marks: !!python/tuple
         \ aJ can only pass to lg, so the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -27793,8 +27792,8 @@ marks: !!python/tuple
         \ the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -28261,8 +28260,8 @@ marks: !!python/tuple
         Therefore, the answer is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -28511,8 +28510,8 @@ marks: !!python/tuple
         \ the statement is logically impossible. The answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -28836,8 +28835,8 @@ marks: !!python/tuple
         \ the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -29031,8 +29030,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -29225,8 +29224,8 @@ marks: !!python/tuple
         \ The answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -29403,8 +29402,8 @@ marks: !!python/tuple
         \ GT. So the answer must be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -29663,8 +29662,8 @@ marks: !!python/tuple
         \ So the answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -29846,8 +29845,8 @@ marks: !!python/tuple
         \ answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -30065,8 +30064,8 @@ marks: !!python/tuple
         \ no, it's impossible. Therefore, the correct output is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -30260,8 +30259,8 @@ marks: !!python/tuple
         \ the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -30423,8 +30422,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -30565,8 +30564,8 @@ marks: !!python/tuple
         \ not the successor in any of Lj's terms. The answer should be False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -30755,8 +30754,8 @@ marks: !!python/tuple
         \ no instance where Fy handed the sceptre to Qe. So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -31101,8 +31100,8 @@ marks: !!python/tuple
         Therefore, the answer should be False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -31263,8 +31262,8 @@ marks: !!python/tuple
         \ So the statement is impossible. So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -31517,8 +31516,8 @@ marks: !!python/tuple
         \ the sceptre to VZ?\" is not possible, so the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -31874,8 +31873,8 @@ marks: !!python/tuple
         Therefore, the correct output is False.'
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -32015,8 +32014,8 @@ marks: !!python/tuple
         \ is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -32158,8 +32157,8 @@ marks: !!python/tuple
         \ to QA?\" is logically impossible. So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -32380,8 +32379,8 @@ marks: !!python/tuple
         \ to SQ?\" is not possible. So the answer is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -32526,8 +32525,8 @@ marks: !!python/tuple
         \ the context, so the event is impossible based on the given data."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 
@@ -32668,8 +32667,8 @@ marks: !!python/tuple
         \ So the correct output is False."
     response: 'False'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: false
+-   answer: false
+    compliance: null
     query: 'You are a Boolean classifier.
 
 

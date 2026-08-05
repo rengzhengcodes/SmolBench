@@ -1,6 +1,7 @@
 date: 2026-07-18 22:58:09.844403+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5093,6 +5094,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11269,6 +11271,7 @@ marks:
         540:'
     score: 0
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -16544,6 +16547,7 @@ marks:
         Position 626: wc|kz. Position 627: wc|qq. Position 628: wc|kz|qv. Position '
     score: 0
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -23119,6 +23123,7 @@ marks:
         736: wc|kz|qv'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -28409,6 +28414,7 @@ marks:
         (2,3,4,6,8,9). At '
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -33565,6 +33571,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -39185,8 +39192,9 @@ marks:
         We''ll need to systematically examine the list for mf presence. Could try
         to infer rule: mf corresponds to divisor 7 but maybe only when the quotient
         is not divisible by 2? Let''s test: n odd? For 7*odd: 7*1=7 mf yes'
-    score: 0
+    score: 1
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -45002,6 +45010,7 @@ marks:
         384? position 384'
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

@@ -1,6 +1,7 @@
 date: 2026-07-18 22:54:26.270994+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5151,6 +5152,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11636,6 +11638,7 @@ marks:
         700: yes (ya|vg|'
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -16794,6 +16797,7 @@ marks:
     response: '840'
     score: 1
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -22075,6 +22079,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -27967,6 +27972,7 @@ marks:
         Position 1584: ya|vg|uh'
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -33750,6 +33756,7 @@ marks:
         by 6? Let''s test: numbers divisible by 4 OR 6'
     score: 0
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -39360,6 +39367,7 @@ marks:
     response: '360'
     score: 1
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -44654,6 +44662,7 @@ marks:
         Position 551: ya. Position 552: ya|vg|uh|ht|jf|'
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

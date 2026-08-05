@@ -1,6 +1,7 @@
 date: 2026-07-19 07:03:23.049216+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -202,6 +203,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -594,6 +596,7 @@ marks:
         \ For m>0, we need the representation of m to have zero r.\n\nThus zero"
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1092,6 +1095,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1251,6 +1255,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1379,6 +1384,7 @@ marks:
     response: '0'
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1991,6 +1997,7 @@ marks:
     response: '1792'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2387,6 +2394,7 @@ marks:
         \ word (maybe like \"Fizz\","
     score: 0
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -2585,6 +2593,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

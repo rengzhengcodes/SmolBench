@@ -1,6 +1,7 @@
 date: 2026-07-18 23:31:48.023727+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5227,6 +5228,7 @@ marks:
         2520'
     score: 1
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -13111,6 +13113,7 @@ marks:
         1260'
     score: 1
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -18697,6 +18700,7 @@ marks:
         840'
     score: 1
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -28912,6 +28916,7 @@ marks:
         630'
     score: 1
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -35234,6 +35239,7 @@ marks:
         504'
     score: 1
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -45459,6 +45465,7 @@ marks:
         420'
     score: 1
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -55884,6 +55891,7 @@ marks:
         360'
     score: 1
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -62062,6 +62070,7 @@ marks:
         316'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

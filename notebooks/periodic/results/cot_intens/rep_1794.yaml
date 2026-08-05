@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-11 03:57:55.901473+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: 2520
+marks:
+-   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -238,8 +237,8 @@ marks: !!python/tuple
         \ to this, the answer is 2520.\n\nTherefore, the correct answer is 2520."
     response: '2520'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 1260
+-   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -333,8 +332,8 @@ marks: !!python/tuple
         \ indeed 2520//2 = 1260. \n\nYes, that makes sense. So the answer is 1260."
     response: '1260'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 840
+-   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -461,8 +460,8 @@ marks: !!python/tuple
         Therefore, the answer should be 840.'
     response: '840'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 630
+-   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -547,8 +546,8 @@ marks: !!python/tuple
         So the correct answer should be 630.'
     response: '630'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 504
+-   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -618,8 +617,8 @@ marks: !!python/tuple
         \ 'vk' alone, but whether 'vk' is included. So the answer is indeed 504."
     response: '504'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 420
+-   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -737,8 +736,8 @@ marks: !!python/tuple
         \ is 420. So the final answer should be 420."
     response: '420'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 360
+-   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -817,8 +816,8 @@ marks: !!python/tuple
         should be 360.'
     response: '360'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 315
+-   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -903,8 +902,8 @@ marks: !!python/tuple
         are counted once. So yes, 315 is the correct answer.'
     response: '315'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 280
+-   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

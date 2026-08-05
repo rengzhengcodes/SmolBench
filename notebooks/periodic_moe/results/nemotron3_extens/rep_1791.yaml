@@ -1,6 +1,7 @@
 date: 2026-07-18 23:00:53.847407+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5091,6 +5092,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11505,6 +11507,7 @@ marks:
         658: hh|l'
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -16688,6 +16691,7 @@ marks:
     response: '840'
     score: 1
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -21989,6 +21993,7 @@ marks:
         \ higher number? Let's test.\n\nCheck ii (7) appears at positions: 7,14,21,28,35,42,49,56,63,70,77,84,91,98,105,112,119,126,133,140,147,154,161,168,175,182,189,196,203,210,217,224,231,238,245,252,259,266,273,280,287,294,301,308,315,322,329,336,343,350,357,364,371,378,385,392,399,406,413,420,427,434,441,448,455,462,469,476,483,490,497,504,511,518,525,532,539,546,553,560,567,574,581,588,595,602,609,616,623,630,637,644,651,658,665,672,679,686,693,700,"
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -27236,6 +27241,7 @@ marks:
         \ no\n50 yes\n51 no\n52 no\n53 no\n54 no\n55 yes\n56 no\n57 no\n"
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -33652,6 +33658,7 @@ marks:
         -'
     score: 0
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -38925,6 +38932,7 @@ marks:
     response: '360'
     score: 1
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -44438,6 +44446,7 @@ marks:
     response: '315'
     score: 1
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

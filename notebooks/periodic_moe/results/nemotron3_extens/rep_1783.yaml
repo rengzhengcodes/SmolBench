@@ -1,6 +1,7 @@
 date: 2026-07-18 22:50:48.941342+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5135,6 +5136,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11462,6 +11464,7 @@ marks:
         614: ep|sf. (sf'
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -16750,6 +16753,7 @@ marks:
     response: '840'
     score: 1
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -23528,6 +23532,7 @@ marks:
         841'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -28861,6 +28866,7 @@ marks:
         \ uj matches line 36.\n\nCheck n=40: sf, or absent, ml present, yv"
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -35224,6 +35230,7 @@ marks:
         63'
     score: 0
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -40410,6 +40417,7 @@ marks:
     response: '360'
     score: 1
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -47483,6 +47491,7 @@ marks:
     response: '315'
     score: 1
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

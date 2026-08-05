@@ -1,6 +1,7 @@
 date: 2026-08-03 19:08:07.033253+00:00
 marks:
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -901,6 +902,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -1801,6 +1803,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -2701,6 +2704,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -3601,6 +3605,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -4499,8 +4504,9 @@ marks:
         \ to dl?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -5401,6 +5407,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -6301,6 +6308,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -7201,6 +7209,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -8101,6 +8110,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -9020,8 +9030,9 @@ marks:
         Answer:
 
         True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: prefixed
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -9920,8 +9931,9 @@ marks:
         \ to kt?"
     reasoning: null
     response: "Answer: \nFalse"
-    score: null
+    score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -10848,8 +10860,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -11750,6 +11763,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: prefixed
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -12648,8 +12662,9 @@ marks:
         \ to SK?"
     reasoning: null
     response: "Answer: \nFalse"
-    score: null
+    score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -13550,6 +13565,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: prefixed
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -14448,8 +14464,9 @@ marks:
         \ to Pd?"
     reasoning: null
     response: "Answer: \nTrue\n"
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -15350,6 +15367,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -16250,6 +16268,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -17148,8 +17167,9 @@ marks:
         \ to dl?"
     reasoning: null
     response: 'Yes'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -18050,6 +18070,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -18950,6 +18971,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -19850,6 +19872,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -20748,8 +20771,9 @@ marks:
         \ to Zy?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -21674,8 +21698,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -22576,6 +22601,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -23501,8 +23527,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -24403,6 +24430,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: prefixed
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -25301,8 +25329,9 @@ marks:
         \ to EP?"
     reasoning: null
     response: "Answer: \nTrue"
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -26203,6 +26232,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -27128,8 +27158,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -28030,6 +28061,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -28951,8 +28983,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -29891,8 +29924,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -30793,6 +30827,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -31693,6 +31728,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -32593,6 +32629,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -33493,6 +33530,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -34414,8 +34452,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -35314,8 +35353,9 @@ marks:
         \ to kX?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 0
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -36214,8 +36254,9 @@ marks:
         \ to Kp?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -37150,8 +37191,9 @@ marks:
         Answer:
 
         True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -38052,6 +38094,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -38952,6 +38995,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -39852,6 +39896,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -40752,6 +40797,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -41652,6 +41698,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -42550,8 +42597,9 @@ marks:
         \ to Nz?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -43472,8 +43520,9 @@ marks:
 
 
         Answer: False'
-    score: null
+    score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -44374,6 +44423,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -45272,8 +45322,9 @@ marks:
         \ to Rk?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 0
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -46185,8 +46236,9 @@ marks:
         \ succeeded Rk in the second term (2482-2567 to 2567-2607).\n\nTherefore,\
         \ at the end of Rk's term in 2567, FY became Twislax and received the sceptre.\n\
         \nAnswer: True"
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -47087,6 +47139,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: prefixed
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -47985,8 +48038,9 @@ marks:
         \ to PO?"
     reasoning: null
     response: "Answer: \nTrue"
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -48887,6 +48941,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -49820,8 +49875,9 @@ marks:
 
 
         Answer: True'
-    score: null
+    score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -50722,6 +50778,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -51622,6 +51679,7 @@ marks:
     response: 'True'
     score: 1
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -52522,6 +52580,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: true
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -53420,8 +53479,9 @@ marks:
         \ to FY?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 0
 -   answer: true
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -54322,6 +54382,7 @@ marks:
     response: 'False'
     score: 0
 -   answer: false
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -55256,8 +55317,9 @@ marks:
 
 
         False'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -56158,6 +56220,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -57058,6 +57121,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -57956,8 +58020,9 @@ marks:
         \ to GT?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -58858,6 +58923,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -59758,6 +59824,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -60686,8 +60753,9 @@ marks:
         Answer:
 
         False'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -61588,6 +61656,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -62488,6 +62557,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -63388,6 +63458,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -64286,8 +64357,9 @@ marks:
         \ to Yp?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -65188,6 +65260,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -66088,6 +66161,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -66988,6 +67062,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -67888,6 +67963,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -68786,8 +68862,9 @@ marks:
         \ to xQ?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -69688,6 +69765,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -70648,8 +70726,9 @@ marks:
 
 
         Answer: False'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -71550,6 +71629,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -72450,6 +72530,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -73350,6 +73431,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -74250,6 +74332,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -75150,6 +75233,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -76050,6 +76134,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -76950,6 +77035,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -77850,6 +77936,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -78750,6 +78837,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -79650,6 +79738,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -80577,8 +80666,9 @@ marks:
 
 
         False'
-    score: null
+    score: 1
 -   answer: false
+    compliance: degenerate-repetition
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -82235,6 +82325,7 @@ marks:
         \ kX, al, PO, hV, Jy, Rk, FY, dl,"
     score: null
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -83135,6 +83226,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -84035,6 +84127,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -84935,6 +85028,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -85833,8 +85927,9 @@ marks:
         \ to Nz?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -86735,6 +86830,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -87635,6 +87731,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -88535,6 +88632,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -89435,6 +89533,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -90333,8 +90432,9 @@ marks:
         \ to Jy?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -91235,6 +91335,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -92135,6 +92236,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -93033,8 +93135,9 @@ marks:
         \ to FY?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 0
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -93933,8 +94036,9 @@ marks:
         \ to Kd?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -94835,6 +94939,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -95733,8 +95838,9 @@ marks:
         \ to SK?"
     reasoning: null
     response: "Answer: \nYes\n"
-    score: null
+    score: 0
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -96633,8 +96739,9 @@ marks:
         \ to SK?"
     reasoning: null
     response: 'Yes'
-    score: null
+    score: 0
 -   answer: false
+    compliance: verbose
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -97554,8 +97661,9 @@ marks:
 
 
         Answer: False'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -98456,6 +98564,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -99356,6 +99465,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -100256,6 +100366,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -101156,6 +101267,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -102056,6 +102168,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -102956,6 +103069,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -103856,6 +103970,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -104754,8 +104869,9 @@ marks:
         \ to FY?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -105656,6 +105772,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: wrong-lexicon
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -106554,8 +106671,9 @@ marks:
         \ to Kd?"
     reasoning: null
     response: 'No'
-    score: null
+    score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -107456,6 +107574,7 @@ marks:
     response: 'False'
     score: 1
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\
@@ -108356,6 +108475,7 @@ marks:
     response: 'True'
     score: 0
 -   answer: false
+    compliance: null
     query: "You are a Boolean classifier.\n\nTask: determine whether the statement\
         \ in the Question is logically possible given the Context.\n\nOutput format:\n\
         Return exactly one of these two strings and nothing else:\nTrue\nFalse\n\n\

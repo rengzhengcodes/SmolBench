@@ -1,6 +1,7 @@
 date: 2026-07-18 23:08:06.913798+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -6495,6 +6496,7 @@ marks:
         7'
     score: 0
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -11726,6 +11728,7 @@ marks:
     response: '1260'
     score: 1
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -17806,6 +17809,7 @@ marks:
         Pos 1467: ud|ms|mx ('
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -23099,6 +23103,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -28255,6 +28260,7 @@ marks:
     response: '504'
     score: 1
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -33609,6 +33615,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -38857,6 +38864,7 @@ marks:
         (no), 637: ud|va (yes'
     score: 0
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -45417,6 +45425,7 @@ marks:
         712: ud|wi|id|nf   <-- pos712 nf'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

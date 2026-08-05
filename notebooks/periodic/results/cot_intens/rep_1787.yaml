@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-11 03:31:21.134845+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: 2520
+marks:
+-   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -123,8 +122,8 @@ marks: !!python/tuple
         Therefore, the answer should be 2520.'
     response: '2520'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 1260
+-   answer: 1260
+    compliance: markup
     query: 'You are a precise integer counter.
 
 
@@ -450,8 +449,8 @@ marks: !!python/tuple
         \ answer is 288.\n\nHence, the final answer is \\boxed{288}."
     response: \boxed{288}
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 840
+-   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -552,8 +551,8 @@ marks: !!python/tuple
         be 840.'
     response: '840'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 630
+-   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -647,8 +646,8 @@ marks: !!python/tuple
         is exactly 2520 divided by 4, which is 630. So the output should be 630.'
     response: '630'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 504
+-   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -737,8 +736,8 @@ marks: !!python/tuple
         \ = 2520, so yes, 504 numbers. Therefore, the answer is 504."
     response: '504'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 420
+-   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -902,9 +901,9 @@ marks: !!python/tuple
 
 
         \boxed{420}'
-    score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 360
+    score: 1
+-   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1081,8 +1080,8 @@ marks: !!python/tuple
         Yes, that's correct.\n\nSo the answer is 280."
     response: '280'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 315
+-   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1376,9 +1375,9 @@ marks: !!python/tuple
         Therefore, the answer is 315.'
     response: "2520 \xF7 8 = 315. So the number of multiples of 8 from 1 to 2520 is\
         \ 315.\n\n\\boxed{315}"
-    score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 280
+    score: 1
+-   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

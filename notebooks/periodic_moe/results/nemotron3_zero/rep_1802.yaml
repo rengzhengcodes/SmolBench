@@ -1,6 +1,7 @@
 date: 2026-07-19 07:09:08.406249+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -170,6 +171,7 @@ marks:
     response: '1260'
     score: 0
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -505,6 +507,7 @@ marks:
     response: '84'
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1100,6 +1103,7 @@ marks:
     response: '0'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1434,6 +1438,7 @@ marks:
     response: '900'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1831,6 +1836,7 @@ marks:
         \ to 599; for h=6,7,8,"
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1998,6 +2004,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -2340,6 +2347,7 @@ marks:
     response: '1260'
     score: 0
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2668,6 +2676,7 @@ marks:
         \ \"01\"? Yes at positions 2-3? \"101\": bits 1,0,"
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

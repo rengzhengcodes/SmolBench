@@ -1,6 +1,7 @@
 date: 2026-07-19 07:12:12.847375+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -382,8 +383,9 @@ marks:
         \ t_max=3 => 4 numbers.\n\nk=9: 2^9-1=511. 2520/511 \u2248 4.9315. log2(4.9315):\
         \ 2^2=4, 2^3=8>4.93 => t_max=2 => 3 numbers.\n\nk=10: 2^10-1=1023. 2520/1023\
         \ \u2248 2.4643. log2(2.4643): 2^1=2, 2^2=4>"
-    score: 0
+    score: 1
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -611,6 +613,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -969,6 +972,7 @@ marks:
         \ form? Let's verify: In"
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1139,6 +1143,7 @@ marks:
     response: '9'
     score: 0
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1391,6 +1396,7 @@ marks:
     response: '2'
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1793,6 +1799,7 @@ marks:
         \ have \"u\", not \"s\". So \"einund\""
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2159,6 +2166,7 @@ marks:
         \ by 2,3,6 => at least 2 => gg. n=7: only 7 => 1 g => no. n=8"
     score: 0
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -2821,6 +2829,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

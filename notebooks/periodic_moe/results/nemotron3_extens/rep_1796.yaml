@@ -1,6 +1,7 @@
 date: 2026-07-18 23:06:59.261635+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5083,6 +5084,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11656,6 +11658,7 @@ marks:
         743'
     score: 0
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -18252,6 +18255,7 @@ marks:
         '
     score: 0
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -23488,6 +23492,7 @@ marks:
         pos693: jk|qp|nl|wz; pos694: jk|rr; pos'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -29834,6 +29839,7 @@ marks:
         Pos630: jk|rr|qp|ap|th|nl|wz (rr qp ap th'
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -36269,6 +36275,7 @@ marks:
         Position 602: jk|rr|nl'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -41567,8 +41574,9 @@ marks:
         \ no. 30? no. 34? no. 38? no. 42? no. 46? no. 50? no. 54? no. 58? no. 62?\
         \ no. 66? no. So cg at multiples of 4.\n\nap? Let's test: position 5: ap present.\
         \ 10: ap present. 15: ap present. "
-    score: 0
+    score: 1
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -46836,6 +46844,7 @@ marks:
         qp, pos1323 qp, pos1326 qp, pos1329 qp,'
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

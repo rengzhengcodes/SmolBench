@@ -1,6 +1,7 @@
 date: 2026-07-19 06:46:34.705013+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -279,6 +280,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -544,6 +546,7 @@ marks:
     response: '1944'
     score: 0
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -897,6 +900,7 @@ marks:
         \ 255*8=2040 <=2520. b=4 =>255*16=4080>2520.\n\na=9 => "
     score: 0
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1271,6 +1275,7 @@ marks:
         \ are: Write the number in English, but if the"
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1662,6 +1667,7 @@ marks:
         \nNow compound words: e.g., twentyone: ends with"
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1790,6 +1796,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1951,6 +1958,7 @@ marks:
     response: '3'
     score: 0
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -2044,6 +2052,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

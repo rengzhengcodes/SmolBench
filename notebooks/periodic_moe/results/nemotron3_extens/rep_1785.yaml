@@ -1,6 +1,7 @@
 date: 2026-07-18 22:53:06.484872+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -5215,6 +5216,7 @@ marks:
         cv|jt|qb. 749: cv|hs. 750: cv|jt|lw|te|tv. 751: cv. 752: cv|jt|qb|av'
     score: 0
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -10335,6 +10337,7 @@ marks:
     response: '1260'
     score: 1
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -16299,6 +16302,7 @@ marks:
         2509: no lw (cv'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -21730,6 +21734,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -26970,6 +26975,7 @@ marks:
     response: '504'
     score: 1
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -33745,6 +33751,7 @@ marks:
         830: {jt, te'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -39186,6 +39193,7 @@ marks:
         (no). 579: cv|lw (no). 580: cv|jt|qb|te (no). 581: cv|hs (yes'
     score: 0
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -44408,6 +44416,7 @@ marks:
     response: '315'
     score: 1
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

@@ -1,6 +1,7 @@
 date: 2026-07-19 06:52:38.605988+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -378,6 +379,7 @@ marks:
         \ 40+24 = 64.\n\n"
     score: 0
 -   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -549,6 +551,7 @@ marks:
     response: '2'
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -875,6 +878,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1179,6 +1183,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1445,6 +1450,7 @@ marks:
     response: '208'
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1633,6 +1639,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1991,6 +1998,7 @@ marks:
     response: '0'
     score: 0
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2356,6 +2364,7 @@ marks:
         av\". For example, maybe \"F"
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

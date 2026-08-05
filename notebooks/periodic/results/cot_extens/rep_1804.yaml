@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-11 04:26:44.184343+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: 2520
+marks:
+-   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5109,8 +5108,8 @@ marks: !!python/tuple
         \ the answer should be 2520."
     response: '2520'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 1260
+-   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -10221,8 +10220,8 @@ marks: !!python/tuple
         \ holds. Thus, the answer is 1260."
     response: '1260'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 840
+-   answer: 840
+    compliance: markup
     query: 'You are a precise integer counter.
 
 
@@ -15351,8 +15350,8 @@ marks: !!python/tuple
         \nSo the count is 840.\n\nTherefore, the answer should be 840."
     response: \boxed{840}
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 630
+-   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -20509,8 +20508,8 @@ marks: !!python/tuple
         \ the answer is 630."
     response: '630'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 504
+-   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -25861,8 +25860,8 @@ marks: !!python/tuple
         \ 'tq'\nPosition 2200: sa|xb|db|tq|gg. \u2192 includes 'tq'\nPosition 2205:\
         \ sa|lk|tq. \u2192 includes 'tq'\nPosition 2210: sa|xb|tq."
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 420
+-   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -31016,8 +31015,8 @@ marks: !!python/tuple
         \ is 2520 \xF7 6 = 420.\n\nSo the answer should be 420."
     response: '420'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 360
+-   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -36307,8 +36306,8 @@ marks: !!python/tuple
         \ conclude the answer is 36."
     response: '36'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 315
+-   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -41433,8 +41432,8 @@ marks: !!python/tuple
         \ answer should be 315."
     response: '315'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 280
+-   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

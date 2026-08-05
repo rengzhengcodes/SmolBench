@@ -1,6 +1,7 @@
 date: 2026-07-18 22:46:57.973289+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5095,6 +5096,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -11484,6 +11486,7 @@ marks:
         649: mu'
     score: 0
 -   answer: 840
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -18030,6 +18033,7 @@ marks:
         Pos728'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -23159,6 +23163,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -28629,6 +28634,7 @@ marks:
         81: g'
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -34520,6 +34526,7 @@ marks:
         - Position 2'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -40168,6 +40175,7 @@ marks:
         cz present. 224 divisible by2 and cz present. 23'
     score: 0
 -   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -45286,6 +45294,7 @@ marks:
     response: '315'
     score: 1
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

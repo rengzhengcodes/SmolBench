@@ -1,6 +1,7 @@
 date: 2026-07-19 07:04:29.052333+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -356,6 +357,7 @@ marks:
         \ \"en\",\"nn\",\"no\",\"oc\",\"ct\". No. \"...enn\"+\"enn\": \"enn"
     score: 0
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -741,6 +743,7 @@ marks:
         \ and max b.\n\nWe'll make a table.\n\na=1: base = 2"
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -911,6 +914,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 630
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1267,6 +1271,7 @@ marks:
         \ base = 127. Multiply: 127,254,508,1016,2032,4064>2"
     score: 0
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1464,6 +1469,7 @@ marks:
     response: '2'
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1675,6 +1681,7 @@ marks:
     response: '0'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2045,6 +2052,7 @@ marks:
         \ the word corresponding to the"
     score: 0
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2428,6 +2436,7 @@ marks:
         \ \u22642520. Let's break down.\n\nWe consider d3=2. Then the number"
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

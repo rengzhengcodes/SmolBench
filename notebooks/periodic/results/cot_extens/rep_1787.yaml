@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-11 03:33:18.385999+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: 2520
+marks:
+-   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5108,8 +5107,8 @@ marks: !!python/tuple
         up to 2520. So all 2520 entries include ''wp''. Hence, the count is 2520.'
     response: '2520'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 1260
+-   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -10263,8 +10262,8 @@ marks: !!python/tuple
         2, which equals 1260.'
     response: '1260'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 840
+-   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -15402,8 +15401,8 @@ marks: !!python/tuple
         \ So yes, the last term is included.\n\nTherefore, the answer should be 840."
     response: '840'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 630
+-   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -20521,8 +20520,8 @@ marks: !!python/tuple
         \ n = 630.\n\nTherefore, there are 630 positions where 'fj' appears."
     response: '630'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 504
+-   answer: 504
+    compliance: markup
     query: 'You are a precise integer counter.
 
 
@@ -25665,8 +25664,8 @@ marks: !!python/tuple
         \ 504."
     response: \boxed{504}
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 420
+-   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -30789,8 +30788,8 @@ marks: !!python/tuple
         \ 1 to 2520 that include 'zy' is 420."
     response: '420'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 360
+-   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -36369,8 +36368,8 @@ marks: !!python/tuple
         105.'
     response: '105'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 315
+-   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -41752,8 +41751,8 @@ marks: !!python/tuple
         \nFrom this extensive check, it's clear that 'sr' appears in positions divisible\
         \ by 8, except for positions"
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 280
+-   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

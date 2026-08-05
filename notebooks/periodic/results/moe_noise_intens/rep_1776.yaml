@@ -1,6 +1,7 @@
 date: 2026-08-03 21:24:50.746150+00:00
 marks:
 -   answer: 2520
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -6002,8 +6003,9 @@ marks:
 
 
         The final answer is: $\boxed{1}$'
-    score: 0
+    score: null
 -   answer: 1260
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -11552,8 +11554,9 @@ marks:
 
 
         The final answer is 0.'
-    score: 0
+    score: null
 -   answer: 840
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -12913,8 +12916,9 @@ marks:
         \ current number: 15\xD72=30.\nAdd1: 30+1=31 (Current number: 31, Step:4).\n\
         \n##Step5\nDouble the current number: 31\xD72=62.\nAdd1: 62+1=63 (Current\
         \ number:63, Step:5).\n\nThe final answer is 63.\nThe final answer is 63."
-    score: 0
+    score: null
 -   answer: 630
+    compliance: multiple-values
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -14014,6 +14018,7 @@ marks:
         The final answer is 10'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -15179,6 +15184,7 @@ marks:
         How many of the positions 1 through 2019] will output 1001'
     score: 0
 -   answer: 420
+    compliance: multiple-values
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -18776,6 +18782,7 @@ marks:
         \ and work with."
     score: 0
 -   answer: 360
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -20402,8 +20409,9 @@ marks:
         \ in the alphabet (a=1, b=2, ..., z=26), we can calculate the value for \"\
         qx\". q=17 and x=24, so \"qx\" = 17*26 + 24 = 442 + 24 = 466.\n\nThe final\
         \ answer is: $\\boxed{466}$"
-    score: 0
+    score: null
 -   answer: 315
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -22205,8 +22213,9 @@ marks:
         \ + P_{0}(0.5)} = \\frac{-0.4375 + (-0.125)}{0.5 + 1} = \\frac{-0.5625}{1.5}$.\n\
         \n## Step 7: Simplify the expression\n$\\frac{-0.5625}{1.5} = -0.375$.\n\n\
         The final answer is: $\\boxed{-0.375}$"
-    score: 0
+    score: null
 -   answer: 280
+    compliance: degenerate-repetition
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -24612,5 +24621,5 @@ marks:
         \ 9th multiple (9*11=99), so we count the occurrences: 1, 10, 19, 28, 37,\
         \ 46, 55, 64, 73, 82, 91. That's 12 positions.\n\nThe final answer is: $\\\
         boxed{12}$"
-    score: 0
+    score: null
 model: llama4-maverick

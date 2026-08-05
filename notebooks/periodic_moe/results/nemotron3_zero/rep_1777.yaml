@@ -1,6 +1,7 @@
 date: 2026-07-19 06:44:45.431787+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -268,6 +269,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -628,6 +630,7 @@ marks:
         \ exactly 3 (since 13 is treize). Also note that numbers like 23 etc are >=2"
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -732,6 +735,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1036,6 +1040,7 @@ marks:
     response: '420'
     score: 0
 -   answer: 504
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1439,6 +1444,7 @@ marks:
         \ If divisible by 2"
     score: 0
 -   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -1609,6 +1615,7 @@ marks:
     response: '1944'
     score: 0
 -   answer: 360
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -1976,6 +1983,7 @@ marks:
         \ 199? Wait 199 ends with 99, yes. So"
     score: 0
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -2315,6 +2323,7 @@ marks:
         \ l l i o n: contains n t i l l i o"
     score: 0
 -   answer: 280
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 

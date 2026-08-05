@@ -1,6 +1,7 @@
 date: 2026-08-03 19:26:17.920174+00:00
 marks:
 -   answer: 2520
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -1403,6 +1404,7 @@ marks:
     response: '2520'
     score: 1
 -   answer: 1260
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -2814,6 +2816,7 @@ marks:
     response: '1260'
     score: 1
 -   answer: 840
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -4211,6 +4214,7 @@ marks:
     response: '840'
     score: 1
 -   answer: 630
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -5612,6 +5616,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -7026,6 +7031,7 @@ marks:
     response: '504'
     score: 1
 -   answer: 420
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -8437,6 +8443,7 @@ marks:
     response: '420'
     score: 1
 -   answer: 360
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -9839,6 +9846,7 @@ marks:
     response: '360'
     score: 1
 -   answer: 315
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\
@@ -11256,6 +11264,7 @@ marks:
     response: '315'
     score: 1
 -   answer: 280
+    compliance: null
     query: "You are a precise integer counter.\n\nTask: answer the question below\
         \ with a single integer and nothing else.\n\nOutput format:\nReturn exactly\
         \ one integer and nothing else.\nDo not output any explanation, punctuation,\

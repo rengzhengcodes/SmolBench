@@ -1,6 +1,7 @@
 date: 2026-07-18 22:59:18.548350+00:00
 marks:
 -   answer: 2520
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -5200,6 +5201,7 @@ marks:
         721: ss|wj. 722: ss|gr. 723: ss|hz. 724: ss|gr|jy. 725: ss|se. 726: ss|gr|hz|kn'
     score: 0
 -   answer: 1260
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -10451,6 +10453,7 @@ marks:
         \ (gr)\n621: ss|hz|te (no gr)\n622: ss|gr (gr)\n623: ss|wj (no gr)\n624: ss|gr|hz|jy|kn|qu"
     score: 0
 -   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -15808,6 +15811,7 @@ marks:
     response: '840'
     score: 1
 -   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -21276,6 +21280,7 @@ marks:
     response: '630'
     score: 1
 -   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -26823,6 +26828,7 @@ marks:
     response: '504'
     score: 1
 -   answer: 420
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -32163,6 +32169,7 @@ marks:
         yes. 1020? 1020/30=34. line '
     score: 0
 -   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -37355,6 +37362,7 @@ marks:
     response: '360'
     score: 1
 -   answer: 315
+    compliance: multiple-values
     query: 'You are a precise integer counter.
 
 
@@ -44005,6 +44013,7 @@ marks:
         774: ss|'
     score: 0
 -   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 

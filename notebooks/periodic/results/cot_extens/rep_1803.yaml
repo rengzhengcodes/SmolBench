@@ -1,8 +1,7 @@
-!!python/object:smolbench.evals.Marks
 date: 2026-06-11 04:23:26.486502+00:00
-marks: !!python/tuple
-- !!python/object:smolbench.evals.Mark
-    answer: 2520
+marks:
+-   answer: 2520
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -5094,8 +5093,8 @@ marks: !!python/tuple
         \ the number of positions that include 'ck' is exactly 2520."
     response: '2520'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 1260
+-   answer: 1260
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -10248,8 +10247,8 @@ marks: !!python/tuple
         \ = 1260."
     response: '1260'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 840
+-   answer: 840
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -15414,8 +15413,8 @@ marks: !!python/tuple
         ''qr'', and there are exactly 840 such positions.'
     response: '840'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 630
+-   answer: 630
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -20610,8 +20609,8 @@ marks: !!python/tuple
         which is 2520 / 4 = 630.'
     response: '630'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 504
+-   answer: 504
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -25723,8 +25722,8 @@ marks: !!python/tuple
         \ = 504. So yes, 504 positions.\n\nTherefore, the answer should be 504."
     response: '504'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 420
+-   answer: 420
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -30902,8 +30901,8 @@ marks: !!python/tuple
         \ with 'he' is 2520 /6 = 420.\n\n**Final Answer**"
     response: '420'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 360
+-   answer: 360
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -36150,8 +36149,8 @@ marks: !!python/tuple
         \nSo 6 initial terms +83=89.\n\nThus, the answer should be 89."
     response: '89'
     score: 0
-- !!python/object:smolbench.evals.Mark
-    answer: 315
+-   answer: 315
+    compliance: null
     query: 'You are a precise integer counter.
 
 
@@ -41244,8 +41243,8 @@ marks: !!python/tuple
         \ positions. Therefore, the count is 315."
     response: '315'
     score: 1
-- !!python/object:smolbench.evals.Mark
-    answer: 280
+-   answer: 280
+    compliance: null
     query: 'You are a precise integer counter.
 
 
