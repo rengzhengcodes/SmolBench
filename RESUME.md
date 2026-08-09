@@ -1,26 +1,26 @@
 # Resume runbook — coprime & divisor induction studies
 
-Written 2026-08-09 because the machine driving these runs was going down
-mid-collection. Everything below is what a fresh session needs to pick up
-without re-deriving it.
+Last updated 2026-08-09 at session handoff. Branch `periodic-induction`.
 
-Branch `periodic-induction`. Last commit before shutdown: `5932137d`.
+`periodic_coprime` is **DONE** (360/360, written up in
+`notebooks/COPRIME_RESULTS.md`). `periodic_divisor` is mid-collection.
+Everything below is what a fresh session needs and cannot re-derive.
 
 ---
 
 ## 1. FIRST: check for billing instances
 
-Do this before anything else, every time. Two p5.48xlarge boxes (~$21/h each)
-were live at shutdown:
+Do this before anything else, every time. Two p5.48xlarge (~$21/h each) were
+live at handoff:
 
-| instance | region | study |
+| instance | region | lane |
 |---|---|---|
-| `i-0e9d2af63354dfb84` | us-east-2 | periodic-divisor-induction |
-| `i-06c0a4bce7703f5da` | us-east-2 | periodic-coprime-induction |
+| `i-082255cd7424be5a2` | us-east-2 | `periodic-divisor-induction` (Nemotron-3) |
+| `i-0b098dcf7d29aea18` | us-east-2 | `periodic-divisor-qwen` (Qwen3.5) |
 
-They should be **gone**. When the driver process dies the box goes idle and the
-on-instance watchdog terminates it after 30 minutes; there is also a hard
-`shutdown -h +1440`. Verify rather than assume:
+When a driver dies the box goes idle and its on-instance watchdog terminates it
+after 30 minutes (plus a hard `shutdown -h +1440`). That backstop has fired
+correctly every time so far — but verify, never assume:
 
 ```bash
 set -a && . notebooks/ec2-operator.env && set +a
@@ -32,88 +32,69 @@ for r in us-east-1 us-east-2 us-west-2; do
 done
 ```
 
-If either is still running, a relaunch (step 3) reattaches to it and reuses its
-warm model cache — that is better than terminating. Only terminate if you are
-not resuming:
+**If a box is still alive, relaunch rather than terminate** — the driver
+reattaches and reuses its loaded checkpoint, worth ~40 minutes. Caveat learned
+the hard way: a box idle for over ~30 min may terminate *during* your reattach,
+and the run then dies with "went shutting-down while waiting for its agent".
+Just relaunch again; it provisions fresh.
 
-```bash
-.venv/bin/python -c "
-from dotenv import load_dotenv; load_dotenv('notebooks/periodic_divisor/keys.env')
-from smolbench.evals import ec2; ec2.shutdown_instance()"
-```
+The unrelated `pruning-metrics` box in us-east-1 belongs to different work —
+do not touch it.
 
-Note the unrelated `pruning-metrics` box in us-east-1 belongs to different
-work — do not touch it.
-
-## 2. Where the data stopped
-
-Committed at `5932137d`. Replicates resume-skip on `rep_{seed}.yaml` existence,
-so nothing below is re-run or re-paid for.
+## 2. Where the data stands
 
 | study | replicates | gpt-oss | Nemotron-3 | Qwen3.5 |
 |---|---|---|---|---|
-| `periodic_coprime` | 308/360 | 30/30 | 30/30 | **17/30** |
-| `periodic_divisor` | 172/360 | 30/30 | **13/30** | **0/30** |
+| `periodic_coprime` | **360/360 DONE** | 30/30 | 30/30 | 30/30 |
+| `periodic_divisor` | 272/360 | 30/30 | **20/30** | **18/30** |
 
-Target is 360 = 3 models x 4 arms x 30 seeds (1776–1805).
+Target is 360 = 3 models x 4 arms x 30 seeds (1776–1805). Everything is
+committed; replicates resume-skip on `rep_{seed}.yaml` existence, so nothing is
+re-run or re-paid for.
 
 ## 3. Resume commands
 
-Run from the repo root, main venv. Each study is a separate process — this is
-mandatory, not stylistic: `ec2.py` freezes its `EC2_*` constants from
-`os.environ` at import, so two studies cannot share an interpreter.
+Repo root, main venv. One process per study — mandatory, since `ec2.py` freezes
+its `EC2_*` constants at import, so two studies cannot share an interpreter.
+Divisor's two outstanding models run on separate boxes:
 
 ```bash
 set -a && . notebooks/ec2-operator.env && set +a
 
-# coprime: only Qwen is outstanding
-COPRIME_N_REPLICATES=30 COPRIME_MODELS=qwen35 \
-  nohup .venv/bin/python notebooks/periodic_coprime/run_study.py > /tmp/coprime.log 2>&1 &
+# Nemotron-3 leg (default tag/state)
+DIVISOR_N_REPLICATES=30 DIVISOR_MODELS=nemotron3 \
+  nohup .venv/bin/python notebooks/periodic_divisor/run_study.py > /tmp/dn.log 2>&1 &
 
-# divisor: Nemotron-3 finishes, then Qwen
-DIVISOR_N_REPLICATES=30 \
-  nohup .venv/bin/python notebooks/periodic_divisor/run_study.py > /tmp/divisor.log 2>&1 &
-```
-
-Startup derives each completion budget before provisioning (a minute or two of
-CPU, no GPU billing). Expect a log line like:
-
-```
-qwen3.5-397b-a17b: worst prompt 59,221 tok (+8,000 reserve) -> completion budget 63,851
-```
-
-If that line does not appear, something failed before provisioning — read the
-log, do not relaunch blindly.
-
-Rough remaining time at observed rates: coprime ~3–5 h (13 Qwen replicates plus
-a ~397 GB load); divisor ~15–20 h (17 Nemotron-3 at ~17 min each, then 30 Qwen).
-
-## 3b. Parallelising by model (one box per model)
-
-A study serves its models in TURN on one box, so wall-clock is the sum of
-the per-model times, not the max. To split them, a process needs BOTH a
-distinct AWS tag and a distinct state file:
-
-```bash
+# Qwen leg -- distinct tag AND state file, or it reattaches to the sibling's box
 DIVISOR_N_REPLICATES=30 DIVISOR_MODELS=qwen35 \
   DIVISOR_STATE_FILE=.ec2_state_periodic_divisor_qwen.json \
   EC2_EXPERIMENT_TAG=periodic-divisor-qwen \
   nohup .venv/bin/python notebooks/periodic_divisor/run_study.py > /tmp/dq.log 2>&1 &
 ```
 
-`EC2_STATE_FILE` alone does NOT work: `InductionExperiment` writes its
-configured `state_file` into that variable (experiment.py), clobbering the
-shell value. A process launched that way reattaches to the sibling's box and
-swaps the served model out from under it. Use `{COPRIME,DIVISOR}_STATE_FILE`.
+Startup derives each completion budget before provisioning (CPU only, nothing
+billing). Expect:
 
-Results are unaffected — their path comes from `archetype_tags`, not the EC2
-tag — so per-model runs merge into one tree and never contend for the same
-`rep_{seed}.yaml`. Do not run two processes for the SAME model.
+```
+qwen3.5-397b-a17b: worst prompt 36,321 tok (+8,000 reserve) -> completion budget 86,751
+```
 
-## 3c. Sharding one model across N instances
+If that line does not appear, something failed before provisioning — read the
+log rather than relaunching blindly.
 
-`{COPRIME,DIVISOR}_SHARD=index/count` runs only every `count`-th replicate,
-starting at `index`. Launch one process per shard, all with the same MODELS:
+Remaining at observed rates: Nemotron-3 ~10 replicates at ~17 min each (~3 h),
+Qwen ~12 at ~15 min (~3 h), running concurrently.
+
+## 3b. Parallelising further (optional, costs money)
+
+**By model** — already in use above. `EC2_STATE_FILE` alone does NOT work:
+`InductionExperiment` writes its configured `state_file` into that variable
+(experiment.py), clobbering the shell value, and the second process then
+reattaches to the first's box and swaps the served model out from under it.
+Use `{COPRIME,DIVISOR}_STATE_FILE`.
+
+**By replicate** — `{COPRIME,DIVISOR}_SHARD=index/count` runs every `count`-th
+replicate starting at `index`. One process per shard, same MODELS:
 
 ```bash
 for i in 0 1 2; do
@@ -122,97 +103,112 @@ for i in 0 1 2; do
 done
 ```
 
-Each shard derives its OWN AWS tag and state file (`...-qwen35-s0of3`), so
-shards cannot reattach to each other's box — no manual tag/state juggling.
-Shards stride rather than block, so 30 over 4 splits 8/8/7/7 and the slowest
-shard (which sets wall-clock) stays balanced. Seeds keep their identity: seed
-1779 is the same replicate whichever shard collects it.
-
+Each shard derives its own AWS tag and state file (`...-qwen35-s0of3`), so
+shards cannot collide. Shards stride, so 30 over 4 splits 8/8/7/7 and the
+slowest shard stays balanced. Seeds keep their identity across shards.
 Unsharded runs are byte-identical to before the flag existed.
 
-**Do not** run two processes with the same (MODELS, SHARD) — that is the one
-combination that races on the same `rep_{seed}.yaml`.
+**Do not** run two processes with the same (MODELS, SHARD) — the one
+combination that races on the same `rep_{seed}.yaml`. Sharding costs real
+money: each extra box re-loads its checkpoint (~40 min) before useful work, so
+shallow shards spend much of their life loading.
 
-## 4. When a study reaches 360
+## 4. When divisor reaches 360
 
 ```bash
-.venv/bin/python scripts/coprime_pilot_gate.py periodic_coprime   # or periodic_divisor
-.venv/bin/python scripts/posterior_power.py periodic_coprime --mei 0.05
+.venv/bin/python scripts/coprime_pilot_gate.py periodic_divisor
+.venv/bin/python scripts/posterior_power.py periodic_divisor --mei 0.05
 ```
 
-The gate blocks on `compliance=empty` marks (truncation). The posterior power
-script sorts every planned contrast into DECIDED / EQUIVALENT / UNDECIDED and
-quotes an R only for UNDECIDED ones — it deliberately does not report observed
-power, which is just a restatement of the p-value.
+The gate blocks on `compliance=empty` marks (truncation). The posterior script
+sorts all 30 planned contrasts into DECIDED / EQUIVALENT / UNDECIDED and quotes
+an R only for UNDECIDED, at a pre-specified MEI. It deliberately reports no
+observed power — that is a monotone restatement of the p-value.
 
-Then commit results and figures.
+Then write up as `notebooks/DIVISOR_RESULTS.md`, mirroring
+`notebooks/COPRIME_RESULTS.md`, and commit results + write-up.
 
-## 5. Hazards already hit — do not rediscover these
+## 5. What to expect from divisor, and what to check
 
-Three failures cost roughly 10 hours of collection between them. All are fixed
-in committed code; they are listed so the symptoms are recognisable.
+Divisor holds the listing fixed at 2,520 positions and roughly doubles the rule
+list (26 harmonics, all dividing 2,520). It carries the question coprime could
+not answer, since noise adds length without adding rules.
 
-1. **600 s read timeout vs a large completion budget** (`c50bb6b0` lineage).
-   A read timeout counts toward `EC2_MAX_CONNECTION_FAILURES`, so a long
-   generation dies after 10 retries with a misleading "endpoint unreachable"
-   when the endpoint is perfectly healthy. Fixed by
-   `EC2_REQUEST_TIMEOUT_SECONDS=3600` in both studies' `keys.env`.
+The early gpt-oss signal (complete at 30/30) is what to confirm or refute in the
+other two models: **the arms fail at opposite ends of the harmonic range.**
+Extensional fails only at LARGE periods (120–2520, answers 5–21 — needles in
+2,520 lines); intensional fails only at SMALL periods (2, 3, 9 — answers
+1260/840/280, large-number division). gpt-oss intens fell to 0.885 where the
+baseline sat at ceiling, so unlike coprime this manipulation does de-saturate.
 
-2. **Teardown deleting another run's state file** (`3da8b192`). Run A's
-   teardown used to unlink state unconditionally, including state run B had
-   just written for a *different* box — stranding a live $21/h instance with
-   nothing driving it. `_clear_state` now only clears state it owns. Still:
-   **do not launch a study while a previous run of the same study is tearing
-   down.** Wait for the process to exit.
+When interpreting: a large-period harmonic is EASY intensionally (2520/2520 = 1)
+and HARD extensionally. That is a feature — it is where the representations
+should come apart — but it is not a uniform difficulty increase, so do not
+report the two arms' accuracies as if they faced the same task.
 
-3. **Completion budget sized from `count()` on one seed** (`c50bb6b0`). Two
-   ways wrong: `count()` excludes the server-side chat template (~1,547
-   tokens), and one seed is not the worst seed (coprime's worst extens prompt
-   is 59,221 at seed 1793 vs 55,526 at seed 1776). A budget one token too large
-   gets a vLLM 400, which kills the whole run. Now derived at startup with an
-   8,000-token reserve — **do not hardcode it again.**
+## 6. Hazards already paid for — do not rediscover
 
-## 6. Analysis caveats to carry into the write-up
+Roughly 10 hours of collection went to these. All fixed in committed code;
+listed so the symptoms are recognisable.
 
-- **Qwen cannot fully fit the coprime task.** Its derived budget there is
-  63,851, *below* the 65,536 that already truncated one mark. At ~59k-token
-  prompts Qwen3.5 cannot reliably both reason and answer inside a 131,072
-  context. Report its invalid rate as a finding about the model at this prompt
-  length, not as a misconfiguration.
-- **A budget seam inside coprime's Qwen arm.** Replicates collected before the
-  shutdown used 65,536; the remaining ones use 63,851. Treat that arm's invalid
-  rate as approximate, or re-collect the arm uniformly if the truncation rate
-  matters to a claim.
+1. **Read timeout vs a large completion budget.** A read timeout counts toward
+   `EC2_MAX_CONNECTION_FAILURES`, so a long generation dies after 10 retries
+   with a misleading "endpoint unreachable" on a perfectly healthy endpoint.
+   Fixed by `EC2_REQUEST_TIMEOUT_SECONDS=3600` in both studies' `keys.env`.
+   (A *genuine* unreachable box says the same thing — check whether requests
+   were succeeding moments earlier.)
+2. **Teardown deleting another run's state file** (`3da8b192`). `_clear_state`
+   now only clears state it owns. Still: do not launch a study while a previous
+   run of the same study is tearing down.
+3. **Completion budget sized from `count()` on one seed** (`c50bb6b0`).
+   `count()` excludes the server-side chat template (~1,547 tokens), and one
+   seed is not the worst seed (coprime's worst extens prompt is 59,221 at seed
+   1793 vs 55,526 at 1776). A budget one token too large gets a vLLM 400, which
+   kills the whole run. Now derived at startup with an 8,000-token reserve —
+   **do not hardcode it again.**
+4. **Public IP changes after a host restart.** The security group still holds
+   the old IP and every request fails to connect. Relaunching re-authorises.
+
+## 7. Analysis caveats that outlive the runs
+
+- **Qwen cannot fully fit the coprime task.** 10 of its 180 coprime extens
+  marks are truncation (empty response AND empty reasoning: the `<think>` block
+  never closed). At ~59k-token prompts it cannot reliably both reason and
+  answer inside a 131,072 window. Report as a finding about the model at that
+  prompt length, not a misconfiguration.
+- **Budget seam in coprime's Qwen arm.** Replicates before a mid-study host
+  restart used 65,536; the rest used the derived 63,851. Its invalid rate is
+  approximate. Re-collect uniformly if the truncation rate matters to a claim.
+- **Coprime's Nemotron-3 recovery (0.452 -> 0.792) is confounded.**
+  Coprimality forbids both 2 and 4, so that listing is longer AND sparser
+  (2.02 vs 2.83 labels/position). Length and density moved together.
+- **Equivalence at ceiling is weaker than equivalence mid-range.** All ten
+  coprime EQUIVALENT verdicts have zero-width intervals because both arms are
+  perfect. Say "indistinguishable at this benchmark's resolution".
 - **`power_analysis.py` in each notebook sizes from a pilot and refuses to read
-  completed replicates** — that is deliberate, not a bug. Posterior questions
-  go to `scripts/posterior_power.py`.
-- **Divisor has 26 questions per replicate, coprime 6**, against the 9 the
-  original `power_analysis.py` assumes. Strata differ, so size R from these
-  studies' own data rather than inheriting the baseline's numbers.
-- **`periodic_moe/keys.env` pins `vllm/vllm-openai:nightly`, a moving tag**,
-  and both new studies inherit it. Record the digest per run; pinning it
-  overflows the EC2 user-data 16 KB cap (41 bytes of headroom, and the tag form
-  needs exactly 41).
+  completed replicates** — deliberate. Posterior questions go to
+  `scripts/posterior_power.py`.
+- **Divisor has 26 questions/replicate, coprime 6**, against the 9 the original
+  `power_analysis.py` assumes. Strata differ; size from each study's own data.
+- **`vllm/vllm-openai:nightly` is a moving tag** inherited from
+  `periodic_moe/keys.env`. Record the digest per run; pinning it overflows the
+  EC2 user-data 16 KB cap (41 bytes of headroom, tag form needs exactly 41).
 
-## 7. What these studies are for
+## 8. Why these studies exist
 
-`periodic_moe` saturated: intens and noise_intens are both at ceiling for all
-three models at *every* harmonic, so no harmonic separates them (paired
-McNemar p=0.549 for gpt-oss, 1.000 for the others). More harmonics cannot fix
-it — `lcm(1..10) == lcm(1..9) == 2520`, and `lcm(1..11)` is 11x, a ~341k-token
+`periodic_moe` saturated: intens and noise both at ceiling for all three models
+at *every* harmonic, so no harmonic separated them (paired McNemar p=0.549 for
+gpt-oss, 1.000 for the others). More harmonics cannot fix it —
+`lcm(1..10) == lcm(1..9) == 2520`, and `lcm(1..11)` is 11x, a ~341k-token
 listing against a 131,072 context.
 
-The two studies attack the saturation from opposite sides:
+Two studies attack it from opposite sides:
 
-- **coprime** `(1,3,4,5,7,11)` → 4,620 positions. Pairwise-coprime, so
-  `lcm == prod` and the EXTENSIONAL listing lengthens ~1.6x.
-- **divisor** 26 periods all dividing 2,520 → sequence length unmoved, so the
-  INTENSIONAL rule list roughly doubles against an unchanged listing.
-
-Noise adds length without adding rules, so it cannot separate a context-length
-limit from a rule-tracking one. Together these can.
-
-Early divisor signal (gpt-oss, R=30) is already interesting: extens fails only
-at *large* periods (needles in 2,520 lines) while intens fails only at *small*
-ones (large-number division) — the two representations break at opposite ends
-of the harmonic range.
+- **coprime** `(1,3,4,5,7,11)` -> 4,620 positions. `lcm == prod`, so the
+  EXTENSIONAL listing lengthens ~1.6x. **Done, and it failed its purpose:**
+  intensional went to a perfect 1.000, more saturated than the baseline,
+  because lengthening the listing never touches a six-line rule list. It did
+  sharpen the extensional contrast. See `notebooks/COPRIME_RESULTS.md`.
+- **divisor** 26 periods all dividing 2,520 -> sequence length unmoved, so the
+  INTENSIONAL rule list roughly doubles against an unchanged listing. **In
+  flight, and the one that matters** for the original question.
