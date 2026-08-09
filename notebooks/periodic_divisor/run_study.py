@@ -118,20 +118,89 @@ PERIODS: tuple[int, ...] = tuple(sorted(
     + (105, 120, 126, 140, 168, 180, 210, 252, 280, 315, 360, 420, 504, 630, 840, 1260, 2520)
 ))
 
-#: Completion budget, PER MODEL -- see periodic_coprime/run_study.py, where
-#: Qwen3.5 truncated an extens mark at 65,536 (empty response AND empty
-#: reasoning: its <think> block never closed). gpt-oss and Nemotron-3 have
-#: produced zero empties at 65,536 here, so they keep it and their collected
-#: replicates stay comparable; only Qwen, which has not run yet, is raised.
+#: The served checkpoints' context window (EC2_DEPLOY_SPECS max_model_len).
+CONTEXT_LIMIT: int = 131_072
+
+#: Tokens withheld from the completion budget, covering the two things a
+#: count() on one seed's prompt cannot see. Both were measured, not guessed:
 #:
-#: Prompts here are shorter than the coprime study's (36,321 worst for Qwen
-#: against 55,526 there), so Qwen can be given 93,000 -- close to this
-#: context's ceiling of 131,072 - 36,321 = 94,751.
-MAX_COMPLETION_TOKENS: dict[str, int] = {
+#:  ~1,547  chat template. ``Tokenizer.count`` deliberately excludes
+#:          special/BOS tokens (see the Tokenizer protocol docstring), so the
+#:          server always receives more than count() reports. A prompt
+#:          counting 55,526 arrived at vLLM as 57,073 input tokens.
+#:  ~3,695  cross-seed variation. Sweeping all 30 seeds, the coprime study's
+#:          worst extens prompt is 59,221 (seed 1793) against 55,526 for seed
+#:          1776 -- the labels are random per seed and tokenize differently,
+#:          which compounds over thousands of listing lines. Sizing from one
+#:          seed understates the worst case by thousands of tokens.
+#:
+#: 8,000 covers both with margin, so the derived budget stays safe even when
+#: the seed probe misses the single longest seed. It costs only completion
+#: headroom that is otherwise unused.
+TEMPLATE_RESERVE: int = 8_000
+
+#: Seeds sampled when measuring the worst-case prompt. See completion_budget.
+PROBE_SEEDS: int = 6
+
+#: Floor below which a run is not worth starting: Qwen truncated mid-<think>
+#: at 65,536, so anything much smaller guarantees empties rather than data.
+MIN_VIABLE_BUDGET: int = 48_000
+
+#: Ceilings, applied AFTER the derived budget below. gpt-oss and Nemotron-3
+#: produced zero empties at 65,536, so they stay there and their collected
+#: replicates remain comparable; Qwen is uncapped and takes whatever the
+#: context allows, because it is the only model that has ever truncated.
+BUDGET_CAP: dict[str, int] = {
     MODEL_GPTOSS: 65_536,
     MODEL_NEMOTRON: 65_536,
-    MODEL_QWEN: 93_000,
+    MODEL_QWEN: CONTEXT_LIMIT,
 }
+
+
+def completion_budget(model: str, seeds: range) -> int:
+    """Largest completion budget that cannot overflow this model's context.
+
+    Derived, not hardcoded, because hardcoding it went wrong twice in one day:
+    65,536 truncated Qwen mid-``<think>`` (empty response AND empty
+    reasoning), and a hand-computed 74,000 overshot by exactly ONE token --
+    57,073 input + 74,000 output = 131,073 against a 131,072 limit -- which
+    vLLM rejects with a 400 that kills the whole run, not just that request.
+
+    Both mistakes came from me doing this arithmetic against a prompt length I
+    measured with ``count()``, which excludes the server-side template. So the
+    arithmetic moves here, over the ACTUAL worst-case prompt across every seed
+    this study will send, with TEMPLATE_RESERVE covering what count() cannot
+    see. Probing runs before provisioning, so its cost is wall-clock on a
+    machine that is not yet billing.
+    """
+    tok = for_model(model)
+    # Subsample the seeds. Prompt length varies across seeds only through the
+    # random labels (a couple of hundred tokens at most); the structure that
+    # sets the length -- period set, sequence length, arm -- is identical for
+    # every seed. Probing all 30 costs minutes per model because the noise arm
+    # re-runs its token-matching search each time, and TEMPLATE_RESERVE already
+    # covers far more than the residual variation. Endpoints are always
+    # included so the range is bracketed rather than sampled from the middle.
+    picks = sorted({seeds[0], seeds[-1],
+                    *(seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)]
+                      for i in range(PROBE_SEEDS))}) if len(seeds) > 1 else list(seeds)
+    worst = 0
+    for seed in picks:
+        for quiz in make_quizzes(seed, model).values():
+            worst = max(worst, max(tok.count(q.prompt) for q in quiz))
+    budget = min(CONTEXT_LIMIT - worst - TEMPLATE_RESERVE, BUDGET_CAP[model])
+    if budget < MIN_VIABLE_BUDGET:
+        raise SystemExit(
+            f"{model}: worst prompt is {worst:,} tokens, leaving only {budget:,} for "
+            f"completion against a {CONTEXT_LIMIT:,} context. That is below the "
+            f"{MIN_VIABLE_BUDGET:,} floor and would collect empties, not data. "
+            "Shorten the period set."
+        )
+    logging.info(
+        f"{model}: worst prompt {worst:,} tok (+{TEMPLATE_RESERVE:,} reserve) "
+        f"-> completion budget {budget:,}"
+    )
+    return budget
 
 # Byte-identical to periodic_moe's and periodic_coprime's template, so the
 # period set is the only thing that differs across the three studies.
@@ -226,12 +295,15 @@ def main() -> None:
 
     # Warm tokenizers BEFORE provisioning: an HF download failure must never
     # land between a billing GPU box and the first request.
+    seeds = range(BASE_SEED, BASE_SEED + EXPERIMENT.n_replicates)
+    budgets = {}
     for model in models:
         logging.info(f"warming tokenizer for {model}: {for_model(model).name}")
+        budgets[model] = completion_budget(model, seeds)
 
     EXPERIMENT.provision()
     for model in models:
-        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS[model]})
+        EXPERIMENT.run(model, extra_args={"max_completion_tokens": budgets[model]})
         EXPERIMENT.summarize(model)
     EXPERIMENT.teardown()
     print("DIVISOR STUDY COMPLETE: box torn down", flush=True)

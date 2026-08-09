@@ -49,12 +49,24 @@ only in degree -- do not read a length-only story into any gap it produces.
 
 COMPLETION BUDGET
 -----------------
-All three models get 65,536 tokens, not just Qwen. Every one of the 21
-invalids in ``periodic_moe`` was ``compliance=empty`` with a zero-length
-response -- truncation, at gpt-oss's and Nemotron's 8,192 budget against a
-~26k-token prompt. Prompts here are ~2x longer again, so the budget rises
-for everyone. Whether 65,536 is actually enough is an empirical question
-this study's PILOT answers; check the invalid count before scaling R.
+DERIVED at startup by ``completion_budget``, not hardcoded -- hardcoding it
+failed twice here in one day, once too small and once too large:
+
+  65,536  truncated Qwen mid-``<think>``: empty response AND empty
+          reasoning, because the reasoning parser never saw a closing tag.
+  74,000  overshot by exactly ONE token. The prompt I had measured at
+          55,526 arrived at vLLM as 57,073 input tokens -- ``count()``
+          excludes the server-side chat template -- and 57,073 + 74,000 =
+          131,073 against a 131,072 limit. vLLM 400s that, which kills the
+          whole run rather than the single request.
+
+gpt-oss and Nemotron-3 are capped at 65,536 where they have produced zero
+empties, so their collected replicates stay comparable. Qwen takes whatever
+the context allows, since it is the only model that has ever truncated.
+Per-model budgets are the established practice in this family (periodic_moe
+gave Qwen 65,536 against 8,192 for the others): a uniform budget truncates
+whichever model reasons longest, which is a worse confound than an explicit
+ceiling because it penalises exactly the model working hardest.
 
 WHAT IT WILL ACTUALLY DO
 ------------------------
@@ -120,30 +132,89 @@ MODEL_GPTOSS = "gpt-oss-120b"
 #: module docstring's table for why this set and not a longer one.
 PERIODS: tuple[int, ...] = (1, 3, 4, 5, 7, 11)
 
-#: Completion budget, PER MODEL. See COMPLETION BUDGET above.
+#: The served checkpoints' context window (EC2_DEPLOY_SPECS max_model_len).
+CONTEXT_LIMIT: int = 131_072
+
+#: Tokens withheld from the completion budget, covering the two things a
+#: count() on one seed's prompt cannot see. Both were measured, not guessed:
 #:
-#: Qwen3.5 gets more than the others because it needs more: at 65,536 it
-#: truncated one extens mark in the pilot (period 11), returning an empty
-#: response AND empty reasoning -- its <think> block never closed, so the
-#: reasoning parser had nothing to hand back. gpt-oss and Nemotron-3 produced
-#: zero empties at 65,536 in the same pilot, so they keep it and their
-#: already-collected replicates stay comparable.
+#:  ~1,547  chat template. ``Tokenizer.count`` deliberately excludes
+#:          special/BOS tokens (see the Tokenizer protocol docstring), so the
+#:          server always receives more than count() reports. A prompt
+#:          counting 55,526 arrived at vLLM as 57,073 input tokens.
+#:  ~3,695  cross-seed variation. Sweeping all 30 seeds, the coprime study's
+#:          worst extens prompt is 59,221 (seed 1793) against 55,526 for seed
+#:          1776 -- the labels are random per seed and tokenize differently,
+#:          which compounds over thousands of listing lines. Sizing from one
+#:          seed understates the worst case by thousands of tokens.
 #:
-#: Qwen's 74,000 is essentially the ceiling this context allows: its worst
-#: prompt here is 55,526 tokens against a 131,072 window, leaving 75,546. If a
-#: request still truncates at 74,000 then no budget fits it on this
-#: checkpoint, and that is a finding about the model rather than a
-#: misconfiguration.
-#:
-#: Per-model budgets are the established practice in this benchmark family
-#: (periodic_moe gave Qwen 65,536 against 8,192 for the others) precisely
-#: because a uniform budget truncates some models and not others -- a worse
-#: confound than an explicit per-model ceiling.
-MAX_COMPLETION_TOKENS: dict[str, int] = {
+#: 8,000 covers both with margin, so the derived budget stays safe even when
+#: the seed probe misses the single longest seed. It costs only completion
+#: headroom that is otherwise unused.
+TEMPLATE_RESERVE: int = 8_000
+
+#: Seeds sampled when measuring the worst-case prompt. See completion_budget.
+PROBE_SEEDS: int = 6
+
+#: Floor below which a run is not worth starting: Qwen truncated mid-<think>
+#: at 65,536, so anything much smaller guarantees empties rather than data.
+MIN_VIABLE_BUDGET: int = 48_000
+
+#: Ceilings, applied AFTER the derived budget below. gpt-oss and Nemotron-3
+#: produced zero empties at 65,536, so they stay there and their collected
+#: replicates remain comparable; Qwen is uncapped and takes whatever the
+#: context allows, because it is the only model that has ever truncated.
+BUDGET_CAP: dict[str, int] = {
     MODEL_GPTOSS: 65_536,
     MODEL_NEMOTRON: 65_536,
-    MODEL_QWEN: 74_000,
+    MODEL_QWEN: CONTEXT_LIMIT,
 }
+
+
+def completion_budget(model: str, seeds: range) -> int:
+    """Largest completion budget that cannot overflow this model's context.
+
+    Derived, not hardcoded, because hardcoding it went wrong twice in one day:
+    65,536 truncated Qwen mid-``<think>`` (empty response AND empty
+    reasoning), and a hand-computed 74,000 overshot by exactly ONE token --
+    57,073 input + 74,000 output = 131,073 against a 131,072 limit -- which
+    vLLM rejects with a 400 that kills the whole run, not just that request.
+
+    Both mistakes came from me doing this arithmetic against a prompt length I
+    measured with ``count()``, which excludes the server-side template. So the
+    arithmetic moves here, over the ACTUAL worst-case prompt across every seed
+    this study will send, with TEMPLATE_RESERVE covering what count() cannot
+    see. Probing runs before provisioning, so its cost is wall-clock on a
+    machine that is not yet billing.
+    """
+    tok = for_model(model)
+    # Subsample the seeds. Prompt length varies across seeds only through the
+    # random labels (a couple of hundred tokens at most); the structure that
+    # sets the length -- period set, sequence length, arm -- is identical for
+    # every seed. Probing all 30 costs minutes per model because the noise arm
+    # re-runs its token-matching search each time, and TEMPLATE_RESERVE already
+    # covers far more than the residual variation. Endpoints are always
+    # included so the range is bracketed rather than sampled from the middle.
+    picks = sorted({seeds[0], seeds[-1],
+                    *(seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)]
+                      for i in range(PROBE_SEEDS))}) if len(seeds) > 1 else list(seeds)
+    worst = 0
+    for seed in picks:
+        for quiz in make_quizzes(seed, model).values():
+            worst = max(worst, max(tok.count(q.prompt) for q in quiz))
+    budget = min(CONTEXT_LIMIT - worst - TEMPLATE_RESERVE, BUDGET_CAP[model])
+    if budget < MIN_VIABLE_BUDGET:
+        raise SystemExit(
+            f"{model}: worst prompt is {worst:,} tokens, leaving only {budget:,} for "
+            f"completion against a {CONTEXT_LIMIT:,} context. That is below the "
+            f"{MIN_VIABLE_BUDGET:,} floor and would collect empties, not data. "
+            "Shorten the period set."
+        )
+    logging.info(
+        f"{model}: worst prompt {worst:,} tok (+{TEMPLATE_RESERVE:,} reserve) "
+        f"-> completion budget {budget:,}"
+    )
+    return budget
 
 # Byte-identical to periodic_moe's template, so the only difference between
 # the two studies is the period set.
@@ -227,16 +298,22 @@ def main() -> None:
     logging.info(f"periods={PERIODS} -> seq_len={prod(PERIODS)}")
     logging.info(f"running models: {list(models)}")
 
-    # Warm every tokenizer BEFORE provisioning. make_quizzes resolves a model's
-    # tokenizer from the HF hub, and doing that for the first time inside the
-    # run loop would put a network download -- and its failure modes -- between
-    # an already-billing GPU box and the first request.
+    # Warm every tokenizer AND derive every completion budget BEFORE
+    # provisioning. make_quizzes resolves a model's tokenizer from the HF hub,
+    # and doing that for the first time inside the run loop would put a network
+    # download -- and its failure modes -- between an already-billing GPU box
+    # and the first request. Deriving budgets here has the same shape of
+    # benefit: a period set that cannot fit its own context now fails on a
+    # laptop rather than after a p5 has spent 40 minutes loading weights.
+    seeds = range(BASE_SEED, BASE_SEED + EXPERIMENT.n_replicates)
+    budgets = {}
     for model in models:
         logging.info(f"warming tokenizer for {model}: {for_model(model).name}")
+        budgets[model] = completion_budget(model, seeds)
 
     EXPERIMENT.provision()
     for model in models:
-        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS[model]})
+        EXPERIMENT.run(model, extra_args={"max_completion_tokens": budgets[model]})
         EXPERIMENT.summarize(model)
     EXPERIMENT.teardown()
     print("COPRIME STUDY COMPLETE: box torn down", flush=True)
