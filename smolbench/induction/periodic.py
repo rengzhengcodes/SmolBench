@@ -41,9 +41,32 @@ set can be compared across all three:
   confound: any accuracy gap between intensional and extensional should not
   be attributable merely to the extensional prompt being longer.
 
+Harmonic periods: consecutive vs coprime
+----------------------------------------
+By default the k-th harmonic has period k for k in 1..n, so the sequence
+runs for lcm(1..n) positions. That makes sequence length a step function
+of n which is useless as a difficulty dial: lcm(1..10) == lcm(1..9) ==
+2520, so n=10 lengthens nothing, while n=11 introduces a new prime and
+multiplies the period by 11 (27,720 positions, a ~341k-token extensional
+listing that no current checkpoint's context window can hold).
+
+``PeriodicConfig.periods`` replaces 1..n with an explicit PAIRWISE-COPRIME
+period set. Coprimality is validated, not assumed, because it is what
+collapses lcm to the product -- so the caller dials sequence length
+directly (``periods=(1, 3, 4, 5, 7, 11)`` -> 4,620 positions) instead of
+accepting whatever lcm(1..n) happens to be. Everything downstream --
+renderers, query generators, the noise token-matcher -- is shared verbatim
+between the two pathways; they diverge only in :func:`_periods_of`.
+
+Note the density trade-off this buys: pairwise coprimality forbids keeping
+both 2 and 4, or both 3 and 9, so a coprime set fires fewer labels per
+position than 1..n does. Longer sequences therefore come with sparser
+per-position compounds, which is a change in the extensional listing's
+character and not only its length.
+
 Configuration
 -------------
-:class:`PeriodicConfig` (n, labels, seed, sep) plus a
+:class:`PeriodicConfig` (n, labels, seed, sep, periods) plus a
 ``smolbench.induction._common.Prompter`` (prompt template, static
 substitutions, and one of the query generators above) together determine a
 run; :func:`get_periodic_prompts` is the core generator both quiz wrappers
@@ -84,7 +107,7 @@ unintended generation drift.
 
 import string
 from dataclasses import dataclass
-from math import lcm
+from math import gcd, lcm
 from typing import TypeAlias, Collection, Iterable, Tuple, Dict
 
 import numpy as np
@@ -134,18 +157,52 @@ PosToCompound: TypeAlias = Dict[int, CompoundLabel]
 class PeriodicConfig:
     """Config for generating some periodic pattern."""
 
-    # Number of harmonics; the k-th harmonic fires at positions k, 2k, 3k, … for k in 1..n.
+    # Number of harmonics. With the default periods (None) the k-th harmonic
+    # fires at positions k, 2k, 3k, … for k in 1..n; with an explicit `periods`
+    # set, n is simply how many periods that set contains.
     n: int
     # Labels for each harmonic: n strings or int n → auto-generate n random labels.
+    # Assigned in ascending-period order, so labels[i] belongs to the i-th
+    # smallest period (identical to the old labels[k-1] on the 1..n pathway).
     labels: Collection[Label] | int
     # RNG seed for reproducibility.
     seed: int
     # Separator placed between active labels in compound output; must not appear in any label.
     sep: str = "|"
+    # Explicit PAIRWISE-COPRIME harmonic periods, replacing the default 1..n.
+    # None (the default) means the consecutive-integer pathway, whose generated
+    # bytes are pinned by tests/test_golden_quizzes.py -- leave it None and
+    # nothing about this class's behaviour changes. See _seq_len_of for why
+    # coprimality is enforced rather than merely encouraged.
+    periods: Tuple[int, ...] | None = None
 
     def __post_init__(self):
         if self.n < 1:
             raise ValueError("n must be positive.")
+        if self.periods is not None:
+            periods = tuple(int(p) for p in self.periods)
+            if len(periods) != self.n:
+                raise ValueError(
+                    f"Number of periods ({len(periods)}) must equal n ({self.n})."
+                )
+            if len(set(periods)) != len(periods):
+                raise ValueError(f"Periods must be distinct, got {periods}.")
+            if any(p < 1 for p in periods):
+                raise ValueError(f"Periods must be positive, got {periods}.")
+            # Pairwise coprimality is the whole point of this pathway: it makes
+            # lcm(periods) == prod(periods), so sequence length is a product the
+            # caller dials directly instead of the step function lcm(1..n) --
+            # which is why n=10 buys nothing (lcm stays 2520) and n=11 jumps 11x
+            # straight past every model's context window.
+            for i, a in enumerate(periods):
+                for b in periods[i + 1:]:
+                    if gcd(a, b) != 1:
+                        raise ValueError(
+                            f"Periods must be pairwise coprime; gcd({a}, {b}) = {gcd(a, b)}. "
+                            "Without coprimality lcm(periods) < prod(periods) and the "
+                            "sequence length is no longer the product you asked for."
+                        )
+            object.__setattr__(self, "periods", periods)
         if isinstance(self.labels, int):
             if self.labels != self.n:
                 raise ValueError(
@@ -182,26 +239,52 @@ _LABEL_CHARSET: str = string.ascii_lowercase
 # Sequence generation
 # ---------------------------------------------------------------------------
 
-def _seq_len(n: int) -> int:
-    """Returns the period of n harmonics: lcm(1, 2, …, n)."""
-    return lcm(*range(1, n + 1))
+def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
+    """Returns the harmonic periods this config asks for, ascending.
+
+    The consecutive-integer default (1..n) and the explicit coprime pathway
+    differ ONLY here, so every renderer, query generator and quiz wrapper
+    downstream is shared verbatim between the two.
+    """
+    if config.periods is None:
+        return tuple(range(1, config.n + 1))
+    return tuple(sorted(config.periods))
+
+
+def _seq_len_of(config: PeriodicConfig) -> int:
+    """Returns the sequence period: lcm of the config's harmonic periods.
+
+    For the default 1..n pathway this is lcm(1..n) -- a step function that
+    stalls (lcm(1..10) == lcm(1..9) == 2520) then leaps by a whole new prime
+    (lcm(1..11) == 27720). For a pairwise-coprime period set, validated as
+    such by PeriodicConfig, lcm degenerates to the product, so the caller
+    picks the sequence length directly.
+    """
+    return lcm(*_periods_of(config))
 
 
 def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
     """
     Returns the period→label mapping and the position→compound mapping.
 
-    The sequence covers exactly one full period: positions 1..lcm(1..n).
-    At each position the compound label is the sep-joined concatenation of all labels
-    whose period divides that position, in ascending period order.
+    The sequence covers exactly one full period: positions 1..lcm(periods),
+    which is lcm(1..n) on the default pathway and prod(periods) on the
+    coprime pathway. At each position the compound label is the sep-joined
+    concatenation of all labels whose period divides that position, in
+    ascending period order.
+
+    Labels are assigned to periods in ascending-period order, so
+    ``labels[i]`` belongs to the i-th smallest period. On the default
+    pathway that is exactly the previous ``labels[k - 1]`` for period k.
     """
+    periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
-        k: config.labels[k - 1] for k in range(1, config.n + 1)
+        k: config.labels[i] for i, k in enumerate(periods)
     }
-    seq_len = _seq_len(config.n)
+    seq_len = _seq_len_of(config)
     pos_to_compound: PosToCompound = {
         pos: config.sep.join(
-            period_to_label[k] for k in range(1, config.n + 1) if pos % k == 0
+            period_to_label[k] for k in periods if pos % k == 0
         )
         for pos in range(1, seq_len + 1)
     }
@@ -433,7 +516,9 @@ def numeric_count_query_gen(
     Yields count queries of the form 'How many positions 1..seq_len contain label?'
 
     The ground-truth answer is floor(seq_len / period) for each label, which is
-    always an exact integer since each period divides lcm(1..n).
+    always an exact integer since seq_len is the lcm of the harmonic periods,
+    so every period divides it -- true on both the default 1..n pathway
+    (lcm(1..n)) and the explicit coprime one (prod(periods)).
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
