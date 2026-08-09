@@ -163,20 +163,60 @@ class InductionExperiment:
     #: chromatic experiments need a private state file to avoid clobbering
     #: each other's instance record -- see ``_apply_env``).
     state_file: Optional[str] = None
+    #: ``(index, count)`` selecting a disjoint slice of the replicates, so N
+    #: processes on N instances can collect one model's replicates in
+    #: parallel; None (the default) means this process runs all of them.
+    #:
+    #: Sharding is what removes the LAST serialisation in a study. Splitting
+    #: by model already lets three checkpoints run at once, but a single
+    #: model's 30 replicates still run one after another on one box, so
+    #: wall-clock is set by the slowest model alone. Shards divide that too.
+    #:
+    #: Replicates are independent by construction -- each is a fresh
+    #: ``PeriodicConfig`` seed, and results are keyed by (tag, info, seed) --
+    #: so no coordination is needed BEYOND disjointness, which
+    #: ``seeds`` guarantees.
+    shard: Optional[Tuple[int, int]] = None
+
+    def __post_init__(self) -> None:
+        if self.shard is not None:
+            index, count = self.shard
+            if count < 1 or not (0 <= index < count):
+                raise ValueError(
+                    f"shard {self.shard!r}: need count >= 1 and 0 <= index < count."
+                )
 
     @property
     def seeds(self) -> Tuple[int, ...]:
-        """The replicate seeds: ``base_seed``, ``base_seed + 1``, ...
+        """The replicate seeds this process is responsible for.
+
+        Unsharded that is ``base_seed``, ``base_seed + 1``, ... Sharded it is
+        every ``count``-th one starting at ``index``.
 
         Returns
         -------
         Tuple[int, ...]
-            Length ``n_replicates``. Replicate ``r``'s seed is
+            Length ``n_replicates`` unsharded. Replicate ``r``'s seed is
             ``base_seed + r`` -- this same value both regenerates replicate
             ``r``'s quiz (see the module docstring's seed convention) and is
-            sent as the per-request decoding seed.
+            sent as the per-request decoding seed, so a seed means the same
+            replicate no matter which shard collects it.
+
+        Notes
+        -----
+        Shards stride (``r % count == index``) rather than taking contiguous
+        blocks. Striding keeps the shards within one replicate of each other
+        in size when ``count`` does not divide ``n_replicates`` -- 30 seeds
+        over 4 shards splits 8/8/7/7 instead of 8/8/8/6 -- which matters
+        because the slowest shard sets the wall-clock the sharding was meant
+        to reduce. Every replicate lands in exactly one shard, so parallel
+        shards never contend for the same ``rep_{seed}.yaml``.
         """
-        return tuple(self.base_seed + r for r in range(self.n_replicates))
+        every = tuple(self.base_seed + r for r in range(self.n_replicates))
+        if self.shard is None:
+            return every
+        index, count = self.shard
+        return tuple(s for r, s in enumerate(every) if r % count == index)
 
     @property
     def results_dir(self) -> Path:

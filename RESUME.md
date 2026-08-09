@@ -110,6 +110,29 @@ Results are unaffected — their path comes from `archetype_tags`, not the EC2
 tag — so per-model runs merge into one tree and never contend for the same
 `rep_{seed}.yaml`. Do not run two processes for the SAME model.
 
+## 3c. Sharding one model across N instances
+
+`{COPRIME,DIVISOR}_SHARD=index/count` runs only every `count`-th replicate,
+starting at `index`. Launch one process per shard, all with the same MODELS:
+
+```bash
+for i in 0 1 2; do
+  DIVISOR_N_REPLICATES=30 DIVISOR_MODELS=qwen35 DIVISOR_SHARD=$i/3 \
+    nohup .venv/bin/python notebooks/periodic_divisor/run_study.py > /tmp/dq$i.log 2>&1 &
+done
+```
+
+Each shard derives its OWN AWS tag and state file (`...-qwen35-s0of3`), so
+shards cannot reattach to each other's box — no manual tag/state juggling.
+Shards stride rather than block, so 30 over 4 splits 8/8/7/7 and the slowest
+shard (which sets wall-clock) stays balanced. Seeds keep their identity: seed
+1779 is the same replicate whichever shard collects it.
+
+Unsharded runs are byte-identical to before the flag existed.
+
+**Do not** run two processes with the same (MODELS, SHARD) — that is the one
+combination that races on the same `rep_{seed}.yaml`.
+
 ## 4. When a study reaches 360
 
 ```bash

@@ -367,3 +367,88 @@ def test_cot_chain_lengths_delegates_to_harness_with_default_tag(exp, tmp_path, 
     out = capsys.readouterr().out
     assert "cot/intens: no reasoning chains found" in out
     assert "cot/extens: no reasoning chains found" in out
+
+
+# ---------------------------------------------------------------------------
+# Replicate sharding: N instances collecting one model's replicates in parallel
+# ---------------------------------------------------------------------------
+
+
+def _sharded(count, index, n_replicates=30):
+    return InductionExperiment(
+        notebook_dir="periodic",
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        n_replicates=n_replicates,
+        shard=(index, count),
+    )
+
+
+def test_shards_partition_the_replicates_exactly():
+    """Across all shards every replicate appears EXACTLY once.
+
+    This is the only correctness property sharding needs, and it is the one
+    that costs money to get wrong in either direction: an overlap means two
+    instances race on the same ``rep_{seed}.yaml`` and one pays GPU time for
+    a result the other already has, while a gap means the study quietly
+    finishes short of R and every downstream power number is computed against
+    a replicate count that never existed.
+    """
+    unsharded = InductionExperiment(
+        notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes, n_replicates=30,
+    ).seeds
+    for count in (1, 2, 3, 4, 7, 30):
+        collected = [s for i in range(count) for s in _sharded(count, i).seeds]
+        assert sorted(collected) == sorted(unsharded), f"count={count} is not a partition"
+        assert len(collected) == len(set(collected)), f"count={count} has overlap"
+
+
+def test_shards_stay_within_one_replicate_of_each_other():
+    """Striding must keep shard sizes balanced when count does not divide R.
+
+    The point of sharding is wall-clock, which is set by the SLOWEST shard, so
+    an unbalanced split gives back the speedup it was bought for. Striding
+    splits 30 over 4 as 8/8/7/7; contiguous blocking would give 8/8/8/6, and
+    that last shard finishes early while everyone waits on the first.
+    """
+    for count in (4, 7, 8, 9):
+        sizes = [len(_sharded(count, i).seeds) for i in range(count)]
+        assert max(sizes) - min(sizes) <= 1, f"count={count} sizes {sizes}"
+        assert sum(sizes) == 30
+
+
+def test_unsharded_is_unchanged():
+    """shard=None must behave exactly as before the flag existed, so already
+    collected studies and any un-sharded relaunch stay bit-for-bit comparable."""
+    exp = InductionExperiment(
+        notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes, n_replicates=5, base_seed=1776,
+    )
+    assert exp.shard is None
+    assert exp.seeds == (1776, 1777, 1778, 1779, 1780)
+
+
+def test_seed_identity_is_shard_independent():
+    """A seed must name the same replicate regardless of which shard runs it.
+
+    Seeds are both the quiz generator's seed and the decoding seed, so if
+    sharding renumbered them, two shards would produce different quizzes for
+    the "same" replicate and the results tree would silently mix them.
+    """
+    assert _sharded(3, 0).seeds[0] == 1776
+    assert _sharded(3, 1).seeds[0] == 1777
+    assert _sharded(3, 2).seeds[0] == 1778
+    for count in (2, 3, 5):
+        for i in range(count):
+            for s in _sharded(count, i).seeds:
+                assert (s - 1776) % count == i
+
+
+@pytest.mark.parametrize("bad", [(0, 0), (3, 3), (-1, 2), (2, 2), (5, 3)])
+def test_invalid_shards_are_rejected(bad):
+    """A malformed shard must fail at construction, not silently collect the
+    wrong slice -- an out-of-range index yields an EMPTY seed list, which
+    looks exactly like 'already finished' to a resume-skipping run."""
+    with pytest.raises(ValueError, match="shard"):
+        _sharded(bad[1], bad[0])

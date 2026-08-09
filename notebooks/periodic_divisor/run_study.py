@@ -73,6 +73,11 @@ Run (repo root, main venv):
 Environment:
     DIVISOR_N_REPLICATES   replicate count (default 1 = pilot)
     DIVISOR_MODELS         comma-separated tags (default all three)
+    DIVISOR_SHARD          'index/count' -- run only every count-th replicate,
+                           starting at index, so N instances can collect one
+                           model's replicates in parallel. Derives its own AWS
+                           tag and state file, so shards cannot collide; launch
+                           one process per shard, each with the same MODELS.
 """
 
 import logging
@@ -90,6 +95,47 @@ logging.basicConfig(level=logging.INFO)
 # and resource tags can never collide with the two sibling studies, which may
 # be running at the same time.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
+
+def _parse_shard(var: str) -> "tuple[int, int] | None":
+    """Parses a ``index/count`` shard selector from the environment.
+
+    Sharding splits ONE model's replicates across N instances, which is the
+    last serialisation left in a study: splitting by model already runs the
+    three checkpoints at once, but a single model's 30 replicates still run
+    one after another, so wall-clock is set by the slowest model alone.
+    """
+    raw = os.environ.get(var, "").strip()
+    if not raw:
+        return None
+    try:
+        index, count = (int(part) for part in raw.split("/", 1))
+    except ValueError:
+        raise SystemExit(f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3")
+    if count < 1 or not (0 <= index < count):
+        raise SystemExit(f"{var}={raw!r}: need count >= 1 and 0 <= index < count")
+    return index, count
+
+
+SHARD = _parse_shard("DIVISOR_SHARD")
+
+# A shard needs its OWN AWS tag and state file. Without that, shard 1
+# reattaches to shard 0's live box and swaps the served model out from under a
+# run in progress -- the exact collision hit when first parallelising by model.
+# Deriving both from the lane, rather than asking the caller to remember two
+# more environment variables, removes that footgun.
+#
+# This MUST execute before smolbench.evals.ec2 is imported below: ec2.py
+# freezes its EC2_* constants from os.environ at import time, so a tag set
+# afterwards is silently ignored. Unsharded runs get an empty suffix, leaving
+# the tag and state file byte-identical to before this flag existed.
+_LANE = ""
+if SHARD is not None:
+    _models = os.environ.get("DIVISOR_MODELS", "").strip().replace(",", "-")
+    _LANE = (f"-{_models}" if _models else "") + "-s{}of{}".format(*SHARD)
+    os.environ["EC2_EXPERIMENT_TAG"] = (
+        os.environ.get("EC2_EXPERIMENT_TAG", "periodic-divisor-induction") + _LANE
+    )
+_DEFAULT_STATE_FILE = f".ec2_state_periodic_divisor{_LANE}.json"
 
 from smolbench.evals.tokenization import for_model  # noqa: E402
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
@@ -269,7 +315,8 @@ EXPERIMENT = InductionExperiment(
     # EC2_EXPERIMENT_TAG (that one DOES honour the shell, since load_dotenv
     # does not override) or the second run reattaches to the first run's
     # box and swaps the served model out from under it.
-    state_file=os.environ.get("DIVISOR_STATE_FILE", ".ec2_state_periodic_divisor.json"),
+    state_file=os.environ.get("DIVISOR_STATE_FILE", _DEFAULT_STATE_FILE),
+    shard=SHARD,
 )
 
 _BY_TAG = {"gptoss": MODEL_GPTOSS, "nemotron3": MODEL_NEMOTRON, "qwen35": MODEL_QWEN}
