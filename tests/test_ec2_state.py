@@ -135,3 +135,41 @@ def test_state_file_env_read_at_call_time(tmp_path, monkeypatch):
     ec2._save_state({"ok": True})
     assert custom.exists()  # honored by _save_state too, not just _state_path
     assert ec2._load_state() == {"ok": True}
+
+
+def test_clear_state_leaves_a_different_instances_state_alone(state_file):
+    """A teardown must not delete state belonging to another instance.
+
+    The race this guards, observed live 2026-08-09: run A finishes and starts
+    tearing down its box; run B for the same experiment tag provisions a fresh
+    box and writes ITS state; then A's teardown reaches _clear_state and, if it
+    deletes unconditionally, removes B's state. B's next call raises "No EC2
+    instance state found" and the driver exits -- leaving a live p5-class
+    instance (~$21/h) billing with nothing driving it and no local record it
+    exists.
+
+    Passing the torn-down instance id makes the delete conditional, so state
+    naming a different instance survives.
+    """
+    ec2._save_state(dict(SAMPLE_STATE, instance_id="i-newbox"))
+    ec2._clear_state("i-oldbox")  # the OTHER instance's teardown
+    survived = ec2._load_state()
+    assert survived is not None, "a concurrent run's state was deleted by another teardown"
+    assert survived["instance_id"] == "i-newbox"
+
+
+def test_clear_state_removes_its_own_instances_state(state_file):
+    """The guard must not stop a teardown clearing the state it does own --
+    otherwise every run would leak a stale state file pointing at a dead box,
+    and the next provision would waste a reattach attempt on it."""
+    ec2._save_state(dict(SAMPLE_STATE, instance_id="i-mine"))
+    ec2._clear_state("i-mine")
+    assert ec2._load_state() is None
+
+
+def test_clear_state_without_an_id_stays_unconditional(state_file):
+    """Callers with no resolved instance keep the old behaviour: nothing was
+    identified, so there is no ownership question to answer."""
+    ec2._save_state(SAMPLE_STATE)
+    ec2._clear_state()
+    assert ec2._load_state() is None

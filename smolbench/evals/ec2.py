@@ -404,8 +404,34 @@ def _save_state(state: Dict[str, Any]) -> None:
     path.chmod(0o600)  # holds the control token and the vLLM api key
 
 
-def _clear_state() -> None:
+def _clear_state(instance_id: Optional[str] = None) -> None:
+    """Removes the local state file, unless another instance has claimed it.
+
+    ``instance_id`` is the instance whose teardown is doing the clearing. When
+    supplied, the file is LEFT ALONE if it now names a different instance --
+    which happens when a second run for the same experiment tag provisions a
+    fresh box and writes its state in the window between this teardown
+    starting and finishing.
+
+    Deleting it in that window strands the new box: its driver's next call
+    raises "No EC2 instance state found" and exits, leaving a live GPU
+    instance billing with nothing driving it and no local record that it
+    exists. Seen live 2026-08-09 -- a p5.48xlarge orphaned for 8 minutes at
+    ~$21/h, recovered only because ``provision_spot_instance`` can rebuild
+    state from the instance's user-data via the experiment tag.
+
+    Passing None keeps the unconditional behaviour, for callers with no
+    instance in hand (nothing was resolved, so nothing can be mismatched).
+    """
     try:
+        if instance_id is not None:
+            current = _load_state()
+            if current is not None and current.get("instance_id") != instance_id:
+                logging.info(
+                    f"_clear_state: keeping state for {current.get('instance_id')}; "
+                    f"it is not {instance_id}, the instance being torn down."
+                )
+                return
         _state_path().unlink()
     except OSError:
         pass
@@ -1902,7 +1928,7 @@ def shutdown_instance(wait: bool = True) -> None:
         if _error_code(err) != "InvalidInstanceID.NotFound":
             raise
         logging.info(f"shutdown_instance: {instance_id} already gone.")
-        _clear_state()
+        _clear_state(instance_id)
         return
     logging.info(f"shutdown_instance: terminating {instance_id} ({region}) ...")
     if wait:
@@ -1920,4 +1946,4 @@ def shutdown_instance(wait: bool = True) -> None:
                 f"shutdown_instance: {instance_id} still shutting down after the "
                 "waiter's max attempts; termination is already issued, proceeding."
             )
-    _clear_state()
+    _clear_state(instance_id)

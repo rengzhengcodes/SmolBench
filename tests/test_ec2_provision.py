@@ -365,9 +365,15 @@ def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
     )
     monkeypatch.setattr(ec2, "_agent", lambda *a, **k: {})
     monkeypatch.setattr(ec2, "_ec2_client", lambda region: fake)
-    monkeypatch.setattr(ec2, "_clear_state", lambda: cleared.append(True))
+    # Records the argument, not just the call: shutdown must clear state as
+    # the OWNER of a specific instance, so a concurrent run's freshly-written
+    # state for a different box is not deleted out from under it (see
+    # tests/test_ec2_state.py's ownership tests).
+    monkeypatch.setattr(ec2, "_clear_state", lambda instance_id=None: cleared.append(instance_id))
 
     ec2.shutdown_instance(wait=True)  # must not raise
 
     assert fake.terminated == [["i-slow"]]
-    assert cleared == [True]  # state cleared despite the expired waiter
+    # State is still cleared despite the expired waiter (the original point of
+    # this test), and is cleared as the OWNER of i-slow rather than blindly.
+    assert cleared == ["i-slow"]
