@@ -118,9 +118,20 @@ PERIODS: tuple[int, ...] = tuple(sorted(
     + (105, 120, 126, 140, 168, 180, 210, 252, 280, 315, 360, 420, 504, 630, 840, 1260, 2520)
 ))
 
-#: Completion budget for every model -- see periodic_coprime/run_study.py.
-#: Prompts here are near the baseline's length, so this is generous.
-MAX_COMPLETION_TOKENS: int = 65_536
+#: Completion budget, PER MODEL -- see periodic_coprime/run_study.py, where
+#: Qwen3.5 truncated an extens mark at 65,536 (empty response AND empty
+#: reasoning: its <think> block never closed). gpt-oss and Nemotron-3 have
+#: produced zero empties at 65,536 here, so they keep it and their collected
+#: replicates stay comparable; only Qwen, which has not run yet, is raised.
+#:
+#: Prompts here are shorter than the coprime study's (36,321 worst for Qwen
+#: against 55,526 there), so Qwen can be given 93,000 -- close to this
+#: context's ceiling of 131,072 - 36,321 = 94,751.
+MAX_COMPLETION_TOKENS: dict[str, int] = {
+    MODEL_GPTOSS: 65_536,
+    MODEL_NEMOTRON: 65_536,
+    MODEL_QWEN: 93_000,
+}
 
 # Byte-identical to periodic_moe's and periodic_coprime's template, so the
 # period set is the only thing that differs across the three studies.
@@ -220,7 +231,7 @@ def main() -> None:
 
     EXPERIMENT.provision()
     for model in models:
-        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS})
+        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS[model]})
         EXPERIMENT.summarize(model)
     EXPERIMENT.teardown()
     print("DIVISOR STUDY COMPLETE: box torn down", flush=True)

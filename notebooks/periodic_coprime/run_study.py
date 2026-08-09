@@ -120,8 +120,30 @@ MODEL_GPTOSS = "gpt-oss-120b"
 #: module docstring's table for why this set and not a longer one.
 PERIODS: tuple[int, ...] = (1, 3, 4, 5, 7, 11)
 
-#: Completion budget for EVERY model. See COMPLETION BUDGET above.
-MAX_COMPLETION_TOKENS: int = 65_536
+#: Completion budget, PER MODEL. See COMPLETION BUDGET above.
+#:
+#: Qwen3.5 gets more than the others because it needs more: at 65,536 it
+#: truncated one extens mark in the pilot (period 11), returning an empty
+#: response AND empty reasoning -- its <think> block never closed, so the
+#: reasoning parser had nothing to hand back. gpt-oss and Nemotron-3 produced
+#: zero empties at 65,536 in the same pilot, so they keep it and their
+#: already-collected replicates stay comparable.
+#:
+#: Qwen's 74,000 is essentially the ceiling this context allows: its worst
+#: prompt here is 55,526 tokens against a 131,072 window, leaving 75,546. If a
+#: request still truncates at 74,000 then no budget fits it on this
+#: checkpoint, and that is a finding about the model rather than a
+#: misconfiguration.
+#:
+#: Per-model budgets are the established practice in this benchmark family
+#: (periodic_moe gave Qwen 65,536 against 8,192 for the others) precisely
+#: because a uniform budget truncates some models and not others -- a worse
+#: confound than an explicit per-model ceiling.
+MAX_COMPLETION_TOKENS: dict[str, int] = {
+    MODEL_GPTOSS: 65_536,
+    MODEL_NEMOTRON: 65_536,
+    MODEL_QWEN: 74_000,
+}
 
 # Byte-identical to periodic_moe's template, so the only difference between
 # the two studies is the period set.
@@ -214,7 +236,7 @@ def main() -> None:
 
     EXPERIMENT.provision()
     for model in models:
-        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS})
+        EXPERIMENT.run(model, extra_args={"max_completion_tokens": MAX_COMPLETION_TOKENS[model]})
         EXPERIMENT.summarize(model)
     EXPERIMENT.teardown()
     print("COPRIME STUDY COMPLETE: box torn down", flush=True)
