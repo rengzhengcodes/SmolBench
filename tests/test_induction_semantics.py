@@ -209,6 +209,93 @@ def test_non_coprime_periods_are_rejected():
         PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=3, periods=(1, 3, 3, 5))
 
 
+def test_divisor_periods_add_harmonics_without_moving_sequence_length():
+    """A non-coprime DIVISOR set must leave seq_len exactly where it was while
+    adding harmonics -- the dual of coprime mode, and the whole point of it.
+
+    Coprime mode lengthens the extensional listing; this lengthens the
+    intensional rule list instead. It works because a period d contributes
+    only seq_len/d occurrences to the listing, so LARGE divisors add rules
+    and questions almost for free. If lcm ever drifted off the declared
+    length the listing would silently resize and the manipulation would no
+    longer be "intensional length holding extensional fixed" -- which is why
+    expect_seq_len is asserted rather than inferred.
+    """
+    base = tuple(range(1, 10))              # lcm(1..9) == 2520
+    added = (2520, 1260, 840, 630, 504)     # the largest proper divisors
+    periods = base + added
+    cfg = PeriodicConfig(
+        n=len(periods), labels=len(periods), seed=17,
+        periods=periods, expect_seq_len=2520,
+    )
+    period_to_label, pos_to_compound = generate_sequence(cfg)
+
+    # The invariant under test: more harmonics, identical sequence length.
+    assert len(period_to_label) == 14 > len(base)
+    assert max(pos_to_compound) == 2520 == lcm(*base)
+
+    # Every added period divides the length, so counts stay exact -- and the
+    # large ones are deliberately rare in the listing (2520 fires once).
+    for d in added:
+        occurrences = sum(1 for comp in pos_to_compound.values()
+                          if period_to_label[d] in comp.split("|"))
+        assert occurrences == 2520 // d
+    assert sum(1 for c in pos_to_compound.values()
+               if period_to_label[2520] in c.split("|")) == 1
+
+    # A quiz over this config asks one question per harmonic, so the rule
+    # list and the question count both grow while the listing does not.
+    template = string.Template(
+        "$positive_info\nHow many of positions 1..$seq_len include '$label'?"
+    )
+    intens_quiz, _extens, _noise = get_periodic_numeric_quiz(
+        cfg, Prompter(template, {}, numeric_count_query_gen), tokenizer=StubTokenizer()
+    )
+    assert len(intens_quiz) == len(periods)
+    label_to_period = {lab: p for p, lab in period_to_label.items()}
+    for qna in intens_quiz:
+        match = re.search(r"positions 1\.\.(\d+) include '(\w+)'", qna.prompt)
+        seq_len, label = int(match.group(1)), match.group(2)
+        period = label_to_period[label]
+        assert qna.answer == sum(1 for pos in range(1, seq_len + 1) if pos % period == 0)
+
+
+def test_divisor_mode_rejects_periods_that_move_the_length():
+    """A period that does NOT divide the declared length must raise.
+
+    Slipping in 11 alongside 1..9 multiplies lcm to 27,720 -- an eleven-fold
+    longer extensional listing. The quiz would still be internally
+    consistent, so the only symptom would be a study silently comparing
+    against the wrong baseline. expect_seq_len turns that into a crash.
+    """
+    periods = tuple(range(1, 10)) + (11,)
+    with pytest.raises(ValueError, match="lcm\\(periods\\) is 27720"):
+        PeriodicConfig(n=len(periods), labels=len(periods), seed=17,
+                       periods=periods, expect_seq_len=2520)
+
+    # Under-reaching the declared length is caught by the same assertion.
+    with pytest.raises(ValueError, match="not the declared expect_seq_len"):
+        PeriodicConfig(n=3, labels=3, seed=17, periods=(1, 2, 4), expect_seq_len=2520)
+
+    # And the field is meaningless without an explicit period set.
+    with pytest.raises(ValueError, match="only means something alongside"):
+        PeriodicConfig(n=4, labels=4, seed=17, expect_seq_len=60)
+
+
+def test_coprime_mode_still_requires_coprimality_when_length_undeclared():
+    """Omitting expect_seq_len must keep the strict coprime contract.
+
+    The two modes share one field, so this pins the discriminator: no
+    declared length means coprime mode, and a shared factor is still an
+    error there rather than being waved through by the divisor branch.
+    """
+    with pytest.raises(ValueError, match="pairwise coprime"):
+        PeriodicConfig(n=4, labels=4, seed=17, periods=(1, 2, 4, 5))
+    # The error names the escape hatch, so the divisor pathway is findable.
+    with pytest.raises(ValueError, match="expect_seq_len"):
+        PeriodicConfig(n=4, labels=4, seed=17, periods=(1, 2, 4, 5))
+
+
 def test_default_pathway_is_untouched_by_the_periods_field():
     """Omitting ``periods`` must leave the consecutive-integer behaviour exactly
     as it was -- the coprime pathway is additive, not a replacement.
