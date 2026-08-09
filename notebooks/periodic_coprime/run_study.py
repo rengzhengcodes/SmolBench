@@ -265,7 +265,14 @@ EXPERIMENT = InductionExperiment(
     info_types=INFO_TYPES,
     n_replicates=int(os.environ.get("COPRIME_N_REPLICATES", "1")),
     base_seed=BASE_SEED,
-    state_file=".ec2_state_periodic_coprime.json",
+    # Env-overridable so ONE MODEL PER BOX is possible. InductionExperiment
+    # writes this into EC2_STATE_FILE (experiment.py), which clobbers any
+    # shell-set value -- so parallelising by model has to go through here,
+    # not through the environment. Pair it with a distinct
+    # EC2_EXPERIMENT_TAG (that one DOES honour the shell, since load_dotenv
+    # does not override) or the second run reattaches to the first run's
+    # box and swaps the served model out from under it.
+    state_file=os.environ.get("COPRIME_STATE_FILE", ".ec2_state_periodic_coprime.json"),
 )
 
 #: Archetype tag -> model, for the COPRIME_MODELS selector.

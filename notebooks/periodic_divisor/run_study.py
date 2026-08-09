@@ -262,7 +262,14 @@ EXPERIMENT = InductionExperiment(
     info_types=INFO_TYPES,
     n_replicates=int(os.environ.get("DIVISOR_N_REPLICATES", "1")),
     base_seed=BASE_SEED,
-    state_file=".ec2_state_periodic_divisor.json",
+    # Env-overridable so ONE MODEL PER BOX is possible. InductionExperiment
+    # writes this into EC2_STATE_FILE (experiment.py), which clobbers any
+    # shell-set value -- so parallelising by model has to go through here,
+    # not through the environment. Pair it with a distinct
+    # EC2_EXPERIMENT_TAG (that one DOES honour the shell, since load_dotenv
+    # does not override) or the second run reattaches to the first run's
+    # box and swaps the served model out from under it.
+    state_file=os.environ.get("DIVISOR_STATE_FILE", ".ec2_state_periodic_divisor.json"),
 )
 
 _BY_TAG = {"gptoss": MODEL_GPTOSS, "nemotron3": MODEL_NEMOTRON, "qwen35": MODEL_QWEN}
