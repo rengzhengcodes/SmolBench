@@ -17,7 +17,12 @@ the model room to answer.
 Exit status is the contract: 0 = pass (safe to scale R), 1 = blocked.
 
 Run (repo root, main venv):
-    .venv/bin/python scripts/coprime_pilot_gate.py
+    .venv/bin/python scripts/coprime_pilot_gate.py [study]
+
+``study`` is a notebook directory name and defaults to ``periodic_coprime``;
+pass ``periodic_divisor`` (or any sibling) to gate that study instead. The
+check is study-agnostic -- it only ever looks for empty completions -- so it
+is worth pointing at any run whose completion budget is unproven.
 """
 
 import sys
@@ -26,7 +31,8 @@ from pathlib import Path
 
 import yaml
 
-RESULTS = Path(__file__).resolve().parent.parent / "notebooks" / "periodic_coprime" / "results"
+NOTEBOOKS = Path(__file__).resolve().parent.parent / "notebooks"
+DEFAULT_STUDY = "periodic_coprime"
 
 #: Completion budget the pilot ran with; only used for the diagnosis message.
 BUDGET = 65_536
@@ -50,13 +56,16 @@ def tally(arm_dir: Path) -> tuple[int, int, int, Counter]:
 
 
 def main() -> int:
-    if not RESULTS.is_dir():
-        print(f"BLOCKED: no results directory at {RESULTS}")
+    study = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STUDY
+    results = NOTEBOOKS / study / "results"
+    print(f"gating study: {study}\n")
+    if not results.is_dir():
+        print(f"BLOCKED: no results directory at {results}")
         return 1
 
-    arms = sorted(p for p in RESULTS.iterdir() if p.is_dir())
+    arms = sorted(p for p in results.iterdir() if p.is_dir())
     if not arms:
-        print(f"BLOCKED: {RESULTS} has no arms; the pilot produced nothing")
+        print(f"BLOCKED: {results} has no arms; the run produced nothing")
         return 1
 
     empties = 0
