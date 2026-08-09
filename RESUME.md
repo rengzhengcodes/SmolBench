@@ -88,6 +88,28 @@ log, do not relaunch blindly.
 Rough remaining time at observed rates: coprime ~3–5 h (13 Qwen replicates plus
 a ~397 GB load); divisor ~15–20 h (17 Nemotron-3 at ~17 min each, then 30 Qwen).
 
+## 3b. Parallelising by model (one box per model)
+
+A study serves its models in TURN on one box, so wall-clock is the sum of
+the per-model times, not the max. To split them, a process needs BOTH a
+distinct AWS tag and a distinct state file:
+
+```bash
+DIVISOR_N_REPLICATES=30 DIVISOR_MODELS=qwen35 \
+  DIVISOR_STATE_FILE=.ec2_state_periodic_divisor_qwen.json \
+  EC2_EXPERIMENT_TAG=periodic-divisor-qwen \
+  nohup .venv/bin/python notebooks/periodic_divisor/run_study.py > /tmp/dq.log 2>&1 &
+```
+
+`EC2_STATE_FILE` alone does NOT work: `InductionExperiment` writes its
+configured `state_file` into that variable (experiment.py), clobbering the
+shell value. A process launched that way reattaches to the sibling's box and
+swaps the served model out from under it. Use `{COPRIME,DIVISOR}_STATE_FILE`.
+
+Results are unaffected — their path comes from `archetype_tags`, not the EC2
+tag — so per-model runs merge into one tree and never contend for the same
+`rep_{seed}.yaml`. Do not run two processes for the SAME model.
+
 ## 4. When a study reaches 360
 
 ```bash
