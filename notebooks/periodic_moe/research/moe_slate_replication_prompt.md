@@ -1,10 +1,10 @@
-# Replication task: open-weight MoE family ladders for a cross-lab scaling study
+# Researcn task: open-weight family ladders for a cross-lab scaling study
 
 Conduct a deep, multi-source, adversarially fact-checked survey and return a **slate of
 open-weight model families that each ship a size ladder**, for use in a within-family
 parameter-scaling study on a reasoning/induction benchmark.
 
-**Anchor every judgment to a knowledge state of 2026-08-02.** Do not count models
+**Anchor every judgment to a knowledge state of 2026-08-10.** Do not count models
 released after that date. State explicitly wherever your evidence post-dates it.
 
 ## What counts as a family
@@ -16,20 +16,16 @@ seat only if a European family genuinely clears every hard filter.
 
 ## Hard filters (a family fails if ANY counted tier fails)
 
-1. **Mixture-of-experts.** Every *counted* tier must be MoE. Report total and active
-   params per tier. Dense siblings may be mentioned but never count toward a ladder.
-   A dense family may appear ONLY if you explicitly label it a control arm and mark
-   this filter failed by design.
-2. **Explicit reasoning mechanism.** A thinking variant, hybrid/toggleable think mode,
+1. **Explicit reasoning mechanism.** A thinking variant, hybrid/toggleable think mode,
    or reasoning-effort control. Verify against the **shipped chat template / config**
    in the actual repo — not the model card's prose, not a blog claim.
-3. **>=128,000 context on every counted tier**, as it appears in the **shipped
+2. **>=128,000 context on every counted tier**, as it appears in the **shipped
    `config.json`**. An officially-shipped YaRN/rope-scaling config counts. A card-only
    claim, a community RoPE patch, or a "supports up to" marketing number does NOT.
-4. **Open weights, downloadable.** Note gated vs ungated status per repo (check the
+3. **Open weights, downloadable.** Note gated vs ungated status per repo (check the
    host API, not the web page).
-5. **Released within ~24 months** of 2026-08 (i.e. >= ~2024-08). Give a sourced date.
-6. **Single-node deployability.** The largest counted member must serve on ONE node of
+4. **Released within ~24 months** of 2026-08 (i.e. >= ~2024-08). Give a sourced date.
+5. **Single-node deployability.** The largest counted member must serve on ONE node of
    8x H200 (1,128 GB total HBM) via **upstream vLLM** at the best *official* precision
    the lab published. Fork wheels, vendor plugins, and out-of-tree backends do NOT
    count as upstream support — check the upstream architecture registry. Show the
