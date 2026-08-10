@@ -15,8 +15,13 @@ live at handoff:
 
 | instance | region | lane |
 |---|---|---|
-| `i-082255cd7424be5a2` | us-east-2 | `periodic-divisor-induction` (Nemotron-3) |
-| `i-0b098dcf7d29aea18` | us-east-2 | `periodic-divisor-qwen` (Qwen3.5) |
+| `i-0de896205a3f4c5c2` | us-east-2c | `periodic-divisor-induction` (Nemotron-3) |
+| `i-0d74add84f68e785f` | us-east-2c | `periodic-divisor-qwen` (Qwen3.5) |
+
+Both relaunched 2026-08-10 after the previous pair wound down on their idle
+watchdogs. us-east-1 had no p5 spot capacity in any of its six AZs that day;
+the provisioner fell through to us-east-2c on its own, which is the configured
+behaviour and needs no intervention.
 
 When a driver dies the box goes idle and its on-instance watchdog terminates it
 after 30 minutes (plus a hard `shutdown -h +1440`). That backstop has fired
@@ -46,7 +51,7 @@ do not touch it.
 | study | replicates | gpt-oss | Nemotron-3 | Qwen3.5 |
 |---|---|---|---|---|
 | `periodic_coprime` | **360/360 DONE** | 30/30 | 30/30 | 30/30 |
-| `periodic_divisor` | 272/360 | 30/30 | **20/30** | **18/30** |
+| `periodic_divisor` | 288/360 | 30/30 | **22/30** | **20/30** |
 
 Target is 360 = 3 models x 4 arms x 30 seeds (1776–1805). Everything is
 committed; replicates resume-skip on `rep_{seed}.yaml` existence, so nothing is
