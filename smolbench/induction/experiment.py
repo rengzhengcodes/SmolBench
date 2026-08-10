@@ -32,14 +32,62 @@ archetype it belongs to, so a replicate stays regenerable from its path.)
 
 Results layout and resume semantics
 ------------------------------------
-Every (archetype, info type, seed) replicate is serialized to
-``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml`` -- see
+Every (archetype, info type, seed) replicate is addressed by a
+``smolbench.evals.results_store.ReplicateAddress`` (archetype tag, info
+type, seed, and -- for the S3 backend only -- model id) -- see
 :class:`~smolbench.evals.replicates.ReplicateHarness` for the pooling and
 resume-skip mechanics (delegated to unchanged here). ``prefix`` exists so
 more than one experiment can share one ``results_dir`` without their
-replicate directories colliding (``induction_eval_one_hop.ipynb`` sets
+replicates colliding (``induction_eval_one_hop.ipynb`` sets
 ``prefix="one_hop_"`` to share ``notebooks/chromatic/results`` with
 ``induction_eval.ipynb``).
+
+Where a replicate actually lives -- local disk or S3 -- is decided by
+:func:`smolbench.evals.results_store.resolve_store` (``results_dir``,
+``prefix``), keyed off ``SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]``
+(unset/empty selects the local store; set, it selects S3) and
+``SMOLBENCH_RESULTS_S3_REGION`` (defaulting to ``AWS_REGION``, else boto3's
+own resolution chain), both read at call time.
+
+The LOCAL layout is unchanged and byte-identical to every prior release:
+``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir`` -- one file
+per replicate, overwritten on rerun. Every analysis script, notebook, and
+already-committed results tree depends on this shape staying exactly as it
+is.
+
+The S3 layout is a clean, APPEND-ONLY EXPERIMENT LOG organised by model,
+seed, and collection time -- NOT a mirror of the local tree::
+
+    <base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml
+
+``experiment`` is derived from ``results_dir`` by
+``results_store.experiment_name``: ``repo_root()/notebooks/<notebook_dir>/
+results`` maps to ``<notebook_dir>``, with ``prefix`` (e.g. ``"one_hop_"``)
+folded in as a sub-level with its trailing ``"_"`` stripped --
+``notebook_dir="chromatic"``, ``prefix="one_hop_"`` therefore maps to
+``"chromatic/one_hop"``. ``run_ts`` is a fixed-width UTC
+``YYYYMMDDTHHMMSSZ`` stamp, so lexicographic key order is chronological
+order. A worked example -- ``notebook_dir="periodic_moe"``, model
+``"gpt-oss-120b"``, seed 1776, info ``"extens"``, empty base prefix::
+
+    periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml
+
+A run NEVER overwrites a prior run's object in the S3 log -- re-running an
+experiment APPENDS a new timestamped object rather than replacing anything,
+so a superseded verdict stays recoverable as log history rather than being
+destroyed. Every READ path (``summarize()``, ``cot_chain_lengths()``,
+``harness.sync_down()``) resolves the LATEST ``run_ts`` per (model, seed,
+info) and treats only that one as live.
+
+``InductionExperiment.harness.sync_down()`` translates an S3-backed
+experiment's append-only log back into the local layout above, for tooling
+(``power_analysis.py``, the figure scripts) that reads a local tree and is
+not itself store-aware -- it supplies this experiment's own
+``archetype_tags`` as the model -> tag mapping the log cannot carry (a log
+key names a model, never a tag). See
+``smolbench.evals.results_store.sync_down`` for the full contract
+(including why this is a translation rather than a mirror, and why it
+remains a one-way, destructive S3 -> local operation).
 
 Cost warning
 -------------
@@ -47,7 +95,12 @@ Cost warning
 AWS calls against a self-provisioned EC2 spot instance billed for the
 duration it is up (~$30-45/h for the p5e/p5 family at the time of writing --
 see ``smolbench/evals/ec2.py``). ``summarize()`` and ``cot_chain_lengths()``
-only read cached YAML off disk and never touch AWS or the network.
+never touch EC2 or inference spend -- but with an S3-backed results store
+(see "Results layout and resume semantics" above) they DO issue S3 reads
+(``list_objects_v2``/``get_object`` per replicate), so "never touch AWS or
+the network" is only true for the default local store; the point of this
+warning -- that these two calls cannot trigger GPU billing -- still holds
+either way.
 
 CRITICAL: no ``smolbench.evals.ec2`` import at module scope
 --------------------------------------------------------------
@@ -80,30 +133,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
-import smolbench
 from smolbench.evals import Quiz
 from smolbench.evals.replicates import ReplicateHarness
 
 
-def repo_root() -> Path:
-    """Returns the repository root, anchored via the installed package.
-
-    Design: every notebook computes its results/state-file paths the same
-    way (``Path(smolbench.__file__).resolve().parents[1]``) rather than
-    anything cwd-relative, because notebook kernels can run with a temp-dir
-    cwd and the power-analysis scripts read the same ``results/`` tree from
-    a different working directory entirely. This function is that one
-    blessed anchor, reused by every path derived below.
-
-    Returns
-    -------
-    Path
-        The directory containing the top-level ``notebooks/`` folder (i.e.
-        the git checkout root), resolved to an absolute, symlink-free path.
-    """
-    # smolbench.__file__ -> <repo_root>/smolbench/__init__.py; two parents
-    # up strips both the file and the package directory.
-    return Path(smolbench.__file__).resolve().parents[1]
+# Canonical definition now lives in smolbench.evals.results_store: the
+# results store maps a repo-anchored results directory onto an S3 key
+# prefix, and needs this same repo-root anchor to do it. Re-exported here so
+# every existing `from smolbench.induction.experiment import repo_root`
+# caller (including this module's own uses below) keeps working unchanged.
+from smolbench.evals.results_store import repo_root  # noqa: F401 -- re-exported
 
 
 @dataclass(frozen=True)
@@ -414,10 +453,14 @@ class InductionExperiment:
             )
 
     def summarize(self, model: str) -> None:
-        """Prints per-info-type totals for ``model`` over every serialized replicate.
+        """Prints per-info-type totals for ``model`` over every stored replicate.
 
-        Pure ``ReplicateHarness.summarize`` delegate: reads only cached
-        YAML off disk, no environment applied, no AWS/network calls.
+        Pure ``ReplicateHarness.summarize`` delegate: no environment
+        applied, no EC2/inference spend -- but reads through
+        ``ReplicateHarness.store``, which issues S3 requests instead of
+        local reads when this experiment's ``results_dir`` resolves to an
+        S3-backed store (see the module docstring's "Results layout and
+        resume semantics" section).
 
         Parameters
         ----------
@@ -431,10 +474,14 @@ class InductionExperiment:
         self.harness.summarize(model)
 
     def cot_chain_lengths(self, tag: str = "cot") -> None:
-        """Prints reasoning-chain word-count stats from the cached CoT YAMLs.
+        """Prints reasoning-chain word-count stats from the stored CoT replicates.
 
-        Pure ``ReplicateHarness.cot_chain_lengths`` delegate: reads only
-        cached YAML off disk, no environment applied, no AWS/network calls.
+        Pure ``ReplicateHarness.cot_chain_lengths`` delegate: no environment
+        applied, no EC2/inference spend -- but reads through
+        ``ReplicateHarness.store``, which issues S3 requests instead of
+        local reads when this experiment's ``results_dir`` resolves to an
+        S3-backed store (see the module docstring's "Results layout and
+        resume semantics" section).
 
         Parameters
         ----------

@@ -28,6 +28,36 @@ Per condition, before vs after:
 Dry-run by default. ``--write`` rewrites the YAMLs in place; they are
 git-tracked, so a bad pass is recoverable with ``git checkout``.
 
+S3-backed results guard
+------------------------
+This script edits ``rep_*.yaml`` files directly on the LOCAL filesystem --
+it has no idea ``smolbench.evals.results_store`` (S3-backed results) exists.
+That is fine as long as a study's results live only locally, but is
+actively dangerous once ``SMOLBENCH_RESULTS_S3`` is in play:
+``smolbench.evals.results_store.sync_down`` is a ONE-WAY mirror, S3 ->
+local only -- it never uploads, and it OVERWRITES whatever is already in
+the local tree. A local-only edit this script makes (``--write``) never
+reaches S3, so the very next ``sync_down`` silently clobbers it back to the
+stale, pre-regrade S3 copy. This is not a loud failure: a regrade's typical
+edit is a score flip (e.g. ``1 -> 0``), which is byte-length preserving --
+measured directly, 147 bytes before and after, only the content (and its
+MD5) differs -- so nothing about file size or presence would tip the
+operator off that the regrade was ever lost.
+
+Before doing ANY work, this script therefore checks every study it would
+touch (respecting ``--study``) via
+``smolbench.evals.results_store.resolve_store``, and REFUSES outright --
+printing which studies are S3-backed and returning a nonzero exit, without
+reading or writing a single file -- if any of them resolves to an
+``S3ResultsStore``. This refusal fires regardless of ``--write``: a dry run
+is not safe either, since with an S3-backed store the local tree is not
+authoritative, and a dry run's before/after tallies computed from an
+absent or stale local tree would mislead the operator at exactly the
+moment they are deciding whether to write. See `_s3_backed_studies` and the
+guard block at the top of `main` for the implementation, and the printed
+message for the exact recovery sequence (sync down, unset the env var,
+re-run, re-seed).
+
 Run (repo root, main venv):
     .venv/bin/python scripts/regrade.py                     # report only
     .venv/bin/python scripts/regrade.py --study chromatic
@@ -57,6 +87,56 @@ STUDIES = {
 def parser_for(study: str):
     """Chromatic asks True/False; both periodic studies ask for an integer."""
     return parse_tof if study == "chromatic" else parse_numeric
+
+
+def _s3_backed_studies(studies) -> List:
+    """Returns which of ``studies`` resolve to an S3-backed results store.
+
+    Parameters
+    ----------
+    studies : iterable of str
+        Study names (keys of `STUDIES`) that a run would touch -- the same
+        set `main` already computes from ``--study`` (or every study, when
+        ``--study`` is absent).
+
+    Returns
+    -------
+    list of (str, pathlib.Path, str)
+        One ``(study, tree, description)`` tuple per offending study, where
+        ``tree`` is ``REPO / STUDIES[study]`` (the exact path `main` would
+        read/write) and ``description`` is that tree's resolved store's
+        ``describe()`` (e.g. ``"s3://smolbench-results-.../notebooks/..."``).
+        Empty when every study in ``studies`` resolves locally -- the
+        common case whenever ``SMOLBENCH_RESULTS_S3`` is unset.
+
+    Notes
+    -----
+    Imports ``smolbench.evals.results_store`` lazily (inside this function),
+    matching this repo's house convention that a module is not required to
+    depend on the AWS SDK merely by being imported -- ``resolve_store``
+    itself only *might* need boto3 (to build a client), never at the point
+    this function calls it, since deciding WHICH store class a directory
+    maps to needs no network I/O at all.
+
+    ``REPO / STUDIES[study]`` is always repo-anchored (both ``REPO`` here
+    and ``results_store.repo_root()`` reduce to the same checkout root), so
+    in practice: whenever ``SMOLBENCH_RESULTS_S3`` is set at all, EVERY
+    study in ``studies`` resolves to ``S3ResultsStore`` -- there is no
+    "some local, some S3" split for this script's own trees, only "the env
+    var is set" vs. "it isn't". This function still checks each study
+    individually (rather than short-circuiting on the env var) so the
+    printed refusal names every offending tree by its own resolved
+    ``describe()``, not by a guess.
+    """
+    from smolbench.evals.results_store import S3ResultsStore, resolve_store
+
+    offending = []
+    for study in studies:
+        tree = REPO / STUDIES[study]
+        store = resolve_store(tree)
+        if isinstance(store, S3ResultsStore):
+            offending.append((study, tree, store.describe()))
+    return offending
 
 
 def regrade_file(path: Path, parse) -> Dict:
@@ -102,6 +182,34 @@ def main() -> int:
     argp.add_argument("--write", action="store_true", help="rewrite YAMLs in place")
     args = argp.parse_args()
     studies = args.study or sorted(STUDIES)
+
+    # Guard (see the module docstring's "S3-backed results guard" section):
+    # refuse OUTRIGHT, before touching a single file, if any study this run
+    # would touch is S3-backed. This fires regardless of --write -- a dry
+    # run's tallies would themselves be computed from a local tree that is
+    # not authoritative once SMOLBENCH_RESULTS_S3 is set, which would
+    # mislead rather than inform the operator's --write decision.
+    offending = _s3_backed_studies(studies)
+    if offending:
+        print("REFUSING to regrade: the following stud(y/ies) are S3-backed, not local:")
+        for study, tree, description in offending:
+            print(f"  {study}: {tree} -> {description}")
+        print(
+            "\nThis script rewrites rep_*.yaml on the LOCAL filesystem only. "
+            "smolbench.evals.results_store.sync_down is a ONE-WAY mirror "
+            "(S3 -> local) that OVERWRITES the local tree, so a local-only "
+            "regrade would be silently clobbered back to the stale S3 copy "
+            "on the next sync_down -- a score flip is byte-length "
+            "preserving, so nothing would catch the loss."
+        )
+        print(
+            "\nTo proceed:\n"
+            "  1. Sync down: python -m smolbench.evals.results_store <results_dir>\n"
+            "  2. Unset SMOLBENCH_RESULTS_S3\n"
+            "  3. Re-run this regrade\n"
+            "  4. Deliberately re-seed the regraded trees back to S3"
+        )
+        return 1
 
     total_broke = 0
     for study in studies:

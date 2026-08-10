@@ -1,9 +1,17 @@
-"""The shared replication harness: pooling, resume-skip, and summaries."""
+"""The shared replication harness: pooling, resume-skip, and summaries.
+
+Exercised against the LOCAL store throughout -- ``tmp_path`` is outside the
+repo, so ``resolve_store`` always falls back to local here even if the S3
+env var is set. The S3 log backend is covered in ``test_results_store.py``.
+"""
+
+from datetime import datetime, timezone
 
 import pytest
 
 from smolbench.evals import Mark, Marks, Numeric, provider
 from smolbench.evals.replicates import ReplicateHarness
+from smolbench.evals.results_store import ReplicateAddress
 
 
 def make_quizzes(seed: int, model: str):
@@ -128,9 +136,9 @@ def test_cot_chain_lengths_reports_word_counts(harness, capsys):
     summarize(), its contract is entirely print-based, so this test drives
     it through capsys rather than inspecting a return value.
 
-    Builds the cached CoT replicate files with Marks.dump (never
-    hand-crafting the YAML format) at the paths the harness's own
-    ``_rep_path("cot", info, seed)`` convention expects, with a mix of
+    Builds the cached CoT replicate files through the harness's own store
+    (never hand-crafting the YAML format or the layout) at the keys its
+    ``ReplicateAddress`` layout expects, with a mix of
     substantive, empty-string, and None ``Mark.reasoning`` values. The
     empty/None entries must be excluded from the word-count stats (the
     source's ``if mark.reasoning:`` guard skips falsy values) -- this
@@ -148,9 +156,15 @@ def test_cot_chain_lengths_reports_word_counts(harness, capsys):
                 for i, r in enumerate(texts)
             ),
         )
-        path = harness._rep_path("cot", "intens", seed)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        marks.dump(path)
+        # model=None: no model in archetype_tags carries the "cot" tag here,
+        # which is exactly the tag-keyed read cot_chain_lengths performs. The
+        # LOCAL layout is keyed by tag alone, so this addresses the same file
+        # the method will look for.
+        harness.store.dump_marks(
+            marks,
+            ReplicateAddress(tag="cot", info="intens", seed=seed, model=None),
+            datetime(2026, 8, 10, tzinfo=timezone.utc),
+        )
     # "extens" (the harness's other configured info type) gets no replicate
     # files at all, exercising the "no reasoning chains found" branch.
 
@@ -187,6 +201,54 @@ def test_has_outstanding_is_true_when_only_one_arm_is_missing(harness, fake_eval
     harness.run_replicates("stub-model")
     (tmp_path / "decode_extens" / "rep_2.yaml").unlink()
     assert harness.has_outstanding("stub-model")
+
+
+def test_store_defaults_to_the_local_results_dir(harness, tmp_path):
+    """With no S3 env var configured the harness stores replicates on disk,
+    exactly where ``results_dir`` points."""
+    from smolbench.evals.results_store import LocalResultsStore
+
+    assert isinstance(harness.store, LocalResultsStore)
+    assert harness.store.root == tmp_path
+    assert harness.store is harness.store  # cached_property, built once
+
+
+def test_store_stays_local_for_a_tmp_dir_even_with_the_s3_env_set(
+    harness, tmp_path, monkeypatch
+):
+    """Hermeticity: a developer shell exporting SMOLBENCH_RESULTS_S3 must not
+    turn this offline suite into a credentialed, networked one. Only
+    repo-anchored results directories map onto S3 (see
+    ``smolbench.evals.results_store.resolve_store``)."""
+    from smolbench.evals.results_store import LocalResultsStore
+
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://smolbench-results-414266451290")
+    assert isinstance(harness.store, LocalResultsStore)
+
+
+def test_prefix_namespaces_the_local_replicate_directory(tmp_path):
+    """``prefix`` namespaces the replicate DIRECTORY, not the file name --
+    that is what lets ``induction_eval_one_hop`` share one results dir with
+    its sibling experiment without their replicates colliding.
+
+    Asserted through the store's own rendering (the harness no longer builds
+    keys itself), so this pins the layout the analysis scripts read rather
+    than a string the harness happens to compute.
+    """
+    prefixed = ReplicateHarness(
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        seeds=(1,),
+        info_types=("intens",),
+        prefix="one_hop_",
+    )
+    prefixed.store.dump_marks(
+        Marks(model="stub-model", marks=()),
+        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model"),
+        datetime(2026, 8, 10, tzinfo=timezone.utc),
+    )
+    assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
 
 
 def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
