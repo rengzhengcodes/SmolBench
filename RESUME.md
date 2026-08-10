@@ -1,27 +1,34 @@
 # Resume runbook — coprime & divisor induction studies
 
-Last updated 2026-08-09 at session handoff. Branch `periodic-induction`.
+Last updated 2026-08-10. Branch `periodic-induction`.
 
-`periodic_coprime` is **DONE** (360/360, written up in
-`notebooks/COPRIME_RESULTS.md`). `periodic_divisor` is mid-collection.
-Everything below is what a fresh session needs and cannot re-derive.
+**Both studies are COMPLETE and written up.** Nothing is collecting, nothing is
+billing, and no box is live.
+
+| study | replicates | write-up |
+|---|---|---|
+| `periodic_coprime` | 360/360 | `notebooks/COPRIME_RESULTS.md` |
+| `periodic_divisor` | 360/360 | `notebooks/DIVISOR_RESULTS.md` |
+
+This file is now a **reference**, not a resume checklist. Sections 1, 3 and 6
+still apply verbatim to any future run of either study; sections 5 and 7 record
+what the results mean and which traps are already paid for.
 
 ---
 
 ## 1. FIRST: check for billing instances
 
-Do this before anything else, every time. Two p5.48xlarge (~$21/h each) were
-live at handoff:
+Do this before anything else, every time — including now, even though the last
+session ended clean. Both divisor boxes (`i-0de896205a3f4c5c2`,
+`i-0d74add84f68e785f`, p5.48xlarge @ us-east-2c) terminated on schedule when
+their drivers finished, verified across all three regions.
 
-| instance | region | lane |
-|---|---|---|
-| `i-0de896205a3f4c5c2` | us-east-2c | `periodic-divisor-induction` (Nemotron-3) |
-| `i-0d74add84f68e785f` | us-east-2c | `periodic-divisor-qwen` (Qwen3.5) |
-
-Both relaunched 2026-08-10 after the previous pair wound down on their idle
-watchdogs. us-east-1 had no p5 spot capacity in any of its six AZs that day;
-the provisioner fell through to us-east-2c on its own, which is the configured
-behaviour and needs no intervention.
+One note from the 2026-08-10 relaunch worth keeping: **us-east-1 had no p5 spot
+capacity in any of its six AZs.** The provisioner walked all six, fell through
+to us-east-2c, and landed both boxes at $20.55/h — slightly under the recorded
+us-east-1 rate. That fallthrough is configured behaviour and needs no
+intervention, but it means the region a box lands in is not fixed, so a sweep
+that only checks us-east-1 will miss live instances.
 
 When a driver dies the box goes idle and its on-instance watchdog terminates it
 after 30 minutes (plus a hard `shutdown -h +1440`). That backstop has fired
@@ -51,7 +58,7 @@ do not touch it.
 | study | replicates | gpt-oss | Nemotron-3 | Qwen3.5 |
 |---|---|---|---|---|
 | `periodic_coprime` | **360/360 DONE** | 30/30 | 30/30 | 30/30 |
-| `periodic_divisor` | 288/360 | 30/30 | **22/30** | **20/30** |
+| `periodic_divisor` | **360/360 DONE** | 30/30 | 30/30 | 30/30 |
 
 Target is 360 = 3 models x 4 arms x 30 seeds (1776–1805). Everything is
 committed; replicates resume-skip on `rep_{seed}.yaml` existence, so nothing is
@@ -118,38 +125,55 @@ combination that races on the same `rep_{seed}.yaml`. Sharding costs real
 money: each extra box re-loads its checkpoint (~40 min) before useful work, so
 shallow shards spend much of their life loading.
 
-## 4. When divisor reaches 360
+## 4. Post-collection analysis (already run for both studies)
 
 ```bash
-.venv/bin/python scripts/coprime_pilot_gate.py periodic_divisor
-.venv/bin/python scripts/posterior_power.py periodic_divisor --mei 0.05
+.venv/bin/python scripts/coprime_pilot_gate.py <study>
+.venv/bin/python scripts/posterior_power.py <study> --mei 0.05
 ```
 
-The gate blocks on `compliance=empty` marks (truncation). The posterior script
-sorts all 30 planned contrasts into DECIDED / EQUIVALENT / UNDECIDED and quotes
-an R only for UNDECIDED, at a pre-specified MEI. It deliberately reports no
-observed power — that is a monotone restatement of the p-value.
+The gate blocks on `compliance=empty` marks. **It blocks on the signature, not
+the cause** — as of 2026-08-10 it prints the prompt-length range behind the
+empties and the two competing explanations instead of asserting truncation.
+Diagnose before acting: empties in the longest-prompt arm mean the budget is
+tight; empties on the shortest prompts with the long arm clean mean the model
+failed to terminate, which no budget fixes. Divisor is the second kind.
 
-Then write up as `notebooks/DIVISOR_RESULTS.md`, mirroring
-`notebooks/COPRIME_RESULTS.md`, and commit results + write-up.
+The posterior script sorts all 30 planned contrasts into DECIDED / EQUIVALENT /
+UNDECIDED and quotes an R only for UNDECIDED, at a pre-specified MEI. It
+deliberately reports no observed power — that is a monotone restatement of the
+p-value.
 
-## 5. What to expect from divisor, and what to check
+## 5. What divisor found
 
-Divisor holds the listing fixed at 2,520 positions and roughly doubles the rule
-list (26 harmonics, all dividing 2,520). It carries the question coprime could
-not answer, since noise adds length without adding rules.
+Full write-up in `notebooks/DIVISOR_RESULTS.md`. The four things a future
+session is most likely to get wrong:
 
-The early gpt-oss signal (complete at 30/30) is what to confirm or refute in the
-other two models: **the arms fail at opposite ends of the harmonic range.**
-Extensional fails only at LARGE periods (120–2520, answers 5–21 — needles in
-2,520 lines); intensional fails only at SMALL periods (2, 3, 9 — answers
-1260/840/280, large-number division). gpt-oss intens fell to 0.885 where the
-baseline sat at ceiling, so unlike coprime this manipulation does de-saturate.
+1. **The opposite-ends crossover is gpt-oss-specific.** The pilot suggested it
+   was a property of the task; with all three models in, it is not.
+   Nemotron-3's extensional failure is broad and flat (gap −0.048), Qwen has no
+   gradient at all (+0.007). Only gpt-oss crosses over (intens +0.173, extens
+   −0.499).
+2. **gpt-oss's intens and noise arms score identically (0.9244 both) but agree
+   on only 86.7% of marks.** 104 marks flip, ~52 each way, cancelling to zero.
+   The aggregate null is real; "padding is inert" is false. Any rate-only
+   analysis misses this.
+3. **Nemotron-3's extensional marks mix two failure modes.** 90 of 780 are
+   runaway position-by-position enumerations (median 112,756 chars vs 28,482
+   clean) that never conclude. Its 0.452 -> 0.655 move versus baseline is
+   partly a change in failure mode, not competence.
+4. **Do not leniently regrade those enumerations.** The expected answer appears
+   somewhere in the text for 78 of 80 `multiple-values` marks — because an
+   enumeration of positions 1–2520 contains every candidate integer by
+   construction. Crediting them scores the model on its scratch work.
 
-When interpreting: a large-period harmonic is EASY intensionally (2520/2520 = 1)
-and HARD extensionally. That is a feature — it is where the representations
-should come apart — but it is not a uniform difficulty increase, so do not
-report the two arms' accuracies as if they faced the same task.
+A large-period harmonic is EASY intensionally (2520/2520 = 1) and HARD
+extensionally, so the two arms average over different difficulty profiles. Do
+not report their accuracies as if they faced the same task.
+
+**If the study is extended:** 2,520 has 48 divisors and this study used 26.
+More divisors is the concrete route to de-saturating Nemotron-3 and Qwen on
+the intensional arm, which 26 was not enough to trouble.
 
 ## 6. Hazards already paid for — do not rediscover
 
