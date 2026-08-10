@@ -245,3 +245,8 @@ notebooks/lean/data/synth/
 .claude/*
 !.claude/skills/
 CLAUDE.md
+
+# Pre-S3-migration replicate archive: 292MB, exceeds GitHub's 100MB file
+# limit. This zip + git history are the only record of the retired local
+# results trees -- keep it on disk, never in a commit.
+/local_results_2026-08-10.zip
