@@ -181,6 +181,10 @@ TIER_MEMBERS = {
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
 MAX_CRASH_RELAUNCHES = 2
 COT_MIN_FRACTION = 0.9
+#: A response longer than this counts as a reasoning chain carried in content
+#: (the quiz contract asks for a single bare integer; see
+#: ``reasoning_fraction``'s Notes for the live incident this encodes).
+COT_CONTENT_REASONING_MIN_CHARS = 200
 LAUNCH_STAGGER_SECONDS = 30
 MONITOR_INTERVAL_SECONDS = 60
 DESCRIBE_EVERY_N_TICKS = 5
@@ -641,14 +645,28 @@ def reasoning_fraction(
     -------
     float or None
         ``None`` when NO info arm has landed yet for (`model`, `seed`) --
-        there is nothing to judge. Otherwise
-        ``sum(1 for m in pooled if m.reasoning) / len(pooled)`` over every
-        mark pooled from every info arm that HAS landed. A ``None`` or
-        empty-string ``Mark.reasoning`` counts as NOT thinking (Python
-        truthiness on ``m.reasoning`` handles both uniformly).
+        there is nothing to judge. Otherwise the fraction of pooled marks
+        showing REASONING EVIDENCE: a non-empty ``Mark.reasoning``, or a
+        ``Mark.response`` longer than ``COT_CONTENT_REASONING_MIN_CHARS``.
 
     Notes
     -----
+    Why response length counts (added 2026-08-11, from live fleet data):
+    models whose thinking rides a SOFT protocol reason on essentially every
+    mark but only sometimes wrap it in their think markup -- Ministral's
+    [THINK] system-prompt protocol and EXAONE's ``enable_thinking`` both
+    produced "Alright, let's tackle this step by step..." chains in plain
+    ``response`` content on 40-60% of marks, which the reasoning parsers
+    (and the client-side ``</think>`` split) rightly leave unsplit. That IS
+    chain-of-thought; only the channel differs. Counting channel alone
+    halted those lanes as "silently non-thinking" when the transcript shows
+    the opposite. The quiz's output contract is "return exactly one integer
+    and nothing else", so a TRULY non-thinking mark is a few characters --
+    any response beyond ``COT_CONTENT_REASONING_MIN_CHARS`` is a reasoning
+    chain in content, not a compliant bare answer. A lane whose toggle is
+    genuinely broken (bare integers everywhere, empty reasoning channel)
+    still fails this check exactly as before.
+
     Silently non-thinking data is worse than no data at all: a lane that
     quietly collects 30 replicates of non-reasoning output looks, on disk,
     identical to a successful run -- nothing downstream can tell the two
@@ -670,7 +688,12 @@ def reasoning_fraction(
 
     if not pooled:
         return None
-    return sum(1 for mark in pooled if mark.reasoning) / len(pooled)
+    return sum(
+        1
+        for mark in pooled
+        if mark.reasoning
+        or len(mark.response or "") > COT_CONTENT_REASONING_MIN_CHARS
+    ) / len(pooled)
 
 
 def build_results_store() -> Any:
@@ -1181,7 +1204,18 @@ def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = bui
             continue
         try:
             store = store_factory()
-            fraction = reasoning_fraction(store, run.lane.key, run.lane.tag)
+            # intens ONLY (2026-08-11, live fleet): this is a WIRING check --
+            # "did the thinking toggle reach the model" -- and intens is the
+            # short, well-formed arm where every correctly-wired model
+            # demonstrably reasons. Pooling all arms halted EXAONE-4.0 whose
+            # toggle provably works (intens/zero 100% reasoning) because the
+            # model COLLAPSES on the ~30k-token extens listing and
+            # confabulates on the whitespace-padded noise arm -- which is
+            # exactly the phenomenon the study measures (cf. Nemotron-3's
+            # extens collapse in the prior study), i.e. data, not a fault.
+            fraction = reasoning_fraction(
+                store, run.lane.key, run.lane.tag, infos=("intens",)
+            )
         except Exception as exc:  # noqa: BLE001 -- a store failure must not crash the monitor
             logging.warning(f"run_fleet[{key}]: reasoning_fraction check failed: {exc}")
             continue

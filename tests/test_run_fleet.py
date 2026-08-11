@@ -349,6 +349,29 @@ def test_cot_threshold_is_ninety_percent(fleet):
     assert fleet.COT_MIN_FRACTION == 0.9
 
 
+def test_reasoning_fraction_counts_long_content_as_reasoning(fleet):
+    """A reasoning chain carried in ``response`` (soft-protocol models that
+    reason without their think markup -- the live Ministral/EXAONE incident,
+    2026-08-11) counts as thinking; a compliant bare integer does not."""
+    chain = "Alright, let's tackle this problem step by step. " * 10  # >200 chars
+    store = _FakeStore(
+        {
+            "intens": Marks(
+                model="gemma-4-e2b",
+                marks=(
+                    Mark(query="q", answer=1, response=chain, score=1, reasoning=None),
+                    Mark(query="q", answer=1, response="1260", score=1, reasoning=None),
+                ),
+            )
+        }
+    )
+    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 0.5
+
+
+def test_content_reasoning_threshold_value(fleet):
+    assert fleet.COT_CONTENT_REASONING_MIN_CHARS == 200
+
+
 # ---------------------------------------------------------------------------
 # fleet_status: read-only describe, boto3 injected
 # ---------------------------------------------------------------------------
