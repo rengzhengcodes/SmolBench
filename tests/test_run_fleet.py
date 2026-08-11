@@ -121,7 +121,7 @@ def test_lane_tags_come_from_the_study_driver(fleet):
 @pytest.mark.parametrize(
     "tier,types",
     [
-        ("A", "g6e.4xlarge,g6e.8xlarge"),
+        ("A", "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge"),
         ("B", "g6e.12xlarge,g6e.24xlarge"),
         ("C", "p5.48xlarge,p5e.48xlarge"),
         ("D", "p5e.48xlarge,p5en.48xlarge"),
@@ -148,7 +148,7 @@ def test_lane_env_is_exact_for_an_induction_lane(fleet):
         "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
         "INDUCTION_STATE_FILE": ".ec2_state_scaling_gemma-4-e2b.json",
         "INDUCTION_MODELS": "gemma-4-e2b",
-        "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge",
+        "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
         "EC2_REGIONS": "us-east-1,us-east-2,us-west-2",
         "EC2_VLLM_IMAGE": "vllm/vllm-openai:nightly",
         "EC2_MAX_LIFETIME_MIN": "2160",
@@ -345,8 +345,8 @@ def test_reasoning_fraction_pools_across_info_arms(fleet):
     assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 0.5
 
 
-def test_cot_threshold_is_ninety_percent(fleet):
-    assert fleet.COT_MIN_FRACTION == 0.9
+def test_cot_threshold_separates_dead_toggle_from_variable_protocol(fleet):
+    assert fleet.COT_MIN_FRACTION == 0.5
 
 
 def test_reasoning_fraction_counts_long_content_as_reasoning(fleet):

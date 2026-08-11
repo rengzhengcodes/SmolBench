@@ -153,7 +153,10 @@ MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
 
 TIER_INSTANCE_TYPES = {
-    "A": "g6e.4xlarge,g6e.8xlarge",
+    # g6e.12xlarge appended 2026-08-11: small-G spot in the hunt AZs was
+    # reclaimed for hours on end while 12xl capacity (and the raised G quota)
+    # sat available -- a 3x-cost fallback beats an idle lane.
+    "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
     "D": "p5e.48xlarge,p5en.48xlarge",
@@ -180,7 +183,11 @@ TIER_MEMBERS = {
 
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
 MAX_CRASH_RELAUNCHES = 2
-COT_MIN_FRACTION = 0.9
+# 0.9 -> 0.5 (2026-08-11, live): with only 9 intens marks, one or two direct
+# answers from a capable model read as 78-89% and tripped the halt. A DEAD
+# toggle measures ~0-11% (bare integers everywhere); a working-but-variable
+# soft protocol measures 78-100%. 0.5 cleanly separates the regimes.
+COT_MIN_FRACTION = 0.5
 #: A response longer than this counts as a reasoning chain carried in content
 #: (the quiz contract asks for a single bare integer; see
 #: ``reasoning_fraction``'s Notes for the live incident this encodes).
