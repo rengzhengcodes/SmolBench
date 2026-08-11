@@ -141,7 +141,7 @@ celerybeat.pid
 .envrc
 .venv
 # Dedicated Python 3.12 venv for the Lean verification path (lean-dojo pins
-# Requires-Python <3.13; see notebooks/lean/README.md).
+# Requires-Python <3.13).
 .venv-lean/
 env/
 venv/
@@ -227,18 +227,12 @@ __marimo__/
 .hf_token
 
 # LeanDojo Benchmark 4 -- a ~700MB external dataset (Zenodo download), not a
-# generated artifact; results and replay_passing_*.jsonl sidecars ARE committed.
-notebooks/lean/data/leandojo_benchmark_4/
+# generated artifact; the replay_passing_*.jsonl sidecars ARE committed.
+notebooks/deduction/data/leandojo_benchmark_4/
 
-# Generated LoRA SFT dataset (large JSONL, regenerable from the benchmark via
-# scripts/build_lean_sft.py). The manifest.json beside it IS committed -- it is
-# the decontamination/provenance record (counts + holdout fingerprint).
-notebooks/lean/data/sft/*.jsonl
-
-# Raw synthetic corpora (external downloads -- Goedel-V2 HF snapshot, the
-# LeanNavigator Zenodo archive), inputs to scripts/build_lean_synth_sft.py;
-# multi-GB and re-downloadable, never generated here.
-notebooks/lean/data/synth/
+# Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
+# dirs pruned after upload; never committed.
+notebooks/*/results/
 
 # Claude files -- except .claude/skills/, which holds committed agent
 # tooling (run skills + their drivers).
