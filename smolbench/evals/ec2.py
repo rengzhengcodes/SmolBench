@@ -320,8 +320,11 @@ MINISTRAL_THINK_SYSTEM: str = (
 
 EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # Small smoke-test entry: exercises the full lifecycle on a cheap single-GPU
-    # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar.
-    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 16384},
+    # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar. 32768 =
+    # the checkpoint's native window; the family-ladder canary pushes the real
+    # ~14k-token extens quiz through it, which the old 16384 cap missed by one
+    # token (live 400, 2026-08-11).
+    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768},
     # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8) --
     "qwen3.5-27b":       {"hf_model_id": "Qwen/Qwen3.5-27B", "tp": 4, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
