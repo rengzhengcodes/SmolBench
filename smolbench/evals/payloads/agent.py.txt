@@ -81,14 +81,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/status":
             self._reply(404, {"error": "unknown path"})
             return
-        logs = docker("logs", "--tail", "40", "vllm")
+        logs = docker("logs", "--tail", "300", "vllm")
         self._reply(200, {
             "container": container_state(),
             "healthy": vllm_healthy(),
             "serve_rc": SERVE_PROC.poll() if SERVE_PROC is not None else None,
             "sync_rc": SYNC_PROC.poll() if SYNC_PROC is not None else None,
             "sync_started": SYNC_PROC is not None,
-            "log_tail": (logs.stdout + logs.stderr)[-8000:],
+            "log_tail": (lambda s: s[:3500] + s[3500:][-4500:])(logs.stdout + logs.stderr),
             "serve_log_tail": tail(SERVE_LOG),
             "sync_log_tail": tail(SYNC_LOG, 2000),
         })
