@@ -279,7 +279,18 @@ def random_labels(
 # at ~1 token per repetition in both cl100k_base and o200k_base. The rest are
 # fallbacks for tokenizers that merge `" \t"`; `choose_whitespace_unit`
 # verifies empirically rather than trusting this order.
-WHITESPACE_UNITS: Tuple[str, ...] = (" \t", " \n\t", "\t ", " \n", "\t\n ")
+WHITESPACE_UNITS: Tuple[str, ...] = (
+    " \t", " \n\t", "\t ", " \n", "\t\n ",
+    # Appended LAST so every tokenizer that already selected one of the units
+    # above keeps selecting it (byte-identical noise prompts across studies).
+    # Gemma-4 and EXAONE-4.0 tokenizers merge EVERY mixed space/tab/newline
+    # run (Gemma ships dedicated multi-whitespace tokens), so none of the
+    # units above cost 1 token/rep there. A bare carriage return does: no
+    # multi-\r merge exists in either vocab -- verified linear through 30,000
+    # repetitions on gemma-4-{e2b,12b,31b} and exaone-4.0-32b (2026-08-11).
+    "\r",
+    "\x0b",
+)
 
 # Repetition counts probed by `choose_whitespace_unit`. Small and large, so a
 # unit that merges only once a run gets long (the failure mode that makes a
