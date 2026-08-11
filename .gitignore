@@ -244,3 +244,10 @@ CLAUDE.md
 # limit. This zip + git history are the only record of the retired local
 # results trees -- keep it on disk, never in a commit.
 /local_results_2026-08-10.zip
+
+# Retired-experiment archive: the tracked trees, scripts and write-ups for the
+# chromatic/periodic/periodic_{coprime,divisor,moe} induction studies and the
+# lean deduction study. Unlike local_results_2026-08-10.zip this one is small
+# enough to commit -- it is kept out by policy, not by GitHub's size limit.
+# This zip plus git history are the only record.
+/archive_2026-08-11.zip
