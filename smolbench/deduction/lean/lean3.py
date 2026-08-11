@@ -53,7 +53,7 @@ name-map-dependent rule (`lean3-name` in `find_relics`) and transform
 (`rename` in `corrupt_tail`) without raising, leaving parse-level-only
 detection/corruption (Lean 3 *syntax*, not lemma names) fully functional.
 This lets callers that have not yet bootstrapped the align asset (or are
-running in an environment without `notebooks/lean/data/`) still get useful
+running in an environment without `notebooks/deduction/data/`) still get useful
 signal.
 
 Design constraints

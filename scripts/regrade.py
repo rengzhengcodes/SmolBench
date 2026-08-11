@@ -78,14 +78,18 @@ from smolbench.evals import Marks, Numeric, ToF  # noqa: E402
 from smolbench.evals.parsing import parse_numeric, parse_tof  # noqa: E402
 
 STUDIES = {
-    "periodic": "notebooks/periodic/results",
-    "chromatic": "notebooks/chromatic/results",
-    "periodic_moe": "notebooks/periodic_moe/results",
+    # The family-ladder scaling study (notebooks/induction) is S3-backed
+    # (SMOLBENCH_RESULTS_S3); the S3 guard below therefore refuses a local
+    # regrade until the operator deliberately syncs down, unsets the env, and
+    # re-seeds -- see the module docstring. Retired studies (periodic,
+    # chromatic, periodic_moe, ...) live in archive_2026-08-11.zip + git
+    # history and are no longer regradable in place.
+    "induction": "notebooks/induction/results",
 }
 
 
 def parser_for(study: str):
-    """Chromatic asks True/False; both periodic studies ask for an integer."""
+    """Every current study asks for an integer verdict."""
     return parse_tof if study == "chromatic" else parse_numeric
 
 

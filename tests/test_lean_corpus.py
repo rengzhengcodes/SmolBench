@@ -78,4 +78,49 @@ def test_data_root_default_anchoring(monkeypatch):
     corpus.reset_caches()
     root = corpus.data_root()
     assert root.is_absolute()
-    assert root.parts[-4:] == ("notebooks", "lean", "data", "leandojo_benchmark_4")
+    assert root.parts[-4:] == ("notebooks", "deduction", "data", "leandojo_benchmark_4")
+
+
+# ---------------------------------------------------------------------------
+# Sidecar resolution off data_root().parent -- teeth for the notebooks/lean ->
+# notebooks/deduction relocation.
+#
+# These assert the resolved default paths EXIST on disk rather than only
+# re-deriving the path arithmetic: all four sidecars are COMMITTED files
+# (unlike leandojo_benchmark_4/ itself, which is wholesale-gitignored), so a
+# checkout always has them and the existence check is a real gate. If
+# data_root() still pointed at the retired notebooks/lean/data, every one of
+# these paths would resolve to a nonexistent file and these tests fail --
+# which is exactly the regression they exist to catch.
+# ---------------------------------------------------------------------------
+
+
+def test_replay_passing_sidecars_resolve_to_committed_files(monkeypatch):
+    """The replay-passing sidecars follow data_root() to notebooks/deduction/data."""
+    monkeypatch.delenv("SMOLBENCH_LEAN_DATA", raising=False)
+    corpus.reset_caches()
+    for split in ("val", "test"):
+        p = corpus.replay_passing_path("novel_premises", split)
+        assert p.parent.parts[-3:] == ("notebooks", "deduction", "data"), p
+        assert p.exists(), f"committed sidecar missing at resolved path: {p}"
+
+
+def test_align_asset_loads_from_relocated_data_dir(monkeypatch):
+    """`lean3.AlignMap.load()` resolves its asset off `data_root().parent`.
+
+    `load()` returns None (not an error) when the asset is absent, so a
+    non-None result is the proof that the default resolution actually lands
+    on the committed `lean3_align.json.gz` in its new home.
+    """
+    import smolbench.deduction.lean.lean3 as lean3
+
+    monkeypatch.delenv("SMOLBENCH_LEAN_DATA", raising=False)
+    corpus.reset_caches()
+
+    expected = corpus.data_root().parent / lean3.ALIGN_ASSET_NAME
+    assert expected.parent.parts[-3:] == ("notebooks", "deduction", "data"), expected
+    assert expected.exists(), f"committed align asset missing at: {expected}"
+
+    amap = lean3.AlignMap.load()
+    assert amap is not None, "align asset did not load from its default path"
+    assert amap.lean3_to_lean4, "align map loaded but is empty"

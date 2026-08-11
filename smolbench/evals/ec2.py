@@ -220,120 +220,160 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # context guard), optional vllm_args (extra CLI flags), optional system_prompt
 # (prepended to every request for that model).
 #
-# VRAM math behind the FP8 choice (uniform precision across archetypes): BF16
-# Llama-3.1-405B (~810 GB) and BF16 Llama-4-Maverick (~800 GB) do not fit the
-# 640 GB of a p5.48xlarge, so those two must be FP8 there; Nemotron-Ultra-253B
-# is FP8 as well to keep precision comparable. All three FP8 checkpoints
-# (~410/253/417 GB) fit p5.48xlarge, and fit p5e.48xlarge (1128 GB) trivially.
+# --- Family-ladder scaling study roster (2026-08-11) ------------------------
+# 21 models = 7 families x 3 rungs (smallest / geometric-middle / largest
+# counted rung of each family's ladder), one EC2 instance per model. Serving
+# facts verified against each repo's shipped config.json + the upstream vLLM
+# main registry on 2026-08-11; every architecture below is in-tree upstream, so
+# NO --trust-remote-code anywhere. All repos UNGATED (anonymous HF API checks,
+# 2026-08-10/11). Every entry serves at a uniform max_model_len=131072 -- the
+# smallest native window on the roster is exactly 131072 (gemma-4-E2B,
+# GLM-4.5-Air, EXAONE-4.0-32B), so nothing is down-capped below native, and a
+# scaling study cannot let context vary with the vendor's YaRN generosity.
+# --enable-prefix-caching everywhere: each induction quiz reuses one long
+# prompt prefix across its 9 questions, each Lean theorem reuses its context
+# block across 4 rungs.
 #
-# Context: all three serve at their native 131072 (Maverick's checkpoint says
-# 1M, capped here so every archetype gets the same context budget). The quiz
-# prompts run ~43k tokens, so anything lower 400s. KV-cache fit at 128k on the
-# 640 GB p5: the 405B is the only tight one (126 layers x 8 KV heads x 128 dim
-# ~= 1.0 MB/token -> vLLM's startup check needs ~132 GB KV vs ~140-150 GB free
-# at the default --gpu-memory-utilization 0.9), hence its 0.95 flag below.
-# Nemotron (~253 GB weights, NAS-pruned attention) and Maverick (only 12 of 48
-# layers global attention) have ample slack at the default. If the 405B still
-# fails its KV check on some box: append --kv-cache-dtype fp8 (halves KV) or
-# drop its max_model_len to 65536.
+# The whole roster needs EC2_VLLM_IMAGE=vllm/vllm-openai:nightly (the 2026
+# architectures postdate every cut release; only Qwen3.5 support is confirmed
+# in a tagged release, v0.26.0).
 #
-# All three repos are UNGATED (anonymous download; no HF account or token):
-# Meta's own meta-llama/*-FP8 repos require a logged-in account with the Llama
-# license accepted, so the Llama-architecture models use the official
-# redistributions from Red Hat AI (Neural Magic -- vLLM's quantization team;
-# compressed-tensors FP8, vLLM-native) and NVIDIA's own Nemotron release.
-# Gating verified 2026-06-10 via anonymous /resolve/main/config.json fetches.
+# Instance tiers (chosen per weights + 128k-KV arithmetic; the fleet
+# supervisor maps these to EC2_INSTANCE_TYPES per lane):
+#   tier A g6e.4xlarge  (1x L40S 48 GB):  nano-4b, gemma e2b/12b, ministral-3b
+#   tier B g6e.12xlarge (4x L40S 192 GB): qwen 27b, nano-30b, gemma-31b,
+#                                         glm-4.7-flash, ministral 8b/14b,
+#                                         exaone 32b/33b
+#   tier C p5.48xlarge  (8x H100 640 GB): qwen 122b/397b-fp8, super-120b,
+#                                         glm-4.5-air, k-exaone-236b,
+#                                         deepseek-v4-flash
+#   tier D p5e.48xlarge (8x H200 1128 GB): glm-4.7, deepseek-v3.1, deepseek-v4-pro
 #
-# Nemotron-Ultra reasoning: the model's documented CoT toggle is the system
-# prompt "detailed thinking on" (its chat template keys off it; the OpenAI
-# ``reasoning_effort`` param is not wired up for it on vLLM). Injecting it
-# here, at the provider layer, keeps the notebook's user prompts byte-identical
-# across archetypes. The <think>...</think> block is split out CLIENT-side in
-# query(): Nemotron's Llama tokenizer has no think token ids, and every
-# <think>-style ``--reasoning-parser`` in vLLM 0.11.1 (deepseek_r1, qwen3, ...)
-# is token-id-based, so passing one crashes the engine at startup
-# ("could not locate think start/end tokens in the tokenizer" -- live, 2026-06-10).
+# tp notes: GLM-4.7-Flash has 20 attention heads -> tp must divide 20, so it
+# runs tp=4 on tier B (a p5 would idle half its GPUs). Nemotron-Nano-30B has
+# only 2 KV heads; vLLM replicates KV heads when tp > n_kv. All other tp
+# choices divide the head counts exactly (verified from each config.json).
+#
+# Reasoning wiring (CoT is ON for every model in this study; the per-request
+# chat_template_kwargs toggles ride in extra_args from the study drivers --
+# see notebooks/induction/run_study.py COT_ARGS):
+#   * Qwen3.5 / Gemma-4: server-side --reasoning-parser (qwen3 / gemma4) splits
+#     the think block into reasoning_content. Gemma-4's template defaults
+#     enable_thinking to FALSE, so the driver MUST pass it true; its think tags
+#     are Gemma-specific, so the client-side "</think>" fallback would NOT
+#     catch them -- the parser is load-bearing there.
+#   * Nemotron-3: enable_thinking defaults on in the shipped template; the
+#     plain-text <think> block is split CLIENT-side in query() (same proven
+#     path the periodic_moe study served Super-120B with; a nemotron_v3 parser
+#     exists on vLLM main but has never been launched from this repo, so the
+#     proven config wins).
+#   * GLM-4.x: thinking defaults ON; glm47/glm45 parsers split it server-side.
+#   * Ministral-3 Reasoning: the [THINK] protocol lives ONLY in the shipped
+#     template's default_system_message, which the template injects ONLY when
+#     no system message is supplied. The Lean eval always supplies one, which
+#     would silently disable thinking. Fix: inject that exact default text as
+#     the provider system_prompt below -- ChatClient puts it FIRST, the
+#     template renders each system message as its own [SYSTEM_PROMPT] block,
+#     so induction stays byte-identical to out-of-box behavior and Lean gets
+#     think-protocol + its own instructions. Do NOT switch these entries to
+#     --tokenizer-mode mistral: that bypasses the Jinja template entirely.
+#   * EXAONE: no vLLM reasoning parser exists for it; plain-text <think> split
+#     client-side. EXAONE-4.0-32B defaults enable_thinking OFF -> driver must
+#     pass it true. Only 4.5-33B is a multimodal wrapper (hence its
+#     --language-model-only).
+#   * DeepSeek V4: the repos ship NO chat template (404 + no tokenizer_config
+#     key, verified 2026-08-11) -- the toggle lives in the repo's Python
+#     encoding_dsv4.py. vLLM accepts a LITERAL template string via
+#     --chat-template, so DSV4_CHAT_TEMPLATE below reproduces the shipped
+#     encoding for the [system?, user] + generation-prompt shapes this repo
+#     sends (byte-equality pinned by tests/test_dsv4_chat_template.py against
+#     the vendored encoding module). chat_template_kwargs {"thinking": true}
+#     drives both the template branch and vLLM's deepseek_v4 parser, whose
+#     initial state accepts the prompt-final <think>. DeepSeek-V3.1 DOES ship
+#     its template (thinking kwarg) -- no override there.
+DSV4_CHAT_TEMPLATE: str = (
+    "<｜begin▁of▁sentence｜>"
+    "{%- for m in messages -%}"
+    "{%- if m['role'] == 'system' -%}{{ m['content'] }}"
+    "{%- elif m['role'] == 'user' -%}{{ '<｜User｜>' + m['content'] }}"
+    "{%- endif -%}"
+    "{%- endfor -%}"
+    "{%- if add_generation_prompt -%}<｜Assistant｜>"
+    "{%- if thinking is not defined or thinking -%}<think>{%- else -%}</think>{%- endif -%}"
+    "{%- endif -%}"
+)
+
+# The Ministral-3 Reasoning template's default_system_message, verbatim (md5 of
+# the shipped chat_template.jinja: f9ce03df8c692f42b2aeb78024e29f4f, identical
+# across the 3B/8B/14B rungs; fetched 2026-08-11). See the Ministral note above.
+MINISTRAL_THINK_SYSTEM: str = (
+    "# HOW YOU SHOULD THINK AND ANSWER\n\n"
+    "First draft your thinking process (inner monologue) until you arrive at a "
+    "response. Format your response using Markdown, and use LaTeX for any "
+    "mathematical equations. Write both your thoughts and the response in the "
+    "same language as the input.\n\n"
+    "Your thinking process must follow the template below:[THINK]Your thoughts "
+    "or/and draft, like working through an exercise on scratch paper. Be as "
+    "casual and as long as you want until you are confident to generate the "
+    "response to the user.[/THINK]Here, provide a self-contained response."
+)
+
 EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # Small smoke-test entry: exercises the full lifecycle on a cheap single-GPU
     # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar.
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 16384},
-    "llama-31-405b":       {"hf_model_id": "RedHatAI/Meta-Llama-3.1-405B-Instruct-FP8-dynamic", "tp": 8, "max_model_len": 131072,
-                            "vllm_args": ["--gpu-memory-utilization", "0.95"]},
-    "nemotron-ultra-253b": {"hf_model_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8", "tp": 8, "max_model_len": 131072,
-                            "vllm_args": ["--trust-remote-code"],
-                            "system_prompt": "detailed thinking on"},
-    "llama4-maverick":     {"hf_model_id": "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8", "tp": 8, "max_model_len": 131072},
-    # Param-matched MoE archetype for the Lean 4 deduction experiment
-    # (notebooks/lean): 235B total / 22B active, so it sits next to the dense
-    # CoT nemotron-ultra-253b on TOTAL params (235 vs 253B) instead of the
-    # 671B DeepSeek-V3 the strict-Lean4 search first surfaced. Standard HF
-    # `qwen3_moe` arch -> no --trust-remote-code; hybrid thinking model run in
-    # its NON-thinking (archetype-3) default, so no system_prompt toggle. FP8
-    # (~235 GB) fits the 640 GB p5 / 1128 GB p5e box at tp=8 with KV headroom;
-    # Qwen ships the official FP8 checkpoint, ungated (Apache-2.0). This entry
-    # is the LoRA base; the Lean4-fine-tuned variant is a separate spec whose
-    # hf_model_id points at the trained (private) repo -- see notebooks/lean.
-    "qwen3-235b-a22b":     {"hf_model_id": "Qwen/Qwen3-235B-A22B-FP8", "tp": 8, "max_model_len": 131072},
-    # notebooks/chromatic archetypes: an English-centric ~32B trio covering the
-    # three eval archetypes -- dense non-reasoning, dense always-reasons, and a
-    # non-reasoning MoE -- all released within ~3 months of each other (Sep-Dec
-    # 2025), all ungated (anonymous download verified 2026-06-15), BF16 (~64 GB
-    # each), served one at a time at a uniform 65536 context on one 8-GPU
-    # H200/H100 box (tp=8). The extens/noise quizzes prompt at ~33k tokens, so
-    # the cap must exceed prompt + the CoT's 8192-token completion; every model
-    # here is natively >=65536 (Olmo 65536, Granite 131072), so NO
-    # --rope-scaling/YaRN is needed.
-    #
-    # Why tp=8 on p5e/p5 (keys.env pins EC2_INSTANCE_TYPES=p5e.48xlarge,
-    # p5.48xlarge): CoT decode is memory-bandwidth bound, so the L40S the trio
-    # first ran on (g6e, 864 GB/s x4 = 3.5 TB/s aggregate) was the throughput
-    # ceiling; H200 (4.8 TB/s) / H100 (3.35 TB/s) at tp=8 give ~27-38 TB/s,
-    # ~5-7x faster. p5/p5e ship only as 8-GPU boxes, so tp matches GPU count
-    # (tp<8 would leave GPUs idle). The ~64 GB BF16 weights fit the 640 GB p5 /
-    # 1128 GB p5e trivially, leaving large KV headroom. tp=8 shards cleanly:
-    # Olmo (40 attn / 8 KV heads), Granite (32 attn / 8 KV, mamba_n_heads=128,
-    # 72 experts) -- all divisible by 8; Granite's mamba_n_groups=1 is not
-    # divisible by 8 (nor by the prior tp=4 it already served under), so vLLM
-    # pads groups for TP. keys.env also bumps EC2_VLLM_IMAGE to v0.23.0 -- the
-    # pinned v0.11.1 predates the olmo3 and granitemoehybrid architectures.
-    # Olmo-3.1-32B-Instruct and -Think are two checkpoints on one 32.2B backbone
-    # -> the cleanest CoT-vs-non-CoT control. The Think model needs no system
-    # prompt or toggle: its chat template force-opens <think>, so it always
-    # reasons, and its plain-text think block is split client-side in query()
-    # (no --reasoning-parser, per the crash note above). Instruct and Granite
-    # are non-reasoning by default. All three use standard HF tokenizers, so no
-    # tokenizer/load-format flags are needed.
-    # --enable-prefix-caching: every quiz reuses one ~33k-token prompt prefix
-    # across its ~122 questions (only the trailing Question line varies), so
-    # caching that prefix pays its prefill once per quiz instead of per
-    # question. vLLM's V1 engine (v0.23) defaults this on; setting it
-    # explicitly documents the dependency and survives a default change.
-    "olmo-3.1-32b-instruct": {"hf_model_id": "allenai/Olmo-3.1-32B-Instruct",   "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
-    "olmo-3.1-32b-think":    {"hf_model_id": "allenai/Olmo-3.1-32B-Think",      "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
-    "granite-4.0-h-small":   {"hf_model_id": "ibm-granite/granite-4.0-h-small", "tp": 8, "max_model_len": 65536, "vllm_args": ["--enable-prefix-caching"]},
-    # notebooks/periodic_moe archetypes: an all-Mixture-of-Experts trio for the
-    # follow-on all-MoE induction study -- the sibling to the periodic
-    # decode/cot/moe archetype control (notebooks/periodic). All three are the
-    # strongest open-weight GENERALISTS with a measured Lean 4 miniF2F number in
-    # the UW study (arXiv 2606.05632). Each id is the HIGHEST-PRECISION OFFICIAL
-    # release (per user directive), so precision is heterogeneous: Qwen BF16,
-    # Nemotron BF16, GPT-OSS MXFP4 (its only/native format -- OpenAI ships no
-    # higher-precision build). All three repos are UNGATED (verified via the HF
-    # models API, 2026-07-18). SERVING: gpt-oss (GptOssForCausalLM) + Nemotron-3
-    # (NemotronForCausalLM) serve on stable vLLM v0.25.1, but Qwen3.5 (hybrid
-    # Gated-DeltaNet MoE, multimodal) needs vLLM from main -> the nightly image
-    # (vllm/vllm-openai:nightly). Qwen is served as its official FP8 (~397 GB) so
-    # it FITS p5 (640 GB), matching the widened p5 capacity (BF16 ~794 GB would
-    # force scarce p5e); FP8 still needs the nightly image (the ARCH, not the
-    # precision, is the gate). Models serve one at a time, so the box holds only
-    # the largest single model. Qwen flags: --reasoning-parser qwen3 (split its
-    # <think> so the grader sees only the answer) + --language-model-only
-    # (text-only; skip the vision tower to save memory). If the study needs BF16
-    # precision parity, switch back to Qwen/Qwen3.5-397B-A17B and re-pin p5e.
-    "qwen3.5-397b-a17b":          {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072,
-                                  "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only"]},
-    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", "tp": 8, "max_model_len": 131072},
-    "gpt-oss-120b":               {"hf_model_id": "openai/gpt-oss-120b", "tp": 8, "max_model_len": 131072},
+    # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8) --
+    "qwen3.5-27b":       {"hf_model_id": "Qwen/Qwen3.5-27B", "tp": 4, "max_model_len": 131072,
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+    "qwen3.5-122b-a10b": {"hf_model_id": "Qwen/Qwen3.5-122B-A10B", "tp": 8, "max_model_len": 131072,
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+    "qwen3.5-397b-a17b": {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072,
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+    # -- Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B, all BF16 --
+    "nemotron-3-nano-4b":         {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "tp": 1, "max_model_len": 131072,
+                                   "vllm_args": ["--enable-prefix-caching"]},
+    "nemotron-3-nano-30b-a3b":    {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "tp": 4, "max_model_len": 131072,
+                                   "vllm_args": ["--enable-prefix-caching"]},
+    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", "tp": 8, "max_model_len": 131072,
+                                   "vllm_args": ["--enable-prefix-caching"]},
+    # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
+    "gemma-4-e2b": {"hf_model_id": "google/gemma-4-E2B-it", "tp": 1, "max_model_len": 131072,
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+    "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 1, "max_model_len": 131072,
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+    "gemma-4-31b": {"hf_model_id": "google/gemma-4-31B-it", "tp": 4, "max_model_len": 131072,
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+    # -- GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-generation, flagged) --
+    "glm-4.7-flash": {"hf_model_id": "zai-org/GLM-4.7-Flash", "tp": 4, "max_model_len": 131072,
+                      "vllm_args": ["--reasoning-parser", "glm47", "--enable-prefix-caching"]},
+    "glm-4.5-air":   {"hf_model_id": "zai-org/GLM-4.5-Air", "tp": 8, "max_model_len": 131072,
+                      "vllm_args": ["--reasoning-parser", "glm45", "--enable-prefix-caching"]},
+    "glm-4.7":       {"hf_model_id": "zai-org/GLM-4.7", "tp": 8, "max_model_len": 131072,
+                      "vllm_args": ["--reasoning-parser", "glm47", "--enable-prefix-caching"]},
+    # -- Ministral-3 Reasoning 2512 (Mistral, FR): 3B / 8B / 14B --
+    "ministral-3-3b":  {"hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512", "tp": 1, "max_model_len": 131072,
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "system_prompt": MINISTRAL_THINK_SYSTEM},
+    "ministral-3-8b":  {"hf_model_id": "mistralai/Ministral-3-8B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "system_prompt": MINISTRAL_THINK_SYSTEM},
+    "ministral-3-14b": {"hf_model_id": "mistralai/Ministral-3-14B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "system_prompt": MINISTRAL_THINK_SYSTEM},
+    # -- EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B-A23B (cross-gen, flagged) --
+    "exaone-4.0-32b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.0-32B", "tp": 4, "max_model_len": 131072,
+                          "vllm_args": ["--enable-prefix-caching"]},
+    "exaone-4.5-33b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.5-33B", "tp": 4, "max_model_len": 131072,
+                          "vllm_args": ["--language-model-only", "--enable-prefix-caching"]},
+    "k-exaone-236b-a23b": {"hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B", "tp": 8, "max_model_len": 131072,
+                           "vllm_args": ["--gpu-memory-utilization", "0.92", "--enable-prefix-caching"]},
+    # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
+    "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
+                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--enable-prefix-caching"]},
+    "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
+                          "vllm_args": ["--enable-prefix-caching"]},
+    "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
+                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
 }
 
 

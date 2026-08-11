@@ -12,7 +12,7 @@ but blind to two leak channels:
 2. **Answer-content overlap without the theorem.** The eval's context
    rungs expose, per theorem, its goal states at every step ``k``, its
    tactic prefix, and its ground-truth tactic tail
-   (see ``notebooks/lean/README.md``). Mathlib-derived synthetic corpora
+   (see ``notebooks/deduction/README.md``). Mathlib-derived synthetic corpora
    (e.g. LeanNavigator's state-graph traversal) can reproduce exactly
    those states and tactic chains inside *other* theorems.
 

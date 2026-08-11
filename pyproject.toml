@@ -54,6 +54,10 @@ dev = [
     # Offline test suite under tests/ (stub-server provider round trips,
     # golden quiz regressions, ec2 payload checks) -- no AWS creds needed.
     "pytest>=8.0",
+    # tests/test_dsv4_chat_template.py renders the inline DeepSeek-V4 serving
+    # template and byte-compares it against the vendored shipped encoding; the
+    # pin must RUN (not importorskip away) in both venvs.
+    "jinja2>=3.1",
 ]
 
 # AWS lifecycle paths: SageMaker endpoint provisioning + token minting in

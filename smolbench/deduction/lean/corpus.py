@@ -6,7 +6,7 @@ of mathlib4 (commit ``fe4454af``, March 2024) traced by
 state transitions (this module), plus a corpus of every premise
 (theorem/def/etc.) declared in the traced repo, with source position and
 containing file (``smolbench.deduction.lean.premises``). See
-``notebooks/lean/README.md`` for the full dataset description, pool sizes,
+``notebooks/deduction/README.md`` for the full dataset description, pool sizes,
 and bootstrap instructions.
 
 Two independent axes select which slice of the benchmark to load, both
@@ -41,7 +41,7 @@ def data_root() -> Path:
 
     Resolution order:
       1. The ``SMOLBENCH_LEAN_DATA`` environment variable, if set.
-      2. ``notebooks/lean/data/leandojo_benchmark_4`` under the repo root.
+      2. ``notebooks/deduction/data/leandojo_benchmark_4`` under the repo root.
 
     The default is anchored to the installed ``smolbench`` package
     (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root)
@@ -75,7 +75,7 @@ def data_root() -> Path:
     return (
         Path(smolbench.__file__).resolve().parents[1]
         / "notebooks"
-        / "lean"
+        / "deduction"
         / "data"
         / "leandojo_benchmark_4"
     )
@@ -153,7 +153,7 @@ class BenchmarkTheorem:
 
         Theorems with an empty `traced_tactics` are typically term-mode
         proofs or otherwise untraceable by LeanDojo's tactic-mode tracer
-        (see ``notebooks/lean/README.md``'s "What's not in scope"); such
+        (see ``notebooks/deduction/README.md``'s "What's not in scope"); such
         theorems are excluded by `iter_with_proof`.
 
         Returns
@@ -235,7 +235,7 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
     ------
     FileNotFoundError
         If ``<data_root()>/<kind>/<split>.json`` does not exist -- the
-        dataset has not been bootstrapped yet. See ``notebooks/lean/
+        dataset has not been bootstrapped yet. See ``notebooks/deduction/
         README.md``'s "Data bootstrap" section for the Zenodo download and
         unpack steps. (Distinct from `iter_replay_passing`'s
         ``FileNotFoundError``, which reports a missing `filter`-generated
@@ -322,7 +322,7 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     matches the pre-move layout where ``replay_passing_*.jsonl`` sidecars
     sat alongside the ``leandojo_benchmark_4/`` directory rather than inside
     it, and keeps these small, committed sidecars out of the large,
-    wholesale-gitignored dataset directory (see ``notebooks/lean/
+    wholesale-gitignored dataset directory (see ``notebooks/deduction/
     README.md``'s "Data bootstrap": the sidecars are committed once
     generated, unlike the raw ~700 MB dataset download).
     """

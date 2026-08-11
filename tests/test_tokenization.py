@@ -36,8 +36,8 @@ def record_repo(monkeypatch):
 
 def test_for_model_resolves_the_specs_hf_model_id(record_repo):
     """The alias the notebooks evaluate maps to that checkpoint's repo."""
-    assert tokenization.for_model("gpt-oss-120b") == "tokenizer<openai/gpt-oss-120b>"
-    assert record_repo == ["openai/gpt-oss-120b"]
+    assert tokenization.for_model("gemma-4-31b") == "tokenizer<google/gemma-4-31B-it>"
+    assert record_repo == ["google/gemma-4-31B-it"]
 
 
 def test_for_model_prefers_the_tokenizer_hf_id_override(record_repo, monkeypatch):
@@ -76,9 +76,9 @@ def test_for_model_rejects_models_with_no_spec(record_repo):
 
 def test_for_model_is_cached_per_alias(record_repo):
     """Repeated lookups reuse one loaded tokenizer (a parse, per replicate)."""
-    tokenization.for_model("gpt-oss-120b")
-    tokenization.for_model("gpt-oss-120b")
-    assert record_repo == ["openai/gpt-oss-120b"]
+    tokenization.for_model("gemma-4-31b")
+    tokenization.for_model("gemma-4-31b")
+    assert record_repo == ["google/gemma-4-31B-it"]
 
 
 def test_hf_tokenizer_wraps_an_existing_tokenizer_object():

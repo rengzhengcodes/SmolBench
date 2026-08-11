@@ -1,6 +1,6 @@
 ---
 name: run-smolbench
-description: Build, launch, and drive SmolBench — run the offline smolbench eval smoke driver, pytest suite, and induction demos, and run/smoke/test the smolbench.deduction.lean theorem-proving harness (notebooks/lean experiment). Use when asked to run, start, test, smoke, or drive smolbench or the lean eval, or to verify a change works end-to-end.
+description: Build, launch, and drive SmolBench — run the offline smolbench eval smoke driver, pytest suite, and induction demos, and run/smoke/test the smolbench.deduction.lean theorem-proving harness (notebooks/deduction experiment). Use when asked to run, start, test, smoke, or drive smolbench or the lean eval, or to verify a change works end-to-end.
 ---
 
 # Run SmolBench
@@ -9,7 +9,7 @@ One package, two runnable surfaces, no GUI/server. **smolbench** (repo root):
 an LLM-eval library — "running" it means driving the real quiz → provider →
 evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zero
 credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
-`notebooks/lean/`): a Lean 4 theorem-proving eval whose VERIFICATION path
+`notebooks/deduction/`): a Lean 4 theorem-proving eval whose VERIFICATION path
 (lean_dojo) needs a dedicated Python 3.12 venv — generation/analysis run on
 the main venv. All paths below are relative to the repo root; all commands
 were verified in a headless Linux container.
@@ -36,9 +36,9 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 .venv/bin/python -m smolbench.induction.periodic              # quiz-generation demo
 .venv/bin/python -m smolbench.induction.chromatic | tail -25  # prints ~120 prompt blocks
 
-bash .claude/skills/run-smolbench/deduction/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
-bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --replay  # + one real Dojo replay (see below)
-bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
+bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
+bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real Dojo replay (see below)
+bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -76,7 +76,7 @@ server.shutdown()
 ## Run: smolbench.deduction.lean (theorem-proving eval)
 
 `lean_smoke.sh` handles both venv syncs and a one-time 64 MB benchmark
-bootstrap (Zenodo record 10929138 → `notebooks/lean/data/leandojo_benchmark_4/`,
+bootstrap (Zenodo record 10929138 → `notebooks/deduction/data/leandojo_benchmark_4/`,
 gitignored). Manual driving from the repo root with
 `export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`:
 
@@ -94,7 +94,7 @@ gitignored). Manual driving from the repo root with
 .venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
 
-The canonical sweep driver is `notebooks/lean/lean_eval.ipynb` (kernel:
+The canonical sweep driver is `notebooks/deduction/lean_eval.ipynb` (kernel:
 `.venv-lean`) — config dicts live in its cells; `run-sweep` is the headless
 escape hatch for the same config schema.
 
@@ -118,8 +118,8 @@ Real-model `run-cell`/`run-sweep` need a provider key
 user-opt-in only; `filter` (~70 min/split) produces the
 `replay_passing_*.jsonl` sidecar that non-explicit sweep configs need —
 none is checked in yet (`--e2e` sidesteps it with `theorems.source:
-explicit`). Figure scripts live in `notebooks/lean/figures/` and read
-results under `notebooks/lean/results/runs/` (committed once sweeps are
+explicit`). Figure scripts live in `notebooks/deduction/figures/` and read
+results under `notebooks/deduction/results/runs/` (committed once sweeps are
 run; currently empty — scripts warn and skip missing runs, and write PNGs
 next to themselves, so point `SMOLBENCH_LEAN_RESULTS` at scratch data with
 care: a pilot run's PNG overwrites the committed figure).
@@ -156,7 +156,7 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
   (default 0 fails any response that reports `usage.total_tokens`);
   `evaluate()` resolves it internally via a GET the stub answers with 100000.
 - Repo rule: every request carries `seed` — never drop it to dodge an error.
-  Lean sweeps derive per-rollout seeds as `config["seed"] + rollout_idx`.
+  Lean sweeps derive per-replicate seeds as `config["seed"] + replicate_idx`.
 - `notebooks/*/results*/` are huge generated trees (~80 M lines of YAML for
   the induction experiments; JSONL with full raw responses for lean) — never
   grep/glob them blindly.

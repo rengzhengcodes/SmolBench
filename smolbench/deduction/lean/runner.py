@@ -1,11 +1,11 @@
-"""Eval loop: theorem × step k × context rung × N rollouts → per-theorem dir.
+"""Eval loop: theorem × step k × context rung × N replicates → per-theorem dir.
 
 Two entry points:
   - `run_cell(...)` — yields rows for one (theorem, k, chain, level) cell.
     Opens its own Dojo session per call. Used by the `run-cell` CLI
     subcommand (`python -m smolbench.deduction.lean.cli run-cell`).
   - `sweep(config, run_dir)` — runs a YAML-described sweep with per-theorem
-    output directories and Dojo session reuse across all rungs/models/rollouts
+    output directories and Dojo session reuse across all rungs/models/replicates
     sharing a (theorem, k). Used by the `run-sweep` CLI subcommand
     (`python -m smolbench.deduction.lean.cli run-sweep`).
 
@@ -18,8 +18,8 @@ defaults below):
     (e.g. "primeintellect", "openrouter", "aws", "ec2"). Resolved explicitly
     per model (bypassing the `INFERENCE_PROVIDER` env var) so a single sweep
     can mix providers across its model lineup — see `_provider_for`.
-  - `seed` (default 1776) — base decoding seed; each rollout's actual seed is
-    `seed + rollout_idx` (see `sweep`'s "Seed threading" note below).
+  - `seed` (default 1776) — base decoding seed; each replicate's actual seed is
+    `seed + replicate_idx` (see `sweep`'s "Seed threading" note below).
   - `request_timeout` (default 1800) — per-request read-timeout override
     forwarded to every `complete()` call; the `ChatClient` default (120s)
     would truncate long chain-of-thought generations mid-stream.
@@ -45,7 +45,7 @@ Output layout (`run_dir`):
                 prompts/
                     <rung-slug>.md      rendered prompt per rung
                 outputs/
-                    <rung-slug>__<model-slug>.jsonl   one row per rollout
+                    <rung-slug>__<model-slug>.jsonl   one row per replicate
                 summary.md   human-readable rollup, regenerated at end
 """
 
@@ -97,7 +97,7 @@ def results_root() -> Path:
 
     Resolution order:
       1. The ``SMOLBENCH_LEAN_RESULTS`` environment variable, if set.
-      2. ``notebooks/lean/results`` under the repo root.
+      2. ``notebooks/deduction/results`` under the repo root.
 
     Repo-anchored off the installed ``smolbench`` package
     (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root),
@@ -120,7 +120,7 @@ def results_root() -> Path:
     override = os.getenv("SMOLBENCH_LEAN_RESULTS")
     if override:
         return Path(override)
-    return Path(smolbench.__file__).resolve().parents[1] / "notebooks" / "lean" / "results"
+    return Path(smolbench.__file__).resolve().parents[1] / "notebooks" / "deduction" / "results"
 
 
 def _default_verifier():
@@ -184,7 +184,7 @@ def run_cell(
     k: int,
     chain: Chain,
     level: int,
-    n_rollouts: int,
+    n_replicates: int,
     temperature: float = 0.7,
     max_tokens: int = 4096,
     dojo_timeout: int = 600,
@@ -193,7 +193,7 @@ def run_cell(
     max_retries: int = 4,
     verifier=None,
 ) -> Iterable[dict]:
-    """Yield one result row per rollout for a single (theorem, k, chain, level) cell.
+    """Yield one result row per replicate for a single (theorem, k, chain, level) cell.
 
     Parameters
     ----------
@@ -205,7 +205,7 @@ def run_cell(
     model : str
         Provider-specific model id.
     theorem, k, chain, level : see `smolbench.deduction.lean.context.render`.
-    n_rollouts : int
+    n_replicates : int
         Number of independent generations to run against the same rendered
         prompt.
     temperature : float, default 0.7
@@ -215,9 +215,9 @@ def run_cell(
     dojo_timeout : int, default 600
         Seconds allowed for the Dojo session (prefix replay + tail check).
     seed : int, default 1776
-        Base decoding seed. Rollout `i`'s actual seed is `seed + i` — see
-        `sweep`'s "Seed threading" design note for why rollouts (not
-        theorem/rung/model) are the seed-varying replicate axis.
+        Base decoding seed. Replicate `i`'s actual seed is `seed + i` — see
+        `sweep`'s "Seed threading" design note for why replicates (not
+        theorem/rung/model) are the seed-varying replication axis.
     request_timeout : int, default 1800
         Per-request read-timeout override forwarded to `complete()`; the
         `ChatClient` default (120s) would truncate long CoT generations.
@@ -232,7 +232,7 @@ def run_cell(
     Yields
     ------
     dict
-        One JSONL-serializable row per rollout; see `_execute_one_cell`'s
+        One JSONL-serializable row per replicate; see `_execute_one_cell`'s
         row schema (same keys, since both paths share the same wire format).
     """
     if verifier is None:
@@ -253,8 +253,8 @@ def run_cell(
         ctx_len = 10**9
         print(f"warning: context-length lookup failed for {model} on {provider}: {exc}", flush=True)
 
-    for rollout_idx in range(n_rollouts):
-        rollout_seed = seed + rollout_idx
+    for replicate_idx in range(n_replicates):
+        replicate_seed = seed + replicate_idx
         t0 = time.monotonic()
         # Design: no try/except around `complete()` here — matches the
         # pre-refactor `run_cell`, which let generation failures propagate
@@ -263,7 +263,7 @@ def run_cell(
         # `sweep`'s concern (see `_execute_one_cell` / the concurrent path
         # below); `run_cell` is a single-shot, non-resuming entry point.
         rsp = mod.complete(
-            user_prompt, model, rollout_seed,
+            user_prompt, model, replicate_seed,
             system=SYSTEM,
             context_length=ctx_len,
             extra_args={"temperature": temperature, "max_tokens": max_tokens},
@@ -291,8 +291,8 @@ def run_cell(
             "chain": chain,
             "level": level,
             "rung": rendered.label,
-            "rollout_idx": rollout_idx,
-            "seed": rollout_seed,
+            "replicate_idx": replicate_idx,
+            "seed": replicate_seed,
             "model": rsp.model or model,
             "provider": provider,
             "temperature": temperature,
@@ -372,8 +372,8 @@ def _k_indices(theorem: BenchmarkTheorem, strategy: str) -> list[int]:
     raise ValueError(f"unknown k.strategy: {strategy!r}")
 
 
-def _row_key(model: str, theorem: str, k: int, rung: str, rollout_idx: int) -> tuple:
-    return (model, theorem, k, rung, rollout_idx)
+def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) -> tuple:
+    return (model, theorem, k, rung, replicate_idx)
 
 
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
@@ -399,7 +399,7 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
             keys.add(_row_key(
                 r.get("model", ""), r.get("theorem_id", ""),
                 int(r.get("k", -1)), r.get("rung", ""),
-                int(r.get("rollout_idx", -1)),
+                int(r.get("replicate_idx", -1)),
             ))
     return keys
 
@@ -486,9 +486,28 @@ _VERDICT_GLYPH = {
     "given_up": "?",
     "replay_failed": "!",
     "exception": "X",
+    # Generation-only sweeps (NullVerifier): cells awaiting the deferred
+    # verification pass, and sanity replays that pass never ran.
+    "unverified": "~",
+    "skipped": "-",
 }
 
 _CHAIN_ORDER = {"stepk": 0, "hint": 1}
+
+# Design: the sweep's per-theorem sanity gate (see `sweep`'s
+# `_process_one_theorem`) must exclude a theorem from cell generation only
+# when its sanity replay POSITIVELY says the ground truth failed -- not
+# merely whenever it isn't exactly "success". A verdict that is neither a
+# success nor one of these explicit failures (notably "skipped", which is
+# all `smolbench.deduction.lean.nullverify.NullVerifier` can ever produce,
+# since it never actually replays anything) must pass THROUGH the gate
+# rather than suppress generation: a generation-only sweep runs the real
+# verification pass later, under `.venv-lean`, so there is nothing yet to
+# have positively failed. Testing membership in this frozenset (rather than
+# `!= "success"`) is what makes that distinction possible.
+SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
+    {"lean_error", "incomplete", "given_up", "exception", "replay_failed"}
+)
 
 
 def _glyph(v: str) -> str:
@@ -564,7 +583,7 @@ def write_theorem_summary(theorem_dir: Path) -> None:
         for m in models:
             for r in cells.get((rung, m), []):
                 lines.append(
-                    f"### `{rung}` · {slug_model(m)} · rollout {r['rollout_idx']} → "
+                    f"### `{rung}` · {slug_model(m)} · replicate {r['replicate_idx']} → "
                     f"**{r['verdict']}**  "
                     f"(gen {r.get('gen_ms', 0)/1000:.1f}s, verify {r.get('verify_ms', 0)/1000:.1f}s, "
                     f"in={r.get('prompt_tokens', 0)}, out={r.get('completion_tokens', 0)})\n"
@@ -641,11 +660,13 @@ def write_run_analysis(run_dir: Path) -> None:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
         }
     )
     n_sanity_pass = 0
     n_sanity_fail = 0
+    n_sanity_skipped = 0
     n_rows = 0
     with all_rows.open() as f:
         for line in f:
@@ -657,8 +678,12 @@ def write_run_analysis(run_dir: Path) -> None:
             if kind == "sanity":
                 if r.get("verdict") == "success":
                     n_sanity_pass += 1
-                else:
+                elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
                     n_sanity_fail += 1
+                else:
+                    # "skipped" (NullVerifier) and any future pass-through
+                    # verdict: the gate deferred, nothing positively failed.
+                    n_sanity_skipped += 1
                 continue
             n_rows += 1
             key = (r.get("rung", "?"), r.get("model", "?"))
@@ -676,9 +701,18 @@ def write_run_analysis(run_dir: Path) -> None:
                 c["l3"] += 1
 
     out: list[str] = []
-    out.append(f"# {n_rows} cells; sanity {n_sanity_pass} pass / {n_sanity_fail} fail\n")
+    out.append(
+        f"# {n_rows} cells; sanity {n_sanity_pass} pass / {n_sanity_fail} fail"
+        + (f" / {n_sanity_skipped} deferred" if n_sanity_skipped else "")
+        + "\n"
+    )
     if n_sanity_fail:
         out.append(f"!! {n_sanity_fail} sanity-gate failures — pipeline may have rotted\n")
+    if n_sanity_skipped:
+        out.append(
+            f"# {n_sanity_skipped} sanity replays deferred (generation-only sweep); "
+            "run the verification pass before trusting cell rates\n"
+        )
     if not cells:
         (run_dir / "analysis.txt").write_text("\n".join(out) + "(no cell rows)\n")
         return
@@ -737,7 +771,7 @@ def regenerate_run_artifacts(run_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inner cell loop — shares one Dojo session across all rungs/models/rollouts
+# Inner cell loop — shares one Dojo session across all rungs/models/replicates
 # at a single (theorem, k). Caller wraps in a try/except for open failures.
 # ---------------------------------------------------------------------------
 
@@ -750,7 +784,7 @@ def _run_cells_at_step(
     rungs: list[str],
     rendered_by_rung: dict,
     models_cfg: list[dict],
-    n_rollouts: int,
+    n_replicates: int,
     temperature: float,
     max_tokens: int,
     provider_factory,
@@ -781,22 +815,23 @@ def _run_cells_at_step(
                 model = mc["model"]
                 display_name = mc.get("display_name", model)
                 extra_params = mc.get("extra_params")
-                for rollout_idx in range(n_rollouts):
-                    key = _row_key(display_name, theorem.full_name, k, rung, rollout_idx)
+                for replicate_idx in range(n_replicates):
+                    key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
                     if key in done_keys:
                         n_skipped += 1
                         continue
 
-                    # Seed threading: rollouts are the replicate axis (see
-                    # `sweep`'s docstring), so the decoding seed depends only
-                    # on rollout_idx, not on theorem/k/rung/model — this keeps
-                    # cross-model comparisons at a given cell seed-paired.
-                    seed = base_seed + rollout_idx
+                    # Seed threading: the replicate index is the replication
+                    # axis (see `sweep`'s docstring), so the decoding seed
+                    # depends only on replicate_idx, not on
+                    # theorem/k/rung/model — this keeps cross-model
+                    # comparisons at a given cell seed-paired.
+                    seed = base_seed + replicate_idx
                     row = _execute_one_cell(
                         verifier=verifier,
                         mod=mod, model=model, ctx_len=ctx_len, user_prompt=user_prompt,
                         rendered=rendered, theorem=theorem, k=k, chain=chain,
-                        level=level, rung=rung, rollout_idx=rollout_idx, seed=seed,
+                        level=level, rung=rung, replicate_idx=replicate_idx, seed=seed,
                         provider=mc["provider"], temperature=temperature,
                         max_tokens=max_tokens, request_timeout=request_timeout,
                         max_retries=max_retries, dojo=dojo, state_at_k=state_at_k,
@@ -814,7 +849,7 @@ def _run_cells_at_step(
                     with print_lock:
                         print(
                             f"  {theorem.full_name[:40]:<40}  k={k}  {rung:<8}  "
-                            f"{slug_model(model):<24}  r{rollout_idx}  "
+                            f"{slug_model(model):<24}  r{replicate_idx}  "
                             f"{row['verdict']:<14}  "
                             f"gen={row['gen_ms']/1000:.1f}s  ver={row['verify_ms']/1000:.1f}s",
                             flush=True,
@@ -830,7 +865,7 @@ def _run_cells_at_step_concurrent(
     rungs: list[str],
     rendered_by_rung: dict,
     models_cfg: list[dict],
-    n_rollouts: int,
+    n_replicates: int,
     temperature: float,
     max_tokens: int,
     provider_factory,
@@ -846,7 +881,7 @@ def _run_cells_at_step_concurrent(
     print_lock: threading.Lock | None = None,
     model_semaphores: dict[str, threading.Semaphore] | None = None,
 ) -> tuple[int, int, int]:
-    """Concurrent variant: fire all (rung, model, rollout) gen calls in parallel,
+    """Concurrent variant: fire all (rung, model, replicate) gen calls in parallel,
     then verify each on the shared Dojo session as the API responses arrive.
 
     Verify still serializes on the single Lean server (Dojo is single-threaded),
@@ -865,8 +900,8 @@ def _run_cells_at_step_concurrent(
         user_prompt = build_user_prompt(rendered)
         for mc in models_cfg:
             display_name = mc.get("display_name", mc["model"])
-            for rollout_idx in range(n_rollouts):
-                key = _row_key(display_name, theorem.full_name, k, rung, rollout_idx)
+            for replicate_idx in range(n_replicates):
+                key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
                 if key in done_keys:
                     n_skipped += 1
                     continue
@@ -875,11 +910,12 @@ def _run_cells_at_step_concurrent(
                     "chain": chain, "level": level,
                     "user_prompt": user_prompt,
                     "mc": mc, "model": mc["model"], "provider": mc["provider"],
-                    "rollout_idx": rollout_idx,
-                    # Seed threading: rollouts are the replicate axis, so the
-                    # seed depends only on rollout_idx — see `sweep`'s
-                    # docstring and the matching comment in `_run_cells_at_step`.
-                    "seed": base_seed + rollout_idx,
+                    "replicate_idx": replicate_idx,
+                    # Seed threading: the replicate index is the replication
+                    # axis, so the seed depends only on replicate_idx — see
+                    # `sweep`'s docstring and the matching comment in
+                    # `_run_cells_at_step`.
+                    "seed": base_seed + replicate_idx,
                     "display_name": display_name,
                     "extra_params": mc.get("extra_params"),
                 })
@@ -891,7 +927,7 @@ def _run_cells_at_step_concurrent(
     # reasoning models start before fast non-reasoning ones queue up. Reduces
     # per-theorem wall-clock since the Dojo session stays open until the last
     # gen completes — slow gens at the front overlap with fast tail traffic.
-    # Sort key (asc): (rung_order, is_non_reasoning, model_order, rollout_idx)
+    # Sort key (asc): (rung_order, is_non_reasoning, model_order, replicate_idx)
     rung_order = {r: i for i, r in enumerate(rungs)}
     model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
 
@@ -910,7 +946,7 @@ def _run_cells_at_step_concurrent(
         rung_order[p["rung"]],
         0 if _is_reasoning(p["mc"]) else 1,
         model_order[id(p["mc"])],
-        p["rollout_idx"],
+        p["replicate_idx"],
     ))
 
     # Open Dojo + submit all gens concurrently.
@@ -953,7 +989,7 @@ def _run_cells_at_step_concurrent(
                     "k": k,
                     "n_total_tactics": len(theorem.traced_tactics),
                     "chain": p["chain"], "level": p["level"], "rung": p["rung"],
-                    "rollout_idx": p["rollout_idx"],
+                    "replicate_idx": p["replicate_idx"],
                     "seed": p["seed"],
                     "model": p["display_name"],
                     "api_model": p["model"],
@@ -1014,7 +1050,7 @@ def _run_cells_at_step_concurrent(
                 with print_lock:
                     print(
                         f"  {theorem.full_name[:40]:<40}  k={k}  {row['rung']:<8}  "
-                        f"{slug_model(row['model']):<24}  r{row['rollout_idx']}  "
+                        f"{slug_model(row['model']):<24}  r{row['replicate_idx']}  "
                         f"{row['verdict']:<14}  "
                         f"gen={gen_ms/1000:.1f}s  ver={row['verify_ms']/1000:.1f}s",
                         flush=True,
@@ -1029,12 +1065,12 @@ def _execute_one_cell(
     verifier,
     mod, model: str, ctx_len: int, user_prompt: str, rendered,
     theorem: BenchmarkTheorem, k: int, chain: str, level: int,
-    rung: str, rollout_idx: int, seed: int, provider: str, temperature: float,
+    rung: str, replicate_idx: int, seed: int, provider: str, temperature: float,
     max_tokens: int, request_timeout: int, max_retries: int, dojo, state_at_k,
     display_name: str | None = None,
     extra_params: dict | None = None,
 ) -> dict:
-    """Run one (rung, model, rollout) cell and return the JSONL row dict."""
+    """Run one (rung, model, replicate) cell and return the JSONL row dict."""
     row_model = display_name or model
     base_row = {
         "kind": "cell",
@@ -1045,7 +1081,7 @@ def _execute_one_cell(
         "chain": chain,
         "level": level,
         "rung": rung,
-        "rollout_idx": rollout_idx,
+        "replicate_idx": replicate_idx,
         "seed": seed,
         "model": row_model,
         "api_model": model,
@@ -1159,19 +1195,19 @@ def _ctx_len_for(mc: dict, mod) -> int:
 def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) -> int:
     """Run a sweep described by `config`. Writes per-theorem dirs under `run_dir`.
 
-    Loop ordering: theorem → k → rung → model → rollout. Resumes by skipping
-    cells whose row key (model, theorem, k, rung, rollout_idx) is already in
+    Loop ordering: theorem → k → rung → model → replicate. Resumes by skipping
+    cells whose row key (model, theorem, k, rung, replicate_idx) is already in
     all_rows.jsonl. Per (theorem, k) opens ONE Dojo session shared across all
-    rungs/models/rollouts that branch from it; per theorem runs ONE separate
+    rungs/models/replicates that branch from it; per theorem runs ONE separate
     sanity-gate Dojo session that re-runs the full ground-truth proof.
 
     Config keys (all optional; sane defaults below — see the module
     docstring's "Generation dispatch" section for the rationale behind
     each):
-      - `seed` (default 1776) — base decoding seed. Each rollout's actual
-        seed is `seed + rollout_idx`; rollouts are the replicate axis, so
-        this is independent of theorem/k/rung/model (cross-model
-        comparisons at a given cell stay seed-paired).
+      - `seed` (default 1776) — base decoding seed. Each replicate's actual
+        seed is `seed + replicate_idx`; the replicate index is the
+        replication axis, so this is independent of theorem/k/rung/model
+        (cross-model comparisons at a given cell stay seed-paired).
       - `request_timeout` (default 1800) — per-request read-timeout
         override forwarded to every `complete()` call.
       - `max_retries` (default 4) — retryable-failure cap forwarded to
@@ -1185,7 +1221,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     ----------
     config : dict
         Sweep configuration; see the keys above plus `theorems`, `rungs`,
-        `models`, `k`, `n_rollouts`, `temperature`, `max_tokens`,
+        `models`, `k`, `n_replicates`, `temperature`, `max_tokens`,
         `dojo_timeout`, `concurrent_gen`, `max_concurrency`,
         `skip_trivial`, `theorem_workers` (all pre-existing, unchanged).
     run_dir : Path
@@ -1227,7 +1263,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     # burned a real sanity replay inside a Dojo session.
     for mc in models_cfg:
         _provider_for(mc)
-    n_rollouts = int(config.get("n_rollouts", 1))
+    n_replicates = int(config.get("n_replicates", 1))
     temperature = float(config.get("temperature", 0.7))
     max_tokens = int(config.get("max_tokens", 4096))
     dojo_timeout = int(config.get("dojo_timeout", 300))
@@ -1296,12 +1332,12 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
             print(f"per-model cap: {display_name} = {int(cap)}", flush=True)
 
     n_total_cells = sum(
-        len(_k_indices(t, k_strategy)) * len(rungs) * len(models_cfg) * n_rollouts
+        len(_k_indices(t, k_strategy)) * len(rungs) * len(models_cfg) * n_replicates
         for t in theorems
     )
     print(
         f"sweep: {len(theorems)} theorems, {len(rungs)} rungs × "
-        f"{len(models_cfg)} models × {n_rollouts} rollouts → {n_total_cells} cells",
+        f"{len(models_cfg)} models × {n_replicates} replicates → {n_total_cells} cells",
         flush=True,
     )
     print(f"output: {run_dir}", flush=True)
@@ -1343,7 +1379,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                 with write_lock:
                     all_rows.write(json.dumps(sanity_row, ensure_ascii=False) + "\n")
                     all_rows.flush()
-                if sanity.verdict != "success":
+                if sanity.verdict in SANITY_FAILURE_VERDICTS:
                     with print_lock:
                         print(
                             f"  SANITY-FAIL {theorem.full_name}: {sanity.verdict} "
@@ -1351,7 +1387,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             flush=True,
                         )
                     return n_w, n_o, n_s
-            elif prev_sanity != "success":
+            elif prev_sanity in SANITY_FAILURE_VERDICTS:
                 # Resume must re-apply the gate, not just skip the replay: a
                 # theorem recorded as sanity-failed stays excluded, otherwise
                 # resuming would generate cells the first pass refused to run.
@@ -1393,7 +1429,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             all_rows=all_rows,
                             theorem=theorem, k=k,
                             rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
-                            models_cfg=models_cfg, n_rollouts=n_rollouts,
+                            models_cfg=models_cfg, n_replicates=n_replicates,
                             temperature=temperature, max_tokens=max_tokens,
                             provider_factory=_provider_and_ctx_for,
                             base_seed=base_seed, request_timeout=request_timeout,
@@ -1410,7 +1446,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             all_rows=all_rows,
                             theorem=theorem, k=k,
                             rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
-                            models_cfg=models_cfg, n_rollouts=n_rollouts,
+                            models_cfg=models_cfg, n_replicates=n_replicates,
                             temperature=temperature, max_tokens=max_tokens,
                             provider_factory=_provider_and_ctx_for,
                             base_seed=base_seed, request_timeout=request_timeout,

@@ -116,6 +116,123 @@ def test_is_trivial_stepk_branches(thms):
     assert context.is_trivial_rung(a, 2, "stepk", 2) is False
 
 
+# ---------------------------------------------------------------------------
+# noise:N invariants — WHITESPACE padding at EXACT token equality.
+#
+# The contract these pin (a user directive): a `noise:N` rendering must be its
+# `hint:(N-1)` baseline followed by pure WHITESPACE padding, sized so the
+# rendered context's token count is EXACTLY EQUAL to the paired `hint:N`
+# rendering's token count -- not approximately, and not with prose filler.
+#
+# Token counts here are taken with an INDEPENDENT tiktoken cl100k_base
+# encoder rather than through `context`'s own counter, so these assertions
+# describe the contract rather than whatever the implementation happens to
+# measure with.
+# ---------------------------------------------------------------------------
+
+
+def _cl100k_count(text: str) -> int:
+    tiktoken = pytest.importorskip("tiktoken")
+    return len(tiktoken.get_encoding("cl100k_base").encode(text))
+
+
+def _noise_cases(thms):
+    """Every (theorem, k, level) noise rung renderable on the fixture."""
+    for name in sorted(thms):
+        t = thms[name]
+        for k in range(len(t.traced_tactics)):
+            for level in (1, 2, 3):
+                yield name, t, k, level
+
+
+def test_noise_token_count_exactly_equals_paired_hint(thms):
+    """`noise:N` matches `hint:N` EXACTLY in tokens, for every fixture rung.
+
+    Exactness is the whole point of the control arm: an approximate match
+    silently reintroduces prompt length as a confound between the two arms
+    being compared.
+    """
+    pytest.importorskip("tiktoken")
+    checked = 0
+    for name, t, k, level in _noise_cases(thms):
+        noise = context.render(t, k, "noise", level)
+        hint = context.render(t, k, "hint", level)
+        n_noise = _cl100k_count(noise.text)
+        n_hint = _cl100k_count(hint.text)
+        assert n_noise == n_hint, (
+            f"{name} k={k} noise:{level} -> {n_noise} tokens but "
+            f"hint:{level} -> {n_hint} tokens (must be exactly equal)"
+        )
+        checked += 1
+    # Guard against a vacuous pass if the fixture ever stops producing rungs.
+    assert checked >= 6, f"only {checked} noise rungs exercised"
+
+
+def test_noise_padding_is_whitespace_only_and_not_lorem(thms):
+    """The pad is the `hint:(N-1)` baseline plus WHITESPACE and nothing else.
+
+    Also pins the removal of the previous lorem-ipsum filler: prose padding
+    is informational content the paired hint rung does not have, and the
+    old `## Filler ...` header was itself unmatched content.
+    """
+    pytest.importorskip("tiktoken")
+    padded_seen = 0
+    for name, t, k, level in _noise_cases(thms):
+        noise_text = context.render(t, k, "noise", level).text
+        base_text = context.render(t, k, "hint", level - 1).text
+
+        assert noise_text.startswith(base_text), (
+            f"{name} k={k} noise:{level} does not start with its hint:{level-1} baseline"
+        )
+        pad = noise_text[len(base_text):]
+        assert pad.strip() == "", (
+            f"{name} k={k} noise:{level} pad is not whitespace-only: {pad[:120]!r}"
+        )
+        assert "Lorem ipsum" not in noise_text
+        assert "lorem" not in noise_text.lower()
+        assert "Filler" not in noise_text
+        if pad:
+            padded_seen += 1
+    # At least some rungs must actually need padding, or the whitespace
+    # assertion above is trivially satisfied by empty pads everywhere.
+    assert padded_seen >= 2, f"only {padded_seen} noise rungs actually padded"
+
+
+def test_noise_render_is_deterministic(thms):
+    """Whitespace padding consumes no RNG: identical inputs, identical text."""
+    pytest.importorskip("tiktoken")
+    for name, t, k, level in _noise_cases(thms):
+        a = context.render(t, k, "noise", level).text
+        b = context.render(t, k, "noise", level).text
+        assert a == b, f"{name} k={k} noise:{level} render is not deterministic"
+
+
+def test_noise_raises_when_baseline_exceeds_target(thms, monkeypatch):
+    """A baseline LONGER than its target must fail loudly, never under-pad.
+
+    Appending whitespace cannot shrink a rendering, so if `hint:(N-1)` ever
+    rendered longer than `hint:N` the exact-match contract is unsatisfiable.
+    Silently emitting a short "length control" would reintroduce exactly the
+    length confound this arm exists to remove, so the renderer must raise.
+    """
+    pytest.importorskip("tiktoken")
+    t = thms["Mini.theoremA"]
+
+    def fake_hint_parts(theorem, k, level):
+        # level 1 (the noise:2 baseline) renders far longer than level 2.
+        return ["X " * 400] if level == 1 else ["short"]
+
+    monkeypatch.setattr(context, "_render_hint_parts", fake_hint_parts)
+    with pytest.raises(ValueError):
+        context.render(t, 2, "noise", 2)
+
+
+def test_noise_level_zero_still_rejected(thms):
+    """`noise:0` has no `hint:-1` baseline to pad; it stays a ValueError."""
+    with pytest.raises(ValueError):
+        context.render(thms["Mini.theoremA"], 2, "noise", 0)
+
+
 def test_is_trivial_hint_branches(thms):
     a = thms["Mini.theoremA"]
     # No premises recorded at this step -> the whole hint chain is trivial.

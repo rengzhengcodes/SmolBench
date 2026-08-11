@@ -543,6 +543,13 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: nothing and keeps token-matched prompts (the induction noise arm)
     #: buildable for that checkpoint.
     tokenizer_hf_id: str
+    #: EC2/vLLM ONLY: LoRA adapters to stage from S3 and register with vLLM,
+    #: as ``[{"name": ..., "s3": "<prefix>/<base_key>[/<sub>]", "region": ...}]``.
+    #: Consumed by ``ec2.serve_model`` (which passes the staging plan to the
+    #: on-box agent) -- listed in ``EC2_SPEC_KEYS`` since the LoRA arms first
+    #: shipped, but previously missing from this TypedDict, so type checkers
+    #: flagged adapter-carrying spec literals. Base-only studies never set it.
+    adapters: list
 
 
 #: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use -- verified against the

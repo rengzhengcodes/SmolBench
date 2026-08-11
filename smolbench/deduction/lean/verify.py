@@ -6,7 +6,7 @@ Two patterns:
   - `open_at_step(bt, k)` + `try_tail(dojo, state, tail)` — opens once and
     yields the state at step k; many `try_tail` calls can branch from the
     same checkpoint without re-replaying the prefix. Used by `sweep`, where
-    multiple rungs × models × rollouts share a single Dojo session per
+    multiple rungs × models × replicates share a single Dojo session per
     (theorem, k) — saves a Lean process startup per cell.
 """
 

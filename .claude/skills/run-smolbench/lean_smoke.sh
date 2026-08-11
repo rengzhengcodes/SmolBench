@@ -8,9 +8,9 @@
 # Benchmark 4 JSON from Zenodo (64 MB, one-time), then drive the `metadata`
 # and `list` CLI subcommands against real benchmark data.
 #
-#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
-#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --replay   # + one Dojo ground-truth replay
-#   bash .claude/skills/run-smolbench/deduction/lean_smoke.sh --e2e      # + FULL run-sweep: fake LLMs, REAL Lean
+#   bash .claude/skills/run-smolbench/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
+#   bash .claude/skills/run-smolbench/lean_smoke.sh --replay   # + one Dojo ground-truth replay
+#   bash .claude/skills/run-smolbench/lean_smoke.sh --e2e      # + FULL run-sweep: fake LLMs, REAL Lean
 #
 # --replay and --e2e additionally need elan on PATH and, on first use, pull
 # the ~2.4 GB traced corpus from LeanDojo's S3 cache into ~/.cache/lean_dojo/
@@ -28,7 +28,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
 
-# uv-managed Python needs the system CA bundle (see notebooks/lean/README.md).
+# uv-managed Python needs the system CA bundle (see notebooks/deduction/README.md).
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Tier 0: the generation/analysis side of smolbench.deduction.lean must import on the
@@ -42,14 +42,14 @@ echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly on the main 3.14
 # same sync command valid for both interpreters.
 UV_PROJECT_ENVIRONMENT=.venv-lean uv sync -q --python 3.12 --extra lean --extra notebook --extra dev
 
-DATA=notebooks/lean/data/leandojo_benchmark_4
+DATA=notebooks/deduction/data/leandojo_benchmark_4
 if [ ! -f "$DATA/metadata.json" ]; then
     echo "Bootstrapping LeanDojo Benchmark 4 (64 MB) from Zenodo record 10929138..."
-    mkdir -p notebooks/lean/data
-    curl -sSL -o notebooks/lean/data/leandojo_benchmark_4.tar.gz \
+    mkdir -p notebooks/deduction/data
+    curl -sSL -o notebooks/deduction/data/leandojo_benchmark_4.tar.gz \
         "https://zenodo.org/api/records/10929138/files/leandojo_benchmark_4.tar.gz/content"
-    tar xzf notebooks/lean/data/leandojo_benchmark_4.tar.gz -C notebooks/lean/data
-    rm notebooks/lean/data/leandojo_benchmark_4.tar.gz
+    tar xzf notebooks/deduction/data/leandojo_benchmark_4.tar.gz -C notebooks/deduction/data
+    rm notebooks/deduction/data/leandojo_benchmark_4.tar.gz
 fi
 
 metadata_out=$(.venv-lean/bin/python -m smolbench.deduction.lean.cli metadata)
@@ -96,7 +96,7 @@ if [ "${1:-}" = "--e2e" ]; then
     cat > "$WORK/sweep.yaml" <<'YAML'
 run_name: e2e_stub_smoke
 seed: 4242
-n_rollouts: 1
+n_replicates: 1
 temperature: 0.7
 max_tokens: 512
 request_timeout: 30

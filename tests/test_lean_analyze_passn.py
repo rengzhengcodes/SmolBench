@@ -33,7 +33,7 @@ def _row(
     rung: str = "stepk:0",
     theorem_id: str = "Mini.theoremA",
     k: int = 1,
-    rollout_idx: int = 0,
+    replicate_idx: int = 0,
     verdict: str = "success",
     raw_response: str = "```lean\nrfl\n```",
     content: str | None = None,
@@ -48,11 +48,11 @@ def _row(
     Parameters
     ----------
     model, rung, theorem_id, k : see module row schema
-        Identify the (model, rung, theorem_id, k) cell this rollout belongs
+        Identify the (model, rung, theorem_id, k) cell this replicate belongs
         to -- `cmd_analyze` groups pass@N on exactly this tuple.
-    rollout_idx : int, default 0
+    replicate_idx : int, default 0
         Recorded but NOT read by `cmd_analyze`'s pass@N grouping (which
-        groups by row occurrence, not by distinct `rollout_idx`); kept here
+        groups by row occurrence, not by distinct `replicate_idx`); kept here
         only for schema fidelity with real sweep output.
     verdict : str, default "success"
         One of the verdict strings `cmd_analyze` recognizes
@@ -84,7 +84,7 @@ def _row(
         "theorem_id": theorem_id,
         "k": k,
         "rung": rung,
-        "rollout_idx": rollout_idx,
+        "replicate_idx": replicate_idx,
         "model": model,
         "verdict": verdict,
         "raw_response": raw_response,
@@ -183,12 +183,12 @@ def _section_rows(out: str, marker: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Single-rollout sweeps: pass@N tables must be entirely absent, and every
+# Single-replicate sweeps: pass@N tables must be entirely absent, and every
 # existing line must be untouched apart from the new trailing `trunc` column.
 # ---------------------------------------------------------------------------
 
 
-def test_single_rollout_omits_passn_table(tmp_path, capsys):
+def test_single_replicate_omits_passn_table(tmp_path, capsys):
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success"),
         _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, verdict="lean_error"),
@@ -208,10 +208,10 @@ def test_single_rollout_omits_passn_table(tmp_path, capsys):
     assert "model-a" in out and "model-b" in out
 
 
-def test_single_rollout_detail_table_gets_trunc_column_only(tmp_path, capsys):
+def test_single_replicate_detail_table_gets_trunc_column_only(tmp_path, capsys):
     """The one sanctioned change to old output: a `trunc` column is always
     added to the detail table's header and rows, even when every cell has
-    exactly one rollout and the pass@N tables are skipped."""
+    exactly one replicate and the pass@N tables are skipped."""
     rows = [_row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success")]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -223,23 +223,23 @@ def test_single_rollout_detail_table_gets_trunc_column_only(tmp_path, capsys):
     hdr = _header_index(lines, "lerr", "trunc")
     assert "trunc" in lines[hdr]
     (row,) = _table_rows(lines, hdr)
-    # 1 rollout, no <think> in raw_response -> trailing trunc count is 0.
+    # 1 replicate, no <think> in raw_response -> trailing trunc count is 0.
     assert row.split()[-1] == "0"
 
 
 # ---------------------------------------------------------------------------
-# pass@N: multi-rollout sweeps.
+# pass@N: multi-replicate sweeps.
 # ---------------------------------------------------------------------------
 
 
-def test_multi_rollout_pass_at_n_counts_any_success(tmp_path, capsys):
+def test_multi_replicate_pass_at_n_counts_any_success(tmp_path, capsys):
     rows = [
-        # T1: rollouts [lean_error, success] -> counts as ONE pass.
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=1, verdict="success"),
-        # T2: rollouts [lean_error, lean_error] -> fail.
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, rollout_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, rollout_idx=1, verdict="lean_error"),
+        # T1: replicates [lean_error, success] -> counts as ONE pass.
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="success"),
+        # T2: replicates [lean_error, lean_error] -> fail.
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=0, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=1, verdict="lean_error"),
     ]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -264,13 +264,13 @@ def test_multi_rollout_pass_at_n_counts_any_success(tmp_path, capsys):
     assert "1/2" in rollup_row and "50.0%" in rollup_row
 
 
-def test_multi_rollout_group_pass_ignores_which_rollout_succeeded(tmp_path, capsys):
-    """Order/index of the successful rollout must not matter -- ANY success
-    in the group is enough (rollout 0 succeeding here, not the last one)."""
+def test_multi_replicate_group_pass_ignores_which_replicate_succeeded(tmp_path, capsys):
+    """Order/index of the successful replicate must not matter -- ANY success
+    in the group is enough (replicate 0 succeeding here, not the last one)."""
     rows = [
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=1, verdict="given_up"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=2, verdict="replay_failed"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="given_up"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=2, verdict="replay_failed"),
     ]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -288,14 +288,14 @@ def test_multi_rollout_group_pass_ignores_which_rollout_succeeded(tmp_path, caps
     assert fields[3] == "100.0%"
 
 
-def test_multi_rollout_n_is_max_across_all_cells(tmp_path, capsys):
-    """N in the header reflects the MAX rollout count seen anywhere in the
-    file, even if most cells only have 1 rollout (mixed replication)."""
+def test_multi_replicate_n_is_max_across_all_cells(tmp_path, capsys):
+    """N in the header reflects the MAX replicate count seen anywhere in the
+    file, even if most cells only have 1 replicate (mixed replication)."""
     rows = [
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, rollout_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, rollout_idx=1, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, rollout_idx=2, verdict="success"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=0, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=1, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=2, verdict="success"),
     ]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -314,14 +314,14 @@ def test_multi_rollout_n_is_max_across_all_cells(tmp_path, capsys):
     assert fields[3] == "100.0%"
 
 
-def test_multi_rollout_per_model_rollup_sums_across_rungs(tmp_path, capsys):
+def test_multi_replicate_per_model_rollup_sums_across_rungs(tmp_path, capsys):
     rows = [
         # rung stepk:0, T1: pass.
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=1, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="lean_error"),
         # rung stepk:1, T2: fail.
-        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, rollout_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, rollout_idx=1, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, replicate_idx=0, verdict="lean_error"),
+        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, replicate_idx=1, verdict="lean_error"),
     ]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -494,11 +494,11 @@ def test_sanity_rows_excluded_from_passn_and_trunc(tmp_path, capsys):
     rows = [
         _sanity_row(model="model-a", verdict="lean_error"),
         _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=0,
+            model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0,
             verdict="success", raw_response="<think>\nunclosed",
         ),
         _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1, rollout_idx=1,
+            model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1,
             verdict="lean_error",
         ),
     ]

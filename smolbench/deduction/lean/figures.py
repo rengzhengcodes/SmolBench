@@ -1,16 +1,16 @@
 """Shared helpers for figure scripts.
 
-Every figure script under ``notebooks/lean/figures/`` reads rollout rows
+Every figure script under ``notebooks/deduction/figures/`` reads replicate rows
 from ``<results_root>/runs/<run>/all_rows.jsonl`` (one JSON object per
-(model, theorem, k, rung, rollout) cell, where ``results_root`` defaults to
+(model, theorem, k, rung, replicate) cell, where ``results_root`` defaults to
 ``smolbench.deduction.lean.runner.results_root()``) and slices/aggregates them over a
-shared "rung" vocabulary — the experimental condition each rollout was run
+shared "rung" vocabulary — the experimental condition each replicate was run
 under: no hint (``stepk:2``), a positive-information hint level
 (``hint:0``..``hint:3``), or a volume-matched noise control
 (``noise:1``..``noise:3``).
 
 This module itself lives under ``smolbench/deduction/lean/`` (an installed package)
-rather than alongside the figure scripts it serves (``notebooks/lean/
+rather than alongside the figure scripts it serves (``notebooks/deduction/
 figures/``) — see `load_rows` and `figure_out_path` for how each accounts
 for that split (a lazily-imported results root, and an explicit output
 directory, respectively).
@@ -56,13 +56,14 @@ import matplotlib.pyplot as plt
 # copy-pasted six times (with the `--runs` help text drifting — three
 # scripts had it, three didn't) before being centralized here.
 
-# DEFAULT_RUNS is the run-directory list every figure script merges over
-# when `--runs` is not passed: the full `main_v3` sweep (100 theorems) plus
-# the smaller `main_v3_2` sweep that adds a few low-n frontier closed-weight
-# models (Sonnet 4.6, GPT-5.5) not present in `main_v3`. See
-# `models_per_run` / `model_sort_key` for how the "low-n" distinction is
-# used downstream.
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
+# DEFAULT_RUNS is intentionally empty. The now-archived `main_v3`/`main_v3_2`
+# sweeps this used to default to are retired, and the current study's run
+# directories are named `scaling_<model>` (one per model) rather than a
+# fixed pair of shared sweeps -- there is no single canonical merge set to
+# fall back to any more. Callers must pass `--runs` explicitly, naming the
+# `scaling_<model>` (or other) run directories under `<results_root>/runs/`
+# they want merged.
+DEFAULT_RUNS: list[str] = []
 
 # DEFAULT_FIGSIZE is the (width, height) inches five of the six figure
 # scripts pass to `plt.subplots(figsize=...)` — every script except
@@ -84,10 +85,15 @@ def parse_runs_args() -> list[str]:
     Returns
     -------
     list of str
-        The parsed `--runs` values, defaulting to `DEFAULT_RUNS` when the
-        flag is omitted. (Returns the raw list, not the `argparse.Namespace`,
-        since every caller immediately does `args.runs` and nothing else
-        with the parsed arguments.)
+        The parsed `--runs` values, defaulting to `DEFAULT_RUNS` (empty --
+        see that constant's comment) when the flag is omitted, in which case
+        every downstream `load_rows` call sees an empty run list and no rows
+        load. There is no current canonical merge set: run directories are
+        named `scaling_<model>` (one per model) under `<results_root>/runs/`,
+        so callers must pass `--runs` explicitly to name the ones they want
+        merged. (Returns the raw list, not the `argparse.Namespace`, since
+        every caller immediately does `args.runs` and nothing else with the
+        parsed arguments.)
 
     Notes
     -----
@@ -97,7 +103,10 @@ def parse_runs_args() -> list[str]:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--runs", nargs="+", default=DEFAULT_RUNS,
-        help="run dirs under results/runs/ to merge (default: %(default)s)",
+        help=(
+            "run dirs under results/runs/ to merge, e.g. scaling_<model> "
+            "(default: %(default)s -- no canonical set, must be passed explicitly)"
+        ),
     )
     return ap.parse_args().runs
 
@@ -112,11 +121,11 @@ def figure_out_path(name: str, out_dir: Path) -> Path:
         script's own module name, e.g. `"success_rate_bars"`).
     out_dir : pathlib.Path
         Directory the PNG is written into. Callers pass their own
-        `Path(__file__).parent` (i.e. `notebooks/lean/figures/`) explicitly.
+        `Path(__file__).parent` (i.e. `notebooks/deduction/figures/`) explicitly.
 
         Design: this module now lives under `smolbench/deduction/lean/` (an installed
         package, potentially imported from anywhere) while the figure
-        scripts and their PNG outputs live under `notebooks/lean/figures/` —
+        scripts and their PNG outputs live under `notebooks/deduction/figures/` —
         two different directories. The previous version of this function
         introspected *its own* `__file__` to anchor the output path, which
         was correct back when `_util.py` and the figure scripts were
@@ -329,7 +338,7 @@ def models_per_run(rows: list[dict]) -> dict[str, set[str]]:
     ----------
     rows : list of dict
         Rows produced by `load_rows` (each must carry a `_run` key and, for
-        real rollout rows, a `model` key).
+        real replicate rows, a `model` key).
 
     Returns
     -------

@@ -26,7 +26,8 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    new_run_id, regenerate_run_artifacts, results_root, run_cell, sweep, write_jsonl,
+    SANITY_FAILURE_VERDICTS, new_run_id, regenerate_run_artifacts, results_root,
+    run_cell, sweep, write_jsonl,
 )
 
 
@@ -240,7 +241,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
 
 def cmd_run_cell(args: argparse.Namespace) -> int:
-    """Run one (theorem, k, rung) cell with N rollouts and write a JSONL row file.
+    """Run one (theorem, k, rung) cell with N replicates and write a JSONL row file.
 
     Parameters
     ----------
@@ -249,9 +250,9 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
         ``--split``), ``--k`` (proof step; ``-1`` means the last step,
         ``len(traced_tactics) - 1``), ``--rung`` (parsed as
         ``<chain>:<level>`` and validated via `context.validate`),
-        ``--n-rollouts``, ``--provider``, ``--model``, ``--temperature``,
+        ``--n-replicates``, ``--provider``, ``--model``, ``--temperature``,
         ``--max-tokens``, ``--timeout`` (Dojo timeout), and ``--seed``
-        (base decoding seed forwarded to `runner.run_cell`, whose rollout
+        (base decoding seed forwarded to `runner.run_cell`, whose replicate
         ``i`` uses ``seed + i``).
 
     Returns
@@ -259,16 +260,16 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     int
         2 if ``--full-name`` doesn't match any theorem in the pool, or if
         ``--rung`` is malformed or fails `context.validate`; 0 if every
-        rollout's verdict is ``"success"``; 1 otherwise.
+        replicate's verdict is ``"success"``; 1 otherwise.
 
     Notes
     -----
     Requires `.venv-lean`: reaches `smolbench.deduction.lean.verify` indirectly
     through `runner.run_cell`'s lazily-resolved default verifier (see the
     module docstring's environment split), rather than importing it
-    directly here. Writes one JSONL row per rollout to
+    directly here. Writes one JSONL row per replicate to
     ``<results_root()>/runs/<new_run_id()>.jsonl`` (via `runner.write_jsonl`)
-    and prints a per-rollout summary (verdict, token counts, timings, and a
+    and prints a per-replicate summary (verdict, token counts, timings, and a
     short candidate-proof preview).
     """
     pool = list(iter_with_proof(args.kind, args.split))
@@ -301,7 +302,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
         k=k,
         chain=chain_str,
         level=level,
-        n_rollouts=args.n_rollouts,
+        n_replicates=args.n_replicates,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         dojo_timeout=args.timeout,
@@ -313,7 +314,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     print(f"verdicts: {n_ok}/{n_written} success")
     for r in rows:
         print(
-            f"  rollout {r['rollout_idx']}: {r['verdict']:<14} "
+            f"  replicate {r['replicate_idx']}: {r['verdict']:<14} "
             f"prompt_tok={r['prompt_tokens']} comp_tok={r['completion_tokens']} "
             f"gen={r['gen_ms']}ms verify={r['verify_ms']}ms"
         )
@@ -435,11 +436,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     always 0 for models that never emit one), and per-model token/success
     totals.
 
-    When the sweep recorded more than one rollout for at least one
+    When the sweep recorded more than one replicate for at least one
     (model, rung, theorem_id, k) cell, two more tables follow: a pass@N
-    table (a cell counts as a pass if ANY of its rollouts verified; N is
-    the max rollout count seen across all cells) broken down per (rung,
-    model), and its per-model rollup. Sweeps with exactly one rollout per
+    table (a cell counts as a pass if ANY of its replicates verified; N is
+    the max replicate count seen across all cells) broken down per (rung,
+    model), and its per-model rollup. Sweeps with exactly one replicate per
     cell everywhere (the common, non-replicated case) omit both -- their
     output is byte-identical to the pre-pass@N/trunc format aside from the
     added ``trunc`` column in the detail table.
@@ -450,19 +451,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
     # Design: keyed on the full cell identity (model, rung, theorem_id, k) --
-    # one entry per group, holding every rollout's verdict for that group --
+    # one entry per group, holding every replicate's verdict for that group --
     # rather than folding straight into `cells`, because pass@N needs to ask
-    # "did ANY rollout of *this exact* (theorem, k) succeed", a question the
+    # "did ANY replicate of *this exact* (theorem, k) succeed", a question the
     # (rung, model)-only `cells` aggregation has already lost the answer to.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
     n_sanity_fail = 0
+    n_sanity_skipped = 0
     with open(args.path) as f:
         for line in f:
             r = json.loads(line)
@@ -470,8 +473,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             if kind == "sanity":
                 if r.get("verdict") == "success":
                     n_sanity_pass += 1
-                else:
+                elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
                     n_sanity_fail += 1
+                else:
+                    # "skipped": a generation-only sweep deferred the replay.
+                    n_sanity_skipped += 1
                 continue
             n_rows += 1
             key = (r.get("rung", "?"), r.get("model", "?"))
@@ -522,9 +528,17 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         return 1
 
     print(f"# {n_rows} cells from {args.path}")
-    print(f"# sanity gate: {n_sanity_pass} pass / {n_sanity_fail} fail")
+    print(
+        f"# sanity gate: {n_sanity_pass} pass / {n_sanity_fail} fail"
+        + (f" / {n_sanity_skipped} deferred" if n_sanity_skipped else "")
+    )
     if n_sanity_fail:
         print(f"!! {n_sanity_fail} sanity-gate failures — investigate before trusting cell rates")
+    if n_sanity_skipped:
+        print(
+            f"# {n_sanity_skipped} sanity replays deferred (generation-only sweep); "
+            "run the verification pass before trusting cell rates"
+        )
     print()
 
     from .runner import _rung_sort_key, slug_model
@@ -551,7 +565,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print()
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     print(header)
@@ -566,7 +580,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['unverified']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
@@ -585,15 +599,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
 
-    # ---- pass@N (only meaningful once a sweep actually replicated rollouts;
-    # with n_rollouts==1 everywhere, "pass@N" and the plain success rate
-    # above are identical, so we skip it rather than print a redundant,
-    # visually-noisy duplicate table). N is derived from the data itself
-    # (max rollouts seen in any single cell) rather than threaded through
-    # from the sweep config, so this stays correct even for sweeps that mix
-    # rollout counts across models/rungs.
-    n_max_rollouts = max((len(vs) for vs in groups.values()), default=1)
-    if n_max_rollouts > 1:
+    # ---- pass@N (only meaningful once a sweep actually ran multiple
+    # replicates; with n_replicates==1 everywhere, "pass@N" and the plain
+    # success rate above are identical, so we skip it rather than print a
+    # redundant, visually-noisy duplicate table). N is derived from the data
+    # itself (max replicates seen in any single cell) rather than threaded
+    # through from the sweep config, so this stays correct even for sweeps
+    # that mix replicate counts across models/rungs.
+    n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
+    if n_max_replicates > 1:
         passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
             lambda: {"groups": 0, "pass": 0}
         )
@@ -603,7 +617,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             if "success" in verdicts:
                 pc["pass"] += 1
 
-        print(f"\n# pass@N per rung × model (N={n_max_rollouts})")
+        print(f"\n# pass@N per rung × model (N={n_max_replicates})")
         header2 = f"{'rung':<10} {'model':<36} {'pass':>5}/{'grp':<4} {'rate':>6}"
         print(header2)
         print("-" * len(header2))
@@ -672,8 +686,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
     ----------
     args : argparse.Namespace
         Consumes ``run_dir`` (positional; must contain ``all_rows.jsonl``),
-        ``model``, ``rung_a``, ``rung_b`` (positional filters), ``--rollout``
-        (which rollout index to compare when a cell has more than one), and
+        ``model``, ``rung_a``, ``rung_b`` (positional filters), ``--replicate``
+        (which replicate index to compare when a cell has more than one), and
         ``--regressions-only`` (suppress the improvements section).
 
     Returns
@@ -704,8 +718,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
             continue
         if r.get("rung") not in (args.rung_a, args.rung_b):
             continue
-        # If multiple rollouts, prefer the first; user can pass --rollout to pick.
-        if r.get("rollout_idx", 0) != args.rollout:
+        # If multiple replicates, prefer the first; user can pass --replicate to pick.
+        if r.get("replicate_idx", 0) != args.replicate:
             continue
         by_thm.setdefault(r["theorem_id"], {})[r["rung"]] = r
 
@@ -733,7 +747,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         else:
             both_fail += 1
 
-    print(f"# {args.model}  rung {args.rung_a} vs {args.rung_b}  (rollout {args.rollout})")
+    print(f"# {args.model}  rung {args.rung_a} vs {args.rung_b}  (replicate {args.replicate})")
     print(f"  both pass:      {both_pass}")
     print(f"  both fail:      {both_fail}")
     print(f"  regressions ({args.rung_a} ✓ → {args.rung_b} ✘): {len(regressions)}")
@@ -933,7 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_filter.add_argument("--fresh", action="store_true", help="delete existing JSONL and start over")
     p_filter.set_defaults(func=cmd_filter)
 
-    p_cell = sub.add_parser("run-cell", help="run one (theorem,k,rung) cell with N rollouts")
+    p_cell = sub.add_parser("run-cell", help="run one (theorem,k,rung) cell with N replicates")
     p_cell.add_argument("--full-name", required=True)
     p_cell.add_argument("--kind", choices=["random", "novel_premises"], default="random")
     p_cell.add_argument("--split", choices=["train", "val", "test"], default="val")
@@ -943,7 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="stepk:1",
         help="context rung as <chain>:<level>, e.g. stepk:0..3 or hint:0..4",
     )
-    p_cell.add_argument("--n-rollouts", type=int, default=1)
+    p_cell.add_argument("--n-replicates", type=int, default=1)
     p_cell.add_argument(
         "--provider", default="primeintellect",
         choices=["openrouter", "primeintellect", "aws", "ec2"],
@@ -954,11 +968,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_cell.add_argument("--timeout", type=int, default=600)
     p_cell.add_argument(
         "--seed", type=int, default=1776,
-        help="base decoding seed; rollout i uses seed+i",
+        help="base decoding seed; replicate i uses seed+i",
     )
     p_cell.set_defaults(func=cmd_run_cell)
 
-    p_sweep = sub.add_parser("run-sweep", help="run a YAML-described sweep across (theorem, k, rung, model, rollout)")
+    p_sweep = sub.add_parser("run-sweep", help="run a YAML-described sweep across (theorem, k, rung, model, replicate)")
     p_sweep.add_argument("--config", required=True, help="path to sweep YAML")
     p_sweep.add_argument("--out", default=None, help="output run dir (default: results/runs/<run_name>/)")
     p_sweep.add_argument("--fresh", action="store_true", help="ignore existing JSONL; start from empty")
@@ -982,7 +996,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("model", help="model identifier, e.g. 'anthropic/claude-sonnet-4.6'")
     p_cmp.add_argument("rung_a", help="baseline rung, e.g. 'hint:1'")
     p_cmp.add_argument("rung_b", help="comparison rung, e.g. 'hint:2'")
-    p_cmp.add_argument("--rollout", type=int, default=0)
+    p_cmp.add_argument("--replicate", type=int, default=0)
     p_cmp.add_argument("--regressions-only", action="store_true",
                        help="show only rung_a ✓ → rung_b ✘ cases")
     p_cmp.set_defaults(func=cmd_compare)

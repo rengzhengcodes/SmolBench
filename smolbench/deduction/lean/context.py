@@ -31,7 +31,7 @@ Chain = Literal["stepk", "hint", "noise"]
 #   premise-dependency closure whose *hop count* is `level - 2` (hint:3 =
 #   1-hop, hint:4 = 2-hop, ..., hint:9 = 7-hop -- see `_render_hint_parts`'s
 #   `depth = level - 2`). This deliberately extends well past the
-#   `notebooks/lean/README.md`-documented, sweep-tested range (hint:0..4):
+#   `notebooks/deduction/README.md`-documented, sweep-tested range (hint:0..4):
 #   nothing in the renderer actually breaks past hint:4, since
 #   `_HINT2_3_TOKEN_CAP` (50k tokens) already bounds the rendered text no
 #   matter how many hops the closure walks -- so a caller experimenting
@@ -41,8 +41,9 @@ Chain = Literal["stepk", "hint", "noise"]
 #   without artificially restricting experimentation to the currently-used
 #   levels.
 # - "noise" caps at 9 to mirror "hint": `_render_noise_parts(level)` renders
-#   `_render_hint_parts` at both `level - 1` and `level` to compute the
-#   padding delta, so it needs the same level range `hint` supports.
+#   `_render_hint_parts` at both `level - 1` and `level` to find the exact
+#   token count a whitespace pad must hit, so it needs the same level range
+#   `hint` supports.
 _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 
 
@@ -154,50 +155,12 @@ _HINT2_3_TOKEN_CAP = 50_000  # token budget for transitive closure rendering
 
 
 # ---------------------------------------------------------------------------
-# Noise (lorem-ipsum) padding — control arm for hint:3 / hint:4
+# Noise (whitespace) padding — control arm for hint:3 / hint:4
 # ---------------------------------------------------------------------------
 
 
-_LOREM_PARAGRAPH = (
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-    "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim "
-    "veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea "
-    "commodo consequat. Duis aute irure dolor in reprehenderit in voluptate "
-    "velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint "
-    "occaecat cupidatat non proident, sunt in culpa qui officia deserunt "
-    "mollit anim id est laborum.\n\n"
-)
-
-
-def _generate_lorem(target_tokens: int) -> str:
-    """Generate a lorem-ipsum string of approximately `target_tokens` tokens.
-
-    Uses tiktoken cl100k_base for budgeting (close enough to the actual model
-    tokenizer for an isolation test). Returns clean prose; pure whitespace
-    would tokenize differently and not match hint:N token counts.
-    """
-    if target_tokens <= 0:
-        return ""
-    try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")
-        tokens_per_para = len(enc.encode(_LOREM_PARAGRAPH))
-        n_paras = max(1, (target_tokens // tokens_per_para) + 1)
-        text = _LOREM_PARAGRAPH * n_paras
-        # Trim to exact target by re-encoding/decoding.
-        toks = enc.encode(text)
-        if len(toks) > target_tokens:
-            toks = toks[:target_tokens]
-        return enc.decode(toks)
-    except Exception:  # noqa: BLE001
-        # Fallback: rough char-based estimate (~4 chars/token for English).
-        target_chars = target_tokens * 4
-        n_paras = max(1, target_chars // len(_LOREM_PARAGRAPH) + 1)
-        return (_LOREM_PARAGRAPH * n_paras)[:target_chars]
-
-
 def _count_tokens(s: str) -> int:
-    """Approximate token count of `s`, for internal token-budget decisions only.
+    """Token count of `s` under this module's harness tokenizer.
 
     Parameters
     ----------
@@ -214,17 +177,22 @@ def _count_tokens(s: str) -> int:
 
     Notes
     -----
-    The char-based fallback is intentionally rough: this function only
-    gates internal budget decisions -- `_render_noise_parts`'s
-    padding-delta calculation, `_render_hint_parts`'s hint:3+ truncation
-    loop, and `is_trivial_rung`'s noise-triviality check -- none of which
-    need an exact count, just a consistent-enough estimate to size padding
-    or decide whether a rung added content. `cl100k_base` is not
-    necessarily the tokenizer of whichever model is actually being
-    prompted, so even the `tiktoken` path is already an approximation; the
-    char-based fallback only widens that approximation for the rare case
-    where `tiktoken` is unavailable or errors, rather than raising and
-    aborting context rendering entirely.
+    The char-based fallback is intentionally rough, and callers differ in
+    how much that roughness matters. `_render_hint_parts`'s hint:3+
+    truncation loop and `is_trivial_rung`'s noise-triviality check only need
+    a consistent-enough estimate to size a budget or decide whether a rung
+    added content -- an approximation is fine there. `_render_noise_parts`'s
+    exact-token-match padding is different: it needs `_count_tokens` to be
+    the harness's single source of truth for "how many tokens is this text",
+    since `token_matched_noise_prompt` verifies its pad against exactly this
+    function (via `_TokenCounter`) and nothing else -- there is no second,
+    more-precise counter it falls back to. `cl100k_base` is not necessarily
+    the tokenizer of whichever model is actually being prompted, so even the
+    `tiktoken` path is already an approximation of that model's real token
+    count; the char-based fallback only widens that approximation for the
+    rare case where `tiktoken` is unavailable or errors, rather than raising
+    and aborting context rendering entirely. See `_TokenCounter` for how
+    this function is exposed as an exact-match target where it counts.
     """
     try:
         import tiktoken
@@ -233,16 +201,136 @@ def _count_tokens(s: str) -> int:
         return len(s) // 4
 
 
-def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
-    """`noise:N` = `hint:(N-1)` baseline + lorem padding sized to match `hint:N`.
+class _TokenCounter:
+    """Adapts `_count_tokens` to the small `Tokenizer`-like interface
+    `smolbench.induction._common`'s token-matching search expects: a
+    `count(str) -> int` method plus a `name` attribute (used only in that
+    module's own error messages -- see `choose_whitespace_unit` /
+    `token_matched_noise_prompt`). This is a deliberately minimal, ad hoc
+    adapter rather than an import of `smolbench.evals.tokenization.Tokenizer`
+    -- the interface is duck-typed (`typing.Protocol` there), so no import is
+    needed to satisfy it, and this module must not acquire a dependency on
+    `smolbench.evals` (see `_render_noise_parts`'s Notes for why the whole
+    `smolbench.induction._common` import stays lazy).
+    """
 
-    Each comparison `hint:N` vs `noise:N` isolates the marginal *content*
-    added at step N (e.g. for noise:2: lorem-padded hint:1 = signatures plus
-    filler vs hint:2 = signatures plus real premise bodies, both at the same
-    token count).
+    #: Identifies which counter is in play in `token_matched_noise_prompt`'s
+    #: `ValueError` messages (e.g. "no whitespace unit costs ~1 token per
+    #: repetition under tokenizer ...") -- not consumed anywhere else.
+    name = "smolbench.deduction.lean.context._count_tokens (tiktoken cl100k_base, or len//4 fallback)"
+
+    def count(self, text: str) -> int:
+        """`_count_tokens(text)`, spelled as the `Tokenizer.count` the search helper expects."""
+        return _count_tokens(text)
+
+
+def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
+    """`noise:N` = `hint:(N-1)` baseline + whitespace padded to `hint:N`'s exact token count.
+
+    `noise:N` isolates the marginal *content* `hint:N` adds over
+    `hint:(N-1)`: it renders the SAME `hint:(N-1)` baseline text, then pads
+    it with whitespace until its token count exactly equals `hint:N`'s.
+    Comparing a model's `hint:N` vs `noise:N` performance then isolates the
+    effect of that content, because prompt length is no longer a confound --
+    both rungs are the exact same number of tokens, and the padding carries
+    no information a model could use.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        Theorem being evaluated.
+    k : int
+        0-indexed proof step; forwarded to `_render_hint_parts`.
+    level : int
+        Noise level `N`; must be `>= 1` (see Raises). The baseline padded is
+        `hint:(level - 1)`; the target token count matched is `hint:level`'s.
+
+    Returns
+    -------
+    list of str
+        `_render_hint_parts(theorem, k, level - 1)`'s parts, unchanged
+        except that the LAST part has a whitespace pad appended to its end
+        (never a new list element -- see Notes for why). When the baseline
+        is already exactly as long as the target (the rung is trivial --
+        see `is_trivial_rung`), the parts are returned completely unchanged,
+        pad or no pad.
+
+    Raises
+    ------
+    ValueError
+        If `level < 1` (no noise counterpart is defined for the
+        `hint:0`/`stepk:2` baseline -- there is nothing to pad against). If
+        the `hint:(level - 1)` baseline is somehow LONGER, in tokens, than
+        the `hint:level` target it is supposed to be padded to match --
+        appending whitespace can only grow a rendering, never shrink one, so
+        this contract is unsatisfiable; in practice this should never fire,
+        since `hint:level`'s content is a strict superset of
+        `hint:(level - 1)`'s, but it is guarded rather than silently
+        under-padding and reintroducing the length confound. If
+        `choose_whitespace_unit` cannot find a whitespace unit that costs
+        ~1 token per repetition under `_count_tokens` (notably: whenever
+        `tiktoken` is unavailable and `_count_tokens` has fallen back to its
+        ``len(s) // 4`` estimate, since an *exact* token match cannot be
+        built against an approximate counter -- see `_count_tokens`'s
+        Notes). If the padding search itself cannot land on the exact target
+        token count (`token_matched_noise_prompt`'s own `ValueError`), or if
+        this function's own post-hoc verification of the result disagrees
+        with the target (belt-and-braces -- see Notes).
+
+    Notes
+    -----
+    Design: reuses `smolbench.induction._common.token_matched_noise_prompt`
+    (the periodic/chromatic induction benchmarks' own exact-token-count
+    whitespace-pad search) rather than reimplementing it. Both problems are
+    identical -- "grow this text with content-free padding until it hits an
+    exact token count under a given tokenizer" -- and a second, independently
+    written bisection search would only be a second place for that logic to
+    subtly drift from the first. The import is LAZY (inside this function,
+    not at module top): `smolbench.induction._common` pulls in `numpy`,
+    `ordered_set`, and `smolbench.evals`, none of which any other caller of
+    this (`context`) module needs, and `context` is imported at module level
+    by `runner.py` -- an eager import here would make every `runner`/`cli`
+    invocation pay that cost even when no noise rung is ever rendered.
+
+    The pad is appended to `base_parts[-1]` (the last existing part) rather
+    than appended as a new part in the returned list. This is load-bearing:
+    `render()` joins whatever parts this function returns with `"\\n\\n"`, so
+    a new trailing part would silently insert an extra `"\\n\\n"` separator
+    that the token search below never measured or accounted for, making the
+    "exact token count" guarantee off by the separator's own token cost.
+    Appending directly to the final part's text is what makes the final
+    rendered string exactly `base_text + pad` -- precisely what
+    `token_matched_noise_prompt` measured and verified.
+
+    The pad is pure whitespace, not placeholder prose (the prior
+    implementation this replaces generated a fixed paragraph, repeated):
+    prose is itself informational content the paired `hint:N` rung does not
+    have, and a markdown section header announcing the padding's own
+    presence is unmatched content in its own right. Whitespace carries
+    nothing a model could read as signal, and the
+    match is exact (not approximate) rather than merely "close" -- both
+    properties this experiment's noise arm requires to be a clean length
+    control (see `smolbench.induction._common`'s module docstring for the
+    same argument made about the induction benchmarks' own noise arm, where
+    an earlier *character*-matched pad was found to silently overshoot its
+    token-count target by 1.6x).
+
+    This function never trusts `token_matched_noise_prompt`'s return value
+    blindly, even though that function already verifies its own result
+    internally: it has one documented escape hatch (returning the *unpadded*
+    render, with a logged warning, when the unpadded text is already at or
+    past the target -- see that function's docstring) that this function's
+    own `base_tokens > target_tokens` / `base_tokens == target_tokens`
+    pre-checks make unreachable in practice. "Should be unreachable" is not
+    the same guarantee as "is checked", so the result's token count is
+    re-verified here regardless before being returned.
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
+
+    # Lazy import -- see this function's Notes for why `smolbench.induction._common`
+    # must not be pulled in at module top.
+    from smolbench.induction._common import choose_whitespace_unit, token_matched_noise_prompt
 
     base_parts = _render_hint_parts(theorem, k, level - 1)
     base_text = "\n\n".join(base_parts)
@@ -251,16 +339,43 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
     target_tokens = _count_tokens(target_text)
 
-    delta = target_tokens - base_tokens
-    if delta <= 0:
-        return base_parts  # nothing to pad; rung is trivial
+    if base_tokens > target_tokens:
+        raise ValueError(
+            f"noise:{level} baseline (hint:{level - 1}, {base_tokens} tokens) is "
+            f"LONGER than its hint:{level} target ({target_tokens} tokens) for "
+            f"{theorem.full_name!r} at k={k} -- a whitespace pad can only grow "
+            "a rendering, never shrink one, so this rung cannot be built as a "
+            "length control"
+        )
+    if base_tokens == target_tokens:
+        # Already exact: nothing to pad. Real and common -- every rung where
+        # hint:level adds nothing over hint:(level - 1), which
+        # `is_trivial_rung` independently reports as trivial. `render()` is
+        # still called on trivial noise rungs when a sweep sets
+        # `skip_trivial: false`, so this must return cleanly, not raise.
+        return base_parts
 
-    filler = _generate_lorem(delta)
-    base_parts.append(
-        f"## Filler (hint:{level-1} → hint:{level} token-match, ≈{delta} tokens, "
-        "no informational content)\n" + filler
+    counter = _TokenCounter()
+    padded_text = token_matched_noise_prompt(
+        lambda pad: base_text + pad,  # render: pad string -> full rendered text
+        "",  # context: empty -- the pad IS the whole variable part being searched
+        target_tokens,
+        counter,
+        unit=choose_whitespace_unit(counter),
     )
-    return base_parts
+
+    # Belt-and-braces (see Notes): verify exactness ourselves rather than
+    # trusting the helper's own internal verification blindly.
+    padded_tokens = _count_tokens(padded_text)
+    if padded_tokens != target_tokens:
+        raise ValueError(
+            f"noise:{level} padding for {theorem.full_name!r} at k={k} did not "
+            f"hit the exact target: got {padded_tokens} tokens, wanted "
+            f"{target_tokens}"
+        )
+
+    pad = padded_text[len(base_text):]
+    return base_parts[:-1] + [base_parts[-1] + pad]
 
 
 def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -412,12 +527,17 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     ValueError
         If `k` is outside ``[0, len(theorem.traced_tactics))``; if
         `(chain, level)` fails `validate` (unknown `chain`, or `level`
-        outside `_MAX_LEVEL`'s bound); or if `chain == "noise"` and
-        `level < 1` (propagated from `_render_noise_parts` -- `validate`
+        outside `_MAX_LEVEL`'s bound); or if `chain == "noise"`, propagated
+        from `_render_noise_parts`, whose own ``Raises`` section documents
+        the noise-specific cases in full -- notably `level < 1` (``validate``
         alone does not reject ``noise:0``, since there is no noise
         counterpart for the `hint:0`/`stepk:2` baseline it would pad; see
         ``figures.NOISE_RUNGS_ALIGNED``'s docstring for the same gap
-        described from the figure-plotting side).
+        described from the figure-plotting side), the `hint:(level - 1)`
+        baseline somehow being LONGER, in tokens, than the `hint:level`
+        target it must be padded to match, and the exact-token-match search
+        itself failing (no whitespace unit found, or the search unable to
+        land on the target).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")

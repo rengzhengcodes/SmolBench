@@ -64,10 +64,11 @@ def test_ec2_query_context_guard(ec2_env):
 def test_ec2_system_prompt_injected_from_deploy_spec(ec2_env):
     from smolbench.evals import ec2
 
-    # nemotron's spec carries the "detailed thinking on" CoT toggle.
-    ec2.query("user prompt", "nemotron-ultra-253b", seed=1, context_length=200000)
+    # ministral's spec carries the [THINK]-protocol default system message.
+    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+    ec2.query("user prompt", "ministral-3-14b", seed=1, context_length=200000)
     body = ec2_env.requests[-1]["body"]
-    assert body["messages"][0] == {"role": "system", "content": "detailed thinking on"}
+    assert body["messages"][0] == {"role": "system", "content": MINISTRAL_THINK_SYSTEM}
     assert body["messages"][1] == {"role": "user", "content": "user prompt"}
     assert body["seed"] == 1  # repo rule: the decoding seed always ships
 
@@ -257,18 +258,19 @@ def test_complete_usage_absent_defaults_to_zero_and_none(ec2_env):
 
 def test_complete_system_message_ordering_with_provider_prompt(ec2_env):
     """[provider system, per-call system, user] in that order -- the
-    provider's deploy-spec toggle (nemotron's "detailed thinking on") must
-    survive ahead of a caller-supplied system message, per complete()'s
-    ``system`` parameter doc."""
+    provider's deploy-spec toggle (ministral's [THINK]-protocol default
+    system message) must survive ahead of a caller-supplied system message,
+    per complete()'s ``system`` parameter doc."""
     from smolbench.evals import ec2
+    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
 
     ec2.complete(
-        "user prompt", "nemotron-ultra-253b", seed=1, context_length=200000,
+        "user prompt", "ministral-3-14b", seed=1, context_length=200000,
         system="extra context",
     )
     body = ec2_env.requests[-1]["body"]
     assert body["messages"] == [
-        {"role": "system", "content": "detailed thinking on"},
+        {"role": "system", "content": MINISTRAL_THINK_SYSTEM},
         {"role": "system", "content": "extra context"},
         {"role": "user", "content": "user prompt"},
     ]
@@ -298,16 +300,18 @@ def test_query_still_returns_tuple_and_forwards_system(ec2_env):
     ordering complete() produces."""
     from smolbench.evals import ec2
 
+    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+
     ec2_env.queue_response(chat_completion("7"))
     content, reasoning = ec2.query(
-        "user prompt", "nemotron-ultra-253b", context_length=200000, seed=1,
+        "user prompt", "ministral-3-14b", context_length=200000, seed=1,
         system="extra context",
     )
     assert content == "7"
     assert reasoning is None
     body = ec2_env.requests[-1]["body"]
     assert body["messages"] == [
-        {"role": "system", "content": "detailed thinking on"},
+        {"role": "system", "content": MINISTRAL_THINK_SYSTEM},
         {"role": "system", "content": "extra context"},
         {"role": "user", "content": "user prompt"},
     ]
