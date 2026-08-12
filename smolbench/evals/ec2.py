@@ -394,11 +394,19 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # hazards: vllm#47769 (Marlin repack IMA under TP+EP -- we don't enable
     # EP), vllm#49165 (FlashInfer cold-JIT race; workaround
     # VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0).
+    # --enforce-eager + --disable-custom-all-reduce (2026-08-12): with the
+    # SM90 pins the model now LOADS but a worker died with an illegal memory
+    # access (reported at custom_all_reduce.cuh:164) during CUDA-graph
+    # warmup, while TileLang MHC kernels + FlashInfer autotune were still
+    # JIT-compiling -- the #49165 cold-JIT-race shape. Eager mode skips
+    # graph capture entirely (throughput cost accepted for a batch eval);
+    # the NCCL all-reduce fallback avoids the reported site.
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
                                         "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--enable-prefix-caching"]},
+                                        "--block-size", "256", "--enforce-eager", "--disable-custom-all-reduce",
+                                        "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
