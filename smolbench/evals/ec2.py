@@ -382,11 +382,15 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # and the probe had imported the LEGACY flat path, whose
     # ModuleNotFoundError is by design. The module ships in the nightly that
     # crashed AND in v0.27.0/v0.27.1 (wheel + image layer listings). The
-    # silent engine-core death on the 2026-08-11 nightly is therefore real
-    # but UNDIAGNOSED. Known adjacent hazard: vllm#51326 reports corrupted
-    # generations for V4-Flash on 8xH100 TP8 on 0.26/0.27.1 (maintainer:
-    # deepgemm-related; 0.25.0 reported good) -- any V4 lane must pass a
-    # coherence smoke before its data counts.
+    # ROOT CAUSE (closed 2026-08-12; v0.27.1 probe with widened log capture
+    # + source read): vllm/models/deepseek_v4/nvidia/model.py:316 raises
+    # NotImplementedError("DeepGEMM MegaMoE requires SM100 GPUs.") at model
+    # construction -- V4's FP4 expert path is BLACKWELL-ONLY. H100 and H200
+    # are SM90, so the V4 rungs cannot serve inside this study's single-node
+    # 8xH200 envelope at official precision, on any image; no Marlin/Triton
+    # fallback exists. Revisit only if upstream ships a Hopper path or the
+    # hardware envelope changes (p6/B200). (vllm#51326's H100 corruption
+    # reports predate this gate and no longer apply here.)
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
