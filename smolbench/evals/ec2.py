@@ -342,7 +342,12 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
     "gemma-4-e2b": {"hf_model_id": "google/gemma-4-E2B-it", "tp": 1, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
-    "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 1, "max_model_len": 131072,
+    # tp=4 (2026-08-12): tier A's g6e.12xlarge capacity fallback means this
+    # lane lands on 4x L40S in practice, and a 12B with ~95k-token thinking
+    # budgets on ONE L40S hit the 3600s read timeout on long arms. 16 attn /
+    # 8 KV heads shard cleanly; on a true single-GPU box vLLM ignores nothing
+    # -- tp=4 simply requires the 4-GPU box, which the fallback list provides.
+    "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
     "gemma-4-31b": {"hf_model_id": "google/gemma-4-31B-it", "tp": 4, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
