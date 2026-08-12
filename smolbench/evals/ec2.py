@@ -376,27 +376,36 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     "k-exaone-236b-a23b": {"hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B", "tp": 8, "max_model_len": 131072,
                            "vllm_args": ["--gpu-memory-utilization", "0.92", "--enable-prefix-caching"]},
     # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
-    # !! V4 status (corrected 2026-08-12): the 2026-08-11 "missing module"
-    # diagnosis was WRONG -- new archs moved to a top-level vllm/models/
-    # package (registry maps the fully-qualified "vllm.models.deepseek_v4"),
-    # and the probe had imported the LEGACY flat path, whose
-    # ModuleNotFoundError is by design. The module ships in the nightly that
-    # crashed AND in v0.27.0/v0.27.1 (wheel + image layer listings). The
-    # ROOT CAUSE (closed 2026-08-12; v0.27.1 probe with widened log capture
-    # + source read): vllm/models/deepseek_v4/nvidia/model.py:316 raises
-    # NotImplementedError("DeepGEMM MegaMoE requires SM100 GPUs.") at model
-    # construction -- V4's FP4 expert path is BLACKWELL-ONLY. H100 and H200
-    # are SM90, so the V4 rungs cannot serve inside this study's single-node
-    # 8xH200 envelope at official precision, on any image; no Marlin/Triton
-    # fallback exists. Revisit only if upstream ships a Hopper path or the
-    # hardware envelope changes (p6/B200). (vllm#51326's H100 corruption
-    # reports predate this gate and no longer apply here.)
+    # !! V4 status (re-corrected 2026-08-12, adversarial re-read of the
+    # v0.27.1 source + upstream issue traffic): the earlier "SM100-only"
+    # closure was ALSO WRONG. The nvidia/model.py:316 raise sits behind
+    # `use_mega_moe`, i.e. the OPT-IN `--moe-backend deep_gemm_mega_moe`
+    # (never auto-selected at v0.27.1; nothing rewrites the "auto" default),
+    # and we never passed that flag, so it cannot have been our crash.
+    # SM90 has an in-tree serving path -- Marlin W4A16 MXFP4 experts +
+    # FLASHMLA_SPARSE_DSV4 attention + fp8_ds_mla KV -- demonstrated live on
+    # 4xH200 at v0.27.0 (vllm#51822; also #51743, #47769). The args below
+    # pin that path instead of trusting the oracle's fallthrough. Memory:
+    # Flash weights 160 GB (fits with huge headroom); Pro 865 GB (fits
+    # 8xH200's 1128 GB with ~260 GB headroom -- tight, gmu 0.93). Our
+    # actual construction-time crash cause remains UNDIAGNOSED (the log
+    # window elided the root exception line; window since widened) -- if the
+    # pinned relaunch still dies, read the full worker traceback. Known
+    # hazards: vllm#47769 (Marlin repack IMA under TP+EP -- we don't enable
+    # EP), vllm#49165 (FlashInfer cold-JIT race; workaround
+    # VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0).
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--enable-prefix-caching"]},
+                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
+                                        "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
+                                        "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
+                                        "--block-size", "256", "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
+                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
+                                        "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
+                                        "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
+                                        "--block-size", "256", "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
 }
 
 

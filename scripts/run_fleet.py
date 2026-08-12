@@ -149,6 +149,15 @@ from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 # ---------------------------------------------------------------------------
 DEFAULT_REGIONS = "us-east-1,us-east-2,us-west-2"
 NIGHTLY_IMAGE = "vllm/vllm-openai:nightly"
+# Per-lane image pins (default: NIGHTLY_IMAGE). The V4 lanes run the tagged
+# v0.27.1 release: it is the version whose SM90 serving path (Marlin MXFP4 +
+# FLASHMLA_SPARSE_DSV4, see the DeepSeek block in EC2_DEPLOY_SPECS) was
+# source-verified and issue-proven (vllm#51822 on 4xH200), while nightly
+# drifts daily.
+LANE_IMAGE_OVERRIDES = {
+    "deepseek-v4-flash": "vllm/vllm-openai:v0.27.1-cu129-ubuntu2404",
+    "deepseek-v4-pro": "vllm/vllm-openai:v0.27.1-cu129-ubuntu2404",
+}
 MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
 
@@ -437,7 +446,7 @@ def lane_env(
             "INDUCTION_MODELS": lane.key,
             "EC2_INSTANCE_TYPES": lane.instance_types,
             "EC2_REGIONS": lane.regions,
-            "EC2_VLLM_IMAGE": NIGHTLY_IMAGE,
+            "EC2_VLLM_IMAGE": LANE_IMAGE_OVERRIDES.get(lane.key, NIGHTLY_IMAGE),
             "EC2_MAX_LIFETIME_MIN": MAX_LIFETIME_MIN,
             "EC2_REQUEST_TIMEOUT_SECONDS": REQUEST_TIMEOUT_SECONDS,
         }
