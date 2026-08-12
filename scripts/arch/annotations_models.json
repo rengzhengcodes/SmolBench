@@ -1,32 +1,32 @@
 {
  "_families": {
   "qwen3.5": {
-   "lede": "Qwen3.5 is a Qwen3-Next-derived hybrid: three Gated DeltaNet layers for every one softmax-attention layer, wrapped in a Qwen3-VL multimodal shell that the study never built. All three rungs share the tile, the head geometry, the rotary scheme, the zero-centred RMSNorms and the 248,320-token tokenizer. No Qwen3.5 technical report exists — every mechanism name here comes from the reference implementations and the papers for each borrowed part.",
-   "ladder": "The one architectural break is at the bottom: the 27B is dense, both larger rungs are fine-grained MoE with a sigmoid-gated shared expert. Depth, hidden width, expert count and top-k all move — and none of them monotonically, since the dense rung is the deepest and widest of the three."
+   "lede": "Qwen3.5 is a Qwen3-Next-derived hybrid: three Gated DeltaNet layers for every one softmax-attention layer, wrapped in a Qwen3-VL multimodal shell that the study never built. All three rungs share the tile, `head_dim: 256`, the rotary scheme, the zero-centred RMSNorms and the 248,320-token tokenizer; head *counts* move, 24Q/4KV on the 27B against 32Q/2KV on both MoE rungs. No Qwen3.5 technical report exists — every mechanism name here comes from the reference implementations and the papers for each borrowed part.",
+   "ladder": "The one architectural break is at the bottom: the 27B is dense, both larger rungs are fine-grained MoE with a sigmoid-gated shared expert. Depth and hidden width move non-monotonically — the dense 27B is the deepest and widest of the three — while expert count and top-k rise straight through, 256 → 512 and top-8 → top-10."
   },
   "nemotron-3": {
    "lede": "Nemotron-3 is a Mamba-2 / attention hybrid in which each layer carries exactly one mixer — a Mamba-2 block, an attention block, or a channel mixer — rather than the usual attention-plus-FFN pair. Attention is 9 to 12 percent of layers, every attention layer is immediately preceded by a Mamba-2 layer, and there is no rotary embedding anywhere in the family. Channel mixers are ungated squared-ReLU, two matrices instead of SwiGLU's three.",
-   "ladder": "The channel mixer is the ladder's axis — dense MLP, then MoE, then LatentMoE — but the bottom rung is not a small Nemotron-3 at all: the 4B was pruned and distilled from Nemotron Nano 9B v2, a previous-generation model, which is why hidden size runs 3136 → 2688 → 4096 and the 4B's data cutoff is 18 months older."
+   "ladder": "The channel mixer is the ladder's axis — dense MLP, then MoE, then LatentMoE — but the bottom rung is not a small Nemotron-3 at all: the 4B was pruned and distilled from Nemotron Nano 9B v2, a previous-generation model, which is why hidden size runs 3136 → 2688 → 4096 and the 4B's data cutoff is nine months older."
   },
   "gemma-4": {
    "lede": "Gemma 4 is a dense decoder whose defining move is that global and sliding layers are structurally different blocks: the global layers run 512-wide heads against the sliding layers' 256, use a different rotary scheme, and on 12B and 31B carry no `v_proj` at all. Every layer wraps both sub-blocks in Gemma's double RMSNorm, and the softmax has no `1/√d` scale — the temperature is learned into the QK norms.",
    "ladder": "Only 12B → 31B approximates a width-and-depth scale-up, and even that pair diverges on global KV heads. E2B adds per-layer embeddings, cross-layer KV sharing and a double-wide MLP on its shared span; 12B is a different architecture class (`gemma4_unified`) with an encoder-free multimodal front end, added after the family launch."
   },
   "glm": {
-   "lede": "GLM's 355B line is a deep, narrow MoE with an unusually wide query side — 96 query heads to 8 KV heads — a one-to-three-layer dense prefix, and DeepSeek-V3's sigmoid router with an aux-loss-free correction bias. Partial rotary at 0.5 is a GLM inheritance: half of every head's dimensions are rotated, half pass through unrotated. All three rungs ship an MTP module that transformers drops at load and that this study never drove.",
-   "ladder": "Two of these rungs are one architecture at two sizes; the third is a different block. GLM-4.5-Air and GLM-4.7 differ only in depth, width, expert count, `routed_scaling_factor` and QK-norm — every one of which is the Air-versus-full split inside the GLM-4.5 generation — while GLM-4.7-Flash replaces GQA with Multi-head Latent Attention."
+   "lede": "GLM's MoE line is deep and narrow with an unusually wide query side — 96 query heads to 8 KV heads on the two GQA rungs — a dense prefix of one layer on Air and Flash and three on GLM-4.7, and DeepSeek-V3's sigmoid router with an aux-loss-free correction bias. Partial rotary at 0.5 is a GLM inheritance: half of every head's dimensions are rotated, half pass through unrotated. All three rungs ship an MTP module that transformers drops at load and that this study never drove.",
+   "ladder": "Two of these rungs are one architecture at two sizes; the third is a different block. GLM-4.5-Air and GLM-4.7 differ in depth, width, expert count, `routed_scaling_factor`, QK-norm, dense-prefix length and declared context (131,072 against 202,752) — every one of those but the context length is the Air-versus-full split inside the GLM-4.5 generation — while GLM-4.7-Flash replaces GQA with Multi-head Latent Attention."
   },
   "ministral-3": {
    "lede": "Ministral-3 is the plainest family on the page: the same dense SwiGLU block repeated 26, 34 or 40 times, with global causal attention on every layer and no windowing anywhere. The head configuration is byte-identical across the ladder — 32 query heads, 8 KV heads, head dim 128 — so KV cost scales with depth alone. All the interesting engineering is positional.",
-   "ladder": "Four knobs move: depth, hidden width, FFN width, and the RoPE base, which jumps from 1e6 on the 3B and 8B to 1e9 on the 14B. Because head dim is pinned at 128 while hidden size grows, the attention projection is wider than the residual stream on the 3B, exactly square on the 8B and narrower on the 14B."
+   "ladder": "Five knobs move: depth, hidden width, FFN width, embedding tying (the 3B alone ties), and the RoPE base, which jumps from 1e6 on the 3B and 8B to 1e9 on the 14B. Because head dim is pinned at 128 while hidden size grows, the attention projection is wider than the residual stream on the 3B, exactly square on the 8B and narrower on the 14B."
   },
   "exaone": {
    "lede": "All three EXAONE rungs share one attention design: a 3:1 local/global interleave in which RoPE runs only on the sliding-window layers and every global layer carries no positional encoding at all, with per-head RMSNorm on Q and K. What surrounds that design is not shared — norm placement, FFN sparsity, window size, tokenizer and the presence of an MTP head all differ.",
-   "ladder": "This is deliberately not a scale sweep. EXAONE-4.5-33B is EXAONE-4.0's text stack — same 64 layers, same 5120/27392, byte-identical `layer_types` — re-tokenised and given an MTP head and a vision tower, while K-EXAONE is a separate Korean sovereign line: MoE, its own tokenizer, a 128-token window, a commercial licence, and conventional pre-norm where the other two are post-norm."
+   "ladder": "This is deliberately not a scale sweep. EXAONE-4.5-33B is EXAONE-4.0's text stack — same 64 layers, same 5120/27392, byte-identical `layer_types` — re-tokenised and given an MTP head and a vision tower, while K-EXAONE is a separate Korean sovereign line: MoE, a 128-token window, a commercial licence, and conventional pre-norm where the other two are post-norm. Its 153,600-token SuperBPE tokenizer is the one EXAONE-4.5 also adopted."
   },
   "deepseek": {
    "lede": "Two generations sit in this family. DeepSeek-V3.1 is Multi-head Latent Attention — compression along the head dimension, one 512-dim latent plus a 64-dim decoupled rotary key per token per layer. The two V4 rungs compress along the sequence dimension instead: learned gated pooling collapses runs of tokens into single KV entries, a Lightning Indexer selects among them, and an unconditional 128-token uncompressed window restores the local detail compression destroys.",
-   "ladder": "V4-Pro is shape-matched to V3.1 at 61 layers, hidden 7168 and 128 query heads, which makes the generation gap readable directly. Flash → Pro moves width, depth, query heads, expert count and retrieval budget and changes no mechanism at all — the compression ratios, window, indexer width, top-k, hash-layer count and residual-lane count are identical."
+   "ladder": "V4-Pro is shape-matched to V3.1 at 61 layers, hidden 7168 and 128 query heads, which makes the generation gap readable directly. Flash → Pro moves width, depth, query heads, expert count, retrieval budget and `routed_scaling_factor`, and changes how the stack opens: Flash begins with two sliding-only layers that have no long-range path at all, where Pro's first two are already 128:1 compressed. The alternating CSA/HCA schedule, the 128-token window, the indexer width, the hash-layer count and the four residual lanes are the same on both."
   }
  },
  "qwen3.5-27b": {
@@ -122,14 +122,14 @@
   "attention": "Twelve full-attention layers at 32 query heads to 2 KV heads — group size 16, against the 27B's 6 — with per-head QK RMSNorm before rotary and a sigmoid output gate from a double-width `q_proj`. At `head_dim: 256` the attention runs 8192 dimensions wide against a 3072-dimensional residual stream, 2.7× wider than the model it sits in.\n\nThirty-six Gated DeltaNet layers broadcast 16 query/key heads four-fold onto 64 value heads. Only the 12 attention layers hold KV, which is why this rung is cheaper per token than the smaller dense one.",
   "ffn": "Every layer is sparse — `mlp_only_layers` is empty and nothing forces a dense layer. The router is a bias-free linear map to 256 logits, softmaxed over all experts, top-8 selected, then the selected weights renormalised. There is no sigmoid router, no per-expert correction bias and no aux-loss-free balancing here: load balance is the classic auxiliary loss at `router_aux_loss_coef: 0.001`, which acts only in training. The single shared expert is added through a scalar sigmoid gate, Qwen2-MoE style.",
   "extras": [
-   "Expert and shared-expert hidden widths are both 1024 — fine-grained experts, 256 of them, at 1/3 the width of the 27B's single dense MLP.",
+   "Expert and shared-expert hidden widths are both 1024 — fine-grained experts, 256 of them, each a seventeenth the width of the 27B's single dense MLP, 1,024 against 17,408.",
    "Zero-centred RMSNorm throughout, plus the gated RMSNorm inside each DeltaNet block.",
    "The 1-layer MTP module ships in the checkpoint and shares the trunk's embedding and LM head; the study passed no `--speculative-config`.",
    "Two KV heads against a tensor-parallel degree of 8 means vLLM replicated them across ranks rather than sharding."
   ],
   "flags": [
    {
-    "kind": "unverified",
+    "kind": "contradiction",
     "text": "The router's score function cannot be determined from the config. `norm_topk_prob`, `decoder_sparse_step` and `scoring_func` are all absent — Qwen3-Next carried the first two — and the behaviour is now hardcoded in source: softmax, always renormalise, every layer sparse."
    },
    {
@@ -154,7 +154,7 @@
  },
  "qwen3.5-397b-a17b": {
   "params": "397 B / 17 B active",
-  "signature": "The family flagship, and the only checkpoint on this page served from an official FP8 repo: block-quantised weights at 128×128 granularity, with the routers, the DeltaNet gate projections, the embeddings and the LM head deliberately left in BF16.",
+  "signature": "The family flagship, and the only Qwen rung shipped from an official FP8 repo: block-quantised weights at 128×128 granularity, with the routers, the DeltaNet gate projections, the embeddings and the LM head deliberately left in BF16.",
   "activation": "SwiGLU",
   "mixerNames": {
    "full": "Gated GQA · QK-norm",
@@ -187,10 +187,10 @@
   "flags": [
    {
     "kind": "contradiction",
-    "text": "The vendor's parameter headline counts the trunk only. Config-only reconstruction gives 396.3 B against a stated 397 B; adding the 1-layer MTP head — which contains a full MoE block, roughly 6.5 B parameters here — would overshoot the headline on every rung."
+    "text": "The vendor's parameter headline appears to count the trunk only; the convention is inferred, not documented. Config-only reconstruction gives 396.3 B against a stated 397 B; adding the 1-layer MTP head — which contains a full MoE block, roughly 6.5 B parameters here — would overshoot the headline on every rung."
    },
    {
-    "kind": "unverified",
+    "kind": "contradiction",
     "text": "vLLM re-fuses this checkpoint's split DeltaNet projections at load time through a `WeightsMapper`, so vLLM-side tensor names (`in_proj_qkvz`, `in_proj_ba`) do not match the FP8 scale names in the checkpoint. Worth knowing before inspecting quantisation metadata."
    }
   ],
@@ -211,7 +211,7 @@
  },
  "nemotron-3-nano-4b": {
   "params": "3.97 B dense",
-  "signature": "Not a small Nemotron-3 — a compressed Nemotron-2, pruned and distilled from Nemotron Nano 9B v2. Its ragged layer pattern, larger hidden size, 5:1 grouped-query ratio, dense MLPs and 18-month-older data cutoff all follow from that lineage.",
+  "signature": "Not a small Nemotron-3 — a compressed Nemotron-2, pruned and distilled from Nemotron Nano 9B v2. Its ragged layer pattern, larger hidden size, 5:1 grouped-query ratio, dense MLPs and nine-month-older data cutoff all follow from that lineage.",
   "activation": "ReLU² (ungated)",
   "mixerNames": {
    "full": "Self-attention · GQA, NoPE",
@@ -232,7 +232,7 @@
    "ungated ReLU² MLP"
   ],
   "pe": "There is no positional encoding of any kind. The config carries no `rope_theta` and no `partial_rotary_factor`, the attention class applies nothing between `qkv_proj` and the softmax, and NVIDIA states it directly across four reports — \"We do not use any positional embeddings, dropout, or bias on linear layers.\"\n\nOrder comes from two places. Every Mamba-2 block applies a depthwise causal convolution of kernel 4, a hard local ordering over four tokens, and then a causal scan with input-dependent decay whose state at step t depends on everything before it. The attention layers see only the causal mask — and every one of the four sits immediately after a Mamba-2 layer, so none of them ever runs on a positionally naked residual stream.",
-  "attention": "Four grouped-query attention layers out of 42, at indices 12, 17, 24 and 32 — strides of 5, 7 and 8, irregular. Forty query heads to 8 KV heads, `head_dim: 128` explicit and decoupled from hidden size: 40 × 128 = 5120 against a 3136-dimensional residual stream, so the projection widens then contracts. No QK-norm — the attention class has no `q_norm` or `k_norm` member — no bias, no sliding window, no softcapping.\n\nThe consequence is that this rung carries a 2.7× larger KV cache per token than the 30B despite being roughly eight times smaller: five KV heads' worth of extra width across fewer but fatter layers. The ladder's KV footprint is not monotone.",
+  "attention": "Four grouped-query attention layers out of 42, at indices 12, 17, 24 and 32 — strides of 5, 7 and 8, irregular. Forty query heads to 8 KV heads, `head_dim: 128` explicit and decoupled from hidden size: 40 × 128 = 5120 against a 3136-dimensional residual stream, so the projection widens then contracts. No QK-norm — the attention class has no `q_norm` or `k_norm` member — no bias, no sliding window, no softcapping.\n\nThe consequence is that this rung carries a 2.7× larger KV cache per token than the 30B despite being roughly eight times smaller: six KV heads' worth of extra width across fewer but fatter layers. The ladder's KV footprint is not monotone.",
   "ffn": "Seventeen dense channel mixers, 3136 → 12544 → 3136. That is exactly 4× hidden, the classic ungated ratio — the mixer is two matrices and a squared ReLU, `y = W_down · ReLU(W_up x)²`, with no gate projection. A SwiGLU model of the same parameter budget would sit near 2.67×. NVIDIA asserts the choice in every Nemotron report and argues for it in none of them.",
   "extras": [
    "Remove the attention layers and `M-` alternation breaks in three places — `MM` at 6–7, `MM` at 30–31, `MMM` at 34–36. Structured pruning leaves that behind.",
@@ -249,10 +249,6 @@
    {
     "kind": "contradiction",
     "text": "`time_step_rank: 256` is a Mamba-1 field describing a low-rank `dt` projection that Mamba-2 does not have. It is not a `NemotronHConfig` parameter and nothing reads it — residue of this rung's older lineage."
-   },
-   {
-    "kind": "contradiction",
-    "text": "The cards advertise 1M context against `max_position_embeddings: 262144`, reachable only by setting vLLM's explicit override for exceeding a model's declared limit. NVIDIA staff have conceded the documentation error on the sibling 30B checkpoint. The study served 131,072."
    }
   ],
   "sources": [
@@ -434,9 +430,9 @@
   ],
   "pe": "Two regimes in one stack. Sliding layers use ordinary RoPE at base 1e4 with all 256 head dimensions rotated. Global layers use `rope_type: \"proportional\"` — HuggingFace's registered name for p-RoPE, from Barbero et al., the paper the Gemma 4 report cites at exactly this point.\n\np-RoPE is frequency truncation, not interpolation. The exponent denominator is the full head dim rather than the rotated slice, so the retained frequencies are identical to standard RoPE's highest-frequency quarter and the lowest frequencies are deleted outright. Because the config injects a per-layer `head_dim: 512` override on full-attention layers before rotary init, `partial_rotary_factor: 0.25` rotates 128 of 512 dimensions and leaves 384 as pure NoPE channels. Those dimensions are not sliced out — their `inv_freq` entries are zero-padded, so `cos = 1`, `sin = 0` and the rotation is an algebraic identity.",
   "attention": "Multi-query attention throughout: 8 query heads against a single KV head on both layer types. Head width is where the two blocks part — 256 on the 28 sliding layers with a 512-token window, 512 on the 7 global layers. `attention_k_eq_v` is `false` on this rung alone, so its global layers keep a real `v_proj`.\n\nCross-layer KV sharing is the E2B-specific mechanism. `num_kv_shared_layers: 20` of 35 means layers 15 through 34 own no `k_proj`, `v_proj`, `k_norm` or `v_norm` at all and never write cache; they read the last non-shared layer of their own type — layer 13 for sliding, layer 14 for global. Only 15 of 35 layers hold KV.\n\nQK-norm is applied pre-rotary at the layer's own head width, and a third, deliberately unscaled `v_norm` sits alongside it. The softmax scale is `1.0` — there is no `1/√d` and no `query_pre_attn_scalar`; the temperature is learned into the QK norms, which is what lets one weight set cope with head dim changing between layer types.",
-  "ffn": "Dense GeGLU — `gelu_pytorch_tanh`, three matrices — at 4.0× hidden throughout. `use_double_wide_mlp` applies only to the KV-shared span, which is not guessable from the config: layers 0–14 run `intermediate_size: 6144` and layers 15–34 run 12288. It is an explicit trade — the 20 layers that gave up their KV projections get twice the FFN width back.",
+  "ffn": "Dense GeGLU — `gelu_pytorch_tanh`, three matrices — but not at one width. `use_double_wide_mlp` applies only to the KV-shared span, which is not guessable from the config: layers 0–14 run `intermediate_size: 6144`, 4.0× hidden, and layers 15–34 run 12288, 8.0×. It is an explicit trade — the 20 layers that gave up their KV projections get twice the FFN width back.",
   "extras": [
-   "The per-layer-embedding table is 262144 × 35 × 256 ≈ 2,349 M parameters — the entire gap between 2.3 B effective and 5.1 B raw.",
+   "The per-layer-embedding table is 262144 × 35 × 256 ≈ 2,349 M parameters — most of the gap between 2.3 B effective and 5.1 B raw; the 150 M vision encoder and 305 M audio encoder account for the rest.",
    "Gemma 3n's other tricks are gone: zero occurrences of AltUp, LAuReL or MatFormer in the modeling file or the report. This is not a nested or elastic model.",
    "`final_logit_softcapping: 30.0` is applied at inference by both runtimes — a tanh cap that compresses the logit range every sampler sees.",
    "Embeddings are tied, and scaled by `√hidden_size` on the way in.",
@@ -445,7 +441,7 @@
   "flags": [
    {
     "kind": "contradiction",
-    "text": "The report's 37.5% global-KV reduction is architecturally real and realised by neither open-source runtime. `v_norm` is unscaled where `k_norm` has a scale, so K and V differ by a fixed diagonal, and on the 384 NoPE dims rotary is the identity — a runtime can cache 640 of 1024 dimensions. transformers writes both tensors regardless and vLLM materialises a duplicate `v_proj` at load. Assume the unreduced footprint for this study."
+    "text": "The report's 37.5% global-KV reduction does not apply to this rung. It rests on keys and values being tied, and E2B sets `attention_k_eq_v: false` where the 12B and 31B set it true. E2B buys its KV saving a different way: 20 of its 35 layers project no KV at all and read a lower layer's cache instead."
    },
    {
     "kind": "contradiction",
@@ -477,7 +473,7 @@
  },
  "gemma-4-12b": {
   "params": "11.96 B dense",
-  "signature": "A different architecture class from its two siblings — `gemma4_unified`, added after the family launch — with no vision or audio tower at all: raw 48×48 pixel patches and 40 ms audio frames are projected straight into the LM's embedding space by shallow linear pipelines.",
+  "signature": "A different architecture class from its two siblings — `gemma4_unified`, which the launch blog does not list and which carries a later `transformers_version`, so it appears to postdate the family launch — with no vision or audio tower at all: raw 48×48 pixel patches and 40 ms audio frames are projected straight into the LM's embedding space by shallow linear pipelines.",
   "residual": "Gemma's double norm, not the page default: `x + PostNorm(Op(PreNorm(x)))`, four RMSNorms per layer.",
   "activation": "GeGLU",
   "mixerNames": {
@@ -700,7 +696,7 @@
    "Pure pre-norm RMSNorm at eps 1e-5 — no sandwich norm. The layer names are Llama-style: `post_attention_layernorm` is applied before the MLP, not after the attention output.",
    "The shared expert is one widened MLP added as an unscaled parallel branch, never multiplied by `routed_scaling_factor`.",
    "Untied embeddings: 151552 × 4096 twice, 1.24 B parameters of pure vocabulary.",
-   "The MTP module sits at layer index 46. transformers implements no MTP and drops those weights through a load-time regex hard-coded to the three known checkpoint depths."
+   "The MTP module sits at layer index 46. transformers implements no MTP and drops those weights through a load-time regex hard-coded to two depths, `layers.92` and `layers.46`; the Flash rung's `layers.47` sits in a separate list in the Lite implementation."
   ],
   "flags": [
    {
@@ -771,7 +767,7 @@
     "text": "Total parameters: 355B-A32B on Z.ai's own GitHub README, \"moe358B / 32B\" on vLLM's recipe page. The active count agrees everywhere. Config arithmetic gives 352.8 B for the main tower and 356.8 B including the one-layer MoE MTP module — a counting convention, but both figures circulate from credible sources."
    },
    {
-    "kind": "unverified",
+    "kind": "contradiction",
     "text": "No dedicated technical report exists for GLM-4.6 or GLM-4.7. Both cards point back to the GLM-4.5 report, and the GLM-4.7 card frames its delta entirely as thinking-mode features and benchmark gains, making no architectural claim."
    }
   ],
@@ -811,7 +807,7 @@
    "q/o width 4096 > 3072",
    "no QK-norm, no bias"
   ],
-  "pe": "Three long-context mechanisms stacked on one another. The base is 1e6, which puts 27 of 64 frequency pairs beyond a full rotation inside the 16,384-token pre-extension window — they act as slow positional-magnitude channels rather than oscillators. YaRN then extends 16,384 to 262,144, a 16× ratio, as NTK-by-parts: with `beta_fast: 32` and `beta_slow: 1` the correction range works out to dimensions 20 through 37, so dimensions 0–20 are pure extrapolation and left untouched, 37–63 are fully interpolated by 1/16, and the seventeen in between are a linear blend.\n\nThird, `llama_4_scaling_beta: 0.1` is Llama 4's position-dependent query temperature — the query vector multiplied by `1 + 0.1·ln(1 + ⌊pos / 16384⌋)`. It is exactly 1.0 below position 16,384 and reaches 1.2079 at the served ceiling of 131,072. Treatment is uniform across all 26 layers: there is no `layer_types` and no per-layer rotary config.",
+  "pe": "Three long-context mechanisms stacked on one another. The base is 1e6, which puts 27 of 64 frequency pairs beyond a full rotation inside the 16,384-token pre-extension window — they act as slow positional-magnitude channels rather than oscillators. YaRN then extends 16,384 to 262,144, a 16× ratio, as NTK-by-parts: with `beta_fast: 32` and `beta_slow: 1` the correction range works out to dimensions 20 through 37, so dimensions 0–20 are pure extrapolation and left untouched, 37–63 are fully interpolated by 1/16, and the seventeen in between are a linear blend.\n\nThird, `llama_4_scaling_beta: 0.1` is Llama 4's position-dependent query temperature — the query vector multiplied by `1 + 0.1·ln(1 + ⌊pos / 16384⌋)`. It is exactly 1.0 below position 16,384 and reaches 1.2197 at the served ceiling of 131,072. Treatment is uniform across all 26 layers: there is no `layer_types` and no per-layer rotary config.",
   "attention": "Plain grouped-query attention, identical on all three rungs of this ladder: 32 query heads, 8 KV heads, `head_dim: 128`, a 4:1 ratio. `sliding_window: null` means global causal attention on every layer — the interleaved sliding-window scheme that defined Ministral 2410 is gone, and with it the need for two attention block types in the diagram.\n\nNo QK-norm — there are no `q_norm` or `k_norm` tensors in the weight map. No attention bias — only `.weight` on q, k, v and o. Softmax scale is `head_dim**-0.5`. Because head dim and KV head count are pinned across the ladder, KV cost scales with depth alone: 104 KiB per token here.",
   "ffn": "Dense SwiGLU on every layer, `intermediate_size: 9216` — exactly 3.0× hidden. There are no MoE fields anywhere in the config.",
   "extras": [
@@ -938,8 +934,8 @@
     "text": "The `intermediate_size / hidden_size` ratio is not monotone across the ladder — 3.0, then 3.5, then 3.2. Flagged as a genuine non-uniformity; no published rationale was found."
    },
    {
-    "kind": "contradiction",
-    "text": "`llama_4_scaling_beta` and `mscale` are both read by HF transformers and dropped by vLLM's plain-`yarn` path, which substitutes its own mscale of 1.2773 for the config's 1.0. Two live divergences between the two reference stacks, both at long positions."
+    "kind": "unverified",
+    "text": "`llama_4_scaling_beta` is read by HF transformers and dropped by vLLM's plain-`yarn` path, which also substitutes its own mscale of 1.2773 for the config's 1.0. Whether Mistral intended the config's 1.0 to be honoured could not be established, so the size of the second divergence is open."
    }
   ],
   "sources": [
@@ -1100,7 +1096,7 @@
    "window 128, was 4096",
    "Reorder-Norm dropped"
   ],
-  "pe": "`rope_type: \"default\"`, `rope_theta: 1000000`, and no scaling of any kind at a declared 262,144-token window. The atlas overrides the config-derived rotary fraction on the global layers, as on the other two rungs: `ExaoneMoeAttention` is a bare subclass of `Exaone4Attention`, so rotary runs on sliding layers only. vLLM gates it on the per-layer window, and `sliding_windows[i] == 0` on global layers is falsy — so a zero there means \"global, and NoPE\".\n\nDropping llama3 scaling is not a regression, it is the design admitting the scaling was never doing the work. Rotary's dot product depends only on relative offset, and here rotary exists only on layers whose mask caps that offset at 128 tokens. No frequency in the model is ever evaluated at an offset it was not trained on, however long the context; length generalisation is carried entirely by the position-blind global layers.",
+  "pe": "`rope_type: \"default\"`, `rope_theta: 1000000`, and no scaling of any kind at a declared 262,144-token window. The atlas overrides the config-derived rotary fraction on the global layers, as on the other two rungs: `ExaoneMoeAttention` is a bare subclass of `Exaone4Attention`, so rotary runs on sliding layers only. vLLM gates it on the per-layer window, and `sliding_windows[i] == 0` on global layers is falsy — so a zero there means \"global, and NoPE\".\n\nDropping On the most natural reading — inferred, not stated by LG — dropping llama3 scaling is not a regression but the design admitting the scaling was never doing the work. Rotary's dot product depends only on relative offset, and here rotary exists only on layers whose mask caps that offset at 128 tokens. No frequency in the model is ever evaluated at an offset it was not trained on, however long the context; length generalisation is carried entirely by the position-blind global layers.",
   "attention": "Grouped-query attention at 64 query heads to 8 KV heads — 8:1, against 5:1 on the dense rungs — with `head_dim: 128`. Note `64 × 128 = 8192` against hidden 6144: the projections are non-square and attention operates in a wider space than the residual stream, a genuine difference from 4.0 and 4.5 where the two matched exactly.\n\nPer-head QK RMSNorm before rotary is retained. No attention bias. The `LLLG` interleave is unchanged in shape but the window is 128 rather than 4096, stated twice in the config — as a scalar and as an explicit 48-entry `sliding_windows` array with zeros on the global positions. The consequence is stark: the 36 windowed layers hold about 18 MiB flat, while the 12 global layers carry everything that grows — 48 KiB per token, 12.0 GiB at the full 262,144-token window.",
   "ffn": "Layer 0 is dense SwiGLU at width 18432; layers 1 through 47 are sparse — 128 routed experts of width 2048, top-8, plus one shared expert of that same width added un-gated. The dense/sparse split is stated three separate ways in the config (`first_k_dense_replace`, `mlp_layer_types`, `is_moe_layer`) and all three agree.\n\nThe router is DeepSeek-V3's, implemented in transformers by literally subclassing `DeepseekV3TopkRouter`: fp32 logits, sigmoid scores, a per-expert `e_score_correction_bias` added for selection only and force-kept in fp32, group-limited top-k that is degenerate here (`n_group: 1`), renormalised weights, then a ×2.5 gain on the routed branch.",
   "extras": [
@@ -1188,7 +1184,7 @@
   "flags": [
    {
     "kind": "serving",
-    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and as of 2026-08-12 the actual construction-time crash cause remains undiagnosed."
+    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
    },
    {
     "kind": "contradiction",
@@ -1246,12 +1242,12 @@
    "Weights ship FP8 e4m3 with `scale_fmt: \"ue8m0\"` — an unsigned-exponent, zero-mantissa scale, so applying it is an exponent add and mantissa-lossless. The card cites microscaling compatibility.",
    "RMSNorm at eps 1e-6, pre-norm, plus the two extra RMSNorms inside MLA on the query latent and the KV latent.",
    "The one-layer MTP module reads the trunk's hidden state for one token plus the next token's embedding and predicts the one after, sharing the embedding and output head.",
-   "Served with BF16 KV — no `--kv-cache-dtype` — so the per-token figure is ~69 KB, not the ~34 KB the same 576 elements cost in V4's FP8 layout."
+   "Served with BF16 KV — no `--kv-cache-dtype` — so the per-token figure is ~69 KB, not the ~38 KB the same 576 elements cost in V4's FP8 layout."
   ],
   "flags": [
    {
     "kind": "contradiction",
-    "text": "The HF repo advertises 685B against the card's 671B. The ~14 B delta is the MTP module, which the card's figure excludes — the same trunk-only counting convention seen elsewhere on this page."
+    "text": "The HF repo advertises 685B against the card's 671B. The ~14 B delta is almost certainly the MTP module, which the card's figure excludes — a reconstruction, not a stated figure — the same trunk-only counting convention seen elsewhere on this page."
    },
    {
     "kind": "contradiction",
@@ -1315,7 +1311,7 @@
   "flags": [
    {
     "kind": "serving",
-    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and as of 2026-08-12 the actual construction-time crash cause remains undiagnosed."
+    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
    },
    {
     "kind": "contradiction",
@@ -1340,7 +1336,7 @@
     "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"
    },
    {
-    "label": "DeepSeek's own inference implementation",
+    "label": "DeepSeek's own inference implementation (shipped in the V4-Flash repo)",
     "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/raw/main/inference/model.py"
    }
   ]

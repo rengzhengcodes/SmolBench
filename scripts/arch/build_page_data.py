@@ -450,18 +450,35 @@ def _head_dim(model: Dict[str, Any]) -> Optional[int]:
 
 
 def _kv_bytes_per_token(model: Dict[str, Any]) -> Optional[int]:
-    """Rough KV-cache bytes per token at BF16, for the fact strip.
+    """KV-cache bytes per token of context at BF16, for the fact strip.
 
-    Counts only the layers that keep a KV cache (SSM and gated-linear layers
-    keep a fixed-size state instead, which does not grow with sequence length --
-    that asymmetry is the whole point of the hybrid designs, so folding them in
-    would erase it). MLA checkpoints cache the compressed latent plus the
-    decoupled RoPE slice rather than full K and V. Returns ``None`` when the
-    config does not carry enough to compute it honestly.
+    Counts only the layers whose cache grows without bound -- the layers that
+    attend globally. Three kinds of layer are deliberately excluded, because
+    including them would report growth that does not happen:
+
+    - SSM and gated-linear layers keep a fixed-size state, not a cache. That
+      asymmetry is the whole point of the hybrid designs.
+    - Windowed layers cap their cache at the window, so their cost is constant
+      in context length, not per-token. Counting EXAONE's 48 sliding layers
+      alongside its 16 global ones overstated its growth four-fold.
+
+    MLA checkpoints cache the compressed latent plus the decoupled RoPE slice
+    rather than full K and V.
+
+    Returns ``None`` when the config cannot support an honest figure --
+    including when the checkpoint uses a *different* head geometry on its
+    global layers than the flat fields describe (Gemma-4's global heads are
+    twice as wide and use fewer KV heads), in which case the model's annotation
+    supplies the exact figure instead.
     """
     tracks = _tracks(model)
-    attn_layers = sum(1 for t in tracks if t["mix"] in ("full", "sliding"))
+    attn_layers = sum(1 for t in tracks if t["mix"] == "full")
     if not attn_layers:
+        return None
+    attn = model.get("derived", {}).get("attention", {})
+    global_head_dim = attn.get("global_head_dim")
+    if (global_head_dim and global_head_dim != attn.get("head_dim")) or \
+            attn.get("num_global_key_value_heads") is not None:
         return None
     mla = model.get("derived", {}).get("mla", {})
     if mla.get("kv_lora_rank"):
