@@ -163,8 +163,12 @@ REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value
 # deepseek-v4-pro serves --enforce-eager (see EC2_DEPLOY_SPECS): a budget-
 # burning 87k-token generation takes >1h at eager Pro throughput, so under
 # the fleet-wide 3600s timeout those cells retry forever (observed at
-# attempt 7 on seed 0). 7500s covers a ~2h generation.
-LANE_REQUEST_TIMEOUT_OVERRIDES = {"deepseek-v4-pro": "7500"}
+# attempt 7 on seed 0). 7500s still lost races on the slowest tail cells
+# (attempts 2-4 observed at 27/36 on seed 0, each failed attempt burning a
+# full ~2h regeneration); 14400s lets a worst-case cell finish in ONE
+# attempt. The box-side idle watchdog keys on vLLM metrics activity, so an
+# hours-long in-flight generation cannot trip it.
+LANE_REQUEST_TIMEOUT_OVERRIDES = {"deepseek-v4-pro": "14400"}
 
 TIER_INSTANCE_TYPES = {
     # g6e.12xlarge appended 2026-08-11: small-G spot in the hunt AZs was
