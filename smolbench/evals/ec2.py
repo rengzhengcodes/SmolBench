@@ -409,11 +409,14 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                                         "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},
+    # Pro mirrors Flash's PROVEN flag set (served + marked on p5 2026-08-12
+    # only once --enforce-eager skipped the IMA-during-capture).
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
                                         "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
+                                        "--block-size", "256", "--enforce-eager", "--disable-custom-all-reduce",
+                                        "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
 }
 
 
