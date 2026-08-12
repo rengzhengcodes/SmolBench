@@ -1,0 +1,1092 @@
+<title>Layer Atlas</title>
+
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens. The complete light palette lives on bare :root; the dark blocks
+   redefine only tokens, once for the OS setting (guarded so an explicit light
+   stamp still wins) and once for the viewer's toggle.
+
+   Chromatic tokens are not decoration -- each one is a category in the
+   diagrams, validated for CVD separation and contrast in both themes.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  --page:      #f2f3f5;
+  --surface:   #fbfbfc;
+  --surface-2: #f6f7f9;
+  --ink:       #0e1216;
+  --ink-2:     #4c545d;
+  --ink-3:     #7d858e;
+  --rule:      #e0e3e8;
+  --rule-2:    #cbd1d9;
+
+  --c-attn:   #2a78d6;  /* softmax attention  */
+  --c-linear: #eda100;  /* gated linear attention */
+  --c-ssm:    #008300;  /* Mamba-2 state-space  */
+  --c-moe:    #e87ba4;  /* mixture-of-experts FFN */
+
+  --wash: 14%;
+  --shadow: 0 1px 2px rgba(14, 18, 22, .06), 0 8px 24px -16px rgba(14, 18, 22, .28);
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page:      #0b0d10;
+    --surface:   #15181c;
+    --surface-2: #1b1f25;
+    --ink:       #eef1f4;
+    --ink-2:     #aeb6bf;
+    --ink-3:     #7c858f;
+    --rule:      #252a31;
+    --rule-2:    #363e47;
+    --c-attn:   #3987e5;
+    --c-linear: #c98500;
+    --c-ssm:    #008300;
+    --c-moe:    #d55181;
+    --wash: 20%;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px -16px rgba(0, 0, 0, .8);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:      #0b0d10;
+  --surface:   #15181c;
+  --surface-2: #1b1f25;
+  --ink:       #eef1f4;
+  --ink-2:     #aeb6bf;
+  --ink-3:     #7c858f;
+  --rule:      #252a31;
+  --rule-2:    #363e47;
+  --c-attn:   #3987e5;
+  --c-linear: #c98500;
+  --c-ssm:    #008300;
+  --c-moe:    #d55181;
+  --wash: 20%;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px -16px rgba(0, 0, 0, .8);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+
+/* --- masthead ----------------------------------------------------------- */
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  padding: 56px 0 40px;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 18px;
+}
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(2rem, 5.5vw, 3.1rem);
+  font-weight: 600;
+  letter-spacing: -.03em;
+  line-height: 1.05;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+.standfirst {
+  max-width: 62ch;
+  font-size: 1.06rem;
+  color: var(--ink-2);
+  margin: 0 0 28px;
+}
+.masthead-stats {
+  display: flex; flex-wrap: wrap; gap: 0 40px;
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+}
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat b {
+  font-family: var(--mono); font-size: 1.45rem; font-weight: 600;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+.stat span {
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+
+/* --- sticky family nav ---------------------------------------------------
+   The page runs to roughly twenty-five thousand pixels; without this the only
+   way back to a family is the scrollbar.
+------------------------------------------------------------------------- */
+.familynav {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+.familynav-inner {
+  display: flex; gap: 4px; overflow-x: auto; padding: 8px 0;
+  scrollbar-width: thin;
+}
+.familynav a {
+  flex: 0 0 auto;
+  font-family: var(--mono); font-size: .7rem; letter-spacing: .04em;
+  color: var(--ink-2); text-decoration: none;
+  padding: 4px 10px; border-radius: 3px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.familynav a:hover, .familynav a:focus-visible {
+  background: var(--surface); border-color: var(--rule); color: var(--ink); outline: none;
+}
+.familynav a:focus-visible { box-shadow: 0 0 0 2px var(--c-attn); }
+
+/* --- sections ----------------------------------------------------------- */
+main { padding-bottom: 96px; }
+section { padding-top: 64px; scroll-margin-top: 56px; }
+h2 {
+  font-size: 1.55rem; font-weight: 650; letter-spacing: -.015em;
+  margin: 0 0 10px; text-wrap: balance;
+}
+h2.mono { font-family: var(--mono); font-weight: 600; letter-spacing: -.025em; }
+.lede { max-width: 68ch; color: var(--ink-2); margin: 0 0 28px; }
+.lede + .lede { margin-top: -16px; }
+
+/* --- legend ------------------------------------------------------------- */
+.legend-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-bottom: 28px;
+}
+.legend-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 3px; padding: 12px 14px;
+}
+.swatch {
+  flex: 0 0 auto; width: 16px; height: 30px; border-radius: 2px; margin-top: 2px;
+}
+.legend-item h3 {
+  font-family: var(--mono); font-size: .82rem; font-weight: 600;
+  margin: 0 0 3px; letter-spacing: -.01em;
+}
+.legend-item p { margin: 0; font-size: .82rem; color: var(--ink-2); line-height: 1.45; }
+
+.note {
+  border-left: 2px solid var(--rule-2);
+  padding: 2px 0 2px 16px;
+  color: var(--ink-2);
+  font-size: .9rem;
+  max-width: 70ch;
+  margin: 0 0 20px;
+}
+
+/* --- roster overview ---------------------------------------------------- */
+.roster { display: flex; flex-direction: column; gap: 4px; }
+.roster-family-label {
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3);
+  margin: 18px 0 4px;
+}
+.roster-family-label:first-child { margin-top: 0; }
+.roster-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) 1fr minmax(64px, auto);
+  gap: 14px; align-items: center;
+  padding: 5px 8px; border-radius: 3px;
+  color: inherit; text-decoration: none;
+}
+.roster-row:hover, .roster-row:focus-visible { background: var(--surface); outline: none; }
+.roster-row:focus-visible { box-shadow: 0 0 0 2px var(--c-attn); }
+.roster-row .name {
+  font-family: var(--mono); font-size: .78rem; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.roster-row .count {
+  font-family: var(--mono); font-size: .7rem; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+
+/* --- rotary-coverage bars ------------------------------------------------ */
+.bars { display: flex; flex-direction: column; gap: 3px; }
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) 1fr 56px;
+  gap: 14px; align-items: center;
+  padding: 4px 8px; border-radius: 3px;
+  color: inherit; text-decoration: none;
+}
+.bar-row:hover, .bar-row:focus-visible { background: var(--surface); outline: none; }
+.bar-row:focus-visible { box-shadow: 0 0 0 2px var(--c-attn); }
+.bar-row .name {
+  font-family: var(--mono); font-size: .78rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bar-track {
+  height: 12px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  position: relative; overflow: hidden;
+}
+.bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--c-attn); border-radius: 2px; }
+.bar-value {
+  font-family: var(--mono); font-size: .74rem; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bar-value.zero { color: var(--ink-3); }
+
+/* --- family + model cards ----------------------------------------------- */
+.family-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px;
+  border-bottom: 1px solid var(--rule-2); padding-bottom: 12px; margin-bottom: 8px;
+}
+.family-head h2 { margin: 0; }
+.family-head .vendor {
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+
+.model {
+  scroll-margin-top: 56px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 22px 24px 24px;
+  margin-top: 24px;
+  box-shadow: var(--shadow);
+}
+.model-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  margin-bottom: 4px;
+}
+.model-head h3 {
+  font-family: var(--mono); font-size: 1.16rem; font-weight: 600;
+  letter-spacing: -.025em; margin: 0;
+}
+.rung-tag {
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3);
+  border: 1px solid var(--rule-2); border-radius: 999px; padding: 2px 9px;
+}
+.repo {
+  font-family: var(--mono); font-size: .74rem; color: var(--ink-3);
+  word-break: break-all;
+}
+.signature {
+  font-size: .95rem; color: var(--ink-2); margin: 10px 0 18px; max-width: 78ch;
+}
+.badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.badge {
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .02em;
+  border: 1px solid var(--rule-2); border-radius: 3px; padding: 3px 8px;
+  color: var(--ink-2); background: var(--surface-2);
+}
+.badge.warn {
+  border-color: color-mix(in srgb, var(--c-moe) 55%, var(--rule-2));
+  color: color-mix(in srgb, var(--c-moe) 72%, var(--ink));
+}
+
+/* --- fact strip --------------------------------------------------------- */
+.facts {
+  display: grid; gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  background: var(--rule); border: 1px solid var(--rule);
+  border-radius: 3px; overflow: hidden; margin-bottom: 22px;
+}
+.fact { background: var(--surface-2); padding: 9px 11px; }
+.fact dt {
+  font-family: var(--mono); font-size: .6rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px;
+}
+.fact dd {
+  font-family: var(--mono); font-size: .84rem; margin: 0;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+}
+
+/* --- diagrams ----------------------------------------------------------- */
+figure { margin: 0 0 22px; }
+figcaption {
+  font-size: .8rem; color: var(--ink-3); margin-top: 8px; max-width: 76ch;
+}
+.strip-scroll { overflow-x: auto; }
+svg.strip { display: block; width: 100%; min-width: 320px; height: auto; }
+
+.diagram-cols {
+  display: grid; gap: 24px;
+  grid-template-columns: minmax(300px, 480px) minmax(280px, 1fr);
+  align-items: start;
+}
+@media (max-width: 880px) { .diagram-cols { grid-template-columns: 1fr; } }
+svg.schematic { display: block; width: 100%; max-width: 480px; height: auto; }
+
+.callout {
+  border: 1px solid var(--rule); border-left: 3px solid var(--c-attn);
+  border-radius: 3px; background: var(--surface-2); padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.callout h4 {
+  font-family: var(--mono); font-size: .64rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3); margin: 0 0 7px;
+}
+.callout p { margin: 0 0 8px; font-size: .88rem; color: var(--ink-2); }
+.callout p:last-child { margin-bottom: 0; }
+.callout code, .prose code, .fact dd code {
+  font-family: var(--mono); font-size: .92em;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  padding: .1em .32em; border-radius: 2px;
+}
+.prose h4 {
+  font-family: var(--mono); font-size: .64rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3); margin: 18px 0 6px;
+}
+.prose p { margin: 0 0 10px; font-size: .9rem; color: var(--ink-2); }
+.prose ul { margin: 0 0 10px; padding-left: 18px; font-size: .9rem; color: var(--ink-2); }
+.prose li { margin-bottom: 4px; }
+.prose a, .sources a { color: color-mix(in srgb, var(--c-attn) 82%, var(--ink)); }
+.flag {
+  border: 1px dashed color-mix(in srgb, var(--c-moe) 60%, var(--rule-2));
+  border-radius: 3px; padding: 10px 12px; margin: 12px 0 0;
+  font-size: .84rem; color: var(--ink-2);
+}
+.flag b {
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .13em;
+  text-transform: uppercase; color: color-mix(in srgb, var(--c-moe) 70%, var(--ink));
+  display: block; margin-bottom: 4px;
+}
+.sources { font-size: .78rem; color: var(--ink-3); margin-top: 14px; }
+.sources ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.sources li { margin-bottom: 2px; word-break: break-word; }
+
+/* --- matrix ------------------------------------------------------------- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 3px; }
+table { border-collapse: collapse; width: 100%; font-size: .8rem; background: var(--surface); }
+th, td {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule);
+  white-space: nowrap; vertical-align: top;
+}
+/* Not sticky: `overflow-x: auto` makes this a scroll container on both axes,
+   so a sticky header would pin inside a box that never scrolls vertically --
+   and where it did resolve to the viewport it would collide with the sticky
+   family nav. A 21-row table does not need one. */
+th {
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--ink-3);
+  background: var(--surface-2);
+}
+tbody td:first-child { font-family: var(--mono); font-size: .76rem; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody tr:last-child td { border-bottom: none; }
+tr.family-start td { border-top: 2px solid var(--rule-2); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+
+footer {
+  border-top: 1px solid var(--rule); margin-top: 72px; padding: 28px 0 64px;
+  font-size: .8rem; color: var(--ink-3);
+}
+footer p { max-width: 76ch; }
+footer code { font-family: var(--mono); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">SmolBench &middot; family-ladder scaling study</p>
+    <h1>Layer Atlas</h1>
+    <p class="standfirst" id="standfirst"></p>
+    <div class="masthead-stats" id="masthead-stats"></div>
+  </div>
+</header>
+
+<nav class="familynav" aria-label="Jump to family">
+  <div class="wrap"><div class="familynav-inner" id="familynav"></div></div>
+</nav>
+
+<main class="wrap">
+  <section id="read">
+    <h2>How to read this atlas</h2>
+    <div id="read-body"></div>
+    <div class="legend-grid" id="legend"></div>
+    <div id="read-notes"></div>
+  </section>
+
+  <section id="roster">
+    <h2>The roster at a glance</h2>
+    <p class="lede">Every checkpoint's layer stack, drawn to the same scale. Colour is the token
+      mixer; the lower track is the feed-forward. Bar height on the mixer track is attention span:
+      a full-height bar attends to the whole context, a short bar is windowed.</p>
+    <div class="roster" id="roster-list"></div>
+  </section>
+
+  <section id="position">
+    <h2>How much of a head still carries position</h2>
+    <div id="position-body"></div>
+    <figure>
+      <div id="position-chart"></div>
+      <figcaption>Share of each attention head's dimensions that RoPE actually rotates, on the
+        layers that attend globally. Recurrent mixers — Qwen3.5's gated linear attention and
+        Nemotron-3's Mamba-2 layers — are not shown: they carry no per-head rotary geometry at
+        all, because order is implicit in the recurrence.</figcaption>
+    </figure>
+    <div id="position-notes"></div>
+  </section>
+
+  <div id="families"></div>
+
+  <section id="matrix">
+    <h2>Side by side</h2>
+    <p class="lede">One row per checkpoint, ordered by family ladder. Every value here is read from
+      the checkpoint's own <code>config.json</code>.</p>
+    <div class="table-scroll" id="matrix-table"></div>
+  </section>
+
+  <section id="method">
+    <h2>Where these numbers come from</h2>
+    <div id="method-body"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap" id="footer-body"></div>
+</footer>
+
+<script type="application/json" id="page-data">__PAGE_DATA__</script>
+<script>
+(function () {
+  "use strict";
+
+  const DATA = JSON.parse(document.getElementById("page-data").textContent);
+  const M = DATA.models;
+
+  // ---------------------------------------------------------------------
+  // Category system. Colour == token mixer; the FFN track uses fill-vs-outline
+  // so "is this model sparse?" reads as presence, not as a second hue to learn.
+  // ---------------------------------------------------------------------
+  const MIX = {
+    full:    { color: "var(--c-attn)",   label: "Softmax attention (global)" },
+    sliding: { color: "var(--c-attn)",   label: "Softmax attention (windowed)" },
+    linear:  { color: "var(--c-linear)", label: "Gated linear attention" },
+    ssm:     { color: "var(--c-ssm)",    label: "Mamba-2 state space" }
+  };
+  const FFN = {
+    dense: { color: "var(--ink-3)", label: "Dense MLP", filled: false },
+    moe:   { color: "var(--c-moe)", label: "Mixture of experts", filled: true }
+  };
+  // Cells are only ~9 units wide, far too small for an in-cell glyph, so the
+  // colour categories carry their secondary encoding outside the mark: named
+  // legend entries, the bar-height span encoding, each figure's caption, and
+  // the fully-worded comparison table. Nothing here rests on hue alone.
+
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const num = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : "—");
+
+  /** Compact byte/parameter magnitudes: 17408 -> "17.4 K". */
+  function si(n) {
+    if (typeof n !== "number") return "—";
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + " B";
+    if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + " M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + " K";
+    return String(n);
+  }
+
+  /**
+   * Attention span as a fraction of full bar height.
+   *
+   * Windowed layers are drawn shorter than global ones, log-scaled between a
+   * 128-token window and 8192. This is the one place the strip encodes a
+   * magnitude rather than a category: it makes K-EXAONE's 128-token window and
+   * EXAONE-4.0's 4096 visibly different rather than both just "sliding".
+   */
+  function spanFraction(layer) {
+    if (layer.mix !== "sliding" || !layer.window) return 1;
+    const lo = Math.log2(128), hi = Math.log2(8192);
+    const t = Math.min(1, Math.max(0, (Math.log2(layer.window) - lo) / (hi - lo)));
+    return 0.34 + 0.42 * t;
+  }
+
+  // ---------------------------------------------------------------------
+  // Genome strip: one cell per layer, mixer track over FFN track.
+  // ---------------------------------------------------------------------
+  function genomeStrip(model, opts) {
+    const o = Object.assign({ width: 1000, mixH: 34, ffnH: 13, ruler: false }, opts || {});
+    const n = model.tracks.length;
+    // Normalise on total WIDTH, not on cell size. Stacks here run from 26 to 92
+    // layers; a fixed cell size would give every strip a different aspect ratio,
+    // so at one column width a 26-layer strip would render three times taller
+    // than a 92-layer one and the roster would stop being comparable.
+    const pitch = o.width / n;
+    const gap = Math.min(2, pitch * 0.18);
+    const cell = pitch - gap;
+    const W = o.width;
+    const gapY = 4;
+    const rulerH = o.ruler ? 16 : 0;
+    const H = o.mixH + gapY + o.ffnH + rulerH;
+    const parts = [];
+
+    model.tracks.forEach(function (layer, i) {
+      const x = i * pitch;
+      if (layer.mix) {
+        const spec = MIX[layer.mix];
+        const h = Math.max(3, o.mixH * spanFraction(layer));
+        // DeepSeek-V4 alternates two compression ratios over the same
+        // attention category. They are one mechanism at two resolutions, so
+        // they take one hue at two values rather than a second hue nobody
+        // else on the page would use.
+        const dim = layer.variant === "csa" ? ' opacity=".52"' : "";
+        parts.push('<rect x="' + x + '" y="' + (o.mixH - h) + '" width="' + cell +
+          '" height="' + h + '" rx="1.5" fill="' + spec.color + '"' + dim + '/>');
+      }
+      if (layer.ffn) {
+        const spec = FFN[layer.ffn];
+        const y = o.mixH + gapY;
+        parts.push(spec.filled
+          ? '<rect x="' + x + '" y="' + y + '" width="' + cell + '" height="' + o.ffnH +
+            '" rx="1.5" fill="' + spec.color + '"/>'
+          : '<rect x="' + (x + 0.5) + '" y="' + (y + 0.5) + '" width="' + (cell - 1) +
+            '" height="' + (o.ffnH - 1) + '" rx="1.5" fill="none" stroke="' + spec.color +
+            '" stroke-width="1" opacity=".65"/>');
+      }
+    });
+
+    if (o.ruler) {
+      const y = o.mixH + gapY + o.ffnH;
+      const step = n > 70 ? 20 : n > 36 ? 10 : 5;
+      for (let i = 0; i < n; i += step) {
+        const x = i * pitch + cell / 2;
+        parts.push('<line x1="' + x + '" y1="' + (y + 2) + '" x2="' + x + '" y2="' + (y + 5) +
+          '" stroke="currentColor" opacity=".35" stroke-width="1"/>');
+        parts.push('<text x="' + x + '" y="' + (y + 14) + '" font-size="8" text-anchor="middle" ' +
+          'fill="currentColor" opacity=".5" font-family="var(--mono)">' + i + '</text>');
+      }
+    }
+
+    const summary = stripSummary(model);
+    return '<svg class="strip" viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+      'aria-label="' + esc(summary) + '">' + parts.join("") + '</svg>';
+  }
+
+  function stripSummary(model) {
+    const c = model.counts, bits = [];
+    if (c.full) bits.push(c.full + " global-attention");
+    if (c.sliding) bits.push(c.sliding + " windowed-attention");
+    if (c.linear) bits.push(c.linear + " linear-attention");
+    if (c.ssm) bits.push(c.ssm + " Mamba-2");
+    const ffn = [];
+    if (c.dense) ffn.push(c.dense + " dense MLP");
+    if (c.moe) ffn.push(c.moe + " MoE");
+    const variants = {};
+    model.tracks.forEach(function (t) {
+      if (t.variant) variants[t.variant] = (variants[t.variant] || 0) + 1;
+    });
+    const vBits = Object.keys(variants).map(function (v) { return variants[v] + " " + v; });
+    return model.key + ": " + model.layers + " layers — " + bits.join(", ") +
+      (vBits.length ? " (" + vBits.join(", ") + ")" : "") +
+      (ffn.length ? "; " + ffn.join(", ") : "");
+  }
+
+  // ---------------------------------------------------------------------
+  // Block schematic.
+  //
+  // Draws the embedding, the compressed layer motif with its multiplier, and
+  // the head. The pre-norm residual (x + Op(Norm(x))) is identical in all 21
+  // checkpoints, so it is stated once in the legend rather than redrawn 21
+  // times -- the diagram shows what differs.
+  // ---------------------------------------------------------------------
+  const SCH = { w: 480, pad: 14, boxX: 14, boxW: 452, rowGap: 9, segPad: 12 };
+
+  function mixLines(model, layer) {
+    const a = model.attention, note = model.note || {}, byLayer = note.peByLayer || {};
+    const names = note.mixerNames || {};
+    const detail = note.mixerDetail || {};
+    const out = [];
+    // DeepSeek-V4 runs three different attention variants over the same
+    // "softmax attention" category, so lookups try the compound key first.
+    const key = layer.variant ? layer.mix + ":" + layer.variant : layer.mix;
+    const pick = (map, fallback) => map[key] != null ? map[key] :
+      (map[layer.mix] != null ? map[layer.mix] : fallback);
+    // A per-layer-type detail override exists because several checkpoints do
+    // NOT share one head configuration across layer types -- Gemma-4's global
+    // layers run wider heads (d 512) and fewer KV heads than its sliding
+    // layers, which the flat config fields cannot express.
+    if (layer.mix === "full" || layer.mix === "sliding") {
+      out.push(pick(names, layer.mix === "sliding" ? "Windowed attention" : "Global attention"));
+      const override = pick(detail, null);
+      if (override) {
+        out.push(override);
+      } else {
+        const q = a.num_attention_heads, kv = a.num_key_value_heads, hd = a.head_dim_effective;
+        let l2 = (q ? q + " Q" : "") + (kv ? " · " + kv + " KV" : "") + (hd ? " · d_head " + hd : "");
+        if (layer.mix === "sliding" && layer.window) l2 += " · window " + num(layer.window);
+        out.push(l2.trim());
+      }
+    } else if (layer.mix === "linear") {
+      out.push(pick(names, "Gated linear attention"));
+      out.push(pick(detail, null) || [a.linear_num_key_heads && a.linear_num_key_heads + " K-heads",
+                a.linear_num_value_heads && a.linear_num_value_heads + " V-heads",
+                a.linear_conv_kernel_dim && "conv " + a.linear_conv_kernel_dim]
+               .filter(Boolean).join(" · "));
+    } else if (layer.mix === "ssm") {
+      const s = model.ssm || {};
+      out.push(pick(names, "Mamba-2 SSD"));
+      out.push(pick(detail, null) || [s.mamba_num_heads && s.mamba_num_heads + " heads",
+                s.ssm_state_size && "d_state " + s.ssm_state_size,
+                s.conv_kernel && "conv " + s.conv_kernel]
+               .filter(Boolean).join(" · "));
+    }
+    const pe = pick(byLayer, null);
+    if (pe) out.push(pe);
+    return out.filter(Boolean);
+  }
+
+  function ffnLines(model, layer) {
+    const s = model.shape, moe = model.moe, note = model.note || {};
+    const act = note.activation || s.hidden_activation || s.hidden_act || s.mlp_hidden_act || "MLP";
+    if (layer.ffn === "moe") {
+      const n = moe.n_routed_experts || moe.num_experts || moe.num_local_experts;
+      const k = moe.num_experts_per_tok;
+      const shared = moe.n_shared_experts || (model.unclassified || {}).num_shared_experts ||
+        (moe.shared_expert_intermediate_size ? 1 : 0);
+      return [
+        (layer.ffnVariant === "hash" ? "MoE · hash-routed" : "MoE · " + act),
+        (n ? n + " experts" : "") + (k ? " · top-" + k : "") + (shared ? " · +" + shared + " shared" : ""),
+        moe.moe_intermediate_size ? "expert d_ff " + num(moe.moe_intermediate_size) : ""
+      ].filter(Boolean);
+    }
+    return ["Dense · " + act,
+            s.intermediate_size ? "d_ff " + num(s.intermediate_size) : ""].filter(Boolean);
+  }
+
+  function schematic(model) {
+    const g = [];
+    let y = SCH.pad;
+
+    // Embedding
+    const s = model.shape;
+    y = drawPlain(g, y, "Token embedding",
+      "vocab " + num(s.vocab_size) + " → d_model " + num(s.hidden_size) +
+      (s.tie_word_embeddings ? " · tied" : ""));
+    y = arrow(g, y);
+
+    model.schematic.segments.forEach(function (seg) {
+      const inner = [];
+      let iy = 0;
+      seg.layers.forEach(function (layer, idx) {
+        if (idx) iy += SCH.rowGap;
+        iy = layer.group ? drawGroup(inner, iy, model, layer)
+                         : drawLayerCard(inner, iy, model, layer);
+      });
+      // A quasi-periodic stack (Nemotron-H) is drawn as its most common group,
+      // so the multiplier alone would overstate the drawing's exactness -- the
+      // 120B's modal group times its repeat count comes to 95 layers where the
+      // stack has 88. State the spread on the box instead of implying a tiling.
+      const spread = seg.varies
+        ? Math.min.apply(null, seg.varies) + "–" + Math.max.apply(null, seg.varies)
+        : null;
+      const boxH = iy + SCH.segPad * 2 + (spread ? 13 : 0);
+      const label = seg.repeat > 1 ? "× " + seg.repeat : "once";
+      g.push('<g transform="translate(0,' + y + ')">' +
+        '<rect x="' + SCH.boxX + '" y="0" width="' + SCH.boxW + '" height="' + boxH +
+        '" rx="4" fill="none" stroke="currentColor" stroke-opacity=".3" stroke-dasharray="4 3"/>' +
+        '<rect x="' + (SCH.boxX + SCH.boxW - 46) + '" y="-9" width="42" height="17" rx="3" ' +
+        'fill="var(--surface)" stroke="currentColor" stroke-opacity=".3"/>' +
+        '<text x="' + (SCH.boxX + SCH.boxW - 25) + '" y="3" font-size="10.5" text-anchor="middle" ' +
+        'font-family="var(--mono)" fill="currentColor" opacity=".7">' + label + '</text>' +
+        (spread ? '<text x="' + (SCH.boxX + 14) + '" y="' + (boxH - 8) + '" font-size="9.5" ' +
+          'font-family="var(--mono)" fill="currentColor" opacity=".55">typical group — ' +
+          'lengths vary ' + spread + ' layers</text>' : "") +
+        '<g transform="translate(0,' + SCH.segPad + ')">' + inner.join("") + '</g></g>');
+      y += boxH;
+      y = arrow(g, y);
+    });
+
+    y = drawPlain(g, y, "Final RMSNorm → LM head",
+      "logits over " + num(s.vocab_size) + " tokens");
+
+    // Multi-token-prediction heads hang off the trunk rather than sitting in
+    // it: none of the study's lanes were served with speculative decoding, so
+    // every MTP module here is dead weight at inference. Drawing it detached
+    // and dashed says that without a footnote.
+    const mtp = (model.note || {}).mtp;
+    if (mtp) {
+      y += 8;
+      g.push('<g transform="translate(0,' + y + ')">' +
+        '<rect x="' + (SCH.boxX + 90) + '" y="0" width="' + (SCH.boxW - 180) + '" height="30" rx="3" ' +
+        'fill="none" stroke="currentColor" stroke-opacity=".28" stroke-dasharray="4 3"/>' +
+        '<text x="' + SCH.w / 2 + '" y="13" font-size="10" text-anchor="middle" ' +
+        'font-family="var(--mono)" fill="currentColor" opacity=".62">' + esc(mtp) + '</text>' +
+        '<text x="' + SCH.w / 2 + '" y="25" font-size="9" text-anchor="middle" ' +
+        'font-family="var(--mono)" fill="currentColor" opacity=".45">unused — served without speculative decoding</text>' +
+        '</g>');
+      y += 30;
+    }
+
+    const H = y + SCH.pad;
+    return '<svg class="schematic" viewBox="0 0 ' + SCH.w + ' ' + H + '" role="img" ' +
+      'aria-label="' + esc(schematicSummary(model)) + '">' + g.join("") + '</svg>';
+  }
+
+  function schematicSummary(model) {
+    const seg = model.schematic.segments[model.schematic.segments.length - 1];
+    const describe = function (l) {
+      if (l.group) {
+        return "(" + l.group.map(describe).join(" then ") + ") × " + l.repeat;
+      }
+      return l.count + "× (" + (l.mix ? MIX[l.mix].label : "no mixer") + " + " +
+        (l.ffn ? FFN[l.ffn].label : "no FFN") + ")";
+    };
+    const unit = seg.layers.map(describe).join(", ");
+    return "Block schematic for " + model.key + ": embedding, then " +
+      (seg.repeat > 1 ? seg.repeat + " repeats of " : "") + unit + ", then final norm and LM head.";
+  }
+
+  function drawPlain(g, y, title, sub) {
+    const h = sub ? 40 : 28;
+    g.push('<g transform="translate(0,' + y + ')">' +
+      '<rect x="' + SCH.boxX + '" y="0" width="' + SCH.boxW + '" height="' + h +
+      '" rx="3" fill="var(--surface-2)" stroke="currentColor" stroke-opacity=".22"/>' +
+      '<text x="' + (SCH.boxX + 14) + '" y="17" font-size="11.5" font-family="var(--mono)" ' +
+      'fill="currentColor">' + esc(title) + '</text>' +
+      (sub ? '<text x="' + (SCH.boxX + 14) + '" y="31" font-size="10" font-family="var(--mono)" ' +
+        'fill="currentColor" opacity=".62">' + esc(sub) + '</text>' : "") + '</g>');
+    return y + h;
+  }
+
+  function arrow(g, y) {
+    const x = SCH.w / 2;
+    g.push('<line x1="' + x + '" y1="' + y + '" x2="' + x + '" y2="' + (y + 12) +
+      '" stroke="currentColor" stroke-opacity=".4"/>' +
+      '<polygon points="' + (x - 3.5) + ',' + (y + 12) + ' ' + (x + 3.5) + ',' + (y + 12) +
+      ' ' + x + ',' + (y + 17) + '" fill="currentColor" fill-opacity=".4"/>');
+    return y + 19;
+  }
+
+  /**
+   * A nested repeat inside a segment.
+   *
+   * Nemotron-H alternates a Mamba-2 mixer layer with an MoE layer five times
+   * between attention layers. Run-length encoding cannot touch that -- no two
+   * adjacent layers are alike -- so without this the block would be eleven
+   * stacked cards restating one pattern.
+   */
+  function drawGroup(out, y, model, entry) {
+    const inner = [];
+    let iy = 0;
+    entry.group.forEach(function (layer, idx) {
+      if (idx) iy += 5;
+      iy = drawLayerCard(inner, iy, model, layer);
+    });
+    const pad = 9, h = iy + pad * 2;
+    out.push('<g transform="translate(8,' + y + ')">' +
+      '<rect x="' + (SCH.boxX + 6) + '" y="0" width="' + (SCH.boxW - 44) + '" height="' + h +
+      '" rx="3" fill="none" stroke="currentColor" stroke-opacity=".22" stroke-dasharray="3 3"/>' +
+      '<text x="' + (SCH.boxX + SCH.boxW - 32) + '" y="' + (h / 2 + 4) + '" font-size="10" ' +
+      'font-family="var(--mono)" fill="currentColor" opacity=".6">× ' + entry.repeat + '</text>' +
+      '<g transform="translate(-4,' + pad + ')">' + inner.join("") + '</g></g>');
+    return y + h;
+  }
+
+  /** One layer card: a mixer sub-block and/or an FFN sub-block. */
+  function drawLayerCard(out, y, model, layer) {
+    const x = SCH.boxX + 14, w = SCH.boxW - 28;
+    const rows = [];
+    if (layer.mix) rows.push({ kind: "mix", spec: MIX[layer.mix], lines: mixLines(model, layer) });
+    if (layer.ffn) rows.push({ kind: "ffn", spec: FFN[layer.ffn], lines: ffnLines(model, layer) });
+
+    let cy = y;
+    rows.forEach(function (row, i) {
+      if (i) cy += 5;
+      const h = 15 + row.lines.length * 13;
+      const wash = "color-mix(in srgb, " + row.spec.color + " var(--wash), var(--surface))";
+      out.push('<g transform="translate(0,' + cy + ')">' +
+        '<rect x="' + x + '" y="0" width="' + w + '" height="' + h + '" rx="3" fill="' + wash +
+        '" stroke="' + row.spec.color + '" stroke-opacity=".45"/>' +
+        '<rect x="' + x + '" y="0" width="3.5" height="' + h + '" rx="1.5" fill="' + row.spec.color + '"/>' +
+        row.lines.map(function (line, li) {
+          return '<text x="' + (x + 13) + '" y="' + (15 + li * 13) + '" font-size="' +
+            (li ? 9.5 : 11) + '" font-family="var(--mono)" fill="currentColor" opacity="' +
+            (li ? ".68" : "1") + '">' + esc(line) + '</text>';
+        }).join("") + '</g>');
+      cy += h;
+    });
+
+    if (layer.count > 1) {
+      out.push('<text x="' + (SCH.boxX + SCH.boxW - 18) + '" y="' + (y + 14) + '" font-size="10" ' +
+        'text-anchor="end" font-family="var(--mono)" fill="currentColor" opacity=".55">×' +
+        layer.count + '</text>');
+    }
+    return cy;
+  }
+
+  // ---------------------------------------------------------------------
+  // Page assembly
+  // ---------------------------------------------------------------------
+  function factStrip(model) {
+    const s = model.shape, a = model.attention, note = model.note || {};
+    const items = [
+      ["Parameters", note.params || "—"],
+      ["Layers", model.layers],
+      ["d_model", num(s.hidden_size)],
+      // Overridable: the flat config fields describe one layer type, and
+      // Gemma-4's global layers run both fewer KV heads and wider heads than
+      // the sliding layers these fields actually describe.
+      ["Attn heads", note.heads || (a.num_attention_heads ? a.num_attention_heads + " Q / " +
+        (a.num_key_value_heads || "?") + " KV" : "—")],
+      ["Head dim", note.headDim || a.head_dim_effective || (model.mla.qk_nope_head_dim ?
+        (model.mla.qk_nope_head_dim + "+" + model.mla.qk_rope_head_dim) : "—")],
+      ["Vocab", num(s.vocab_size)],
+      ["Native ctx", num(model.positional.max_position_embeddings)],
+      ["Served ctx", num(model.served.max_model_len) + " · tp" + model.served.tp],
+      // The computed figure assumes one head_dim for every attention layer.
+      // Checkpoints that break that assumption (Gemma-4's wider global heads,
+      // Gemma-4 E2B's cross-layer KV sharing) supply the exact figure instead.
+      ["KV / token", note.kvPerToken ||
+        (model.kvBytesPerToken ? si(model.kvBytesPerToken) + "B" : "—")]
+    ];
+    return '<dl class="facts">' + items.map(function (it) {
+      return '<div class="fact"><dt>' + esc(it[0]) + '</dt><dd>' + esc(it[1]) + '</dd></div>';
+    }).join("") + '</dl>';
+  }
+
+  function badges(model) {
+    const note = model.note || {}, out = [];
+    out.push(model.architecture);
+    if (model.isMoE) {
+      const n = model.moe.n_routed_experts || model.moe.num_experts;
+      out.push("MoE " + n + " × top-" + model.moe.num_experts_per_tok);
+    } else out.push("dense");
+    if (model.counts.ssm) out.push("hybrid SSM");
+    if (model.counts.linear) out.push("hybrid linear-attn");
+    if (model.mla.kv_lora_rank) out.push("MLA r=" + model.mla.kv_lora_rank);
+    if (model.counts.sliding) out.push("sliding window");
+    if (model.quantization) out.push(String(model.quantization.quant_method || "quantized").toUpperCase());
+    if ((model.towers || []).length) out.push("text tower of " + model.towers.length + "-tower model");
+    (note.badges || []).forEach(function (b) { out.push(b); });
+    const html = out.map(function (b) { return '<span class="badge">' + esc(b) + '</span>'; });
+    (note.warnBadges || []).forEach(function (b) {
+      html.push('<span class="badge warn">' + esc(b) + '</span>');
+    });
+    return '<div class="badge-row">' + html.join("") + '</div>';
+  }
+
+  function prose(model) {
+    const note = model.note || {}, out = [];
+    if (note.pe) {
+      out.push('<div class="callout"><h4>Positional encoder</h4>' +
+        toParas(note.pe) + '</div>');
+    }
+    if (note.attention) out.push('<div class="prose"><h4>Attention</h4>' + toParas(note.attention) + '</div>');
+    if (note.ffn) out.push('<div class="prose"><h4>Feed-forward</h4>' + toParas(note.ffn) + '</div>');
+    if (note.extras && note.extras.length) {
+      out.push('<div class="prose"><h4>Also in the block</h4><ul>' +
+        note.extras.map(function (e) { return "<li>" + inline(e) + "</li>"; }).join("") + "</ul></div>");
+    }
+    (note.flags || []).forEach(function (f) {
+      out.push('<div class="flag"><b>' + esc(f.kind || "flag") + '</b>' + inline(f.text) + '</div>');
+    });
+    if (note.sources && note.sources.length) {
+      out.push('<div class="sources">Sources<ul>' + note.sources.map(function (s) {
+        return '<li><a href="' + esc(s.url) + '" rel="noopener">' + esc(s.label) + "</a></li>";
+      }).join("") + "</ul></div>");
+    }
+    return out.join("");
+  }
+
+  /** Minimal inline markup: `code` and [label](url). Content is escaped first. */
+  function inline(text) {
+    return esc(text)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+  }
+  function toParas(text) {
+    return String(text).split("\n\n").map(function (p) { return "<p>" + inline(p) + "</p>"; }).join("");
+  }
+
+  function modelCard(model) {
+    const note = model.note || {};
+    const stripFig = '<figure><div class="strip-scroll">' +
+      genomeStrip(model, { width: 1000, mixH: 40, ffnH: 15, ruler: true }) +
+      '</div><figcaption>' + esc(stripSummary(model)) +
+      (model.schematic.exact ? "" : " The stack is quasi-periodic — group lengths vary.") +
+      '</figcaption></figure>';
+
+    return '<article class="model" id="m-' + esc(model.key) + '">' +
+      '<div class="model-head"><h3>' + esc(model.key) + '</h3>' +
+      '<span class="rung-tag">' + esc(model.rung) + ' rung</span>' +
+      '<span class="repo">' + esc(model.repo) + '</span></div>' +
+      (note.signature ? '<p class="signature">' + inline(note.signature) + "</p>" : "") +
+      badges(model) +
+      factStrip(model) +
+      stripFig +
+      '<div class="diagram-cols"><figure>' + schematic(model) +
+      // Norm placement is NOT uniform across the roster -- EXAONE-4.0 and 4.5
+      // are post-norm where the other nineteen are pre-norm -- so the residual
+      // convention is stated per model rather than once for the page.
+      '<figcaption>Block schematic. ' + inline(note.residual ||
+        "Every sub-block is a pre-norm residual: `x + Op(Norm(x))`.") +
+      (model.schematic.exact ? ""
+        : " This stack does not tile exactly — the drawing shows the dominant " +
+          "pattern, and the multiplier is approximate. The strip above is exact.") +
+      '</figcaption></figure>' +
+      '<div>' + prose(model) + '</div></div></article>';
+  }
+
+  function familySection(family) {
+    const note = (DATA.intro.families || {})[family.id] || {};
+    return '<section class="family" id="fam-' + esc(family.id) + '">' +
+      '<div class="family-head"><h2 class="mono">' + esc(family.name) + '</h2>' +
+      '<span class="vendor">' + esc(family.vendor) + '</span></div>' +
+      (note.lede ? '<p class="lede">' + inline(note.lede) + "</p>" : "") +
+      (note.ladder ? '<p class="note">' + inline(note.ladder) + "</p>" : "") +
+      family.rungs.map(function (k) { return modelCard(M[k]); }).join("") +
+      "</section>";
+  }
+
+  // ---- render ----------------------------------------------------------
+  const intro = DATA.intro || {};
+  document.getElementById("standfirst").innerHTML = inline(intro.standfirst || "");
+  document.getElementById("masthead-stats").innerHTML = (intro.stats || []).map(function (s) {
+    return '<div class="stat"><b>' + esc(s.value) + "</b><span>" + esc(s.label) + "</span></div>";
+  }).join("");
+  document.getElementById("read-body").innerHTML = (intro.howToRead || [])
+    .map(function (p) { return '<p class="lede">' + inline(p) + "</p>"; }).join("");
+  document.getElementById("read-notes").innerHTML = (intro.readNotes || [])
+    .map(function (p) { return '<p class="note">' + inline(p) + "</p>"; }).join("");
+
+  document.getElementById("legend").innerHTML = (DATA.legend.items || []).map(function (it) {
+    const style = it.outline
+      ? "border:1.5px solid " + it.color + ";background:transparent;"
+      : "background:" + it.color + ";";
+    return '<div class="legend-item"><span class="swatch" style="' + style + '"></span>' +
+      "<div><h3>" + esc(it.title) + "</h3><p>" + inline(it.text) + "</p></div></div>";
+  }).join("");
+
+  document.getElementById("roster-list").innerHTML = DATA.families.map(function (f) {
+    return '<p class="roster-family-label">' + esc(f.name) + " · " + esc(f.vendor) + "</p>" +
+      f.rungs.map(function (k) {
+        const m = M[k];
+        return '<a class="roster-row" href="#m-' + esc(k) + '">' +
+          '<span class="name">' + esc(k) + "</span>" +
+          '<span class="strip-scroll">' + genomeStrip(m, { width: 1000, mixH: 26, ffnH: 10 }) + "</span>" +
+          '<span class="count">' + m.layers + "L</span></a>";
+      }).join("");
+  }).join("");
+
+  document.getElementById("familynav").innerHTML =
+    ['<a href="#read">How to read</a>', '<a href="#roster">Roster</a>',
+     '<a href="#position">Position</a>']
+      .concat(DATA.families.map(function (f) {
+        return '<a href="#fam-' + esc(f.id) + '">' + esc(f.name) + "</a>";
+      }))
+      .concat(['<a href="#matrix">Side by side</a>', '<a href="#method">Method</a>']).join("");
+
+  document.getElementById("position-body").innerHTML = (intro.position || [])
+    .map(function (p) { return '<p class="lede">' + inline(p) + "</p>"; }).join("");
+  document.getElementById("position-notes").innerHTML = (intro.positionNotes || [])
+    .map(function (p) { return '<p class="note">' + inline(p) + "</p>"; }).join("");
+  document.getElementById("position-chart").innerHTML = rotaryChart();
+
+  document.getElementById("families").innerHTML = DATA.families.map(familySection).join("");
+
+  document.getElementById("matrix-table").innerHTML = matrixTable();
+  document.getElementById("method-body").innerHTML = (intro.method || [])
+    .map(function (p) { return '<p class="lede">' + inline(p) + "</p>"; }).join("");
+  document.getElementById("footer-body").innerHTML = (intro.footer || [])
+    .map(function (p) { return "<p>" + inline(p) + "</p>"; }).join("");
+
+  /**
+   * How much of each attention head actually carries RoPE.
+   *
+   * Reported per attention layer type, because two families treat their global
+   * and local layers differently. Recurrent mixers are left out: they hold no
+   * per-head rotary geometry at all, which the mixer-stack column already says.
+   */
+  function rotaryCell(model) {
+    const r = model.rotaryByMixer || {}, c = model.counts, bits = [];
+    const label = { full: "global", sliding: "local" };
+    ["full", "sliding"].forEach(function (kind) {
+      if (!c[kind] || r[kind] == null) return;
+      bits.push(Math.round(r[kind] * 100) + "% " + label[kind]);
+    });
+    if (!bits.length) return "—";
+    if (bits.every(function (b) { return b.indexOf("0% ") === 0; })) return "none (NoPE)";
+    const pcts = bits.map(function (b) { return b.split(" ")[0]; });
+    if (pcts.length === 2 && pcts[0] === pcts[1]) return pcts[0] + " of head";
+    return bits.join(" · ");
+  }
+
+  /**
+   * Rotary coverage across the roster, as one bar per checkpoint.
+   *
+   * A magnitude, so: one hue, direct-labelled, no legend. Global layers only --
+   * mixing the local-layer figure into the same bar would average two different
+   * regimes into a number no checkpoint actually has.
+   */
+  function rotaryChart() {
+    const rows = [];
+    DATA.families.forEach(function (f) {
+      rows.push('<p class="roster-family-label">' + esc(f.name) + "</p>");
+      f.rungs.forEach(function (k) {
+        const m = M[k], r = (m.rotaryByMixer || {});
+        const kind = m.counts.full ? "full" : (m.counts.sliding ? "sliding" : null);
+        const v = kind ? r[kind] : null;
+        const pct = v == null ? null : Math.round(v * 100);
+        const label = pct == null ? "—" : (pct === 0 ? "none" : pct + "%");
+        rows.push('<a class="bar-row" href="#m-' + esc(k) + '">' +
+          '<span class="name">' + esc(k) + "</span>" +
+          '<span class="bar-track">' +
+            (pct ? '<span class="bar-fill" style="width:' + pct + '%"></span>' : "") +
+          "</span>" +
+          '<span class="bar-value' + (pct ? "" : " zero") + '">' + esc(label) + "</span></a>");
+      });
+    });
+    return '<div class="bars">' + rows.join("") + "</div>";
+  }
+
+  function matrixTable() {
+    const cols = ["Checkpoint", "Layers", "Mixer stack", "FFN", "Positional encoder",
+                  "RoPE coverage", "Attention", "d_model", "Native ctx"];
+    const rows = [];
+    DATA.families.forEach(function (f) {
+      f.rungs.forEach(function (k, i) {
+        const m = M[k], note = m.note || {}, c = m.counts;
+        const mixBits = [];
+        if (c.full) mixBits.push('<span class="dot" style="background:' + MIX.full.color + '"></span>' + c.full + " global");
+        if (c.sliding) mixBits.push('<span class="dot" style="background:' + MIX.sliding.color +
+          ';opacity:.55"></span>' + c.sliding + " windowed");
+        if (c.linear) mixBits.push('<span class="dot" style="background:' + MIX.linear.color + '"></span>' + c.linear + " linear");
+        if (c.ssm) mixBits.push('<span class="dot" style="background:' + MIX.ssm.color + '"></span>' + c.ssm + " Mamba-2");
+        const ffn = c.moe
+          ? '<span class="dot" style="background:' + FFN.moe.color + '"></span>' + c.moe + " MoE" +
+            (c.dense ? " + " + c.dense + " dense" : "")
+          : c.dense + " dense";
+        rows.push('<tr' + (i === 0 ? ' class="family-start"' : "") + '>' +
+          "<td>" + esc(k) + "</td>" +
+          '<td class="num">' + m.layers + "</td>" +
+          "<td>" + mixBits.join(" &nbsp; ") + "</td>" +
+          "<td>" + ffn + "</td>" +
+          "<td>" + esc(note.peShort || "—") + "</td>" +
+          "<td>" + esc(rotaryCell(m)) + "</td>" +
+          "<td>" + esc(note.attnShort || "—") + "</td>" +
+          '<td class="num">' + num(m.shape.hidden_size) + "</td>" +
+          '<td class="num">' + num(m.positional.max_position_embeddings) + "</td></tr>");
+      });
+    });
+    return "<table><thead><tr>" + cols.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") +
+      "</tr></thead><tbody>" + rows.join("") + "</tbody></table>";
+  }
+})();
+</script>

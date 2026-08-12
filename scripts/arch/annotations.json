@@ -1,0 +1,76 @@
+{
+ "_intro": {
+  "standfirst": "Twenty-one open-weight checkpoints — seven families, three size rungs each — make up the roster of the SmolBench family-ladder study. This is what is actually inside them: how every layer mixes tokens, how every layer encodes position, and where the feed-forward goes sparse. Every structural number here is read from the checkpoint's own `config.json`.",
+  "stats": [
+   {"value": "21", "label": "checkpoints"},
+   {"value": "7 × 3", "label": "families × rungs"},
+   {"value": "1,123", "label": "layers drawn"},
+   {"value": "11 / 21", "label": "route to experts"}
+  ],
+  "howToRead": [
+   "Each checkpoint gets two drawings. The **genome strip** shows its whole stack, one cell per layer, so twenty-one models can be compared by scanning down the page. The **block schematic** underneath expands the repeating unit and fills in the numbers.",
+   "The strip has two tracks. The upper track is the **token mixer** — the thing that moves information between positions. The lower track is the **feed-forward** — the thing that transforms each position on its own. Colour is the mixer's mechanism; a filled lower cell means that layer routes to experts, an outlined one means an ordinary dense MLP.",
+   "Bar height on the mixer track is **attention span**. A full-height bar attends to the entire context; a short bar is windowed, log-scaled by its window size. This is the one place the strip encodes a magnitude instead of a category, and it is what makes K-EXAONE's 128-token window and EXAONE-4.0's 4096-token window read as different things rather than both as \"sliding\"."
+  ],
+  "readNotes": [
+   "**Where a track is empty, nothing is missing.** Nemotron-3 is the only family here whose layers are *either* a mixer *or* a feed-forward, never both — so its two tracks interleave rather than stack. Every other family puts a mixer and an FFN in every layer. The gaps are the architecture, not a gap in the data.",
+   "**The residual stream is not drawn.** Fourteen of the twenty-one wrap every sub-block in the plain pre-norm residual, `x + Op(Norm(x))`; drawing that fourteen times would add no information. The seven that do something else all say so in their own schematic caption — the two EXAONE-4.x rungs normalise *after* each sub-block, the three Gemma-4 rungs use a double norm on both sides of every sub-block, and the two DeepSeek-V4 rungs do not have a single residual stream at all: they carry four parallel lanes, remixed at every junction.",
+   "**Layer counts, not parameter counts, set the drawing.** A 92-layer stack is drawn as tall as it is because that is what the config says; expert counts and widths live in the schematic's labels.",
+   "**Two of the twenty-one never completed a serve.** The DeepSeek-V4 rungs are described here from their weights and configs like everything else, and carry a badge saying so — they are part of the roster the study was designed around, so dropping them would misdescribe the study."
+  ],
+  "position": [
+   "Ask twenty-one 2026 checkpoints how they encode position and you get one answer, arrived at seven different ways: **less than they used to**. Rotary position embedding was originally applied to every dimension of every attention head. On this roster it reaches a quarter of a head in Qwen3.5 and in Gemma-4's global layers, half in GLM-4.5-Air and GLM-4.7, a third in DeepSeek-V3.1, an eighth in DeepSeek-V4 — and, in two whole families, nothing at all on the layers that see the entire context.",
+   "Three of the twenty-one still rotate a complete head: the three Ministral-3 rungs. They are also the only three checkpoints here with no windowed layers, no recurrent mixer and no expert routing. The plainest architecture on the page is the last one still encoding position the plain way."
+  ],
+  "positionNotes": [
+   "**Unrotated is not the same as order-blind.** A head with no rotary encoding still knows about order: the causal mask, the short depthwise convolution in front of every gated-linear and Mamba-2 block, and the recurrence itself all carry position. What this chart measures is how much of the *explicit* positional signal each attention head is handed — not whether the model has a sense of sequence.",
+   "**Two superficially similar configs are different mechanisms.** Qwen3.5's `partial_rotary_factor: 0.25` is the GPT-NeoX scheme — rotate the first quarter of the dimensions, leave the rest alone. Gemma-4's `rope_type: \"proportional\"` is p-RoPE, which computes its frequencies against the *full* head width and so truncates the lowest frequencies rather than subsampling the spectrum. Both read as \"25%\"; they do different things to the low-frequency end.",
+   "**And two families declare rotary parameters that nothing reads.** Nemotron-3's two larger rungs ship `rope_theta` and `partial_rotary_factor` in their configs; the reference implementation passes no positions into attention at all. Those rungs are charted at what the code does, not what the config says — the discrepancy is flagged on each model."
+  ],
+  "method": [
+   "Every structural number on this page — layer counts, head counts, head dimensions, RoPE bases and scaling parameters, expert counts, window sizes, state sizes, vocabulary sizes — was fetched on 2026-08-12 from the exact Hugging Face repository each lane served, and each record carries that repo's resolved commit SHA. The fetch is reproducible: `scripts/arch/fetch_arch_facts.py`.",
+   "The fetched values were cross-checked against `tests/fixtures/roster_configs.json`, the fixture the fleet's own deploy-spec test pins against, on the four fields both hold. All twenty-one agree, so no checkpoint moved under the study between launch and this page.",
+   "Prose — what a mechanism is *called*, when a checkpoint was released, how many parameters it has — cannot come from a config file. Those claims come from published model cards, technical reports and reference implementations, cited per model. Where a source contradicts the config, the contradiction is shown rather than smoothed over; those are the dashed flags."
+  ],
+  "footer": [
+   "Built for the SmolBench family-ladder scaling study. Structural data fetched 2026-08-12 from Hugging Face; served-context and tensor-parallel figures from `smolbench/evals/ec2.py`.",
+   "Colour categories were validated for colour-vision separation and surface contrast in both light and dark themes. Every coloured cell also carries its meaning in text, so nothing on this page depends on hue alone."
+  ],
+  "families": {}
+ },
+ "_legend": {
+  "items": [
+   {
+    "title": "Softmax attention",
+    "color": "var(--c-attn)",
+    "text": "Every position attends to every earlier one; the KV cache grows with the sequence. Drawn full height on the mixer track."
+   },
+   {
+    "title": "Windowed attention",
+    "color": "color-mix(in srgb, var(--c-attn) 78%, transparent)",
+    "text": "The same operator with a restricted span. Bar height is the window, log-scaled — from a 128-token stub to a nearly-full-height 4,096."
+   },
+   {
+    "title": "Gated linear attention",
+    "color": "var(--c-linear)",
+    "text": "A recurrent mixer with a fixed-size state instead of a growing cache. Position is carried by the recurrence, so these layers need no positional encoding."
+   },
+   {
+    "title": "Mamba-2 state space",
+    "color": "var(--c-ssm)",
+    "text": "A selective state-space mixer — a causal convolution and a scan over a constant-size state. Also inherently ordered, also unencoded."
+   },
+   {
+    "title": "Dense feed-forward",
+    "color": "var(--ink-3)",
+    "outline": true,
+    "text": "Outlined: an ordinary MLP. Every parameter runs on every token."
+   },
+   {
+    "title": "Mixture of experts",
+    "color": "var(--c-moe)",
+    "text": "Filled: a router selects a few experts of many per token, so most parameters stay idle on any given token. Eleven of the twenty-one checkpoints are sparse."
+   }
+  ]
+ }
+}
