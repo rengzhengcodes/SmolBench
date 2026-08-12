@@ -160,6 +160,11 @@ LANE_IMAGE_OVERRIDES = {
 }
 MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
+# deepseek-v4-pro serves --enforce-eager (see EC2_DEPLOY_SPECS): a budget-
+# burning 87k-token generation takes >1h at eager Pro throughput, so under
+# the fleet-wide 3600s timeout those cells retry forever (observed at
+# attempt 7 on seed 0). 7500s covers a ~2h generation.
+LANE_REQUEST_TIMEOUT_OVERRIDES = {"deepseek-v4-pro": "7500"}
 
 TIER_INSTANCE_TYPES = {
     # g6e.12xlarge appended 2026-08-11: small-G spot in the hunt AZs was
@@ -453,7 +458,9 @@ def lane_env(
             "EC2_REGIONS": lane.regions,
             "EC2_VLLM_IMAGE": LANE_IMAGE_OVERRIDES.get(lane.key, NIGHTLY_IMAGE),
             "EC2_MAX_LIFETIME_MIN": MAX_LIFETIME_MIN,
-            "EC2_REQUEST_TIMEOUT_SECONDS": REQUEST_TIMEOUT_SECONDS,
+            "EC2_REQUEST_TIMEOUT_SECONDS": LANE_REQUEST_TIMEOUT_OVERRIDES.get(
+                lane.key, REQUEST_TIMEOUT_SECONDS
+            ),
         }
     )
     if phase == "deduction":
