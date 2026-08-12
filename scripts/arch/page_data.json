@@ -160,7 +160,8 @@
     "title": "Softmax attention"
    },
    {
-    "color": "color-mix(in srgb, var(--c-attn) 78%, transparent)",
+    "bar": 48,
+    "color": "var(--c-attn)",
     "text": "The same operator with a restricted span. Bar height is the window, log-scaled \u2014 from a 128-token stub to a nearly-full-height 4,096.",
     "title": "Windowed attention"
    },
@@ -3726,7 +3727,7 @@
       "text": "The same concept is named `expert_intermediate_size` in the `gemma4` class and `moe_intermediate_size` in `gemma4_unified` \u2014 a field-name skew across two architecture classes in one family."
      }
     ],
-    "kvPerToken": "336 KiB",
+    "kvPerToken": "344.1 KB",
     "mixerDetail": {
      "full": "16 Q \u00b7 1 KV \u00b7 d_head 512 \u00b7 v_proj dropped, V = K"
     },
@@ -4366,7 +4367,7 @@
       "text": "Report Table 1 lists a 500 M \"Drafter\" for this checkpoint with no corresponding field in any served config. Whether the `-it` repo ships those weights is unconfirmed; the study used no speculative decoding either way."
      }
     ],
-    "kvPerToken": "880 KiB",
+    "kvPerToken": "901.1 KB",
     "mixerDetail": {
      "full": "32 Q \u00b7 4 KV \u00b7 d_head 512 \u00b7 v_proj dropped, V = K"
     },
@@ -5061,7 +5062,7 @@
       "text": "The report's Table 1 lists a 76 M \"Drafter\" for this checkpoint, and no served config carries a `speculative_config` or MTP entry. vLLM does register a `Gemma4MTPModel` class, so the drafters are multi-token-prediction heads shipped somewhere; whether the `-it` repos contain them is unconfirmed. The study did not use them."
      }
     ],
-    "kvPerToken": "18 KiB",
+    "kvPerToken": "18.4 KB",
     "mixerDetail": {
      "full": "8 Q \u00b7 1 KV \u00b7 d_head 512 \u2014 global heads run 2\u00d7 wider"
     },
@@ -10056,7 +10057,7 @@
           "window": null
          }
         ],
-        "repeat": 3
+        "repeat": 2
        }
       ],
       "repeat": 4,

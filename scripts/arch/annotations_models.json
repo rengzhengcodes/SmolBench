@@ -426,7 +426,7 @@
   },
   "peShort": "p-RoPE 25% θ=1e6 / RoPE θ=1e4",
   "attnShort": "MQA 8/1 · 4:1 local:global",
-  "kvPerToken": "18 KiB",
+  "kvPerToken": "18.4 KB",
   "badges": [
    "per-layer embeddings",
    "KV shared: 20 of 35",
@@ -493,7 +493,7 @@
   },
   "peShort": "p-RoPE 25% θ=1e6 / RoPE θ=1e4",
   "attnShort": "GQA 16/8 local, 16/1 global",
-  "kvPerToken": "336 KiB",
+  "kvPerToken": "344.1 KB",
   "badges": [
    "gemma4_unified class",
    "V = K on global layers",
@@ -560,7 +560,7 @@
   },
   "peShort": "p-RoPE 25% θ=1e6 / RoPE θ=1e4",
   "attnShort": "GQA 32/16 local, 32/4 global",
-  "kvPerToken": "880 KiB",
+  "kvPerToken": "901.1 KB",
   "badges": [
    "V = K on global layers",
    "text + image, no audio",

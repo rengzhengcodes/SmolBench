@@ -975,9 +975,15 @@ footer code { font-family: var(--mono); }
     .map(function (p) { return '<p class="note">' + inline(p) + "</p>"; }).join("");
 
   document.getElementById("legend").innerHTML = (DATA.legend.items || []).map(function (it) {
+    // `bar` renders the swatch as a part-height fill, mirroring how the strip
+    // actually encodes a restricted attention span. A lighter or smaller solid
+    // swatch would teach the reader the wrong encoding.
     const style = it.outline
       ? "border:1.5px solid " + it.color + ";background:transparent;"
-      : "background:" + it.color + ";";
+      : it.bar
+        ? "background:linear-gradient(to top, " + it.color + " " + it.bar +
+          "%, transparent " + it.bar + "%);"
+        : "background:" + it.color + ";";
     return '<div class="legend-item"><span class="swatch" style="' + style + '"></span>' +
       "<div><h3>" + esc(it.title) + "</h3><p>" + inline(it.text) + "</p></div></div>";
   }).join("");

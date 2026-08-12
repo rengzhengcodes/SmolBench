@@ -2,10 +2,22 @@
  "_intro": {
   "standfirst": "Twenty-one open-weight checkpoints — seven families, three size rungs each — make up the roster of the SmolBench family-ladder study. This is what is actually inside them: how every layer mixes tokens, how every layer encodes position, and where the feed-forward goes sparse. Every structural number here is read from the checkpoint's own `config.json`.",
   "stats": [
-   {"value": "21", "label": "checkpoints"},
-   {"value": "7 × 3", "label": "families × rungs"},
-   {"value": "1,123", "label": "layers drawn"},
-   {"value": "11 / 21", "label": "route to experts"}
+   {
+    "value": "21",
+    "label": "checkpoints"
+   },
+   {
+    "value": "7 × 3",
+    "label": "families × rungs"
+   },
+   {
+    "value": "1,123",
+    "label": "layers drawn"
+   },
+   {
+    "value": "11 / 21",
+    "label": "route to experts"
+   }
   ],
   "howToRead": [
    "Each checkpoint gets two drawings. The **genome strip** shows its whole stack, one cell per layer, so twenty-one models can be compared by scanning down the page. The **block schematic** underneath expands the repeating unit and fills in the numbers.",
@@ -47,8 +59,9 @@
    },
    {
     "title": "Windowed attention",
-    "color": "color-mix(in srgb, var(--c-attn) 78%, transparent)",
-    "text": "The same operator with a restricted span. Bar height is the window, log-scaled — from a 128-token stub to a nearly-full-height 4,096."
+    "color": "var(--c-attn)",
+    "text": "The same operator with a restricted span. Bar height is the window, log-scaled — from a 128-token stub to a nearly-full-height 4,096.",
+    "bar": 48
    },
    {
     "title": "Gated linear attention",
