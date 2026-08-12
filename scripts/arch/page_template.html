@@ -905,11 +905,19 @@ footer code { font-family: var(--mono); }
     return out.join("");
   }
 
-  /** Minimal inline markup: `code` and [label](url). Content is escaped first. */
+  /**
+   * Minimal inline markup: `code`, **bold**, *italic*, and [label](url).
+   *
+   * Escaped first, so the copy can never inject markup. Bold is matched before
+   * italic — otherwise the single-asterisk rule eats the first two characters
+   * of every bold run and leaves stray asterisks in the text.
+   */
   function inline(text) {
     return esc(text)
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
   }
   function toParas(text) {
     return String(text).split("\n\n").map(function (p) { return "<p>" + inline(p) + "</p>"; }).join("");

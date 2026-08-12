@@ -81,6 +81,18 @@ for (const token of ["undefined", "NaN", "[object Object]", "__PAGE_DATA__"]) {
   }
 }
 
+// Unconverted markdown. The annotations are written with `**bold**` and
+// `*italic*`; a formatter that misses them prints the asterisks verbatim, which
+// is invisible to every other check here. Code spans are excluded -- `**kwargs`
+// and `head_dim**-0.5` are legitimately literal.
+const outsideCode = all.replace(/<code>[\s\S]*?<\/code>/g, "");
+const unconvertedBold = (outsideCode.match(/\*\*/g) || []).length;
+if (unconvertedBold) {
+  const i = outsideCode.indexOf("**");
+  problems.push(`${unconvertedBold} unconverted **bold** run(s) — context: ` +
+    JSON.stringify(outsideCode.slice(Math.max(0, i - 100), i + 40)));
+}
+
 // Every schematic label is left-anchored monospace inside a 452-unit box.
 // 0.6 em advance is the common width for every ui-monospace face.
 const overflow = [];
