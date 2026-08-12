@@ -371,16 +371,17 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     "k-exaone-236b-a23b": {"hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B", "tp": 8, "max_model_len": 131072,
                            "vllm_args": ["--gpu-memory-utilization", "0.92", "--enable-prefix-caching"]},
     # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
-    # !! V4 UNSERVABLE ON UPSTREAM as of 2026-08-11: every published image
-    # (nightly lineage 0.26.1rc1.dev602+g65b7662d3 AND the v0.27.0 cut
-    # release) ships a registry.py that MAPS DeepseekV4ForCausalLM but does
-    # NOT ship the vllm/model_executor/models/deepseek_v4 module -- the
-    # engine core dies at import with zero log output (verified by SSM
-    # docker-import probe on a live box; ModuleNotFoundError). A registry
-    # grep is therefore NOT sufficient proof of serving support -- import
-    # the module. The V4 lanes are excluded from the 2026-08 run until an
-    # upstream build actually contains the module; V3.1 serves fine (mature
-    # deepseek_v2-family modules).
+    # !! V4 status (corrected 2026-08-12): the 2026-08-11 "missing module"
+    # diagnosis was WRONG -- new archs moved to a top-level vllm/models/
+    # package (registry maps the fully-qualified "vllm.models.deepseek_v4"),
+    # and the probe had imported the LEGACY flat path, whose
+    # ModuleNotFoundError is by design. The module ships in the nightly that
+    # crashed AND in v0.27.0/v0.27.1 (wheel + image layer listings). The
+    # silent engine-core death on the 2026-08-11 nightly is therefore real
+    # but UNDIAGNOSED. Known adjacent hazard: vllm#51326 reports corrupted
+    # generations for V4-Flash on 8xH100 TP8 on 0.26/0.27.1 (maintainer:
+    # deepgemm-related; 0.25.0 reported good) -- any V4 lane must pass a
+    # coherence smoke before its data counts.
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE, "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
