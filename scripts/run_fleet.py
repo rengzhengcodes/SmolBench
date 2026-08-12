@@ -178,10 +178,15 @@ TIER_REGIONS = {"D": "us-east-2,us-west-2"}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 
 TIER_MEMBERS = {
-    "A": ("nemotron-3-nano-4b", "gemma-4-e2b", "gemma-4-12b", "ministral-3-3b"),
+    # gemma-4-12b moved A->B 2026-08-12: its spec is tp=4 (tp=1 on a 4-GPU
+    # box wedged every request past the 1h read timeout), and tier A's hunt
+    # list mixes 1-GPU types where tp=4 cannot construct ("World size (4)
+    # is larger than the number of available GPUs"). Tier B is all-4-GPU.
+    "A": ("nemotron-3-nano-4b", "gemma-4-e2b", "ministral-3-3b"),
     "B": (
-        "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-31b", "glm-4.7-flash",
-        "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b", "exaone-4.5-33b",
+        "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-12b", "gemma-4-31b",
+        "glm-4.7-flash", "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b",
+        "exaone-4.5-33b",
     ),
     "C": (
         "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",

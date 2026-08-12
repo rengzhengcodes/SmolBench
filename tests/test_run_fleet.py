@@ -44,10 +44,11 @@ FLEET_STATUS_PATH = REPO_ROOT / "scripts" / "fleet_status.py"
 STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
 
 EXPECTED_TIERS = {
-    "A": {"nemotron-3-nano-4b", "gemma-4-e2b", "gemma-4-12b", "ministral-3-3b"},
+    "A": {"nemotron-3-nano-4b", "gemma-4-e2b", "ministral-3-3b"},
     "B": {
-        "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-31b", "glm-4.7-flash",
-        "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b", "exaone-4.5-33b",
+        "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-12b", "gemma-4-31b",
+        "glm-4.7-flash", "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b",
+        "exaone-4.5-33b",
     },
     "C": {
         "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
