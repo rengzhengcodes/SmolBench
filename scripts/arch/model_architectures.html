@@ -283,6 +283,7 @@ h2.mono { font-family: var(--mono); font-weight: 600; letter-spacing: -.025em; }
   font-family: var(--mono); font-size: .74rem; color: var(--ink-3);
   word-break: break-all;
 }
+.repo .rev { opacity: .7; }
 .signature {
   font-size: .95rem; color: var(--ink-2); margin: 10px 0 18px; max-width: 78ch;
 }
@@ -934,7 +935,11 @@ footer code { font-family: var(--mono); }
     return '<article class="model" id="m-' + esc(model.key) + '">' +
       '<div class="model-head"><h3>' + esc(model.key) + '</h3>' +
       '<span class="rung-tag">' + esc(model.rung) + ' rung</span>' +
-      '<span class="repo">' + esc(model.repo) + '</span></div>' +
+      // The method section claims every structural number is pinned to a
+      // resolved commit; showing that commit is what makes the claim checkable.
+      '<span class="repo">' + esc(model.repo) +
+      (model.revision ? ' <span class="rev">@' + esc(model.revision.slice(0, 10)) + '</span>' : "") +
+      '</span></div>' +
       (note.signature ? '<p class="signature">' + inline(note.signature) + "</p>" : "") +
       badges(model) +
       factStrip(model) +
