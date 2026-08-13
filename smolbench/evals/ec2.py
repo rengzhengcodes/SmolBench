@@ -504,7 +504,17 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
     if heads is None or gpus is None:
         return spec.get("tp", 1)
-    return max(1, math.gcd(heads, gpus))
+    tp = max(1, math.gcd(heads, gpus))
+    if tp < gpus:
+        # Correct but wasteful: head divisibility strands GPUs (e.g. 20
+        # heads on an 8-GPU box -> tp=4, four GPUs idle). Loud, so a
+        # half-used expensive box is visible rather than silent.
+        logging.warning(
+            f"derive_tp: {model!r} on {instance_type} uses tp={tp} of {gpus} "
+            f"GPUs ({heads} attention heads don't divide further) -- "
+            f"{gpus - tp} GPUs will sit idle"
+        )
+    return tp
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,10 @@ def _layer_mix(cfg: Dict[str, Any]) -> list:
             "sliding" if pattern[i % len(pattern)] == "L" else "full"
             for i in range(n_layers)
         ]
+    # NOT a bug: a bare ``sliding_window`` value with neither mix field is
+    # deliberately ignored. DeepSeek-V4 carries ``sliding_window=128`` as
+    # CSA/HCA scaffolding while keeping full-length KV -- windowing it here
+    # would shrink its KV ~1000x and size boxes that OOM at serve.
     return ["full"] * n_layers
 
 
