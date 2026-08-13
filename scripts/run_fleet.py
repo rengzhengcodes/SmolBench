@@ -168,7 +168,16 @@ REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value
 # full ~2h regeneration); 14400s lets a worst-case cell finish in ONE
 # attempt. The box-side idle watchdog keys on vLLM metrics activity, so an
 # hours-long in-flight generation cannot trip it.
-LANE_REQUEST_TIMEOUT_OVERRIDES = {"deepseek-v4-pro": "14400"}
+LANE_REQUEST_TIMEOUT_OVERRIDES = {
+    "deepseek-v4-pro": "14400",
+    # gemma-4-12b wedged 2026-08-13 at 14/30: its g6e.12xl (4x L40S) serves
+    # ~146 tok/s AGGREGATE, so concurrent 87k-token budget-burner cells run
+    # >1h each and every request died at the 3600s read timeout (observed at
+    # attempt 5, each retry burning another hour, box healthy the whole
+    # time). 10800s covers the worst case (~90 min at 3 concurrent) with 2x
+    # headroom.
+    "gemma-4-12b": "10800",
+}
 
 TIER_INSTANCE_TYPES = {
     # g6e.12xlarge appended 2026-08-11: small-G spot in the hunt AZs was
