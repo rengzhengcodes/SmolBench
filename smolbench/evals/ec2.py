@@ -409,13 +409,17 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                                         "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},
-    # Pro mirrors Flash's PROVEN flag set (served + marked on p5 2026-08-12
-    # only once --enforce-eager skipped the IMA-during-capture).
+    # Pro mirrors Flash's flag set EXCEPT --enforce-eager: eager decode measured
+    # ~5-7h per induction seed (87k-token budget-burners, infeasible x30), and
+    # the 2026-08-12 warmup IMA fired inside custom_all_reduce.cuh during
+    # CUDA-graph capture -- custom AR stays disabled, so capture goes through
+    # NCCL. If the IMA recurs at serve, re-add "--enforce-eager" (Flash still
+    # carries the proven eager set as the fallback reference).
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
                                         "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--enforce-eager", "--disable-custom-all-reduce",
+                                        "--block-size", "256", "--disable-custom-all-reduce",
                                         "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
 }
 
