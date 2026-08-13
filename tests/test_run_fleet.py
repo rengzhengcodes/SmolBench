@@ -125,7 +125,10 @@ def test_lane_tags_come_from_the_study_driver(fleet):
         ("A", "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge"),
         ("B", "g6e.12xlarge,g6e.24xlarge"),
         ("C", "p5.48xlarge,p5e.48xlarge"),
-        ("D", "p5e.48xlarge,p5en.48xlarge"),
+        # D pivoted to p6-b200 2026-08-13: deepseek-v4-pro's marlin-less SM100
+        # spec must never serve on SM90 boxes, so the hunt list carries only
+        # the B200 type (see TIER_INSTANCE_TYPES' comment in run_fleet.py).
+        ("D", "p6-b200.48xlarge"),
     ],
 )
 def test_tier_instance_types(fleet, tier, types):
@@ -158,12 +161,12 @@ def test_lane_env_is_exact_for_an_induction_lane(fleet):
 
 
 def test_lane_env_tier_d_overrides_the_regions(fleet):
-    """p5e exists ONLY in us-east-2 a/b/c and us-west-2c -- offering
-    us-east-1 to a tier-D lane wastes a whole capacity hunt."""
+    """Tier D hunts p6-b200 in ALL 3 study regions (B200 placement is still
+    shifting, unlike p5e's fixed us-east-2/us-west-2 footprint)."""
     for key in EXPECTED_TIERS["D"]:
         env = fleet.lane_env(fleet.LANES[key], "induction", base_env={})
-        assert env["EC2_REGIONS"] == "us-east-2,us-west-2"
-        assert env["EC2_INSTANCE_TYPES"] == "p5e.48xlarge,p5en.48xlarge"
+        assert env["EC2_REGIONS"] == "us-east-1,us-east-2,us-west-2"
+        assert env["EC2_INSTANCE_TYPES"] == "p6-b200.48xlarge"
 
 
 def test_lane_env_non_tier_d_uses_the_default_regions(fleet):

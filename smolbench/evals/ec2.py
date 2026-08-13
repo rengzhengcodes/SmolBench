@@ -409,15 +409,20 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                                         "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},
-    # Pro mirrors Flash's flag set EXCEPT --enforce-eager: eager decode measured
-    # ~5-7h per induction seed (87k-token budget-burners, infeasible x30), and
-    # the 2026-08-12 warmup IMA fired inside custom_all_reduce.cuh during
-    # CUDA-graph capture -- custom AR stays disabled, so capture goes through
-    # NCCL. If the IMA recurs at serve, re-add "--enforce-eager" (Flash still
-    # carries the proven eager set as the fallback reference).
+    # Pro now targets p6-b200 (SM100) ONLY -- the SM90 story is exhausted:
+    # eager decode measured ~5-7h per induction seed (87k-token budget-burners,
+    # infeasible x30), and CUDA-graph capture IMA'd on H200 twice (2026-08-12
+    # inside custom_all_reduce.cuh; 2026-08-13 again with custom AR disabled,
+    # teardown trace in CUDASymmetricMemory.cu). On SM100 the Marlin W4A16
+    # fallback pin is DROPPED so the oracle takes the native MXFP4 expert path
+    # (the deep_gemm_mega_moe raise is opt-in-only at v0.27.1 and cannot
+    # auto-select); FLASHMLA_SPARSE_DSV4 accepts major in [9,10]. Graphs stay
+    # ON -- that is the experiment. Do NOT serve this marlin-less spec on
+    # p5/p5e/p5en: SM90 without the pin is the original undiagnosed crash
+    # config. Flash still carries the proven SM90 eager set as the reference.
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
-                                        "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
+                                        "--tokenizer-mode", "deepseek_v4",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
                                         "--block-size", "256", "--disable-custom-all-reduce",
                                         "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},

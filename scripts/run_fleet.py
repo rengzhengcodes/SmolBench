@@ -177,13 +177,19 @@ TIER_INSTANCE_TYPES = {
     "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
-    "D": "p5e.48xlarge,p5en.48xlarge",
+    # D switched to p6-b200 (8x B200, SM100) 2026-08-13 for the deepseek-v4-pro
+    # experiment: SM90 graph capture IMA'd twice and eager can't finish 30
+    # seeds, so Pro's spec dropped its Marlin pin for SM100's native MXFP4
+    # path -- and that marlin-less spec MUST NOT serve on p5e/p5en (see the
+    # spec comment in ec2.py). glm-4.7 / deepseek-v3.1, the other D lanes,
+    # completed on the old p5e/p5en list and never relaunch.
+    "D": "p6-b200.48xlarge",
 }
 # Override for tier D only; every other tier falls back to DEFAULT_REGIONS.
-# p5e.48xlarge exists ONLY in us-east-2 (a/b/c) and us-west-2c -- offering
-# us-east-1 to a tier-D lane would waste a whole capacity hunt on a region
-# that can never fill the request.
-TIER_REGIONS = {"D": "us-east-2,us-west-2"}
+# All 3 study regions stay in the hunt for p6-b200 -- unlike p5e (which
+# exists only in us-east-2/us-west-2), B200 placement is still shifting, so
+# excluding a region risks starving the experiment.
+TIER_REGIONS = {"D": "us-east-1,us-east-2,us-west-2"}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 
 TIER_MEMBERS = {
