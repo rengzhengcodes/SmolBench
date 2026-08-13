@@ -61,6 +61,14 @@ RELAUNCH_BACKOFF_SECONDS = 60
 #: A shard dying faster than this after launch counts toward the crash loop.
 FAST_CRASH_SECONDS = 300
 MAX_FAST_CRASHES = 3
+#: A capacity-exhausted hunt prints this and exits within ~2-3 minutes --
+#: which LOOKS like a fast crash but must retry indefinitely (capacity and
+#: quota free up on their own; run_fleet classifies the analogous lane exit
+#: as RECLAIM with unlimited retries). Checked against the LOG TAIL of the
+#: attempt that just died, and retried on a longer backoff so a dry pool is
+#: not hammered.
+CAPACITY_MARKER = "No spot capacity for any"
+CAPACITY_BACKOFF_SECONDS = 300
 
 
 def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
@@ -263,6 +271,21 @@ def main() -> int:
                 shard.status = "done"
                 logging.info(f"shard {shard.index}: COMPLETE")
                 terminate_shard_box(args, shard.index)
+                continue
+            try:
+                tail = shard.log.read_text(errors="replace")[-2000:]
+            except OSError:
+                tail = ""
+            if CAPACITY_MARKER in tail:
+                # Not a crash: the hunt found no capacity. Retry patiently
+                # and never count it toward the crash loop.
+                shard.fast_crashes = 0
+                logging.info(
+                    f"shard {shard.index}: capacity-exhausted hunt; "
+                    f"re-hunting in {CAPACITY_BACKOFF_SECONDS}s"
+                )
+                time.sleep(CAPACITY_BACKOFF_SECONDS)
+                shard.launch()
                 continue
             if age < FAST_CRASH_SECONDS:
                 shard.fast_crashes += 1
