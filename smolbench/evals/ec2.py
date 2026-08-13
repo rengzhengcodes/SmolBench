@@ -394,18 +394,21 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # hazards: vllm#47769 (Marlin repack IMA under TP+EP -- we don't enable
     # EP), vllm#49165 (FlashInfer cold-JIT race; workaround
     # VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER=0).
-    # --enforce-eager + --disable-custom-all-reduce (2026-08-12): with the
-    # SM90 pins the model now LOADS but a worker died with an illegal memory
-    # access (reported at custom_all_reduce.cuh:164) during CUDA-graph
-    # warmup, while TileLang MHC kernels + FlashInfer autotune were still
-    # JIT-compiling -- the #49165 cold-JIT-race shape. Eager mode skips
-    # graph capture entirely (throughput cost accepted for a batch eval);
-    # the NCCL all-reduce fallback avoids the reported site.
+    # Flash moved to the SM100/B200 recipe 2026-08-13 (mirrors Pro, which
+    # proved it live: healthy graphs serve + ~10 min/seed): the Marlin pin
+    # and --enforce-eager are DROPPED so the native MXFP4 path serves with
+    # CUDA graphs. Economics at then-current spot: 18 remaining eager seeds
+    # on p5 ($20/h x ~2.4h/seed) ~= $1,040 vs ~$210-420 on p6-b200 ($41.5/h)
+    # -- 2x the rate, ~15x the throughput. Do NOT serve this marlin-less
+    # spec on p5/p5e/p5en (SM90 without the pin = the original undiagnosed
+    # crash config). Seeds 0-11 were generated on the SM90 marlin/eager
+    # stack; 12+ on SM100 native/graphs -- documented replicate-subset
+    # numerics difference. --disable-custom-all-reduce kept (proven set).
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
-                                        "--tokenizer-mode", "deepseek_v4", "--moe-backend", "marlin",
+                                        "--tokenizer-mode", "deepseek_v4",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--enforce-eager", "--disable-custom-all-reduce",
+                                        "--block-size", "256", "--disable-custom-all-reduce",
                                         "--enable-prefix-caching"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--enable-prefix-caching"]},

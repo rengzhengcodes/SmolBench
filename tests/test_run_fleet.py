@@ -52,9 +52,11 @@ EXPECTED_TIERS = {
     },
     "C": {
         "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
-        "glm-4.5-air", "k-exaone-236b-a23b", "deepseek-v4-flash",
+        "glm-4.5-air", "k-exaone-236b-a23b",
     },
-    "D": {"glm-4.7", "deepseek-v3.1", "deepseek-v4-pro"},
+    # deepseek-v4-flash rides tier D since 2026-08-13: its marlin-less SM100
+    # spec must only ever serve on the p6-b200 hunt list.
+    "D": {"glm-4.7", "deepseek-v3.1", "deepseek-v4-pro", "deepseek-v4-flash"},
 }
 
 
