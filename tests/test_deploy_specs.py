@@ -155,3 +155,52 @@ def test_ministral_rows_carry_the_think_protocol_system_prompt():
 def test_hf_model_ids_match_the_vendored_roster():
     for key in STUDY_KEYS:
         assert EC2_DEPLOY_SPECS[key]["hf_model_id"] == ROSTER[key]["repo"], key
+
+
+# ---------------------------------------------------------------------------
+# derive_tp (2026-08-13 fleet audit): tp comes from the landed box, not a pin
+# ---------------------------------------------------------------------------
+
+
+def test_model_attention_heads_match_the_vendored_roster():
+    from smolbench.evals.ec2 import MODEL_ATTENTION_HEADS
+
+    assert set(MODEL_ATTENTION_HEADS) == set(STUDY_KEYS)
+    for key in STUDY_KEYS:
+        assert MODEL_ATTENTION_HEADS[key] == ROSTER[key]["num_attention_heads"], key
+
+
+@pytest.mark.parametrize(
+    "model,instance_type,expected",
+    [
+        # Uses every GPU the hunt paid for when head divisibility allows: a
+        # tp=1 spec landing on a 4-GPU g6e.12xlarge idled 3 of 4 L40S.
+        ("ministral-3-3b", "g6e.12xlarge", 4),
+        ("nemotron-3-nano-4b", "g6e.12xlarge", 4),
+        ("nemotron-3-nano-4b", "g6e.4xlarge", 1),
+        # 20 heads cannot shard 8 ways -- the largest common divisor is 4.
+        ("glm-4.7-flash", "p5.48xlarge", 4),
+        ("glm-4.7-flash", "g6e.12xlarge", 4),
+        # The in-flight lanes' derived tp equals their previous static pin
+        # (verified before this landed mid-drain).
+        ("gemma-4-12b", "g6e.12xlarge", 4),
+        ("ministral-3-14b", "g6e.12xlarge", 4),
+        ("deepseek-v4-pro", "p6-b200.48xlarge", 8),
+        ("deepseek-v4-flash", "p6-b200.48xlarge", 8),
+    ],
+)
+def test_derive_tp_uses_the_landed_gpu_count(model, instance_type, expected):
+    from smolbench.evals.ec2 import derive_tp
+
+    assert derive_tp(model, instance_type, EC2_DEPLOY_SPECS[model]) == expected
+
+
+def test_derive_tp_falls_back_to_the_spec_pin():
+    from smolbench.evals.ec2 import derive_tp
+
+    # Unknown model (the canary is deliberately absent from the heads map).
+    assert derive_tp("qwen2.5-1.5b", "g6e.12xlarge", {"tp": 1}) == 1
+    # Unknown instance type: never guess a GPU count.
+    assert derive_tp("gemma-4-12b", "g7e.2xlarge", {"tp": 4}) == 4
+    # No pin at all defaults to 1.
+    assert derive_tp("qwen2.5-1.5b", "mystery.large", {}) == 1

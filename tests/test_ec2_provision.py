@@ -377,3 +377,53 @@ def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
     # State is still cleared despite the expired waiter (the original point of
     # this test), and is cleared as the OWNER of i-slow rather than blindly.
     assert cleared == ["i-slow"]
+
+
+# ---------------------------------------------------------------------------
+# max_price / _spot_price_map (2026-08-13 audit: price-aware capacity hunt)
+# ---------------------------------------------------------------------------
+
+
+def test_run_instances_kwargs_max_price_sets_the_spot_ceiling():
+    kwargs = _base_kwargs(max_price="25.1900")
+    assert kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "25.1900"
+
+
+def test_run_instances_kwargs_no_max_price_keeps_the_default_ceiling():
+    kwargs = _base_kwargs()
+    assert "MaxPrice" not in kwargs["InstanceMarketOptions"]["SpotOptions"]
+
+
+def test_run_instances_kwargs_capacity_block_ignores_max_price():
+    # A block launch replaces InstanceMarketOptions wholesale; a stray
+    # MaxPrice would be an invalid combination.
+    kwargs = _base_kwargs(capacity_reservation_id="cr-0abc", max_price="25.1900")
+    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
+
+
+def test_spot_price_map_newest_observation_wins(monkeypatch):
+    class FakeClient:
+        def describe_spot_price_history(self, **kwargs):
+            # describe_spot_price_history returns rows newest-first.
+            return {
+                "SpotPriceHistory": [
+                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "20.00"},
+                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "99.00"},
+                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1b", "SpotPrice": "21.50"},
+                ]
+            }
+
+    monkeypatch.setattr(ec2, "_ec2_client", lambda region: FakeClient())
+    prices = ec2._spot_price_map("us-east-1", ["p5.48xlarge"])
+    assert prices == {
+        ("p5.48xlarge", "us-east-1a"): 20.00,
+        ("p5.48xlarge", "us-east-1b"): 21.50,
+    }
+
+
+def test_spot_price_map_failure_degrades_to_price_blind(monkeypatch):
+    def boom(region):
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(ec2, "_ec2_client", boom)
+    assert ec2._spot_price_map("us-east-1", ["p5.48xlarge"]) == {}

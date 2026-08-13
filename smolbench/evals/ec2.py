@@ -79,6 +79,7 @@ Security model (accepted trade-offs for a short-lived, single-user box):
 import contextlib
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -430,6 +431,75 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                                         "--block-size", "256", "--disable-custom-all-reduce",
                                         "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
 }
+
+#: ``num_attention_heads`` per family-ladder checkpoint, copied from each
+#: model's config.json (scripts/arch/arch_configs_raw.json is the archived
+#: source; test_deploy_specs drift-pins this map against it). Used by
+#: `derive_tp` -- models absent here (e.g. the qwen2.5-1.5b canary) fall back
+#: to their spec's static ``tp``.
+MODEL_ATTENTION_HEADS = {
+    "deepseek-v3.1": 128,
+    "deepseek-v4-flash": 64,
+    "deepseek-v4-pro": 128,
+    "exaone-4.0-32b": 40,
+    "exaone-4.5-33b": 40,
+    "gemma-4-12b": 16,
+    "gemma-4-31b": 32,
+    "gemma-4-e2b": 8,
+    "glm-4.5-air": 96,
+    "glm-4.7": 96,
+    "glm-4.7-flash": 20,
+    "k-exaone-236b-a23b": 64,
+    "ministral-3-14b": 32,
+    "ministral-3-3b": 32,
+    "ministral-3-8b": 32,
+    "nemotron-3-nano-30b-a3b": 32,
+    "nemotron-3-nano-4b": 40,
+    "nemotron-3-super-120b-a12b": 32,
+    "qwen3.5-122b-a10b": 32,
+    "qwen3.5-27b": 24,
+    "qwen3.5-397b-a17b": 32,
+}
+
+#: GPU count per instance type this provider hunts. Unknown types make
+#: `derive_tp` fall back to the spec's static ``tp`` rather than guess.
+_INSTANCE_GPU_COUNTS = {
+    "g6e.xlarge": 1, "g6e.2xlarge": 1, "g6e.4xlarge": 1, "g6e.8xlarge": 1,
+    "g6e.12xlarge": 4, "g6e.24xlarge": 4, "g6e.48xlarge": 8,
+    "p5.48xlarge": 8, "p5e.48xlarge": 8, "p5en.48xlarge": 8,
+    "p6-b200.48xlarge": 8,
+}
+
+
+def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
+    """Tensor-parallel degree for `model` on the box that actually landed.
+
+    ``tp = gcd(num_attention_heads, gpu_count)`` -- the largest head-divisor
+    that also divides the landed GPU count, so every GPU the hunt paid for is
+    used whenever head divisibility allows (2026-08-13 fleet audit: a tp=1
+    spec landing on a 4-GPU g6e.12xlarge idled 3 of 4 L40S). The static
+    ``spec["tp"]`` remains the fallback for models or instance types this
+    module doesn't know.
+
+    Parameters
+    ----------
+    model : str
+        Deploy-spec key (e.g. ``"gemma-4-12b"``).
+    instance_type : str
+        The landed instance type from the provision state.
+    spec : Dict[str, Any]
+        The model's ``EC2_DEPLOY_SPECS`` entry (fallback ``tp`` source).
+
+    Returns
+    -------
+    int
+        Tensor-parallel degree, always >= 1.
+    """
+    heads = MODEL_ATTENTION_HEADS.get(model)
+    gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
+    if heads is None or gpus is None:
+        return spec.get("tp", 1)
+    return max(1, math.gcd(heads, gpus))
 
 
 # ---------------------------------------------------------------------------
@@ -1357,6 +1427,42 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     )
 
 
+def _spot_price_map(region: str, instance_types: List[str]) -> Dict[Tuple[str, str], float]:
+    """Current spot price per ``(instance_type, availability_zone)`` in `region`.
+
+    Newest observation wins (``describe_spot_price_history`` returns rows
+    newest-first). STRICTLY best-effort: any API failure returns ``{}`` so the
+    capacity hunt degrades to its pre-2026-08-13 price-blind behaviour instead
+    of dying -- pricing must never cost a lane its box.
+
+    Parameters
+    ----------
+    region : str
+        Region to query.
+    instance_types : List[str]
+        Instance types to price.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], float]
+        ``{(instance_type, az): usd_per_hour}``; empty on any failure.
+    """
+    try:
+        resp = _ec2_client(region).describe_spot_price_history(
+            InstanceTypes=instance_types,
+            ProductDescriptions=["Linux/UNIX"],
+        )
+        prices: Dict[Tuple[str, str], float] = {}
+        for row in resp.get("SpotPriceHistory", []):
+            prices.setdefault(
+                (row["InstanceType"], row["AvailabilityZone"]), float(row["SpotPrice"])
+            )
+        return prices
+    except Exception as exc:  # noqa: BLE001 -- pricing is advisory only
+        logging.info(f"_spot_price_map: {region} lookup failed ({exc}); hunting price-blind")
+        return {}
+
+
 def _run_instances_kwargs(
     ami: str,
     instance_type: str,
@@ -1368,6 +1474,7 @@ def _run_instances_kwargs(
     key_name: str,
     iam_profile: Optional[str],
     capacity_reservation_id: Optional[str] = None,
+    max_price: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Builds the ``run_instances`` kwargs for one launch attempt.
 
@@ -1408,6 +1515,15 @@ def _run_instances_kwargs(
         launches) and a ``CapacityReservationSpecification`` pins the
         instance to the block. The caller must pass the block's own AZ
         subnet and instance type -- a mismatch is rejected by RunInstances.
+    max_price : Optional[str]
+        Spot bid ceiling in USD/hour (stringified, as the API wants). When
+        ``None`` the ceiling stays at EC2's default (the on-demand price) --
+        the 2026-08-13 fleet audit found the price-blind default paying
+        1.29-1.48x each type's cheapest AZ against a 2.46x intra-type
+        spread, so `provision_spot_instance` now derives a cap from live
+        ``describe_spot_price_history`` medians. A bid under an AZ's current
+        price fails fast with ``SpotMaxPriceTooLow`` (a tolerated
+        capacity-hunt code), moving the hunt to the next AZ.
 
     Returns
     -------
@@ -1429,6 +1545,9 @@ def _run_instances_kwargs(
             "SpotOptions": {
                 "SpotInstanceType": "one-time",
                 "InstanceInterruptionBehavior": "terminate",
+                # MaxPrice added below only when the caller derived a cap --
+                # omitting it keeps EC2's default ceiling (the on-demand
+                # price), the pre-2026-08-13 behaviour.
             },
         },
         "InstanceInitiatedShutdownBehavior": "terminate",
@@ -1471,6 +1590,8 @@ def _run_instances_kwargs(
                 "CapacityReservationId": capacity_reservation_id
             }
         }
+    elif max_price:
+        kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] = max_price
     if key_name:
         kwargs["KeyName"] = key_name
     if iam_profile:
@@ -1642,6 +1763,34 @@ def _launch_fresh(
         _wait_agent(state)
         return state
 
+    # Price the whole hunt space up front (one best-effort call per region;
+    # {} on failure = price-blind fallback). Each type's bid cap is 1.25x the
+    # median of its observed AZ prices across ALL hunted regions: enough
+    # headroom that a normal-priced AZ always clears it, while the outlier
+    # AZs (2.46x intra-type spread observed 2026-08-13) fail fast with
+    # SpotMaxPriceTooLow and the hunt moves on.
+    spot_prices: Dict[str, Dict[Tuple[str, str], float]] = {
+        r: _spot_price_map(r, list(instance_types)) for r in regions
+    }
+    type_caps: Dict[str, Optional[str]] = {}
+    for _type in instance_types:
+        observed = sorted(
+            price
+            for region_map in spot_prices.values()
+            for (obs_type, _az), price in region_map.items()
+            if obs_type == _type
+        )
+        if observed:
+            median = observed[len(observed) // 2]
+            type_caps[_type] = f"{1.25 * median:.4f}"
+            logging.info(
+                f"provision_spot_instance: {_type} bid cap ${type_caps[_type]}/h "
+                f"(1.25x median of {len(observed)} AZ prices, "
+                f"range ${observed[0]:.2f}-${observed[-1]:.2f})"
+            )
+        else:
+            type_caps[_type] = None
+
     region_info: Dict[str, Optional[Dict[str, Any]]] = {}  # cached per-region lookups
     attempts: List[str] = []
     for instance_type in instance_types:
@@ -1666,7 +1815,14 @@ def _launch_fresh(
             if not _offers_instance_type(region, instance_type):
                 attempts.append(f"{instance_type} @ {region}: not offered")
                 continue
-            for subnet_id, az in info["subnets"]:
+            # Cheapest AZ first; unpriced AZs keep their original order after
+            # the priced ones (inf sorts last, sort is stable).
+            region_prices = spot_prices.get(region, {})
+            subnets_by_price = sorted(
+                info["subnets"],
+                key=lambda pair: region_prices.get((instance_type, pair[1]), float("inf")),
+            )
+            for subnet_id, az in subnets_by_price:
                 kwargs = _run_instances_kwargs(
                     ami=info["ami"],
                     instance_type=instance_type,
@@ -1677,6 +1833,7 @@ def _launch_fresh(
                     user_data=user_data,
                     key_name=EC2_KEY_NAME,
                     iam_profile=iam_profile,
+                    max_price=type_caps.get(instance_type),
                 )
                 try:
                     logging.info(f"provision_spot_instance: trying {instance_type} in {az} ...")
@@ -1891,7 +2048,9 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     serve_payload = {
         "served_model_name": model,
         "hf_model_id": spec["hf_model_id"],
-        "tp": spec.get("tp", 1),
+        # Derived from the box that actually landed, not pinned per spec:
+        # the hunt list can hand one lane boxes with different GPU counts.
+        "tp": derive_tp(model, state.get("instance_type", ""), spec),
         "max_model_len": spec.get("max_model_len", EC2_CONTEXT_LENGTH),
         # HF_TOKEN is deliberately NOT in this payload: it was baked into
         # the instance at provision time, so it never crosses plain HTTP.
