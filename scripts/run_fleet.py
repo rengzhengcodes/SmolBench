@@ -177,6 +177,9 @@ LANE_REQUEST_TIMEOUT_OVERRIDES = {
     # time). 10800s covers the worst case (~90 min at 3 concurrent) with 2x
     # headroom.
     "gemma-4-12b": "10800",
+    # ministral-3-14b: same disease, same g6e.12xl class -- 141 read-timeout
+    # retries observed while limping through seed 10.
+    "ministral-3-14b": "10800",
 }
 
 TIER_INSTANCE_TYPES = {
