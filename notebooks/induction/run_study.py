@@ -560,6 +560,13 @@ EXPERIMENT = InductionExperiment(
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
     shard=SHARD,
+    # INDUCTION_FORCE_RERUN=1: re-collect every replicate this process is
+    # responsible for even when the store already has it (newest run_ts
+    # supersedes on read). For deliberate re-collection ONLY -- e.g. the
+    # 2026-08-13 gemma-4-12b re-run on g7 hardware to keep the lane's 30
+    # seeds serving-stack-homogeneous. Combine with INDUCTION_SHARD to
+    # parallelize the re-run across boxes.
+    force_rerun=os.environ.get("INDUCTION_FORCE_RERUN", "").strip() == "1",
 )
 
 

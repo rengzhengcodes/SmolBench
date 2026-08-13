@@ -112,6 +112,15 @@ class ReplicateHarness:
     #: sub-level of the experiment name -- see
     #: ``smolbench.evals.results_store.experiment_name``.
     prefix: str = ""
+    #: When True, EVERY (info type, seed) is treated as outstanding -- the
+    #: ``store.exists`` resume-skip is bypassed and each replicate is
+    #: re-collected and re-logged under a fresh ``run_ts``. Safe against the
+    #: append-only S3 log because every reader resolves the LATEST run_ts
+    #: per key (newest wins), so a re-run SUPERSEDES rather than duplicates.
+    #: Exists for deliberate re-collection (2026-08-13: re-running a lane's
+    #: early seeds on new hardware to remove a within-lane serving-stack
+    #: confound); never set it for a normal resume.
+    force_rerun: bool = False
 
     @functools.cached_property
     def store(self) -> ResultsStore:
@@ -208,6 +217,8 @@ class ReplicateHarness:
             given (info type, seed) counts as "not outstanding" -- see
             ``ResultsStore.exists``.
         """
+        if self.force_rerun:
+            return True
         tag: str = self.archetype_tags[model]
         return any(
             not self.store.exists(self._address(model, tag, info, seed))
@@ -268,7 +279,8 @@ class ReplicateHarness:
             outstanding = [
                 info
                 for info in self.info_types
-                if not self.store.exists(self._address(model, tag, info, seed))
+                if self.force_rerun
+                or not self.store.exists(self._address(model, tag, info, seed))
             ]
             if not outstanding:
                 continue  # every info type for this seed already graded

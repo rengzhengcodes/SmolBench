@@ -266,3 +266,27 @@ def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "decode/intens: 2/2 replicates" in out
     assert "acc=1.000" in out
+
+
+def test_force_rerun_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
+    """force_rerun re-collects replicates the store already has.
+
+    Exists for deliberate re-collection (re-running a lane's early seeds on
+    new hardware to remove a within-lane serving-stack confound); the
+    append-only store makes this safe because every reader resolves the
+    newest run_ts per key.
+    """
+    import dataclasses
+
+    harness.run_replicates("stub-model")
+    assert not harness.has_outstanding("stub-model")
+    n_first = len(fake_evaluate)
+
+    forced = dataclasses.replace(harness, force_rerun=True)
+    # Everything counts as outstanding again ...
+    assert forced.has_outstanding("stub-model")
+    forced.run_replicates("stub-model")
+    # ... and every (info, seed) was actually re-evaluated, not skipped.
+    assert len(fake_evaluate) == 2 * n_first
+    # The plain harness still sees a fully-collected model.
+    assert not harness.has_outstanding("stub-model")
