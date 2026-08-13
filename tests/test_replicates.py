@@ -268,8 +268,8 @@ def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
     assert "acc=1.000" in out
 
 
-def test_force_rerun_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
-    """force_rerun re-collects replicates the store already has.
+def test_force_seeds_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
+    """force_seeds re-collects replicates the store already has.
 
     Exists for deliberate re-collection (re-running a lane's early seeds on
     new hardware to remove a within-lane serving-stack confound); the
@@ -282,7 +282,7 @@ def test_force_rerun_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
     assert not harness.has_outstanding("stub-model")
     n_first = len(fake_evaluate)
 
-    forced = dataclasses.replace(harness, force_rerun=True)
+    forced = dataclasses.replace(harness, force_seeds=frozenset(harness.seeds))
     # Everything counts as outstanding again ...
     assert forced.has_outstanding("stub-model")
     forced.run_replicates("stub-model")
@@ -290,3 +290,22 @@ def test_force_rerun_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
     assert len(fake_evaluate) == 2 * n_first
     # The plain harness still sees a fully-collected model.
     assert not harness.has_outstanding("stub-model")
+
+
+def test_force_seeds_subset_recollects_only_those_seeds(harness, fake_evaluate):
+    """A seed subset re-runs exactly the forced seeds (the hardware-migration
+    case: early seeds re-collect on the new box, the homogeneous tail is
+    left alone)."""
+    import dataclasses
+
+    harness.run_replicates("stub-model")
+    n_first = len(fake_evaluate)
+
+    forced = dataclasses.replace(harness, force_seeds=frozenset({harness.seeds[0]}))
+    assert forced.has_outstanding("stub-model")
+    forced.run_replicates("stub-model")
+    # One of the two seeds re-evaluated -> exactly one extra evaluate call.
+    assert len(fake_evaluate) == n_first + 1
+    # A forced seed OUTSIDE this harness's seed range forces nothing.
+    unrelated = dataclasses.replace(harness, force_seeds=frozenset({999}))
+    assert not unrelated.has_outstanding("stub-model")

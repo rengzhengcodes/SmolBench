@@ -65,7 +65,7 @@ import logging
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Mapping, Optional, Sequence
+from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
 
 from smolbench.evals import Marks, Quiz
 from smolbench.evals import provider
@@ -112,15 +112,17 @@ class ReplicateHarness:
     #: sub-level of the experiment name -- see
     #: ``smolbench.evals.results_store.experiment_name``.
     prefix: str = ""
-    #: When True, EVERY (info type, seed) is treated as outstanding -- the
-    #: ``store.exists`` resume-skip is bypassed and each replicate is
-    #: re-collected and re-logged under a fresh ``run_ts``. Safe against the
-    #: append-only S3 log because every reader resolves the LATEST run_ts
-    #: per key (newest wins), so a re-run SUPERSEDES rather than duplicates.
-    #: Exists for deliberate re-collection (2026-08-13: re-running a lane's
-    #: early seeds on new hardware to remove a within-lane serving-stack
-    #: confound); never set it for a normal resume.
-    force_rerun: bool = False
+    #: Seeds whose (info type, seed) replicates are treated as outstanding
+    #: even when the store already has them -- the ``store.exists``
+    #: resume-skip is bypassed for exactly these seeds and each is
+    #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (the
+    #: default) disables forcing entirely. Safe against the append-only S3
+    #: log because every reader resolves the LATEST run_ts per key (newest
+    #: wins), so a re-run SUPERSEDES rather than duplicates. Exists for
+    #: deliberate re-collection (2026-08-13: re-running a lane's early seeds
+    #: on new hardware to remove a within-lane serving-stack confound);
+    #: never set it for a normal resume.
+    force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
     def store(self) -> ResultsStore:
@@ -217,7 +219,8 @@ class ReplicateHarness:
             given (info type, seed) counts as "not outstanding" -- see
             ``ResultsStore.exists``.
         """
-        if self.force_rerun:
+        forced = self.force_seeds or frozenset()
+        if any(seed in forced for seed in self.seeds):
             return True
         tag: str = self.archetype_tags[model]
         return any(
@@ -275,11 +278,12 @@ class ReplicateHarness:
             eval_kwargs["max_parallel"] = max_parallel
         if request_timeout is not None:
             eval_kwargs["request_timeout"] = request_timeout
+        forced = self.force_seeds or frozenset()
         for seed in self.seeds:
             outstanding = [
                 info
                 for info in self.info_types
-                if self.force_rerun
+                if seed in forced
                 or not self.store.exists(self._address(model, tag, info, seed))
             ]
             if not outstanding:

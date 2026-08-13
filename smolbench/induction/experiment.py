@@ -216,10 +216,11 @@ class InductionExperiment:
     #: so no coordination is needed BEYOND disjointness, which
     #: ``seeds`` guarantees.
     shard: Optional[Tuple[int, int]] = None
-    #: Forwarded to ``ReplicateHarness.force_rerun``: bypasses the
-    #: resume-skip so every replicate is re-collected and re-logged (newest
-    #: run_ts supersedes on read). For deliberate re-collection only.
-    force_rerun: bool = False
+    #: Forwarded to ``ReplicateHarness.force_seeds``: seeds whose replicates
+    #: are re-collected and re-logged past the resume-skip (newest run_ts
+    #: supersedes on read). ``None`` disables. For deliberate re-collection
+    #: only.
+    force_seeds: Optional[frozenset] = None
 
     def __post_init__(self) -> None:
         if self.shard is not None:
@@ -304,7 +305,7 @@ class InductionExperiment:
             seeds=self.seeds,
             info_types=self.info_types,
             prefix=self.prefix,
-            force_rerun=self.force_rerun,
+            force_seeds=self.force_seeds,
         )
 
     def _apply_env(self) -> None:

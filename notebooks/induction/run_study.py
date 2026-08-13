@@ -218,6 +218,48 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     return index, count
 
 
+def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
+    """Parses ``INDUCTION_FORCE_RERUN`` into a forced-seed set.
+
+    Parameters
+    ----------
+    raw : str
+        The environment value: ``""`` (off), ``"1"`` (force every seed in
+        `full_range`), or ``"a-b"`` (force the inclusive subrange a..b).
+    full_range : range
+        The study's full seed range, used both for ``"1"`` and to validate
+        that a subrange stays inside the study's seeds.
+
+    Returns
+    -------
+    frozenset[int] | None
+        Seeds to re-collect past the resume-skip, or ``None`` when unset.
+
+    Raises
+    ------
+    SystemExit
+        On an unparseable value or a subrange outside `full_range` --
+        immediately at import, never silently as a no-op resume.
+    """
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw == "1":
+        return frozenset(full_range)
+    try:
+        lo, hi = (int(part) for part in raw.split("-", 1))
+    except ValueError:
+        raise SystemExit(
+            f"INDUCTION_FORCE_RERUN={raw!r}: expected '1' or 'a-b' (e.g. '0-11')"
+        )
+    if lo > hi or lo < full_range.start or hi >= full_range.stop:
+        raise SystemExit(
+            f"INDUCTION_FORCE_RERUN={raw!r}: subrange must lie inside "
+            f"{full_range.start}..{full_range.stop - 1}"
+        )
+    return frozenset(range(lo, hi + 1))
+
+
 SHARD = _parse_shard("INDUCTION_SHARD")
 
 # A shard needs its OWN AWS tag and state file -- without that, shard 1
@@ -560,13 +602,18 @@ EXPERIMENT = InductionExperiment(
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
     shard=SHARD,
-    # INDUCTION_FORCE_RERUN=1: re-collect every replicate this process is
-    # responsible for even when the store already has it (newest run_ts
-    # supersedes on read). For deliberate re-collection ONLY -- e.g. the
-    # 2026-08-13 gemma-4-12b re-run on g7 hardware to keep the lane's 30
-    # seeds serving-stack-homogeneous. Combine with INDUCTION_SHARD to
-    # parallelize the re-run across boxes.
-    force_rerun=os.environ.get("INDUCTION_FORCE_RERUN", "").strip() == "1",
+    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip
+    # (newest run_ts supersedes on read). "1" forces the full seed range;
+    # "a-b" forces the inclusive seed subrange a..b (e.g. "0-11" re-collects
+    # only a lane's early seeds after a hardware migration, leaving the
+    # already-homogeneous tail untouched). For deliberate re-collection
+    # ONLY -- e.g. the 2026-08-13 gemma-4-12b / deepseek-v4-flash re-runs
+    # that keep each lane serving-stack-homogeneous. Combines with
+    # INDUCTION_SHARD (a shard forces only the forced seeds it owns).
+    force_seeds=_parse_force_seeds(
+        os.environ.get("INDUCTION_FORCE_RERUN", ""),
+        range(BASE_SEED, BASE_SEED + N_REPLICATES),
+    ),
 )
 
 
