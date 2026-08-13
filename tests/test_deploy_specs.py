@@ -201,6 +201,14 @@ def test_derive_tp_falls_back_to_the_spec_pin():
     # Unknown model (the canary is deliberately absent from the heads map).
     assert derive_tp("qwen2.5-1.5b", "g6e.12xlarge", {"tp": 1}) == 1
     # Unknown instance type: never guess a GPU count.
-    assert derive_tp("gemma-4-12b", "g7e.2xlarge", {"tp": 4}) == 4
+    assert derive_tp("gemma-4-12b", "g9.99xlarge", {"tp": 4}) == 4
     # No pin at all defaults to 1.
     assert derive_tp("qwen2.5-1.5b", "mystery.large", {}) == 1
+
+
+def test_derive_tp_on_sm120_g7_boxes():
+    from smolbench.evals.ec2 import derive_tp
+
+    # g7.12xlarge carries TWO GPUs (not four like g6e.12xlarge).
+    assert derive_tp("gemma-4-12b", "g7.12xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 2
+    assert derive_tp("exaone-4.5-33b", "g7e.2xlarge", EC2_DEPLOY_SPECS["exaone-4.5-33b"]) == 1

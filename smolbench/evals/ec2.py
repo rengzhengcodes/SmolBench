@@ -466,6 +466,11 @@ MODEL_ATTENTION_HEADS = {
 _INSTANCE_GPU_COUNTS = {
     "g6e.xlarge": 1, "g6e.2xlarge": 1, "g6e.4xlarge": 1, "g6e.8xlarge": 1,
     "g6e.12xlarge": 4, "g6e.24xlarge": 4, "g6e.48xlarge": 8,
+    # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both SM120,
+    # PCIe-only. Counts verified via describe-instance-types 2026-08-13
+    # (note the 12xlarge sizes carry TWO GPUs, unlike g6e's four).
+    "g7.2xlarge": 1, "g7.12xlarge": 2,
+    "g7e.2xlarge": 1, "g7e.12xlarge": 2,
     "p5.48xlarge": 8, "p5e.48xlarge": 8, "p5en.48xlarge": 8,
     "p6-b200.48xlarge": 8,
 }
