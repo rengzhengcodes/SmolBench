@@ -548,6 +548,52 @@ _INSTANCE_GPU_NAMES = {
 }
 
 
+#: Optional hardware pin, ``"<gpu-name-substring>:<count>"`` (e.g. ``"L40S:1"``).
+#: When set, a lane REFUSES to serve on a box whose silicon does not match.
+#:
+#: WHY: widening ``EC2_INSTANCE_TYPES`` to escape a capacity wall is the
+#: obvious move and a silent confound -- on 2026-08-14 two repair lanes that
+#: were completing cells generated on g6e.4xlarge landed on g6e.2xlarge
+#: instead. That case was benign (both carry exactly one L40S, so GPU and tp
+#: were unchanged) and the user accepted it, but nothing in the system had
+#: CHECKED that; the widened list would equally have accepted a 4-GPU
+#: g6e.12xlarge, changing derived tp mid-lane. Pin the silicon, not the
+#: instance size: it permits the harmless substitution and blocks the
+#: contaminating one.
+EC2_REQUIRE_GPU: str = os.getenv("EC2_REQUIRE_GPU", "")
+
+
+def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
+    """Raises when the landed box's GPU does not match ``EC2_REQUIRE_GPU``.
+
+    Fails BEFORE the container swap, so a mismatched box never generates a
+    single row. No-ops when the pin is unset (the default) or when the landed
+    instance type is absent from this module's tables -- an unknown type is
+    reported rather than silently treated as a match.
+    """
+    if not EC2_REQUIRE_GPU:
+        return
+    want_name, _, want_count = EC2_REQUIRE_GPU.partition(":")
+    itype = str(state.get("instance_type") or "")
+    got_count = _INSTANCE_GPU_COUNTS.get(itype)
+    got_name = _INSTANCE_GPU_NAMES.get(itype.split(".", 1)[0])
+    if got_name is None or got_count is None:
+        raise RuntimeError(
+            f"EC2_REQUIRE_GPU={EC2_REQUIRE_GPU!r} is set but instance type "
+            f"{itype!r} is not in this module's GPU tables, so its silicon "
+            "cannot be checked. Add it to _INSTANCE_GPU_COUNTS/_NAMES or drop "
+            "the pin -- refusing to serve unverified hardware."
+        )
+    if want_name.strip() not in got_name or (want_count and got_count != int(want_count)):
+        raise RuntimeError(
+            f"hardware pin violated for lane {model!r}: EC2_REQUIRE_GPU="
+            f"{EC2_REQUIRE_GPU!r} but {itype} carries {got_count}x {got_name}.\n"
+            "Serving here would generate rows on different silicon from the "
+            "rest of the lane. Wait for the pinned hardware, or clear the pin "
+            "deliberately and record the change."
+        )
+
+
 def server_config(model: str) -> Optional[Dict[str, Any]]:
     """Serving-stack snapshot for `model` on the currently provisioned box.
 
@@ -2164,6 +2210,9 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             "add one with hf_model_id / tp / max_model_len."
         )
     state = _require_state()
+    # Check the silicon BEFORE swapping the container: a mismatched box must
+    # not generate even one row (see EC2_REQUIRE_GPU).
+    _assert_required_gpu(state, model)
     serve_payload = {
         "served_model_name": model,
         "hf_model_id": spec["hf_model_id"],

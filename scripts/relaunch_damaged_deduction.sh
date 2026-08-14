@@ -52,7 +52,7 @@ set -a; source notebooks/deduction/keys.env; set +a
 
 BUCKET=smolbench-results-414266451290
 
-# lane key | instance types | regions
+# lane key | instance types | regions | REQUIRED GPU (silicon pin)
 # Types match each rung's original EC2_DEPLOY_SPECS placement so the re-run
 # lands on the SAME hardware class as the cells it is completing -- a
 # different GPU would confound within-lane comparisons.
@@ -61,18 +61,18 @@ LANES=(
   # type list buys capacity without changing the accelerator (derive_tp reads
   # the landed box). ministral-3-3b exhausted g6e.4xlarge in all three regions
   # on the first attempt.
-  "nemotron-3-nano-4b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1"
-  "ministral-3-3b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1"
-  "exaone-4.5-33b|g6e.12xlarge|us-east-2,us-west-2,us-east-1"
-  "gemma-4-31b|g6e.12xlarge|us-east-2,us-west-2,us-east-1"
-  "deepseek-v3.1|p5e.48xlarge|us-east-2,us-west-2"
+  "nemotron-3-nano-4b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
+  "ministral-3-3b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
+  "exaone-4.5-33b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
+  "gemma-4-31b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
+  "deepseek-v3.1|p5e.48xlarge|us-east-2,us-west-2|H200:8"
   # Only 6 cells, but a lane with ANY infra loss keeps the completeness audit
   # red, and a permanently-red gate is one nobody reads.
-  "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1"
+  "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
 )
 
 launch_one() {
-    local key="$1" types="$2" regions="$3"
+    local key="$1" types="$2" regions="$3" gpu="$4"
     local run_dir="notebooks/deduction/results/runs/scaling_${key}"
     mkdir -p "$run_dir"
 
@@ -104,6 +104,12 @@ print(audit_lane(open('$run_dir/all_rows.jsonl').read())['infra'])
     # first lane's box and serves ITS model on top: three lanes fought over one
     # g6e.12xlarge on the first attempt at this re-run (22:29Z 2026-08-14),
     # caught before any row was written.
+    # Pin the SILICON, not the instance size: permits the harmless
+    # g6e.4xlarge->g6e.2xlarge substitution (same single L40S, same tp; the
+    # user accepted it 2026-08-14) while refusing a 4-GPU g6e.12xlarge, which
+    # would change derived tp mid-lane. serve_model raises before the
+    # container swap, so a mismatched box never writes a row.
+    EC2_REQUIRE_GPU="$gpu" \
     EC2_EXPERIMENT_TAG="scaling-${key}" \
     LEAN_MODEL="$key" \
     LEAN_STATE_FILE=".ec2_state_scaling_${key}_repair.json" \
@@ -113,20 +119,20 @@ print(audit_lane(open('$run_dir/all_rows.jsonl').read())['infra'])
     EC2_MAX_PARALLEL_REQUESTS=8 \
     setsid nohup .venv/bin/python -u notebooks/deduction/run_study.py --teardown \
         >> "notebooks/deduction/results/repair_${key}.log" 2>&1 < /dev/null &
-    echo "  ${key}: launched pid $!  (${types} @ ${regions})"
+    echo "  ${key}: launched pid $!  (${types} @ ${regions}, pinned ${gpu})"
 }
 
 if [[ $# -ge 1 ]]; then
     for spec in "${LANES[@]}"; do
-        IFS='|' read -r key types regions <<< "$spec"
-        [[ "$key" == "$1" ]] && launch_one "$key" "$types" "$regions" && exit 0
+        IFS='|' read -r key types regions gpu <<< "$spec"
+        [[ "$key" == "$1" ]] && launch_one "$key" "$types" "$regions" "$gpu" && exit 0
     done
     echo "unknown lane: $1" >&2; exit 1
 fi
 
 echo "relaunching ${#LANES[@]} damaged deduction lanes:"
 for spec in "${LANES[@]}"; do
-    IFS='|' read -r key types regions <<< "$spec"
-    launch_one "$key" "$types" "$regions"
+    IFS='|' read -r key types regions gpu <<< "$spec"
+    launch_one "$key" "$types" "$regions" "$gpu"
     sleep 5   # stagger so five provision hunts do not race the same AZ
 done

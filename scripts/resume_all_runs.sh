@@ -44,6 +44,9 @@ if pgrep -f "run_shards.py --model ministral-3-14b" >/dev/null; then
     echo "   already running; left alone"
 else
     set -a; source notebooks/induction/keys.env; source notebooks/ec2-operator.env; set +a
+    # g7.24xlarge = 4x RTX PRO 4500; pin it so a widened hunt cannot
+    # quietly move these seeds onto different silicon.
+    EC2_REQUIRE_GPU="RTX PRO 4500:4" \
     EC2_MAX_PARALLEL_REQUESTS=4 EC2_IDLE_TIMEOUT_MIN=90 \
     setsid nohup .venv/bin/python -u scripts/run_shards.py \
         --model ministral-3-14b --count 11 --only-shards "$INDUCTION_SEEDS" \

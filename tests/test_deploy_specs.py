@@ -236,3 +236,39 @@ def test_derive_tp_unknown_type_fallback_warns_for_known_model(caplog):
     with caplog.at_level(logging.WARNING):
         assert derive_tp("qwen2.5-1.5b", "g6e.12xlarge", {"tp": 1}) == 1
     assert not caplog.records
+
+
+def test_hardware_pin_blocks_a_gpu_swap_but_allows_a_size_swap(monkeypatch):
+    """EC2_REQUIRE_GPU pins SILICON, not instance size.
+
+    Widening EC2_INSTANCE_TYPES to escape a capacity wall is the obvious move
+    and a silent confound. On 2026-08-14 two repair lanes completing cells
+    generated on g6e.4xlarge landed on g6e.2xlarge; that was benign (both
+    carry one L40S, so GPU and tp were unchanged) and was accepted, but the
+    same widened list would equally have taken a 4-GPU g6e.12xlarge and
+    changed derived tp mid-lane. The pin must permit the first and refuse the
+    second.
+    """
+    from smolbench.evals import ec2
+
+    monkeypatch.setattr(ec2, "EC2_REQUIRE_GPU", "L40S:1")
+
+    # Same silicon, different size -- the accepted substitution.
+    ec2._assert_required_gpu({"instance_type": "g6e.2xlarge"}, "ministral-3-3b")
+    ec2._assert_required_gpu({"instance_type": "g6e.4xlarge"}, "ministral-3-3b")
+
+    # Same family, FOUR GPUs -- would silently change tp.
+    with pytest.raises(RuntimeError, match="hardware pin violated"):
+        ec2._assert_required_gpu({"instance_type": "g6e.12xlarge"}, "ministral-3-3b")
+
+    # Different silicon entirely.
+    with pytest.raises(RuntimeError, match="hardware pin violated"):
+        ec2._assert_required_gpu({"instance_type": "g7.4xlarge"}, "ministral-3-3b")
+
+    # Unknown type is reported, never treated as a match.
+    with pytest.raises(RuntimeError, match="not in this module's GPU tables"):
+        ec2._assert_required_gpu({"instance_type": "zz9.42xlarge"}, "ministral-3-3b")
+
+    # Unset pin is a no-op: every existing lane keeps working unchanged.
+    monkeypatch.setattr(ec2, "EC2_REQUIRE_GPU", "")
+    ec2._assert_required_gpu({"instance_type": "g6e.12xlarge"}, "ministral-3-3b")

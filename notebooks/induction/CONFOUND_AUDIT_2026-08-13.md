@@ -257,3 +257,31 @@ segments g6e.12xlarge tp=4 (us-east-2c then us-east-1d).
     ladder with this caveat attached. The wiring was identical across
     rungs (the family's deploy-spec `system_prompt` recipe), so this is a
     model-behaviour difference, not a serving-config difference.
+
+## 11. Hardware deviations in the 2026-08-14 repair runs (user-accepted, pinned going forward)
+
+The repair runs that regenerate infrastructure-lost cells did not all land on the
+instance size their lane originally used. Recorded here because the analysis must
+know, and because `server_config` stamps `instance_type`/`gpu` onto every row, so
+the two are cross-checkable.
+
+**Deduction — `nemotron-3-nano-4b` and `ministral-3-3b`: `g6e.4xlarge` → `g6e.2xlarge`.**
+`g6e.4xlarge` capacity was exhausted in all three regions, so the type list was
+widened. Both sizes carry exactly ONE L40S 48GB and run tp=1 under the same image
+and vLLM args, so **GPU and sharding are unchanged**; the sizes differ only in host
+vCPU/RAM, which affects throughput rather than sampling. Disclosed and accepted by
+the user on the explicit condition that sharding and GPU stay the same.
+
+**Induction — seed 19 (shard 8 of 11): `us-east-2` → `us-west-2d`.** Identical
+instance type (`g7.24xlarge`, 4× RTX PRO 4500, tp=4) and image; region/AZ only.
+The other six reshard seeds ran in us-east-2c.
+
+**Prevention (not just documentation).** `EC2_REQUIRE_GPU="<gpu>:<count>"` now pins
+the SILICON rather than the instance size: `serve_model` raises before the container
+swap when the landed box does not match, so a mismatched box never generates a row.
+The pin permits the accepted size substitution (`L40S:1` covers g6e.2/4/8/16xlarge)
+and refuses the contaminating one (a 4-GPU `g6e.12xlarge` would silently change
+derived tp mid-lane). An instance type missing from the module's GPU tables is
+reported rather than treated as a match. Lanes are pinned in
+`scripts/relaunch_damaged_deduction.sh` (L40S:1 / L40S:4 / H200:8) and the induction
+reshard in `scripts/resume_all_runs.sh` (RTX PRO 4500:4).
