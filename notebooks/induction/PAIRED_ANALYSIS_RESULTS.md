@@ -218,10 +218,11 @@ there. Where the profile is empty- or collapse-dominated, the small gaps
 (`glm_flash` 39 vs 33, `glm_air` 176 vs 164) genuinely do show the parser recovering what
 is present.
 
-> **Note on the companion document.** `POWER_ANALYSIS_2026-08-14.md` as committed at
-> `3cac6e75` still carries a banner deferring to a predicted pairing gain that this
-> document refutes (§"Headline"). A corrected version is staged in the sibling session and
-> may or may not land; until it does, read that banner as superseded here.
+> **Note on the companion document.** Between `3cac6e75` and `619c8ebf`,
+> `POWER_ANALYSIS_2026-08-14.md` carried a banner deferring to a predicted pairing gain
+> that this document refutes (§"Headline"). **Corrected at `619c8ebf`** — at HEAD the two
+> documents agree that R = 78 is contaminated at source rather than a pairing artifact.
+> Kept as a history note for anyone reading the repo in that range.
 
 **Operational hazard (do not skip).** `results_store.sync_down()` is a one-way S3 → local
 mirror that overwrites the local tree, so any `regrade.py --write` is destroyed by the
@@ -249,6 +250,16 @@ That safety net does not exist for this study and the docstring should be correc
 6. **Hold all Ministral conclusions.** All four arms are contaminated, `min3_14b` is at
    23/30 seeds, and it drives the R = 78 figure. Let the lane drain, then re-examine —
    but do not re-collect on hardware grounds; the audit clears the serving stack.
+
+   *Fleet state, 2026-08-14 19:27 UTC.* The lane is progressing but barely. Under an
+   11-shard relaunch, shards 0/1/9/10 completed as pure resume-skips (their logs still
+   report `min3_14b/zero: 23/…`, i.e. the total has not moved off 23), shard 8 is the only
+   one doing work at 2/36 prompted, and the babysitter has been cycling
+   `capacity-exhausted hunt; re-hunting in 300s` for g7.24xlarge in us-east-2 since ~18:22.
+   Note the self-inflicted part: the same degeneration that contaminates this lane —
+   responses up to 203,113 characters — is *why* it collects so slowly. **Continued spend
+   here buys more marks of the kind this document recommends quarantining**, which makes
+   draining the lane a cost decision rather than a prerequisite.
 7. **Flag the `zero`-arm contamination** on all three Ministral rungs before leaning on
    the chance-floor baseline anywhere in the write-up.
 8. **Fix `regrade.py:28-29`'s stale safety claim** (results are gitignored, so
