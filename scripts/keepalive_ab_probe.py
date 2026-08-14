@@ -87,6 +87,12 @@ COMPLETION_BUDGET = 88_396
 #: both arms -- an asymmetric timeout would bias the comparison.
 READ_TIMEOUT_S = 4_200
 CONNECT_TIMEOUT_S = 10
+#: A probe run is only informative if SOMETHING ran long enough to create the
+#: idle stretch under test. The boxes that failed were reaped after 30 minutes
+#: idle, so a run whose longest request settled in well under that never
+#: reached the regime -- 35 min sits just above the ~43-minute honest
+#: generation's lower spread while staying clear of the fast-answer case.
+MIN_VALID_ELAPSED_S = 2_100
 
 
 def load_prompt(bucket: str, key: str, mark_index: int) -> str:
@@ -106,9 +112,24 @@ def load_prompt(bucket: str, key: str, mark_index: int) -> str:
 
 
 def _body(prompt: str) -> Dict[str, Any]:
+    """Builds the completion body the STUDY would send, not a minimal one.
+
+    The provider system prompt is mandatory here, not cosmetic: Ministral's
+    thinking mode is carried entirely by the deploy-spec ``system_prompt``
+    (this family takes no ``chat_template_kwargs``), so omitting it serves the
+    model non-reasoning. It then answers this "reply with a single integer"
+    prompt in milliseconds -- no long generation, no long idle, and the probe
+    measures nothing. The first run of this script did exactly that: four
+    requests settled in 2 seconds. System message first, matching
+    ChatClient's ordering.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    sys_prompt = ec2._system_prompt(MODEL)
+    if sys_prompt:
+        messages.insert(0, {"role": "system", "content": sys_prompt})
     return {
         "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         # Seeded like every other generation in this study; never dropped.
         "seed": 0,
         "max_completion_tokens": COMPLETION_BUDGET,
@@ -152,6 +173,16 @@ def verdict(results) -> str:
     plain = [r for r in results if r["arm"] == "plain"]
     ka_ok = sum(r["outcome"] == "returned" for r in keepalive)
     pl_ok = sum(r["outcome"] == "returned" for r in plain)
+
+    # A run that never generated for long never created the idle stretch the
+    # hypothesis is about, so its outcome carries no information either way --
+    # report that instead of a verdict. Checked BEFORE the success branches so
+    # a fast all-returned run can't be misread as "keepalive works".
+    if max((r["elapsed_s"] for r in results), default=0) < MIN_VALID_ELAPSED_S:
+        return (f"PROBE INVALID: every request settled in under "
+                f"{MIN_VALID_ELAPSED_S / 60:.0f} min, so the long idle period was "
+                "never created (is the model thinking? check the system prompt). "
+                "This says nothing about keepalive -- fix the probe and re-run.")
     if ka_ok and not pl_ok:
         return ("FIX PROVEN: keepalive returned and plain did not. Relaunch the "
                 "reshard with the fix in place.")
@@ -215,6 +246,17 @@ def main() -> int:
                 ]
                 results = [f.result() for f in futures]
             logging.info("all four settled after %.1f min", (time.monotonic() - started) / 60)
+            # Logged HERE, before teardown, not only in the final print: the
+            # teardown waiter can run for minutes (or fail outright), and a
+            # probe whose whole purpose is one measurement must not be able to
+            # lose that measurement behind a slow terminate.
+            for r in results:
+                logging.info(
+                    "RESULT %s #%d: %s after %.1fs (%d chars)%s",
+                    r["arm"], r["index"], r["outcome"], r["elapsed_s"], r["chars"],
+                    f" -- {r.get('error', '')}" if r.get("error") else "",
+                )
+            logging.info("VERDICT: %s", verdict(results))
     finally:
         if args.keep_box:
             logging.warning("--keep-box set: instance left RUNNING and billing")
