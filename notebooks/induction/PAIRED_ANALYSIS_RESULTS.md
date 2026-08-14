@@ -295,6 +295,23 @@ That safety net does not exist for this study and the docstring should be correc
    `git checkout` will not undo a `--write`), and treat S3 write-back as user-approved
    only.
 
+## Ownership and trigger (settled 2026-08-14)
+
+**The statistical analysis belongs to the induction analysis session** (this document's
+author). The earlier overlap with the family-ladder study's task #10 is **resolved by user
+decision**: the remaining peer session's job is **AWS monitoring only**.
+
+**Trigger: the analysis runs after ALL AWS runs are complete** — not per-lane, not
+mid-flight. That includes the induction `min3_14b` repair-and-retry, the deduction verify
+pass, and the outstanding gemma / ministral deduction lanes. Nothing below should be
+executed against a partially-collected study; the whole point of the items in "Open
+questions" is that figures derived mid-flight expire.
+
+*Why the wait is load-bearing, not procedural.* Three of this document's own conclusions
+were derived mid-flight and had to be corrected — the R = 78 sizing (contaminated by an
+in-repair lane), the 23/30 caveat (provisional), and the fleet narrative (retracted
+entirely). Running the final analysis against a settled dataset is the direct remedy.
+
 ## Open questions and handoff state (2026-08-14, end of session)
 
 **1. The equivalence bound — DECIDED 2026-08-14: state it as ±0.20, collect nothing
