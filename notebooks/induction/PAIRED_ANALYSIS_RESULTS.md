@@ -167,23 +167,34 @@ already accounted for. **Regrade-vs-quarantine is not a live fork — only quara
 Reading the raw responses says why, and the three collapsed lanes are not the same
 failure:
 
-- **exaone_32b / exaone_33b noise — total generative collapse.** Zero empty completions,
-  but the text is unrelated to the task: *"We are going to implement a for and use only
-  the = signs there"*, Korean prose about stakeholder relations, one response of **88,751
-  characters** (i.e. generating to the token cap). Of 270 marks the correct answer appears
-  anywhere in only 1 and 24 respectively, and those are incidental substring matches
-  inside multi-kilobyte rambles. **acc 0.000 is a graded zero, but the arm is unusable:**
-  it measures whitespace-padding-induced degeneration, not induction. Report it as
-  UNUSABLE, never as accuracy — the same call the noise-arm record makes for prior
-  degenerate arms, and consistent with the standing rule never to regrade runaway
-  enumerations leniently.
-- **glm_flash noise — half the arm is missing.** 132 of 270 completions are empty. The
-  non-empty ones are fine (`<tool_call>2520` — 2520 is the correct answer, lcm(1..9),
-  merely wrapped in markup). But the parser is not materially under-recovering: 33 marks
-  scored correct against 38 that contain the answer at all. **Unusable at 49% empty**, and
-  the empty half is an infrastructure symptom worth a separate look.
-- **glm_air noise — degraded but usable**, with the caveat stated: 16 empty, 164/270
-  scored correct against 176 containing the answer.
+- **exaone_32b / exaone_33b noise — total generative collapse.** **Zero** empty
+  completions, but the text is unrelated to the task: *"We are going to implement a for
+  and use only the = signs there"*, Korean prose about stakeholder relations. Longest
+  responses run to **299,517** and **159,156 characters** — generating to the token cap.
+  Of 270 marks the correct answer appears anywhere in only **2 and 5** respectively, and
+  those are incidental substring matches inside multi-kilobyte rambles. **acc 0.000 is a
+  graded zero, but the arm is unusable:** it measures whitespace-padding-induced
+  degeneration, not induction. Report it as UNUSABLE, never as accuracy — the same call
+  the noise-arm record makes for prior degenerate arms, and consistent with the standing
+  rule never to regrade runaway enumerations leniently.
+- **glm_flash noise — half the arm is missing.** **132 of 270** completions are empty
+  (48.9%). The non-empty ones are fine (`<tool_call>2520` — 2520 is the correct answer for
+  the k=9 harmonic, lcm(1..9), merely wrapped in markup). But the parser is not materially
+  under-recovering: 33 marks scored correct against 39 that contain their own answer at
+  all. **Unusable**, and the empty half is an infrastructure symptom (longest response
+  284,206 chars) worth a separate look.
+- **glm_air noise — degraded but usable, with an 18% caveat.** **48 of 270** empty
+  (17.8%); 164 scored correct against 176 containing their own answer. Kept in, because
+  acc 0.607 rests on responses that parse fine — but the caveat is sized to 18% missing,
+  not the 6% an earlier draft of this document reported.
+
+*Measurement note.* These per-response counts were taken with a YAML loader that maps the
+files' `!!python/object:` tags to plain dicts rather than constructing them — safe, and
+unlike `yaml.unsafe_load` it does not violate the repo convention against unsafe-loading
+generated files. An earlier regex-based pass got `glm_air` empties (16 vs 48) and
+`exaone_33b` answer-hits (24 vs 5) badly wrong, because `response` is a YAML **block
+scalar** that a line-oriented regex truncates. Any future pass over `response` text must
+use a real parser. Both sessions' independent counts agree under the corrected method.
 
 **Operational hazard (do not skip).** `results_store.sync_down()` is a one-way S3 → local
 mirror that overwrites the local tree, so any `regrade.py --write` is destroyed by the
