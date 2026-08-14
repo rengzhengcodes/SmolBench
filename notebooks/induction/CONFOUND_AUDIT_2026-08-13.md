@@ -209,3 +209,51 @@ segments g6e.12xlarge tp=4 (us-east-2c then us-east-1d).
    success) on a proven LeanDojo environment before touching any lane,
    and (b) write fresh canonical verified_rows.jsonl objects. Analysis
    must treat any BROKEN-suffixed object as non-data.
+
+9. VERIFY-VOID (point 8) ROOT CAUSE, ESTABLISHED 2026-08-14 -- and the
+   re-run is clean. Point 8 named two candidate causes; both were
+   incomplete. With the Lean toolchain on PATH AND a complete traced
+   cache (5,192 `*.ast.json`, byte-matching the known-good host), the
+   verify box STILL returned 10/10 sanity `exception`. Isolating the
+   layers -- (a) raw `Dojo.__enter__` -> child exits status 1 with an
+   EMPTY output buffer; (b) `pexpect.spawn("lake env lean ...")` by hand
+   -> exit 0, so pexpect/PATH/lake are sound; (c) reproducing LeanDojo's
+   own `_modify_file` and running the generated file under `subprocess`
+   to capture stdout -- surfaced the real error: `unknown package
+   'Aesop'` on line 1, with every downstream `expected token` being
+   Mathlib NOTATION (e.g. `<char>`) failing only because imports had
+   already died. Counting build artifacts: the box had 0 `.olean` files
+   for each of aesop/std/Qq/proofwidgets where the known-good host had
+   88/152/11/30; Mathlib's OWN oleans matched exactly (4,080 both).
+   LeanDojo's remote-cache tarball ships Mathlib's build but NOT its
+   dependencies' builds, so a host provisioned purely from that cache can
+   never compile a theorem file. Fix: a bounded `lake build Std Aesop Qq
+   ProofWidgets ImportGraph Cli` (277 modules, ~4 min, does not touch
+   Mathlib). After the fix the smoke gate passed -- sanity 10/10
+   `success`, cells returning real verdicts (lean_error / incomplete /
+   success) -- and the full 21-lane pass was launched on that environment.
+   CONSEQUENCE FOR ANALYSIS: an `*.ast.json` count is NOT evidence that a
+   verification host is healthy; only sanity-replay verdicts are. The
+   superseded 08-11..13 verdicts were an environment artifact end to end
+   and carry no signal about any model.
+
+10. DEDUCTION CoT IS NOT UNIFORM WITHIN THE MINISTRAL LADDER -- treat the
+    middle rung's rung-effect with caution. Measured over each lane's 944
+    canonical cells (share of cells carrying non-empty reasoning content,
+    and mean completion tokens):
+      ministral-3-3b   373/944 = 39.5%   mean  8,762 tok
+      ministral-3-8b    19/944 =  2.0%   mean    508 tok (median 29)
+      ministral-3-14b  451/944 = 47.8%   mean  4,707 tok (median 1,423)
+      gemma-4-12b (contrast) 672/944 = 71.2%   mean 14,074 tok
+    So the earlier read of this as a FAMILY-wide anomaly was wrong: the
+    outer rungs both think on roughly 40-48% of Lean prompts, while the
+    8B rung is effectively non-thinking (2%). Because CoT mode is not
+    constant across the ladder, the ministral within-family rung contrast
+    on deduction confounds parameter count with thinking behaviour at the
+    middle rung specifically. This was NOT "fixed" mid-study (forcing
+    thinking on one rung would confound the contrast in the opposite
+    direction and break comparability with the already-collected rungs);
+    it is recorded here so the write-up reports the ministral deduction
+    ladder with this caveat attached. The wiring was identical across
+    rungs (the family's deploy-spec `system_prompt` recipe), so this is a
+    model-behaviour difference, not a serving-config difference.
