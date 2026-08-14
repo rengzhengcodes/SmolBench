@@ -260,6 +260,15 @@ That safety net does not exist for this study and the docstring should be correc
    responses up to 203,113 characters — is *why* it collects so slowly. **Continued spend
    here buys more marks of the kind this document recommends quarantining**, which makes
    draining the lane a cost decision rather than a prerequisite.
+
+   **Update, 21:20 UTC — the lane is no longer collecting.** The `run_shards.py`
+   babysitter died silently: its log's last entry is 18:54:29 (`shard 8: launched pid
+   31676`) with no shutdown message, and no `run_shards.py` or `run_study.py` process
+   remains. Confirmed independently by both sessions; us-east-2 has zero running
+   instances, so the shard boxes did reap themselves and nothing is billing. **min3_14b is
+   frozen at 23/30 and will not advance without a deliberate relaunch** — which, per the
+   paragraph above, buys quarantine-bound marks slowly. Cause unknown; the log simply
+   stops.
 7. **Flag the `zero`-arm contamination** on all three Ministral rungs before leaning on
    the chance-floor baseline anywhere in the write-up.
 8. **Fix `regrade.py:28-29`'s stale safety claim** (results are gitignored, so
