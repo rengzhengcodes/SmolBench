@@ -198,6 +198,18 @@ def main() -> int:
     parser.add_argument("--tag", default="scaling", help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver).")
     parser.add_argument("--no-shard", action="store_true", help="Single unsharded run (requires --state-file; --count must be 1).")
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")
+    # WHY: the driver provisions BEFORE it checks has_outstanding(), so a shard
+    # whose seeds are already collected still bids for a box, holds it through
+    # boot, finds nothing to do and exits. During the 2026-08-14 ministral
+    # reshard those no-op shards held 4 x 96 vCPU against a 768 vCPU quota and
+    # starved the one shard that had real work for 47 minutes. Selecting the
+    # shards that actually carry work keeps the seed->shard mapping intact
+    # (--count still defines it) while never launching the empty ones.
+    parser.add_argument(
+        "--only-shards", default="",
+        help="Comma-separated shard indices to run (default: all). "
+             "--count still defines the seed->shard mapping.",
+    )
     args = parser.parse_args()
     if args.no_shard and (args.count != 1 or not args.state_file):
         parser.error("--no-shard requires --count 1 and --state-file")
@@ -249,7 +261,19 @@ def main() -> int:
             self.status = "running"
             logging.info(f"shard {self.index}: launched pid {self.proc.pid}")
 
-    shards: List[Shard] = [Shard(i) for i in range(args.count)]
+    selected = (
+        sorted({int(i) for i in args.only_shards.split(",") if i.strip() != ""})
+        if args.only_shards else list(range(args.count))
+    )
+    out_of_range = [i for i in selected if not 0 <= i < args.count]
+    if out_of_range:
+        parser.error(f"--only-shards {out_of_range} outside 0..{args.count - 1}")
+    if args.only_shards:
+        logging.info(
+            "running %d of %d shard(s): %s (the rest are not launched, so they "
+            "cannot provision no-op boxes)", len(selected), args.count, selected,
+        )
+    shards: List[Shard] = [Shard(i) for i in selected]
     for shard in shards:
         pid = find_adoptable(args.model, shard.selector)
         if pid is not None:
