@@ -293,6 +293,41 @@ That safety net does not exist for this study and the docstring should be correc
    `git checkout` will not undo a `--write`), and treat S3 write-back as user-approved
    only.
 
+## Open questions and handoff state (2026-08-14, end of session)
+
+**1. The equivalence bound — the one live decision, and it is a claims-language call, not
+a compute purchase.** R = 30 certifies the 79 near-tie contrasts only at **±0.20**
+(needs R = 28). Matching the parent periodic study's **±0.15** needs **R = 49** (R = 50
+with periodic's +1 headroom). The paired re-analysis above establishes this does *not*
+resolve itself statistically, so the options are: widen the stated bound to ±0.20, or buy
+20 more replicates per condition.
+
+*Recommendation: widen.* 68 of the 210 PRIMARY contrasts are ceiling pairs sitting in the
+TOST family **by assumption rather than by evidence** — the pilot could not resolve them
+in a 9-question quiz, and at exact 1.000-vs-1.000 with zero discordance no replicate count
+recovers them. Buying 20 replicates to tighten a bound around contrasts that are tied by
+construction is the expensive way to get the same claim. (Concurred by the sibling session
+that ran the sizing.)
+
+**2. An ACHIEVED-power analysis does not exist.** `power_analysis.py` is **prospective
+only** — verified by reading it: `load_outcomes()` reads exactly `rep_{PILOT_SEED}` with
+`PILOT_SEED = 0` and simulates forward, never consuming the 30 landed replicates. Every R
+figure it prints is "what the seed-0 pilot implies R should be", not "what the collected
+data achieved". Computing achieved power over the landed seeds is new code. This is the
+most likely next request.
+
+**3. Re-derive the min3 contrasts when the lane drains.** `min3_14b` is at 23/30 under a
+debug-and-retry (keepalive fix `27fd1c1a`). When it completes, the 23/30 caveat drops out
+and the min3-driven contrasts — including the R = 78 driver — must be **re-derived, not
+assumed unchanged**. Note the compliance contamination is independent of the fleet fix and
+will not improve with more seeds.
+
+**4. The local `results/` tree is a ~19:00Z snapshot** (2492 objects, gitignored).
+Re-sync before trusting it. `sync_down()` overwrites local unconditionally.
+
+*Provenance for this section:* items 1 and 3's sizing figures are the sibling session's
+(`619c8ebf`), not re-derived here; item 2 is verified directly against the source.
+
 ## Reproduce
 
 ```
