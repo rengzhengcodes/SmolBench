@@ -212,3 +212,27 @@ def test_derive_tp_on_sm120_g7_boxes():
     # g7.12xlarge carries TWO GPUs (not four like g6e.12xlarge).
     assert derive_tp("gemma-4-12b", "g7.12xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 2
     assert derive_tp("exaone-4.5-33b", "g7e.2xlarge", EC2_DEPLOY_SPECS["exaone-4.5-33b"]) == 1
+    # The larger g7 sizes must be mapped too: a lane whose hunt spans a
+    # mapped and an unmapped size would silently change tp mid-lane
+    # (2026-08-14 peer audit -- the ministral g7.24xlarge fleet was on the
+    # spec-fallback path, correct only by coincidence).
+    assert derive_tp("ministral-3-14b", "g7.24xlarge", EC2_DEPLOY_SPECS["ministral-3-14b"]) == 4
+    assert derive_tp("ministral-3-14b", "g7.48xlarge", EC2_DEPLOY_SPECS["ministral-3-14b"]) == 8
+    assert derive_tp("gemma-4-12b", "g7.24xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 4
+    assert derive_tp("gemma-4-12b", "p5.4xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 1
+    assert derive_tp("ministral-3-14b", "g7e.12xlarge", EC2_DEPLOY_SPECS["ministral-3-14b"]) == 2
+
+
+def test_derive_tp_unknown_type_fallback_warns_for_known_model(caplog):
+    import logging
+
+    from smolbench.evals.ec2 import derive_tp
+
+    with caplog.at_level(logging.WARNING):
+        assert derive_tp("gemma-4-12b", "g9.99xlarge", {"tp": 4}) == 4
+    assert any("not in _INSTANCE_GPU_COUNTS" in r.message for r in caplog.records)
+    # Unknown MODEL on a known type stays a silent, by-design fallback.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert derive_tp("qwen2.5-1.5b", "g6e.12xlarge", {"tp": 1}) == 1
+    assert not caplog.records

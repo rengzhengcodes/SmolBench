@@ -467,10 +467,18 @@ _INSTANCE_GPU_COUNTS = {
     "g6e.xlarge": 1, "g6e.2xlarge": 1, "g6e.4xlarge": 1, "g6e.8xlarge": 1,
     "g6e.12xlarge": 4, "g6e.24xlarge": 4, "g6e.48xlarge": 8,
     # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both SM120,
-    # PCIe-only. Counts verified via describe-instance-types 2026-08-13
-    # (note the 12xlarge sizes carry TWO GPUs, unlike g6e's four).
-    "g7.2xlarge": 1, "g7.12xlarge": 2,
-    "g7e.2xlarge": 1, "g7e.12xlarge": 2,
+    # PCIe-only. Counts verified via describe-instance-types 2026-08-14,
+    # ALL sizes this time (note the 12xlarge sizes carry TWO GPUs, unlike
+    # g6e's four): a partially-mapped family is worse than an unmapped one,
+    # because a lane whose --types spans a mapped and an unmapped size gets
+    # derived tp on one box and spec-fallback tp on the other -- a silent
+    # mid-lane tp change (2026-08-14 peer audit: the ministral g7.24xlarge
+    # fleet ran the fallback path and was correct only by coincidence).
+    "g7.2xlarge": 1, "g7.4xlarge": 1, "g7.8xlarge": 1,
+    "g7.12xlarge": 2, "g7.24xlarge": 4, "g7.48xlarge": 8,
+    "g7e.2xlarge": 1, "g7e.4xlarge": 1, "g7e.8xlarge": 1,
+    "g7e.12xlarge": 2, "g7e.24xlarge": 4, "g7e.48xlarge": 8,
+    "p5.4xlarge": 1,
     "p5.48xlarge": 8, "p5e.48xlarge": 8, "p5en.48xlarge": 8,
     "p6-b200.48xlarge": 8,
 }
@@ -503,6 +511,17 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     heads = MODEL_ATTENTION_HEADS.get(model)
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
     if heads is None or gpus is None:
+        if heads is not None and instance_type:
+            # A known model on an unmapped instance type is the dangerous
+            # fallback: if a lane's hunt spans mapped AND unmapped types, the
+            # spec tp used here can differ from the derived tp on the mapped
+            # box -- a silent mid-lane tp change. Loud so the gap gets mapped.
+            logging.warning(
+                f"derive_tp: instance type {instance_type!r} not in "
+                f"_INSTANCE_GPU_COUNTS; falling back to spec tp="
+                f"{spec.get('tp', 1)} for {model!r} -- add the type's GPU "
+                "count to keep tp derivation consistent across a lane"
+            )
         return spec.get("tp", 1)
     tp = max(1, math.gcd(heads, gpus))
     if tp < gpus:
