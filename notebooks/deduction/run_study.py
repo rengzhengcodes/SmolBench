@@ -846,6 +846,10 @@ def main(argv: list[str] | None = None) -> None:
 
                 import yaml
 
+                # mkdir first: runner.sweep creates run_dir itself, but this
+                # sidecar writes BEFORE the sweep runs (2026-08-14: the
+                # missing mkdir crashed the first gemma deduction relaunch).
+                run_dir.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 with (run_dir / "server_config.yaml").open("a") as sink:
                     yaml.safe_dump([{"captured_utc": stamp, **cfg}],
