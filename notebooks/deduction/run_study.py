@@ -833,6 +833,23 @@ def main(argv: list[str] | None = None) -> None:
     n = 0
     try:
         with ec2.serve_model(key):
+            # Provenance sidecar: snapshot the serving stack INSIDE the
+            # serve block (the landed box is the one that generates) and
+            # write it into run_dir so spool_to_s3 carries it with the
+            # rows. One file per run, not per row -- a deduction run serves
+            # on one box unless it crashes, and a relaunch APPENDS a fresh
+            # timestamped snapshot rather than overwriting, so a resumed
+            # run that landed on different hardware is visible in the log.
+            cfg = ec2.server_config(key)
+            if cfg is not None:
+                import datetime
+
+                import yaml
+
+                stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                with (run_dir / "server_config.yaml").open("a") as sink:
+                    yaml.safe_dump([{"captured_utc": stamp, **cfg}],
+                                   sink, default_flow_style=False, indent=4)
             n = runner.sweep(config, run_dir, verifier=verifier)
         logging.info(f"main[{key}]: sweep wrote {n} cell row(s) to {run_dir}")
         if args.no_s3:

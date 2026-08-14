@@ -140,3 +140,18 @@ def test_load_real_legacy_result_file():
     assert sorted(vars(marks.marks[0])) == ["answer", "query", "response", "score"]
     # The string path must reach the same place as the file path.
     assert Marks.loads(raw) == marks
+
+
+def test_server_config_round_trips_and_defaults_none():
+    marks = _sample_marks()
+    assert marks.server_config is None
+    assert Marks.loads(marks.dumps()).server_config is None  # key absent pre-field files too
+
+    import dataclasses
+
+    stamped = dataclasses.replace(
+        marks, server_config={"instance_type": "p6-b200.48xlarge", "gpu": "8x B200 180GB", "tp": 8}
+    )
+    loaded = Marks.loads(stamped.dumps())
+    assert loaded.server_config == stamped.server_config
+    assert loaded == stamped

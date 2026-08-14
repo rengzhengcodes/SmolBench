@@ -537,6 +537,69 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     return tp
 
 
+#: GPU marketing name + memory per instance FAMILY (the type prefix before
+#: the size dot). Purely descriptive -- consumed by ``server_config`` so a
+#: result file names its silicon without the reader needing this module's
+#: type tables. p6 families keep their full hyphenated prefix.
+_INSTANCE_GPU_NAMES = {
+    "g6e": "L40S 48GB", "g7": "RTX PRO 4500 32GB", "g7e": "RTX PRO 6000 96GB",
+    "p4d": "A100 40GB", "p5": "H100 80GB", "p5e": "H200 141GB",
+    "p5en": "H200 141GB", "p6-b200": "B200 180GB", "p6-b300": "B300 288GB",
+}
+
+
+def server_config(model: str) -> Optional[Dict[str, Any]]:
+    """Serving-stack snapshot for `model` on the currently provisioned box.
+
+    Built for result provenance: stamped onto every stored replicate
+    (``Marks.server_config`` via ``ReplicateHarness.run_replicates``) and
+    written as a deduction run's ``server_config.yaml`` sidecar, so results
+    self-describe their hardware instead of needing a timestamp->config side
+    table (the 2026-08-13 confound audit had to reconstruct exactly that
+    because none of this was logged).
+
+    Parameters
+    ----------
+    model : str
+        Deploy-spec key (e.g. ``"gemma-4-12b"``).
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        ``instance_type`` / ``gpu`` (e.g. ``"2x RTX PRO 4500 32GB"``) /
+        ``tp`` / ``region`` / ``availability_zone`` / ``instance_id`` /
+        ``vllm_image`` / ``hf_model_id``. Unknown pieces are None rather
+        than omitted, so readers see the schema. Returns None outright when
+        no snapshot could be built at all.
+
+    Notes
+    -----
+    NEVER raises: provenance is a passenger, and a lane must not crash (and
+    crash-loop under its babysitter) because a snapshot field was missing.
+    Reads the state file at call time -- call it INSIDE the ``serve_model``
+    block so the landed instance it describes is the one that serves.
+    """
+    try:
+        state = _load_state() or {}
+        spec = EC2_DEPLOY_SPECS.get(model, {})
+        itype = state.get("instance_type") or ""
+        gpus = _INSTANCE_GPU_COUNTS.get(itype)
+        name = _INSTANCE_GPU_NAMES.get(itype.split(".", 1)[0])
+        return {
+            "instance_type": itype or None,
+            "gpu": f"{gpus}x {name}" if gpus and name else None,
+            "tp": derive_tp(model, itype, spec),
+            "region": state.get("region"),
+            "availability_zone": state.get("availability_zone"),
+            "instance_id": state.get("instance_id"),
+            "vllm_image": EC2_VLLM_IMAGE,
+            "hf_model_id": spec.get("hf_model_id"),
+        }
+    except Exception:  # noqa: BLE001 -- see Notes: provenance never crashes a lane
+        logging.warning("server_config: could not snapshot the serving config", exc_info=True)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Internal poll/timeout tuning: implementation detail, NOT env-configurable
 # like the EC2_* knobs above -- these bound how chattily this module polls

@@ -164,13 +164,15 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
     captured_kwargs = {}
 
     def fake_run_replicates(
-        self, model, extra_args=None, max_parallel=None, request_timeout=None
+        self, model, extra_args=None, max_parallel=None, request_timeout=None,
+        server_config=None,
     ):
         events.append(("run_replicates", model))
         captured_kwargs.update(
             extra_args=extra_args,
             max_parallel=max_parallel,
             request_timeout=request_timeout,
+            server_config=server_config,
         )
 
     monkeypatch.setattr(ReplicateHarness, "run_replicates", fake_run_replicates)
@@ -187,6 +189,10 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
     # Only the kwargs the caller passed carry a non-None value through;
     # request_timeout (never passed here) forwards as None, which
     # ReplicateHarness.run_replicates treats identically to "omitted".
+    # server_config is ALWAYS captured inside the serve block (provenance
+    # is not caller-optional); with no live state file it degrades to a
+    # schema-complete snapshot of Nones, never to an error.
+    assert isinstance(captured_kwargs.pop("server_config"), dict)
     assert captured_kwargs == {
         "extra_args": {"max_completion_tokens": 64},
         "max_parallel": 8,
@@ -225,18 +231,21 @@ def test_run_forwards_no_kwargs_when_caller_passes_none(monkeypatch, exp):
     captured_kwargs = {}
 
     def fake_run_replicates(
-        self, model, extra_args=None, max_parallel=None, request_timeout=None
+        self, model, extra_args=None, max_parallel=None, request_timeout=None,
+        server_config=None,
     ):
         captured_kwargs.update(
             extra_args=extra_args,
             max_parallel=max_parallel,
             request_timeout=request_timeout,
+            server_config=server_config,
         )
 
     monkeypatch.setattr(ReplicateHarness, "run_replicates", fake_run_replicates)
 
     exp.run("stub-model")
 
+    assert isinstance(captured_kwargs.pop("server_config"), dict)
     assert captured_kwargs == {
         "extra_args": None,
         "max_parallel": None,

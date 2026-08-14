@@ -106,6 +106,15 @@ class Marks:
     marks: tuple[Mark, ...]
     #: Date the quiz was run.
     date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    #: Serving-stack snapshot the completions were generated under (instance
+    #: type, GPUs, tensor-parallel degree, image, ...) -- provenance so a
+    #: result file is self-describing about its hardware instead of needing a
+    #: timestamp->config side table (the 2026-08-13 confound audit had to
+    #: reconstruct exactly that). None on results written before this field
+    #: existed, and for providers with nothing meaningful to report; a plain
+    #: default (not default_factory) so legacy ``!!python/object`` files
+    #: missing the attribute fall back to the class attribute on access.
+    server_config: Optional[dict] = None
 
     @property
     def correct(self) -> int:
@@ -194,6 +203,8 @@ class Marks:
             model=data["model"],
             marks=tuple(Mark(**m) for m in data["marks"]),
             date=data["date"],
+            # .get: files written before the field existed have no key.
+            server_config=data.get("server_config"),
         )
 
     @classmethod

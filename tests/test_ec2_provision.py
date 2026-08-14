@@ -470,3 +470,32 @@ def test_wait_public_ip_observed_terminated_aborts_immediately(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="went terminated right after launch"):
         ec2._wait_public_ip("us-east-2", "i-abc")
+
+
+# ec2.server_config: the provenance snapshot stamped onto stored results.
+
+def test_server_config_snapshot_from_state(monkeypatch):
+    monkeypatch.setattr(ec2, "_load_state", lambda: {
+        "instance_type": "g7.24xlarge", "region": "us-east-2",
+        "availability_zone": "us-east-2c", "instance_id": "i-abc123",
+    })
+    cfg = ec2.server_config("ministral-3-14b")
+    assert cfg["instance_type"] == "g7.24xlarge"
+    assert cfg["gpu"] == "4x RTX PRO 4500 32GB"
+    assert cfg["tp"] == 4  # derived from the landed box, not the spec pin
+    assert cfg["availability_zone"] == "us-east-2c"
+    assert cfg["instance_id"] == "i-abc123"
+    assert cfg["vllm_image"] == ec2.EC2_VLLM_IMAGE
+    assert cfg["hf_model_id"] == ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["hf_model_id"]
+
+
+def test_server_config_never_raises(monkeypatch):
+    def boom():
+        raise RuntimeError("corrupt state")
+
+    monkeypatch.setattr(ec2, "_load_state", boom)
+    assert ec2.server_config("ministral-3-14b") is None
+    # Absent state degrades to a schema-complete dict of Nones, not a crash.
+    monkeypatch.setattr(ec2, "_load_state", lambda: None)
+    cfg = ec2.server_config("gemma-4-12b")
+    assert cfg["instance_type"] is None and cfg["gpu"] is None

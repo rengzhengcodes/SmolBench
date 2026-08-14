@@ -309,3 +309,23 @@ def test_force_seeds_subset_recollects_only_those_seeds(harness, fake_evaluate):
     # A forced seed OUTSIDE this harness's seed range forces nothing.
     unrelated = dataclasses.replace(harness, force_seeds=frozenset({999}))
     assert not unrelated.has_outstanding("stub-model")
+
+
+# server_config provenance stamping (2026-08-14, user directive: results must
+# record what serving stack generated them).
+
+def test_run_replicates_stamps_server_config_on_every_dump(harness, fake_evaluate, tmp_path):
+    cfg = {"instance_type": "g7.12xlarge", "gpu": "2x RTX PRO 4500 32GB", "tp": 2}
+    harness.run_replicates("stub-model", server_config=cfg)
+    for seed in (1, 2):
+        for info in ("intens", "extens"):
+            stored = Marks.load(tmp_path / f"decode_{info}" / f"rep_{seed}.yaml")
+            assert stored.server_config == cfg
+            # A private copy, not the caller's mapping.
+            assert stored.server_config is not cfg
+
+
+def test_run_replicates_without_server_config_leaves_field_none(harness, fake_evaluate, tmp_path):
+    harness.run_replicates("stub-model")
+    stored = Marks.load(tmp_path / "decode_intens" / "rep_1.yaml")
+    assert stored.server_config is None

@@ -235,6 +235,7 @@ class ReplicateHarness:
         extra_args: Optional[dict] = None,
         max_parallel: Optional[int] = None,
         request_timeout: Optional[int] = None,
+        server_config: Optional[Mapping] = None,
     ) -> None:
         """Runs all outstanding replicates of every info type against model.
 
@@ -244,6 +245,12 @@ class ReplicateHarness:
         replicates (the long timeout must cover the longest chain on attempt
         1, or long-CoT requests get censored -> non-deterministic,
         top-truncated output).
+
+        ``server_config``, when given, is stamped onto every ``Marks``
+        dumped by this call (``Marks.server_config``) so each stored
+        replicate self-describes the serving stack that generated it --
+        instance type, GPUs, tp, image (see ``ec2.server_config``). None
+        (the default) leaves the field None, exactly as before it existed.
 
         Notes
         -----
@@ -301,7 +308,14 @@ class ReplicateHarness:
             start: int = 0
             for info in outstanding:
                 n: int = len(quizzes[info])
-                marks = Marks(model=model, marks=tuple(pooled.marks[start:start + n]))
+                marks = Marks(
+                    model=model,
+                    marks=tuple(pooled.marks[start:start + n]),
+                    # dict(): a private copy per dump, so a caller mutating
+                    # its mapping later cannot retroactively alter what one
+                    # replicate claims it ran on.
+                    server_config=dict(server_config) if server_config else None,
+                )
                 start += n
                 # No mkdir here: LocalResultsStore.dump_marks owns creating
                 # its parent directory, and S3ResultsStore.dump_marks needs

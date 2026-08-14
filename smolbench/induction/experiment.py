@@ -456,6 +456,10 @@ class InductionExperiment:
                 extra_args=extra_args,
                 max_parallel=max_parallel,
                 request_timeout=request_timeout,
+                # Captured INSIDE the serve block so the snapshot describes
+                # the box that actually serves these replicates; stamped on
+                # every stored Marks (never raises -- see ec2.server_config).
+                server_config=ec2.server_config(model),
             )
 
     def summarize(self, model: str) -> None:
