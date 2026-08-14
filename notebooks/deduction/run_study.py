@@ -500,7 +500,29 @@ def build_config(key: str) -> dict:
     >>> cfg["models"][0]["extra_params"] is COT_ARGS["glm-4.7"]
     False
     """
-    run_name = os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}"
+    # Optional theorem-stride shard ("i/n", passed through to
+    # runner._select_theorems). The shard key is CONDITIONALLY present:
+    # LEAN_SHARD unset leaves the theorems block byte-identical to the
+    # unsharded study config. When sharding, the DEFAULT run_name gains a
+    # _shard<i>of<n> suffix so two concurrently running shards can never
+    # share a run directory (concurrent appends to one all_rows.jsonl from
+    # separate processes interleave large rows and corrupt the file); an
+    # explicit LEAN_RUN_NAME still wins verbatim, so a caller overriding it
+    # for a sharded launch owns that uniqueness themselves.
+    shard = os.environ.get("LEAN_SHARD", "").strip()
+    shard_suffix = ""
+    if shard:
+        shard_suffix = "_shard" + shard.replace("/", "of")
+    run_name = os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}{shard_suffix}"
+    theorems: dict[str, Any] = {
+        "source": "replay_passing",
+        "kind": "novel_premises",
+        "split": "val",
+        "limit": 300,
+        "seed": 0,
+    }
+    if shard:
+        theorems["shard"] = shard
     return {
         "run_name": run_name,
         "seed": 0,
@@ -513,13 +535,7 @@ def build_config(key: str) -> dict:
         "skip_trivial": True,
         "k": {"strategy": "last"},
         "n_replicates": 1,
-        "theorems": {
-            "source": "replay_passing",
-            "kind": "novel_premises",
-            "split": "val",
-            "limit": 300,
-            "seed": 0,
-        },
+        "theorems": theorems,
         "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
         "theorem_workers": 4,
         "max_concurrency": 8,

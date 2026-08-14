@@ -214,6 +214,29 @@ def test_run_name_honours_fleet_override(driver, monkeypatch):
     assert driver.build_config(KEY)["run_name"] == f"scaling_{KEY}"
 
 
+def test_lean_shard_threads_into_theorems_and_run_name(driver, monkeypatch):
+    """``LEAN_SHARD=i/n`` must (a) add ``theorems.shard`` verbatim and (b)
+    suffix the DEFAULT run_name so two live shards can never share a run
+    directory (concurrent appends from separate processes would interleave
+    large rows inside one ``all_rows.jsonl``). An explicit ``LEAN_RUN_NAME``
+    still wins verbatim. With LEAN_SHARD unset, ``test_config_is_user_locked``
+    above already pins the theorems block to the exact shard-free dict."""
+    monkeypatch.setenv("LEAN_SHARD", "1/3")
+    cfg = driver.build_config(KEY)
+    assert cfg["theorems"]["shard"] == "1/3"
+    assert cfg["run_name"] == f"scaling_{KEY}_shard1of3"
+    # Everything else in the theorems block stays byte-identical.
+    assert {k: v for k, v in cfg["theorems"].items() if k != "shard"} == {
+        "source": "replay_passing",
+        "kind": "novel_premises",
+        "split": "val",
+        "limit": 300,
+        "seed": 0,
+    }
+    monkeypatch.setenv("LEAN_RUN_NAME", "scaling_custom")
+    assert driver.build_config(KEY)["run_name"] == "scaling_custom"
+
+
 def test_build_config_does_not_mutate_shared_cot_table(driver):
     """Mutating a returned config must not corrupt the shared ``COT_ARGS`` table.
 

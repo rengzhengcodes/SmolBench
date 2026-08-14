@@ -736,6 +736,42 @@ def test_select_theorems_seeded_selection_is_deterministic(sweep_ctx):
     assert [t.full_name for t in first] == [t.full_name for t in second]
 
 
+def test_select_theorems_shards_partition_the_unsharded_selection(sweep_ctx):
+    """`theorems.shard: "i/n"` slices AFTER the seeded sample, so the n
+    shards of one spec must be pairwise disjoint and their union (in stride
+    order) must be exactly the unsharded selection. This is the invariant a
+    sharded multi-box lane rests on: every shard recomputes the identical
+    pool and takes only its own slice, so merged shard outputs equal one
+    unsharded run's output with no duplicated and no dropped theorems.
+    """
+    base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
+    whole = [t.full_name for t in runner._select_theorems(base)]
+    assert len(whole) >= 2  # fixture must give the slices something to split
+
+    shards = [
+        [t.full_name for t in runner._select_theorems({**base, "shard": f"{i}/3"})]
+        for i in range(3)
+    ]
+    seen: list[str] = []
+    for i, names in enumerate(shards):
+        assert names == whole[i::3]
+        seen.extend(names)
+    assert sorted(seen) == sorted(whole)
+    assert len(seen) == len(set(seen))  # pairwise disjoint
+
+
+def test_select_theorems_shard_rejects_malformed_values(sweep_ctx):
+    """A malformed shard spec must raise, never silently return the FULL
+    pool: on a live sharded fleet, a shard that silently ran everything
+    would triple the spend and corrupt the merged rows with duplicates."""
+    import pytest
+
+    base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
+    for bad in ("3/3", "-1/3", "0", "0of3", "a/b", "1/0"):
+        with pytest.raises(ValueError):
+            runner._select_theorems({**base, "shard": bad})
+
+
 # ---------------------------------------------------------------------------
 # (l) frozen ordering + artifacts (SERIAL sweep only -- see docstring)
 # ---------------------------------------------------------------------------

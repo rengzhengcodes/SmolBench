@@ -358,6 +358,22 @@ def _select_theorems(spec: dict) -> list[BenchmarkTheorem]:
         rng = random.Random(seed)
         pool = rng.sample(pool, limit)
 
+    # Optional "i/n" stride shard, applied AFTER the seeded sample so every
+    # shard of the same spec computes the identical pool and takes a disjoint
+    # slice of it — the n shards' union is exactly the unsharded selection.
+    # Sharding at the THEOREM level (not the cell level) keeps all of one
+    # theorem's rungs and its sanity row on a single shard.
+    shard = str(spec.get("shard", "") or "")
+    if shard:
+        idx_str, sep, n_str = shard.partition("/")
+        try:
+            idx, n = int(idx_str), int(n_str)
+        except ValueError:
+            idx, n = -1, 0  # falls through to the range check below
+        if not sep or not (0 <= idx < n):
+            raise ValueError(f"theorems.shard {shard!r} must be 'i/n' with 0 <= i < n")
+        pool = pool[idx::n]
+
     return pool
 
 
