@@ -172,3 +172,40 @@ segments g6e.12xlarge tp=4 (us-east-2c then us-east-1d).
    server_config.yaml sidecars (040d2e83) record the config; if a resume
    lands on different hardware the sidecar appends a second snapshot and
    the verify pass must check it before pooling.
+
+## Addendum 2026-08-14 (afternoon): sharded deduction lanes + VOID verify pass
+
+7. Point 6 is superseded on lane shape: both remaining deduction legs were
+   SHARDED by theorem stride (`theorems.shard = "i/n"`, commit db566cf8 --
+   disjoint slices of the identical seeded 300-theorem sample; each
+   theorem's 4 rungs + sanity row stay on one box, so paired rung
+   contrasts remain within-box).
+   - ministral-3-14b: 3 fresh shards, 3x g7.24xlarge us-west-2d (same
+     type/tp=4/nightly image as its induction re-run fleet -> whole lane
+     type-homogeneous).
+   - gemma-4-12b: resharded MID-RUN at cell 502 (commit 559e45ed): the
+     unsharded driver (1x g7.12xlarge us-west-2b) was killed and its rows
+     pre-split into 4 shard dirs; shard 0 resumed ON THE ORIGINAL BOX,
+     shards 1-3 on fresh g7.12xlarge us-west-2. Whole lane =
+     4x g7.12xlarge us-west-2, type-homogeneous.
+   Each shard appends its own server_config.yaml snapshot; the merged
+   sidecar (scripts/merge_lean_shards.py) therefore lists 3 (ministral)
+   and 4 (gemma) instance_ids of ONE instance type each. Read multi-entry
+   sidecars on these two lanes as designed sharding, NOT as resumed-run
+   hardware drift.
+
+8. THE 2026-08-11..13 LEAN VERIFICATION PASS WAS VOID and its outputs are
+   superseded. Every lane's verified_rows.jsonl contained zero successes;
+   sanity replays (ground-truth proofs that must pass on a healthy
+   verifier) were 100% exceptions (`DojoInitError: Unexpected EOF`,
+   missing `*.ast.json`) -- the verify host's LeanDojo environment was
+   broken (dying Dojo subprocess / incomplete traced-repo cache), so no
+   candidate was ever actually tested against Lean. Per user directive
+   2026-08-14: all 16 objects were archived in place as
+   `verified_rows_BROKEN-dojoinit_archived-2026-08-14.jsonl` and the
+   canonical `verified_rows.jsonl` keys DELETED (16/16 size-verified
+   copies; bucket versioning additionally retains the originals). The
+   re-run pass must (a) first pass a sanity-group smoke (~100% sanity
+   success) on a proven LeanDojo environment before touching any lane,
+   and (b) write fresh canonical verified_rows.jsonl objects. Analysis
+   must treat any BROKEN-suffixed object as non-data.
