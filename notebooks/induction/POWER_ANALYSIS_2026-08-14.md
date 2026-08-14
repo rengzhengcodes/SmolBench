@@ -35,8 +35,17 @@ So R=78 is **not** a pairing artifact. It is contaminated at source: the
 headline is driven by `[min3 ladder | intens] min3_3b vs min3_14b`
 (0.44 vs 0.33), and those two lanes' *intens* marks are **13.7%** and **56.5%**
 non-compliant respectively (verified independently over the landed data);
-min3_14b is additionally incomplete at **23/30 seeds**. The runner-up driver,
-min3 extens (77), is 57.0% / 82.6% non-compliant. Do not act on R=78.
+min3_14b is additionally incomplete at **23/30 seeds** (PROVISIONAL — see below).
+The runner-up driver, min3 extens (77), is 57.0% / 82.6% non-compliant. Do not
+act on R=78.
+
+**PROVISIONAL — the 23/30 figure is expected to expire.** The min3_14b lane is
+MID-REPAIR, not frozen: the silent-delivery root cause is fixed (27fd1c1a, TCP
+keepalive on completion sockets) and the 7 remaining seeds are queued to
+relaunch behind an A/B gate (e59b81f0). Do **not** harden 23/30 into a "77% of
+intended data" caveat — re-derive the min3 contrasts once the lane drains.
+Note the two defects are independent: draining fixes 23/30 and does nothing for
+the 27.5%-compliant problem, which more seeds cannot improve.
 
 Everything below is a faithful run of `power_analysis.py` **as it exists
 today** (the plan is explicitly "not yet implemented"). It is reported because
@@ -116,12 +125,21 @@ All seven gates are saturated at R=30. **The gates are not the constraint.**
   near-ties can only be certified equivalent within **+/-0.20** at R=30
   (needs 28); matching the parent study's **+/-0.15** would require R=49,
   i.e. R=50 with periodic's +1 headroom.
-- So, **under the current unpaired statistic**: R=30 is adequate for the
-  difference claims and one notch loose on the equivalence claims — either
-  widen the stated equivalence bound to +/-0.20, or extend to R=50.
-  The paired re-analysis does **not** close this gap (it moves 1 of 210
-  contrasts), so the equivalence-bound choice is a real open question and not
-  an artifact of the statistic: either widen to +/-0.20 or extend to R=50.
+- So: R=30 is adequate for the difference claims and one notch loose on the
+  equivalence claims. The paired re-analysis does **not** close the gap (it
+  moves 1 of 210 contrasts), so this was a real choice and not an artifact of
+  the statistic: widen the stated bound to +/-0.20, or extend to R=50.
+
+**DECIDED (2026-08-14): WIDEN TO +/-0.20, collect nothing further.** Recorded in
+`35e7cfb8`; the decision was taken in the `smolbench-4d` session, whose
+ownership of this workstream was contested and unresolved at the time (see the
+study memory brief) — so attribute it rather than reading it as the study's
+uncontested final word. Rationale, which belongs in the methods and not a
+footnote because a reader comparing to the parent periodic study will ask why
+the bound differs: the ceiling near-ties sit at 1.00 vs 1.00 with **zero
+discordant items**, and at zero discordance NO replicate count resolves them.
+That is an identification limit, not a power shortfall — which is the argument
+against buying 20 more replicates to tighten a bound around them.
 
 ## Caveats
 
