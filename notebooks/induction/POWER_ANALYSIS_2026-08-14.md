@@ -20,14 +20,23 @@ design**, on two counts:
    contributes one unit to all 9 harmonic strata, which CMH sums as if
    independent; reportedly up to 56x the nominal alpha = 2.38e-4.
 
-**Consequence for this run.** The headline R=78 sits squarely inside that
-1.17x–2.83x pairing penalty band relative to R=30 (78/2.83 ~ 28, 78/2.0 ~ 39).
-So the most likely reading is that **R=78 is an artifact of the unpaired
-statistic, and the R=30 being collected is already adequate under the correct
-paired test (exact McNemar / matched-set CMH, Cochran's Q for the ladder
-gate).** Do not act on R=78 — i.e. do not extend the study to 78 replicates —
-until the paired re-analysis is run. Per that plan the re-analysis needs **no
-new data collection**.
+**UPDATE 2026-08-14 (later): the pairing hypothesis is REFUTED; the real cause
+is compliance contamination.** The paired re-analysis has since been run
+(`paired_analysis.py`, exact McNemar on item-matched marks, Holm over the 210):
+it changes **exactly one** contrast of 210 (`[nemo3 ladder | intens]
+nemo3_30b vs nemo3_120b`). Pairing buys almost nothing here because the real
+ceiling pairs have *exactly zero* discordant items (b/c = 0/0), and no test
+extracts signal from zero discordance — the 53x figure held only for the
+simulated low-but-nonzero-discordance regime. The measured clustering design
+effect is likewise modest: median **1.124**, p90 **1.881**, max 2.97 (not the
+56x worst-case bracket).
+
+So R=78 is **not** a pairing artifact. It is contaminated at source: the
+headline is driven by `[min3 ladder | intens] min3_3b vs min3_14b`
+(0.44 vs 0.33), and those two lanes' *intens* marks are **13.7%** and **56.5%**
+non-compliant respectively (verified independently over the landed data);
+min3_14b is additionally incomplete at **23/30 seeds**. The runner-up driver,
+min3 extens (77), is 57.0% / 82.6% non-compliant. Do not act on R=78.
 
 Everything below is a faithful run of `power_analysis.py` **as it exists
 today** (the plan is explicitly "not yet implemented"). It is reported because
@@ -110,9 +119,9 @@ All seven gates are saturated at R=30. **The gates are not the constraint.**
 - So, **under the current unpaired statistic**: R=30 is adequate for the
   difference claims and one notch loose on the equivalence claims — either
   widen the stated equivalence bound to +/-0.20, or extend to R=50.
-  **Under a paired statistic this gap likely closes on its own**, since the
-  pairing penalty is largest exactly on the ceiling near-ties that set the
-  TOST requirement. Re-run the sizing paired before buying any replicates.
+  The paired re-analysis does **not** close this gap (it moves 1 of 210
+  contrasts), so the equivalence-bound choice is a real open question and not
+  an artifact of the statistic: either widen to +/-0.20 or extend to R=50.
 
 ## Caveats
 
