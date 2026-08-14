@@ -25,8 +25,13 @@ Per condition, before vs after:
   reasoning, which is precisely the question the induction ``noise_intens``
   arm raised.
 
-Dry-run by default. ``--write`` rewrites the YAMLs in place; they are
-git-tracked, so a bad pass is recoverable with ``git checkout``.
+Dry-run by default. ``--write`` rewrites the YAMLs in place. There is NO
+git safety net: ``.gitignore`` ignores ``notebooks/*/results/`` for every
+study, so no result YAML is tracked and ``git checkout`` recovers nothing
+(verified 2026-08-14: ``git ls-files 'notebooks/*/results/*'`` returns 0).
+A bad ``--write`` pass is recoverable ONLY by re-fetching the results --
+for S3-backed studies via ``InductionExperiment.harness.sync_down()``,
+which is also what silently DISCARDS a good pass (see the guard below).
 
 S3-backed results guard
 ------------------------
