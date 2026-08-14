@@ -247,9 +247,11 @@ That safety net does not exist for this study and the docstring should be correc
 5. **Quarantine, don't regrade** — the regrade is already applied and recovers nothing.
    Mark `exaone_32b`/`exaone_33b` noise and `glm_flash` noise UNUSABLE (not acc 0.000);
    report `glm_air` noise as degraded-with-caveat; report **glm_47 as the noise finding**.
-6. **Hold all Ministral conclusions.** All four arms are contaminated, `min3_14b` is at
-   23/30 seeds, and it drives the R = 78 figure. Let the lane drain, then re-examine —
-   but do not re-collect on hardware grounds; the audit clears the serving stack.
+6. **Hold all Ministral conclusions.** All four arms are contaminated, and `min3_14b`
+   drives the R = 78 figure. Its seed count is **provisional and mid-repair** (see Open
+   Questions item 3) — re-derive when it drains rather than caveating on a number that is
+   about to change. Do not re-collect on *hardware* grounds; the audit clears the serving
+   stack.
 
    Over all 828 marks landed for `min3_14b` (23 seeds × 4 arms × 9 harmonics), only
    **27.5% are compliant**: 30.1% degenerate-repetition, 26.6% multiple-values, 15.2%
@@ -295,19 +297,22 @@ That safety net does not exist for this study and the docstring should be correc
 
 ## Open questions and handoff state (2026-08-14, end of session)
 
-**1. The equivalence bound — the one live decision, and it is a claims-language call, not
-a compute purchase.** R = 30 certifies the 79 near-tie contrasts only at **±0.20**
-(needs R = 28). Matching the parent periodic study's **±0.15** needs **R = 49** (R = 50
-with periodic's +1 headroom). The paired re-analysis above establishes this does *not*
-resolve itself statistically, so the options are: widen the stated bound to ±0.20, or buy
-20 more replicates per condition.
+**1. The equivalence bound — DECIDED 2026-08-14: state it as ±0.20, collect nothing
+further.** R = 30 certifies the 79 near-tie contrasts at **±0.20** (needs R = 28).
+Matching the parent periodic study's **±0.15** would need **R = 49** (R = 50 with
+periodic's +1 headroom), i.e. ~20 more replicates across all 84 conditions. The paired
+re-analysis above establishes the gap does *not* close statistically, so this was a
+claims-language call rather than a compute purchase, and the user chose to widen.
 
-*Recommendation: widen.* 68 of the 210 PRIMARY contrasts are ceiling pairs sitting in the
-TOST family **by assumption rather than by evidence** — the pilot could not resolve them
-in a 9-question quiz, and at exact 1.000-vs-1.000 with zero discordance no replicate count
-recovers them. Buying 20 replicates to tighten a bound around contrasts that are tied by
-construction is the expensive way to get the same claim. (Concurred by the sibling session
-that ran the sizing.)
+*Rationale, for the write-up.* 68 of the 210 PRIMARY contrasts are ceiling pairs sitting
+in the TOST family **by assumption rather than by evidence**. At exactly 1.000 vs 1.000
+with **zero discordant items**, no replicate count resolves them — that is an
+identification limit, not a power shortfall. Buying 20 replicates would purchase the same
+tie at higher cost. Both analysis sessions concurred before the decision.
+
+*Expect the question.* A reader comparing to the parent study will ask why the bound
+differs; the answer is the zero-discordance argument above, and it should appear in the
+methods rather than as a footnote.
 
 **2. An ACHIEVED-power analysis does not exist.** `power_analysis.py` is **prospective
 only** — verified by reading it: `load_outcomes()` reads exactly `rep_{PILOT_SEED}` with
@@ -316,8 +321,13 @@ figure it prints is "what the seed-0 pilot implies R should be", not "what the c
 data achieved". Computing achieved power over the landed seeds is new code. This is the
 most likely next request.
 
-**3. Re-derive the min3 contrasts when the lane drains.** `min3_14b` is at 23/30 under a
-debug-and-retry (keepalive fix `27fd1c1a`). When it completes, the 23/30 caveat drops out
+**3. Re-derive the min3 contrasts when the lane drains. ⚠ The 23/30 figure is PROVISIONAL
+and expected to expire within hours of this being written — do not bake it into the
+record as a "77% of intended data" caveat.** `min3_14b` is **mid-repair, not frozen**: the
+keepalive fix (`27fd1c1a`) is committed and the 7 remaining seeds are queued to relaunch
+behind an A/B gate (`e59b81f0`). Any sizing derived from 23/30 — here or in
+`POWER_ANALYSIS_2026-08-14.md` — is stale on arrival. When it completes, the 23/30 caveat
+drops out
 and the min3-driven contrasts — including the R = 78 driver — must be **re-derived, not
 assumed unchanged**. Note the compliance contamination is independent of the fleet fix and
 will not improve with more seeds.
