@@ -251,24 +251,42 @@ That safety net does not exist for this study and the docstring should be correc
    23/30 seeds, and it drives the R = 78 figure. Let the lane drain, then re-examine —
    but do not re-collect on hardware grounds; the audit clears the serving stack.
 
-   *Fleet state, 2026-08-14 19:27 UTC.* The lane is progressing but barely. Under an
-   11-shard relaunch, shards 0/1/9/10 completed as pure resume-skips (their logs still
-   report `min3_14b/zero: 23/…`, i.e. the total has not moved off 23), shard 8 is the only
-   one doing work at 2/36 prompted, and the babysitter has been cycling
-   `capacity-exhausted hunt; re-hunting in 300s` for g7.24xlarge in us-east-2 since ~18:22.
-   Note the self-inflicted part: the same degeneration that contaminates this lane —
-   responses up to 203,113 characters — is *why* it collects so slowly. **Continued spend
-   here buys more marks of the kind this document recommends quarantining**, which makes
-   draining the lane a cost decision rather than a prerequisite.
+   Over all 828 marks landed for `min3_14b` (23 seeds × 4 arms × 9 harmonics), only
+   **27.5% are compliant**: 30.1% degenerate-repetition, 26.6% multiple-values, 15.2%
+   empty. Independently measured in both sessions, from S3 and from the local tree, in
+   agreement. That is the basis of the quarantine recommendation, and it is a statement
+   about the marks, not about the fleet.
 
-   **Update, 21:20 UTC — the lane is no longer collecting.** The `run_shards.py`
-   babysitter died silently: its log's last entry is 18:54:29 (`shard 8: launched pid
-   31676`) with no shutdown message, and no `run_shards.py` or `run_study.py` process
-   remains. Confirmed independently by both sessions; us-east-2 has zero running
-   instances, so the shard boxes did reap themselves and nothing is billing. **min3_14b is
-   frozen at 23/30 and will not advance without a deliberate relaunch** — which, per the
-   paragraph above, buys quarantine-bound marks slowly. Cause unknown; the log simply
-   stops.
+   **Keep this separate from the fleet's health.** The recommendation above is about
+   whether the lane's *marks* are worth reporting. It never depended on the lane being
+   technically broken — which is just as well, because it was not. Conflating the two is
+   what produced the retracted fleet narrative below.
+
+   *Fleet state — earlier readings in this file's history were WRONG; see the retraction
+   in the commit that added this paragraph.* The `run_shards.py` babysitter did **not**
+   die silently and its cause is **not** unknown: the monitor session killed it
+   deliberately at ~20:10 UTC (by explicit PID) to stop the fleet relaunching into a known
+   bug while that bug was debugged. It was alive and healthy from 18:54 to 20:10. The log
+   has no entries after 18:54:29 because **this babysitter logs only hunt / launch /
+   complete events — a shard generating normally produces no output at all, so log silence
+   is the signature of health, not failure.** Two further readings recorded here earlier
+   were also misreads of a healthy system: shard 8 "stuck at 2/36" was a progress bar that
+   advances only on *completion*, where four concurrent 88k-token generations take ~43 min;
+   and the `capacity-exhausted` cycling was **self-inflicted contention**, not a dry pool —
+   four no-op resume-skip shards were holding vCPU, and a box landed the instant they
+   released it.
+
+   The measured root cause (monitor session's instrumentation, fixed in `27fd1c1a`): a
+   non-streaming completion is silent on the wire for the entire generation; this host
+   egresses over Wi-Fi behind NAT; a 40+ minute idle flow gets its mapping dropped, so the
+   response lands nowhere, the box then looks idle to its own watchdog and self-terminates.
+   `requests.post` never set `SO_KEEPALIVE`, and the OS default `tcp_keepalive_time` is
+   7200 s. The fix stamps `SO_KEEPALIVE` + `TCP_KEEPIDLE=60` on a shared session and is
+   generation-neutral, so data collected before and after stays comparable.
+
+   **Disposition: debug-and-retry, decided with the user — not abandonment.** Nothing in
+   this document argues for dropping the lane; the quarantine recommendation concerns how
+   its marks are *reported*, not whether it is *collected*.
 7. **Flag the `zero`-arm contamination** on all three Ministral rungs before leaning on
    the chance-floor baseline anywhere in the write-up.
 8. **Fix `regrade.py:28-29`'s stale safety claim** (results are gitignored, so
