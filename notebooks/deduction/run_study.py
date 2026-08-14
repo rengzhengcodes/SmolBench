@@ -350,6 +350,39 @@ if _RAW_LEAN_MODEL:
         # environment must always win over this file's own default.
         os.environ.setdefault(_env_name, _env_value)
     del _env_name, _env_value
+
+    # GUARD -- cross-lane box adoption. setdefault above means an
+    # EC2_EXPERIMENT_TAG already in the environment WINS, which is correct for
+    # a fleet supervisor overriding per lane but catastrophic when the value
+    # is shared: boxes are discovered by tag whenever a state file is absent
+    # (``_recover_tagged_instance``), so a second lane started under the same
+    # tag ADOPTS the first lane's instance and serves its own model on top of
+    # it. Rows generated after such a swap are attributed to the wrong model.
+    #
+    # This is not hypothetical: keys.env ships
+    # ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a standalone-run safety
+    # default, and a launcher that sources keys.env with ``set -a`` exports it
+    # into every lane. On 2026-08-14 three lanes (exaone-4.5-33b, gemma-4-31b,
+    # deepseek-v3.1) converged on one g6e.12xlarge that way; it was caught
+    # because the instance was tagged scaling-standalone rather than
+    # scaling-<key>, before any row was written.
+    #
+    # A lane's tag must name its lane. Fail loudly rather than let a run
+    # produce mislabelled data.
+    _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
+    if _RAW_LEAN_MODEL not in _TAG:
+        raise SystemExit(
+            f"EC2_EXPERIMENT_TAG={_TAG!r} does not name this lane's model "
+            f"({_RAW_LEAN_MODEL!r}).\n"
+            "Two lanes sharing a tag will adopt each other's EC2 instance and "
+            "generate rows under the wrong model.\n"
+            "Most likely cause: a launcher sourced notebooks/deduction/keys.env "
+            "with `set -a`, exporting its standalone default and overriding the "
+            "per-lane value this driver would otherwise install.\n"
+            f"Fix: export EC2_EXPERIMENT_TAG=scaling-{_RAW_LEAN_MODEL} for this "
+            "lane (or stop sourcing keys.env in the launcher)."
+        )
+    del _TAG
 # else: LEAN_MODEL is unset/empty. Deriving a tag/state-file from an empty
 # key (e.g. "scaling-") would be actively misleading, and there is no
 # benefit to it: selected_model() (called later, from main()) raises an

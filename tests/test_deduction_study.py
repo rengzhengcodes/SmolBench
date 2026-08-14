@@ -399,14 +399,16 @@ def test_fleet_exported_env_wins_over_driver_defaults():
     code = (
         "import os, sys, importlib.util\n"
         "os.environ['LEAN_MODEL'] = 'glm-4.7'\n"
-        "os.environ['EC2_EXPERIMENT_TAG'] = 'fleet-owned-tag'\n"
+        # Names the lane: the driver refuses a tag that does not, because a
+        # tag shared across lanes is exactly how two lanes converge on one box.
+        "os.environ['EC2_EXPERIMENT_TAG'] = 'fleet-owned-glm-4.7'\n"
         "os.environ['EC2_VLLM_IMAGE'] = 'fleet/image:pinned'\n"
         "os.environ['SMOLBENCH_LEAN_RESULTS'] = '/tmp/fleet-owned-results'\n"
         f"spec = importlib.util.spec_from_file_location('d', r'{DRIVER_PATH}')\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "sys.modules['d'] = m\n"
         "spec.loader.exec_module(m)\n"
-        "assert os.environ['EC2_EXPERIMENT_TAG'] == 'fleet-owned-tag'\n"
+        "assert os.environ['EC2_EXPERIMENT_TAG'] == 'fleet-owned-glm-4.7'\n"
         "assert os.environ['EC2_VLLM_IMAGE'] == 'fleet/image:pinned'\n"
         "assert os.environ['SMOLBENCH_LEAN_RESULTS'] == '/tmp/fleet-owned-results'\n"
         "print('SETDEFAULT-OK')\n"
@@ -845,3 +847,32 @@ def test_spool_missing_run_dir_is_not_an_error(driver, tmp_path):
     client = FakeS3()
     assert driver.spool_to_s3(tmp_path / "nope", KEY, client=client) == 0
     assert client.uploads == []
+
+
+def test_driver_refuses_a_tag_that_does_not_name_its_lane():
+    """A tag shared across lanes must abort the run, not start a box.
+
+    ``setdefault`` means an exported EC2_EXPERIMENT_TAG wins -- correct for a
+    supervisor, catastrophic when the value is shared. keys.env ships
+    ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a standalone default, and a
+    launcher sourcing it with ``set -a`` exports that into every lane; boxes
+    are then discovered by tag (``_recover_tagged_instance``) and the second
+    lane adopts the first lane's instance, serving its own model on top. Three
+    lanes converged on one g6e.12xlarge this way on 2026-08-14.
+    """
+    code = (
+        "import os, sys, importlib.util\n"
+        "os.environ['LEAN_MODEL'] = 'glm-4.7'\n"
+        "os.environ['EC2_EXPERIMENT_TAG'] = 'scaling-standalone'\n"
+        f"spec = importlib.util.spec_from_file_location('d', r'{DRIVER_PATH}')\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "sys.modules['d'] = m\n"
+        "spec.loader.exec_module(m)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=300,
+    )
+    assert proc.returncode != 0, "a shared tag must abort, not proceed"
+    assert "does not name this lane" in proc.stderr
+    assert "scaling-glm-4.7" in proc.stderr, "error must state the fix"
