@@ -1,6 +1,19 @@
 # Multiplicity & error-rate plan — periodic induction, 21-model family ladder
 
-**Status:** recommendation, 2026-08-14. Not yet implemented.
+**Status:** recommendation, 2026-08-14. **Partly superseded the same day — read
+`PAIRED_ANALYSIS_RESULTS.md` alongside it.**
+
+> **Correction (2026-08-14, after running the re-analysis this document specified).**
+> §2.1 predicted up to a **53× power gain** from switching to a paired test. Run against
+> the landed data, pairing changes **1 of 210 contrasts**. The simulation swept
+> discordance rates that were low but nonzero, where `DE = 2pq/d` blows up; the study's
+> actual ceiling pairs have *exactly zero* discordant items (1.000 vs 1.000, b/c = 0/0),
+> and no test recovers signal from zero discordance. **The recommendation stands — adopt
+> the paired test because it is correct for a matched design and free — but the power
+> argument for it does not.** §2.2's clustering worry survives in a much milder form: the
+> measured design effect is ~1.12 median / 1.88 p90, not the 56× the bracket allowed.
+> Read every power figure in §1–§3 as conditional on the simulated regime, not as a
+> property of this dataset.
 **Scope:** `notebooks/induction/` (the 7-family × 3-rung × 4-info-arm scaling study, R = 30,
 seeds 0–29, 9 harmonics per replicate). Sizing lives in `power_analysis.py`; **no
 analysis script exists yet**, so this document is written as the specification that
