@@ -188,13 +188,40 @@ failure:
   acc 0.607 rests on responses that parse fine — but the caveat is sized to 18% missing,
   not the 6% an earlier draft of this document reported.
 
-*Measurement note.* These per-response counts were taken with a YAML loader that maps the
-files' `!!python/object:` tags to plain dicts rather than constructing them — safe, and
-unlike `yaml.unsafe_load` it does not violate the repo convention against unsafe-loading
-generated files. An earlier regex-based pass got `glm_air` empties (16 vs 48) and
-`exaone_33b` answer-hits (24 vs 5) badly wrong, because `response` is a YAML **block
-scalar** that a line-oriented regex truncates. Any future pass over `response` text must
-use a real parser. Both sessions' independent counts agree under the corrected method.
+### Measurement notes — two traps, both hit before being caught
+
+Reproduce with `notebooks/induction/response_audit.py`, which encodes both.
+
+**Trap 1 — `response` is a YAML block scalar.** A line-oriented regex truncates it at the
+first line that looks like a new key. That understated `glm_air` empties (16 vs 48) and
+overstated `exaone_33b` answer-hits (24 vs 5). Use a real parser. The files carry
+`!!python/object:` tags, so `safe_load` refuses them and `unsafe_load` would construct
+arbitrary objects from generated files — against repo convention. The third option is what
+the script uses: map unknown tags to plain dicts. Both sessions independently reproduced
+all six lanes' counts under this method.
+
+**Trap 2 — the per-harmonic answer is not `lcm(1..k)`.** The queries are *counts* over one
+full 2520-position sequence, so harmonic k's answer is `2520 // k` =
+(2520, 1260, 840, 630, 504, 420, 360, 315, 280) — and it is identical for every seed, since
+only the label assignment varies with the seed. Assuming `lcm` yields
+`scored > answer_in_response`, which is arithmetically impossible. The script asserts
+`scored <= ans_in_resp` and checks each mark against `EXPECTED_ANSWERS`, so this fails
+loudly instead of producing a plausible table. (Verified against `qwen35_397b_intens` at
+acc 1.000: 270/270/270, longest response 6 characters.)
+
+**Interpreting the `scored` vs `ans_in_resp` gap.** It only indicates parser
+under-recovery when the lane's violation profile is *not* `multiple-values`-dominated. A
+response that rambles through a long list of integers contains the correct one by
+construction, so `min3_8b` noise (181 vs 58) and `min3_14b` (70 vs 8) are **not** evidence
+of recoverable signal — the regrade no-op independently confirms nothing is recoverable
+there. Where the profile is empty- or collapse-dominated, the small gaps
+(`glm_flash` 39 vs 33, `glm_air` 176 vs 164) genuinely do show the parser recovering what
+is present.
+
+> **Note on the companion document.** `POWER_ANALYSIS_2026-08-14.md` as committed at
+> `3cac6e75` still carries a banner deferring to a predicted pairing gain that this
+> document refutes (§"Headline"). A corrected version is staged in the sibling session and
+> may or may not land; until it does, read that banner as superseded here.
 
 **Operational hazard (do not skip).** `results_store.sync_down()` is a one-way S3 → local
 mirror that overwrites the local tree, so any `regrade.py --write` is destroyed by the
