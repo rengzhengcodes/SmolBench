@@ -42,6 +42,7 @@ behind ``INFERENCE_PROVIDER``.
 
 import logging
 import os
+import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
@@ -60,6 +61,74 @@ from smolbench.evals import Quiz, Mark, Marks
 #: provider's catalog/context-length lookup instead of each module
 #: hardcoding its own ``timeout=120`` literal.
 METADATA_TIMEOUT_S: int = 120
+
+#: TCP keepalive idle/interval/count (seconds, seconds, probes) applied to
+#: every chat-completion socket. A non-streaming completion is SILENT on the
+#: wire for the whole generation: the request goes out, then nothing flows
+#: until the finished body comes back. A 14B reasoning model generating to an
+#: ~88k-token cap keeps that connection idle for 40+ minutes, which is long
+#: enough for a NAT/conntrack gateway between the client and the endpoint to
+#: drop the flow. When it does, the server's response lands in a dead mapping
+#: and the client's socket stays ESTABLISHED, blocked in poll() until the read
+#: timeout expires -- a silent hours-long stall with no error, while the box
+#: looks idle to its own watchdog and gets reaped. Keepalive probes keep the
+#: mapping warm through the quiet stretch. The OS default is useless here
+#: (``tcp_keepalive_time`` is 7200 s -- two hours, long after the gateway has
+#: forgotten the flow), so TCP_KEEPIDLE must be set explicitly per socket.
+KEEPALIVE_IDLE_S: int = int(os.getenv("SMOLBENCH_TCP_KEEPIDLE", "60"))
+KEEPALIVE_INTERVAL_S: int = int(os.getenv("SMOLBENCH_TCP_KEEPINTVL", "30"))
+KEEPALIVE_PROBES: int = int(os.getenv("SMOLBENCH_TCP_KEEPCNT", "8"))
+
+
+def _keepalive_socket_options() -> List[Tuple[int, int, int]]:
+    """Builds the setsockopt triples enabling aggressive TCP keepalive.
+
+    TCP_KEEPIDLE/KEEPINTVL/KEEPCNT are Linux spellings; each is added only
+    when the running platform defines it, so the client still imports (just
+    without per-socket tuning) on platforms that name them differently.
+    """
+    options: List[Tuple[int, int, int]] = [
+        (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+    ]
+    for name, value in (
+        ("TCP_KEEPIDLE", KEEPALIVE_IDLE_S),
+        ("TCP_KEEPINTVL", KEEPALIVE_INTERVAL_S),
+        ("TCP_KEEPCNT", KEEPALIVE_PROBES),
+    ):
+        option = getattr(socket, name, None)
+        if option is not None:
+            options.append((socket.IPPROTO_TCP, option, value))
+    return options
+
+
+class _KeepaliveAdapter(requests.adapters.HTTPAdapter):
+    """HTTPAdapter that stamps the keepalive socket options onto new sockets."""
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs["socket_options"] = _keepalive_socket_options()
+        return super().init_poolmanager(*args, **kwargs)
+
+
+def _build_session() -> requests.Session:
+    """Returns the shared keepalive-enabled Session used for completions.
+
+    ``pool_maxsize`` is generous because completions fan out across joblib
+    threads (``max_parallel``); a pool smaller than the fan-out would
+    serialize requests that are supposed to run concurrently. ``max_retries``
+    stays 0 -- retry policy lives in ``ChatClient.complete``'s own loop, which
+    re-resolves the endpoint per attempt (a spot box can be re-provisioned
+    mid-loop) and counts connection failures separately from HTTP failures.
+    """
+    session = requests.Session()
+    adapter = _KeepaliveAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+#: Module-level so connections (and their warm NAT mappings) are reused across
+#: calls rather than rebuilt per completion, as bare ``requests.post`` did.
+SESSION: requests.Session = _build_session()
 
 
 def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
@@ -517,7 +586,7 @@ class ChatClient:
             # Resolved per attempt -- see the ``connection`` field docs.
             url, token = self.connection(model)
             try:
-                response = requests.post(
+                response = SESSION.post(
                     url=url,
                     # Extra headers first, base pair second: on collision the
                     # base Authorization/Content-Type wins (see the

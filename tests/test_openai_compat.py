@@ -566,3 +566,41 @@ def test_metadata_get_check_status_false_passes_error_body_through(flaky_server)
     flaky_server.queue(500, {"error": {"message": "denied"}})
     body = metadata_get(f"{flaky_server.base_url}/models", "k", check_status=False)
     assert body == {"error": {"message": "denied"}}
+
+
+def test_completion_sockets_enable_tcp_keepalive():
+    """The shared Session must stamp aggressive keepalive onto its sockets.
+
+    A non-streaming completion is silent on the wire for the whole
+    generation, so a long CoT run leaves the connection idle for tens of
+    minutes -- long enough for a NAT gateway to forget the flow and strand
+    the response (server finishes, client blocks in poll() until the read
+    timeout). Asserting the triples are ACCEPTED by a real socket, not just
+    present in a list, is what catches a wrong level/constant pairing: an
+    invalid (level, option) combination raises OSError on setsockopt.
+    """
+    from smolbench.evals.openai_compat import (
+        KEEPALIVE_IDLE_S,
+        SESSION,
+        _KeepaliveAdapter,
+        _keepalive_socket_options,
+    )
+
+    for scheme in ("http://", "https://"):
+        assert isinstance(SESSION.get_adapter(scheme), _KeepaliveAdapter)
+
+    options = _keepalive_socket_options()
+    assert (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) in options
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        for level, option, value in options:
+            probe.setsockopt(level, option, value)
+        assert probe.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            # The OS default is 7200 s; the whole point is overriding it to a
+            # value shorter than a NAT idle timeout.
+            assert probe.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == KEEPALIVE_IDLE_S
+            assert KEEPALIVE_IDLE_S < 7200
+    finally:
+        probe.close()
