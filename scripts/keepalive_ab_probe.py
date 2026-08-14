@@ -25,20 +25,24 @@ Session per call and never sets SO_KEEPALIVE -- the pre-fix behavior). They
 carry a byte-identical prompt and completion budget, so the ONLY difference
 between the arms is the socket option.
 
-Four concurrent -- not two -- because concurrency sets the per-stream
-generation rate, and the rate sets the idle duration that the whole
-hypothesis turns on. At 4-way the measured rate was ~34 tok/s, so an ~88k
-budget idles the connection ~43 minutes: the exact condition that failed. Two
-concurrent would run ~50 tok/s and finish near 29 minutes, possibly UNDER the
-gateway's idle threshold, and a negative result would then prove nothing.
+What sets the idle duration is the PROMPT, not the concurrency. Decoding
+attends over the whole context, so the extens arm's 61k-character prompts run
+~34 tok/s while intens' 748-character prompts run ~52 tok/s. At an 88k-token
+budget that is a ~43-minute idle versus a ~29.5-minute one -- and the run that
+used intens prompts returned cleanly on BOTH arms, never reaching the regime
+and proving nothing. Hence the extens default. ``--pairs`` remains available
+to lengthen the idle further by contending for decode.
 
 Two replicates per arm because a single hang could be coincidence.
 
 Reading the result:
   * keepalive returns, plain hangs      -> fix proven, relaunch the reshard
-  * both return                         -> the failure did not reproduce; the
+  * both return, longest run >= floor   -> the failure did not reproduce; the
                                            network path may have changed
                                            again. Do NOT claim the fix works.
+  * both return, longest run <  floor   -> PROBE INVALID: nothing idled long
+                                           enough to test. Says nothing either
+                                           way; lengthen and re-run.
   * both hang                           -> fault is server-side, keepalive was
                                            never the answer. Stop and rethink.
 
@@ -82,10 +86,12 @@ MODEL = "ministral-3-14b"
 #: logged "worst prompt 34,676 tok (+8,000 reserve) -> completion budget
 #: 88,396"), so the probe generates for as long as the real run did.
 COMPLETION_BUDGET = 88_396
-#: 70 min: comfortably past the ~43-minute honest generation, so a request
-#: that has not returned by then is hung rather than slow. Symmetric across
-#: both arms -- an asymmetric timeout would bias the comparison.
-READ_TIMEOUT_S = 4_200
+#: 100 min. Must exceed the HONEST generation time or a slow-but-healthy
+#: keepalive arm gets cut off and misreported as a hang -- with the extens
+#: prompt (61k chars of context) decode runs ~34 tok/s, so an 88k-token
+#: completion takes ~45 min and the margin needs to absorb the spread.
+#: Symmetric across both arms; an asymmetric timeout would bias the comparison.
+READ_TIMEOUT_S = 6_000
 CONNECT_TIMEOUT_S = 10
 #: A probe run is only informative if SOMETHING ran long enough to create the
 #: idle stretch under test. The boxes that failed were reaped after 30 minutes
@@ -178,11 +184,17 @@ def verdict(results) -> str:
     # hypothesis is about, so its outcome carries no information either way --
     # report that instead of a verdict. Checked BEFORE the success branches so
     # a fast all-returned run can't be misread as "keepalive works".
-    if max((r["elapsed_s"] for r in results), default=0) < MIN_VALID_ELAPSED_S:
-        return (f"PROBE INVALID: every request settled in under "
-                f"{MIN_VALID_ELAPSED_S / 60:.0f} min, so the long idle period was "
-                "never created (is the model thinking? check the system prompt). "
-                "This says nothing about keepalive -- fix the probe and re-run.")
+    longest = max((r["elapsed_s"] for r in results), default=0)
+    if longest < MIN_VALID_ELAPSED_S:
+        thought = max((r["chars"] for r in results), default=0)
+        why = ("the model answered instead of thinking -- check the system prompt"
+               if thought < 10_000 else
+               f"generation was long ({thought:,} chars) but FAST: raise --pairs so "
+               "more concurrent streams slow per-stream decode and lengthen the idle")
+        return (f"PROBE INVALID: longest request settled in {longest / 60:.1f} min, under "
+                f"the {MIN_VALID_ELAPSED_S / 60:.0f} min floor, so the idle stretch that "
+                f"strands responses was never created -- {why}. This says nothing about "
+                "keepalive either way.")
     if ka_ok and not pl_ok:
         return ("FIX PROVEN: keepalive returned and plain did not. Relaunch the "
                 "reshard with the fix in place.")
@@ -201,15 +213,27 @@ def main() -> int:
     parser.add_argument("--bucket", default="smolbench-results-414266451290")
     parser.add_argument(
         "--prompt-key",
-        default="induction/ministral-3-14b/seed=0/intens--20260814T044724Z.yaml",
-        help="Completed result object to lift a real study prompt from.",
+        default="induction/ministral-3-14b/seed=0/extens--20260814T044724Z.yaml",
+        help="Completed result object to lift a real study prompt from. Defaults to "
+             "the EXTENS arm: its prompts are 61k chars vs intens' 748, and decoding "
+             "over that much context is what slowed the failing boxes to ~34 tok/s "
+             "and produced the ~43-minute idle. An intens prompt runs ~52 tok/s and "
+             "finishes in 29.5 min -- short of the regime, proving nothing.",
     )
     parser.add_argument(
-        "--mark-index", type=int, default=1,
-        help="Which mark's query to use (default 1: produced 302,677 chars).",
+        "--mark-index", type=int, default=0,
+        help="Which mark's query to use (default 0).",
     )
     parser.add_argument("--types", default="g7.24xlarge")
     parser.add_argument("--regions", default="us-east-2")
+    # Concurrency is the control knob for idle DURATION at a fixed token budget:
+    # more streams -> slower per-stream decode -> longer silence on each socket.
+    # 2 pairs produced only a 29.5-minute idle (three streams ran at ~52 tok/s),
+    # short of the ~43 minutes the failing boxes saw, and the run proved nothing.
+    parser.add_argument(
+        "--pairs", type=int, default=2,
+        help="Keepalive/plain request pairs to fire concurrently (default 4 = 8 requests).",
+    )
     parser.add_argument(
         "--keep-box", action="store_true",
         help="Skip teardown (debugging only -- the box then bills until its watchdog fires).",
@@ -234,12 +258,15 @@ def main() -> int:
 
         with ec2.serve_model(MODEL):
             url, token = ec2._connection(MODEL)
-            logging.info("serving; firing 2 keepalive + 2 plain at %s", url)
-            plan: Tuple[Tuple[str, int], ...] = (
-                ("keepalive", 0), ("plain", 0), ("keepalive", 1), ("plain", 1),
+            logging.info("serving at %s", url)
+            # Interleaved so both arms start together: an arm fired second
+            # would see a different queue depth and a different decode rate.
+            plan: Tuple[Tuple[str, int], ...] = tuple(
+                (arm, i) for i in range(args.pairs) for arm in ("keepalive", "plain")
             )
+            logging.info("firing %d requests (%d pair(s))", len(plan), args.pairs)
             started = time.monotonic()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan)) as pool:
                 futures = [
                     pool.submit(one_request, arm, i, url, token, prompt)
                     for arm, i in plan
