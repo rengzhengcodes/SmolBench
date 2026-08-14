@@ -526,6 +526,10 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
 # IP after launch, and how often to re-poll while waiting.
 _WAIT_IP_TIMEOUT_S: int = 300
 _WAIT_IP_POLL_S: int = 5
+# Consecutive "absent" DescribeInstances polls tolerated after RunInstances
+# before concluding the instance is really gone (~30s at _WAIT_IP_POLL_S=5;
+# the eventual-consistency window is typically a few seconds).
+_ABSENT_STREAK_LIMIT: int = 6
 # _wait_agent: how often to retry the control-agent's /status probe, and
 # every how many polls to additionally confirm (via DescribeInstances) that
 # the instance itself is still alive -- 6 polls * 10s = one extra
@@ -1172,8 +1176,11 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     Raises
     ------
     RuntimeError
-        If the instance transitions to ``shutting-down``/``terminated``/
-        absent before ever getting an IP (spot reclaimed right after launch).
+        If the instance transitions to ``shutting-down``/``terminated``
+        before ever getting an IP (spot reclaimed right after launch), or
+        stays absent from DescribeInstances for ``_ABSENT_STREAK_LIMIT``
+        consecutive polls (a single absent poll is tolerated as eventual
+        consistency, observed live 2026-08-14 during a quota-race relaunch).
     TimeoutError
         If no public IP appears within ``timeout_s``.
 
@@ -1189,13 +1196,27 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     but the original guarded it, so this does too).
     """
 
+    absent_streak = 0
+
     def check() -> Optional[str]:
+        nonlocal absent_streak
         instance = _describe_instance(region, instance_id)
         # NOTE: NOT using _instance_state(region, instance_id) here -- this
         # site also needs PublicIpAddress from the SAME describe result right
         # below, and the helper would cost a second DescribeInstances call
         # for state alone. See _instance_state's docstring.
         inst_state = (instance or {}).get("State", {}).get("Name", "absent")
+        if inst_state == "absent":
+            # DescribeInstances is eventually consistent: a just-launched
+            # instance can be invisible for several seconds even though it is
+            # coming up fine (a truly reclaimed instance stays describable as
+            # "terminated" for ~an hour -- it does not vanish). Only a
+            # sustained streak means the instance is really gone.
+            absent_streak += 1
+            if absent_streak < _ABSENT_STREAK_LIMIT:
+                return None
+        else:
+            absent_streak = 0
         if inst_state in ("shutting-down", "terminated", "absent"):
             raise RuntimeError(
                 f"instance {instance_id} went {inst_state} right after launch "

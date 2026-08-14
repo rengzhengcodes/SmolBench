@@ -427,3 +427,46 @@ def test_spot_price_map_failure_degrades_to_price_blind(monkeypatch):
 
     monkeypatch.setattr(ec2, "_ec2_client", boom)
     assert ec2._spot_price_map("us-east-1", ["p5.48xlarge"]) == {}
+
+
+# _wait_public_ip absent-streak tolerance: DescribeInstances is eventually
+# consistent, so a just-launched instance can be invisible for a few polls
+# (observed live 2026-08-14 during a quota-race relaunch -- the driver
+# declared a healthy box "absent" and crash-looped). Only a SUSTAINED absent
+# streak may abort; positively-observed death states abort immediately.
+
+def _no_sleep_ip(monkeypatch):
+    monkeypatch.setattr(ec2._aws.time, "sleep", lambda s: None)
+
+
+def test_wait_public_ip_tolerates_transient_absent_then_succeeds(monkeypatch):
+    _no_sleep_ip(monkeypatch)
+    polls = iter(
+        [None] * (ec2._ABSENT_STREAK_LIMIT - 1)
+        + [{"State": {"Name": "running"}, "PublicIpAddress": "1.2.3.4"}]
+    )
+    monkeypatch.setattr(ec2, "_describe_instance", lambda region, iid: next(polls))
+    assert ec2._wait_public_ip("us-east-2", "i-abc") == "1.2.3.4"
+
+
+def test_wait_public_ip_sustained_absent_still_aborts(monkeypatch):
+    _no_sleep_ip(monkeypatch)
+    calls = {"n": 0}
+
+    def describe(region, iid):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(ec2, "_describe_instance", describe)
+    with pytest.raises(RuntimeError, match="went absent right after launch"):
+        ec2._wait_public_ip("us-east-2", "i-abc")
+    assert calls["n"] == ec2._ABSENT_STREAK_LIMIT
+
+
+def test_wait_public_ip_observed_terminated_aborts_immediately(monkeypatch):
+    _no_sleep_ip(monkeypatch)
+    monkeypatch.setattr(
+        ec2, "_describe_instance", lambda region, iid: {"State": {"Name": "terminated"}}
+    )
+    with pytest.raises(RuntimeError, match="went terminated right after launch"):
+        ec2._wait_public_ip("us-east-2", "i-abc")
