@@ -91,7 +91,18 @@ LANES=(
   # from the lane's other 529 whichever region supplies them, so region adds
   # no NEW split to one that already exists -- and holding out for two regions
   # was buying a purity that does not exist. The instance TYPE stays pinned.
-  "deepseek-v3.1|p5en.48xlarge|us-east-2,us-west-2,us-east-1,us-west-1|H200:8"
+  # p5en FIRST, p5e as a fallback. User-authorised 2026-08-15 after p5en was
+  # unavailable in all 9 offering AZs across 4 regions, spot AND on-demand, for
+  # a full day and two exhausted 40-attempt supervisors (415 of 944 cells).
+  #
+  # Order matters and is not cosmetic: the hunt is TYPE-MAJOR, so every p5en AZ
+  # is exhausted before a single p5e is requested. If p5en ever frees up the
+  # lane completes on its original hardware with NO split at all; p5e is only
+  # reached once p5en is genuinely gone. Both are 8x H200 at tp=8, so the
+  # H200:8 pin passes either way -- which is exactly why the pin cannot be
+  # relied on to catch this, and why the split is documented instead.
+  # p5e is offered only in us-east-2 a/b/c and us-west-2c.
+  "deepseek-v3.1|p5en.48xlarge,p5e.48xlarge|us-east-2,us-west-2,us-east-1,us-west-1|H200:8"
   # Only 6 cells, but a lane with ANY infra loss keeps the completeness audit
   # red, and a permanently-red gate is one nobody reads.
   "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"

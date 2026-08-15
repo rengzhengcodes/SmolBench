@@ -120,6 +120,31 @@ Several of these ran on **several boxes of the same type** (e.g. `exaone-4.5-33b
 `ministral-3-14b` ×48). **The box-to-box probe has now reported, and it changes the
 reading of everything above.**
 
+### Authorised within-lane split: `deepseek-v3.1` p5en → p5e (2026-08-15)
+
+After p5en.48xlarge proved unavailable in **all 9 offering AZs across 4 regions, spot AND
+on-demand, for a full day** and two exhausted 40-attempt supervisors, the user authorised
+generating the lane's missing 415 cells on **p5e.48xlarge** — also 8× H200 at tp=8.
+
+Resulting lane, if p5en never frees up:
+
+| segment | cells | hardware |
+|---|---|---|
+| original | 529 | `p5en.48xlarge`, i-0f25d11e3090d452e, us-east-2a |
+| repair | 415 | `p5e.48xlarge`, us-east-2 a/b/c or us-west-2c |
+
+The hunt is **type-major and ordered p5en first**, so every p5en AZ is exhausted before a
+single p5e is requested: if capacity returns the lane completes on its original hardware with
+no split at all. `EC2_REQUIRE_GPU=H200:8` passes for both types, which is precisely why it
+cannot be relied on to catch this — hence this entry.
+
+Two things make the split less costly than it would have been this morning. The box-to-box
+result means those 415 cells could never have matched the original 529 anyway, since they must
+come from a new serving process regardless of type; and the analysis loader now excludes
+unmeasured cells rather than scoring them 0, so the alternative (shipping at 529/944) would
+have been unbiased too. The choice was between fewer paired cells and a nameable type split;
+the user took the split.
+
 ### A separate defect this inventory surfaced
 
 `deepseek-v3.1`'s 944 original cells were all generated on **`p5en.48xlarge`**
