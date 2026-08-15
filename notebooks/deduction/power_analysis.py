@@ -595,15 +595,42 @@ def load_joint_cells(
     wanted_set = set(wanted)
 
     # theorem_id -> (k, prompt_rung) -> model -> outcome (1 success / 0 fail)
+    #
+    # EARLIEST SURVIVING ATTEMPT WINS. A cell can own several rows: rows are
+    # appended, so file order is chronological, and the first row whose verdict
+    # is not "exception" is the first time this cell was actually measured.
+    #
+    # Two rules, and both directions were wrong before:
+    #
+    #  * Plain assignment per row was LAST-wins. For the 74 cells that hold
+    #    more than one surviving attempt (a 2026-08-15 resume bug re-ran cells
+    #    the model had already answered emptily, and generation is not
+    #    deterministic across server processes, so retries are fresh draws),
+    #    last-wins takes the RESAMPLED attempt. That is pass@N reported as
+    #    pass@1: it would move ministral-3-3b by +5.9 points, and one of its
+    #    cells has surviving proof lengths [0, 0, 0, 65] -- three empty answers
+    #    then a proof on the fourth draw.
+    #
+    #  * "exception" rows must not score 0. An exception means the attempt
+    #    never produced an answer (spot interruption, idle watchdog,
+    #    unreachable endpoint) -- infrastructure, not a model failure. Scoring
+    #    them 0 would punish a lane for the fleet's flakiness: deepseek-v3.1
+    #    carries 415 such cells, 44% of its lane, and would read as 415
+    #    failures it never had. They are left ABSENT so the paired filter below
+    #    drops them from every model's block, which is what "not measured"
+    #    means in a paired design.
     raw: dict[str, dict[tuple, dict[str, int]]] = {}
     for row in cell_rows:
         model = row["model"]
         if model not in wanted_set:
             continue
+        if row.get("verdict") == "exception":
+            continue  # never measured -- see above
         cell_key = (row["k"], row["rung"])  # row["rung"] is this file's prompt_rung
-        raw.setdefault(row["theorem_id"], {}).setdefault(cell_key, {})[model] = (
-            1 if row.get("verdict") == "success" else 0
-        )
+        by_model = raw.setdefault(row["theorem_id"], {}).setdefault(cell_key, {})
+        if model in by_model:
+            continue  # an earlier attempt already answered this cell
+        by_model[model] = 1 if row.get("verdict") == "success" else 0
 
     # Keep only cells graded for the FULL requested model set (paired), and
     # only theorems with at least one such cell.
