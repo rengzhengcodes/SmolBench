@@ -89,10 +89,23 @@ def run_pass(model: str, prompts: List[Tuple[str, str]], label: str) -> Dict[str
     """Sends every prompt at the study's settings; returns {prompt_id: output}."""
     from smolbench.evals import ec2
 
+    # `query`'s FOURTH POSITIONAL parameter is context_length, and it defaults
+    # to 0 -- omitting it makes complete() reject every response as
+    # "total_tokens > 0". Resolve it from the running server the same way
+    # run_quiz does, rather than hardcoding the spec's max_model_len, so the
+    # probe measures the box that actually landed.
+    ctx_len: int = ec2._CLIENT.context_length(model)
+    logging.info("%s: server reports context_length=%d", label, ctx_len)
+    if ctx_len <= 0:
+        raise RuntimeError(
+            f"{label}: server reported context_length={ctx_len}; refusing to run a "
+            "comparison whose token budget is unknown."
+        )
+
     results: Dict[str, str] = {}
     for i, (pid, text) in enumerate(prompts, 1):
         content, reasoning = ec2.query(
-            text, model, SEED,
+            text, model, SEED, ctx_len,
             extra_args={"temperature": TEMPERATURE, "max_tokens": MAX_TOKENS},
             request_timeout=1800,
         )
