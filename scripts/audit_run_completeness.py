@@ -191,10 +191,12 @@ def main() -> int:
 
     print(f"{'lane':38s} {'cells':>6s} {'INFRA':>6s} {'genuine':>8s} {'status':>8s}")
     total_infra = total_genuine = 0
+    audited = 0
     failures: List[str] = []
     for lane, text in iter_deduction_lanes(args.local):
         if lane in NON_DATA_LANES or (args.lane and args.lane not in lane):
             continue
+        audited += 1
         a = audit_lane(text)
         short = a["cells"] < args.expect_cells
         bad = a["infra"] or short or a["sanity_missing"]
@@ -213,6 +215,22 @@ def main() -> int:
         f"\nTOTAL: {total_infra} cell(s) lost to infrastructure, "
         f"{total_genuine} genuine empty completion(s) (DATA -- do not regenerate)"
     )
+
+    if not audited:
+        # An audit that examined NOTHING must never report success -- that is
+        # the exact failure this script exists to catch, turned on itself.
+        # Hit for real on 2026-08-15: `--local --lane qwen3.5-27b` printed
+        # "All audited lanes complete" and exited 0 because the driver had
+        # already pruned the local spool after uploading to S3. The lane in
+        # fact still had a dead cell, which the S3 audit found immediately.
+        where = "local run dirs" if args.local else "S3"
+        print(
+            f"\n*** AUDITED NOTHING: no lane in {where} matched "
+            f"{args.lane!r} ***" if args.lane else
+            f"\n*** AUDITED NOTHING: no lanes found in {where} ***"
+        )
+        print("An empty selection is not a pass. Check the name, or drop --local.")
+        return 1
 
     if args.induction:
         gaps = audit_induction()
