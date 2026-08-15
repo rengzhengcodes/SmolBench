@@ -83,7 +83,15 @@ LANES=(
   # that nemotron-3-nano-4b is being fully re-run to undo. Both are 8x H200 so
   # the H200:8 pin would NOT have caught it: EC2_REQUIRE_GPU pins silicon, and
   # silicon is not the whole serving config.
-  "deepseek-v3.1|p5en.48xlarge|us-east-2,us-west-2|H200:8"
+  # Regions widened to every one that OFFERS p5en (queried, not assumed):
+  # us-east-1 b/d, us-east-2 a/b/c, us-west-1 c, us-west-2 a/c/d -- 9 AZs
+  # instead of 6. User-authorised 2026-08-15 after the box-to-box probe showed
+  # a fresh box NEVER reproduces a previous box's outputs (0/8 byte-identical
+  # at identical instance type, GPU and tp). These 415 cells therefore differ
+  # from the lane's other 529 whichever region supplies them, so region adds
+  # no NEW split to one that already exists -- and holding out for two regions
+  # was buying a purity that does not exist. The instance TYPE stays pinned.
+  "deepseek-v3.1|p5en.48xlarge|us-east-2,us-west-2,us-east-1,us-west-1|H200:8"
   # Only 6 cells, but a lane with ANY infra loss keeps the completeness audit
   # red, and a permanently-red gate is one nobody reads.
   "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
