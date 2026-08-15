@@ -163,3 +163,27 @@ def test_watchdog_runs_once_unprivileged(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert (run_dir / "last_active").exists()  # boot starts the idle clock
+
+
+def test_vllm_api_key_is_passed_as_one_token_not_two():
+    """`--api-key=VALUE`, never `--api-key VALUE`.
+
+    The key is `secrets.token_urlsafe(32)`, whose alphabet includes '-', so
+    ~1.5% of generated keys START with a hyphen. Passed as two argv entries,
+    argparse reads such a key as the next option and the server dies at
+    startup with:
+
+        vllm serve: error: argument --api-key: expected at least one argument
+
+    That is a ~1-in-65 random box-launch death that looks exactly like flaky
+    infrastructure -- it killed a ministral-3-3b relaunch on 2026-08-15 and
+    would have been dismissed as capacity noise. The `=` form binds the value
+    to the option, so a leading hyphen is just data.
+    """
+    from smolbench.evals.payloads import AGENT_PY
+
+    assert '"--api-key=" + VLLM_API_KEY' in AGENT_PY, (
+        "the api key must be bound with '=' so a leading-hyphen key cannot "
+        "be parsed as a flag"
+    )
+    assert '"--api-key", VLLM_API_KEY' not in AGENT_PY

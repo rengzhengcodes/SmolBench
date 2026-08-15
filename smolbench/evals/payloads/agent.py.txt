@@ -149,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
             "--served-model-name", name,
             "--tensor-parallel-size", str(tp),
             "--max-model-len", str(max_len),
-            "--api-key", VLLM_API_KEY,
+            "--api-key=" + VLLM_API_KEY,
         ] + vllm_args
         # Async (cold `docker run -d` blocks on the image pull; /status reports
         # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
