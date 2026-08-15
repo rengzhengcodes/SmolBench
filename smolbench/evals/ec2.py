@@ -169,6 +169,13 @@ EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
+#: "spot" (default) or "on-demand". Only ever set this deliberately: on-demand
+#: pays several times the spot rate and cannot be reclaimed, so a forgotten box
+#: bills at full price until the idle watchdog or the lifetime backstop fires.
+#: It exists for a lane whose exact instance type has NO spot capacity anywhere
+#: and whose hardware must not be substituted -- buying the same silicon a
+#: different way is the only move that keeps the lane uncontaminated.
+EC2_MARKET: str = os.getenv("EC2_MARKET", "spot")
 EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # Optional EC2 key pair name for SSH debugging; empty = no SSH (the default --
 # boot problems are then visible only via the serial console/screenshot).
@@ -1755,6 +1762,21 @@ def _run_instances_kwargs(
                 "CapacityReservationId": capacity_reservation_id
             }
         }
+    elif EC2_MARKET == "on-demand":
+        # On-demand is expressed by the ABSENCE of InstanceMarketOptions --
+        # there is no MarketType="on-demand". MaxPrice goes with it: an
+        # on-demand launch has no bid.
+        #
+        # Used 2026-08-15 for deduction lane deepseek-v3.1, whose 415 dead
+        # cells could not be regenerated because p5e.48xlarge spot had zero
+        # capacity in every AZ for an entire night. The instance type, GPU
+        # count and tp are IDENTICAL to the lane's original box -- only how
+        # the capacity was purchased differs, so nothing about what ran
+        # changes. InstanceInitiatedShutdownBehavior stays "terminate" and the
+        # idle watchdog still fires, which matters far more here: an
+        # abandoned on-demand p5e bills at full rate indefinitely, where an
+        # abandoned spot box is at least reclaimable.
+        kwargs.pop("InstanceMarketOptions", None)
     elif max_price:
         kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] = max_price
     if key_name:

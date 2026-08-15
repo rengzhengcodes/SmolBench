@@ -46,12 +46,19 @@ else
     set -a; source notebooks/induction/keys.env; source notebooks/ec2-operator.env; set +a
     # g7.24xlarge = 4x RTX PRO 4500; pin it so a widened hunt cannot
     # quietly move these seeds onto different silicon.
+    #
+    # --request-timeout 2100 (was 5400): server-side latency for these prompts
+    # is 17-26 min, so 35 min is generous, and a request that has gone nowhere
+    # is now abandoned in 35 min instead of 90. Paired with the
+    # `Connection: close` fix in openai_compat (2026-08-15) -- reused
+    # connections were being black-holed, and keepalive kept them looking
+    # healthy so the client waited out the whole timeout.
     EC2_REQUIRE_GPU="RTX PRO 4500:4" \
     EC2_MAX_PARALLEL_REQUESTS=4 EC2_IDLE_TIMEOUT_MIN=90 \
     setsid nohup .venv/bin/python -u scripts/run_shards.py \
         --model ministral-3-14b --count 11 --only-shards "$INDUCTION_SEEDS" \
         --types g7.24xlarge --regions us-east-2,us-west-2,us-east-1 \
-        --request-timeout 5400 \
+        --request-timeout 2100 \
         >> notebooks/induction/results/fleet_logs/shards_ministral_repair.log 2>&1 < /dev/null &
     echo "   relaunched (pid $!)"
 fi

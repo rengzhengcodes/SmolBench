@@ -499,3 +499,41 @@ def test_server_config_never_raises(monkeypatch):
     monkeypatch.setattr(ec2, "_load_state", lambda: None)
     cfg = ec2.server_config("gemma-4-12b")
     assert cfg["instance_type"] is None and cfg["gpu"] is None
+
+
+def test_on_demand_market_drops_instance_market_options(monkeypatch):
+    """EC2_MARKET=on-demand launches by OMITTING InstanceMarketOptions.
+
+    There is no MarketType="on-demand" -- absence is how the API expresses it,
+    so a launch that merely renamed the MarketType would be rejected. Every
+    other kwarg must be byte-identical to the spot shape, because the whole
+    point of this path is buying the SAME silicon a different way: it exists
+    for a lane (deepseek-v3.1, 2026-08-15) whose p5e.48xlarge had no spot
+    capacity in any AZ and whose hardware could not be substituted without
+    contaminating the study.
+
+    The bid ceiling must go too: an on-demand launch has no MaxPrice, and
+    leaving one attached would be rejected.
+    """
+    monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
+    kwargs = _base_kwargs(max_price="12.34")
+    assert "InstanceMarketOptions" not in kwargs
+
+    monkeypatch.setattr(ec2, "EC2_MARKET", "spot")
+    spot = _base_kwargs(max_price="12.34")
+    assert spot["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "12.34"
+
+    # Same box, different till: everything except the market differs not at all.
+    assert {k: v for k, v in spot.items() if k != "InstanceMarketOptions"} == kwargs
+    # The cost backstop survives -- an abandoned on-demand p5e bills forever.
+    assert kwargs["InstanceInitiatedShutdownBehavior"] == "terminate"
+
+
+def test_capacity_block_still_wins_over_on_demand(monkeypatch):
+    """A purchased block is targeted even when EC2_MARKET says on-demand."""
+    monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
+    kwargs = _base_kwargs(capacity_reservation_id="cr-123")
+    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
+    assert kwargs["CapacityReservationSpecification"] == {
+        "CapacityReservationTarget": {"CapacityReservationId": "cr-123"}
+    }

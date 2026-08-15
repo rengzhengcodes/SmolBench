@@ -104,6 +104,14 @@ print(audit_lane(open('$run_dir/all_rows.jsonl').read())['infra'])
     # first lane's box and serves ITS model on top: three lanes fought over one
     # g6e.12xlarge on the first attempt at this re-run (22:29Z 2026-08-14),
     # caught before any row was written.
+    # EC2_MARKET is inherited (default "spot") so ONE lane can be bought
+    # on-demand without touching the others. Used 2026-08-15 for
+    # deepseek-v3.1: p5e.48xlarge spot was empty in every AZ all night, and
+    # its 415 dead cells cannot be regenerated on other silicon without
+    # contaminating the lane. Same instance type, same 8x H200, same tp --
+    # only the till differs. The idle watchdog below is what keeps that
+    # affordable: an abandoned on-demand p5e bills at full rate, where an
+    # abandoned spot box is at least reclaimable.
     # Pin the SILICON, not the instance size: permits the harmless
     # g6e.4xlarge->g6e.2xlarge substitution (same single L40S, same tp; the
     # user accepted it 2026-08-14) while refusing a 4-GPU g6e.12xlarge, which
@@ -117,6 +125,7 @@ print(audit_lane(open('$run_dir/all_rows.jsonl').read())['infra'])
     EC2_REGIONS="$regions" \
     EC2_IDLE_TIMEOUT_MIN=90 \
     EC2_MAX_PARALLEL_REQUESTS=8 \
+    EC2_MARKET="${EC2_MARKET:-spot}" \
     setsid nohup .venv/bin/python -u notebooks/deduction/run_study.py --teardown \
         >> "notebooks/deduction/results/repair_${key}.log" 2>&1 < /dev/null &
     echo "  ${key}: launched pid $!  (${types} @ ${regions}, pinned ${gpu})"
