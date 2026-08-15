@@ -64,7 +64,20 @@ sidecars and this run's repair logs. That distinction is not academic — see
 
 | lane | configs that generated its cells | status |
 |---|---|---|
-| `nemotron-3-nano-4b` | induction `g6e.4xlarge` + `g6e.8xlarge`; deduction `g6e.4xlarge` (59 cells) + `g6e.2xlarge` (885 cells) | **deduction leg re-running in full on ONE `g6e.4xlarge`** via `--force-rerun`. Prior rows preserved at `all_rows_SUPERSEDED-mixed-4xl-2xl-2026-08-15.jsonl` (67,197,216 bytes, sha256 `df17ff29aff89e6e`, byte-verified). Induction leg still mixed — see open items. |
+| `nemotron-3-nano-4b` | induction `g6e.4xlarge` + `g6e.8xlarge`; deduction WAS `g6e.4xlarge` (59 cells) + `g6e.2xlarge` (885 cells) | **DEDUCTION LEG DECONTAMINATED 2026-08-15 22:37Z.** Full 944-cell re-run on ONE box via `--force-rerun`. Induction leg still mixed — see open items. |
+
+Verification of that re-run, all four checks rather than the driver's own completion message:
+
+| check | result |
+|---|---|
+| `audit_run_completeness.py --lane nemotron-3-nano-4b` | 944 cells, **0 infra, 0 genuine**, exit 0 |
+| `server_config.yaml` | **1 capture, 1 box** — `i-05428528f2aef631f`, `g6e.4xlarge`, 1× L40S 48GB, tp=1 |
+| pass@1 | 944 cells, `replicate_idx` ∈ {0}, **exactly 1 surviving attempt per cell**, 0 cells with more |
+| superseded data | `all_rows_SUPERSEDED-mixed-4xl-2xl-2026-08-15.jsonl` intact in S3, 67,197,216 bytes |
+
+This is the only lane in the study whose deduction cells all come from a single serving
+process, and therefore the only one that is internally bit-reproducible. Box terminated on
+completion.
 
 ### Contaminated, not worth rerunning
 
