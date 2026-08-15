@@ -163,6 +163,36 @@ Cells are identified as: a clean (non-`exception`) empty row that is followed, l
 `all_rows.jsonl`, by a row carrying content. File order is append order, so "later" is
 chronological.
 
+## pass@1 verification (all 21 deduction lanes)
+
+Checked three ways, because the configured value and the collected data can disagree:
+
+1. **Configured** — every lane: `n_replicates: 1`. No lane was ever run with multiple rollouts.
+2. **Recorded** — every lane: `replicate_idx` ∈ {0} only, 944 cells each, 19,824 total.
+3. **Actual attempts per cell** — 18 of 21 lanes have exactly ONE surviving (non-`exception`)
+   row per cell. Three do not, as fallout from the resampling bug above: **74 cells hold more
+   than one surviving attempt** (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5).
+
+For those three lanes the metric is pass@1 only under the first-surviving-row rule. Taking
+any-row-with-content instead:
+
+| lane | any attempt | first surviving | difference |
+|---|---|---|---|
+| `ministral-3-3b` | 850 / 944 = 90.0% | **794 / 944 = 84.1%** | **+5.9 pt** |
+| `qwen3.5-27b` | 929 / 944 = 98.4% | **923 / 944 = 97.8%** | +0.6 pt |
+| `gemma-4-31b` | 943 / 944 = 99.9% | **938 / 944 = 99.4%** | +0.5 pt |
+
+One `ministral-3-3b` cell's surviving attempts have proof lengths `[0, 0, 0, 65]` — three empty
+answers and then a proof on the fourth draw. Reported as-is that is **pass@4 presented as
+pass@1**, and it moves that lane's headline by nearly six points against its own family.
+
+These are proof CANDIDATES, not verified successes; the verification pass has not yet run, so
+nothing downstream has consumed the inflated figures. The `nemotron-3-nano-4b` rerun generates
+each cell exactly once on one box and will be textbook pass@1.
+
+(The induction leg is not a pass@1 metric: R=30 replicates per model by design, R=23 for
+`ministral-3-14b`.)
+
 ## Open items
 
 - `nemotron-3-nano-4b` **induction** leg is still mixed (`g6e.4xlarge` + `g6e.8xlarge`)
