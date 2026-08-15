@@ -386,43 +386,54 @@ def test_sweep_resume_and_exception_rerun(sweep_ctx, concurrent):
 # ---------------------------------------------------------------------------
 
 
-def test_existing_keys_decides_per_cell_not_per_row(tmp_path):
-    """A dead cell must stay reachable; a genuine empty answer must not re-run.
+def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
+    """`prompt_tokens > 0` is the line between lost data and real data.
 
-    Shapes taken verbatim from the family-ladder study's S3 rows. A cell that
-    died to a spot interruption owns TWO rows -- the `exception` carrying the
-    error and a contentless row written by whatever ran next. Deciding
-    row-by-row let that second row pin the cell as done, so no relaunch could
-    ever regenerate it (qwen3.5-27b lost 6 cells this way and still reported
-    "DEDUCTION LANE COMPLETE" after writing zero rows).
+    A cell whose attempts all died before the server saw the prompt was never
+    measured -- re-run it. A cell the model actually answered, even emptily, has
+    given its answer; re-running it until it happens to emit a proof is
+    resampling, and generation is NOT deterministic across server processes
+    (measured: 8/8 byte-identical within one vLLM process, 0/8 across two), so
+    the retry really does eventually "succeed".
 
-    The distinction that matters, and the reason this can't just re-run every
-    contentless cell: a cell with NO exception row whose completion is empty is
-    a real answer -- the model was asked and said nothing (962 such cells in
-    the study). Re-running those fabricates results by resampling.
+    That is not hypothetical: the rule this replaces re-ran any contentless cell
+    that owned an old `exception` row, and 67 cells across three lanes were
+    resampled from empty to a proof before it was caught -- 0.4% of all cells
+    carrying a proof, straight into a pass@1 numerator.
+
+    The tempting alternative -- "it burned the full token budget, so retrying is
+    pointless" -- is refuted: qwen3.5-27b cells that hit the 32,768-token cap
+    emptily went on to produce proofs on a later attempt.
     """
-    def cell(theorem, verdict, proof="", error=""):
+    def cell(theorem, verdict, proof="", error="", prompt_tokens=0):
         return {
             "kind": "cell", "model": "m", "theorem_id": theorem, "k": 1,
             "rung": "stepk:1", "replicate_idx": 0, "verdict": verdict,
             "candidate_proof": proof, "lean_error": error,
+            "prompt_tokens": prompt_tokens, "completion_tokens": 0,
         }
 
     path = tmp_path / "all_rows.jsonl"
     rows = [
-        # (1) DEAD: interrupted, then an empty row landed on top of it.
-        cell("dead.pinned", "exception", error="RuntimeError: spot instance terminated"),
-        cell("dead.pinned", "unverified", proof=""),
-        # (2) DATA: nothing failed, the model simply returned nothing.
-        cell("genuine.empty", "unverified", proof=""),
-        # (3) DONE: a retry succeeded after an earlier failure.
-        cell("retried.ok", "exception", error="RuntimeError: connection reset"),
-        cell("retried.ok", "unverified", proof="exact foo"),
-        # (4) DEAD: every row is an exception (the classic transient failure).
-        cell("dead.allexc", "exception", error="Timeout"),
-        # (5) VERIFIER blew up but the proof text survives -- still retryable,
-        #     which is why content alone must not pin a cell.
-        cell("verifier.exploded", "exception", proof="exact bar", error="RuntimeError: dojo"),
+        # (1) LOST: every attempt died before the model saw the prompt.
+        cell("lost.never_asked", "exception",
+             error="RuntimeError: spot instance terminated", prompt_tokens=0),
+        cell("lost.never_asked", "unverified", proof="", prompt_tokens=0),
+        # (2) DATA: lost its first attempt, but a later one ran and answered
+        #     emptily. Must NOT re-run -- this is the resampling case.
+        cell("data.answered_empty_after_infra", "exception",
+             error="RuntimeError: spot instance terminated", prompt_tokens=0),
+        cell("data.answered_empty_after_infra", "unverified", proof="",
+             prompt_tokens=398),
+        # (3) DATA: asked, answered nothing, nothing ever failed.
+        cell("data.plain_empty", "unverified", proof="", prompt_tokens=398),
+        # (4) DONE: has a proof.
+        cell("done.has_proof", "unverified", proof="exact foo", prompt_tokens=398),
+        # (5) RE-RUN: the only record is an exception. Even though proof text
+        #     survived, an exception can come from the VERIFIER, so the proof
+        #     was never checked -- deliberate older behaviour, preserved.
+        cell("rerun.only_an_exception", "exception", proof="exact bar",
+             error="RuntimeError: dojo", prompt_tokens=398),
     ]
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
@@ -430,11 +441,13 @@ def test_existing_keys_decides_per_cell_not_per_row(tmp_path):
         return runner._row_key("m", theorem, 1, "stepk:1", 0)
 
     skip = runner._existing_keys(path)
-    assert key("dead.pinned") not in skip, "dead cell unreachable by resume"
-    assert key("dead.allexc") not in skip
-    assert key("verifier.exploded") not in skip
-    assert key("genuine.empty") in skip, "would fabricate data by resampling"
-    assert key("retried.ok") in skip
+    assert key("lost.never_asked") not in skip, "infra loss must still be recoverable"
+    assert key("data.answered_empty_after_infra") in skip, (
+        "re-running a cell the model already answered is resampling"
+    )
+    assert key("data.plain_empty") in skip
+    assert key("done.has_proof") in skip
+    assert key("rerun.only_an_exception") not in skip
 
 
 # ---------------------------------------------------------------------------

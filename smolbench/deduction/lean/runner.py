@@ -395,38 +395,57 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
     """Read existing JSONL rows; return cell keys for cells we should NOT re-run.
 
-    The decision is made PER CELL, not per row, because one cell can own
-    several rows and they can disagree. A cell that died to a spot
-    interruption is typically written twice: an ``exception`` row carrying the
-    error, and a contentless row with some other verdict recorded by whatever
-    ran next. Deciding row-by-row let the second row pin the cell as done
-    (2026-08-14: qwen3.5-27b had 6 cells that no relaunch could ever
-    regenerate, because each had an empty ``unverified`` row sitting beside
-    its ``exception`` row). Group first, then decide:
+    The decision is made PER CELL, not per row, and it turns on ONE question:
+    **did a request for this cell ever complete a round trip?** The evidence is
+    ``prompt_tokens > 0`` — the server counted a prompt, so the model was asked
+    and whatever came back is its answer.
 
-    * **every row is ``exception``** — nothing survived. Re-run it. (Unchanged
-      behaviour: transient API errors have always been retried this way, and
-      an exception row can legitimately carry proof text when it was the
-      *verifier* that blew up, so content is not consulted here.)
-    * **some row succeeded and carries content** — we already have an answer.
-      Skip it.
-    * **the only rows that succeeded are EMPTY, and some row is an
-      ``exception``** — the "success" is an artifact of the failure, not an
-      attempt. Re-run it. This is the case the old row-by-row rule got wrong.
-    * **the only rows that succeeded are EMPTY, and nothing failed** — the
-      model was asked and produced nothing. That is DATA, so skip it.
-      Re-running would fabricate results by resampling until the model
-      happens to answer (962 such cells exist in the family-ladder study,
-      e.g. 272 in gemma-4-12b, and they must never be "repaired").
+    Only SURVIVING (non-``exception``) rows count as evidence:
 
-    Aligning with the "assert on CONTENT" rule that
-    `scripts/audit_run_completeness.py` audits means a lane the audit calls
-    damaged is a lane a relaunch can actually repair. It is deliberately
-    broader than the audit's infra/genuine split: an ``exception`` with no
-    infrastructure signature still re-runs, which is the safe direction. The
-    re-run set is a strict superset of the pre-2026-08-14 one -- checked
-    against all 21 landed lanes, where no cell that used to re-run stopped
-    doing so and no genuine empty started.
+    * **a surviving row has content** — we have a proof. Skip.
+    * **a surviving row has ``prompt_tokens > 0`` but no content** — the model
+      was asked and returned nothing extractable. **That is DATA.** Skip.
+    * **neither** — no attempt both reached the model and survived (spot
+      interruption, idle watchdog, unreachable endpoint, transient API error).
+      Nothing was ever measured. Re-run.
+
+    Restricting to survivors preserves a deliberate older behaviour: a cell
+    whose ONLY record is an ``exception`` re-runs even when that row carries
+    proof text, because an exception can come from the VERIFIER, leaving a
+    proof that was never checked.
+
+    Why not "re-run whenever an exception row exists and there is no content",
+    which is what this function did between 2026-08-14 and 2026-08-15: a cell
+    that lost its FIRST attempt to a spot kill and then answered emptily still
+    owns that old exception row forever, so the rule re-ran it on every
+    relaunch. Two consequences, both measured:
+
+    1. **Resampling bias.** Generation is not deterministic across server
+       processes (measured: 8/8 byte-identical within one vLLM process, 0/8
+       across two), so each retry is an independent draw. Re-running a cell
+       that already answered emptily, until it happens to emit a proof, turns
+       a failure into a success. **67 cells across three lanes were resampled
+       this way** (56 in ministral-3-3b) — 0.4% of all cells carrying a proof,
+       and pure inflation of a pass@1 metric.
+    2. **An unbounded futile loop.** Cells that keep answering emptily are
+       retried forever at ~12 minutes each, and keep the completeness gate
+       permanently red.
+
+    The token-count rule that looks tempting here — "it burned the whole
+    32,768-token budget, so retrying is pointless" — is REFUTED: qwen3.5-27b
+    cells that hit the cap emptily went on to produce proofs on a later
+    attempt. Truncation is a property of the draw, not of the cell.
+
+    A retry cap (K clean attempts) would also work but is a tuned constant;
+    ``prompt_tokens`` states the actual distinction, needs no tuning, and is
+    the same signal `scripts/audit_run_completeness.py` uses to separate
+    infrastructure loss from genuine empty output.
+
+    NOTE: this is NOT a superset of any earlier version. Relative to the
+    2026-08-14/15 rule it re-runs strictly fewer cells (that is the fix);
+    relative to the original row-by-row rule it still recovers infra losses
+    the original could not reach. Both directions are measured against all 21
+    landed lanes rather than asserted.
     """
     if not jsonl_path.exists():
         return set()
@@ -448,12 +467,11 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     keys: set[tuple] = set()
     for key, rows in rows_by_key.items():
         survived = [r for r in rows if r.get("verdict") != "exception"]
-        if not survived:
-            continue  # let retries re-run transient API failures
         if any((r.get("candidate_proof") or "").strip() for r in survived):
-            keys.add(key)
-        elif not any(r.get("verdict") == "exception" for r in rows):
-            keys.add(key)  # asked, answered nothing, nothing failed: DATA
+            keys.add(key)  # a surviving attempt produced a proof
+        elif any(int(r.get("prompt_tokens") or 0) > 0 for r in survived):
+            keys.add(key)  # asked and answered emptily: DATA, never resample
+        # else: no attempt both reached the model AND survived -- re-run
     return keys
 
 

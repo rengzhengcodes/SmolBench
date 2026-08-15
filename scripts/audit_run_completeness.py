@@ -141,8 +141,22 @@ def audit_lane(text: str) -> Dict[str, object]:
     for key, rows in rows_by_key.items():
         if any((r.get("candidate_proof") or "").strip() for r in rows):
             continue
+        # A cell is INFRA loss only if NO attempt ever reached the model.
+        # `prompt_tokens > 0` means the server counted a prompt, so the model
+        # WAS asked and the empty result is its answer -- data, not loss.
+        #
+        # Classifying on the error text instead (any row matching
+        # INFRA_PATTERNS) made a cell infra FOREVER once it had lost a single
+        # attempt to a spot kill, even after later attempts ran cleanly and
+        # answered emptily. Eight cells were stuck that way on 2026-08-15,
+        # keeping two lanes permanently red and, worse, feeding an unbounded
+        # retry loop that resampled 67 cells from empty to a proof.
+        reached_model = any(int(r.get("prompt_tokens") or 0) > 0 for r in rows)
         blob = " ".join(str(r.get("lean_error") or "") for r in rows)
-        (infra if INFRA_PATTERNS.search(blob) else genuine).append(key)
+        if not reached_model and INFRA_PATTERNS.search(blob):
+            infra.append(key)
+        else:
+            genuine.append(key)
     return {
         "cells": len(rows_by_key),
         "infra": len(infra),
@@ -248,11 +262,13 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         print(
-            "\nInfrastructure loss is RECOVERABLE: relaunch the lane. runner._existing_keys()\n"
-            "decides per CELL -- a cell whose only surviving rows are empty and which owns an\n"
-            "'exception' row is re-run, so exactly these regenerate. Genuine empty completions\n"
-            "are DATA and are never re-run. Re-audit after the relaunch: the driver printing\n"
-            "'DEDUCTION LANE COMPLETE' is not evidence, this script's exit status is."
+            "\nInfrastructure loss is RECOVERABLE: relaunch the lane. INFRA here means NO\n"
+            "attempt ever reached the model (no surviving row with prompt_tokens > 0), which\n"
+            "is exactly the set runner._existing_keys() re-runs. A cell the model answered --\n"
+            "even emptily -- is DATA and is never re-run: generation is not deterministic\n"
+            "across server processes, so retrying an empty answer until a proof appears is\n"
+            "resampling, and it inflates the numerator. Re-audit after the relaunch: the\n"
+            "driver printing 'DEDUCTION LANE COMPLETE' is not evidence, this exit status is."
         )
         return 1
     print("\nAll audited lanes complete at the CONTENT level.")
