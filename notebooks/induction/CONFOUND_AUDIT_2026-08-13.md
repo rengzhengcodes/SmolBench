@@ -333,3 +333,36 @@ by an argument about a mechanism instead of a measurement of the outcome. When a
 substitution is defended on the grounds that it "cannot affect results," the cheap
 move is to run the thing twice and diff it -- with a same-box baseline, so the
 comparison has a noise floor to be judged against.
+
+### Correction to the above (same day): size was never the variable — the PROCESS is
+
+The retraction above concluded that the `g6e.4xlarge` → `g6e.2xlarge` substitution changes
+generations. A third comparison, run afterwards, shows that conclusion was too specific:
+
+| comparison (`nemotron-3-nano-4b`, same prompts/seed) | byte-identical |
+|---|---|
+| same box, same process, back to back | **8/8** |
+| `g6e.4xlarge` vs `g6e.2xlarge` (size **and** box differ) | **0/8** |
+| `g6e.4xlarge` vs `g6e.4xlarge` (**only** the box differs) | **0/8** |
+
+The 2xlarge in the middle row was also a different machine running a different vLLM
+process. With the size held fixed, agreement is still 0/8 (common prefixes 0–149 chars).
+**Instance size was never shown to matter. A different serving process is what matters.**
+
+The original clearance ("same L40S silicon, so not a confound") is still wrong — but so
+was my first correction of it. The accurate statement:
+
+> vLLM output here is reproducible **within one server process** and not across
+> processes, at identical instance type, GPU, tp and image build.
+
+Consequence for this audit's framing: "confound" cannot usefully mean "some of a lane's
+cells came from a different box," because that is true of nearly every lane in the study
+(`gemma-4-12b` ×21 boxes, `ministral-3-14b` ×48, `glm-4.7-flash` ×4, `exaone-4.5-33b` ×3,
+`qwen3.5-27b` ×3, and every sweep resumed after a spot reclaim). It is a per-process noise
+term that does not correlate with the model axis — every lane has its own hardware by
+design — and it should be reported as a known noise term with its measured size, not
+chased with re-runs. Full reasoning and the per-lane inventory:
+`notebooks/CONTAMINATION_INVENTORY_2026-08-15.md`.
+
+Recommendation carried forward: pin `EC2_VLLM_IMAGE` to a DIGEST rather than the
+`nightly` tag, so that at least the image is not a second uncontrolled variable.
