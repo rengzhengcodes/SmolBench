@@ -861,6 +861,18 @@ def main(argv: list[str] | None = None) -> None:
             "this lane's replicate rows on local disk only."
         ),
     )
+    parser.add_argument(
+        "--force-rerun",
+        action="store_true",
+        default=False,
+        help=(
+            "Regenerate EVERY cell, including ones that already have a "
+            "proof, and move the existing all_rows.jsonl aside first. For "
+            "decontaminating a lane whose cells were generated on more "
+            "than one hardware config -- resume alone cannot do this, "
+            "because it (correctly) skips cells that already have content."
+        ),
+    )
     args = parser.parse_args(argv)
 
     key = selected_model()
@@ -903,7 +915,34 @@ def main(argv: list[str] | None = None) -> None:
                 with (run_dir / "server_config.yaml").open("a") as sink:
                     yaml.safe_dump([{"captured_utc": stamp, **cfg}],
                                    sink, default_flow_style=False, indent=4)
-            n = runner.sweep(config, run_dir, verifier=verifier)
+            if args.force_rerun:
+                # Move the old rows aside rather than appending on top of
+                # them. With resume=False the sweep regenerates every cell,
+                # but it still APPENDS to all_rows.jsonl -- leaving both the
+                # superseded and the fresh row for each key in one file, on
+                # different hardware, with nothing but line order to tell
+                # them apart. That is the confound this flag exists to
+                # remove, so archiving is part of the operation, not a
+                # courtesy. The archive stays inside run_dir so spool_to_s3
+                # carries it to S3 under its own key: the superseded data is
+                # preserved and plainly labelled, never silently dropped.
+                old = run_dir / "all_rows.jsonl"
+                if old.exists():
+                    import datetime
+
+                    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+                        "%Y%m%dT%H%M%SZ"
+                    )
+                    archived = run_dir / f"all_rows_SUPERSEDED-{stamp}.jsonl"
+                    old.rename(archived)
+                    logging.warning(
+                        f"main[{key}]: --force-rerun: archived {old.name} -> "
+                        f"{archived.name} ({archived.stat().st_size} bytes); "
+                        "regenerating ALL cells on the current box."
+                    )
+            n = runner.sweep(
+                config, run_dir, resume=not args.force_rerun, verifier=verifier
+            )
         logging.info(f"main[{key}]: sweep wrote {n} cell row(s) to {run_dir}")
         if args.no_s3:
             logging.info(f"main[{key}]: --no-s3 set; leaving replicate rows on local disk.")

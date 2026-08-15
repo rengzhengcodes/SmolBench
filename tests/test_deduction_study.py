@@ -876,3 +876,51 @@ def test_driver_refuses_a_tag_that_does_not_name_its_lane():
     assert proc.returncode != 0, "a shared tag must abort, not proceed"
     assert "does not name this lane" in proc.stderr
     assert "scaling-glm-4.7" in proc.stderr, "error must state the fix"
+
+
+def test_force_rerun_archives_old_rows_and_disables_resume(tmp_path, monkeypatch):
+    """--force-rerun must move all_rows.jsonl aside AND pass resume=False.
+
+    Both halves matter. resume=False alone regenerates every cell but still
+    APPENDS, leaving the superseded row and the fresh row for each key in one
+    file on different hardware, distinguishable only by line order -- which is
+    the very confound the flag exists to remove. Archiving alone would leave
+    resume skipping every cell that already has content, so nothing would be
+    regenerated at all.
+
+    The archive is written INSIDE run_dir so spool_to_s3 carries it to S3 under
+    its own key: superseded data is preserved and labelled, never dropped.
+    """
+    import notebooks.deduction.run_study as rs
+
+    run_dir = tmp_path / "runs" / "scaling_test"
+    run_dir.mkdir(parents=True)
+    old = run_dir / "all_rows.jsonl"
+    old.write_text('{"kind": "cell", "candidate_proof": "old hardware"}\n')
+
+    seen = {}
+
+    def fake_sweep(config, rd, *, resume=True, verifier=None):
+        seen["resume"] = resume
+        seen["existed_at_sweep"] = (rd / "all_rows.jsonl").exists()
+        return 7
+
+    monkeypatch.setattr(rs.runner, "sweep", fake_sweep)
+    monkeypatch.setattr(rs.runner, "results_root", lambda: tmp_path)
+    monkeypatch.setattr(rs.ec2, "provision_spot_instance", lambda *a, **k: {})
+    monkeypatch.setattr(rs.ec2, "server_config", lambda *a, **k: None)
+    monkeypatch.setattr(rs, "select_verifier", lambda: None)
+    monkeypatch.setattr(rs, "selected_model", lambda: "test")
+    monkeypatch.setattr(rs, "build_config", lambda k: {"run_name": "scaling_test"})
+    monkeypatch.setattr(rs, "spool_to_s3", lambda *a, **k: 0)
+
+    import contextlib
+    monkeypatch.setattr(rs.ec2, "serve_model", lambda k: contextlib.nullcontext())
+
+    rs.main(["--force-rerun", "--no-s3"])
+
+    assert seen["resume"] is False, "force-rerun must disable resume"
+    assert not seen["existed_at_sweep"], "old rows must be moved aside BEFORE the sweep"
+    archived = list(run_dir.glob("all_rows_SUPERSEDED-*.jsonl"))
+    assert len(archived) == 1, archived
+    assert "old hardware" in archived[0].read_text(), "superseded data must survive"
