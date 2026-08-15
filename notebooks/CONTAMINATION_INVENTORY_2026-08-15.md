@@ -20,21 +20,33 @@ comparison. vLLM is not guaranteed bitwise-reproducible even on one machine — 
 continuous batching, what else is in flight changes reduction order — so without a
 noise floor a naive cross-size diff would blame hardware for vLLM's own jitter.
 
-| model | same-box baseline | 4xlarge vs 2xlarge | reading |
-|---|---|---|---|
-| `nemotron-3-nano-4b` | **8/8 identical** | **0/8 identical** | hardware IS a variable |
-| `ministral-3-3b` | 0/8 identical | 0/8 identical | neutral within noise |
+| comparison (`nemotron-3-nano-4b`) | byte-identical | what it isolates |
+|---|---|---|
+| same box, same process, back to back (A1 vs A2) | **8/8** | the noise floor: this model IS deterministic at a fixed seed |
+| `g6e.4xlarge` vs `g6e.2xlarge` (different size **and** different box) | **0/8** | size *and* box, confounded |
+| `g6e.4xlarge` vs `g6e.4xlarge` (**same size**, different box) | **0/8** | box/process alone |
 
-`nemotron-3-nano-4b` is bitwise-reproducible at a fixed seed on one box, so 0/8 across
-sizes cannot be jitter. Outputs diverged from the **first token**, with an identical
-`1x L40S 48GB` and `tp=1` served on both sides (verified in the probe logs). Host
-vCPU/RAM change batching and therefore floating-point reduction order.
+`ministral-3-3b` scored 0/8 on its OWN same-box baseline, so it is not deterministic even
+within one process and nothing can be measured for it.
 
-`ministral-3-3b` is not reproducible even on one box. For that lane the substitution is
-real but **undetectable, and unverifiable by rerunning** — a rerun would produce
-different outputs by construction, so it cannot demonstrate a fix.
+**The third row corrects the second, and corrects what I first concluded.** I initially
+reported the 4xl-vs-2xl result as "instance SIZE changes generations." It does not show
+that: the 2xlarge was also a *different machine running a different vLLM process*. When
+the size is held fixed and only the box changes, agreement is still 0/8, with common
+prefixes of 0–149 characters — outputs diverge almost immediately. **Size was never
+shown to matter. What matters is that it is a different serving process at all.**
 
-Reports: `notebooks/deduction/results/hwprobe_archive/<model>_4xl-vs-2xl.json`.
+So the honest statement is narrower than "hardware is a variable" and broader in its
+consequences: **vLLM output here is reproducible within one server process and not
+across processes**, at identical instance type, GPU, tp, and (as far as could be
+checked) image build — two boxes brought up 12 minutes apart either side of the pull
+both reported `vllm 0.27.2rc1.dev110+gacb0f1dcd`, so an unpinned-nightly digest change
+does not explain it, though the probe's own two boxes were not directly fingerprinted.
+
+Reports: `notebooks/deduction/results/hwprobe_archive/` — `<model>_4xl-vs-2xl.json` and
+`nemotron-3-nano-4b_4xl-vs-4xl-BOX2BOX.json`. (In the box-to-box file the field named
+`cross_size` is cross-*box* at fixed size; the script's key names assume the size
+comparison.)
 
 ## Method for the inventory
 
@@ -69,6 +81,33 @@ sidecars and this run's repair logs. That distinction is not academic — see
 | `deepseek-v4-flash` | p5 + p5e + p6-b200 | seeds 0–11 all re-collected on B200 with full 4-arm coverage; seeds 12–29 were B200 originally, so their older timestamps are expected, not stale |
 | `deepseek-v4-pro` | p5en + p6-b200 | zero rows predate the final B200 recipe — the p5en boxes wrote nothing |
 
+### What the box-to-box result means for the other lanes
+
+Every lane that used more than one box has cells from more than one serving process, and
+therefore cannot be bit-reproducible internally. That is **most of the study**:
+`gemma-4-12b` ×21 boxes, `ministral-3-14b` ×48, `glm-4.7-flash` ×4, `exaone-4.5-33b` ×3,
+`qwen3.5-27b` ×3, `gemma-4-e2b` ×3, and every lane whose sweep was resumed after a spot
+reclaim. Single-box lanes are the exception, not the rule.
+
+**This is a property of the design, not a repairable defect, and it is noise rather than
+bias.** Every lane already runs on its own hardware by construction — the study compares
+models *across* lanes — so per-process nondeterminism does not correlate with the model
+axis. Re-running twenty lanes single-box would cost weeks of compute to remove a term
+that does not bias the comparison.
+
+What it does mean:
+
+1. **No rerun can restore a lane to its original outputs.** A rerun can only make a lane
+   internally homogeneous going forward. That is why the `nemotron-3-nano-4b` rerun is
+   still correct — one box, one process, one image is the only way any lane achieves it —
+   and why nothing is gained by rerunning the rest.
+2. **`deepseek-v3.1`'s remaining 415 cells will differ from its other 529 no matter what**,
+   because they must come from a new box. Region choice adds nothing to a split that
+   already exists.
+3. Analysis must not assume bitwise reproducibility across a lane's cells, and the
+   write-up should state this as a known noise term with its measured size (0/8 agreement
+   across processes, 8/8 within one).
+
 ### Single-configuration lanes (no action)
 
 `exaone-4.0-32b`, `exaone-4.5-33b`, `gemma-4-31b`, `gemma-4-e2b`, `glm-4.5-air`,
@@ -77,14 +116,9 @@ sidecars and this run's repair logs. That distinction is not academic — see
 `qwen3.5-122b-a10b`, `qwen3.5-397b-a17b`, `deepseek-v3.1`.
 
 Several of these ran on **several boxes of the same type** (e.g. `exaone-4.5-33b` ×3,
-`glm-4.7-flash` ×4, `qwen3.5-27b` ×3). Whether two boxes of the same type agree is a
-question the size probe does **not** answer, because its cross-size arm changed the
-machine and the size together. A box-to-box probe at fixed size is running; note in
-advance that a disagreement there would not prove "box identity matters" — a different
-box also means a fresh vLLM process, a cold prefix cache, and possibly a different
-unpinned nightly image digest. If it disagrees, the honest conclusion is that **no
-rerun can restore bit-identity to any lane**, and the output is documentation rather
-than compute.
+`glm-4.7-flash` ×4, `qwen3.5-27b` ×3, and — after re-runs — `gemma-4-12b` ×21 and
+`ministral-3-14b` ×48). **The box-to-box probe has now reported, and it changes the
+reading of everything above.**
 
 ### A separate defect this inventory surfaced
 
