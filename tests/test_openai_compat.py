@@ -604,3 +604,57 @@ def test_completion_sockets_enable_tcp_keepalive():
             assert KEEPALIVE_IDLE_S < 7200
     finally:
         probe.close()
+
+
+def test_completions_do_not_travel_on_a_reused_connection():
+    """Every completion POST must carry ``Connection: close`` by default.
+
+    Measured 2026-08-15 on the ministral-3-14b induction shards: seven drivers
+    had four worker threads each blocked in poll() on POOLED connections while
+    their vLLM servers reported 0 requests running and 0 waiting -- the
+    requests never reached the application. A FRESH connection to the same box
+    at the same moment returned a full generation in 83 ms. Reuse was the
+    fault, not the path.
+
+    TCP keepalive (asserted above) does not save this and partly caused it: by
+    answering probes it keeps a dead reused connection looking healthy, so the
+    client blocks for the whole read timeout instead of erroring out in
+    seconds. The two settings pull opposite ways, so this test pins which one
+    wins.
+    """
+    import smolbench.evals.openai_compat as oc
+
+    assert oc.REUSE_CONNECTIONS is False, "connection reuse must default to OFF"
+    assert oc._CONNECTION_HEADER == {"Connection": "close"}
+
+    sent: dict = {}
+
+    class _Resp:
+        ok = True
+        status_code = 200
+        text = "{}"
+
+        @staticmethod
+        def json() -> dict:
+            return {"choices": [{"message": {"content": "hi"}}],
+                    "usage": {"total_tokens": 1}}
+
+    def _fake_post(**kwargs):
+        sent.update(kwargs)
+        return _Resp()
+
+    client = ChatClient(
+        name="reuse-test",
+        env_prefix="REUSE_TEST",
+        connection=lambda model: ("http://box:8000/v1/chat/completions", "tok"),
+        context_length=lambda model: 4096,
+        retry_backoff_s=0,
+    )
+    original_post = oc.SESSION.post
+    oc.SESSION.post = _fake_post
+    try:
+        client.complete("p", "m", 0, context_length=4096)
+    finally:
+        oc.SESSION.post = original_post
+
+    assert sent["headers"].get("Connection") == "close", sent["headers"]

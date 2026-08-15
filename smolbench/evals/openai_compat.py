@@ -109,6 +109,32 @@ class _KeepaliveAdapter(requests.adapters.HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 
+#: Whether a completion may travel on a REUSED connection. Default off, and
+#: the default is the whole point -- see below. Set REUSE_CONNECTIONS=1 to
+#: restore HTTP keep-alive.
+REUSE_CONNECTIONS: bool = os.getenv("REUSE_CONNECTIONS", "") not in ("", "0", "false", "False")
+
+#: Stamped onto every completion POST. ``Connection: close`` makes the server
+#: close the socket after responding, so urllib3 discards it and the next
+#: completion dials fresh.
+#:
+#: WHY, measured 2026-08-15 on the ministral-3-14b induction shards:
+#: seven drivers sat with four worker threads each blocked in ``poll()`` on
+#: POOLED connections while their vLLM servers reported 0 requests running and
+#: 0 waiting -- the requests never reached the application. A FRESH connection
+#: to the very same box, at the same moment, returned a complete generation in
+#: 83 MILLISECONDS. The path was fine; connection reuse was not.
+#:
+#: The TCP keepalive options below stay ON: they protect the socket while it
+#: sits idle during one long generation (a 90-minute non-streaming completion
+#: sends nothing on the wire until it finishes). What they cannot do is notice
+#: that a reused connection is dead -- worse, by answering probes they keep the
+#: client's socket "healthy" so it blocks for the FULL read timeout instead of
+#: erroring out in seconds. Keepalive and connection reuse pulled in opposite
+#: directions here; reuse is the one that had to go.
+_CONNECTION_HEADER: Dict[str, str] = {} if REUSE_CONNECTIONS else {"Connection": "close"}
+
+
 def _build_session() -> requests.Session:
     """Returns the shared keepalive-enabled Session used for completions.
 
@@ -118,6 +144,10 @@ def _build_session() -> requests.Session:
     stays 0 -- retry policy lives in ``ChatClient.complete``'s own loop, which
     re-resolves the endpoint per attempt (a spot box can be re-provisioned
     mid-loop) and counts connection failures separately from HTTP failures.
+
+    The Session itself is kept even with ``REUSE_CONNECTIONS`` off: it still
+    carries the keepalive socket options, and ``Connection: close`` is what
+    prevents a socket from being handed to a second request.
     """
     session = requests.Session()
     adapter = _KeepaliveAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
@@ -126,8 +156,8 @@ def _build_session() -> requests.Session:
     return session
 
 
-#: Module-level so connections (and their warm NAT mappings) are reused across
-#: calls rather than rebuilt per completion, as bare ``requests.post`` did.
+#: Module-level so the adapter (and its socket options) is built once rather
+#: than per completion, as bare ``requests.post`` did.
 SESSION: requests.Session = _build_session()
 
 
@@ -594,7 +624,7 @@ class ChatClient:
                     headers=self.extra_headers(model) | {
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
-                    },
+                    } | _CONNECTION_HEADER,
                     json=(
                         {
                             "model": self.body_model(model),
