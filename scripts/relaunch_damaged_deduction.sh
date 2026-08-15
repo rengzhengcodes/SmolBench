@@ -73,7 +73,17 @@ LANES=(
   "ministral-3-3b|g6e.4xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
   "exaone-4.5-33b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
   "gemma-4-31b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
-  "deepseek-v3.1|p5e.48xlarge|us-east-2,us-west-2|H200:8"
+  # p5en.48xlarge, NOT p5e.48xlarge. This lane's 944 original cells were all
+  # generated on i-0f25d11e3090d452e, a p5en.48xlarge in us-east-2a (fleet log
+  # + CONFOUND_AUDIT per-lane table both agree). The entry here said p5e for
+  # ~15h on 2026-08-14/15, so the hunt asked for an instance type this lane
+  # never used and reported "no capacity" the whole time -- and had a p5e
+  # actually landed, it would have generated 415 of 944 cells on a different
+  # instance type from the other 529, i.e. exactly the mixed-hardware confound
+  # that nemotron-3-nano-4b is being fully re-run to undo. Both are 8x H200 so
+  # the H200:8 pin would NOT have caught it: EC2_REQUIRE_GPU pins silicon, and
+  # silicon is not the whole serving config.
+  "deepseek-v3.1|p5en.48xlarge|us-east-2,us-west-2|H200:8"
   # Only 6 cells, but a lane with ANY infra loss keeps the completeness audit
   # red, and a permanently-red gate is one nobody reads.
   "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
