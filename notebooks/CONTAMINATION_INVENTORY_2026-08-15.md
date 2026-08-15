@@ -133,6 +133,36 @@ not have caught it, because p5e and p5en both expose 8× H200.
 **Pinning silicon is necessary and not sufficient. The serving config is more than the
 accelerator.**
 
+## Resampling bias — 67 cells, and the analysis rule that removes it
+
+Separate from hardware, and self-inflicted. Between 2026-08-14 and 2026-08-15 the resume
+rule re-ran any contentless cell that owned an `exception` row. A cell that lost its FIRST
+attempt to a spot kill keeps that row forever, so it was re-run on every relaunch even
+after later attempts had run cleanly and answered emptily. Since generation is not
+deterministic across server processes (see above), each retry is an independent draw — so
+retrying an empty answer until a proof appears **manufactures successes**.
+
+**67 cells went empty → proof this way**, 0.4% of all cells carrying a proof:
+
+| lane | resampled cells | share of that lane's cells with proofs |
+|---|---|---|
+| `ministral-3-3b` | 56 | 6.6% |
+| `qwen3.5-27b` | 6 | 0.6% |
+| `gemma-4-31b` | 5 | 0.5% |
+
+The rule is fixed going forward (`aab747e4`): a cell is re-run only when no attempt both
+reached the model and survived, evidenced by `prompt_tokens > 0` on a non-`exception` row.
+
+**For the already-collected data, the analysis must take the FIRST surviving
+(non-`exception`) row per cell, not the last and not "any row with content."** That is the
+unbiased estimator, and it is correct universally — where an infra failure forced a legitimate
+re-run, the first *surviving* row is still the first real measurement. Taking any-row-with-content
+inflates `ministral-3-3b` by up to 56 cells and would flatter it against its own family.
+
+Cells are identified as: a clean (non-`exception`) empty row that is followed, later in
+`all_rows.jsonl`, by a row carrying content. File order is append order, so "later" is
+chronological.
+
 ## Open items
 
 - `nemotron-3-nano-4b` **induction** leg is still mixed (`g6e.4xlarge` + `g6e.8xlarge`)
