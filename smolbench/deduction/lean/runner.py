@@ -395,13 +395,42 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
     """Read existing JSONL rows; return cell keys for cells we should NOT re-run.
 
-    Skips rows whose verdict was `exception` — those are typically transient
-    API errors (rate limits, network) and should be retried on resume rather
-    than treated as final answers.
+    The decision is made PER CELL, not per row, because one cell can own
+    several rows and they can disagree. A cell that died to a spot
+    interruption is typically written twice: an ``exception`` row carrying the
+    error, and a contentless row with some other verdict recorded by whatever
+    ran next. Deciding row-by-row let the second row pin the cell as done
+    (2026-08-14: qwen3.5-27b had 6 cells that no relaunch could ever
+    regenerate, because each had an empty ``unverified`` row sitting beside
+    its ``exception`` row). Group first, then decide:
+
+    * **every row is ``exception``** — nothing survived. Re-run it. (Unchanged
+      behaviour: transient API errors have always been retried this way, and
+      an exception row can legitimately carry proof text when it was the
+      *verifier* that blew up, so content is not consulted here.)
+    * **some row succeeded and carries content** — we already have an answer.
+      Skip it.
+    * **the only rows that succeeded are EMPTY, and some row is an
+      ``exception``** — the "success" is an artifact of the failure, not an
+      attempt. Re-run it. This is the case the old row-by-row rule got wrong.
+    * **the only rows that succeeded are EMPTY, and nothing failed** — the
+      model was asked and produced nothing. That is DATA, so skip it.
+      Re-running would fabricate results by resampling until the model
+      happens to answer (962 such cells exist in the family-ladder study,
+      e.g. 272 in gemma-4-12b, and they must never be "repaired").
+
+    Aligning with the "assert on CONTENT" rule that
+    `scripts/audit_run_completeness.py` audits means a lane the audit calls
+    damaged is a lane a relaunch can actually repair. It is deliberately
+    broader than the audit's infra/genuine split: an ``exception`` with no
+    infrastructure signature still re-runs, which is the safe direction. The
+    re-run set is a strict superset of the pre-2026-08-14 one -- checked
+    against all 21 landed lanes, where no cell that used to re-run stopped
+    doing so and no genuine empty started.
     """
-    keys: set[tuple] = set()
     if not jsonl_path.exists():
-        return keys
+        return set()
+    rows_by_key: dict[tuple, list[dict]] = {}
     with jsonl_path.open() as f:
         for line in f:
             try:
@@ -410,13 +439,21 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
                 continue
             if r.get("kind") != "cell":
                 continue
-            if r.get("verdict") == "exception":
-                continue  # let retries re-run transient API failures
-            keys.add(_row_key(
+            key = _row_key(
                 r.get("model", ""), r.get("theorem_id", ""),
                 int(r.get("k", -1)), r.get("rung", ""),
                 int(r.get("replicate_idx", -1)),
-            ))
+            )
+            rows_by_key.setdefault(key, []).append(r)
+    keys: set[tuple] = set()
+    for key, rows in rows_by_key.items():
+        survived = [r for r in rows if r.get("verdict") != "exception"]
+        if not survived:
+            continue  # let retries re-run transient API failures
+        if any((r.get("candidate_proof") or "").strip() for r in survived):
+            keys.add(key)
+        elif not any(r.get("verdict") == "exception" for r in rows):
+            keys.add(key)  # asked, answered nothing, nothing failed: DATA
     return keys
 
 

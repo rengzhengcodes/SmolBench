@@ -382,6 +382,62 @@ def test_sweep_resume_and_exception_rerun(sweep_ctx, concurrent):
 
 
 # ---------------------------------------------------------------------------
+# (c2) resume decides per CELL, not per row -- the 2026-08-14 silent data fault
+# ---------------------------------------------------------------------------
+
+
+def test_existing_keys_decides_per_cell_not_per_row(tmp_path):
+    """A dead cell must stay reachable; a genuine empty answer must not re-run.
+
+    Shapes taken verbatim from the family-ladder study's S3 rows. A cell that
+    died to a spot interruption owns TWO rows -- the `exception` carrying the
+    error and a contentless row written by whatever ran next. Deciding
+    row-by-row let that second row pin the cell as done, so no relaunch could
+    ever regenerate it (qwen3.5-27b lost 6 cells this way and still reported
+    "DEDUCTION LANE COMPLETE" after writing zero rows).
+
+    The distinction that matters, and the reason this can't just re-run every
+    contentless cell: a cell with NO exception row whose completion is empty is
+    a real answer -- the model was asked and said nothing (962 such cells in
+    the study). Re-running those fabricates results by resampling.
+    """
+    def cell(theorem, verdict, proof="", error=""):
+        return {
+            "kind": "cell", "model": "m", "theorem_id": theorem, "k": 1,
+            "rung": "stepk:1", "replicate_idx": 0, "verdict": verdict,
+            "candidate_proof": proof, "lean_error": error,
+        }
+
+    path = tmp_path / "all_rows.jsonl"
+    rows = [
+        # (1) DEAD: interrupted, then an empty row landed on top of it.
+        cell("dead.pinned", "exception", error="RuntimeError: spot instance terminated"),
+        cell("dead.pinned", "unverified", proof=""),
+        # (2) DATA: nothing failed, the model simply returned nothing.
+        cell("genuine.empty", "unverified", proof=""),
+        # (3) DONE: a retry succeeded after an earlier failure.
+        cell("retried.ok", "exception", error="RuntimeError: connection reset"),
+        cell("retried.ok", "unverified", proof="exact foo"),
+        # (4) DEAD: every row is an exception (the classic transient failure).
+        cell("dead.allexc", "exception", error="Timeout"),
+        # (5) VERIFIER blew up but the proof text survives -- still retryable,
+        #     which is why content alone must not pin a cell.
+        cell("verifier.exploded", "exception", proof="exact bar", error="RuntimeError: dojo"),
+    ]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def key(theorem):
+        return runner._row_key("m", theorem, 1, "stepk:1", 0)
+
+    skip = runner._existing_keys(path)
+    assert key("dead.pinned") not in skip, "dead cell unreachable by resume"
+    assert key("dead.allexc") not in skip
+    assert key("verifier.exploded") not in skip
+    assert key("genuine.empty") in skip, "would fabricate data by resampling"
+    assert key("retried.ok") in skip
+
+
+# ---------------------------------------------------------------------------
 # (f) determinism: identical key sets across two fresh sweeps
 # ---------------------------------------------------------------------------
 

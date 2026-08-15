@@ -29,8 +29,12 @@ Dead cells split into two populations that must NOT be conflated:
   INFRA   some row carries an infrastructure error (spot interruption, idle
           watchdog, unreachable endpoint, connection/timeout). This is LOST
           DATA and is recoverable by re-running -- runner._existing_keys()
-          excludes ``exception`` rows from the resume skip set, so a plain
-          relaunch regenerates exactly these.
+          re-runs a cell whose surviving rows are all empty when the cell also
+          owns an ``exception`` row, so a plain relaunch regenerates exactly
+          these. (Until 2026-08-14 that function decided per ROW, so an empty
+          non-exception row could pin a dead cell as done and no relaunch
+          could ever reach it; qwen3.5-27b lost 6 cells that way and reported
+          COMPLETE having written nothing.)
 
   GENUINE no error anywhere: the model was asked and returned nothing. This
           is DATA, not loss (962 such cells exist across the study, e.g. 272
@@ -90,7 +94,9 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     """Yields (lane_name, all_rows_text) for every deduction lane."""
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
-        for d in sorted(p for p in runs.iterdir() if p.is_dir()):
+        # Skip symlinks: the driver keeps a `latest -> scaling_<key>` pointer,
+        # and following it double-counts that lane in the totals.
+        for d in sorted(p for p in runs.iterdir() if p.is_dir() and not p.is_symlink()):
             rows = d / "all_rows.jsonl"
             if rows.exists():
                 yield d.name, rows.read_text(errors="replace")
@@ -224,10 +230,11 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         print(
-            "\nInfrastructure loss is RECOVERABLE: relaunch the lane. Dead cells carry\n"
-            "verdict 'exception', which runner._existing_keys() excludes from the resume\n"
-            "skip set, so only they regenerate. Genuine empty completions are DATA and\n"
-            "must never be regenerated."
+            "\nInfrastructure loss is RECOVERABLE: relaunch the lane. runner._existing_keys()\n"
+            "decides per CELL -- a cell whose only surviving rows are empty and which owns an\n"
+            "'exception' row is re-run, so exactly these regenerate. Genuine empty completions\n"
+            "are DATA and are never re-run. Re-audit after the relaunch: the driver printing\n"
+            "'DEDUCTION LANE COMPLETE' is not evidence, this script's exit status is."
         )
         return 1
     print("\nAll audited lanes complete at the CONTENT level.")
