@@ -49,9 +49,10 @@ side. Timeout/monitoring/scheduling changes are not confounds.
 - ministral-3-14b (through seed 8): one instance type, tp=4 throughout.
   [Seeds 0-29 are being fully re-collected on g7.24xlarge tp=4 anyway,
   user-approved -- so this lane also ends single-config.]
-- Mixed 1/4-GPU boxes on tp=1 lanes (ministral-3-3b, nemotron-nano-4b):
+- ~~Mixed 1/4-GPU boxes on tp=1 lanes (ministral-3-3b, nemotron-nano-4b):
   static tp=1 throughout, same L40S silicon; idle GPUs are waste, not
-  confounds.
+  confounds.~~ **RETRACTED 2026-08-15 — MEASURED FALSE. See "Refuted
+  dispositions" below.**
 
 ## Residual, documented-not-fixed
 1. Unpinned vllm/vllm-openai:nightly digest drift WITHIN five multi-day
@@ -101,7 +102,7 @@ against S3 per-seed timestamps.
 | qwen3.5-27b | g6e.12xl (4x L40S, tp=4), boxes in us-east-2c + us-east-1d | same type; TWO completed sweeps, see segmentation note |
 | qwen3.5-122b-a10b | p5.48xl (8x H100, tp=8) x2 boxes us-east-2c | same type |
 | qwen3.5-397b-a17b | p5e.48xl (8x H200, tp=8), ONE box us-west-2c | same box |
-| nemotron-3-nano-4b | g6e.4xl/g6e.8xl (both 1x L40S, static tp=1) | same 1-GPU L40S types |
+| nemotron-3-nano-4b | g6e.4xl/g6e.8xl (both 1x L40S, static tp=1) -- **CONFOUNDED, see Refuted dispositions** | g6e.4xl then g6e.2xl -- **CONFOUNDED (measured 0/8)** |
 | nemotron-3-nano-30b-a3b | g6e.12xl (tp=4), ONE box us-west-2b | same box |
 | nemotron-3-super-120b-a12b | p5e.48xl (8x H200, tp=8), ONE box us-west-2 | same box |
 | gemma-4-e2b | g6e.4xl (1x L40S, tp=1) x3 boxes us-east-2 | same type |
@@ -110,7 +111,7 @@ against S3 per-seed timestamps.
 | glm-4.7-flash | g6e.12xl (tp=4) x4 boxes us-east-2 + us-east-1d | same type, resumed sweep |
 | glm-4.5-air | p5.48xl (8x H100, tp=8) x2 us-east-2c | same type, resumed sweep |
 | glm-4.7 | p5en.48xl (8x H200, tp=8) x2 us-east-2a | same type |
-| ministral-3-3b | g6e.4xl + g6e.12xl MIXED, static tp=1 (cleared above: same L40S silicon, idle GPUs) | final box g6e.12xl us-west-2c, tp=1 |
+| ministral-3-3b | g6e.4xl + g6e.12xl MIXED, static tp=1 -- **clearance RETRACTED** | g6e.2xl then g6e.4xl MIXED; model not reproducible on one box (0/8 baseline) so undetectable AND unverifiable by rerun |
 | ministral-3-8b | g6e.12xl (tp=4), ONE box us-west-2b | same box |
 | ministral-3-14b | RE-RUN: g7.24xl (4x RTX PRO 4500, tp=4) x8, us-east-2c | TO RUN (single lane, sidecar active) |
 | exaone-4.0-32b | g6e.12xl (tp=4), ONE box us-east-2c | same box |
@@ -285,3 +286,50 @@ derived tp mid-lane). An instance type missing from the module's GPU tables is
 reported rather than treated as a match. Lanes are pinned in
 `scripts/relaunch_damaged_deduction.sh` (L40S:1 / L40S:4 / H200:8) and the induction
 reshard in `scripts/resume_all_runs.sh` (RTX PRO 4500:4).
+
+---
+
+## Refuted dispositions (added 2026-08-15)
+
+### The `g6e.4xlarge` → `g6e.2xlarge` substitution IS a confound. Measured.
+
+Section 11 above, and the "Cleared" entry for mixed 1/4-GPU boxes on tp=1 lanes,
+both argued that because the two sizes carry the same single L40S 48GB and run the
+same tp=1 under the same image, the substitution could change throughput but not
+sampling. **That argument is wrong, and it was wrong for a reason worth keeping:
+"same accelerator, same tp" does not imply "same output."** Host vCPU/RAM change
+how vLLM batches and schedules, which changes floating-point reduction order.
+
+The user ordered an empirical check rather than accepting the argument. The design
+of `scripts/hardware_equivalence_probe.py` is what makes the result interpretable:
+it first measures a SAME-BOX baseline (two back-to-back passes on one box), because
+vLLM is not guaranteed bitwise-reproducible even on one machine, and a naive
+cross-size comparison would blame hardware for vLLM's own jitter. Real deduction
+prompts from the lane's own S3 run dir, the study's own temperature/seed/max_tokens.
+
+| model | same-box baseline | 4xlarge vs 2xlarge | verdict |
+|---|---|---|---|
+| `nemotron-3-nano-4b` | **8/8 identical** | **0/8 identical** | HARDWARE IS A VARIABLE |
+| `ministral-3-3b` | 0/8 identical | 0/8 identical | neutral within noise |
+
+`nemotron-3-nano-4b` is bitwise-reproducible at a fixed seed on one box, so its 0/8
+across sizes cannot be jitter — outputs diverged from the FIRST token, with an
+identical `1x L40S 48GB` and `tp=1` served on both sides (confirmed in the probe
+logs). `ministral-3-3b` is not reproducible even on one box, so for that lane the
+substitution is real but undetectable, and no rerun could verify a fix.
+
+Reports: `notebooks/deduction/results/hwprobe_archive/<model>_4xl-vs-2xl.json`.
+
+**Consequences.**
+1. `scripts/relaunch_damaged_deduction.sh` no longer widens the type list for the
+   tp=1 lanes; both are pinned to `g6e.4xlarge` alone. Wait for the spec type.
+2. `EC2_REQUIRE_GPU`, which pins silicon and therefore PERMITS this substitution,
+   is necessary but NOT sufficient. It still prevents the worse failure (a 4-GPU
+   box silently changing derived tp mid-lane).
+3. Affected data is recorded in the study's rerun record rather than here.
+
+**Generalisable lesson.** Both this and the original silent data fault were cleared
+by an argument about a mechanism instead of a measurement of the outcome. When a
+substitution is defended on the grounds that it "cannot affect results," the cheap
+move is to run the thing twice and diff it -- with a same-box baseline, so the
+comparison has a noise floor to be judged against.

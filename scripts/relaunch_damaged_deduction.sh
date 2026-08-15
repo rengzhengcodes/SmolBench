@@ -57,12 +57,20 @@ BUCKET=smolbench-results-414266451290
 # lands on the SAME hardware class as the cells it is completing -- a
 # different GPU would confound within-lane comparisons.
 LANES=(
-  # tp=1 lanes: every g6e size below carries exactly ONE L40S, so widening the
-  # type list buys capacity without changing the accelerator (derive_tp reads
-  # the landed box). ministral-3-3b exhausted g6e.4xlarge in all three regions
-  # on the first attempt.
-  "nemotron-3-nano-4b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
-  "ministral-3-3b|g6e.4xlarge,g6e.2xlarge,g6e.8xlarge,g6e.16xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
+  # tp=1 lanes: SINGLE TYPE ONLY. The widened list that used to live here
+  # ("every g6e size carries exactly ONE L40S, so this buys capacity without
+  # changing the accelerator") was WRONG, and measured wrong on 2026-08-15:
+  # scripts/hardware_equivalence_probe.py --model nemotron-3-nano-4b found the
+  # same-box baseline 8/8 IDENTICAL (the model is bitwise-reproducible at a
+  # fixed seed) but g6e.4xlarge vs g6e.2xlarge **0/8**, diverging from the
+  # FIRST token -- with an identical 1x L40S 48GB and tp=1 on both sides. Same
+  # silicon and same tp do NOT imply same output; host CPU/RAM change batching
+  # and hence reduction order. The 2026-08-13 confound audit had cleared this
+  # exact substitution as "idle GPUs are waste, not confounds" -- that
+  # disposition is now refuted and has been corrected in the audit document.
+  # Wait for the spec type instead of widening; capacity comes back.
+  "nemotron-3-nano-4b|g6e.4xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
+  "ministral-3-3b|g6e.4xlarge|us-east-2,us-west-2,us-east-1|L40S:1"
   "exaone-4.5-33b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
   "gemma-4-31b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
   "deepseek-v3.1|p5e.48xlarge|us-east-2,us-west-2|H200:8"
