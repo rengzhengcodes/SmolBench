@@ -176,6 +176,19 @@ EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"
 #: and whose hardware must not be substituted -- buying the same silicon a
 #: different way is the only move that keeps the lane uncontaminated.
 EC2_MARKET: str = os.getenv("EC2_MARKET", "spot")
+#: Spot bid ceiling as a multiple of the median observed AZ price. The 1.25
+#: default gives a normal-priced AZ headroom while letting outlier AZs (a 2.46x
+#: intra-type spread was observed 2026-08-13) fail fast with SpotMaxPriceTooLow
+#: so the hunt moves on. Set <= 0 to send NO MaxPrice at all, which defaults the
+#: ceiling to the on-demand price -- the highest bid EC2 accepts.
+#:
+#: Raising this does NOT buy scarce capacity. Modern EC2 spot does not allocate
+#: by bid, the spot price never exceeds on-demand, and InsufficientInstanceCapacity
+#: is a statement about physical hosts, not about money. Measured on this study
+#: 2026-08-15/16: 2,079 launch attempts for 8xH200, 1,249 InsufficientInstanceCapacity,
+#: 830 Unsupported, ZERO SpotMaxPriceTooLow -- not one rejection was about price,
+#: and those attempts were on-demand, which already outranks every spot bid.
+EC2_SPOT_BID_MULTIPLIER: float = float(os.getenv("EC2_SPOT_BID_MULTIPLIER", "1.25"))
 EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # Optional EC2 key pair name for SSH debugging; empty = no SSH (the default --
 # boot problems are then visible only via the serial console/screenshot).
@@ -1967,16 +1980,26 @@ def _launch_fresh(
             for (obs_type, _az), price in region_map.items()
             if obs_type == _type
         )
-        if observed:
+        if observed and EC2_SPOT_BID_MULTIPLIER > 0:
             median = observed[len(observed) // 2]
-            type_caps[_type] = f"{1.25 * median:.4f}"
+            type_caps[_type] = f"{EC2_SPOT_BID_MULTIPLIER * median:.4f}"
             logging.info(
                 f"provision_spot_instance: {_type} bid cap ${type_caps[_type]}/h "
-                f"(1.25x median of {len(observed)} AZ prices, "
+                f"({EC2_SPOT_BID_MULTIPLIER}x median of {len(observed)} AZ prices, "
                 f"range ${observed[0]:.2f}-${observed[-1]:.2f})"
             )
         else:
+            # No MaxPrice: the ceiling defaults to the ON-DEMAND price, which is
+            # the highest bid EC2 accepts and the highest you can ever pay for
+            # spot. Reached either because pricing lookup failed (price-blind
+            # fallback) or because EC2_SPOT_BID_MULTIPLIER <= 0 asked for it.
             type_caps[_type] = None
+            if EC2_SPOT_BID_MULTIPLIER <= 0:
+                logging.info(
+                    f"provision_spot_instance: {_type} bidding UNCAPPED "
+                    "(EC2_SPOT_BID_MULTIPLIER<=0) -- ceiling is the on-demand "
+                    "price, the maximum EC2 allows."
+                )
 
     region_info: Dict[str, Optional[Dict[str, Any]]] = {}  # cached per-region lookups
     attempts: List[str] = []

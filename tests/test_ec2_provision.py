@@ -537,3 +537,28 @@ def test_capacity_block_still_wins_over_on_demand(monkeypatch):
     assert kwargs["CapacityReservationSpecification"] == {
         "CapacityReservationTarget": {"CapacityReservationId": "cr-123"}
     }
+
+
+def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch):
+    """EC2_SPOT_BID_MULTIPLIER scales the bid; <= 0 sends no MaxPrice at all.
+
+    Sending no MaxPrice defaults the ceiling to the ON-DEMAND price, which is
+    the highest bid EC2 accepts -- there is no way to bid above it, and the spot
+    price never exceeds it.
+
+    Worth stating because it is counter-intuitive: raising this does NOT buy
+    scarce capacity. Modern spot does not allocate by bid, and
+    InsufficientInstanceCapacity is a statement about physical hosts. Measured
+    on this study over 2,079 launch attempts for 8xH200: 1,249
+    InsufficientInstanceCapacity, 830 Unsupported, ZERO SpotMaxPriceTooLow.
+    """
+    assert ec2.EC2_SPOT_BID_MULTIPLIER == 1.25, "default headroom over median"
+
+    # A cap is passed through verbatim to SpotOptions.MaxPrice.
+    kwargs = _base_kwargs(max_price="9.9900")
+    assert kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "9.9900"
+
+    # No cap -> the key is absent, i.e. EC2's default on-demand ceiling.
+    kwargs = _base_kwargs(max_price=None)
+    assert "MaxPrice" not in kwargs["InstanceMarketOptions"]["SpotOptions"]
+    assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
