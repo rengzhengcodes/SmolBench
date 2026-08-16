@@ -447,7 +447,9 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
 
    Related: the count of vLLM builds serving the study is a count of *recorded* builds — at
    least one re-collection's boxes logged no version string, so the true number is a lower
-   bound, not a total.
+   bound, not a total. (The 2026-08-16 determinism probe recorded its build —
+   `0.27.2rc1.dev122+g8efa13b70`, the sixth known — which is the practice the rest of the
+   study should have followed.)
 
 5. **The decontamination re-runs are in the log but invisible to this analysis.** Under
    earliest-wins, the three multi-attempt lanes (`gemma-4-12b`, `deepseek-v4-flash`,
@@ -468,10 +470,36 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    with the model axis: it is noise, not bias, and re-runs cannot remove it. Do not
    chase it.
 
+   The 8/8 within-process figure is **genuine kernel determinism, not prefix-cache
+   replay** — the obvious alternative explanation, since pass 2 could simply be replaying
+   pass 1 from cache. Tested directly: the stock configuration logged 3,904 prefix-cache
+   hits, and a caching-off configuration logged 0 queries and 0 hits *and still scored
+   8/8*. The noise floor stands without a caveat.
+
 7. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
    (fully re-run on one box). Its induction leg is still mixed (`g6e.4xlarge` +
-   `g6e.8xlarge`). `ministral-3-3b` is mixed on both legs by decision — its same-box
-   baseline is 0/8, so contamination there is undetectable *and* unfixable by re-running.
+   `g6e.8xlarge`). `ministral-3-3b` is mixed on both legs by decision.
+
+   > **Correction — `ministral-3-3b` is not an irreproducible model.** An earlier version
+   > of this document reported its same-box baseline as 0/8 and concluded that
+   > contamination there was "undetectable *and* unfixable by re-running," implying a
+   > property of the model. A direct test refutes that: **stock 0/8, determinism
+   > configuration 8/8** (`--no-enable-prefix-caching --max-num-seqs 1 --enforce-eager
+   > --seed 0`). The 0/8 was the *serving configuration*, not the model. The stock 0/8
+   > also occurred at strictly sequential client concurrency, so the cause is the config
+   > itself — CUDA graphs, scheduling, cache path — and not batching.
+   >
+   > What does **not** change: the lanes were collected under the stock configuration, so
+   > the within-lane nondeterminism in the *collected data* is real as collected. Only the
+   > model-property claim was wrong. Correct phrasing going forward:
+   > *nondeterministic under the study's serving configuration; fully deterministic under
+   > caching-off / `max-num-seqs 1` / eager / fixed seed.*
+   >
+   > Scope limit on all of this: cross-configuration agreement is **0/8 on both models**,
+   > same box and same seed. Determinism holds within one process × one configuration —
+   > it does not survive a config change, so re-collecting a lane under the determinism
+   > config would make it internally reproducible while making it incomparable to the
+   > other twenty.
 
 8. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
    529**, unavoidably (see 6). This is why its lane nonetheless reaches a full 712
