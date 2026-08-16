@@ -329,7 +329,25 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    > move the other 196. **The deduction leg is unaffected** — all 21 deduction lanes are
    > complete. If the attempt fails, the numbers here stand as final.
 
-2. **24.6% of the deduction theorem set is unusable for everyone.** The same **232
+2. **SCOPE: the deduction leg measures Mathlib only, not Lean's standard library.**
+   The unusable theorems are not a random subset. Of the 300 theorems, the 45 that
+   LeanDojo could never open are **100% `.lake/packages/std/`**, and all **218**
+   measurable theorems are **100% `Mathlib/`** — complete separation, verified directly
+   from `file_path` on the collected rows:
+
+   | theorem set | count | source |
+   |---|---|---|
+   | measurable | 218 | Mathlib 218 / std 0 |
+   | unmeasurable | 82 | Mathlib 37 (prefix-replay) / std 45 (DojoInit) |
+
+   So every deduction number in this document is a statement about **next-tactic
+   prediction on Mathlib**. It is a scope restriction and nothing more should be read
+   into it: no model ever attempted those 45 under a verifiable setup, so there is no
+   success rate on them to compare and none is recoverable from the collected data.
+   Proof length happens to match (3.04 vs 3.05 tactics, p=1.00), but that does **not**
+   license "and they are no harder."
+
+3. **24.6% of the deduction theorem set is unusable for everyone.** The same **232
    cells** fail in every one of the 21 lanes — 151 where LeanDojo could not open the
    theorem (missing `*.ast.json`) and 81 where the *ground-truth* prefix would not
    replay. 100% overlap across models proves this is not model behaviour. They are
@@ -337,7 +355,7 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    24.6%. Uniform across models, so **no bias — but real lost power**: the measurable
    denominator is 712 cells / 216 theorem blocks, not 944.
 
-3. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
+4. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
    reproducible *within* one server process (8/8 byte-identical) and **not across
    processes** (0/8, at identical instance type, GPU, tp and image). Nearly every lane
    spans several boxes — `ministral-3-14b` ×48, `gemma-4-12b` ×21, `glm-4.7-flash` ×4.
@@ -345,16 +363,16 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    with the model axis: it is noise, not bias, and re-runs cannot remove it. Do not
    chase it.
 
-4. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
+5. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
    (fully re-run on one box). Its induction leg is still mixed (`g6e.4xlarge` +
    `g6e.8xlarge`). `ministral-3-3b` is mixed on both legs by decision — its same-box
    baseline is 0/8, so contamination there is undetectable *and* unfixable by re-running.
 
-5. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
-   529**, unavoidably (see 3). This is why its lane nonetheless reaches a full 712
+6. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
+   529**, unavoidably (see 4). This is why its lane nonetheless reaches a full 712
    measurable cells.
 
-6. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
+7. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
    accuracy: `exaone_32b`/`exaone_33b` at acc 0.000 with total generative collapse,
    `glm_flash` 48.9% empty, `min3_8b`/`min3_14b` 100% non-compliant, `glm_air` 17.8%
    empty. Contrasts involving them measure whitespace-padding-induced degeneration, not
@@ -362,7 +380,7 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    ≥25% non-compliant; findings touching them are flagged `[!]` in the report, because
    the mechanism may be format collapse rather than task difficulty.
 
-7. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
+8. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
    token budget — an infrastructure symptom, not truncation, and it has not been
    investigated.
 
