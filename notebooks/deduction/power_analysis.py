@@ -512,6 +512,12 @@ def _warn_unverified(reasons: list[str]) -> None:
     print("\n".join(lines), file=sys.stderr)
 
 
+#: Verdicts meaning "this cell was never measured for ANY model" -- see the
+#: reasoning in load_joint_cells. Cells carrying only these are excluded from
+#: the paired blocks rather than scored 0.
+UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
+
+
 def load_joint_cells(
     row_files: list[Path], models: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict, list[str]]:
@@ -611,20 +617,46 @@ def load_joint_cells(
     #    cells has surviving proof lengths [0, 0, 0, 65] -- three empty answers
     #    then a proof on the fourth draw.
     #
-    #  * "exception" rows must not score 0. An exception means the attempt
-    #    never produced an answer (spot interruption, idle watchdog,
-    #    unreachable endpoint) -- infrastructure, not a model failure. Scoring
-    #    them 0 would punish a lane for the fleet's flakiness: deepseek-v3.1
-    #    carries 415 such cells, 44% of its lane, and would read as 415
-    #    failures it never had. They are left ABSENT so the paired filter below
-    #    drops them from every model's block, which is what "not measured"
-    #    means in a paired design.
+    #  * UNMEASURABLE verdicts must not score 0. Two kinds, both meaning the
+    #    model was never actually tested:
+    #
+    #      "exception"     -- the generation attempt never produced an answer
+    #                        (spot interruption, idle watchdog, unreachable
+    #                        endpoint). Infrastructure, not a model failure.
+    #                        deepseek-v3.1 carries 415 such cells, 44% of its
+    #                        lane, and would read as 415 failures it never had.
+    #
+    #      "replay_failed" -- VERIFICATION could not be set up: LeanDojo could
+    #                        not open a session for the theorem (missing
+    #                        *.ast.json in the traced cache), or the
+    #                        GROUND-TRUTH prefix of k tactics would not replay.
+    #                        Both happen before the candidate is considered.
+    #                        Proof that this is not model behaviour: the
+    #                        replay_failed cell set is BYTE-IDENTICAL across
+    #                        lanes -- exactly 232 cells, 100% overlap, in every
+    #                        one of 21 models (151 DojoInit + 81 prefix). A
+    #                        model-dependent failure cannot do that.
+    #
+    #    Scoring replay_failed as 0 would deflate EVERY model's marginal rate by
+    #    up to 232/944 = 24.6% (measured: gemma-4-e2b 0.110 -> 0.083,
+    #    glm-4.7-flash 0.146 -> 0.110). Paired McNemar survives it -- concordant
+    #    zeros cancel -- but every reported rate would be wrong.
+    #
+    #    The measurable denominator is therefore 944 - 232 = 712 per lane, which
+    #    is exactly the row count on which Lean actually ran.
+    #
+    #    "incomplete" is NOT in this set: its cell sets differ per model
+    #    (68 / 30 / 50 across three lanes, 8 shared), so it is real behaviour.
+    #
+    #    Unmeasurable cells are left ABSENT so the paired filter below drops
+    #    them from every model's block, which is what "not measured" means in a
+    #    paired design.
     raw: dict[str, dict[tuple, dict[str, int]]] = {}
     for row in cell_rows:
         model = row["model"]
         if model not in wanted_set:
             continue
-        if row.get("verdict") == "exception":
+        if row.get("verdict") in UNMEASURABLE_VERDICTS:
             continue  # never measured -- see above
         cell_key = (row["k"], row["rung"])  # row["rung"] is this file's prompt_rung
         by_model = raw.setdefault(row["theorem_id"], {}).setdefault(cell_key, {})

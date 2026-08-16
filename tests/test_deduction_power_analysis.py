@@ -95,3 +95,49 @@ def test_exception_then_a_real_attempt_uses_the_real_attempt(tmp_path):
     ]
     _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
     assert blocks["thm.recovered"][(1, "stepk:1")] == {"m1": 1, "m2": 0}
+
+
+def test_replay_failed_is_unmeasurable_not_a_model_failure(tmp_path):
+    """`replay_failed` means verification could not be SET UP -- exclude it.
+
+    Two causes, both upstream of the model's candidate: LeanDojo could not open
+    a session for the theorem (missing *.ast.json in the traced cache), or the
+    GROUND-TRUTH prefix of k tactics would not replay.
+
+    The proof that this is not model behaviour is that the replay_failed cell
+    set is byte-identical across lanes: exactly 232 cells, 100% overlap, in
+    every one of 21 models (151 DojoInit + 81 prefix-tactic). No model-dependent
+    outcome can do that.
+
+    Scoring them 0 deflates every model's marginal rate by up to 232/944 =
+    24.6% -- measured on real lanes, gemma-4-e2b 0.110 -> 0.083 and
+    glm-4.7-flash 0.146 -> 0.110. Paired McNemar survives it because concordant
+    zeros cancel, but every reported rate would be wrong, and the write-up
+    quotes rates.
+    """
+    rows = [
+        _cell("m1", "thm.unverifiable", "replay_failed"),
+        _cell("m2", "thm.unverifiable", "replay_failed"),
+        _cell("m1", "thm.real", "success"),
+        _cell("m2", "thm.real", "lean_error"),
+    ]
+    _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
+    assert "thm.unverifiable" not in blocks, (
+        "a cell no model could be tested on must not enter the denominator"
+    )
+    assert blocks["thm.real"][(1, "stepk:1")] == {"m1": 1, "m2": 0}
+
+
+def test_incomplete_is_real_model_behaviour_and_is_scored(tmp_path):
+    """`incomplete` is model-dependent, so it counts as a failure, not a gap.
+
+    Unlike replay_failed, its cell sets differ per model (68 / 30 / 50 across
+    three real lanes, only 8 shared), which is what genuine behaviour looks
+    like. It must stay in the denominator.
+    """
+    rows = [
+        _cell("m1", "thm.x", "incomplete"),
+        _cell("m2", "thm.x", "success"),
+    ]
+    _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
+    assert blocks["thm.x"][(1, "stepk:1")] == {"m1": 0, "m2": 1}
