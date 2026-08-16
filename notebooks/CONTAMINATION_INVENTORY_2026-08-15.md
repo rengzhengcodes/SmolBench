@@ -126,7 +126,7 @@ completion.
 
 | lane | configs | why not |
 |---|---|---|
-| `ministral-3-3b` | induction `g6e.4xlarge` + `g6e.12xlarge`; deduction `g6e.2xlarge` + `g6e.4xlarge` | Baseline 0/8 — the model is not reproducible on a single box at a fixed seed, so contamination here is undetectable *and* a rerun could never be shown to have fixed it. Spending on it buys nothing measurable. Documented instead. |
+| `ministral-3-3b` | induction `g6e.4xlarge` + `g6e.12xlarge`; deduction `g6e.2xlarge` + `g6e.4xlarge` | Baseline 0/8 — the model is not reproducible on a single box at a fixed seed, so contamination here is undetectable *and* a rerun could never be shown to have fixed it. Spending on it buys nothing measurable. Documented instead. **2026-08-16, hinge result: the second half of that reasoning is VOID** — under the determinism config this model is 8/8, so a re-collection *could* now be verified. **The decision stands on different grounds: comparability.** Cross-config agreement is 0/8 on both hinge models, so a determinism-config re-collection would make this lane internally reproducible and simultaneously incomparable to the other twenty, which all ran the stock config. The reason not to spend is that the cure changes the treatment, not that the cure can't be checked. |
 
 ### Cleared — verified, not assumed
 
