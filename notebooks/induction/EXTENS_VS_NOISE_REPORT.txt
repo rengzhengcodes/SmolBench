@@ -1,0 +1,53 @@
+EXTENSIONAL vs NOISE-PADDED INTENSIONAL, per model
+Both arms token-matched; the contrast isolates INFORMATION from LENGTH.
+Paired exact McNemar. n = 270-270 matched items.
+
+model          extens   noise   disc       b/c          p  H210  H21  Hoch21  flags
+-----------------------------------------------------------------------------------
+qwen35_27b      0.974   1.000  0.026    0/7      1.56e-02   .     .       .    
+qwen35_122b     0.974   0.993  0.033    2/7      1.80e-01   .     .       .    
+qwen35_397b     0.974   1.000  0.026    0/7      1.56e-02   .     .       .    
+nemo3_4b        0.396   0.719  0.633   42/129    1.74e-11  yes   yes     yes   
+nemo3_30b       0.711   0.937  0.344   16/77     9.63e-11  yes   yes     yes   
+nemo3_120b      0.841   0.996  0.163    1/43     5.12e-12  yes   yes     yes   
+gemma4_e2b      0.115   0.981  0.881    2/236    1.29e-67  yes   yes     yes   
+gemma4_12b      0.548   0.993  0.452    1/121    4.63e-35  yes   yes     yes   extens 29% non-compliant
+gemma4_31b      0.985   1.000  0.015    0/4      1.25e-01   .     .       .    
+glm_flash       0.393   0.122  0.374   87/14     4.80e-14  yes   yes     yes   QUARANTINED
+glm_air         0.741   0.607  0.444   78/42     1.30e-03   .    yes     yes   QUARANTINED
+glm_47          0.889   0.789  0.278   51/24     2.44e-03   .    yes     yes   
+min3_3b         0.407   0.637  0.585   48/110    8.92e-07  yes   yes     yes   extens 57% non-compliant; noise 45% non-compliant
+min3_8b         0.222   0.215  0.378   52/50     9.21e-01   .     .       .    QUARANTINED
+min3_14b        0.081   0.026  0.107   22/7      8.13e-03   .     .       .    QUARANTINED
+exaone_32b      0.141   0.000  0.141   38/0      7.28e-12  yes   yes     yes   QUARANTINED
+exaone_33b      0.741   0.000  0.741  200/0      1.24e-60  yes   yes     yes   QUARANTINED
+exaone_236b     0.641   0.978  0.374    5/96     6.58e-23  yes   yes     yes   
+ds_flash        0.963   0.993  0.044    2/10     3.86e-02   .     .       .    
+ds_v31          0.993   1.000  0.007    0/2      5.00e-01   .     .       .    
+ds_pro          0.970   0.993  0.037    2/8      1.09e-01   .     .       .    
+
+H210 = Holm over the pre-registered 210-contrast family (PRIMARY inference).
+H21 / Hoch21 = Holm / Hochberg over these 21 only -- SENSITIVITY ONLY; re-sizing the
+  family to a subset chosen after seeing the data is not a valid primary analysis.
+  agreement: H210 10, H21 12, Hoch21 12 of 21
+
+SIGNIFICANT under the primary (m=210) correction: 10 of 21
+  nemo3_4b      0.396 vs 0.719   noise HIGHER
+  nemo3_30b     0.711 vs 0.937   noise HIGHER
+  nemo3_120b    0.841 vs 0.996   noise HIGHER
+  gemma4_e2b    0.115 vs 0.981   noise HIGHER
+  gemma4_12b    0.548 vs 0.993   noise HIGHER [contaminated]
+  glm_flash     0.393 vs 0.122   extens HIGHER [QUARANTINED]
+  min3_3b       0.407 vs 0.637   noise HIGHER [contaminated]
+  exaone_32b    0.141 vs 0.000   extens HIGHER [QUARANTINED]
+  exaone_33b    0.741 vs 0.000   extens HIGHER [QUARANTINED]
+  exaone_236b   0.641 vs 0.978   noise HIGHER
+
+Of those, on CLEAN arms (<25% non-compliance, not quarantined): 5
+  nemo3_4b      0.396 vs 0.719   noise HIGHER   p=1.74e-11
+  nemo3_30b     0.711 vs 0.937   noise HIGHER   p=9.63e-11
+  nemo3_120b    0.841 vs 0.996   noise HIGHER   p=5.12e-12
+  gemma4_e2b    0.115 vs 0.981   noise HIGHER   p=1.29e-67
+  exaone_236b   0.641 vs 0.978   noise HIGHER   p=6.58e-23
+
+Direction among clean significant results: 5 noise-higher, 0 extens-higher.

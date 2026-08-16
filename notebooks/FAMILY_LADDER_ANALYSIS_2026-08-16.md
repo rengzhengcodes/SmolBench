@@ -21,24 +21,43 @@ The published snapshot is `s3://smolbench-results-414266451290/analysis/2026-08-
 (55,006 objects / 4.61 GB). Two checks ran before any number below was computed,
 because both legs had a rule that a row/object count would have certified wrongly.
 
-**Induction — the local tree is current.** Three lanes hold two files per cell
-(`gemma-4-12b` 176 objects, `deepseek-v4-flash` 168, `ministral-3-14b` 128, against a
-120 baseline); the extras are deliberate decontamination re-collections, and the
-correct rule is **newest run-timestamp per cell** — the opposite of the deduction rule
-in the next paragraph. Every cell's newest snapshot version was compared against the
-local file **by size**, and the `gemma-4-12b` seed=8 `extens` pair (922,083 vs
-1,319,921 bytes) confirms size discriminates the versions that matter:
+**Induction — the local tree is current, gated under the ruling in force.** The gate had
+to flip with the selection rule: a tree that matched the *newest* version, as an earlier
+pass certified, is wrong for the 140 multi-attempt cells once earliest-wins applies.
+Size discriminates them — the `gemma-4-12b` seed=8 `extens` pair is 922,083 vs 1,319,921
+bytes — so a full-tree size match is a real content gate rather than an object count:
 
 | check | result |
 |---|---|
-| snapshot cells (newest per cell) | 2,492 |
-| local matches newest, by size | **2,492** |
+| snapshot objects | 2,660 |
+| distinct cells (= 21 × 4 × 30) | 2,520 |
+| cells with more than one attempt | 140 |
+| **local matches EARLIEST, by size** | **2,520** |
 | missing locally | 0 |
-| stale locally | 0 |
+| not earliest (stale) | 0 |
+| lanes below R=30 | none |
 
-2,492 = 21 × 4 × 30 − 28, the 28 being `ministral-3-14b`'s seven abandoned seeds.
-A byte-level `md5` on the `gemma-4-12b` seed=8 pair confirms the local file is the
-**newer** version. The committed Holm numbers therefore rest on current data.
+2,660 = 2,520 + 140 duplicates. The re-gate was run after the snapshot refresh that
+closed `ministral-3-14b`; the refresh was additive-only (28 objects added, 55,002
+untouched), so nothing previously certified changed content.
+
+**Selection rule — EARLIEST logged attempt, both legs (user ruling, 2026-08-16).** Per
+(model, seed, arm) on induction the object with the minimum run timestamp wins; per cell
+on deduction the earliest *surviving* row wins. 140 of the 2,520 induction cells own more
+than one logged attempt (`gemma-4-12b` 56, `deepseek-v4-flash` 48, `ministral-3-14b` 36);
+the other 18 lanes are single-attempt and bit-identical under any rule.
+
+The rule's effect was measured rather than assumed, holding the seed set fixed so the
+selection is the only variable (`notebooks/induction/compare_selection_rules.py`):
+**124 rejections under earliest against 122 under newest, with 2 of 210 contrasts
+flipping** — both borderline, both crossing *into* significance. That direction is a
+property of those two lanes, not of the rule; earliest-wins is neither statistically
+conservative nor liberal, it exists to stop retry-until-success inflating a pass@1
+numerator. **The five clean lanes carrying the extens-vs-noise finding own no
+multi-attempt cell, so their p-values are byte-identical under both rules and the ruling
+cannot reach the headline.** Both predicted flips then confirmed at R=30:
+`[gemma4 ladder | intens] gemma4_e2b vs gemma4_12b` held at p=1.22e-04, and
+`[min3 ladder | extens] min3_8b vs min3_14b` strengthened from 6.36e-04 to 5.85e-06.
 
 **Deduction — the loader reproduces the collection side exactly.** `load_joint_cells`
 already implements *earliest surviving row per cell* (last-wins takes a resampled retry
@@ -104,11 +123,15 @@ alongside; the two differ by at most 0.002.
 every model answers the same seeds with byte-identical prompts, and all four arms at a
 given seed reuse the same queries and answers.
 
+Every contrast runs at **n = 270 matched items** (30 seeds × 9 harmonics). All 21 lanes
+closed at R=30 on 2026-08-16; the earlier unequal-R caveat for `ministral-3-14b` is
+retired, not merely narrowed.
+
 | test | procedure | rejected | uncorrected p<0.05 |
 |---|---|---|---|
-| paired | **Holm** | **123** | 144 |
-| paired | Hochberg | 123 | 144 |
-| unpaired (CMH) | Holm | 122 | 143 |
+| paired | **Holm** | **125** | 148 |
+| paired | Hochberg | 125 | 148 |
+| unpaired (CMH) | Holm | 124 | 146 |
 
 **Holm and Hochberg reject the identical set**, not merely the same count. The two share
 critical values α/(m−i+1) and differ only in stepping direction, so they can diverge only
@@ -119,11 +142,11 @@ arbitrary dependence, while Hochberg's Simes/MTP2 assumption is unverified for 2
 statistics sharing models, seeds and harmonics — and here it buys zero extra rejections.
 This is a property of this dataset's bimodal p-value distribution, not a general identity.
 
-Of the 123 rejections, **46 are scientific findings**; the rest are 57 `zero`-arm
-positive controls (significant by construction — a chance-floor baseline against arms at
-0.60–1.00) and 20 quarantined-lane contrasts.
+Of the 125 rejections, **48 are scientific findings**; the rest are `zero`-arm positive
+controls (significant by construction — a chance-floor baseline against arms at
+0.60–1.00) and quarantined-lane contrasts.
 
-**Not significant: 59 of 105 non-control contrasts — and 48 of those are ceiling pairs**
+**Not significant: 57 of 105 non-control contrasts — and 48 of those are ceiling pairs**
 (both arms ≥ 0.95), many with *zero* discordant items. These are ties by construction,
 not underpowered: no replicate count separates two arms that never disagree on a single
 item.
@@ -313,21 +336,21 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
 
 ## 3. Caveats that belong in any write-up of these numbers
 
-1. **`ministral-3-14b` induction ships at R=23, not R=30.** Seeds 19 and 24–29 were
-   abandoned: cap-length responses were undeliverable to the collecting host, a fault
-   that survived reverting every client change. All other 20 lanes are R=30. `aligned()`
-   intersects seeds, so contrasts touching this lane run at **n=207** rather than 270 —
-   validly paired, but model-level tables mix denominators. Contrast n is reported as a
-   range (207–270) rather than a single figure.
+1. **`ministral-3-14b` was collected on a different TRANSPORT.** The lane's R is no longer
+   a caveat — all 21 lanes closed at R=30 on 2026-08-16 and every contrast runs at n=270.
+   But seeds 19 and 24–29 originally failed: cap-length responses were undeliverable to
+   the collecting host, a fault that survived reverting every client change. They were
+   recovered with `EC2_STREAM_COMPLETIONS=1` — **same hardware pin, same sampling
+   parameters, different transport**, reassembled to an identical body shape with
+   cross-transport equality verified live. So 7 of that lane's 30 seeds differ from the
+   other 23 in how the response reached the client, and from every other lane in the
+   study. Priced as noise on the same grounds as the hardware mixing below; named here
+   because it is a real inhomogeneity inside one lane, not because it is known to matter.
 
-   > **In flight as of 2026-08-16.** A re-collection of those 7 seeds is being attempted.
-   > If it lands, the lane becomes R=30 and **14 of the 210 primary contrasts** must be
-   > re-derived (8 `min3` ladder contrasts against `min3_14b`, plus all 6 info-arm pairs
-   > within it). Holm is a global procedure, so the whole family is simply re-run rather
-   > than patched — it costs seconds. The rejection boundary is robust to this: Holm
-   > stops at a 2× gap (4.88e-04 → 9.77e-04), so 14 shifting p-values are unlikely to
-   > move the other 196. **The deduction leg is unaffected** — all 21 deduction lanes are
-   > complete. If the attempt fails, the numbers here stand as final.
+   > This lane is also the one whose contrasts moved most on closing:
+   > `[min3 ladder | extens] min3_8b vs min3_14b` went 6.36e-04 → 5.85e-06 across the
+   > rule change and the seed completion together. Its `extens` arm is 84% non-compliant,
+   > so those contrasts are flagged `[!]` regardless.
 
 2. **SCOPE: the deduction leg measures Mathlib only, not Lean's standard library.**
    The unusable theorems are not a random subset. Of the 300 theorems, the 45 that
@@ -355,7 +378,18 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    24.6%. Uniform across models, so **no bias — but real lost power**: the measurable
    denominator is 712 cells / 216 theorem blocks, not 944.
 
-4. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
+4. **The decontamination re-runs are in the log but invisible to this analysis.** Under
+   earliest-wins, the three multi-attempt lanes (`gemma-4-12b`, `deepseek-v4-flash`,
+   `ministral-3-14b`) are analysed on their **pre-re-collection** attempts. Those
+   re-collections were run specifically to remove hardware mixing, so the analysed data
+   for those lanes is the mixed-instance-type version and the compute spent on
+   decontaminating them does not appear in any number here. This is a direct consequence
+   of the selection ruling, priced as noise rather than bias on the strength of the
+   cross-process determinism measurement in the next item. Stated explicitly because a
+   reader who knows the re-runs happened will look for them, and should find this
+   paragraph rather than conclude they were forgotten.
+
+5. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
    reproducible *within* one server process (8/8 byte-identical) and **not across
    processes** (0/8, at identical instance type, GPU, tp and image). Nearly every lane
    spans several boxes — `ministral-3-14b` ×48, `gemma-4-12b` ×21, `glm-4.7-flash` ×4.
@@ -363,16 +397,16 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    with the model axis: it is noise, not bias, and re-runs cannot remove it. Do not
    chase it.
 
-5. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
+6. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
    (fully re-run on one box). Its induction leg is still mixed (`g6e.4xlarge` +
    `g6e.8xlarge`). `ministral-3-3b` is mixed on both legs by decision — its same-box
    baseline is 0/8, so contamination there is undetectable *and* unfixable by re-running.
 
-6. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
-   529**, unavoidably (see 4). This is why its lane nonetheless reaches a full 712
+7. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
+   529**, unavoidably (see 5). This is why its lane nonetheless reaches a full 712
    measurable cells.
 
-7. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
+8. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
    accuracy: `exaone_32b`/`exaone_33b` at acc 0.000 with total generative collapse,
    `glm_flash` 48.9% empty, `min3_8b`/`min3_14b` 100% non-compliant, `glm_air` 17.8%
    empty. Contrasts involving them measure whitespace-padding-induced degeneration, not
@@ -380,7 +414,7 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    ≥25% non-compliant; findings touching them are flagged `[!]` in the report, because
    the mechanism may be format collapse rather than task difficulty.
 
-8. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
+9. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
    token budget — an infrastructure symptom, not truncation, and it has not been
    investigated.
 
