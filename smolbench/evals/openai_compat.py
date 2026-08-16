@@ -40,6 +40,7 @@ is therefore available under EVERY provider, keeping providers substitutable
 behind ``INFERENCE_PROVIDER``.
 """
 
+import json
 import logging
 import os
 import time
@@ -168,6 +169,121 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
             return True
         return response.status_code == 429 or 500 <= response.status_code < 600
     return True
+
+
+def collect_stream(response: requests.Response) -> Dict[str, Any]:
+    """Reassembles an SSE completion stream into a NON-streamed response body.
+
+    Why a streaming path exists at all
+    ----------------------------------
+    A non-streaming completion is silent on the wire for the whole
+    generation: the request goes out, then nothing flows until the finished
+    body comes back. On 2026-08-16 that silence was measured to be fatal on
+    the ``ministral-3-14b`` induction path -- the server finished four
+    cap-length responses (``vllm:request_success_total{finished_reason=
+    "length"}`` went 0 -> 4, ``generation_tokens_total`` froze at 354,389)
+    while this host held four ESTABLISHED sockets with EMPTY receive queues
+    for 57 minutes, then took four 5400 s read timeouts. The short ``stop``
+    response in the same batch arrived normally, so the loss was selective
+    by generation LENGTH, i.e. by how long the socket sat quiet.
+
+    An A/B on that same box, two requests with identical sampling parameters
+    issued concurrently and differing only in ``stream``, settled it::
+
+        non_streamed  ReadTimeout after 5400.1 s, nothing delivered
+        streamed      first byte at 0.62 s, 87,843 chunks, 19,856,415 bytes,
+                      complete in 2,461 s
+
+    19.9 MB arrives intact where a quarter-megabyte body never arrives at
+    all, because SSE chunks keep bytes flowing and the flow is never idle.
+
+    Why it reassembles instead of returning its own shape
+    -----------------------------------------------------
+    Everything downstream -- usage accounting, the ``content is None``
+    guard, the plain-text ``</think>`` split, the verbose-logging hooks --
+    is parsing logic that has been exercised across every provider in this
+    repo. Returning a body shaped exactly like the non-streamed one means
+    NONE of it forks on the transport, so the two paths cannot drift and a
+    streamed run stays comparable with a non-streamed one. Transport is the
+    only thing that changes; sampling happens server-side and is untouched.
+
+    Parameters
+    ----------
+    response : requests.Response
+        An open streamed response from ``requests.post(..., stream=True)``.
+
+    Returns
+    -------
+    dict
+        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":
+        {...}, "model": ...}`` -- the same shape a non-streamed request
+        returns. ``reasoning_content`` is present only if the server sent
+        reasoning deltas, matching the non-streamed body (whose key is
+        likewise absent when there is no reasoning channel).
+
+    Notes
+    -----
+    Requires ``stream_options: {"include_usage": true}`` on the request for
+    ``usage`` to arrive; without it the final chunk carries no counters and
+    the returned ``usage`` is empty, which downstream code tolerates (it
+    reads usage through ``.get`` chains) but which loses the token counts
+    the study records.
+    """
+    content_parts: List[str] = []
+    reasoning_parts: List[str] = []
+    finish_reason: Optional[str] = None
+    usage: Dict[str, Any] = {}
+    reported_model: Optional[str] = None
+    saw_reasoning = False
+    saw_content = False
+
+    for line in response.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        if not line.startswith("data:"):
+            continue  # SSE comment/keepalive line
+        payload = line[len("data:"):].strip()
+        if payload == "[DONE]":
+            break
+        chunk = json.loads(payload)
+        reported_model = chunk.get("model") or reported_model
+        # The usage-only final chunk (include_usage) carries an EMPTY
+        # choices list, so this must not assume choices[0] exists.
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                content_parts.append(delta["content"])
+                saw_content = True
+            reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
+            if reasoning_delta:
+                reasoning_parts.append(reasoning_delta)
+                saw_reasoning = True
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+
+    # NO content deltas -> content is None, NOT "". This looks pedantic and is
+    # not: vLLM's non-streamed body sends `"content": null` when a generation
+    # spends its whole budget in the reasoning channel, and the caller has a
+    # dedicated early-return for that case which yields (content="",
+    # reasoning=None) -- it DISCARDS the reasoning. Measured live on
+    # 2026-08-16 against ministral-3-14b: the same prompt returned
+    # content=None with 1,553 characters of `reasoning` non-streamed, and an
+    # earlier version of this function returned "" instead, which skipped that
+    # branch and recorded reasoning where the non-streamed path records null.
+    # That is precisely the cap-length population this lane is missing, so the
+    # difference would have landed in the data rather than staying in the
+    # transport. Whether discarding the reasoning is the RIGHT behaviour is a
+    # separate question from whether the two transports agree; they must agree.
+    message: Dict[str, Any] = {"content": "".join(content_parts) if saw_content else None}
+    if saw_reasoning:
+        message["reasoning_content"] = "".join(reasoning_parts)
+    return {
+        "choices": [{"message": message, "finish_reason": finish_reason}],
+        "usage": usage,
+        "model": reported_model,
+    }
 
 
 def _identity_body_model(model: str) -> str:
@@ -501,6 +617,16 @@ class ChatClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        # OPT-IN streaming transport, off by default. When set, the request
+        # asks for SSE and the chunks are reassembled into the ordinary
+        # response shape (see ``collect_stream``) -- the study's data path
+        # does not fork. Enabled per LANE, never globally: on 2026-08-16 it
+        # was the measured difference between a cap-length response arriving
+        # and vanishing, but every already-collected row in this study came
+        # over the non-streamed path, so flipping the default would split
+        # the transport under data that is already on disk.
+        stream: bool = self._flag("STREAM_COMPLETIONS")
+
         attempt: int = 0
         connection_failures: int = 0
         # Counts every retryable failure (connection-level OR HTTP
@@ -533,11 +659,19 @@ class ChatClient:
                             "seed": seed,
                         }
                         | (extra_args if extra_args else {})
+                        # Applied AFTER extra_args so the transport is decided
+                        # here and cannot be silently overridden by a caller's
+                        # sampling arguments. include_usage is what carries the
+                        # token counters on the final chunk; without it a
+                        # streamed row would lose prompt/completion tokens.
+                        | ({"stream": True, "stream_options": {"include_usage": True}}
+                           if stream else {})
                     ),
                     timeout=(
                         self.connect_timeout_s,
                         request_timeout or self.read_timeout_s,
                     ),
+                    stream=stream,
                 )
                 # The server answered, so the endpoint is alive: only
                 # SUSTAINED connection failures count toward unreachable.
@@ -557,7 +691,7 @@ class ChatClient:
                         f"{response.url}: {response.text[:1000]}",
                         response=response,
                     )
-                body = response.json()
+                body = collect_stream(response) if stream else response.json()
                 if self._flag("INFO") and self._flag("INFO_RESPONSE"):
                     logging.info(body)
 

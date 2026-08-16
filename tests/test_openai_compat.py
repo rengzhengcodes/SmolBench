@@ -53,6 +53,136 @@ def test_ec2_query_missing_usage_tolerated(ec2_env):
     assert content == "7"
 
 
+# ---------------------------------------------------------------------------
+# Opt-in streaming transport (EC2_STREAM_COMPLETIONS)
+# ---------------------------------------------------------------------------
+# A non-streaming completion is silent on the wire for the whole generation,
+# and on 2026-08-16 that silence was measured to be fatal for cap-length
+# ministral-3-14b responses: the server finished them, the client's sockets
+# stayed ESTABLISHED with empty receive queues for 57 minutes, and every one
+# hit its read timeout. An A/B on the same box in the same window -- identical
+# sampling parameters, differing only in `stream` -- delivered 19,856,415
+# bytes streamed against nothing at all non-streamed. These tests pin the
+# resulting transport: same parsed result, off unless asked for.
+
+
+def test_ec2_stream_is_off_by_default(ec2_env):
+    """No opt-in, no `stream` key: every row already collected in this study
+    came over the non-streamed path, so the default must not move."""
+    from smolbench.evals import ec2
+
+    ec2_env.queue_response(chat_completion("7"))
+    ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert "stream" not in ec2_env.requests[-1]["body"]
+
+
+def test_ec2_stream_round_trip_matches_non_streamed(ec2_env, monkeypatch):
+    """The SAME response object, delivered both ways, parses identically.
+
+    This is the property that makes a streamed lane comparable with a
+    non-streamed one: transport changes, data does not.
+    """
+    from smolbench.evals import ec2
+
+    response = chat_completion("7", reasoning_content="thought")
+    ec2_env.queue_response(response)
+    plain = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+    ec2_env.queue_response(response)
+    streamed = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+
+    assert streamed == plain == ("7", "thought")
+    body = ec2_env.requests[-1]["body"]
+    assert body["stream"] is True
+    # Without include_usage the final chunk carries no counters and a streamed
+    # row would silently lose its token counts.
+    assert body["stream_options"] == {"include_usage": True}
+
+
+def test_ec2_stream_preserves_usage_and_finish_reason(ec2_env, monkeypatch):
+    from smolbench.evals import ec2
+
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+    ec2_env.queue_response({
+        "choices": [{"message": {"content": "7"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33},
+    })
+    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert (result.content, result.finish_reason) == ("7", "length")
+    assert (result.prompt_tokens, result.completion_tokens) == (11, 22)
+    assert result.total_tokens == 33
+
+
+def test_ec2_stream_think_split_still_applies(ec2_env, monkeypatch):
+    """Reassembly happens BEFORE parsing, so a plain-text think block that
+    arrives split across deltas is still split into channels."""
+    from smolbench.evals import ec2
+
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+    ec2_env.queue_response(chat_completion("<think>step by step</think>\n7"))
+    content, reasoning = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert (content, reasoning) == ("7", "step by step")
+
+
+def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypatch):
+    """A reasoning-only generation must parse the same over both transports.
+
+    vLLM sends ``"content": null`` when the whole budget went to the reasoning
+    channel, and the client has a dedicated early-return for that which
+    DISCARDS the reasoning. Measured live on ministral-3-14b: content=None
+    with 1,553 characters of reasoning. If the streamed path reassembled that
+    as ``""`` it would skip the branch and record reasoning where the
+    non-streamed path records null -- a difference in the DATA, from a change
+    that is only supposed to touch the transport. This is the cap-length case
+    the lane is missing, so it is the case most likely to occur.
+    """
+    from smolbench.evals import ec2
+
+    reasoning_only = {
+        "choices": [{"message": {"content": None, "reasoning": "long thought"},
+                     "finish_reason": "length"}],
+        "usage": {"total_tokens": 10},
+    }
+    ec2_env.queue_response(reasoning_only)
+    plain = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+    ec2_env.queue_response(reasoning_only)
+    streamed = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
+
+    assert streamed == plain == ("", None)
+
+
+def test_collect_stream_survives_usage_only_chunk():
+    """The include_usage final chunk has an EMPTY choices list -- the shape a
+    naive choices[0] reader crashes on."""
+    from smolbench.evals.openai_compat import collect_stream
+
+    frames = [
+        'data: {"model": "m", "choices": [{"delta": {"content": "4"}}]}',
+        'data: {"choices": [{"delta": {"content": "2"}, "finish_reason": "stop"}]}',
+        'data: {"choices": [], "usage": {"total_tokens": 9}}',
+        "data: [DONE]",
+        'data: {"choices": [{"delta": {"content": "IGNORED"}}]}',
+    ]
+
+    class _Resp:
+        def iter_lines(self, decode_unicode=False):
+            return iter(frames)
+
+    body = collect_stream(_Resp())
+    assert body["choices"][0]["message"]["content"] == "42"
+    assert body["choices"][0]["finish_reason"] == "stop"
+    assert body["usage"] == {"total_tokens": 9}
+    assert body["model"] == "m"
+    # Nothing after [DONE] is consumed.
+    assert "IGNORED" not in body["choices"][0]["message"]["content"]
+    # No reasoning deltas arrived, so the key is absent -- exactly as it is
+    # absent from a non-streamed body with no reasoning channel.
+    assert "reasoning_content" not in body["choices"][0]["message"]
+
+
 def test_ec2_query_context_guard(ec2_env):
     from smolbench.evals import ec2
 

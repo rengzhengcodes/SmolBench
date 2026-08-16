@@ -27,6 +27,39 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _reply_sse(self, obj):
+        """Re-emits a chat-completions body as an SSE stream.
+
+        Chunked deliberately -- one character per delta for both channels --
+        so a test exercises real REASSEMBLY rather than a single-frame
+        passthrough that would pass even if the client dropped everything
+        but the last chunk. The frame ORDER mirrors vLLM: content/reasoning
+        deltas, then a chunk carrying only ``finish_reason``, then (for
+        ``stream_options: {"include_usage": true}``) a usage-only chunk whose
+        ``choices`` list is EMPTY -- the shape most likely to crash a naive
+        ``choices[0]`` reader -- and finally ``[DONE]``.
+        """
+        message = (obj.get("choices") or [{}])[0].get("message") or {}
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+
+        def frame(chunk):
+            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+
+        for key in ("reasoning_content", "reasoning"):
+            for ch in message.get(key) or "":
+                frame({"model": obj.get("model", "stub-model"),
+                       "choices": [{"delta": {key: ch}}]})
+        for ch in message.get("content") or "":
+            frame({"model": obj.get("model", "stub-model"),
+                   "choices": [{"delta": {"content": ch}}]})
+        finish = (obj.get("choices") or [{}])[0].get("finish_reason", "stop")
+        frame({"choices": [{"delta": {}, "finish_reason": finish}]})
+        if obj.get("usage") is not None:
+            frame({"choices": [], "usage": obj["usage"]})
+        self.wfile.write(b"data: [DONE]\n\n")
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
@@ -35,7 +68,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.server.requests.append(
             {"path": self.path, "body": payload, "headers": dict(self.headers)}
         )
-        self._reply(self.server.next_response())
+        response = self.server.next_response()
+        # The stub answers in whichever transport the CLIENT asked for, so a
+        # streaming test and a non-streaming test can queue the exact same
+        # response object and assert the parsed results match.
+        if payload.get("stream"):
+            self._reply_sse(response)
+        else:
+            self._reply(response)
 
     def do_GET(self):
         # Headers recorded for the same reason as in do_POST (e.g. asserting
