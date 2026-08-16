@@ -1,5 +1,25 @@
 # Hardware-contamination inventory and rerun record — family-ladder study
 
+> **2026-08-16 — PARTIALLY SUPERSEDED. Read
+> [`DETERMINISM_PLAN_2026-08-16.md`](DETERMINISM_PLAN_2026-08-16.md) alongside this.**
+>
+> This document's *practical* conclusions stand: per-process variation is noise
+> rather than bias, and no lane should be re-collected for it. Its **mechanism**
+> claim does not. Cross-referencing the two archived probe reports — which nobody
+> did, because each was read alone — yields digests for four serving processes, and
+> one cross-process pairing is **byte-identical on all 8 prompts** across two
+> *different instance types in two different regions*. So line 40-41's "reproducible
+> within one process and not across processes" is false as stated; the four
+> processes fall into three groups, not one-per-process. Line 43-44's "both reported
+> `dev110`" also does not describe the probe boxes — probe-1's log records `dev77`,
+> and five vLLM builds spanning `0.26.1`→`0.27.2` served this study.
+>
+> The pass@1 section below (line 204 onward) has likewise been re-derived against the
+> 2026-08-16 snapshot in
+> [`PASS_AT_1_REVIEW_PLAN_2026-08-16.md`](PASS_AT_1_REVIEW_PLAN_2026-08-16.md):
+> verification absorbed nearly all of the +5.9 pt figure quoted here (now +0.14 pt),
+> and the multi-surviving count is 61, not 74.
+
 **2026-08-15.** Which of the 21 lanes had their cells generated on more than one
 serving configuration, what was done about each, and — for the first time in this
 study — a *measurement* rather than an argument about whether that matters.
