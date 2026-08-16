@@ -182,12 +182,26 @@ EC2_MARKET: str = os.getenv("EC2_MARKET", "spot")
 #: so the hunt moves on. Set <= 0 to send NO MaxPrice at all, which defaults the
 #: ceiling to the on-demand price -- the highest bid EC2 accepts.
 #:
-#: Raising this does NOT buy scarce capacity. Modern EC2 spot does not allocate
-#: by bid, the spot price never exceeds on-demand, and InsufficientInstanceCapacity
-#: is a statement about physical hosts, not about money. Measured on this study
-#: 2026-08-15/16: 2,079 launch attempts for 8xH200, 1,249 InsufficientInstanceCapacity,
-#: 830 Unsupported, ZERO SpotMaxPriceTooLow -- not one rejection was about price,
-#: and those attempts were on-demand, which already outranks every spot bid.
+#: What this knob does and does not do, corrected against evidence 2026-08-16:
+#:
+#: Within spot, InsufficientInstanceCapacity is a statement about physical hosts,
+#: not about money -- EC2 stopped allocating by bid years ago, and the spot price
+#: never exceeds on-demand. So raising the multiplier only helps when an AZ's
+#: price genuinely exceeds the cap (a 2.46x intra-type spread was observed, so
+#: that does happen); it cannot conjure hosts.
+#:
+#: BUT do not conclude that on-demand is strictly better at ACQUIRING capacity.
+#: I asserted that and was wrong: on-demand's priority is about not being
+#: interrupted, not about which pool has free hosts, and the two are accounted
+#: separately. deepseek-v3.1 spent 2,079 ON-DEMAND attempts across 13 AZs and 4
+#: regions failing with InsufficientInstanceCapacity, then landed a
+#: p5en.48xlarge on SPOT within one attempt. (The landing AZ was priced $26.45/h,
+#: comfortably under the $34.06 cap that had been in force, so the bid level
+#: itself was probably not the operative change -- switching market was, or the
+#: capacity happened to free up. Both readings survive the evidence.)
+#:
+#: Practical rule: when on-demand reports no capacity, TRY SPOT before concluding
+#: the hardware is unavailable.
 EC2_SPOT_BID_MULTIPLIER: float = float(os.getenv("EC2_SPOT_BID_MULTIPLIER", "1.25"))
 EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
 # Optional EC2 key pair name for SSH debugging; empty = no SSH (the default --

@@ -546,11 +546,13 @@ def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch)
     the highest bid EC2 accepts -- there is no way to bid above it, and the spot
     price never exceeds it.
 
-    Worth stating because it is counter-intuitive: raising this does NOT buy
-    scarce capacity. Modern spot does not allocate by bid, and
-    InsufficientInstanceCapacity is a statement about physical hosts. Measured
-    on this study over 2,079 launch attempts for 8xH200: 1,249
-    InsufficientInstanceCapacity, 830 Unsupported, ZERO SpotMaxPriceTooLow.
+    Raising the multiplier only helps when an AZ's price genuinely exceeds the
+    cap; within spot, InsufficientInstanceCapacity is about physical hosts, not
+    money. It does NOT follow that on-demand is better at acquiring capacity --
+    that claim was made here and was wrong. deepseek-v3.1 failed 2,079 ON-DEMAND
+    attempts across 13 AZs with InsufficientInstanceCapacity and then landed on
+    SPOT within one attempt (2026-08-16). On-demand's priority concerns
+    interruption, not which pool has free hosts.
     """
     assert ec2.EC2_SPOT_BID_MULTIPLIER == 1.25, "default headroom over median"
 
