@@ -144,6 +144,31 @@ two halves need incompatible Python environments:
   .venv-lean/bin/python scripts/lean_verify_rows.py --runs 'scaling_glm-4.7*'
   ```
 
+### Two traps in phase 2, both of which fail SILENTLY
+
+**1. `elan` must be on `PATH`, or every group "verifies" as `replay_failed`.**
+Under a non-login shell (`ssh cmd`, SSM `AWS-RunShellScript`, cron) `/root/.elan/bin`
+is absent from `PATH`, `lean_dojo` cannot spawn Lean, and every Dojo open fails with
+`ExceptionPexpect: The command was not found`. The pass does not crash -- it marks
+group after group `replay_failed` at high speed and uploads them as if they were
+findings. Tells: no `repl`/`lake` processes, one Python process pinned at ~100% CPU
+(not the worker count), and implausible throughput. Always:
+
+```
+export PATH=/root/.elan/bin:$PATH
+```
+
+**2. Resume is keyed on GROUPS, not on the proofs inside them.** If phase 1
+regenerated a lane after it was verified, every `(theorem_id, k)` group still looks
+done while the candidate proofs beneath are completely different, so the pass reports
+`0 to process` and leaves `verified_rows.jsonl` describing text that no longer exists.
+Use `--no-resume` for any regenerated lane, and archive the superseded file first.
+Compare `all_rows.jsonl`'s LastModified against `verified_rows.jsonl`'s to find them.
+
+**Gate on the verdicts, not on the exit status.** A healthy pass writes a mix of
+`success` / `lean_error` with `verify_ms > 0`; a broken one writes `replay_failed`
+almost everywhere with a Dojo-open error attached.
+
 **Analysing `all_rows.jsonl` before phase 2 has run shows all-zero success
 rates.** That is an artifact of every cell still carrying the `unverified`
 placeholder, not a finding about any model -- always check for a
