@@ -476,8 +476,20 @@ resolves:
 
 The user's ruling (§4 banner) postdates the decision this check was written to inform;
 it survives as the record that the ruling's significance cost was measured and small —
-2 borderline flips out of 210, headline unreachable. Final numbers land with the
-post-R=30 re-derivation.
+2 borderline flips out of 210, headline unreachable.
+
+**FINAL at R=30 (smolbench-4d, their `8e48c406`/`99d81621`, 2026-08-16): both provisional
+predictions confirmed, in the directions called in advance.** Holm 125/210 (Hochberg
+identical set) vs 123 at R=23-under-newest; n=270 on every contrast; the gemma4 flip held
+at p=1.22e-04 (ministral-independent, as predicted) and the min3 flip strengthened
+6.36e-04 → 5.85e-06 as the lane closed. All five clean extens-vs-noise lanes carry
+**byte-identical p-values** under the ruling, and glm_47's counter-example is unchanged —
+the headline was structurally unreachable and stayed so. Methods-grade detail: Holm's
+stopping rank moved 124 → 126 but **the 2× gap at the boundary is the same two p-values**
+(4.883e-04 → 9.766e-04) — the robustness cliff survived a real perturbation rather than
+being asserted. The re-gate itself had to flip with the ruling: a tree certified against
+newest is wrong for the 140 multi-attempt cells; the earliest-gating check is committed
+as `notebooks/induction/check_currency.py`. This check is CLOSED.
 
 **I-8 · Transport-error retries did not censor the sample.**
 *Asserts:* the request-level retry loop discards only attempts that produced no model
