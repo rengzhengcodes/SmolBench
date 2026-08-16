@@ -1,5 +1,35 @@
 # Deduction (Lean4) coverage diagnosis — why 24.6% of the eval is unmeasurable
 
+> ## Correction, 2026-08-16 (post-review, measured)
+>
+> Two claims below were wrong and are superseded by this box. They are left in
+> place in situ so the reasoning that produced them stays legible.
+>
+> **A. Five lanes have a 711 denominator, not two.** Counting cells with no
+> surviving measurable row directly from `analysis/2026-08-16/`:
+> `nemotron-3-nano-4b`, `glm-4.7`, `ministral-3-3b`, `ministral-3-14b` and
+> `exaone-4.0-32b` each hold exactly one `exception`-only cell
+> (`Polynomial.natSepDegree_eq_natDegree_iff`, `Submodule.iSup_toAddSubmonoid`,
+> `IntermediateField.card_algHom_adjoin_integral` ×2,
+> `CategoryTheory.GradedObject.ιMapObjOrZero_mapMap`). `qwen3.5-27b` and
+> `gemma-4-31b` are 712. The `imeout`-substring field scan that found two missed
+> three because the snapshot strips error strings to `null` — the same stripping
+> this document flags as step P1. Count cells, not error text.
+>
+> **B. `error_bars.py` never bootstrapped against 300, so no published CI is too
+> narrow.** `n_thm` is derived from the blocks the loader returns
+> (`error_bars.py:266`, `:360-361`); it has no hardcoded theorem count. The paired
+> analysis runs on the 21-lane intersection, which is **216** blocks — smaller than
+> the 218 derived here, because two of the five 711-lanes lose a whole theorem. The
+> `300 − 45 − 37 = 218` decomposition is correct **per lane** and wrong as a claim
+> about the analysis. Intervals are conservative, not narrow.
+>
+> Both were caught by `smolbench-4d` checking against the data rather than
+> accepting the hand-off. Neither affects the scope finding in §3a, which was
+> independently reproduced there from `file_path`.
+
+
+
 **Date:** 2026-08-16 · **Branch:** `periodic-induction` · **Status:** DIAGNOSIS AND PLAN ONLY —
 nothing was fixed, no study code/data/config was modified, no verification pass was re-run, no
 EC2 instance was touched, no money was spent. S3 was read-only (`ls` / `cp` into scratchpad).
