@@ -41,6 +41,12 @@ bytes — so a full-tree size match is a real content gate rather than an object
 closed `ministral-3-14b`; the refresh was additive-only (28 objects added, 55,002
 untouched), so nothing previously certified changed content.
 
+*Limit of the size gate:* it discriminates here because all 140 earliest/newest pairs are
+size-distinct, minimum delta 827 bytes — but that is a property of this data, not a
+guarantee. A same-size pair would pass a size gate while differing in content. The
+durable form is a checksum comparison (an independent `sync_down` md5 pass reported 0
+downloaded / 2,520 skipped, agreeing cell-for-cell with the result above).
+
 **Selection rule — EARLIEST logged attempt, both legs (user ruling, 2026-08-16).** Per
 (model, seed, arm) on induction the object with the minimum run timestamp wins; per cell
 on deduction the earliest *surviving* row wins. 140 of the 2,520 induction cells own more
@@ -336,18 +342,38 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
 
 ## 3. Caveats that belong in any write-up of these numbers
 
-1. **`ministral-3-14b` was collected on a different TRANSPORT.** The lane's R is no longer
-   a caveat — all 21 lanes closed at R=30 on 2026-08-16 and every contrast runs at n=270.
-   But seeds 19 and 24–29 originally failed: cap-length responses were undeliverable to
-   the collecting host, a fault that survived reverting every client change. They were
-   recovered with `EC2_STREAM_COMPLETIONS=1` — **same hardware pin, same sampling
-   parameters, different transport**, reassembled to an identical body shape with
-   cross-transport equality verified live. So 7 of that lane's 30 seeds differ from the
-   other 23 in how the response reached the client, and from every other lane in the
-   study. Priced as noise on the same grounds as the hardware mixing below; named here
-   because it is a real inhomogeneity inside one lane, not because it is known to matter.
+1. **`ministral-3-14b`: the re-collection REMOVED a survivorship bias — it did not add an
+   inhomogeneity.** All 21 lanes closed at R=30 and every contrast runs at n=270, so the
+   unequal-R caveat is retired. Seeds 19 and 24–29 originally failed on a silent
+   non-streaming socket that dropped **cap-length** response bodies, and were recovered
+   with `EC2_STREAM_COMPLETIONS=1` — same hardware pin, same sampling parameters,
+   different transport, cross-transport equality verified live.
 
-   > This lane is also the one whose contrasts moved most on closing:
+   The tempting framing is "7 of 30 seeds differ, priced as noise." **That framing is
+   wrong, and the empty-response profile shows why** (verified independently here):
+
+   | arm | pre-fix 23 seeds | re-collected 7 | delta |
+   |---|---|---|---|
+   | `intens` | 11.1% empty | 61.9% | **+50.8 pt** |
+   | `extens` | 36.2% | 79.4% | **+43.1 pt** |
+   | `zero` | 14.0% | 50.8% | **+36.8 pt** |
+   | `noise_intens` | 0.5% | 0.0% | −0.5 pt |
+
+   The lift is confined to exactly the arms whose draws run to the token cap; the noise
+   arm, which does not, is **identical across the two groups**. That is the signature of a
+   length-correlated delivery fault, not of a transport difference: the 23 seeds that
+   landed pre-fix are precisely the ones whose draws capped out *least*, and the 7 that
+   failed are victims *because* they cap out most. **Shipping at R=23 would therefore have
+   baked a length-selection bias toward answered cells into this lane; collecting the
+   remaining 7 removed it.** The lane's own non-compliance figures corroborate
+   independently (`intens` 58%, `extens` 84%).
+
+   Honest limit: survivorship and per-process regime variation cannot be fully separated
+   offline, because the marks carry no `finish_reason`. Both readings leave the R=30 data
+   as the honest draw, and only the survivorship reading is consistent with the noise arm
+   being unmoved.
+
+   > This lane's contrasts moved most on closing:
    > `[min3 ladder | extens] min3_8b vs min3_14b` went 6.36e-04 → 5.85e-06 across the
    > rule change and the seed completion together. Its `extens` arm is 84% non-compliant,
    > so those contrasts are flagged `[!]` regardless.
@@ -378,7 +404,20 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    24.6%. Uniform across models, so **no bias — but real lost power**: the measurable
    denominator is 712 cells / 216 theorem blocks, not 944.
 
-4. **The decontamination re-runs are in the log but invisible to this analysis.** Under
+4. **Induction hardware attribution is FLEET-LOG-INFERRED, never object-carried.** An
+   induction result object's schema is `date` / `marks` / `model`, and a mark's is
+   `answer` / `compliance` / `query` / `reasoning` / `response` / `score` — verified
+   directly on both the earliest and newest versions of a duplicated cell. **No induction
+   object records the instance type, GPU, or server build at all**, so every hardware
+   statement about this leg — including the mixed-instance-type claims below — is
+   *inferred* from run timestamps against the fleet logs, not read off the data. The
+   inference is near-certain but it is an inference, and the methods should say so rather
+   than imply the objects carry provenance. (The deduction leg differs: it has
+   `server_config.yaml` sidecars.) Related: the count of vLLM builds serving the study is
+   a count of *recorded* builds — at least one re-collection's boxes logged no version
+   string, so the true number is a lower bound.
+
+5. **The decontamination re-runs are in the log but invisible to this analysis.** Under
    earliest-wins, the three multi-attempt lanes (`gemma-4-12b`, `deepseek-v4-flash`,
    `ministral-3-14b`) are analysed on their **pre-re-collection** attempts. Those
    re-collections were run specifically to remove hardware mixing, so the analysed data
@@ -389,7 +428,7 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    reader who knows the re-runs happened will look for them, and should find this
    paragraph rather than conclude they were forgotten.
 
-5. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
+6. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
    reproducible *within* one server process (8/8 byte-identical) and **not across
    processes** (0/8, at identical instance type, GPU, tp and image). Nearly every lane
    spans several boxes — `ministral-3-14b` ×48, `gemma-4-12b` ×21, `glm-4.7-flash` ×4.
@@ -397,16 +436,16 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    with the model axis: it is noise, not bias, and re-runs cannot remove it. Do not
    chase it.
 
-6. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
+7. **`nemotron-3-nano-4b`'s deduction leg is the only internally bit-reproducible lane**
    (fully re-run on one box). Its induction leg is still mixed (`g6e.4xlarge` +
    `g6e.8xlarge`). `ministral-3-3b` is mixed on both legs by decision — its same-box
    baseline is 0/8, so contamination there is undetectable *and* unfixable by re-running.
 
-7. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
-   529**, unavoidably (see 5). This is why its lane nonetheless reaches a full 712
+8. **`deepseek-v3.1`'s 415 repaired cells came from a different box than its original
+   529**, unavoidably (see 6). This is why its lane nonetheless reaches a full 712
    measurable cells.
 
-8. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
+9. **Six `noise_intens` lanes are quarantined for output-contract collapse**, not low
    accuracy: `exaone_32b`/`exaone_33b` at acc 0.000 with total generative collapse,
    `glm_flash` 48.9% empty, `min3_8b`/`min3_14b` 100% non-compliant, `glm_air` 17.8%
    empty. Contrasts involving them measure whitespace-padding-induced degeneration, not
@@ -414,7 +453,7 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    ≥25% non-compliant; findings touching them are flagged `[!]` in the report, because
    the mechanism may be format collapse rather than task difficulty.
 
-9. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
+10. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
    token budget — an infrastructure symptom, not truncation, and it has not been
    investigated.
 
