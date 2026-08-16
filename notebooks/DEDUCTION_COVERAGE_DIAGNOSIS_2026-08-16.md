@@ -10,7 +10,8 @@ EC2 instance was touched, no money was spent. S3 was read-only (`ls` / `cp` into
    in **all** lanes, on the **same** cell keys. Measurable denominator = **712/lane**.
 2. The 232 splits cleanly into two classes with **different causes and opposite bias profiles**:
    **151 cells / 45 theorems** are `DojoInitError` (verification could not open the theorem) and
-   are **100% `.lake/packages/std/`** — a *scope* loss, not a difficulty loss;
+   are **100% `.lake/packages/std/`** — a *scope* restriction (Mathlib only); whether those
+   theorems would score comparably is unmeasured, see §3a;
    **81 cells / 37 theorems** are ground-truth-prefix replay failures and are **100% `Mathlib/`**
    with **median proof length 8 tactics vs 2** for the measurable set (permutation p = 5e-5) — a
    **real difficulty skew**.
@@ -375,9 +376,21 @@ verification pass's own logs, not in the published analysis input.
   data-structure lemma (`List`, `Array`, `String`, `RBMap`, `Rat`, `HashMap`, `UnionFind`,
   `BinomialHeap`, `PairingHeap`, `ByteArray`, `Int`, `Nat`, `Fin`) is gone.
 
-So the eval is **not** biased easy-or-hard by this class; it is silently **narrowed to Mathlib**.
-The honest description is: *the deduction leg measures next-tactic prediction on Mathlib, not on
-Mathlib + Lean's standard library.* That matters for any claim about "Lean4 theorem proving"
+So the eval is silently **narrowed to Mathlib**. The honest description is: *the deduction leg
+measures next-tactic prediction on Mathlib, not on Mathlib + Lean's standard library.*
+
+**State it as a scope restriction, not as "not a difficulty loss" — the stronger phrasing
+overclaims.** Proof length is a *proxy*; the quantity that would settle difficulty is the models'
+success RATE on those 45 theorems, and no such rate exists, because no model ever attempted them
+under a setup that could verify the answer. So "these theorems are no harder" is **not
+measurable from the collected data**, and steps D1/P1 below do not close it either — only
+recovering the 45 into the measurable set would. What *is* established is narrower and still
+sufficient for the write-up: the excluded set is not distinguishable from the measurable set on
+proof length, and it is defined by a property (source tree) that is independent of any model's
+behaviour. Prefer: *"the leg measures Mathlib only; whether `std` theorems would score
+comparably is unmeasured."*
+
+That matters for any claim about "Lean4 theorem proving"
 generally, and it matters for contamination/memorisation arguments (`std` lemmas are short,
 computational, and very differently distributed from Mathlib's algebra/category-theory bulk).
 It does **not** invalidate any model-vs-model contrast, because the loss is identical across all
