@@ -26,8 +26,8 @@ that cached property's docstring:
 - ``S3ResultsStore``: an APPEND-ONLY LOG under
   ``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``. A rerun ADDS a
   new timestamped object rather than overwriting anything; every read
-  (``summarize``, ``cot_chain_lengths``) resolves the LATEST logged run per
-  (model, seed, info). ``ReplicateHarness.sync_down()`` translates this log
+  (``summarize``, ``cot_chain_lengths``) resolves the EARLIEST logged run
+  per (model, seed, info) -- user ruling 2026-08-16. ``ReplicateHarness.sync_down()`` translates this log
   back into the local layout above for the local-reading analysis tooling.
 
 A seed's outstanding info types are pooled into ONE evaluate() call so the
@@ -116,12 +116,19 @@ class ReplicateHarness:
     #: even when the store already has them -- the ``store.exists``
     #: resume-skip is bypassed for exactly these seeds and each is
     #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (the
-    #: default) disables forcing entirely. Safe against the append-only S3
-    #: log because every reader resolves the LATEST run_ts per key (newest
-    #: wins), so a re-run SUPERSEDES rather than duplicates. Exists for
-    #: deliberate re-collection (2026-08-13: re-running a lane's early seeds
-    #: on new hardware to remove a within-lane serving-stack confound);
-    #: never set it for a normal resume.
+    #: default) disables forcing entirely.
+    #:
+    #: WARNING (user ruling 2026-08-16, earliest-wins reads): against an
+    #: S3-backed store this knob can no longer SUPERSEDE anything. It was
+    #: built when readers resolved the LATEST run_ts (and was used
+    #: 2026-08-13 to re-collect early seeds on new hardware); readers now
+    #: resolve the EARLIEST, so a forced re-collection of an already-logged
+    #: seed appends an object that no reader in this codebase will ever
+    #: return -- it spends real GPU money producing log history. Forcing is
+    #: only meaningful for seeds with no logged run (where it is redundant
+    #: with the normal outstanding check) or against a LOCAL store (which
+    #: overwrites in place). If logged data must be replaced, that is an
+    #: explicit-exclusion problem -- see the results_store module docstring.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
@@ -330,8 +337,9 @@ class ReplicateHarness:
         """Prints per-info-type totals over every DISTINCT SEED with a stored replicate.
 
         Against an S3-backed store, "stored" means "has at least one logged
-        run" and the totals are computed from the LATEST logged run of each
-        such seed (older, superseded runs are never read) -- see
+        run" and the totals are computed from the EARLIEST logged run of
+        each such seed (later re-collections are never read; user ruling
+        2026-08-16) -- see
         ``ResultsStore.list_seeds``/``ResultsStore.load_marks``. The printed
         line's replicate count is ``len(seeds)``: the number of DISTINCT
         seeds with a stored replicate, never the number of underlying log

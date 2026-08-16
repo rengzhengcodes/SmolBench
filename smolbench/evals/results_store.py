@@ -64,8 +64,8 @@ append-only log organised by model, seed, and collection time::
   console/CLI.
 - ``run_ts`` is :func:`format_run_ts` applied to the instant this replicate
   was collected -- a FIXED-WIDTH UTC ``YYYYMMDDTHHMMSSZ`` stamp. The fixed
-  width is load-bearing: it is what lets every "latest run" lookup in this
-  module be a plain lexicographic string MAXIMUM over listed keys, with no
+  width is load-bearing: it is what lets every "earliest run" lookup in this
+  module be a plain lexicographic string MINIMUM over listed keys, with no
   timestamp parsing anywhere.
 
 Worked example -- empty base prefix, notebook ``periodic_moe``, model
@@ -73,22 +73,37 @@ Worked example -- empty base prefix, notebook ``periodic_moe``, model
 
     periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml
 
-APPEND-ONLY, and every read resolves the LATEST run
+APPEND-ONLY, and every read resolves the EARLIEST run
 -------------------------------------------------------
 A dump ALWAYS creates a new, timestamped object; it never overwrites a prior
 run's. Re-running an experiment (a re-collected replicate, a fixed bug, a
 relaunch after a spot interruption) therefore ADDS to the log rather than
-replacing anything in it -- the old verdict is never destroyed, only
-superseded. Every read path in this module (:meth:`S3ResultsStore.
-load_marks`, :meth:`S3ResultsStore.list_seeds`, :func:`sync_down`) resolves
-the LATEST ``run_ts`` per (model, seed, info) and treats only that one as
-live; every older object under the same (model, seed, info) prefix is log
-history, readable directly from S3 (e.g. for an audit of a past regrade) but
-invisible to every method in this module.
+replacing anything in it -- no verdict is ever destroyed. Every read path in
+this module (:meth:`S3ResultsStore.load_marks`, :func:`sync_down`) resolves
+the EARLIEST ``run_ts`` per (model, seed, info) and treats only that one as
+live; every later object under the same (model, seed, info) prefix is log
+history, readable directly from S3 (e.g. for an audit of a re-collection)
+but invisible to every method in this module.
+
+EARLIEST-wins is a user ruling (2026-08-16), not a stylistic choice, and the
+reads resolved LATEST until that date. The first logged run is the one
+measurement whose selection cannot correlate with anything discovered after
+it was taken -- retries, re-collections, and regrades all postdate it -- so
+it is the estimator that keeps every reported score pass@1 under any later
+operational history. (Either extreme is outcome-blind; "any run with a
+desirable property" is the rule that would not be.)
+
+The corollary is deliberate and must not be engineered around: **a
+re-collection can never supersede logged data.** New objects for an already-
+logged (model, seed, info) are invisible to every reader here. If logged
+data must ever be voided (a corrupt collection, a voided arm), that now
+requires an EXPLICIT exclusion visible to readers -- there is no
+supersede-by-newer-object mechanism anymore, and quietly restoring one would
+reverse the ruling.
 
 The LOCAL layout is a different animal, and stays exactly as it always was:
 one file per (tag, info, seed) -- ``{prefix}{tag}_{info}/rep_{seed}.yaml`` --
-overwritten in place on every rerun. Append-only and latest-wins are S3-LOG
+overwritten in place on every rerun. Append-only and earliest-wins are S3-LOG
 properties; :class:`LocalResultsStore` has no history at all, by design,
 because the local tree is what every existing analysis script, notebook, and
 already-committed results directory depends on staying byte-identical.
@@ -119,7 +134,7 @@ ONE-WAY and DESTRUCTIVE (S3 -> local only)
 -----------------------------------------------------------------------------
 Because the S3 layout is no longer a mirror of the local one, bringing an
 S3-backed experiment's results onto local disk is a TRANSLATION, not a copy:
-for each (model, seed, info) the LATEST logged run is written to the local
+for each (model, seed, info) the EARLIEST logged run is written to the local
 path a ``LocalResultsStore`` would use for that replicate, under the model's
 configured archetype TAG -- which the log itself does not carry (a log key
 names a model, never a tag). :func:`sync_down` therefore needs the
@@ -130,18 +145,24 @@ hand and never has to re-type it.
 
 This is still a ONE-WAY, DESTRUCTIVE mirror in the direction it operates:
 :func:`sync_down` copies S3 -> local ONLY. It overwrites local files with
-whatever the S3 log currently holds as the latest run for the same
+whatever the S3 log holds as the earliest run for the same
 (model, seed, info), and it never uploads anything in the other direction.
 Any local-only modification is silently DESTROYED by the next ``sync_down``
-unless it was deliberately re-appended to the S3 log first -- concretely,
-``scripts/regrade.py --write`` rewrites replicate YAMLs IN PLACE on the local
-tree, and a later ``sync_down`` of the same experiment overwrites that
-regrade back to the log's latest (older) verdict with no warning. The safe
+unless it was deliberately re-appended to the S3 log first -- and note that
+under earliest-wins a re-append CANNOT restore a local edit either: the new
+object postdates the original and is therefore invisible to readers.
+Concretely, ``scripts/regrade.py --write`` rewrites replicate YAMLs IN PLACE
+on the local tree, and a later ``sync_down`` of the same experiment
+overwrites that regrade back to the log's earliest verdict with no warning.
+The safe
 operator sequence is: sync down, unset ``SMOLBENCH_RESULTS_S3`` (so
-subsequent runs touch the local tree only, not S3), regrade locally, THEN
-re-seed the regraded tree back to S3 deliberately, as its own explicit step
-(a guard enforcing this sequence in ``regrade.py`` itself is out of this
-module's scope -- see that script).
+subsequent runs touch the local tree only, not S3), and regrade locally.
+The pre-ruling sequence ended "...then re-seed the regraded tree back to
+S3"; that step is now DEAD -- a re-seeded object postdates the original and
+no reader here will ever resolve it (and seeding a regrade over history is
+separately forbidden for this bucket regardless). A regrade that must
+outlive the local tree is an explicit-exclusion problem, not a re-seed
+problem.
 
 URI parsing: one parser, shared
 ----------------------------------
@@ -328,10 +349,9 @@ def format_run_ts(when: datetime) -> str:
         always exactly 16 characters (FIXED WIDTH, zero-padded fields). The
         fixed width is load-bearing: it is what makes a plain lexicographic
         string comparison of two ``run_ts`` values agree with chronological
-        order, which is how every "latest run wins" read in this module
-        (:meth:`S3ResultsStore.load_marks`, :meth:`S3ResultsStore.
-        list_seeds`, :func:`sync_down`) finds the newest logged run without
-        ever parsing a timestamp back out of a key.
+        order, which is how every "earliest run wins" read in this module
+        (:meth:`S3ResultsStore.load_marks`, :func:`sync_down`) finds the
+        first logged run without ever parsing a timestamp back out of a key.
 
     Notes
     -----
@@ -512,9 +532,10 @@ class ResultsStore(abc.ABC):
             the resume-skip check: ``ReplicateHarness`` consults it before
             re-evaluating a given (tag, info, seed), so a resumed run never
             re-runs (and re-bills) work that already landed. For an
-            S3-backed store, ANY logged run counts as done -- there is no
-            requirement that it be the LATEST one, since even a superseded
-            run proves the work was already performed once.
+            S3-backed store, ANY logged run counts as done -- no ordering
+            requirement at all, since any logged run proves the work was
+            already performed once (and under earliest-wins reads, the
+            first one is precisely the run that counts).
 
         Raises
         ------
@@ -581,9 +602,9 @@ class ResultsStore(abc.ABC):
         -------
         Marks
             For ``LocalResultsStore``, the single file stored at `addr`'s
-            path. For ``S3ResultsStore``, the LATEST logged run for `addr`
-            (see :meth:`S3ResultsStore.load_marks`) -- older, superseded
-            runs of the same replicate are never returned by this method.
+            path. For ``S3ResultsStore``, the EARLIEST logged run for `addr`
+            (see :meth:`S3ResultsStore.load_marks`) -- later re-collections
+            of the same replicate are never returned by this method.
 
         Raises
         ------
@@ -648,8 +669,10 @@ class LocalResultsStore(ResultsStore):
     readable with no migration step. This store IGNORES `addr.model` and the
     `run_ts` argument to :meth:`dump_marks` entirely -- there is exactly one
     local file per (tag, info, seed) replicate, and a new run overwrites it,
-    exactly as it always has. Append-only, latest-wins semantics are S3-LOG
-    properties (see the module docstring); they do not apply here.
+    exactly as it always has. Append-only, earliest-wins semantics are S3-LOG
+    properties (see the module docstring); they do not apply here -- note the
+    asymmetry this creates: a local rerun REPLACES its predecessor, an
+    S3-logged rerun is INVISIBLE to readers behind its predecessor.
     """
 
     #: Directory holding the per-condition replicate dirs -- an experiment's
@@ -982,16 +1005,19 @@ class S3ResultsStore(ResultsStore):
         self._client().put_object(Bucket=self.bucket, Key=key, Body=marks.dumps().encode())
 
     def load_marks(self, addr: ReplicateAddress) -> Marks:
-        """See ``ResultsStore.load_marks``. Reads the LATEST logged run.
+        """See ``ResultsStore.load_marks``. Reads the EARLIEST logged run.
 
         Returns
         -------
         Marks
-            The run at the LEXICOGRAPHICALLY MAXIMUM key under `addr`'s
+            The run at the LEXICOGRAPHICALLY MINIMUM key under `addr`'s
             (model, seed, info) prefix -- which, thanks to `run_ts`'s fixed
             width (see :func:`format_run_ts`), is exactly the
-            chronologically latest logged run. Every older run under the
-            same prefix is ignored.
+            chronologically first logged run. Every later run under the
+            same prefix is ignored: user ruling 2026-08-16, "use the
+            earliest results to keep pass@1" (this method resolved LATEST
+            before that date; see the module docstring for the rationale
+            and the supersede-requires-explicit-exclusion corollary).
 
         Raises
         ------
@@ -1000,31 +1026,32 @@ class S3ResultsStore(ResultsStore):
             the message (the prefix itself, so an operator can go inspect
             it directly in S3) so a caller that skipped :meth:`exists`
             first gets a clear, addressable error instead of, say, an
-            ``IndexError`` from an empty max() over nothing.
+            ``IndexError`` from an empty min() over nothing.
 
         Notes
         -----
-        Paginates the FULL listing under the prefix (not just the first
-        page) because the maximum key can be anywhere in it -- an
-        S3 listing is lexicographically ordered WITHIN a page and ACROSS
-        pages, so tracking a running maximum while paginating is equivalent
-        to, and cheaper than, collecting every key and calling ``max()``
-        once at the end.
+        An S3 listing is lexicographically ordered within and across pages,
+        so the FIRST matching key of the FIRST page is already the minimum.
+        The loop below still scans the (tiny: one to a few keys) listing
+        with an explicit running min rather than an early ``break``, so the
+        selection rule is stated in code as an ordering rule -- symmetric
+        with what a reader of the pre-ruling running-max version would have
+        seen -- rather than as an artifact of S3's iteration order.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
         paginator = client.get_paginator("list_objects_v2")
-        latest_key: Optional[str] = None
+        earliest_key: Optional[str] = None
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                if latest_key is None or key > latest_key:
-                    latest_key = key
-        if latest_key is None:
+                if earliest_key is None or key < earliest_key:
+                    earliest_key = key
+        if earliest_key is None:
             raise FileNotFoundError(
                 f"no logged run under s3://{self.bucket}/{prefix}"
             )
-        obj = client.get_object(Bucket=self.bucket, Key=latest_key)
+        obj = client.get_object(Bucket=self.bucket, Key=earliest_key)
         return Marks.loads(obj["Body"].read().decode())
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
@@ -1274,7 +1301,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     being ported onto ``ResultsStore`` -- see the module docstring's "No
     local write-through when S3 is active" section. This function is the
     bridge: for every (model, seed, info) under `results_dir`'s resolved S3
-    log, it downloads the LATEST logged run and writes it to the local path
+    log, it downloads the EARLIEST logged run and writes it to the local path
     a ``LocalResultsStore`` would use for that replicate.
 
     This is a TRANSLATION, not a mirror -- see the module docstring's
@@ -1286,11 +1313,12 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
 
     THIS IS STILL A ONE-WAY, DESTRUCTIVE OPERATION in the direction it
     copies -- see the module docstring's section of that name. It writes S3
-    -> local only, overwriting whatever is on disk with the log's current
-    latest run; it never appends to (or otherwise touches) the S3 log. A
+    -> local only, overwriting whatever is on disk with the log's earliest
+    run; it never appends to (or otherwise touches) the S3 log. A
     local-only edit (e.g. a local ``scripts/regrade.py --write`` regrade) is
-    silently destroyed by the next call unless it was deliberately
-    re-appended to S3 first.
+    silently destroyed by the next call, and under earliest-wins no
+    re-append to S3 can protect it either (the module docstring's regrade
+    sequence).
 
     Parameters
     ----------
@@ -1346,11 +1374,12 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     For each ``model, tag`` in `tags`, this function paginates
     ``f"{log_prefix}/{model}/"`` and parses every listed key with
     :func:`_parse_log_entry` into ``(seed, info, run_ts)``, keeping only the
-    entry with the LEXICOGRAPHICALLY MAXIMUM `run_ts` per ``(seed, info)``
-    -- i.e. the latest logged run, exactly as ``S3ResultsStore.load_marks``
-    resolves it. A key that does not match the expected shape (stray,
-    hand-placed, or predating this key scheme) is silently skipped, not
-    downloaded.
+    entry with the LEXICOGRAPHICALLY MINIMUM `run_ts` per ``(seed, info)``
+    -- i.e. the earliest logged run, exactly as ``S3ResultsStore.load_marks``
+    resolves it (user ruling 2026-08-16; both functions MUST agree, or a
+    synced tree and a direct load would silently fork the analysis). A key
+    that does not match the expected shape (stray, hand-placed, or predating
+    this key scheme) is silently skipped, not downloaded.
 
     A local file is SKIPPED (not re-downloaded) only when ALL of: (a) it
     already exists; (b) the S3 object's ``ETag``, read directly off the
@@ -1424,12 +1453,15 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     skipped = 0
     for model, tag in tags.items():
         list_prefix = f"{store.log_prefix}/{model}/"
-        # Per (seed, info): (run_ts, key, etag) of the latest run seen so
-        # far. A dict keyed on (seed, info) is the natural shape for "keep
-        # only the winner of a running max over run_ts" -- no separate
-        # grouping/sorting pass is needed, since the running-max update is
-        # O(1) per listed key.
-        latest: dict[tuple[int, str], tuple[str, str, object]] = {}
+        # Per (seed, info): (run_ts, key, etag) of the EARLIEST run seen so
+        # far -- the selection rule is user-ruled (2026-08-16, "use the
+        # earliest results to keep pass@1") and must match load_marks
+        # exactly; a sync_down that resolved a different run than a direct
+        # load would silently fork the analysis. A dict keyed on
+        # (seed, info) is the natural shape for "keep only the winner of a
+        # running min over run_ts" -- no separate grouping/sorting pass is
+        # needed, since the running-min update is O(1) per listed key.
+        earliest: dict[tuple[int, str], tuple[str, str, object]] = {}
         for page in paginator.paginate(Bucket=store.bucket, Prefix=list_prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
@@ -1439,11 +1471,11 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 if parsed is None:
                     continue  # stray key under this prefix; not one of ours
                 seed, info, run_ts = parsed
-                cur = latest.get((seed, info))
-                if cur is None or run_ts > cur[0]:
-                    latest[(seed, info)] = (run_ts, key, obj.get("ETag"))
+                cur = earliest.get((seed, info))
+                if cur is None or run_ts < cur[0]:
+                    earliest[(seed, info)] = (run_ts, key, obj.get("ETag"))
 
-        for (seed, info), (_run_ts, key, etag) in latest.items():
+        for (seed, info), (_run_ts, key, etag) in earliest.items():
             local_rel = f"{prefix}{tag}_{info}/rep_{seed}.yaml"
             # F5 guard FIRST: validate before touching the filesystem at
             # all, so a refused entry leaves no trace (no mkdir, no partial

@@ -14,7 +14,9 @@ Two layouts are under test and they are deliberately different:
   overwrites it.
 * S3 is an append-only experiment LOG keyed by model, seed and run time:
   ``<base>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``. A re-run
-  ADDS an object; reads resolve the latest ``run_ts``.
+  ADDS an object; reads resolve the EARLIEST ``run_ts`` (user ruling
+  2026-08-16 -- the first logged run is the pass@1 measurement; a re-run is
+  log history, invisible to every reader).
 
 The fake client raises REAL ``botocore.exceptions.ClientError`` objects,
 because the store reads ``Error.Code`` through ``smolbench.evals._aws.
@@ -281,7 +283,7 @@ def test_experiment_name_falls_back_to_the_repo_relative_path(fake_repo):
 
 
 def test_format_run_ts_is_fixed_width_utc():
-    """Fixed-width UTC is load-bearing: every "latest" lookup is a plain
+    """Fixed-width UTC is load-bearing: every "earliest" lookup is a plain
     string max over listed keys, so lexicographic order MUST equal
     chronological order. A non-padded format (e.g. month 8 as "8") would
     sort 20261110 before 2026810 and silently return the wrong run."""
@@ -409,20 +411,23 @@ def test_s3_dump_is_append_only(fake_s3):
     ]
 
 
-def test_s3_load_marks_returns_the_latest_run(fake_s3):
+def test_s3_load_marks_returns_the_earliest_run(fake_s3):
+    """User ruling 2026-08-16: the FIRST logged run is the measurement; a
+    re-collection is log history. A flip of this assertion is a change to
+    which data every analysis consumes -- never make it casually."""
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     store.dump_marks(sample_marks(score=0), addr(), TS2)
-    assert store.load_marks(addr()).marks[0].score == 0  # TS2 wins
+    assert store.load_marks(addr()).marks[0].score == 1  # TS1 wins
 
 
-def test_s3_load_marks_latest_is_independent_of_write_order(fake_s3):
-    """Latest means latest TIMESTAMP, not last written. A late-arriving
-    backfill of an older run must not displace a newer one."""
+def test_s3_load_marks_earliest_is_independent_of_write_order(fake_s3):
+    """Earliest means earliest TIMESTAMP, not first written. A late-arriving
+    backfill stamped OLDER than an existing run resolves ahead of it."""
     store = s3_store()
     store.dump_marks(sample_marks(score=0), addr(), TS2)  # newer, written first
     store.dump_marks(sample_marks(score=1), addr(), TS1)  # older, written second
-    assert store.load_marks(addr()).marks[0].score == 0
+    assert store.load_marks(addr()).marks[0].score == 1
 
 
 def test_s3_load_marks_raises_when_nothing_is_logged(fake_s3):
@@ -631,16 +636,18 @@ def test_sync_down_translates_the_log_into_the_analysis_layout(
     assert (results / "decode_intens" / "rep_1777.yaml").read_bytes() == body
 
 
-def test_sync_down_writes_only_the_latest_run_per_replicate(s3_env, fake_repo, fake_s3):
-    """Two logged runs, one local file, carrying the LATER run."""
+def test_sync_down_writes_only_the_earliest_run_per_replicate(s3_env, fake_repo, fake_s3):
+    """Two logged runs, one local file, carrying the EARLIER run -- and the
+    same run ``load_marks`` resolves, since a synced tree and a direct load
+    disagreeing would silently fork the analysis (user ruling 2026-08-16)."""
     results = fake_repo / "notebooks" / "periodic" / "results"
-    old = sample_marks(score=1).dumps().encode()
-    new = sample_marks(score=0).dumps().encode()
-    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1)] = old
-    fake_s3.objects[log_key("stub-model", 1776, "intens", TS2)] = new
+    first = sample_marks(score=1).dumps().encode()
+    rerun = sample_marks(score=0).dumps().encode()
+    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1)] = first
+    fake_s3.objects[log_key("stub-model", 1776, "intens", TS2)] = rerun
 
     assert sync_down(results, TAGS) == 1
-    assert (results / "decode_intens" / "rep_1776.yaml").read_bytes() == new
+    assert (results / "decode_intens" / "rep_1776.yaml").read_bytes() == first
 
 
 def test_sync_down_honours_the_prefix_in_both_directions(monkeypatch, fake_repo, fake_s3):
@@ -905,9 +912,10 @@ def test_harness_has_outstanding_reads_the_log(s3_harness, fake_s3, freeze_ts):
     assert not s3_harness.results_dir.exists()
 
 
-def test_harness_summarize_uses_the_latest_run(s3_harness, fake_s3, capsys):
+def test_harness_summarize_uses_the_earliest_run(s3_harness, fake_s3, capsys):
     """Printed format is byte-identical, the count is distinct seeds, and the
-    tallies come from the LATEST logged run of each replicate."""
+    tallies come from the EARLIEST logged run of each replicate (user ruling
+    2026-08-16)."""
     for seed in (1, 2):
         fake_s3.objects[
             log_key("stub-model", seed, "intens", TS1, experiment="periodic_moe")
@@ -918,8 +926,8 @@ def test_harness_summarize_uses_the_latest_run(s3_harness, fake_s3, capsys):
 
     s3_harness.summarize("stub-model")
     out = capsys.readouterr().out
-    # Latest run scored 0 -> 4 incorrect, not 4 correct.
-    assert "decode/intens: 2/2 replicates -- correct=0 incorrect=4 invalid=0 acc=0.000" in out
+    # Earliest run scored 1 -> 4 correct, not 4 incorrect.
+    assert "decode/intens: 2/2 replicates -- correct=4 incorrect=0 invalid=0 acc=1.000" in out
     assert "decode/extens: 0/2 replicates -- correct=0 incorrect=0 invalid=0 acc=n/a" in out
 
 

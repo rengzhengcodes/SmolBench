@@ -573,9 +573,33 @@ Combine with I-5 (byte identity) as independent corroboration.
 
 ---
 
-## 4. The earliest-vs-newest decision — FOR THE USER
+## 4. The earliest-vs-newest decision — RESOLVED BY THE USER, 2026-08-16
 
-**This review cannot settle this and does not attempt to.** Both candidate rules are
+> **Ruling: "Use the earliest results to keep pass@1." Option B — earliest,
+> everywhere, both legs** — reaffirming the standing directive over this section's
+> Option-A recommendation. Implemented and verified the same day:
+>
+> - `S3ResultsStore.load_marks` and `sync_down` now resolve the lexicographic
+>   **minimum** `run_ts` (commit below; the two sites are documented as required to
+>   agree, and both tests were flipped with the ruling cited).
+> - The local analysis tree was re-synced: **156 files replaced** = the 140
+>   duplicate cells flipping newest→earliest + 16 fresh `ministral-3-14b` streaming
+>   seeds. The §2.4 discriminating cell now md5-matches the **earliest** object
+>   (`c654f7d135ea`), closing the same chain that previously pinned newest.
+> - Consequences accepted with the ruling: the three duplicate lanes' analyzed
+>   induction data reverts to pre-decontamination serving stacks (mixed instance
+>   types — a noise term, not a bias, per `DETERMINISM_PLAN_2026-08-16.md`, whose
+>   8/8 pairing spans two instance types); and `force_seeds` re-collection can no
+>   longer supersede logged data — voiding now requires explicit exclusion, which
+>   is recorded as a deliberate property in the store's module docstring.
+> - Checks §3 I-3/I-4/I-5's acceptance criteria read "newest" — they now assert
+>   **earliest**; I-7 (significance sensitivity) transfers to the analysis
+>   re-derivation, which recomputes on earliest data directly and subsumes it.
+>
+> The section below is preserved as written, as the decision record the ruling
+> answered.
+
+**This review could not settle this and did not attempt to.** Both candidate rules are
 outcome-independent, so both are pass@1-legitimate. They select different data.
 
 **The conflict.** There is a standing directive that *"the analysis should use the

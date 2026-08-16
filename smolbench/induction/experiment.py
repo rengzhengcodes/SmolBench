@@ -76,8 +76,10 @@ A run NEVER overwrites a prior run's object in the S3 log -- re-running an
 experiment APPENDS a new timestamped object rather than replacing anything,
 so a superseded verdict stays recoverable as log history rather than being
 destroyed. Every READ path (``summarize()``, ``cot_chain_lengths()``,
-``harness.sync_down()``) resolves the LATEST ``run_ts`` per (model, seed,
-info) and treats only that one as live.
+``harness.sync_down()``) resolves the EARLIEST ``run_ts`` per (model,
+seed, info) and treats only that one as live (user ruling 2026-08-16: the
+first logged run is the pass@1 measurement; later re-collections are log
+history).
 
 ``InductionExperiment.harness.sync_down()`` translates an S3-backed
 experiment's append-only log back into the local layout above, for tooling

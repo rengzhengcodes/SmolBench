@@ -19,6 +19,19 @@
 > [`PASS_AT_1_REVIEW_PLAN_2026-08-16.md`](PASS_AT_1_REVIEW_PLAN_2026-08-16.md):
 > verification absorbed nearly all of the +5.9 pt figure quoted here (now +0.14 pt),
 > and the multi-surviving count is 61, not 74.
+>
+> **User ruling, 2026-08-16 — analysis reads the EARLIEST logged run, both legs**
+> ("use the earliest results to keep pass@1"). This inverts three of this document's
+> induction clearances, which were argued from "the newest files postdate the re-run
+> cutoff": under earliest selection the analyzed data for **`gemma-4-12b`** (14
+> seeds), **`ministral-3-14b`** (9 seeds) and **`deepseek-v4-flash`** (12 seeds)
+> comes from the pre-re-run serving stacks, so those lanes are **mixed-configuration
+> in the analysis** even though their newest objects are homogeneous. The
+> decontaminated re-runs remain in the S3 log as history. This is the accepted cost
+> of the ruling, and the determinism plan's finding that the 8/8 cross-process
+> pairing spans two instance types is what prices it as noise rather than bias. The
+> same ruling makes `force_seeds`-style re-collection unable to supersede logged
+> data — future voiding requires explicit exclusion, not a newer object.
 
 **2026-08-15.** Which of the 21 lanes had their cells generated on more than one
 serving configuration, what was done about each, and — for the first time in this
