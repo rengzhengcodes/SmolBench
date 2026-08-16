@@ -253,6 +253,15 @@ correction is not binding at this tier.
    validly paired, but model-level tables mix denominators. Contrast n is reported as a
    range (207–270) rather than a single figure.
 
+   > **In flight as of 2026-08-16.** A re-collection of those 7 seeds is being attempted.
+   > If it lands, the lane becomes R=30 and **14 of the 210 primary contrasts** must be
+   > re-derived (8 `min3` ladder contrasts against `min3_14b`, plus all 6 info-arm pairs
+   > within it). Holm is a global procedure, so the whole family is simply re-run rather
+   > than patched — it costs seconds. The rejection boundary is robust to this: Holm
+   > stops at a 2× gap (4.88e-04 → 9.77e-04), so 14 shifting p-values are unlikely to
+   > move the other 196. **The deduction leg is unaffected** — all 21 deduction lanes are
+   > complete. If the attempt fails, the numbers here stand as final.
+
 2. **24.6% of the deduction theorem set is unusable for everyone.** The same **232
    cells** fail in every one of the 21 lanes — 151 where LeanDojo could not open the
    theorem (missing `*.ast.json`) and 81 where the *ground-truth* prefix would not
