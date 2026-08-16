@@ -48,6 +48,7 @@ USAGE
 
 import argparse
 import collections
+import concurrent.futures
 import json
 import logging
 import pathlib
@@ -127,6 +128,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dest", default="analysis/2026-08-16",
                     help="destination prefix inside the study bucket")
+    ap.add_argument("--workers", type=int, default=32,
+                    help="concurrent copies; the work is pure network wait (default 32)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -153,14 +156,25 @@ def main() -> int:
         logging.info("--dry-run: nothing written.")
         return 0
 
+    # Copies run CONCURRENTLY. Each is two S3 round trips (copy, then verify),
+    # so serially 55k objects is ~5 hours of pure latency while moving no bytes
+    # through this host -- measured at 175 objects/min before this change.
+    # Threads are the right tool: the work is entirely network wait.
     counts = collections.Counter()
-    for i, (leg, model, key, size) in enumerate(rows, 1):
+    done = 0
+
+    def _one(item):
+        leg, model, key, size = item
         prefix = "induction/" if leg == "induction" else "deduction/runs/"
         tail = key[len(prefix):].split("/", 1)[1]
-        dest_key = f"{args.dest}/{leg}/{model}/{tail}"
-        counts[copy_one(client, key, dest_key, size)] += 1
-        if i % 2000 == 0:
-            logging.info(f"  {i}/{total_objects} ... ({dict(counts)})")
+        return copy_one(client, key, f"{args.dest}/{leg}/{model}/{tail}", size)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
+        for result in pool.map(_one, rows):
+            counts[result] += 1
+            done += 1
+            if done % 5000 == 0:
+                logging.info(f"  {done}/{total_objects} ... ({dict(counts)})")
 
     for doc in PROVENANCE_DOCS:
         path = REPO_ROOT / doc
