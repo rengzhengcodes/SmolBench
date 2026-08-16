@@ -303,7 +303,48 @@ study's own generation regime. Do not touch it.
 
 ---
 
-## 3. The hinge experiment [PROPOSED — not run]
+## 3. The hinge experiment [RUN 2026-08-16 21:08–22:20Z — BOTH PREDICTIONS LANDED]
+
+> **Results** (user-authorized; `scripts/hinge_probe.py`; reports
+> `notebooks/deduction/results/hwprobe_archive/hinge_<model>.json`; ~2.2 box-hours,
+> ≈ $3.5 — under the $4–7 envelope; the section below is preserved verbatim as the
+> pre-registration):
+>
+> | arm | prediction | measured | verdict |
+> |---|---|---|---|
+> | **B** nemotron stock | 8/8 (replication) | **8/8** | archived baseline replicates |
+> | **A** nemotron det | drops if cache replay | **8/8** | **floor EXONERATED** — genuine kernel determinism, not cache replay; mechanism #3 drops out of §2 |
+> | **D** ministral stock | 0/8 (replication) | **0/8** | archived anomaly replicates |
+> | **C** ministral det | 8/8 if config | **8/8** | **"nothing can be measured for it" was the CONFIGURATION, not the model** — inventory corrected |
+>
+> The manipulation is content-verified, not flag-asserted: stock configs counted
+> 3,904 (nemotron) / 10,320 (ministral) prefix-cache hits — pass 2 replaying pass
+> 1's prefill, exactly the suspected mechanism — while both det configs read
+> **0 queries / 0 hits**. Both boxes ran build `0.27.2rc1.dev122+g8efa13b70`
+> (recorded per §5 — the study's sixth recorded build), same build across both
+> configs per box. The one length-1 row (ministral stock:P2) re-asked per §3.3 was
+> empty twice → a genuine cap-out, kept as the response.
+>
+> Two findings beyond the pre-registered questions:
+>
+> 1. **Cross-config is 0/8 on BOTH models** (same box, same seed, same prompts,
+>    different serving flags; common prefixes 85–1502 chars). Determinism's scope
+>    is one process × one configuration — a config change flips generations as
+>    thoroughly as a process change does.
+> 2. **Ministral's stock 0/8 is NOT client concurrency** — the probe is strictly
+>    sequential, so its within-process nondeterminism under the stock config comes
+>    from the serving configuration itself (CUDA graphs vs eager, default
+>    `max-num-seqs` scheduling, or cache-path numerics). Which of the three det
+>    flags does the work is **not separable from this design** (they changed
+>    together, deliberately — the recipe in §4 uses all three, so separating them
+>    buys nothing for this study).
+>
+> Consequences applied: §1.1's "may be measuring the cache" limit is RESOLVED
+> (it was not); §1.3's ministral narrowing is RESOLVED (config, not model);
+> §2 mechanism #3 dropped; the §4 recipe is now empirically backed — **both
+> models reach 8/8 under it**.
+
+## 3-pre. The hinge experiment [as PROPOSED — pre-registration, verbatim]
 
 ### 3.1 What it decides
 

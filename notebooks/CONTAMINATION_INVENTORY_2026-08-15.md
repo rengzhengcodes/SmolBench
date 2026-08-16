@@ -62,6 +62,16 @@ noise floor a naive cross-size diff would blame hardware for vLLM's own jitter.
 `ministral-3-3b` scored 0/8 on its OWN same-box baseline, so it is not deterministic even
 within one process and nothing can be measured for it.
 
+> **CORRECTED BY MEASUREMENT, 2026-08-16 (hinge experiment, `hinge_ministral-3-3b.json`):
+> that verdict was the CONFIGURATION, not the model.** Under prefix caching OFF +
+> `--max-num-seqs 1` + `--enforce-eager` + `--seed 0`, ministral-3-3b is **8/8
+> byte-identical** on the same baseline that scored 0/8 stock (stock replicated 0/8 in the
+> same run, so the comparison is licensed). The nemotron control also held 8/8 with caching
+> off, so the study's noise floor was genuine kernel determinism, not cache replay. The
+> operational conclusions above survive — the study's lanes RAN under the stock config, so
+> their within-lane nondeterminism is real as collected — but "unmeasurable" and "a property
+> of the model" do not. See `DETERMINISM_PLAN_2026-08-16.md` §3.
+
 **The third row corrects the second, and corrects what I first concluded.** I initially
 reported the 4xl-vs-2xl result as "instance SIZE changes generations." It does not show
 that: the 2xlarge was also a *different machine running a different vLLM process*. When
