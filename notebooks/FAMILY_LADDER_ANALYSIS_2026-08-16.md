@@ -136,7 +136,7 @@ retired, not merely narrowed.
 **Holm and Hochberg reject the identical set**, not merely the same count. The two share
 critical values α/(m−i+1) and differ only in stepping direction, so they can diverge only
 when a p-value fails its threshold and a *larger* one later passes its looser threshold.
-Holm stops at rank 124 and nothing beyond it passes — there is a 2× gap at the boundary
+Holm stops at rank 126 and nothing beyond it passes — there is a 2× gap at the boundary
 (4.88e-04 → 9.77e-04) and the curves never re-cross. **Use Holm**: it is valid under
 arbitrary dependence, while Hochberg's Simes/MTP2 assumption is unverified for 210
 statistics sharing models, seeds and harmonics — and here it buys zero extra rejections.
@@ -158,7 +158,7 @@ to exactly the extensional listing's token count under the model's own tokenizer
 this contrast holds prompt **length** fixed and varies only whether the tokens carry
 information.
 
-Under the primary m=210 correction, **10 of 21 are significant. Six of those are
+Under the primary m=210 correction, **10 of 21 are significant. Five of those are
 quarantined or contaminated, so the finding rests on 5 clean lanes — and all 5 point the
 same way:**
 
