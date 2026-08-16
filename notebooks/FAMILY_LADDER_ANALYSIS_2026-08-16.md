@@ -360,18 +360,32 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    | `noise_intens` | 0.5% | 0.0% | −0.5 pt |
 
    The lift is confined to exactly the arms whose draws run to the token cap; the noise
-   arm, which does not, is **identical across the two groups**. That is the signature of a
-   length-correlated delivery fault, not of a transport difference: the 23 seeds that
-   landed pre-fix are precisely the ones whose draws capped out *least*, and the 7 that
-   failed are victims *because* they cap out most. **Shipping at R=23 would therefore have
-   baked a length-selection bias toward answered cells into this lane; collecting the
-   remaining 7 removed it.** The lane's own non-compliance figures corroborate
-   independently (`intens` 58%, `extens` 84%).
+   arm, which does not, is **identical across the two groups**.
 
-   Honest limit: survivorship and per-process regime variation cannot be fully separated
-   offline, because the marks carry no `finish_reason`. Both readings leave the R=30 data
-   as the honest draw, and only the survivorship reading is consistent with the noise arm
-   being unmoved.
+   **The mechanism is EXCLUSION, not survivorship**, and the landing timestamps settle it.
+   Seeds 0–8 landed 08-11/12; seeds 9–18 and 20–23 landed 07:17–10:46Z on 08-14; the
+   delivery fault began ~13:48Z. **Zero of the 23 old seeds landed after fault onset** —
+   that cohort was never filtered by the fault, it simply ran first. What makes the 7
+   missing seeds special is intrinsic: server counters from inside the fault window show
+   the boxes serving exactly seeds 19/24–29, on the *old* builds, at `length:stop ≈ 28:13`
+   (~68% cap-length), matching the 62–79% those seeds show today on the new build. Their
+   cap-out propensity predates the rebuild and is *why* they could not finish inside the
+   fault window.
+
+   So the correct statement is **missing-not-at-random**: an R=23 lane omitting them is
+   biased toward answered cells, and R=30 removes that bias. The valence is unchanged —
+   the re-collection is a correction, not an inhomogeneity — but it is exclusion bias, not
+   survival of a filter.
+
+   *Correcting an overclaim made in an earlier draft of this document:* the flat noise arm
+   does **not** make this "the only reading consistent with the data." It excludes
+   arm-uniform mechanisms, but a length-mediated per-process or build shift would also
+   spare the noise arm. What excludes the build/regime reading is the fault-window counters
+   above, plus the observation that the two pre-fix cohorts sit within a few points of each
+   other (`intens` 13.6% vs 9.5% empty) *across two hardware families and two builds* — era
+   drift does not produce shifts of this size here. **Cite the counters as the pin, not the
+   noise row.** Residual limit: the marks carry no `finish_reason`, so this rests on
+   server-side counters rather than per-mark evidence.
 
    > This lane's contrasts moved most on closing:
    > `[min3 ladder | extens] min3_8b vs min3_14b` went 6.36e-04 → 5.85e-06 across the
@@ -404,18 +418,36 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    24.6%. Uniform across models, so **no bias — but real lost power**: the measurable
    denominator is 712 cells / 216 theorem blocks, not 944.
 
-4. **Induction hardware attribution is FLEET-LOG-INFERRED, never object-carried.** An
-   induction result object's schema is `date` / `marks` / `model`, and a mark's is
-   `answer` / `compliance` / `query` / `reasoning` / `response` / `score` — verified
-   directly on both the earliest and newest versions of a duplicated cell. **No induction
-   object records the instance type, GPU, or server build at all**, so every hardware
-   statement about this leg — including the mixed-instance-type claims below — is
-   *inferred* from run timestamps against the fleet logs, not read off the data. The
-   inference is near-certain but it is an inference, and the methods should say so rather
-   than imply the objects carry provenance. (The deduction leg differs: it has
-   `server_config.yaml` sidecars.) Related: the count of vLLM builds serving the study is
-   a count of *recorded* builds — at least one re-collection's boxes logged no version
-   string, so the true number is a lower bound.
+4. **Induction hardware attribution is MOSTLY inferred — and the split has a date.**
+   Per-object `server_config` stamping landed at **02:06:44Z on 2026-08-14** (`040d2e83`).
+   Objects written before it carry `date` / `marks` / `model` and nothing else; objects
+   written after carry a full `server_config` block with instance type, instance id and
+   GPU. Verified on the analyzed tree: `ministral-3-14b` seeds 0–8 have no block, seeds
+   9–29 do.
+
+   | analyzed objects | hardware provenance |
+   |---|---|
+   | ~2,436 of 2,520 | **fleet-log-inferred** from run timestamps |
+   | `ministral-3-14b` seeds 9–29 (84 objects) | **object-carried** |
+
+   Among the 140 duplicates: no `gemma-4-12b` or `deepseek-v4-flash` attempt carries the
+   block in *either* version — both lanes' newest attempts finished 01:48Z and 01:55Z,
+   missing stamping by 18 and 11 minutes — while `ministral-3-14b` seeds 0–8 carry it only
+   in the *unanalyzed* newest attempt. So for every duplicated cell the analyzed object is
+   unstamped, and the mixed-instance-type claims below are inferences, near-certain but
+   inferences.
+
+   > **How both sides of this got it wrong, since the lesson generalises.** An earlier
+   > draft of this document asserted that *no* induction object carries hardware fields,
+   > generalising from one duplicated cell; the collection side asserted that only the
+   > newest attempts do. Each sample falsified the other's generalisation, and neither was
+   > right. The sampled cell (`gemma-4-12b` seed 8) happened to straddle nothing — both its
+   > versions predate stamping by minutes. **Date the commit that introduced the field
+   > before generalising from any sample of objects written around it.**
+
+   Related: the count of vLLM builds serving the study is a count of *recorded* builds — at
+   least one re-collection's boxes logged no version string, so the true number is a lower
+   bound, not a total.
 
 5. **The decontamination re-runs are in the log but invisible to this analysis.** Under
    earliest-wins, the three multi-attempt lanes (`gemma-4-12b`, `deepseek-v4-flash`,

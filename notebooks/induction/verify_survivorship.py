@@ -1,11 +1,26 @@
-"""Check the survivorship claim on ministral-3-14b's re-collected seeds.
+"""Empty-response profile of ministral-3-14b's re-collected seeds vs the rest.
 
-Claim under test: the 7 re-collected seeds (19, 24-29) run 62-79% empty
-responses against 11-36% on the 23 that landed pre-fix, confined to the
-cap-length arms, with the noise arm identical across groups. If true, shipping
-at R=23 would have baked a LENGTH-SELECTION bias into the lane -- the seeds
-that landed are the ones whose draws capped out least -- and the re-collection
-removed it rather than introducing an inhomogeneity.
+Measures the gap this lane's exclusion-bias caveat rests on: the 7 re-collected
+seeds (19, 24-29) against the 23 that landed before the delivery fault, per arm.
+The expected shape is a large lift confined to the arms whose draws reach the
+token cap, with the noise arm -- which does not reach it -- unmoved.
+
+WHAT THIS SCRIPT DOES AND DOES NOT SHOW
+---------------------------------------
+It shows the gap. It does NOT establish the mechanism, and an earlier version of
+this docstring overclaimed that it did by calling the effect "survivorship."
+
+Survivorship is the wrong word: the landing timestamps show that ZERO of the 23
+old seeds landed after fault onset (~13:48Z on 08-14; the latest old seed landed
+10:46Z), so that cohort was never filtered by the fault -- it simply ran first.
+The right frame is MISSING-NOT-AT-RANDOM exclusion: the 7 seeds are intrinsically
+cap-out-prone, which is why they could not finish inside the fault window.
+
+Nor does the flat noise arm below prove the mechanism on its own. It rules out
+arm-uniform causes, but a length-mediated per-process or build shift would spare
+the noise arm too. The evidence that pins it is external to this script: server
+counters from inside the fault window show those same seeds at ~68% cap-length on
+the OLD builds, matching what they show today on the new one. Cite those.
 """
 import sys
 from pathlib import Path
