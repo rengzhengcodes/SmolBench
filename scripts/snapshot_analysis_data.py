@@ -203,6 +203,14 @@ def main() -> int:
             "inflates ministral-3-3b by 5.9 points.",
             "'exception' verdicts mean the attempt never reached the model "
             "(infrastructure), not a model failure -- exclude, never score 0.",
+            "'replay_failed' means VERIFICATION could not be set up -- LeanDojo "
+            "could not open the theorem, or the ground-truth prefix would not "
+            "replay. It is the SAME 232 cells in every lane (151 DojoInit + 81 "
+            "prefix), so no model was ever tested on them. Exclude, never score "
+            "0: doing so deflates every marginal rate by up to 24.6%. The "
+            "measurable denominator is 944 - 232 = 712 cells per lane.",
+            "'incomplete' IS model-dependent (68/30/50 across three lanes) and "
+            "stays in the denominator as a genuine failure.",
             "*_SUPERSEDED-*/*_STALE-*/*_BROKEN-* are the repair audit trail, not current data.",
         ],
     }
