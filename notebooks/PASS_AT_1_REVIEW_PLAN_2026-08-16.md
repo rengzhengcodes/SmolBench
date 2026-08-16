@@ -456,19 +456,28 @@ over an identical seed set, so the only variable is which of the 140 multi-attem
 resolves:
 
 - Holm rejections: **earliest 124 vs newest 122**; 35 of 210 contrasts move at all.
-- **2 of 210 contrasts flip significance, both from just outside to just inside**
-  (earliest is the *more* powerful selection here, not less):
+- **2 of 210 contrasts flip significance, both borderline, both into it:**
   `[gemma4 ladder | intens] gemma4_e2b vs gemma4_12b` (9.77e-04 → 1.22e-04) and
   `[min3 ladder | extens] min3_8b vs min3_14b` (6.36e-04 → 1.74e-05). The gemma4 flip is
   ministral-independent and should be stable; the min3 flip will move again when the lane
   closes at R=30.
+- **The direction is a property of these two lanes, not of the rule** (smolbench-4d's
+  correction of this section's first phrasing, adopted). Earliest-selection is neither
+  statistically conservative nor liberal: its rationale — stop retry-until-success
+  inflating a pass@1 numerator — is a *deduction* rationale, and induction (accuracy over
+  R replicates) never had a resampling problem to fix. On induction, earliest simply
+  selects the pre-decontamination attempt; two borderline contrasts landing inside the
+  threshold is how these lanes happened to fall, and the reverse outcome would have read
+  as "costs rejections" under the identical rule. Methods sections must not present the
+  direction as a property of earliest-selection.
 - **The extens-vs-noise headline is untouched: byte-identical p-values under both
   rules.** None of the models in that finding (nemo3 ×3, gemma4_e2b, exaone_236b, nor the
   glm_47 counter-example) owns a multi-attempt cell, so the ruling cannot reach it.
 
 The user's ruling (§4 banner) postdates the decision this check was written to inform;
-it survives as the record that the ruling's significance cost was measured, small, and
-directionally *toward* rejections. Final numbers land with the post-R=30 re-derivation.
+it survives as the record that the ruling's significance cost was measured and small —
+2 borderline flips out of 210, headline unreachable. Final numbers land with the
+post-R=30 re-derivation.
 
 **I-8 · Transport-error retries did not censor the sample.**
 *Asserts:* the request-level retry loop discards only attempts that produced no model
@@ -609,6 +618,11 @@ Combine with I-5 (byte identity) as independent corroboration.
 >   8/8 pairing spans two instance types); and `force_seeds` re-collection can no
 >   longer supersede logged data — voiding now requires explicit exclusion, which
 >   is recorded as a deliberate property in the store's module docstring.
+>   **The paper itself must state the first consequence** — a reader who knows the
+>   re-collections happened will look for them, and should find "the analysis
+>   selects the pre-re-collection attempts; the re-runs remain in the log,
+>   invisible to readers, and the mixing is priced as noise by the cross-process
+>   determinism measurement" in the methods, not infer the re-runs were forgotten.
 > - Checks §3 I-3/I-4/I-5's acceptance criteria read "newest" — they now assert
 >   **earliest**; I-7 (significance sensitivity) transfers to the analysis
 >   re-derivation, which recomputes on earliest data directly and subsumes it.
