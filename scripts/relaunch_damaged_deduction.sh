@@ -102,7 +102,13 @@ LANES=(
   # H200:8 pin passes either way -- which is exactly why the pin cannot be
   # relied on to catch this, and why the split is documented instead.
   # p5e is offered only in us-east-2 a/b/c and us-west-2c.
-  "deepseek-v3.1|p5en.48xlarge,p5e.48xlarge|us-east-2,us-west-2,us-east-1,us-west-1|H200:8"
+  # p5e fallback REMOVED 2026-08-16: a p5en Capacity Block was purchased to
+  # finish this lane on its ORIGINAL instance type. Leaving p5e in the list
+  # would let the free hunt land the exact split the block was bought to
+  # avoid. The block short-circuits the hunt entirely (EC2_CAPACITY_RESERVATION),
+  # so this list only matters for the on-demand attempts made while waiting
+  # for the block window to open.
+  "deepseek-v3.1|p5en.48xlarge|us-east-2,us-west-2,us-east-1,us-west-1|H200:8"
   # Only 6 cells, but a lane with ANY infra loss keeps the completeness audit
   # red, and a permanently-red gate is one nobody reads.
   "qwen3.5-27b|g6e.12xlarge|us-east-2,us-west-2,us-east-1|L40S:4"
