@@ -75,7 +75,11 @@ from power_analysis import (  # noqa: E402
 #: Resample counts swept by ``--mode sweep``. Each runs on an INDEPENDENT RNG
 #: stream so the drift between them measures Monte-Carlo error, not a shared
 #: seed's luck.
-B_GRID = (1_000, 2_000, 5_000, 10_000, 20_000)
+B_GRID = (1_000, 5_000, 20_000, 50_000, 100_000, 200_000, 500_000)
+
+#: Resamples processed per batch. Bounds peak memory at roughly
+#: ``CHUNK * n_theorems * n_models * 4`` bytes regardless of B.
+CHUNK = 2_000
 
 #: Drift below this (in accuracy points) is smaller than anything the write-up
 #: interprets -- rates are reported to 3 decimals, so half a thousandth on an
@@ -154,12 +158,20 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     """
     n_thm, n_mod = succ.shape
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n_thm, size=(B, n_thm))
 
-    # (B, n_models) resampled successes and (B,) resampled cell totals.
-    star_succ = succ[idx].sum(axis=1)
-    star_size = size[idx].sum(axis=1)[:, None]
-    star_rate = star_succ / star_size
+    # Chunked so memory stays flat in B. The intermediate ``succ[idx]`` is
+    # (chunk, n_thm, n_models) -- at B = 500k in one shot that is ~90 GB, which
+    # is why this loop exists and is not premature optimisation. Only the
+    # (B, n_models) rate matrix is retained.
+    star_rate = np.empty((B, n_mod), dtype=np.float64)
+    done = 0
+    while done < B:
+        chunk = min(CHUNK, B - done)
+        idx = rng.integers(0, n_thm, size=(chunk, n_thm))
+        star_rate[done:done + chunk] = (
+            succ[idx].sum(axis=1) / size[idx].sum(axis=1)[:, None]
+        )
+        done += chunk
 
     # Jackknife over theorem blocks for the BCa acceleration.
     tot_succ, tot_size = succ.sum(axis=0), size.sum()

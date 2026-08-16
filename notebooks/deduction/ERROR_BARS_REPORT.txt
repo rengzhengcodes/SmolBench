@@ -1,0 +1,151 @@
+============================================================================================
+DEDUCTION LEG -- pass@1 with block-bootstrap 95% CIs
+============================================================================================
+Resampling unit: THEOREM BLOCK. n = 216 blocks (707 cells, 3.3 cells per block).
+B = 500,000 resamples, BCa intervals (percentile shown for contrast).
+The effective sample size is 216 THEOREMS, not 707 cells -- see the module docstring.
+
+model                           pass@1           95% BCa   width        percentile  own-712
+--------------------------------------------------------------------------------------------
+qwen3.5-27b                      0.298 [0.253, 0.347]   0.094 [0.252, 0.346]    0.298
+qwen3.5-122b-a10b                0.348 [0.298, 0.400]   0.101 [0.298, 0.399]    0.346
+qwen3.5-397b-a17b                0.393 [0.342, 0.445]   0.103 [0.342, 0.445]    0.392
+nemotron-3-nano-4b               0.096 [0.073, 0.125]   0.052 [0.071, 0.123]    0.096
+nemotron-3-nano-30b-a3b          0.041 [0.027, 0.061]   0.034 [0.025, 0.059]    0.041
+nemotron-3-super-120b-a12b       0.164 [0.131, 0.202]   0.072 [0.129, 0.201]    0.163
+gemma-4-e2b                      0.110 [0.082, 0.147]   0.065 [0.080, 0.144]    0.110
+gemma-4-12b                      0.184 [0.146, 0.227]   0.082 [0.144, 0.226]    0.183
+gemma-4-31b                      0.352 [0.303, 0.403]   0.100 [0.302, 0.402]    0.351
+glm-4.7-flash                    0.147 [0.117, 0.181]   0.064 [0.116, 0.180]    0.146
+glm-4.5-air                      0.216 [0.175, 0.263]   0.088 [0.173, 0.261]    0.216
+glm-4.7                          0.362 [0.315, 0.410]   0.096 [0.314, 0.410]    0.360
+ministral-3-3b                   0.066 [0.045, 0.095]   0.051 [0.043, 0.092]    0.066
+ministral-3-8b                   0.074 [0.054, 0.099]   0.045 [0.052, 0.096]    0.073
+ministral-3-14b                  0.103 [0.075, 0.138]   0.062 [0.074, 0.135]    0.103
+exaone-4.0-32b                   0.182 [0.146, 0.225]   0.079 [0.144, 0.223]    0.181
+exaone-4.5-33b                   0.161 [0.131, 0.196]   0.065 [0.130, 0.194]    0.160
+k-exaone-236b-a23b               0.105 [0.079, 0.135]   0.056 [0.078, 0.133]    0.104
+deepseek-v4-flash                0.349 [0.302, 0.398]   0.096 [0.302, 0.397]    0.347
+deepseek-v3.1                    0.440 [0.389, 0.490]   0.101 [0.389, 0.490]    0.441
+deepseek-v4-pro                  0.406 [0.358, 0.454]   0.096 [0.358, 0.454]    0.404
+
+Design effect: block-bootstrap intervals are 1.38x (median) the width a naive binomial on 707
+  independent cells would give -- range 1.16x to 1.45x. Treating cells as independent
+  would overstate precision by that factor.
+
+============================================================================================
+PRIMARY -- within-family ladder: 21 contrasts
+============================================================================================
+Holm-Bonferroni at FWER 0.05 over these 21 (arbitrary dependence).
+
+contrast                                                diff           95% BCa        b/c  Holm
+--------------------------------------------------------------------------------------------
+[qwen35 ladder] qwen3.5-27b vs qwen3.5-122b-a10b      +0.050 [+0.014, +0.089]   47/82     yes 
+[qwen35 ladder] qwen3.5-27b vs qwen3.5-397b-a17b      +0.095 [+0.060, +0.133]   39/106    yes 
+[qwen35 ladder] qwen3.5-122b-a10b vs qwen3.5-397b...  +0.045 [+0.011, +0.083]   49/81     yes 
+[nemotron3 ladder] nemotron-3-nano-4b vs nemotron...  -0.055 [-0.084, -0.029]   62/23     yes 
+[nemotron3 ladder] nemotron-3-nano-4b vs nemotron...  +0.068 [+0.037, +0.101]   37/85     yes 
+[nemotron3 ladder] nemotron-3-nano-30b-a3b vs nem...  +0.123 [+0.093, +0.158]   15/102    yes 
+[gemma4 ladder] gemma-4-e2b vs gemma-4-12b            +0.074 [+0.038, +0.111]   32/84     yes 
+[gemma4 ladder] gemma-4-e2b vs gemma-4-31b            +0.242 [+0.197, +0.289]   16/187    yes 
+[gemma4 ladder] gemma-4-12b vs gemma-4-31b            +0.168 [+0.130, +0.211]   20/139    yes 
+[glm ladder] glm-4.7-flash vs glm-4.5-air             +0.069 [+0.031, +0.111]   45/94     yes 
+[glm ladder] glm-4.7-flash vs glm-4.7                 +0.215 [+0.173, +0.258]   20/172    yes 
+[glm ladder] glm-4.5-air vs glm-4.7                   +0.146 [+0.102, +0.191]   37/140    yes 
+[ministral3 ladder] ministral-3-3b vs ministral-3-8b  +0.007 [-0.021, +0.033]   35/40      .    (CI spans 0)
+[ministral3 ladder] ministral-3-3b vs ministral-3...  +0.037 [+0.007, +0.068]   28/54     yes 
+[ministral3 ladder] ministral-3-8b vs ministral-3...  +0.030 [+0.003, +0.060]   29/50      .  
+[exaone ladder] exaone-4.0-32b vs exaone-4.5-33b      -0.021 [-0.055, +0.013]   72/57      .    (CI spans 0)
+[exaone ladder] exaone-4.0-32b vs k-exaone-236b-a23b  -0.078 [-0.114, -0.044]   92/37     yes 
+[exaone ladder] exaone-4.5-33b vs k-exaone-236b-a23b  -0.057 [-0.086, -0.029]   77/37     yes 
+[deepseek ladder] deepseek-v4-flash vs deepseek-v3.1  +0.091 [+0.052, +0.131]   48/112    yes 
+[deepseek ladder] deepseek-v4-flash vs deepseek-v...  +0.057 [+0.021, +0.093]   55/95     yes 
+[deepseek ladder] deepseek-v3.1 vs deepseek-v4-pro    -0.034 [-0.072, +0.004]   83/59      .    (CI spans 0)
+
+Holm and the uncorrected CI agree on 20/21. They are DIFFERENT questions:
+  the CI is uncorrected and two-sided per contrast; Holm controls the familywise error over all 21.
+
+============================================================================================
+SECONDARY -- cross-family, size-matched: 63 contrasts
+============================================================================================
+contrast                                                diff           95% BCa        b/c  Holm
+--------------------------------------------------------------------------------------------
+[SECONDARY | small] qwen3.5-27b vs nemotron-3-nan...  -0.202 [-0.244, -0.164]  157/14      -  
+[SECONDARY | small] qwen3.5-27b vs gemma-4-e2b        -0.188 [-0.234, -0.145]  153/20      -  
+[SECONDARY | small] qwen3.5-27b vs glm-4.7-flash      -0.151 [-0.193, -0.112]  138/31      -  
+[SECONDARY | small] qwen3.5-27b vs ministral-3-3b     -0.232 [-0.276, -0.191]  175/11      -  
+[SECONDARY | small] qwen3.5-27b vs exaone-4.0-32b     -0.116 [-0.159, -0.074]  121/39      -  
+[SECONDARY | small] qwen3.5-27b vs deepseek-v4-flash  +0.051 [+0.015, +0.088]   54/90      -  
+[SECONDARY | small] nemotron-3-nano-4b vs gemma-4...  +0.014 [-0.014, +0.044]   38/48      -    (CI spans 0)
+[SECONDARY | small] nemotron-3-nano-4b vs glm-4.7...  +0.051 [+0.020, +0.081]   41/77      -  
+[SECONDARY | small] nemotron-3-nano-4b vs ministr...  -0.030 [-0.058, -0.003]   52/31      -  
+[SECONDARY | small] nemotron-3-nano-4b vs exaone-...  +0.086 [+0.056, +0.120]   27/88      -  
+[SECONDARY | small] nemotron-3-nano-4b vs deepsee...  +0.253 [+0.209, +0.299]   23/202     -  
+[SECONDARY | small] gemma-4-e2b vs glm-4.7-flash      +0.037 [+0.009, +0.067]   34/60      -  
+[SECONDARY | small] gemma-4-e2b vs ministral-3-3b     -0.044 [-0.072, -0.016]   53/22      -  
+[SECONDARY | small] gemma-4-e2b vs exaone-4.0-32b     +0.072 [+0.040, +0.108]   28/79      -  
+[SECONDARY | small] gemma-4-e2b vs deepseek-v4-flash  +0.239 [+0.194, +0.286]   20/189     -  
+[SECONDARY | small] glm-4.7-flash vs ministral-3-3b   -0.081 [-0.111, -0.053]   76/19      -  
+[SECONDARY | small] glm-4.7-flash vs exaone-4.0-32b   +0.035 [+0.001, +0.072]   55/80      -  
+[SECONDARY | small] glm-4.7-flash vs deepseek-v4-...  +0.202 [+0.164, +0.242]   27/170     -  
+[SECONDARY | small] ministral-3-3b vs exaone-4.0-32b  +0.116 [+0.081, +0.154]   22/104     -  
+[SECONDARY | small] ministral-3-3b vs deepseek-v4...  +0.283 [+0.238, +0.329]    9/209     -  
+[SECONDARY | small] exaone-4.0-32b vs deepseek-v4...  +0.167 [+0.122, +0.214]   40/158     -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs nemotron-3...  -0.307 [-0.355, -0.262]  222/5       -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs gemma-4-12b    -0.164 [-0.208, -0.123]  141/25      -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs glm-4.5-air    -0.132 [-0.177, -0.087]  131/38      -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs ministral-...  -0.274 [-0.322, -0.229]  204/10      -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs exaone-4.5...  -0.187 [-0.229, -0.148]  158/26      -  
+[SECONDARY | mid] qwen3.5-122b-a10b vs deepseek-v3.1  +0.092 [+0.048, +0.138]   48/113     -  
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs gemm...  +0.143 [+0.106, +0.184]   11/112     -  
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs glm-...  +0.175 [+0.135, +0.220]   15/139     -  
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs mini...  +0.033 [+0.009, +0.060]   25/48      -  
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs exao...  +0.120 [+0.087, +0.155]   20/105     -  
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs deep...  +0.399 [+0.350, +0.447]    6/288     -  
+[SECONDARY | mid] gemma-4-12b vs glm-4.5-air          +0.033 [-0.006, +0.073]   52/75      -    (CI spans 0)
+[SECONDARY | mid] gemma-4-12b vs ministral-3-8b       -0.110 [-0.151, -0.073]  106/28      -  
+[SECONDARY | mid] gemma-4-12b vs exaone-4.5-33b       -0.023 [-0.061, +0.014]   74/58      -    (CI spans 0)
+[SECONDARY | mid] gemma-4-12b vs deepseek-v3.1        +0.256 [+0.209, +0.306]   26/207     -  
+[SECONDARY | mid] glm-4.5-air vs ministral-3-8b       -0.143 [-0.188, -0.102]  128/27      -  
+[SECONDARY | mid] glm-4.5-air vs exaone-4.5-33b       -0.055 [-0.098, -0.016]   96/57      -  
+[SECONDARY | mid] glm-4.5-air vs deepseek-v3.1        +0.223 [+0.174, +0.273]   33/191     -  
+[SECONDARY | mid] ministral-3-8b vs exaone-4.5-33b    +0.088 [+0.058, +0.120]   30/92      -  
+[SECONDARY | mid] ministral-3-8b vs deepseek-v3.1     +0.366 [+0.319, +0.414]    8/267     -  
+[SECONDARY | mid] exaone-4.5-33b vs deepseek-v3.1     +0.279 [+0.236, +0.323]   13/210     -  
+[SECONDARY | large] qwen3.5-397b-a17b vs nemotron...  -0.229 [-0.275, -0.185]  185/23      -  
+[SECONDARY | large] qwen3.5-397b-a17b vs gemma-4-31b  -0.041 [-0.082, -0.001]   87/58      -  
+[SECONDARY | large] qwen3.5-397b-a17b vs glm-4.7      -0.031 [-0.072, +0.010]   94/72      -    (CI spans 0)
+[SECONDARY | large] qwen3.5-397b-a17b vs ministra...  -0.290 [-0.337, -0.245]  213/8       -  
+[SECONDARY | large] qwen3.5-397b-a17b vs k-exaone...  -0.289 [-0.336, -0.244]  217/13      -  
+[SECONDARY | large] qwen3.5-397b-a17b vs deepseek...  +0.013 [-0.027, +0.053]   77/86      -    (CI spans 0)
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.188 [+0.145, +0.234]   27/160     -  
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.198 [+0.155, +0.244]   32/172     -  
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.061 [-0.099, -0.024]   85/42      -  
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.059 [-0.096, -0.024]   88/46      -  
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.242 [+0.196, +0.289]   30/201     -  
+[SECONDARY | large] gemma-4-31b vs glm-4.7            +0.010 [-0.031, +0.052]   73/80      -    (CI spans 0)
+[SECONDARY | large] gemma-4-31b vs ministral-3-14b    -0.249 [-0.295, -0.206]  184/8       -  
+[SECONDARY | large] gemma-4-31b vs k-exaone-236b-...  -0.248 [-0.294, -0.203]  192/17      -  
+[SECONDARY | large] gemma-4-31b vs deepseek-v4-pro    +0.054 [+0.015, +0.094]   61/99      -  
+[SECONDARY | large] glm-4.7 vs ministral-3-14b        -0.259 [-0.303, -0.216]  197/14      -  
+[SECONDARY | large] glm-4.7 vs k-exaone-236b-a23b     -0.257 [-0.303, -0.214]  197/15      -  
+[SECONDARY | large] glm-4.7 vs deepseek-v4-pro        +0.044 [+0.003, +0.086]   76/107     -  
+[SECONDARY | large] ministral-3-14b vs k-exaone-2...  +0.001 [-0.035, +0.037]   54/55      -    (CI spans 0)
+[SECONDARY | large] ministral-3-14b vs deepseek-v...  +0.303 [+0.259, +0.348]   12/226     -  
+[SECONDARY | large] k-exaone-236b-a23b vs deepsee...  +0.301 [+0.258, +0.347]   15/228     -  
+Resample-count sweep -- 216 theorem blocks, 707 cells, 21 models
+Each B runs on an INDEPENDENT RNG stream; drift = max |endpoint change| vs the
+next larger B, over all 21 marginal BCa intervals.
+
+       B  max drift (pts)   median drift                   worst lane
+------------------------------------------------------------------------
+    1000       (baseline)                                            
+    5000          0.00619        0.00153                  qwen3.5-27b
+   20000          0.00404        0.00075                  gemma-4-31b
+   50000          0.00121        0.00029                  glm-4.5-air
+  100000          0.00067        0.00018               exaone-4.0-32b
+  200000          0.00072        0.00021           k-exaone-236b-a23b
+  500000          0.00038        0.00009            qwen3.5-397b-a17b
+
+Tolerance: 0.0005 pts (rates are reported to 3 decimals, so drift below
+half a thousandth cannot change a printed figure).
