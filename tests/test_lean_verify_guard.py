@@ -34,3 +34,40 @@ def test_verify_import_guard():
             "ProofResult",
         ):
             assert hasattr(verify, name), f"verify.{name} missing"
+
+
+def test_no_resume_discards_prior_verdicts_and_reverifies_every_group(tmp_path, monkeypatch):
+    """--no-resume must re-verify a lane whose proofs were regenerated.
+
+    Resume is keyed on (theorem_id, k) GROUPS, not on the candidate proofs
+    inside them. If phase 1 regenerates a lane after it was verified, every
+    group still looks "done" while the proofs beneath are completely different
+    -- so the pass reports success, verifies nothing, and leaves
+    verified_rows.jsonl describing text that no longer exists.
+
+    That is not hypothetical: on 2026-08-16 six lanes were in exactly that
+    state after the day's repairs, and the dry run cheerfully reported
+    "0 to process" for all 21. nemotron-3-nano-4b had had all 944 of its cells
+    regenerated on new hardware.
+    """
+    import importlib.util, sys
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "lean_verify_rows_mod",
+        Path(__file__).resolve().parents[1] / "scripts" / "lean_verify_rows.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    # A prior pass marked this group done (verdict is not "unverified").
+    prior = [{"kind": "cell", "theorem_id": "t1", "k": 1, "verdict": "success",
+              "candidate_proof": "OLD PROOF"}]
+    assert mod.resume_done_groups(prior) == {("t1", 1)}, (
+        "sanity: a completed group is normally skipped"
+    )
+
+    # With --no-resume the caller empties that list before computing `done`,
+    # so nothing is skipped and the current proofs are all re-verified.
+    assert mod.resume_done_groups([]) == set()

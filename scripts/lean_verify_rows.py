@@ -1015,6 +1015,7 @@ def verify_run(
     limit: int = 0,
     workdir: Path,
     dry_run: bool = False,
+    no_resume: bool = False,
     verifier: Any = None,
 ) -> int:
     """Verifies one run's unverified cell groups; uploads `VERIFIED_FILENAME`.
@@ -1075,6 +1076,26 @@ def verify_run(
 
     verified_key = run_object_key(key_prefix, run, VERIFIED_FILENAME)
     verified_rows = download_rows(client, bucket, verified_key, run_dir / VERIFIED_FILENAME)
+    if no_resume:
+        # Verify every group again from the CURRENT all_rows.jsonl, discarding
+        # the prior pass's verdicts.
+        #
+        # Needed because resume is keyed on (theorem_id, k) GROUPS, not on the
+        # candidate proofs inside them. If phase 1 regenerated a lane after a
+        # verification pass, every group still looks "done" while the proofs
+        # under it are completely different -- so the pass reports success,
+        # verifies nothing, and leaves verified_rows.jsonl describing text that
+        # no longer exists. Six lanes were in exactly that state on 2026-08-16
+        # after the day's repairs and re-runs; nemotron-3-nano-4b had had all
+        # 944 of its cells regenerated.
+        #
+        # The caller is responsible for archiving the superseded
+        # verified_rows.jsonl first -- this flag overwrites it.
+        logging.warning(
+            f"lean_verify_rows[{run}]: --no-resume: discarding {len(verified_rows)} "
+            "row(s) from the prior verification pass and re-verifying every group."
+        )
+        verified_rows = []
     done = resume_done_groups(verified_rows)
 
     # Seed the OUTPUT row list: a prior partial pass's own output (which
@@ -1311,6 +1332,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="transient scratch directory (default: a fresh tempfile.mkdtemp())",
     )
     parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-verify every group from the CURRENT all_rows.jsonl, discarding "
+            "the prior pass's verdicts. Required when phase 1 REGENERATED a "
+            "lane after it was verified: resume is keyed on (theorem_id, k) "
+            "groups, not on the candidate proofs inside them, so a regenerated "
+            "lane looks entirely 'done' while its proofs are completely "
+            "different. Archive the superseded verified_rows.jsonl first -- "
+            "this overwrites it."
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="list which groups' replicates would be verified for each matching run, "
              "then exit without opening Lean -- works on any interpreter",
@@ -1381,6 +1416,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 limit=args.limit,
                 workdir=workdir,
                 dry_run=args.dry_run,
+                no_resume=args.no_resume,
             )
             if rc != 0:
                 n_failed += 1
