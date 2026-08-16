@@ -123,7 +123,7 @@ completion.
 | lane | apparent issue | verification |
 |---|---|---|
 | `gemma-4-12b` | 4 instance types across its history | all 30 seeds' newest arm files postdate the `g7.12xlarge` re-run cutoff → single-config |
-| `ministral-3-14b` | `g6e.12xlarge` + `g7.24xlarge` | all 23 landed seeds postdate the `g7.24xlarge` re-collection → single-config (lane ships at R=23; see the induction note) |
+| `ministral-3-14b` | `g6e.12xlarge` + `g7.24xlarge` | all 23 then-landed seeds postdated the `g7.24xlarge` re-collection → single-config under NEWEST selection (see the 2026-08-16 banner: inverted by the earliest ruling). **Lane closed at R=30 on 2026-08-16**: seeds 19, 24–29 collected on the same `g7.24xlarge` pin but with the streaming transport — those 7 seeds are single-attempt, so the ruling does not touch them |
 | `deepseek-v4-flash` | p5 + p5e + p6-b200 | seeds 0–11 all re-collected on B200 with full 4-arm coverage; seeds 12–29 were B200 originally, so their older timestamps are expected, not stale |
 | `deepseek-v4-pro` | p5en + p6-b200 | zero rows predate the final B200 recipe — the p5en boxes wrote nothing |
 
@@ -261,8 +261,10 @@ These are proof CANDIDATES, not verified successes; the verification pass has no
 nothing downstream has consumed the inflated figures. The `nemotron-3-nano-4b` rerun generates
 each cell exactly once on one box and will be textbook pass@1.
 
-(The induction leg is not a pass@1 metric: R=30 replicates per model by design, R=23 for
-`ministral-3-14b`.)
+(The induction leg is not a pass@1 metric: R=30 replicates per model by design. R=23 for
+`ministral-3-14b` when this was written; **closed at R=30 on 2026-08-16** — seeds 19, 24–29
+re-collected with the opt-in streaming transport after the delivery-fault diagnosis, all
+21 lanes now 30/30 by the content-level audit.)
 
 ## Open items
 

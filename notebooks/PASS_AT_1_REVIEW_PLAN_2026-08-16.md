@@ -700,7 +700,16 @@ published conclusion rather than for a decimal place.
 
 **R1 · The live lane is unfinished.** Every induction number here is a point-in-time
 snapshot at 2492 cells; `ministral-3-14b` is at 23 of 30 seeds. Its earliest-vs-newest
-deltas *will* move. Checks I-3/I-4/I-5 must be re-run after it lands (I-6). **Open.**
+deltas *will* move. Checks I-3/I-4/I-5 must be re-run after it lands (I-6).
+**CLOSED 2026-08-16 ~16:27Z: the lane landed at R=30** (seeds 19, 24–29 on the
+streaming transport, `run_shards` "all shards finished (7 done, halted=none)").
+Post-landing verification: `audit_run_completeness.py --induction` reports every
+(model, arm) at 30/30, all 21 lanes content-complete, 0 infra losses; the I-3 census is
+exactly 84 cells ×1 + 36 cells ×2 — **the 7 fresh seeds added zero duplicate objects**,
+so they are untouched by the earliest ruling and the multi-attempt population is closed
+at 140 cells study-wide. The earliest-selected deltas and the min3 significance flip
+(I-7) are final only in the post-R=30 re-derivation, which smolbench-4d runs against the
+refreshed snapshot.
 
 **R2 · Cell-level identity between the two attempts — spot-verified, not swept.** I
 matched duplicates on `(model, seed, info)` and scored them positionally, relying on marks
