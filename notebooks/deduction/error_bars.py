@@ -66,6 +66,8 @@ from power_analysis import (  # noqa: E402
     ALPHA,
     FAMILIES,
     MODELS,
+    Q_SECONDARY,
+    benjamini_hochberg,
     build_cross_family_contrasts,
     build_within_family_contrasts,
     load_joint_cells,
@@ -303,17 +305,26 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json) -> None:
             nb, nc, p = paired_mcnemar(models, blocks, a, b)
             rows.append((label, a, b, ci, nb, nc, p))
         pv = np.array([r[6] for r in rows])
-        rej = holm(pv) if corrected else np.zeros(len(rows), dtype=bool)
+        # PRIMARY gets Holm (FWER, arbitrary dependence); SECONDARY gets the
+        # pre-registered Benjamini-Hochberg FDR at q = 0.05, because it is an
+        # exploratory tier. Running BH here rather than in a throwaway script
+        # is the point: every number in the report must come out of this file.
+        rej = holm(pv) if corrected else benjamini_hochberg(pv, Q_SECONDARY)
 
+        proc = "Holm" if corrected else "BH"
         print(f"\n{'=' * 92}\n{tier}: {len(rows)} contrasts\n{'=' * 92}")
         if corrected:
             print("Holm-Bonferroni at FWER 0.05 over these 21 (arbitrary "
                   "dependence).\n")
+        else:
+            print(f"Benjamini-Hochberg FDR at q = {Q_SECONDARY} over these "
+                  f"{len(rows)} (pre-registered:\nexploratory tier, so FDR "
+                  f"rather than FWER).\n")
         print(f"{'contrast':52s} {'diff':>7s} {'95% BCa':>17s} {'b/c':>10s} "
-              f"{'Holm':>5s}")
+              f"{proc:>5s}")
         print("-" * 92)
         for (label, a, b, ci, nb, nc, p), ok in zip(rows, rej):
-            mark = " yes " if ok else ("  .  " if corrected else "  -  ")
+            mark = " yes " if ok else "  .  "
             crosses = "" if (ci["lo"] > 0 or ci["hi"] < 0) else "  (CI spans 0)"
             short = label if len(label) <= 52 else label[:49] + "..."
             print(f"{short:52s} {ci['diff']:+7.3f} [{ci['lo']:+.3f}, "
@@ -323,11 +334,14 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json) -> None:
 
         agree = sum(1 for (_, _, _, ci, _, _, _), ok in zip(rows, rej)
                     if ok == (ci["lo"] > 0 or ci["hi"] < 0))
-        if corrected:
-            print(f"\nHolm and the uncorrected CI agree on {agree}/{len(rows)}. "
-                  f"They are DIFFERENT questions:\n  the CI is uncorrected and "
-                  f"two-sided per contrast; Holm controls the familywise error "
-                  f"over all 21.")
+        print(f"\n{proc} rejects {int(rej.sum())} of {len(rows)}; "
+              f"uncorrected p<{ALPHA} would be {int((pv < ALPHA).sum())}; "
+              f"CIs excluding 0: "
+              f"{sum(1 for r in rows if r[3]['lo'] > 0 or r[3]['hi'] < 0)}.")
+        print(f"  {proc} and the uncorrected CI agree on {agree}/{len(rows)}. "
+              f"They are DIFFERENT questions: the CI is\n  uncorrected and "
+              f"two-sided per contrast; {proc} controls error over the whole "
+              f"tier.")
 
     if out_json:
         Path(out_json).write_text(json.dumps(results, indent=2, default=float))

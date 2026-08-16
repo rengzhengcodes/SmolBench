@@ -62,77 +62,85 @@ contrast                                                diff           95% BCa  
 [deepseek ladder] deepseek-v4-flash vs deepseek-v...  +0.057 [+0.021, +0.093]   55/95     yes 
 [deepseek ladder] deepseek-v3.1 vs deepseek-v4-pro    -0.034 [-0.072, +0.004]   83/59      .    (CI spans 0)
 
-Holm and the uncorrected CI agree on 20/21. They are DIFFERENT questions:
-  the CI is uncorrected and two-sided per contrast; Holm controls the familywise error over all 21.
+Holm rejects 17 of 21; uncorrected p<0.05 would be 18; CIs excluding 0: 18.
+  Holm and the uncorrected CI agree on 20/21. They are DIFFERENT questions: the CI is
+  uncorrected and two-sided per contrast; Holm controls error over the whole tier.
 
 ============================================================================================
 SECONDARY -- cross-family, size-matched: 63 contrasts
 ============================================================================================
-contrast                                                diff           95% BCa        b/c  Holm
+Benjamini-Hochberg FDR at q = 0.05 over these 63 (pre-registered:
+exploratory tier, so FDR rather than FWER).
+
+contrast                                                diff           95% BCa        b/c    BH
 --------------------------------------------------------------------------------------------
-[SECONDARY | small] qwen3.5-27b vs nemotron-3-nan...  -0.202 [-0.244, -0.164]  157/14      -  
-[SECONDARY | small] qwen3.5-27b vs gemma-4-e2b        -0.188 [-0.234, -0.145]  153/20      -  
-[SECONDARY | small] qwen3.5-27b vs glm-4.7-flash      -0.151 [-0.193, -0.112]  138/31      -  
-[SECONDARY | small] qwen3.5-27b vs ministral-3-3b     -0.232 [-0.276, -0.191]  175/11      -  
-[SECONDARY | small] qwen3.5-27b vs exaone-4.0-32b     -0.116 [-0.159, -0.074]  121/39      -  
-[SECONDARY | small] qwen3.5-27b vs deepseek-v4-flash  +0.051 [+0.015, +0.088]   54/90      -  
-[SECONDARY | small] nemotron-3-nano-4b vs gemma-4...  +0.014 [-0.014, +0.044]   38/48      -    (CI spans 0)
-[SECONDARY | small] nemotron-3-nano-4b vs glm-4.7...  +0.051 [+0.020, +0.081]   41/77      -  
-[SECONDARY | small] nemotron-3-nano-4b vs ministr...  -0.030 [-0.058, -0.003]   52/31      -  
-[SECONDARY | small] nemotron-3-nano-4b vs exaone-...  +0.086 [+0.056, +0.120]   27/88      -  
-[SECONDARY | small] nemotron-3-nano-4b vs deepsee...  +0.253 [+0.209, +0.299]   23/202     -  
-[SECONDARY | small] gemma-4-e2b vs glm-4.7-flash      +0.037 [+0.009, +0.067]   34/60      -  
-[SECONDARY | small] gemma-4-e2b vs ministral-3-3b     -0.044 [-0.072, -0.016]   53/22      -  
-[SECONDARY | small] gemma-4-e2b vs exaone-4.0-32b     +0.072 [+0.040, +0.108]   28/79      -  
-[SECONDARY | small] gemma-4-e2b vs deepseek-v4-flash  +0.239 [+0.194, +0.286]   20/189     -  
-[SECONDARY | small] glm-4.7-flash vs ministral-3-3b   -0.081 [-0.111, -0.053]   76/19      -  
-[SECONDARY | small] glm-4.7-flash vs exaone-4.0-32b   +0.035 [+0.001, +0.072]   55/80      -  
-[SECONDARY | small] glm-4.7-flash vs deepseek-v4-...  +0.202 [+0.164, +0.242]   27/170     -  
-[SECONDARY | small] ministral-3-3b vs exaone-4.0-32b  +0.116 [+0.081, +0.154]   22/104     -  
-[SECONDARY | small] ministral-3-3b vs deepseek-v4...  +0.283 [+0.238, +0.329]    9/209     -  
-[SECONDARY | small] exaone-4.0-32b vs deepseek-v4...  +0.167 [+0.122, +0.214]   40/158     -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs nemotron-3...  -0.307 [-0.355, -0.262]  222/5       -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs gemma-4-12b    -0.164 [-0.208, -0.123]  141/25      -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs glm-4.5-air    -0.132 [-0.177, -0.087]  131/38      -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs ministral-...  -0.274 [-0.322, -0.229]  204/10      -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs exaone-4.5...  -0.187 [-0.229, -0.148]  158/26      -  
-[SECONDARY | mid] qwen3.5-122b-a10b vs deepseek-v3.1  +0.092 [+0.048, +0.138]   48/113     -  
-[SECONDARY | mid] nemotron-3-nano-30b-a3b vs gemm...  +0.143 [+0.106, +0.184]   11/112     -  
-[SECONDARY | mid] nemotron-3-nano-30b-a3b vs glm-...  +0.175 [+0.135, +0.220]   15/139     -  
-[SECONDARY | mid] nemotron-3-nano-30b-a3b vs mini...  +0.033 [+0.009, +0.060]   25/48      -  
-[SECONDARY | mid] nemotron-3-nano-30b-a3b vs exao...  +0.120 [+0.087, +0.155]   20/105     -  
-[SECONDARY | mid] nemotron-3-nano-30b-a3b vs deep...  +0.399 [+0.350, +0.447]    6/288     -  
-[SECONDARY | mid] gemma-4-12b vs glm-4.5-air          +0.033 [-0.006, +0.073]   52/75      -    (CI spans 0)
-[SECONDARY | mid] gemma-4-12b vs ministral-3-8b       -0.110 [-0.151, -0.073]  106/28      -  
-[SECONDARY | mid] gemma-4-12b vs exaone-4.5-33b       -0.023 [-0.061, +0.014]   74/58      -    (CI spans 0)
-[SECONDARY | mid] gemma-4-12b vs deepseek-v3.1        +0.256 [+0.209, +0.306]   26/207     -  
-[SECONDARY | mid] glm-4.5-air vs ministral-3-8b       -0.143 [-0.188, -0.102]  128/27      -  
-[SECONDARY | mid] glm-4.5-air vs exaone-4.5-33b       -0.055 [-0.098, -0.016]   96/57      -  
-[SECONDARY | mid] glm-4.5-air vs deepseek-v3.1        +0.223 [+0.174, +0.273]   33/191     -  
-[SECONDARY | mid] ministral-3-8b vs exaone-4.5-33b    +0.088 [+0.058, +0.120]   30/92      -  
-[SECONDARY | mid] ministral-3-8b vs deepseek-v3.1     +0.366 [+0.319, +0.414]    8/267     -  
-[SECONDARY | mid] exaone-4.5-33b vs deepseek-v3.1     +0.279 [+0.236, +0.323]   13/210     -  
-[SECONDARY | large] qwen3.5-397b-a17b vs nemotron...  -0.229 [-0.275, -0.185]  185/23      -  
-[SECONDARY | large] qwen3.5-397b-a17b vs gemma-4-31b  -0.041 [-0.082, -0.001]   87/58      -  
-[SECONDARY | large] qwen3.5-397b-a17b vs glm-4.7      -0.031 [-0.072, +0.010]   94/72      -    (CI spans 0)
-[SECONDARY | large] qwen3.5-397b-a17b vs ministra...  -0.290 [-0.337, -0.245]  213/8       -  
-[SECONDARY | large] qwen3.5-397b-a17b vs k-exaone...  -0.289 [-0.336, -0.244]  217/13      -  
-[SECONDARY | large] qwen3.5-397b-a17b vs deepseek...  +0.013 [-0.027, +0.053]   77/86      -    (CI spans 0)
-[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.188 [+0.145, +0.234]   27/160     -  
-[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.198 [+0.155, +0.244]   32/172     -  
-[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.061 [-0.099, -0.024]   85/42      -  
-[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.059 [-0.096, -0.024]   88/46      -  
-[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.242 [+0.196, +0.289]   30/201     -  
-[SECONDARY | large] gemma-4-31b vs glm-4.7            +0.010 [-0.031, +0.052]   73/80      -    (CI spans 0)
-[SECONDARY | large] gemma-4-31b vs ministral-3-14b    -0.249 [-0.295, -0.206]  184/8       -  
-[SECONDARY | large] gemma-4-31b vs k-exaone-236b-...  -0.248 [-0.294, -0.203]  192/17      -  
-[SECONDARY | large] gemma-4-31b vs deepseek-v4-pro    +0.054 [+0.015, +0.094]   61/99      -  
-[SECONDARY | large] glm-4.7 vs ministral-3-14b        -0.259 [-0.303, -0.216]  197/14      -  
-[SECONDARY | large] glm-4.7 vs k-exaone-236b-a23b     -0.257 [-0.303, -0.214]  197/15      -  
-[SECONDARY | large] glm-4.7 vs deepseek-v4-pro        +0.044 [+0.003, +0.086]   76/107     -  
-[SECONDARY | large] ministral-3-14b vs k-exaone-2...  +0.001 [-0.035, +0.037]   54/55      -    (CI spans 0)
-[SECONDARY | large] ministral-3-14b vs deepseek-v...  +0.303 [+0.259, +0.348]   12/226     -  
-[SECONDARY | large] k-exaone-236b-a23b vs deepsee...  +0.301 [+0.258, +0.347]   15/228     -  
+[SECONDARY | small] qwen3.5-27b vs nemotron-3-nan...  -0.202 [-0.244, -0.164]  157/14     yes 
+[SECONDARY | small] qwen3.5-27b vs gemma-4-e2b        -0.188 [-0.234, -0.145]  153/20     yes 
+[SECONDARY | small] qwen3.5-27b vs glm-4.7-flash      -0.151 [-0.193, -0.112]  138/31     yes 
+[SECONDARY | small] qwen3.5-27b vs ministral-3-3b     -0.232 [-0.276, -0.191]  175/11     yes 
+[SECONDARY | small] qwen3.5-27b vs exaone-4.0-32b     -0.116 [-0.159, -0.074]  121/39     yes 
+[SECONDARY | small] qwen3.5-27b vs deepseek-v4-flash  +0.051 [+0.015, +0.088]   54/90     yes 
+[SECONDARY | small] nemotron-3-nano-4b vs gemma-4...  +0.014 [-0.014, +0.044]   38/48      .    (CI spans 0)
+[SECONDARY | small] nemotron-3-nano-4b vs glm-4.7...  +0.051 [+0.020, +0.081]   41/77     yes 
+[SECONDARY | small] nemotron-3-nano-4b vs ministr...  -0.030 [-0.058, -0.003]   52/31     yes 
+[SECONDARY | small] nemotron-3-nano-4b vs exaone-...  +0.086 [+0.056, +0.120]   27/88     yes 
+[SECONDARY | small] nemotron-3-nano-4b vs deepsee...  +0.253 [+0.209, +0.299]   23/202    yes 
+[SECONDARY | small] gemma-4-e2b vs glm-4.7-flash      +0.037 [+0.009, +0.067]   34/60     yes 
+[SECONDARY | small] gemma-4-e2b vs ministral-3-3b     -0.044 [-0.072, -0.016]   53/22     yes 
+[SECONDARY | small] gemma-4-e2b vs exaone-4.0-32b     +0.072 [+0.040, +0.108]   28/79     yes 
+[SECONDARY | small] gemma-4-e2b vs deepseek-v4-flash  +0.239 [+0.194, +0.286]   20/189    yes 
+[SECONDARY | small] glm-4.7-flash vs ministral-3-3b   -0.081 [-0.111, -0.053]   76/19     yes 
+[SECONDARY | small] glm-4.7-flash vs exaone-4.0-32b   +0.035 [+0.001, +0.072]   55/80     yes 
+[SECONDARY | small] glm-4.7-flash vs deepseek-v4-...  +0.202 [+0.164, +0.242]   27/170    yes 
+[SECONDARY | small] ministral-3-3b vs exaone-4.0-32b  +0.116 [+0.081, +0.154]   22/104    yes 
+[SECONDARY | small] ministral-3-3b vs deepseek-v4...  +0.283 [+0.238, +0.329]    9/209    yes 
+[SECONDARY | small] exaone-4.0-32b vs deepseek-v4...  +0.167 [+0.122, +0.214]   40/158    yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs nemotron-3...  -0.307 [-0.355, -0.262]  222/5      yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs gemma-4-12b    -0.164 [-0.208, -0.123]  141/25     yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs glm-4.5-air    -0.132 [-0.177, -0.087]  131/38     yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs ministral-...  -0.274 [-0.322, -0.229]  204/10     yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs exaone-4.5...  -0.187 [-0.229, -0.148]  158/26     yes 
+[SECONDARY | mid] qwen3.5-122b-a10b vs deepseek-v3.1  +0.092 [+0.048, +0.138]   48/113    yes 
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs gemm...  +0.143 [+0.106, +0.184]   11/112    yes 
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs glm-...  +0.175 [+0.135, +0.220]   15/139    yes 
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs mini...  +0.033 [+0.009, +0.060]   25/48     yes 
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs exao...  +0.120 [+0.087, +0.155]   20/105    yes 
+[SECONDARY | mid] nemotron-3-nano-30b-a3b vs deep...  +0.399 [+0.350, +0.447]    6/288    yes 
+[SECONDARY | mid] gemma-4-12b vs glm-4.5-air          +0.033 [-0.006, +0.073]   52/75      .    (CI spans 0)
+[SECONDARY | mid] gemma-4-12b vs ministral-3-8b       -0.110 [-0.151, -0.073]  106/28     yes 
+[SECONDARY | mid] gemma-4-12b vs exaone-4.5-33b       -0.023 [-0.061, +0.014]   74/58      .    (CI spans 0)
+[SECONDARY | mid] gemma-4-12b vs deepseek-v3.1        +0.256 [+0.209, +0.306]   26/207    yes 
+[SECONDARY | mid] glm-4.5-air vs ministral-3-8b       -0.143 [-0.188, -0.102]  128/27     yes 
+[SECONDARY | mid] glm-4.5-air vs exaone-4.5-33b       -0.055 [-0.098, -0.016]   96/57     yes 
+[SECONDARY | mid] glm-4.5-air vs deepseek-v3.1        +0.223 [+0.174, +0.273]   33/191    yes 
+[SECONDARY | mid] ministral-3-8b vs exaone-4.5-33b    +0.088 [+0.058, +0.120]   30/92     yes 
+[SECONDARY | mid] ministral-3-8b vs deepseek-v3.1     +0.366 [+0.319, +0.414]    8/267    yes 
+[SECONDARY | mid] exaone-4.5-33b vs deepseek-v3.1     +0.279 [+0.236, +0.323]   13/210    yes 
+[SECONDARY | large] qwen3.5-397b-a17b vs nemotron...  -0.229 [-0.275, -0.185]  185/23     yes 
+[SECONDARY | large] qwen3.5-397b-a17b vs gemma-4-31b  -0.041 [-0.082, -0.001]   87/58     yes 
+[SECONDARY | large] qwen3.5-397b-a17b vs glm-4.7      -0.031 [-0.072, +0.010]   94/72      .    (CI spans 0)
+[SECONDARY | large] qwen3.5-397b-a17b vs ministra...  -0.290 [-0.337, -0.245]  213/8      yes 
+[SECONDARY | large] qwen3.5-397b-a17b vs k-exaone...  -0.289 [-0.336, -0.244]  217/13     yes 
+[SECONDARY | large] qwen3.5-397b-a17b vs deepseek...  +0.013 [-0.027, +0.053]   77/86      .    (CI spans 0)
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.188 [+0.145, +0.234]   27/160    yes 
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.198 [+0.155, +0.244]   32/172    yes 
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.061 [-0.099, -0.024]   85/42     yes 
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  -0.059 [-0.096, -0.024]   88/46     yes 
+[SECONDARY | large] nemotron-3-super-120b-a12b vs...  +0.242 [+0.196, +0.289]   30/201    yes 
+[SECONDARY | large] gemma-4-31b vs glm-4.7            +0.010 [-0.031, +0.052]   73/80      .    (CI spans 0)
+[SECONDARY | large] gemma-4-31b vs ministral-3-14b    -0.249 [-0.295, -0.206]  184/8      yes 
+[SECONDARY | large] gemma-4-31b vs k-exaone-236b-...  -0.248 [-0.294, -0.203]  192/17     yes 
+[SECONDARY | large] gemma-4-31b vs deepseek-v4-pro    +0.054 [+0.015, +0.094]   61/99     yes 
+[SECONDARY | large] glm-4.7 vs ministral-3-14b        -0.259 [-0.303, -0.216]  197/14     yes 
+[SECONDARY | large] glm-4.7 vs k-exaone-236b-a23b     -0.257 [-0.303, -0.214]  197/15     yes 
+[SECONDARY | large] glm-4.7 vs deepseek-v4-pro        +0.044 [+0.003, +0.086]   76/107    yes 
+[SECONDARY | large] ministral-3-14b vs k-exaone-2...  +0.001 [-0.035, +0.037]   54/55      .    (CI spans 0)
+[SECONDARY | large] ministral-3-14b vs deepseek-v...  +0.303 [+0.259, +0.348]   12/226    yes 
+[SECONDARY | large] k-exaone-236b-a23b vs deepsee...  +0.301 [+0.258, +0.347]   15/228    yes 
+
+BH rejects 56 of 63; uncorrected p<0.05 would be 56; CIs excluding 0: 56.
+  BH and the uncorrected CI agree on 63/63. They are DIFFERENT questions: the CI is
+  uncorrected and two-sided per contrast; BH controls error over the whole tier.
 Resample-count sweep -- 216 theorem blocks, 707 cells, 21 models
 Each B runs on an INDEPENDENT RNG stream; drift = max |endpoint change| vs the
 next larger B, over all 21 marginal BCa intervals.

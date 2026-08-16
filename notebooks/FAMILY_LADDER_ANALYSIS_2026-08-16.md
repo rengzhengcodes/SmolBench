@@ -55,7 +55,37 @@ computed rates:
 | nemotron-3-nano-4b | 0.096 | 0.096 |
 | ministral-3-3b | 0.066 | 0.066 |
 
-All 21 lanes land at 712 measurable cells (944 − 232), except five at 711.
+All 21 lanes land at 712 measurable cells (944 − 232), except five at 711 —
+`nemotron-3-nano-4b`, `glm-4.7`, `ministral-3-3b`, `ministral-3-14b`, `exaone-4.0-32b`.
+That gap was checked rather than waved through, since the stated invariant is 712: each
+of those five holds **exactly one cell whose only rows are `exception`**, a different
+cell in each lane. **This fully accounts for the paired total** — five distinct cells
+dropped from the 21-way intersection gives 712 − 5 = **707**.
+
+These five are worth naming precisely, because they are *not* the same kind of thing as
+the other unmeasurable cells and the exclusion rule was written for those. They are
+**Lean verification timeouts**: generation succeeded (e.g. `glm-4.7` on
+`Submodule.iSup_toAddSubmonoid`, 9,413 completion tokens, an ordinary one-line
+`exact AddSubmonoid.add_mem …`), and `DojoTacticTimeoutError` fired after ~600 s of
+elaboration against LeanDojo's per-tactic cap. So unlike a spot-kill `exception` (never
+reached the model) or `replay_failed` (provably model-independent — the identical 232
+cells in all 21 lanes), these are **model-dependent**: five different cells in five
+different lanes, where every other model's candidate on the same cell verified fine. The
+model proposed a tactic that would not elaborate in budget.
+
+**Scoring them 0 and dropping them are both defensible, and it does not matter
+numerically** — one cell in 712 is 0.14 points, an order of magnitude below the narrowest
+interval in this document. They are dropped here, as a consequence of the intersection.
+Flagged so that a reader who counts cells and finds 711 in five lanes knows it is an
+elaboration timeout rather than a hole in the data.
+
+| lane | theorem | k | rung |
+|---|---|---|---|
+| nemotron-3-nano-4b | `Polynomial.natSepDegree_eq_natDegree_iff` | 1 | stepk:1 |
+| glm-4.7 | `Submodule.iSup_toAddSubmonoid` | 15 | stepk:1 |
+| ministral-3-3b | `IntermediateField.card_algHom_adjoin_integral` | 0 | hint:2 |
+| ministral-3-14b | `CategoryTheory.GradedObject.ιMapObjOrZero_mapMap` | 2 | noise:3 |
+| exaone-4.0-32b | `IntermediateField.card_algHom_adjoin_integral` | 0 | noise:3 |
 
 **Pairing scope.** `load_joint_cells` keeps a cell only if it is graded for *every*
 model requested, so loading all 21 at once yields the **21-way intersection**. That
@@ -123,9 +153,25 @@ enumeration. Enumerated evidence is harder to induce from than a stated rule; th
 extensional arm's difficulty is label density, not prompt length. Direction among clean
 significant results: **5 noise-higher, 0 extens-higher.**
 
-Re-correcting at m=21 would add 2 more (glm_air, glm_47) — but both are
-quarantined/borderline, and re-sizing a family to a subset chosen after seeing the data
-is not a valid primary analysis. It is reported as sensitivity only.
+**The counter-example, stated rather than buried.** "5 noise-higher, 0 extens-higher" is
+true *conditional on significance*, and that conditioning is doing work. The
+sixth-ranked clean lane runs the other way:
+
+| model | extens | noise | direction | p |
+|---|---|---|---|---|
+| glm_47 | 0.889 | 0.789 | **extens higher** | 2.44e-03 |
+
+`glm_47` is **not** quarantined and **not** ≥25% non-compliant — it is a clean lane whose
+extensional arm beats its noise arm, and it fails only the m=210 family threshold
+(2.44e-03 vs the ~2.4e-04 it would need). Re-correcting at m=21 would admit it, along
+with `glm_air` (which *is* quarantined). So the directional claim is: among lanes that
+clear the pre-registered threshold the effect is unanimous, but the strongest lane just
+below the line points the other way. This study's own record — the `gpt-oss`
+opposite-ends crossover that the pilot mistook for a general result — is a warning
+against reading unanimity off a significance-filtered set.
+
+Re-sizing a family to a subset chosen after seeing the data is not a valid primary
+analysis, so m=21 is reported as sensitivity only.
 
 ---
 
@@ -201,8 +247,14 @@ in the table above do not imply a null contrast**; read the contrast intervals.
 
 ### 2.4 Ladder contrasts — 17 of 21 significant under Holm
 
-Scaling holds cleanly in **4 of 7 families** (qwen3.5, gemma-4, GLM, DeepSeek): every
-rung-pair positive and Holm-significant. The other three are the finding.
+Scaling holds cleanly in **3 of 7 families** — qwen3.5, gemma-4 and GLM, where every
+rung-pair is positive and Holm-significant. The other four each break monotonicity in a
+different way.
+
+**DeepSeek rises then stops:** `deepseek-v4-flash` → `deepseek-v3.1` is +0.091 (Holm) and
+→ `deepseek-v4-pro` is +0.057 (Holm), but the top rung-pair `deepseek-v3.1` vs
+`deepseek-v4-pro` is **−0.034 [−0.072, +0.004]**, negative and not significant. Two of
+its three rung-pairs separate, not three.
 
 **EXAONE inverts — bigger is monotonically worse:**
 
@@ -224,6 +276,16 @@ the small rung, then the large rung recovers past both:
 **Ministral-3 is flat**: 0.066 → 0.074 → 0.103, only the 3b-vs-14b endpoint contrast
 (+0.037) survives Holm; adjacent rungs do not separate.
 
+Holm rejections by family: qwen3.5 3, gemma-4 3, GLM 3, Nemotron-3 3, DeepSeek 2,
+EXAONE 2, Ministral-3 1 = **17 of 21**. Note that Nemotron-3's three include a
+*negative* rung, so "all three separate" is not the same as "scales cleanly."
+
+Both results survived the hardware audit, which matters because they are the two a reader
+would most reasonably suspect of being a serving artifact: all three EXAONE rungs are
+single-configuration lanes, and `nemotron-3-nano-4b` was fully re-run on one
+`g6e.4xlarge` in a single process — the only internally bit-reproducible lane in the
+study — precisely so its number could not be blamed on mixed hardware.
+
 A tempting reading is that *active* rather than total parameters drive this — both
 inverted top rungs are low-active MoEs (`k-exaone-236b-a23b` 23B active vs a 32B dense
 sibling; `nano-30b-a3b` 3B active vs a 4B dense sibling, and the Nemotron ladder's scores
@@ -240,7 +302,12 @@ an interval that just excludes zero, in a family of 21.
 63 contrasts, pre-registered at Benjamini–Hochberg q = 0.05 (exploratory, so FDR rather
 than FWER). **BH rejects 56 of 63**, identical to both the uncorrected p<0.05 count and
 the count of CIs excluding zero — the cross-family effects are large enough that the
-correction is not binding at this tier.
+correction is not binding at this tier. BH runs inside `error_bars.py --mode report`, so
+this figure regenerates with the rest.
+
+For contrast, at the PRIMARY tier Holm *is* binding: 17 rejections against 18
+uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, +0.030
+[+0.003, +0.060]) is exactly what multiplicity control is for.
 
 ---
 
