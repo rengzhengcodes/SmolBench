@@ -636,15 +636,22 @@ Combine with I-5 (byte identity) as independent corroboration.
 >   invisible to readers, and the mixing is priced as noise by the cross-process
 >   determinism measurement" in the methods, not infer the re-runs were forgotten.
 >
-> - **Provenance caveat on the 140 analyzed duplicate cells** (adversarial
->   verification, 2026-08-16): the earliest objects **predate per-row
->   `server_config` stamping and carry no hardware fields at all** — the field
->   exists only in the newest (unanalyzed) attempts. So "pre-decontamination
->   serving stacks" is timestamp-inferred (every earliest stamp predates every
->   re-collection cutoff, and re-collections were the only source of second
->   attempts) and corroborated by fleet logs, but not verifiable from the analyzed
->   objects themselves. The methods should attribute those cells' hardware via
->   fleet logs and say so.
+> - **Provenance caveat on the induction leg** (adversarial verification,
+>   2026-08-16, corrected in the second round): per-row `server_config` stamping
+>   began at commit `040d2e83`, **02:06:44Z 08-14**. Everything collected before it
+>   carries no hardware fields; everything after carries the full block. In the
+>   ANALYZED (earliest-selected) tree that means: **only `ministral-3-14b` seeds
+>   9–29 are object-backed (84 objects)**; the other 2,436 analyzed objects — all
+>   140 duplicate cells' earliest attempts included — carry nothing, and their
+>   hardware attribution is fleet-log-inferred. Two near-misses worth recording
+>   because they misled both auditors: `gemma-4-12b`'s newest attempts (01:48Z
+>   08-14) and `deepseek-v4-flash`'s B200 re-collection (finished 01:55Z) predate
+>   stamping by 18 and 11 minutes respectively, so for those two lanes NEITHER
+>   attempt carries hardware fields — sampling one of their cells suggests "no
+>   induction object has it" (false: ministral's do), while sampling a late
+>   ministral object suggests "the newest attempts have it" (false for
+>   gemma/dsflash). Date the stamping commit first; do not generalize from one
+>   object.
 > - Checks §3 I-3/I-4/I-5's acceptance criteria read "newest" — they now assert
 >   **earliest**; I-7 (significance sensitivity) transfers to the analysis
 >   re-derivation, which recomputes on earliest data directly and subsumes it.
@@ -748,19 +755,40 @@ arms with cap-length generations:
 | noise_intens | 0.0% | 0.5% | 0.016 | 0.029 |
 
 The noise arm — short generations — is identical across groups, so the split tracks
-generation LENGTH, not the transport as such. The parsimonious reading is
-**survivorship**: the delivery fault dropped cap-length bodies, so the 23 seeds that
-could complete pre-fix are exactly the seeds whose draws capped out least, and seeds
-19/24–29 are the fault's victims *because* they cap out most. Consequence, stated with
-its valence: **shipping at R=23 would have baked a length-selection bias toward
-answered cells into the lane; R=30 removes it.** The empty responses are the model
-spending its whole budget in the reasoning channel (vLLM `content: null`, recorded
-empty identically on both transports — the branch is test-pinned), and
-`significance_report.py` independently flags the same thing (min3_14b 58%
-non-compliant on intens, 84% on extens). What offline forensics cannot fully separate:
-survivorship vs per-process regime variation as the source of the rate split — both
-point the same way (the fresh data is the honest draw), but the marks carry no
-finish_reason or token counts to split them.
+generation LENGTH and rules out any arm-uniform transport or parsing mechanism.
+
+**Mechanism, corrected twice by measurement (second adversarial round, with
+smolbench-4d).** The first framing — "the 23 landed seeds are the ones whose draws
+capped out least" — is **wrong**: earliest-object timestamps show **zero of the 23
+landed after fault onset** (seeds 0–8 on 08-11/12; seeds 9–18/20–23 at
+07:17–10:46Z on 08-14; the fault began ~13:48Z). The old cohort was never
+length-selected at landing; it landed because it ran first. The three-era split of
+empty-response rates is:
+
+| | A: seeds 0–8 (g6e era, 08-11/12) | B: 9–18/20–23 (g7, 08-14 pre-fault) | C: 19/24–29 (g7, 08-16 streaming) |
+|---|---|---|---|
+| intens | 13.6% | 9.5% | **61.9%** |
+| extens | 29.6% | 40.5% | **79.4%** |
+| zero | 12.3% | 15.1% | **50.8%** |
+| noise | 0.0% | 0.8% | 0.0% |
+
+A ≈ B across two different instance families AND two different nightly builds; C is
+the discontinuity. What pins C's rate as **seed-intrinsic rather than an 08-16
+build/regime artifact** is the fault window's own server counters: the boxes serving
+exactly these seeds on the 08-14-era builds already recorded `length:stop ≈ 28:13`
+(~68% cap-length) — matching the 62–79% the same seeds show now on a different build.
+So the corrected consequence is **exclusion bias, not survivor selection**: the 7
+missing seeds were missing-not-at-random (their high cap-out propensity is what made
+them unable to finish inside the fault window), and **an R=23 lane omitting them is
+biased toward answered cells; R=30 removes that bias.** Same valence as the first
+framing, different — and now measured — mechanism. The empty responses themselves are
+the model spending its whole budget in the reasoning channel (vLLM `content: null`,
+recorded identically on both transports — the branch is test-pinned), and
+`significance_report.py` independently flags the same cells (min3_14b 58%
+non-compliant on intens, 84% on extens). Residual that offline forensics cannot
+close: a length-specific streaming artifact is not excluded by the noise row alone —
+it is excluded by the reassembly tests plus the live content-path check, which is a
+weaker instrument than a counter.
 
 **R2 · Cell-level identity between the two attempts — spot-verified, not swept.** I
 matched duplicates on `(model, seed, info)` and scored them positionally, relying on marks
