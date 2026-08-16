@@ -200,8 +200,13 @@ line, so the probe's central "same image" assumption remains **unverified**.
 
 **Corroborated independently by build strings, and the drift is wider than a
 nightly nudge** (orchestrator check, 2026-08-16) [VERIFIED]. vLLM's own version
-banner appears in the run logs, and **five distinct builds spanning two minor
-versions** served this study:
+banner appears in the run logs, and **five distinct RECORDED builds spanning two
+minor versions** served this study — recorded is the operative word: the
+2026-08-16 `ministral-3-14b` streaming re-collection's 7 boxes pulled `:nightly`
+that day and **no version string appears in any of their shard logs**, so the
+true build count is ≥6 with at least one build unidentifiable. That is this
+section's recording gap demonstrated live, on the study's final collection
+event, while this document was already in the repo:
 
 | build | log lines |
 |---|---|

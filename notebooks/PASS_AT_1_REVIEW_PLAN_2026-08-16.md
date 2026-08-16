@@ -635,6 +635,16 @@ Combine with I-5 (byte identity) as independent corroboration.
 >   selects the pre-re-collection attempts; the re-runs remain in the log,
 >   invisible to readers, and the mixing is priced as noise by the cross-process
 >   determinism measurement" in the methods, not infer the re-runs were forgotten.
+>
+> - **Provenance caveat on the 140 analyzed duplicate cells** (adversarial
+>   verification, 2026-08-16): the earliest objects **predate per-row
+>   `server_config` stamping and carry no hardware fields at all** — the field
+>   exists only in the newest (unanalyzed) attempts. So "pre-decontamination
+>   serving stacks" is timestamp-inferred (every earliest stamp predates every
+>   re-collection cutoff, and re-collections were the only source of second
+>   attempts) and corroborated by fleet logs, but not verifiable from the analyzed
+>   objects themselves. The methods should attribute those cells' hardware via
+>   fleet logs and say so.
 > - Checks §3 I-3/I-4/I-5's acceptance criteria read "newest" — they now assert
 >   **earliest**; I-7 (significance sensitivity) transfers to the analysis
 >   re-derivation, which recomputes on earliest data directly and subsumes it.
@@ -716,12 +726,41 @@ deltas *will* move. Checks I-3/I-4/I-5 must be re-run after it lands (I-6).
 **CLOSED 2026-08-16 ~16:27Z: the lane landed at R=30** (seeds 19, 24–29 on the
 streaming transport, `run_shards` "all shards finished (7 done, halted=none)").
 Post-landing verification: `audit_run_completeness.py --induction` reports every
-(model, arm) at 30/30, all 21 lanes content-complete, 0 infra losses; the I-3 census is
-exactly 84 cells ×1 + 36 cells ×2 — **the 7 fresh seeds added zero duplicate objects**,
-so they are untouched by the earliest ruling and the multi-attempt population is closed
-at 140 cells study-wide. The earliest-selected deltas and the min3 significance flip
-(I-7) are final only in the post-R=30 re-derivation, which smolbench-4d runs against the
-refreshed snapshot.
+(model, arm) at 30/30 — note precisely what that gates: **seed PRESENCE.** The
+induction half of the audit never opens an object (its "content-level" closing line
+belongs to the deduction half, which classifies per row). Content-IDENTITY is
+established separately: `sync_down` re-run = 0 downloaded / 2,520 skipped, i.e. every
+local cell md5-matches its earliest S3 object. The I-3 census is exactly 84 cells ×1 +
+36 cells ×2 — **the 7 fresh seeds added zero duplicate objects**, so the multi-attempt
+population is closed at 140 cells study-wide. The re-derivation ran; I-7 above carries
+the final numbers.
+
+**Content-QUALITY of the fresh seeds — measured in the adversarial verification pass,
+and it reframes the transport caveat as a survivorship correction.** The 7 re-collected
+seeds have a far higher empty-response rate than the 23 pre-fix seeds, confined to the
+arms with cap-length generations:
+
+| arm | fresh (7 seeds) empty | old (23) empty | fresh acc | old acc |
+|---|---|---|---|---|
+| intens | **61.9%** | 11.1% | 0.365 | 0.502 |
+| extens | **79.4%** | 36.2% | 0.127 | 0.068 |
+| zero | **50.8%** | 14.0% | 0.000 | 0.000 |
+| noise_intens | 0.0% | 0.5% | 0.016 | 0.029 |
+
+The noise arm — short generations — is identical across groups, so the split tracks
+generation LENGTH, not the transport as such. The parsimonious reading is
+**survivorship**: the delivery fault dropped cap-length bodies, so the 23 seeds that
+could complete pre-fix are exactly the seeds whose draws capped out least, and seeds
+19/24–29 are the fault's victims *because* they cap out most. Consequence, stated with
+its valence: **shipping at R=23 would have baked a length-selection bias toward
+answered cells into the lane; R=30 removes it.** The empty responses are the model
+spending its whole budget in the reasoning channel (vLLM `content: null`, recorded
+empty identically on both transports — the branch is test-pinned), and
+`significance_report.py` independently flags the same thing (min3_14b 58%
+non-compliant on intens, 84% on extens). What offline forensics cannot fully separate:
+survivorship vs per-process regime variation as the source of the rate split — both
+point the same way (the fresh data is the honest draw), but the marks carry no
+finish_reason or token counts to split them.
 
 **R2 · Cell-level identity between the two attempts — spot-verified, not swept.** I
 matched duplicates on `(model, seed, info)` and scored them positionally, relying on marks
