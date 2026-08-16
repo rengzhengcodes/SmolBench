@@ -450,8 +450,25 @@ diff the Holm/BH decisions. ~60 lines; must not touch S3 or the canonical local 
 *Accept:* identical DECIDED/UNDECIDED sets under both rules.
 *If it fails:* the §4 decision is load-bearing for a published claim and must be settled
 by the user before republication.
-**Status: NOT RUN. Point estimates measured (§2.12, max Δ 2.42 pt on a provisional
-lane); the significance impact is UNVERIFIED.**
+**Status: MEASURED by smolbench-4d (their commit `ffa1a610`), 2026-08-16, PROVISIONAL
+at 27/30 ministral seeds.** Earliest- and newest-selected trees built from the snapshot
+over an identical seed set, so the only variable is which of the 140 multi-attempt cells
+resolves:
+
+- Holm rejections: **earliest 124 vs newest 122**; 35 of 210 contrasts move at all.
+- **2 of 210 contrasts flip significance, both from just outside to just inside**
+  (earliest is the *more* powerful selection here, not less):
+  `[gemma4 ladder | intens] gemma4_e2b vs gemma4_12b` (9.77e-04 → 1.22e-04) and
+  `[min3 ladder | extens] min3_8b vs min3_14b` (6.36e-04 → 1.74e-05). The gemma4 flip is
+  ministral-independent and should be stable; the min3 flip will move again when the lane
+  closes at R=30.
+- **The extens-vs-noise headline is untouched: byte-identical p-values under both
+  rules.** None of the models in that finding (nemo3 ×3, gemma4_e2b, exaone_236b, nor the
+  glm_47 counter-example) owns a multi-attempt cell, so the ruling cannot reach it.
+
+The user's ruling (§4 banner) postdates the decision this check was written to inform;
+it survives as the record that the ruling's significance cost was measured, small, and
+directionally *toward* rejections. Final numbers land with the post-R=30 re-derivation.
 
 **I-8 · Transport-error retries did not censor the sample.**
 *Asserts:* the request-level retry loop discards only attempts that produced no model
