@@ -84,6 +84,7 @@ import math
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
@@ -717,6 +718,78 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
         )
 
 
+# Short, separate timeout for server_config()'s best-effort LIVE probes
+# (vLLM /version, /metrics, the agent /status). Deliberately much shorter than
+# the on-instance polling timeouts above (_AGENT_POLL_S etc.): server_config
+# is provenance, typically called once per replicate batch, and a slow/dead
+# endpoint must degrade a handful of fields to None in seconds, not make an
+# eval batch wait on a field that is allowed to be missing.
+_SERVER_CONFIG_PROBE_TIMEOUT_S: int = 5
+
+
+def _fetch_vllm_version(ip: str, vllm_api_key: str) -> Optional[str]:
+    """The ``version`` string from vLLM's ``GET /version``, or None.
+
+    Mirrors ``scripts/hinge_probe.py``'s ``fingerprint()`` request shape
+    (Bearer the vLLM api key, short timeout) rather than inventing a new
+    pattern -- that function is the one place this study already proved a
+    ``/version`` probe works against a live box (DETERMINISM_PLAN section 3).
+    """
+    try:
+        r = requests.get(
+            f"http://{ip}:{EC2_VLLM_PORT}/version",
+            headers={"Authorization": f"Bearer {vllm_api_key}"},
+            timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S,
+        )
+        return r.json().get("version") if r.ok else None
+    except Exception:  # noqa: BLE001 -- best-effort provenance, never raises
+        return None
+
+
+def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
+    """Raw Prometheus line(s) mentioning ``cache_config_info``, or None.
+
+    Deliberately UNPARSED: the line's labels carry ``num_gpu_blocks`` /
+    ``gpu_memory_utilization`` / ``block_size``, and vLLM's exact label set
+    has moved across the builds this study observed (DETERMINISM_PLAN section
+    1.4) -- storing the raw line survives that drift; a parsed dict would not.
+    """
+    try:
+        r = requests.get(
+            f"http://{ip}:{EC2_VLLM_PORT}/metrics",
+            headers={"Authorization": f"Bearer {vllm_api_key}"},
+            timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S,
+        )
+        if not r.ok:
+            return None
+        lines = [
+            line for line in r.text.splitlines()
+            if "cache_config_info" in line and not line.startswith("#")
+        ]
+        return lines or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch_agent_fingerprint(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The control agent's ``/status`` ``"fingerprint"`` object, or None.
+
+    Reuses ``_agent`` -- the same authenticated control-agent call
+    ``_wait_model_ready`` already polls with -- instead of hand-rolling a
+    second HTTP client against the same endpoint. ``connect_retries=0``:
+    this is a best-effort snapshot, not a wait loop, so a single failed
+    attempt degrades to None rather than retrying for minutes.
+    """
+    try:
+        status = _agent(
+            state, "GET", "/status",
+            timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S, connect_retries=0,
+        )
+        return status.get("fingerprint")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def server_config(model: str) -> Optional[Dict[str, Any]]:
     """Serving-stack snapshot for `model` on the currently provisioned box.
 
@@ -727,6 +800,13 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     table (the 2026-08-13 confound audit had to reconstruct exactly that
     because none of this was logged).
 
+    Extended per ``notebooks/DETERMINISM_PLAN_2026-08-16.md`` section 5: the
+    original 8 fields describe the BOX; the fields added here describe the
+    ACTUAL serving process on it (the launched argv, the running vLLM build,
+    the loaded checkpoint's on-disk identity, the GPU as observed rather than
+    looked up in a static table) -- exactly the data that section's two-regime
+    mystery needed and did not have.
+
     Parameters
     ----------
     model : str
@@ -735,18 +815,86 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        ``instance_type`` / ``gpu`` (e.g. ``"2x RTX PRO 4500 32GB"``) /
-        ``tp`` / ``region`` / ``availability_zone`` / ``instance_id`` /
-        ``vllm_image`` / ``hf_model_id``. Unknown pieces are None rather
-        than omitted, so readers see the schema. Returns None outright when
-        no snapshot could be built at all.
+        A dict with these keys; unknown/unreachable pieces are None rather
+        than omitted, so readers see the schema even from a half-built
+        snapshot. Returns None outright when no snapshot could be built at
+        all (state-file read itself raised).
+
+        State/spec-derived (original 8, box-only -- no network calls)::
+
+            instance_type, gpu (e.g. "2x RTX PRO 4500 32GB", from a static
+              table keyed by instance type -- NOT an nvidia-smi observation;
+              see ``nvidia_smi`` below for that), tp, region,
+              availability_zone, instance_id, vllm_image (the configured
+              tag/digest reference, ``EC2_VLLM_IMAGE`` -- a MUTABLE tag is not
+              a digest; see ``vllm_image_digest`` below for the resolved
+              one), hf_model_id (the deploy spec's pin, not necessarily what
+              is actually loaded -- see ``agent_fingerprint.hf_snapshots``).
+
+        ``state["last_serve"]``-derived (the ARGV ``serve_model`` actually
+        POSTed to the agent, stashed by that function -- see its docstring;
+        None for every field below when no ``last_serve`` is recorded, or
+        when its ``"model"`` does not match ``model`` -- i.e. the box is
+        currently serving something else and these fields must not be
+        misattributed to it)::
+
+            vllm_args (List[str], the extra CLI flags actually sent),
+            max_model_len (int, actually sent), served_at (str, UTC
+            ISO-8601 timestamp of that ``/serve`` call).
+
+        Live network probes (best-effort; short timeout; None on any
+        failure, including "no box provisioned")::
+
+            vllm_version (str, the ``"version"`` field of vLLM's own
+              ``GET /version`` -- the build string, e.g.
+              ``"0.27.2rc1.dev122+g8efa13b70"``), vllm_cache_config
+              (List[str], the raw, UNPARSED Prometheus line(s) containing
+              ``cache_config_info`` from ``GET /metrics`` -- carries
+              num_gpu_blocks/gpu_memory_utilization/block_size as labels),
+              agent_fingerprint (Dict[str, Any], the control agent's own
+              best-effort snapshot -- see ``payloads/agent.py.txt``'s
+              ``fingerprint()``: ``image_repo_digests`` (List[str] or None),
+              ``nvidia_smi`` (str, one CSV row from ``nvidia-smi
+              --query-gpu=...`` -- an OBSERVATION, unlike the static ``gpu``
+              field above), ``hf_snapshots`` (List[str] of snapshot dirnames
+              actually on disk for the served repo -- the resolved
+              revision(s), settling "different weights vs different kernels"
+              per DETERMINISM_PLAN section 1), ``weights_digest`` (str
+              sha256 hex of the safetensors index + per-file sizes for the
+              latest snapshot -- NOT a full weights read); vllm_image_digest
+              (str, the first element of
+              ``agent_fingerprint["image_repo_digests"]`` if present, else
+              None -- the resolved digest, in contrast to the mutable
+              ``vllm_image`` tag above).
+
+        Client-side config (populated regardless of box state -- these are
+        env-var reads, not observations of the box, so "no box" does not
+        degrade them; mirrors the existing ``vllm_image``/``hf_model_id``
+        precedent of recording config that does not require a live box)::
+
+            max_parallel_requests (int, ``EC2_MAX_PARALLEL_REQUESTS`` read at
+              call time via ``ChatClient._default_max_parallel`` -- default
+              8; this module never calls ``os.getenv("EC2_MAX_PARALLEL_REQUESTS")``
+              directly, the env var is composed dynamically as
+              ``f"{env_prefix}_MAX_PARALLEL_REQUESTS"`` in
+              ``openai_compat.ChatClient``, reused here rather than
+              re-deriving the literal name), stream (bool,
+              ``EC2_STREAM_COMPLETIONS`` read at call time via
+              ``ChatClient._flag``). Both parse an env var and are
+              individually guarded (None on a malformed override, e.g.
+              ``EC2_STREAM_COMPLETIONS=true`` instead of ``"1"``) so one bad
+              env value degrades only itself, not the whole snapshot.
 
     Notes
     -----
     NEVER raises: provenance is a passenger, and a lane must not crash (and
     crash-loop under its babysitter) because a snapshot field was missing.
     Reads the state file at call time -- call it INSIDE the ``serve_model``
-    block so the landed instance it describes is the one that serves.
+    block so the landed instance it describes is the one that serves. The
+    live network probes add at most a few seconds (bounded by
+    ``_SERVER_CONFIG_PROBE_TIMEOUT_S``) and never touch anything that could
+    slow or break serving itself -- they are read-only GETs against
+    endpoints vLLM/the agent already expose.
     """
     try:
         state = _load_state() or {}
@@ -754,6 +902,46 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
         itype = state.get("instance_type") or ""
         gpus = _INSTANCE_GPU_COUNTS.get(itype)
         name = _INSTANCE_GPU_NAMES.get(itype.split(".", 1)[0])
+
+        # The ACTUAL launched argv, not the (possibly since-edited) spec --
+        # see serve_model's "last_serve" stash. Only trusted when it names
+        # THIS model: a stale last_serve from a previous swap on the same box
+        # must not be misattributed to whatever is being asked about now.
+        last_serve = state.get("last_serve") or {}
+        last_serve_matches = bool(state) and last_serve.get("model") == model
+        vllm_args = last_serve.get("vllm_args") if last_serve_matches else None
+        max_model_len = last_serve.get("max_model_len") if last_serve_matches else None
+        served_at = last_serve.get("served_at") if last_serve_matches else None
+
+        # Live probes: only attempted with enough of the state to reach the
+        # box at all; otherwise short-circuit to None without a doomed call.
+        ip = state.get("public_ip")
+        vllm_key = state.get("vllm_api_key")
+        vllm_version = _fetch_vllm_version(ip, vllm_key) if ip and vllm_key else None
+        vllm_cache_config = _fetch_vllm_cache_config(ip, vllm_key) if ip and vllm_key else None
+        agent_fp = _fetch_agent_fingerprint(state) if ip else None
+        vllm_image_digest = None
+        if agent_fp:
+            digests = agent_fp.get("image_repo_digests")
+            if digests:
+                vllm_image_digest = digests[0]
+
+        # Individually guarded (not just the function-wide except below):
+        # both parse an env var, and a malformed override (e.g.
+        # EC2_STREAM_COMPLETIONS=true instead of "1") must degrade only
+        # THIS field to None -- letting it escape to the outer except would
+        # blank the entire snapshot over one bad env value, breaking the
+        # "each field None when unavailable" contract for every other field
+        # that had already been computed successfully.
+        try:
+            max_parallel_requests = _CLIENT._default_max_parallel()
+        except Exception:  # noqa: BLE001
+            max_parallel_requests = None
+        try:
+            stream = _CLIENT._flag("STREAM_COMPLETIONS")
+        except Exception:  # noqa: BLE001
+            stream = None
+
         return {
             "instance_type": itype or None,
             "gpu": f"{gpus}x {name}" if gpus and name else None,
@@ -763,6 +951,15 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
             "instance_id": state.get("instance_id"),
             "vllm_image": EC2_VLLM_IMAGE,
             "hf_model_id": spec.get("hf_model_id"),
+            "vllm_args": vllm_args,
+            "max_model_len": max_model_len,
+            "served_at": served_at,
+            "vllm_version": vllm_version,
+            "vllm_cache_config": vllm_cache_config,
+            "agent_fingerprint": agent_fp,
+            "vllm_image_digest": vllm_image_digest,
+            "max_parallel_requests": max_parallel_requests,
+            "stream": stream,
         }
     except Exception:  # noqa: BLE001 -- see Notes: provenance never crashes a lane
         logging.warning("server_config: could not snapshot the serving config", exc_info=True)
@@ -2458,6 +2655,23 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     # Remember exactly what this container was launched with, so the
     # already-serving fast path above can tell config drift from a true match.
     state["serving"] = serve_payload
+    # §5 provenance (DETERMINISM_PLAN_2026-08-16.md): a SEPARATE record from
+    # ``state["serving"]`` above. That dict exists only to short-circuit the
+    # already-serving fast path and mirrors the wire payload's own key names
+    # (``served_model_name`` etc.); ``last_serve`` is what server_config()
+    # reads back under stable, self-describing keys, so a spec edited mid-
+    # study (or read long after the box that served it is gone) is still
+    # visible as the argv that actually launched, not just the spec that was
+    # asked for.
+    state["last_serve"] = {
+        "model": model,
+        "hf_model_id": spec["hf_model_id"],
+        "tp": serve_payload["tp"],
+        "max_model_len": serve_payload["max_model_len"],
+        "vllm_args": list(serve_payload["vllm_args"]),
+        "image": EC2_VLLM_IMAGE,
+        "served_at": datetime.now(timezone.utc).isoformat(),
+    }
     _save_state(state)
     logging.info(f"serve_model: {model!r} is up at {_base_url()}")
     if state.get("s3_cache"):

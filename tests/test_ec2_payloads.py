@@ -9,7 +9,9 @@ pre-launch validation they get. They must stay stdlib-only and Python
 
 import ast
 import gzip
+import hashlib
 import inspect
+import json
 import os
 import re
 import subprocess
@@ -54,6 +56,20 @@ def _ec2_getenv_default(name: str) -> str:
 def test_payloads_parse():
     ast.parse(AGENT_PY)
     ast.parse(WATCHDOG_PY)
+
+
+def test_agent_fingerprint_addition_compiles_and_is_present():
+    """The /status ``fingerprint`` object (server_config §5 provenance
+    extension, DETERMINISM_PLAN_2026-08-16.md section 5) is new code in
+    AGENT_PY. ``compile()`` it directly -- a stricter check than
+    ``test_payloads_parse``'s ``ast.parse`` (catches anything a plain parse
+    would not, e.g. a bytecode-level issue) -- and confirm the addition
+    actually landed in the rendered payload rather than only in a local
+    draft.
+    """
+    compile(AGENT_PY, "<agent.py.txt>", "exec")
+    assert "fingerprint" in AGENT_PY
+    assert '"fingerprint": fingerprint()' in AGENT_PY
 
 
 def test_payloads_are_310_compatible():
@@ -214,6 +230,64 @@ def test_watchdog_runs_once_unprivileged(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert (run_dir / "last_active").exists()  # boot starts the idle clock
+
+
+def test_agent_fingerprint_computes_weights_digest_from_a_synthetic_cache(tmp_path):
+    """Actually RUNS AGENT_PY's fingerprint() (via importlib, same shape as
+    test_watchdog_runs_once_unprivileged's subprocess pattern) against a
+    synthetic HF cache tree, so the weights_digest/hf_snapshots composition
+    is exercised rather than merely proven syntactically present.
+    test_payloads_parse and test_agent_fingerprint_addition_compiles_and_is_present
+    above would both pass even with a typo in the digest math; this test
+    would not. Also exercises the "docker/nvidia-smi degrade to None, never
+    raise" path for real, since this sandbox has no docker socket.
+    """
+    agent_path = tmp_path / "agent.py"
+    agent_path.write_text(AGENT_PY)
+
+    cache_hub = tmp_path / "hub"
+    snap_dir = cache_hub / "models--acme--demo-7b" / "snapshots" / "deadbeefcafe"
+    snap_dir.mkdir(parents=True)
+    index_bytes = b'{"weight_map": {}}'
+    (snap_dir / "model.safetensors.index.json").write_bytes(index_bytes)
+    (snap_dir / "model-00001-of-00002.safetensors").write_bytes(b"a" * 100)
+    (snap_dir / "model-00002-of-00002.safetensors").write_bytes(b"b" * 200)
+
+    script = (
+        "import importlib.util, json, os\n"
+        f"spec = importlib.util.spec_from_file_location('agent', {str(agent_path)!r})\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "mod.LAST_HF_ID = 'acme/demo-7b'\n"
+        "print(json.dumps(mod.fingerprint()))\n"
+    )
+    env = os.environ | {
+        "CONTROL_TOKEN": "tok", "VLLM_API_KEY": "key",
+        "VLLM_IMAGE": "vllm/vllm-openai@sha256:deadbeef",
+        "SMOLBENCH_CACHE_HUB": str(cache_hub),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    fp = json.loads(proc.stdout)
+
+    assert fp["hf_snapshots"] == ["deadbeefcafe"]
+    # Independently recomputed expected digest -- proves the field is
+    # actually the spec's "index bytes + sorted (filename,size) repr", not
+    # just some 64-hex-char string.
+    h = hashlib.sha256()
+    h.update(index_bytes)
+    sizes = sorted([
+        ("model-00001-of-00002.safetensors", 100),
+        ("model-00002-of-00002.safetensors", 200),
+    ])
+    h.update(repr(sizes).encode())
+    assert fp["weights_digest"] == h.hexdigest()
+    # docker/nvidia-smi: must degrade to None or a well-typed value, never
+    # raise (proc.returncode == 0 above already proves no exception escaped).
+    assert fp["image_repo_digests"] is None or isinstance(fp["image_repo_digests"], list)
+    assert fp["nvidia_smi"] is None or isinstance(fp["nvidia_smi"], str)
 
 
 def test_vllm_api_key_is_passed_as_one_token_not_two():

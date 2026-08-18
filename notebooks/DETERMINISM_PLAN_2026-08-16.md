@@ -533,14 +533,29 @@ serving configuration, in the same commit that carries this note.]**
 - **Comparability guard:** stock↔det cross-config agreement is 0/8 (§3).
   Nothing generated under the new default may be pooled with the
   family-ladder study's stock-config results.
-- **Not yet live-validated:** the gzip user-data path passes offline
-  round-trip tests but has not provisioned a real box. Run the <$1
-  qwen2.5-1.5b lifecycle canary before the next paid fleet.
+- **Live-validated 2026-08-18:** the qwen2.5-1.5b lifecycle canary ran the
+  full path — gzip user-data booted a g6.2xlarge in 161.8 s (cloud-init
+  gunzipped it; the control agent came up), the digest-pinned image served
+  under the det bundle + revision pin, a seeded 4-question quiz scored 4/4,
+  §5 fields all populated (`/version` = the certified dev122 build), clean
+  teardown, zero-instance sweep across all three regions.
 
 
 ---
 
-## 5. What to record so this is diagnosable next time [PROPOSED]
+## 5. What to record so this is diagnosable next time [IMPLEMENTED 2026-08-18]
+
+> **STATUS: implemented and live-verified.** All nine fields below are now
+> captured — client-side in `server_config()` (`/version`, the raw
+> `cache_config_info` metrics line, the actually-sent vllm_args/tp/max_model_len
+> stashed at serve time, client parallelism + streaming flags) and box-side via
+> a `fingerprint` object on the control agent's `/status` (docker RepoDigests,
+> nvidia-smi observation, HF snapshot dirs, safetensors index+sizes digest).
+> Live-verified by the 2026-08-18 gzip canary: the box itself reported
+> `vllm_version 0.27.2rc1.dev122+g8efa13b70` (the §3-certified build),
+> RepoDigests matching the pinned digest exactly, `enable_prefix_caching="False"`
+> and `gpu_memory_utilization="0.92"` in its own cache_config metric — the
+> determinism default demonstrably active on a real box.
 
 This is the highest-value item in the document relative to its cost, and the one
 thing that is **unrecoverable retroactively**. The reason §0 is a two-regime

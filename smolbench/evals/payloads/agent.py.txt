@@ -1,4 +1,5 @@
 """smolbench control agent: swaps the vLLM container on request."""
+import hashlib
 import hmac
 import json
 import os
@@ -24,6 +25,7 @@ S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
 CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
 SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
 SYNC_PROC = None  # the in-flight cache upload, if any
+LAST_HF_ID = ""  # repo id of the last /serve request; drives fingerprint()'s HF lookup
 
 
 def touch(name):
@@ -56,6 +58,103 @@ def tail(path, limit=8000):
             return fh.read()[-limit:].decode("utf-8", "replace")
     except OSError:
         return ""
+
+
+# image_repo_digests/nvidia_smi are invariant for the life of this process
+# (VLLM_IMAGE never changes after boot; the GPU doesn't change under us) --
+# cache each ONLY on a genuine success, so /status stays cheap on every poll
+# after the first, and a boot-time hiccup (driver still initializing, image
+# not pulled yet) keeps retrying on later calls instead of freezing a
+# permanent None. Explicit short timeouts on both probes below (docker
+# inspect defaults to 120s, no timeout at all is not acceptable here) keep
+# even the uncached first call from blowing past _wait_agent's 5s /status
+# read timeout during the boot poll loop.
+_FP_CACHE = {}
+
+
+def _cached_probe(key, fetch):
+    if key in _FP_CACHE:
+        return _FP_CACHE[key]
+    try:
+        val = fetch()
+    except Exception:
+        val = None
+    if val:
+        _FP_CACHE[key] = val
+    return val
+
+
+def _probe_image_repo_digests():
+    probe = docker("inspect", "--format", "{{json .RepoDigests}}", VLLM_IMAGE, timeout=5)
+    return json.loads(probe.stdout) if probe.returncode == 0 else None
+
+
+def _probe_nvidia_smi():
+    smi = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total,ecc.mode.current",
+         "--format=csv,noheader"],
+        capture_output=True, text=True, timeout=3,
+    )
+    return smi.stdout.strip() if smi.returncode == 0 else None
+
+
+def fingerprint():
+    # Best-effort serving-stack snapshot for /status (DETERMINISM_PLAN section
+    # 5). Every field is independently guarded so one missing probe (no GPU
+    # locally, image not pulled yet, cold cache) never blanks the rest.
+    out = {}
+    out["image_repo_digests"] = _cached_probe("image_repo_digests", _probe_image_repo_digests)
+    out["nvidia_smi"] = _cached_probe("nvidia_smi", _probe_nvidia_smi)
+    out["hf_snapshots"] = None
+    if LAST_HF_ID:
+        try:
+            snaps = os.path.join(CACHE_HUB, "models--" + LAST_HF_ID.replace("/", "--"), "snapshots")
+            # dirnames only (matches the field's own name): a stray non-dir
+            # entry sorting last would otherwise feed os.listdir() below a
+            # file path and blow up the whole weights_digest computation.
+            out["hf_snapshots"] = sorted(
+                n for n in os.listdir(snaps) if os.path.isdir(os.path.join(snaps, n))
+            )
+        except Exception:
+            pass
+    # Hash of the safetensors index + per-file sizes for the LAST (sorted)
+    # snapshot dir -- cheap fingerprint of the loaded weights, not a full read.
+    # NOTE: "last in sorted order" is the spec's literal rule (lexicographic
+    # on the snapshot dirname, which is normally an HF commit-sha hex string)
+    # -- it is NOT guaranteed to be the pinned/--revision snapshot when the
+    # cache holds more than one (e.g. a stale main pull alongside a pinned
+    # sha). hf_snapshots above carries the FULL list precisely so a reader
+    # can check that ambiguity rather than trust this field blindly.
+    out["weights_digest"] = None
+    if out["hf_snapshots"]:
+        try:
+            last = os.path.join(
+                CACHE_HUB, "models--" + LAST_HF_ID.replace("/", "--"),
+                "snapshots", out["hf_snapshots"][-1],
+            )
+            h = hashlib.sha256()
+            try:
+                with open(os.path.join(last, "model.safetensors.index.json"), "rb") as fh:
+                    h.update(fh.read())
+            except OSError:
+                pass
+            sizes = []
+            for fn in os.listdir(last):
+                if fn.endswith(".safetensors"):
+                    try:
+                        # os.stat follows symlinks (HF snapshots symlink into
+                        # blobs/); one dangling/evicted link must only drop
+                        # that file from the digest, not blank the whole
+                        # thing -- same all-fields-independently-guarded
+                        # spirit as the rest of this function.
+                        sizes.append((fn, os.stat(os.path.join(last, fn)).st_size))
+                    except OSError:
+                        continue
+            h.update(repr(sorted(sizes)).encode())
+            out["weights_digest"] = h.hexdigest()
+        except Exception:
+            pass
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -91,6 +190,7 @@ class Handler(BaseHTTPRequestHandler):
             "log_tail": (lambda s: s[:6000] + s[6000:][-8000:])(logs.stdout + logs.stderr),
             "serve_log_tail": tail(SERVE_LOG),
             "sync_log_tail": tail(SYNC_LOG, 2000),
+            "fingerprint": fingerprint(),
         })
 
     def do_POST(self):
@@ -117,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(404, {"error": "unknown path"})
 
     def _serve(self, payload):
-        global SERVE_PROC
+        global SERVE_PROC, LAST_HF_ID
         try:
             name = str(payload["served_model_name"])
             hf_id = str(payload["hf_model_id"])
@@ -128,6 +228,7 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, TypeError, ValueError) as exc:
             self._reply(400, {"error": "bad payload: %s" % (exc,)})
             return
+        LAST_HF_ID = hf_id  # for fingerprint()'s HF snapshot lookup, set before launching docker
         # a stale serve script's pending docker run would race this swap
         if SERVE_PROC and SERVE_PROC.poll() is None:
             SERVE_PROC.kill(); SERVE_PROC.wait()

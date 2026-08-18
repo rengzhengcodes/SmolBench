@@ -545,6 +545,301 @@ def test_server_config_never_raises(monkeypatch):
     assert cfg["instance_type"] is None and cfg["gpu"] is None
 
 
+# ---------------------------------------------------------------------------
+# ec2.server_config §5 extension (DETERMINISM_PLAN_2026-08-16.md section 5):
+# vllm_args/max_model_len/served_at (from state["last_serve"]), vllm_version/
+# vllm_cache_config/agent_fingerprint/vllm_image_digest (live probes),
+# max_parallel_requests/stream (client-side env config). The live-probe
+# helpers (_fetch_vllm_version/_fetch_vllm_cache_config/_fetch_agent_
+# fingerprint) are monkeypatched directly here -- server_config's OWN job is
+# composing their results with last_serve/model-match gating, which is what
+# these tests exercise; the helpers' own request-building is covered by the
+# _FakeResponse-based unit tests further below.
+# ---------------------------------------------------------------------------
+
+_S5_STATE = {
+    "instance_type": "g7.24xlarge",
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "instance_id": "i-abc123",
+    "public_ip": "203.0.113.10",
+    "vllm_api_key": "vk-stub-secret",
+    "control_token": "ct-stub-secret",
+    "last_serve": {
+        "model": "ministral-3-14b",
+        "hf_model_id": "mistralai/Ministral-3-14B-Reasoning-2512",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": ["--seed", "0"],
+        "image": "vllm/vllm-openai@sha256:deadbeef",
+        "served_at": "2026-08-18T00:00:00+00:00",
+    },
+}
+
+
+def _patch_s5_fetches(monkeypatch, *, vllm_version="0.27.2rc1.dev122+g8efa13b70",
+                       vllm_cache_config=None, agent_fp=None):
+    """Stands in for the three live-probe helpers server_config() calls.
+
+    Records the (ip, key) / state each was called with so a test can assert
+    server_config only attempts a probe when it has enough state to reach the
+    box (the "box absent" test below relies on this to prove no doomed call
+    was made, not just that the result degraded to None).
+    """
+    calls = {"version": [], "cache": [], "agent": []}
+    if vllm_cache_config is None:
+        vllm_cache_config = ["vllm:cache_config_info{num_gpu_blocks=\"12345\"} 1.0"]
+    if agent_fp is None:
+        agent_fp = {
+            "image_repo_digests": ["vllm/vllm-openai@sha256:cec2df507519abc"],
+            "nvidia_smi": "H100 80GB HBM3, gpu-uuid-1, 550.90.07, 81559 MiB, Disabled",
+            "hf_snapshots": ["51f9210f3cd20f3452a80d5819d15dc61cc50630"],
+            "weights_digest": "abc123def456",
+        }
+
+    def fake_version(ip, key):
+        calls["version"].append((ip, key))
+        return vllm_version
+
+    def fake_cache(ip, key):
+        calls["cache"].append((ip, key))
+        return vllm_cache_config
+
+    def fake_agent_fp(state):
+        calls["agent"].append(state)
+        return agent_fp
+
+    monkeypatch.setattr(ec2, "_fetch_vllm_version", fake_version)
+    monkeypatch.setattr(ec2, "_fetch_vllm_cache_config", fake_cache)
+    monkeypatch.setattr(ec2, "_fetch_agent_fingerprint", fake_agent_fp)
+    return calls
+
+
+def test_server_config_s5_happy_path_all_new_fields_populated(monkeypatch):
+    """Box up, last_serve names the queried model, all probes succeed."""
+    monkeypatch.setattr(ec2, "_load_state", lambda: dict(_S5_STATE))
+    calls = _patch_s5_fetches(monkeypatch)
+    monkeypatch.setenv("EC2_MAX_PARALLEL_REQUESTS", "3")
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+
+    cfg = ec2.server_config("ministral-3-14b")
+
+    # last_serve-derived (model matches).
+    assert cfg["vllm_args"] == ["--seed", "0"]
+    assert cfg["max_model_len"] == 131072
+    assert cfg["served_at"] == "2026-08-18T00:00:00+00:00"
+    # Live-probe-derived.
+    assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
+    assert cfg["vllm_cache_config"] == ["vllm:cache_config_info{num_gpu_blocks=\"12345\"} 1.0"]
+    assert cfg["agent_fingerprint"]["nvidia_smi"].startswith("H100")
+    assert cfg["vllm_image_digest"] == "vllm/vllm-openai@sha256:cec2df507519abc"
+    # Client-side config, read at call time.
+    assert cfg["max_parallel_requests"] == 3
+    assert cfg["stream"] is True
+    # The probes were actually reached with the box's ip/key, not skipped.
+    assert calls["version"] == [("203.0.113.10", "vk-stub-secret")]
+    assert calls["cache"] == [("203.0.113.10", "vk-stub-secret")]
+    assert len(calls["agent"]) == 1
+    # The original 8 fields are untouched by the extension.
+    assert cfg["instance_type"] == "g7.24xlarge"
+    assert cfg["tp"] == 4
+
+
+def test_server_config_s5_box_absent_degrades_to_none_without_probing(monkeypatch):
+    """No state file at all: every box/network-derived §5 field is None, and
+    the live-probe helpers are never even called (nothing to reach)."""
+    monkeypatch.setattr(ec2, "_load_state", lambda: None)
+    calls = _patch_s5_fetches(monkeypatch)
+
+    cfg = ec2.server_config("gemma-4-12b")
+
+    assert cfg["vllm_args"] is None
+    assert cfg["max_model_len"] is None
+    assert cfg["served_at"] is None
+    assert cfg["vllm_version"] is None
+    assert cfg["vllm_cache_config"] is None
+    assert cfg["agent_fingerprint"] is None
+    assert cfg["vllm_image_digest"] is None
+    assert calls == {"version": [], "cache": [], "agent": []}
+    # Client-side config is NOT box-dependent (env reads only) -- unlike the
+    # box/network fields above, "no box" must not blank these, matching the
+    # existing precedent that vllm_image/hf_model_id also survive no box.
+    assert cfg["max_parallel_requests"] == 8  # ChatClient's own default
+    assert cfg["stream"] is False
+    # server_config must still return a dict, never None, on this path.
+    assert cfg is not None
+
+
+def test_server_config_s5_last_serve_model_mismatch_yields_none(monkeypatch):
+    """last_serve names a DIFFERENT model than the one being queried (the box
+    was swapped since): the launched-argv fields must not be misattributed to
+    the model asked about, even though the box is reachable and the live
+    probes (which describe whatever IS currently running) still succeed."""
+    state = dict(_S5_STATE, last_serve=dict(_S5_STATE["last_serve"], model="gemma-4-12b"))
+    monkeypatch.setattr(ec2, "_load_state", lambda: state)
+    _patch_s5_fetches(monkeypatch)
+
+    cfg = ec2.server_config("ministral-3-14b")
+
+    assert cfg["vllm_args"] is None
+    assert cfg["max_model_len"] is None
+    assert cfg["served_at"] is None
+    # Live probes are independent of the model-name match -- they describe
+    # whatever the box is actually running right now, not the query's name.
+    assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
+    assert cfg["agent_fingerprint"] is not None
+
+
+def test_server_config_s5_malformed_env_blanks_only_its_own_field(monkeypatch):
+    """EC2_STREAM_COMPLETIONS="true" (not "1") makes ChatClient._flag's
+    ``bool(int(...))`` raise ValueError. That must degrade ONLY the "stream"
+    field to None, not escape to server_config's outer except and blank
+    every other already-computed field over one malformed env var."""
+    monkeypatch.setattr(ec2, "_load_state", lambda: dict(_S5_STATE))
+    _patch_s5_fetches(monkeypatch)
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "true")
+
+    cfg = ec2.server_config("ministral-3-14b")
+
+    assert cfg is not None
+    assert cfg["stream"] is None
+    assert cfg["vllm_args"] == ["--seed", "0"]  # untouched by the bad env var
+    assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
+
+
+class _FakeResponse:
+    """Minimal stand-in for requests.Response, as used by _Resp in
+    test_openai_compat.py: only the attributes the code under test reads."""
+
+    def __init__(self, *, ok=True, json_body=None, text="", status_code=200):
+        self.ok = ok
+        self._json_body = json_body
+        self.text = text
+        self.status_code = status_code
+
+    def json(self):
+        return self._json_body
+
+
+def test_fetch_vllm_version_returns_the_version_string(monkeypatch):
+    monkeypatch.setattr(
+        ec2.requests, "get",
+        lambda url, headers, timeout: _FakeResponse(json_body={"version": "0.27.2rc1.dev122+g8efa13b70"}),
+    )
+    assert ec2._fetch_vllm_version("203.0.113.10", "vk") == "0.27.2rc1.dev122+g8efa13b70"
+
+
+def test_fetch_vllm_version_none_on_non_ok_and_on_exception(monkeypatch):
+    monkeypatch.setattr(ec2.requests, "get", lambda url, headers, timeout: _FakeResponse(ok=False))
+    assert ec2._fetch_vllm_version("203.0.113.10", "vk") is None
+
+    def boom(url, headers, timeout):
+        raise ec2.requests.exceptions.ConnectionError("dead box")
+
+    monkeypatch.setattr(ec2.requests, "get", boom)
+    assert ec2._fetch_vllm_version("203.0.113.10", "vk") is None
+
+
+def test_fetch_vllm_cache_config_filters_to_cache_config_info_lines(monkeypatch):
+    body = (
+        "# HELP vllm:cache_config_info info\n"
+        "# TYPE vllm:cache_config_info gauge\n"
+        'vllm:cache_config_info{num_gpu_blocks="12345",block_size="16"} 1.0\n'
+        'vllm:num_requests_running{} 0.0\n'
+    )
+    monkeypatch.setattr(
+        ec2.requests, "get", lambda url, headers, timeout: _FakeResponse(text=body)
+    )
+    lines = ec2._fetch_vllm_cache_config("203.0.113.10", "vk")
+    assert lines == ['vllm:cache_config_info{num_gpu_blocks="12345",block_size="16"} 1.0']
+
+
+def test_fetch_vllm_cache_config_none_when_no_matching_lines(monkeypatch):
+    monkeypatch.setattr(
+        ec2.requests, "get",
+        lambda url, headers, timeout: _FakeResponse(text="vllm:num_requests_running{} 0.0\n"),
+    )
+    assert ec2._fetch_vllm_cache_config("203.0.113.10", "vk") is None
+
+
+def test_fetch_agent_fingerprint_extracts_the_fingerprint_key(monkeypatch):
+    monkeypatch.setattr(
+        ec2, "_agent",
+        lambda state, method, path, timeout=None, connect_retries=None: {
+            "healthy": True, "fingerprint": {"nvidia_smi": "stub"},
+        },
+    )
+    assert ec2._fetch_agent_fingerprint(_S5_STATE) == {"nvidia_smi": "stub"}
+
+
+def test_fetch_agent_fingerprint_none_on_failure(monkeypatch):
+    def boom(state, method, path, timeout=None, connect_retries=None):
+        raise RuntimeError("agent unreachable")
+
+    monkeypatch.setattr(ec2, "_agent", boom)
+    assert ec2._fetch_agent_fingerprint(_S5_STATE) is None
+
+
+# ---------------------------------------------------------------------------
+# ec2.serve_model: the "last_serve" stash (Change B of the §5 plan) -- the
+# launched argv server_config() later reads back. Everything on the network
+# boundary (_agent, _wait_model_ready, list_models) is monkeypatched out;
+# this test's only job is proving the state mutation, not the swap protocol.
+# ---------------------------------------------------------------------------
+
+
+def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatch):
+    state = {
+        "instance_type": "g7.24xlarge",
+        "region": "us-east-2",
+        "availability_zone": "us-east-2c",
+        "instance_id": "i-abc123",
+        "public_ip": "203.0.113.10",
+        "vllm_api_key": "vk-stub-secret",
+        "control_token": "ct-stub-secret",
+    }
+    monkeypatch.delenv("EC2_REQUIRE_GPU", raising=False)
+    monkeypatch.setattr(ec2, "_require_state", lambda: state)
+
+    agent_calls = []
+
+    def fake_agent(state_arg, method, path, payload=None, timeout=120, connect_retries=40):
+        agent_calls.append((method, path, payload))
+        if method == "GET" and path == "/status":
+            # First call is the "already serving?" probe (before): report NOT
+            # already serving so serve_model takes the real-swap path.
+            return {"healthy": False}
+        if method == "POST" and path == "/serve":
+            return {"ok": True, "launching": payload["served_model_name"]}
+        raise AssertionError(f"unexpected agent call: {method} {path}")
+
+    saved = {}
+    monkeypatch.setattr(ec2, "_agent", fake_agent)
+    monkeypatch.setattr(ec2, "_wait_model_ready", lambda *a, **k: None)
+    monkeypatch.setattr(ec2, "list_models", lambda: ["ministral-3-14b"])
+    monkeypatch.setattr(ec2, "_save_state", lambda s: saved.update(s))
+
+    with ec2.serve_model("ministral-3-14b") as served:
+        assert served == "ministral-3-14b"
+
+    assert saved["last_serve"]["model"] == "ministral-3-14b"
+    assert saved["last_serve"]["hf_model_id"] == "mistralai/Ministral-3-14B-Reasoning-2512"
+    assert saved["last_serve"]["tp"] == 4  # derived from g7.24xlarge, not the spec's static pin
+    assert saved["last_serve"]["max_model_len"] == 131072
+    assert saved["last_serve"]["vllm_args"] == ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["vllm_args"]
+    assert saved["last_serve"]["image"] == ec2.EC2_VLLM_IMAGE
+    # served_at is a UTC ISO-8601 timestamp -- round-trips through fromisoformat.
+    from datetime import datetime as _dt
+
+    _dt.fromisoformat(saved["last_serve"]["served_at"])
+    # "serving" (the pre-existing fast-path key) and "last_serve" are distinct
+    # dicts with different key names -- serve_model must not conflate them.
+    assert saved["serving"]["served_model_name"] == "ministral-3-14b"
+    assert "served_model_name" not in saved["last_serve"]
+    # The real swap actually happened (POST /serve), not the skip path.
+    assert ("POST", "/serve") in [(m, p) for m, p, _ in agent_calls]
+
+
 def test_on_demand_market_drops_instance_market_options(monkeypatch):
     """EC2_MARKET=on-demand launches by OMITTING InstanceMarketOptions.
 
