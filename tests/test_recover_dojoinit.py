@@ -105,9 +105,11 @@ def test_recover_lane_count_assert(rec, monkeypatch, tmp_path):
              + [{"theorem_id": f"U{i}", "ks": [1], "n_cells": 1} for i in range(9)]
              + [{"theorem_id": "V", "ks": [1], "n_cells": 2}])
     (tmp_path / "inputs" / "std_45.json").write_text(json.dumps(std45))
-    rows = [{"theorem_id": "T0", "k": 1, "rung": "stepk:1",
+    rows = [{"theorem_id": "T0", "k": 1, "rung": "stepk:1", "kind": "cell",
              "file_path": ".lake/packages/std/Std/X.lean", "verdict": "replay_failed"}
             for _ in range(150)]
+    # a sanity row (no file_path) must be skipped, not crash the filter
+    rows.append({"theorem_id": "T0", "kind": "sanity", "verdict": "success"})
     monkeypatch.setattr(rec, "s3_stream_rows", lambda lane: iter(rows))
     with pytest.raises(AssertionError, match="expected 151 std rows, found 150"):
         rec.recover_lane("some-lane")

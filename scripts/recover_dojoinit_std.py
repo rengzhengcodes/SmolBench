@@ -255,6 +255,10 @@ def stage_controls(args) -> None:
     for lane in CONTROL_LANES:
         by_verdict: Dict[str, List[Dict[str, Any]]] = {v: [] for v in CONTROL_VERDICTS}
         for row in s3_stream_rows(lane):
+            # verified_rows carries 300 kind="sanity" rows with NO file_path;
+            # only kind="cell" rows are cells (confirmed live 2026-08-18).
+            if row.get("kind") != "cell":
+                continue
             if (not row["file_path"].startswith(STD_PREFIX)
                     and row.get("verdict") in by_verdict):
                 by_verdict[row["verdict"]].append(row)
@@ -299,7 +303,8 @@ def recover_lane(lane: str, force: bool = False) -> Dict[str, Any]:
     std45 = load_std45()
     golden = golden_std_keys(std45)
     originals = [r for r in s3_stream_rows(lane)
-                 if r["file_path"].startswith(STD_PREFIX)]
+                 if r.get("kind") == "cell"
+                 and r["file_path"].startswith(STD_PREFIX)]
     assert len(originals) == STD_ROWS_PER_LANE, (
         f"{lane}: expected {STD_ROWS_PER_LANE} std rows, found {len(originals)}")
     got_keys = {(r["theorem_id"], r["k"]) for r in originals}
@@ -395,6 +400,8 @@ def stage_report(args) -> None:
                 f"{len(ref_unrecovered)}) -- the F8 class must be model-independent")
         study = {"success": 0, "lean_error": 0, "incomplete": 0, "other": 0}
         for row in s3_stream_rows(lane):
+            if row.get("kind") != "cell":
+                continue  # sanity rows have no file_path and are not cells
             if row["file_path"].startswith(STD_PREFIX):
                 continue
             v = row.get("verdict")
