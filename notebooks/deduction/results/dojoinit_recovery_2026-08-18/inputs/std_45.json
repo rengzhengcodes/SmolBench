@@ -1,0 +1,407 @@
+[
+ {
+  "theorem_id": "String.atEnd_of_valid",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "List.erase_append_left",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "List.get_drop",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "List.join_eq_joinTR",
+  "file_path": ".lake/packages/std/Std/Data/List/Basic.lean",
+  "ks": [
+   2
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 3
+ },
+ {
+  "theorem_id": "String.offsetOfPos_of_valid",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Nat.gcd_gcd_self_left_right",
+  "file_path": ".lake/packages/std/Std/Data/Nat/Gcd.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Rat.inv_divInt",
+  "file_path": ".lake/packages/std/Std/Data/Rat/Lemmas.lean",
+  "ks": [
+   4
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 5
+ },
+ {
+  "theorem_id": "Fin.get_list",
+  "file_path": ".lake/packages/std/Std/Data/Fin/Lemmas.lean",
+  "ks": [
+   2
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 3
+ },
+ {
+  "theorem_id": "Rat.divInt_sub_divInt",
+  "file_path": ".lake/packages/std/Std/Data/Rat/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "List.Perm.union_right",
+  "file_path": ".lake/packages/std/Std/Data/List/Perm.lean",
+  "ks": [
+   4
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 5
+ },
+ {
+  "theorem_id": "List.get?_set_eq",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.UnionFind.parent'_lt",
+  "file_path": ".lake/packages/std/Std/Data/UnionFind/Basic.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.PairingHeapImp.Heap.WF.deleteMin",
+  "file_path": ".lake/packages/std/Std/Data/PairingHeap.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 2,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Std.HashMap.Imp.WF.mapVal",
+  "file_path": ".lake/packages/std/Std/Data/HashMap/WF.lean",
+  "ks": [
+   12
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 13
+ },
+ {
+  "theorem_id": "String.prev_of_valid",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   2
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 3
+ },
+ {
+  "theorem_id": "List.not_all_eq_any_not",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Std.BinomialHeap.Imp.Heap.WF.deleteMin",
+  "file_path": ".lake/packages/std/Std/Data/BinomialHeap/Basic.lean",
+  "ks": [
+   5
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 6
+ },
+ {
+  "theorem_id": "Std.BinomialHeap.Imp.Heap.realSize_deleteMin",
+  "file_path": ".lake/packages/std/Std/Data/BinomialHeap/Basic.lean",
+  "ks": [
+   9
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 10
+ },
+ {
+  "theorem_id": "List.findIdx?_of_eq_none",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   8
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 9
+ },
+ {
+  "theorem_id": "Std.RBSet.mem_toList_insert",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Std.BinomialHeap.Imp.Heap.WF.tail",
+  "file_path": ".lake/packages/std/Std/Data/BinomialHeap/Basic.lean",
+  "ks": [
+   3
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 4
+ },
+ {
+  "theorem_id": "Int.neg_le_sub_left_of_le_add",
+  "file_path": ".lake/packages/std/Std/Data/Int/Order.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "List.takeD_eq_takeDTR",
+  "file_path": ".lake/packages/std/Std/Data/List/Basic.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Rat.mk_eq_divInt",
+  "file_path": ".lake/packages/std/Std/Data/Rat/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.RBNode.exists_insert_toList_zoom_node",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "String.Pos.zero_addChar_byteIdx",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "List.get?_set_ne",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "String.extract_cons_addChar",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Int.mul_div_assoc'",
+  "file_path": ".lake/packages/std/Std/Data/Int/DivMod.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Rat.mkRat_mul_right",
+  "file_path": ".lake/packages/std/Std/Data/Rat/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "Array.get_extract_loop_lt",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "ks": [
+   4
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 5
+ },
+ {
+  "theorem_id": "Std.RBNode.isOrdered_iff",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Array.getElem_map",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "ks": [
+   4
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 5
+ },
+ {
+  "theorem_id": "Std.RBNode.zoom_toList",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "String.data_dropWhile",
+  "file_path": ".lake/packages/std/Std/Data/String/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.UnionFind.equiv_find",
+  "file_path": ".lake/packages/std/Std/Data/UnionFind/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "List.cons_eq_append",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.RBSet.toStream_toList",
+  "file_path": ".lake/packages/std/Std/Data/RBMap/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "List.set_eq_take_cons_drop",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Array.size_extract_loop",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "ks": [
+   5
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 6
+ },
+ {
+  "theorem_id": "Array.extract_loop_eq_aux",
+  "file_path": ".lake/packages/std/Std/Data/Array/Lemmas.lean",
+  "ks": [
+   8
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 9
+ },
+ {
+  "theorem_id": "List.findIdx?_eq_some_iff",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   3
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 4
+ },
+ {
+  "theorem_id": "List.getLastD_concat",
+  "file_path": ".lake/packages/std/Std/Data/List/Lemmas.lean",
+  "ks": [
+   1
+  ],
+  "n_cells": 1,
+  "n_total_tactics": 2
+ },
+ {
+  "theorem_id": "ByteArray.get_extract",
+  "file_path": ".lake/packages/std/Std/Data/ByteArray.lean",
+  "ks": [
+   0
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 1
+ },
+ {
+  "theorem_id": "Std.PairingHeapImp.Heap.noSibling_tail",
+  "file_path": ".lake/packages/std/Std/Data/PairingHeap.lean",
+  "ks": [
+   4
+  ],
+  "n_cells": 4,
+  "n_total_tactics": 5
+ }
+]
