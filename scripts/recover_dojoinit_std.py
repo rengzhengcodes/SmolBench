@@ -161,17 +161,29 @@ def dedupe_earliest(rows) -> Tuple[List[Dict[str, Any]], int]:
 
     The six re-collected lanes carry duplicate cell rows from the 2026-08-15
     resampling era (measured live: qwen3.5-27b has 178 std rows over 151
-    distinct cells). File order is chronological append, so keeping the
-    FIRST occurrence implements the standing earliest-wins ruling.
+    distinct cells). File order is chronological append; the kept row is the
+    FIRST NON-exception occurrence (see inline comment), matching the study
+    loader's earliest-surviving rule.
     """
     seen: Dict[Tuple, Dict[str, Any]] = {}
     dupes = 0
     for r in rows:
         key = (r["theorem_id"], r["k"], r["rung"], r.get("replicate_idx", 0))
-        if key in seen:
-            dupes += 1
+        if key not in seen:
+            seen[key] = r
             continue
-        seen[key] = r
+        dupes += 1
+        # First NON-exception row per cell wins -- the study loader's own
+        # documented rule (notebooks/deduction/power_analysis.py
+        # load_joint_cells: an exception row means the attempt never produced
+        # an answer, so the earliest SURVIVING row is the cell's answer).
+        # Earliest-ANY was measured live to keep spot-kill exception
+        # placeholders and shrink five re-collected lanes' measurable Mathlib
+        # counts (qwen3.5-27b 520 vs 712, deepseek-v3.1 390, gemma-4-31b 231,
+        # ministral-3-3b 350, exaone-4.5-33b 344).
+        if (seen[key].get("verdict") == "exception"
+                and r.get("verdict") != "exception"):
+            seen[key] = r
     return list(seen.values()), dupes
 
 

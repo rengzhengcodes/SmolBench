@@ -118,8 +118,16 @@ def test_recover_lane_count_assert(rec, monkeypatch, tmp_path):
         rec.recover_lane("some-lane")
 
 
-def test_dedupe_earliest_wins(rec):
+def test_dedupe_earliest_surviving_wins(rec):
     a = {"theorem_id": "T", "k": 1, "rung": "stepk:1", "replicate_idx": 0, "verdict": "success"}
-    b = dict(a, verdict="lean_error")  # later duplicate must lose
+    b = dict(a, verdict="lean_error")  # later duplicate must lose to an earlier survivor
     kept, dupes = rec.dedupe_earliest([a, b])
     assert dupes == 1 and kept == [a] and kept[0]["verdict"] == "success"
+    # ... but an exception PLACEHOLDER (spot-killed attempt) must NOT beat a
+    # later surviving row: the study loader takes the first NON-exception row.
+    e = dict(a, verdict="exception")
+    kept2, dupes2 = rec.dedupe_earliest([e, b])
+    assert dupes2 == 1 and kept2[0]["verdict"] == "lean_error"
+    # all-exception cell keeps its first row (dropped later by measurability)
+    kept3, _ = rec.dedupe_earliest([e, dict(e)])
+    assert kept3[0]["verdict"] == "exception"
