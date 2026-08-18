@@ -1,0 +1,265 @@
+{
+ "n_controls": 30,
+ "lanes": [
+  "gemma-4-e2b",
+  "glm-4.5-air",
+  "ministral-3-8b",
+  "qwen3.5-27b",
+  "nemotron-3-nano-4b"
+ ],
+ "waves": {
+  "0814": [
+   "gemma-4-e2b",
+   "glm-4.5-air",
+   "ministral-3-8b"
+  ],
+  "0816": [
+   "qwen3.5-27b",
+   "nemotron-3-nano-4b"
+  ]
+ },
+ "agreement": 30,
+ "disagreements": [],
+ "results": [
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "LowerSet.compl_iSup\u2082",
+   "k": 0,
+   "rung": "noise:3",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "PerfectRing.lift_comp_lift_apply_eq_self",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "CategoryTheory.InjectiveResolution.isoRightDerivedToHomotopyCategoryObj_hom_naturality",
+   "k": 3,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "Filter.tendsto_mul_const_atBot_iff_neg",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "symmDiff_sdiff_left",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "gemma-4-e2b",
+   "theorem_id": "covBy_sup_of_inf_covBy_of_inf_covBy_right",
+   "k": 1,
+   "rung": "hint:2",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "PiTensorProduct.reindex_symm",
+   "k": 1,
+   "rung": "hint:2",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "LinearMap.comap_leq_ker_subToSupQuotient",
+   "k": 1,
+   "rung": "noise:3",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "covBy_sup_of_inf_covBy_of_inf_covBy_right",
+   "k": 1,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "PiTensorProduct.lift_comp_map",
+   "k": 1,
+   "rung": "hint:3",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "Filter.extraction_of_frequently_atTop",
+   "k": 1,
+   "rung": "noise:3",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "glm-4.5-air",
+   "theorem_id": "bihimp_bihimp_bihimp_comm",
+   "k": 0,
+   "rung": "noise:3",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "Filter.Subsingleton.isCountablyGenerated",
+   "k": 2,
+   "rung": "hint:3",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "OmegaCompletePartialOrder.ContinuousHom.\u03c9Sup_apply_\u03c9Sup",
+   "k": 0,
+   "rung": "hint:3",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "CategoryTheory.ProjectiveResolution.fromLeftDerivedZero'_naturality",
+   "k": 0,
+   "rung": "hint:3",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "Filter.smallSets_top",
+   "k": 0,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "CategoryTheory.Limits.biproduct.conePointUniqueUpToIso_inv",
+   "k": 1,
+   "rung": "noise:3",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "ministral-3-8b",
+   "theorem_id": "symmDiff_sdiff_left",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "CategoryTheory.ProjectiveResolution.isoLeftDerivedToHomotopyCategoryObj_inv_naturality",
+   "k": 3,
+   "rung": "stepk:1",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "RatFunc.intDegree_zero",
+   "k": 0,
+   "rung": "noise:3",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "autAdjoinRootXPowSubC_root",
+   "k": 1,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "CategoryTheory.Pretriangulated.op_distinguished",
+   "k": 1,
+   "rung": "noise:3",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "disjoint_sdiff_comm",
+   "k": 0,
+   "rung": "noise:3",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "qwen3.5-27b",
+   "theorem_id": "Filter.Germ.coe_lt",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "PerfectRing.lift_comp_lift_apply_eq_self",
+   "k": 0,
+   "rung": "hint:2",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "CategoryTheory.SmallObject.\u03c1FunctorObj_\u03c0",
+   "k": 0,
+   "rung": "stepk:1",
+   "recorded": "success",
+   "new": "success"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "CategoryTheory.Limits.Types.Pushout.inl_eq_inr_iff",
+   "k": 5,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "LinearMap.IsAlt.isRefl",
+   "k": 1,
+   "rung": "stepk:1",
+   "recorded": "lean_error",
+   "new": "lean_error"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "LinearMap.span_inl_union_inr",
+   "k": 0,
+   "rung": "noise:3",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  },
+  {
+   "lane": "nemotron-3-nano-4b",
+   "theorem_id": "Module.End.exists_isNilpotent_isSemisimple",
+   "k": 2,
+   "rung": "hint:2",
+   "recorded": "incomplete",
+   "new": "incomplete"
+  }
+ ]
+}

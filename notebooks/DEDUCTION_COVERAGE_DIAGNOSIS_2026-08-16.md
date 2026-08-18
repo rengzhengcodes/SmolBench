@@ -1,5 +1,12 @@
 # Deduction (Lean4) coverage diagnosis — why 24.6% of the eval is unmeasurable
 
+> **SUPERSEDED IN PART, 2026-08-18: the 151 DojoInit cells are RECOVERED.**
+> Root cause confirmed (incomplete `/root` grading cache; this doc's D1
+> mechanism refuted, its conclusion upheld), 30/30 control cells exact, all
+> 21 lanes recovered additively (study S3 objects untouched). New accounting:
+> DojoInit 151→0, prefix class 81→111, measurable 712→833 (711→832),
+> bootstrap blocks 218→252. See `notebooks/DOJOINIT_RECOVERY_2026-08-18.md`.
+
 > ## Correction, 2026-08-16 (post-review, measured)
 >
 > Two claims below were wrong and are superseded by this box. They are left in
