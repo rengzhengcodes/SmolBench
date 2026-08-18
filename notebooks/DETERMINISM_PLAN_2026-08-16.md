@@ -646,6 +646,22 @@ not put a number on it that has not been measured.
 
 ### 6.3 A free, biased lower bound that already exists
 
+> **[MEASURED 2026-08-18 — 0/74 flips, exact 95% CI [0, 4.9%].]** Both
+> attempts of all 74 pairs (ministral-3-3b 63, qwen3.5-27b 6, gemma-4-31b 5
+> — reproducing this section's accounting exactly) were re-verified by
+> today's verifier (`scripts/flip_free_bound.py`; results in
+> `notebooks/deduction/results/flip_free_bound_2026-08-18.json`). Zero
+> verdict flips, first-vs-second AND first-vs-last. 7 pairs are
+> byte-identical text; the other 67 differ — token-level cross-process
+> nondeterminism is present in this very sample, and the score level did
+> not move once. The selected-on-outcome caveat below stands, with one
+> correction the measurement itself supplies: the argued bias direction
+> (over-estimate via regression to the mean) did not materialize — the
+> conditioning event was a failed-looking first attempt, which concentrated
+> HARD cells into concordant failures, so this sample plausibly
+> UNDER-detects flips instead. Either way it cannot substitute for §6.2's
+> unbiased n=200 measurement, which is running as designed.
+
 The resampling bug left **74 cells with more than one surviving attempt**
 (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5 — inventory §"pass@1
 verification"). Those are **paired draws of the same cell from different serving
