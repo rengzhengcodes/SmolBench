@@ -842,6 +842,182 @@ def test_select_theorems_shard_rejects_malformed_values(sweep_ctx):
 
 
 # ---------------------------------------------------------------------------
+# (m) LEAN_CELL_WHITELIST -- cell-level filter used by scripts/flip_probe.py's
+# score-level flip experiment (notebooks/DETERMINISM_PLAN_2026-08-16.md §6.2)
+# ---------------------------------------------------------------------------
+
+
+def test_load_cell_whitelist_parses_and_dedupes(tmp_path):
+    """Valid entries parse into `_row_key`-shaped tuples; a repeated entry
+    collapses to one set member (the file format allows duplicates -- the
+    caller need not pre-dedupe before writing it)."""
+    path = tmp_path / "wl.json"
+    path.write_text(json.dumps([
+        ["m", "T", 1, "stepk:1", 0],
+        ["m", "T", 1, "stepk:1", 0],
+        ["m", "U", 2, "hint:2", 1],
+    ]))
+    keys = runner.load_cell_whitelist(str(path))
+    assert keys == frozenset({("m", "T", 1, "stepk:1", 0), ("m", "U", 2, "hint:2", 1)})
+
+
+def test_load_cell_whitelist_missing_file_raises(tmp_path):
+    with pytest.raises(ValueError):
+        runner.load_cell_whitelist(str(tmp_path / "does_not_exist.json"))
+
+
+def test_load_cell_whitelist_malformed_json_raises(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text("{not valid json")
+    with pytest.raises(ValueError):
+        runner.load_cell_whitelist(str(path))
+
+
+def test_load_cell_whitelist_rejects_non_list_top_level(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"not": "a list"}))
+    with pytest.raises(ValueError):
+        runner.load_cell_whitelist(str(path))
+
+
+def test_load_cell_whitelist_rejects_wrong_length_entries(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([["too", "few", "elements"]]))
+    with pytest.raises(ValueError):
+        runner.load_cell_whitelist(str(path))
+
+
+def test_hash_cell_keys_is_order_and_type_independent():
+    """The digest must depend only on the SET of keys, not their on-disk
+    order or whether they arrive as tuples or plain JSON-decoded lists --
+    `notebooks/deduction/run_study.py`'s sidecar stamp and
+    `scripts/flip_probe.py`'s sample_manifest.json compute this digest via
+    two different code paths and must agree for the SAME cell set."""
+    keys_a = [("m", "T", 1, "stepk:1", 0), ("m", "U", 2, "hint:2", 1)]
+    keys_b = [["m", "U", 2, "hint:2", 1], ["m", "T", 1, "stepk:1", 0]]
+    assert runner.hash_cell_keys(keys_a) == runner.hash_cell_keys(keys_b)
+
+
+def test_hash_cell_keys_changes_with_content():
+    a = runner.hash_cell_keys([("m", "T", 1, "stepk:1", 0)])
+    b = runner.hash_cell_keys([("m", "T", 1, "stepk:1", 1)])
+    assert a != b
+
+
+def test_select_theorems_cell_whitelist_none_is_unchanged(sweep_ctx):
+    """`cell_whitelist=None` (the default) must be byte-identical to calling
+    `_select_theorems` with no such argument at all."""
+    base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
+    assert (
+        [t.full_name for t in runner._select_theorems(base)]
+        == [t.full_name for t in runner._select_theorems(base, cell_whitelist=None)]
+    )
+
+
+def test_select_theorems_cell_whitelist_narrows_to_whitelisted_theorems(sweep_ctx):
+    """A cell_whitelist narrows the pool to exactly the theorems that own at
+    least one whitelisted cell key -- mirrors the shard test's structure,
+    but at theorem-name granularity rather than a stride."""
+    base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
+    whole = runner._select_theorems(base)
+    assert len(whole) >= 2  # fixture must give this something to narrow
+
+    target = whole[0]
+    whitelist = frozenset({runner._row_key("m", target.full_name, 0, "stepk:0", 0)})
+    narrowed = runner._select_theorems(base, cell_whitelist=whitelist)
+    assert [t.full_name for t in narrowed] == [target.full_name]
+
+
+def test_cell_whitelist_unset_leaves_sweep_enumeration_unchanged(sweep_ctx):
+    """LEAN_CELL_WHITELIST unset must be byte-identical to today's behavior:
+    every one of the 16 cells `_make_config` describes still generates."""
+    cfg = _make_config(concurrent=False)
+    run_dir = sweep_ctx.tmp / "run"
+    n_written = runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+    assert n_written == EXPECTED_CELLS
+    keys = {
+        (r["model"], r["theorem_id"], r["k"], r["rung"], r["replicate_idx"])
+        for r in _rows(run_dir, "cell")
+    }
+    assert len(keys) == EXPECTED_CELLS
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(sweep_ctx, monkeypatch, concurrent):
+    """LEAN_CELL_WHITELIST=<path> runs ONLY the whitelisted cells: every other
+    (theorem, k, rung, model, replicate_idx) is skipped, including an entire
+    theorem that owns no whitelisted cell (whose sanity gate must therefore
+    never even run -- see `_select_theorems`'s theorem-level pre-filter)."""
+    cfg = _make_config(concurrent)
+
+    # Baseline: discover the full 16-key set with no whitelist in effect.
+    baseline_dir = sweep_ctx.tmp / "baseline"
+    runner.sweep(cfg, baseline_dir, verifier=FakeVerifier())
+    all_keys = sorted(
+        (r["model"], r["theorem_id"], r["k"], r["rung"], r["replicate_idx"])
+        for r in _rows(baseline_dir, "cell")
+    )
+    assert len(all_keys) == EXPECTED_CELLS
+
+    # Whitelist a strict subset of Mini.theoremA's own cells, leaving
+    # Mini.theoremB with ZERO whitelisted cells -- exercises the theorem-level
+    # pre-filter (theoremB excluded whole) AND the cell-level filter
+    # (theoremA's own non-whitelisted cells still skip).
+    theorem_a_keys = [k for k in all_keys if k[1] == "Mini.theoremA"]
+    assert len(theorem_a_keys) >= 3
+    whitelist_keys = theorem_a_keys[:3]
+    whitelist_path = sweep_ctx.tmp / "whitelist.json"
+    whitelist_path.write_text(json.dumps([list(k) for k in whitelist_keys]))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(whitelist_path))
+
+    run_dir = sweep_ctx.tmp / "run"
+    n_written = runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+    assert n_written == len(whitelist_keys)
+
+    got_keys = sorted(
+        (r["model"], r["theorem_id"], r["k"], r["rung"], r["replicate_idx"])
+        for r in _rows(run_dir, "cell")
+    )
+    assert got_keys == sorted(whitelist_keys)
+
+    sanity_theorems = {r["theorem_id"] for r in _rows(run_dir, "sanity")}
+    assert sanity_theorems == {"Mini.theoremA"}
+
+
+def test_cell_whitelist_missing_file_raises_and_writes_nothing(sweep_ctx, monkeypatch, tmp_path):
+    """A missing LEAN_CELL_WHITELIST file must raise loudly at sweep start --
+    never fall through to a full, unfiltered (and, live, expensive) run."""
+    cfg = _make_config(concurrent=False)
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(tmp_path / "does_not_exist.json"))
+    run_dir = sweep_ctx.tmp / "run"
+    with pytest.raises(ValueError):
+        runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+    assert not (run_dir / "all_rows.jsonl").exists()
+
+
+def test_cell_whitelist_malformed_json_raises_and_writes_nothing(sweep_ctx, monkeypatch):
+    cfg = _make_config(concurrent=False)
+    bad_path = sweep_ctx.tmp / "bad_whitelist.json"
+    bad_path.write_text("{not valid json")
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(bad_path))
+    run_dir = sweep_ctx.tmp / "run"
+    with pytest.raises(ValueError):
+        runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+    assert not (run_dir / "all_rows.jsonl").exists()
+
+
+def test_cell_whitelist_malformed_shape_raises_and_writes_nothing(sweep_ctx, monkeypatch):
+    cfg = _make_config(concurrent=False)
+    bad_path = sweep_ctx.tmp / "bad_shape_whitelist.json"
+    bad_path.write_text(json.dumps([["only", "four", "elements", 0]]))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(bad_path))
+    run_dir = sweep_ctx.tmp / "run"
+    with pytest.raises(ValueError):
+        runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+    assert not (run_dir / "all_rows.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
 # (l) frozen ordering + artifacts (SERIAL sweep only -- see docstring)
 # ---------------------------------------------------------------------------
 

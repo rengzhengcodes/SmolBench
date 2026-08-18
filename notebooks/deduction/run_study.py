@@ -500,7 +500,11 @@ def build_config(key: str) -> dict:
         theorems, itself seeded 0). ``models`` is a single-element list;
         its ``extra_params`` is a DEEP COPY of ``COT_ARGS[key]`` (see
         Notes), so it is always equal to, but never the same object as,
-        ``COT_ARGS[key]``.
+        ``COT_ARGS[key]``. A twelfth key, ``cell_whitelist``, is present
+        ONLY when ``LEAN_CELL_WHITELIST`` is set in the environment at call
+        time (see the "LEAN_CELL_WHITELIST sidecar stamp" note below) --
+        with it unset, the returned dict's key set is unchanged from before
+        this parameter existed.
 
     Notes
     -----
@@ -511,6 +515,13 @@ def build_config(key: str) -> dict:
     ``scripts/run_fleet.py``'s ``Lane`` naming convention and
     ``smolbench.deduction.lean.figures``'s documented ``scaling_<model>``
     run-directory convention.
+
+    Also reads ``LEAN_CELL_WHITELIST`` at CALL time and, when set,
+    additionally performs FILE I/O (``runner.load_cell_whitelist`` reads and
+    parses that path) -- so this function is no longer pure in that branch,
+    and can raise `ValueError` (propagated from `load_cell_whitelist`)
+    before any AWS call, matching this driver's established "fail fast
+    before billing" pattern (see the module docstring's LIFECYCLE step 3).
 
     ``extra_params`` is built with ``copy.deepcopy(COT_ARGS[key])`` rather
     than reused by reference: ``COT_ARGS`` is a shared, imported table (see
@@ -555,7 +566,8 @@ def build_config(key: str) -> dict:
     }
     if shard:
         theorems["shard"] = shard
-    return {
+
+    cfg: dict[str, Any] = {
         "run_name": run_name,
         "seed": 0,
         "temperature": 0.7,
@@ -580,6 +592,32 @@ def build_config(key: str) -> dict:
             }
         ],
     }
+
+    # Optional LEAN_CELL_WHITELIST sidecar stamp -- CONDITIONALLY present,
+    # mirroring the shard key immediately above. Unlike `shard`, this value
+    # does NOT drive `runner.sweep`'s own behavior: `runner.sweep` reads
+    # `LEAN_CELL_WHITELIST` directly from the environment itself (see that
+    # function's docstring), so this key is written purely so the run's
+    # `manifest.json` sidecar (`sweep` stamps `{"config": config, ...}`
+    # verbatim -- see that function's "Output layout" docstring section)
+    # records WHICH whitelist file was in effect for this run, without
+    # embedding the (possibly large) key list a second time. Recording the
+    # path alone would not be enough -- a whitelist file can be edited or
+    # replaced after a run starts -- so `runner.hash_cell_keys` fingerprints
+    # its SORTED content instead; a reader can diff `sha256` against a
+    # fresh `hash_cell_keys(runner.load_cell_whitelist(path))` call to
+    # confirm the file a later reader has on disk is the exact one this run
+    # used. `runner.load_cell_whitelist` itself raises loudly on a missing
+    # or malformed file, so an operator gets that failure HERE, before any
+    # AWS call -- see this function's own Notes section.
+    whitelist_path = os.environ.get("LEAN_CELL_WHITELIST", "").strip()
+    if whitelist_path:
+        cfg["cell_whitelist"] = {
+            "path": whitelist_path,
+            "sha256": runner.hash_cell_keys(runner.load_cell_whitelist(whitelist_path)),
+        }
+
+    return cfg
 
 
 def select_verifier() -> Any:

@@ -237,6 +237,47 @@ def test_lean_shard_threads_into_theorems_and_run_name(driver, monkeypatch):
     assert driver.build_config(KEY)["run_name"] == "scaling_custom"
 
 
+def test_lean_cell_whitelist_stamps_manifest_sidecar(driver, monkeypatch, tmp_path):
+    """``LEAN_CELL_WHITELIST=<path>`` must add a conditional ``cell_whitelist``
+    entry (the path + sha256 of the sorted key list) to the returned config --
+    mirroring how ``LEAN_SHARD`` stamps ``theorems.shard`` above. Purely
+    documentary: ``runner.sweep`` reads ``LEAN_CELL_WHITELIST`` directly from
+    the environment itself (see that function's own docstring), so this key
+    exists only so a run's ``manifest.json`` sidecar (``sweep`` stamps
+    ``{"config": config, ...}`` verbatim) records WHICH whitelist file was in
+    effect, without ``runner.sweep`` needing to consume this key at all. With
+    ``LEAN_CELL_WHITELIST`` unset, ``test_config_keys_are_all_accepted_by_the_harness``
+    above already pins that this key is absent from the returned config."""
+    whitelist_path = tmp_path / "whitelist.json"
+    keys = [[KEY, "T", 1, "stepk:1", 0], [KEY, "U", 2, "hint:2", 1]]
+    whitelist_path.write_text(json.dumps(keys))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(whitelist_path))
+
+    cfg = driver.build_config(KEY)
+    assert cfg["cell_whitelist"]["path"] == str(whitelist_path)
+    expected_sha = runner.hash_cell_keys(runner.load_cell_whitelist(str(whitelist_path)))
+    assert cfg["cell_whitelist"]["sha256"] == expected_sha
+    # Everything else in the config is untouched by the whitelist.
+    assert cfg["run_name"] == f"scaling_{KEY}"
+    assert cfg["theorems"] == {
+        "source": "replay_passing",
+        "kind": "novel_premises",
+        "split": "val",
+        "limit": 300,
+        "seed": 0,
+    }
+
+
+def test_lean_cell_whitelist_missing_file_raises_before_provisioning(driver, monkeypatch, tmp_path):
+    """A missing/malformed whitelist must raise `ValueError` out of
+    ``build_config`` itself -- BEFORE any AWS call, matching this driver's
+    "fail fast before billing" pattern (module docstring, LIFECYCLE step 3;
+    ``main`` calls ``build_config`` before ``select_verifier``/provisioning)."""
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(tmp_path / "does_not_exist.json"))
+    with pytest.raises(ValueError):
+        driver.build_config(KEY)
+
+
 def test_build_config_does_not_mutate_shared_cot_table(driver):
     """Mutating a returned config must not corrupt the shared ``COT_ARGS`` table.
 

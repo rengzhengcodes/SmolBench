@@ -85,7 +85,11 @@ WAVE_0816 = {"nemotron-3-nano-4b", "deepseek-v3.1", "exaone-4.5-33b",
 CONTROL_LANES = ["gemma-4-e2b", "glm-4.5-air", "ministral-3-8b",
                  "qwen3.5-27b", "nemotron-3-nano-4b"]
 CONTROL_VERDICTS = ("success", "lean_error", "incomplete")
-MEASURABLE_VERDICTS = frozenset(CONTROL_VERDICTS)
+#: given_up: the candidate tactic drove Lean to a given-up proof state -- a
+#: judgment on the CANDIDATE (measured live 2026-08-18: 4 such Mathlib cells
+#: in the nemotron-3-nano-4b lane; they are part of the 711/712 measurable
+#: denominators). Not a CONTROL verdict (too rare to stratify on).
+MEASURABLE_VERDICTS = frozenset(CONTROL_VERDICTS) | {"given_up"}
 
 log = logging.getLogger("recover_dojoinit")
 

@@ -51,6 +51,7 @@ Output layout (`run_dir`):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -332,8 +333,27 @@ def new_run_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
-def _select_theorems(spec: dict) -> list[BenchmarkTheorem]:
-    """Resolve a config `theorems` block into a concrete BenchmarkTheorem list."""
+def _select_theorems(
+    spec: dict, *, cell_whitelist: frozenset[tuple] | None = None
+) -> list[BenchmarkTheorem]:
+    """Resolve a config `theorems` block into a concrete BenchmarkTheorem list.
+
+    Parameters
+    ----------
+    spec : dict
+        The sweep config's `theorems` block (see the various keys read
+        below).
+    cell_whitelist : frozenset[tuple] or None, optional
+        When given, narrows the returned pool to exactly the theorems that
+        own at least one cell key in this set (see `load_cell_whitelist`
+        for the key shape). `None` (the default) applies no narrowing --
+        byte-identical to this function's pre-whitelist behavior. Passed
+        explicitly rather than read from `spec` (unlike `shard` below):
+        the whitelist is env-gated (`LEAN_CELL_WHITELIST`, loaded once by
+        `sweep`) rather than a sweep-config field, since it names specific
+        (model, theorem, k, rung, replicate_idx) cells rather than
+        describing how to build the theorem pool.
+    """
     source = spec.get("source", "replay_passing")
     kind = spec.get("kind", "random")
     split = spec.get("split", "val")
@@ -374,6 +394,23 @@ def _select_theorems(spec: dict) -> list[BenchmarkTheorem]:
             raise ValueError(f"theorems.shard {shard!r} must be 'i/n' with 0 <= i < n")
         pool = pool[idx::n]
 
+    # Optional cell-level whitelist (LEAN_CELL_WHITELIST via `sweep`), applied
+    # LAST and at the THEOREM level -- mirrors the shard's own structure
+    # (narrow `pool`, never touch the k/rung/model/replicate loop here).
+    # Filtering whole theorems, rather than leaving this to the per-cell
+    # check in `_run_cells_at_step[_concurrent]` alone, is what keeps a
+    # whitelisted theorem's sanity-gate replay (and its one shared Dojo
+    # session per (theorem, k)) from being skipped for every theorem the
+    # whitelist does NOT touch -- exactly the efficiency a small n=200-cell
+    # rerun needs against a 300-theorem pool. A theorem's SANITY row still
+    # runs unconditionally once it survives this filter -- the finer-grained
+    # (k, rung, model, replicate_idx) narrowing happens separately, later,
+    # against the SAME `cell_whitelist` object, inside
+    # `_run_cells_at_step[_concurrent]` (see `sweep`).
+    if cell_whitelist is not None:
+        whitelisted_theorems = {key[1] for key in cell_whitelist}
+        pool = [t for t in pool if t.full_name in whitelisted_theorems]
+
     return pool
 
 
@@ -390,6 +427,141 @@ def _k_indices(theorem: BenchmarkTheorem, strategy: str) -> list[int]:
 
 def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) -> tuple:
     return (model, theorem, k, rung, replicate_idx)
+
+
+# ---------------------------------------------------------------------------
+# Cell whitelist (LEAN_CELL_WHITELIST) -- an env-gated cell-level filter, in
+# the same spirit as the `theorems.shard` mechanism above but scoped to
+# specific (model, theorem, k, rung, replicate_idx) cells rather than a
+# stride over the theorem pool. Used by `scripts/flip_probe.py`'s
+# score-level flip experiment (notebooks/DETERMINISM_PLAN_2026-08-16.md
+# §6.2) to regenerate an exact n=200-cell sample on a fresh box without
+# re-running (or re-sanity-gating) the other ~700 cells of a 300-theorem
+# lane. See `sweep`'s own docstring for exactly where this is consulted.
+# ---------------------------------------------------------------------------
+
+
+def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
+    """Loads and validates a `LEAN_CELL_WHITELIST` JSON file into a key set.
+
+    Parameters
+    ----------
+    path_str : str
+        Filesystem path to a JSON file containing a list of cell keys, each
+        an exactly-5-element JSON array
+        ``[model, theorem, k, rung, replicate_idx]``, matching `_row_key`'s
+        argument order and tuple shape exactly (so a key built here compares
+        equal to a key `sweep` computes internally for the same cell).
+
+    Returns
+    -------
+    frozenset[tuple]
+        One `_row_key`-shaped tuple per entry, deduplicated (a repeated
+        entry in the file collapses to one set member, same as a Python
+        `set` would do with any input). Order in the source file is not
+        preserved -- callers that need a canonical order should sort the
+        result (see `hash_cell_keys`).
+
+    Raises
+    ------
+    ValueError
+        The path does not exist or cannot be read, the file is not valid
+        JSON, the JSON is not a list, or the list contains an entry that is
+        not a 5-element list/tuple. Every message names `path_str` so the
+        operator can find the offending `LEAN_CELL_WHITELIST` value without
+        re-deriving it. Deliberately a `ValueError` (not letting the
+        underlying `OSError`/`json.JSONDecodeError` propagate bare) so every
+        failure mode of this function raises the SAME exception type -- the
+        call site (`sweep`) can therefore let it propagate unhandled and
+        still present one consistent, actionable failure class rather than
+        three.
+
+    Notes
+    -----
+    Deliberately does NOT fall back to "no whitelist" (i.e. an unfiltered
+    run) on any error here -- a missing file or malformed JSON must abort
+    the sweep before a single cell is generated, never silently degrade
+    into a full, expensive re-run of the whole lane (see the module's
+    `sweep` docstring and `scripts/flip_probe.py`'s "HARD RULE" section for
+    why an accidental full re-run of this specific lane would be a real,
+    costly mistake, not just a wasted whitelist).
+    """
+    path = Path(path_str)
+    try:
+        raw = path.read_text()
+    except OSError as exc:
+        raise ValueError(
+            f"LEAN_CELL_WHITELIST={path_str!r} could not be read: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"LEAN_CELL_WHITELIST={path_str!r} is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(data, list):
+        raise ValueError(
+            f"LEAN_CELL_WHITELIST={path_str!r} must contain a JSON list of "
+            f"[model, theorem, k, rung, replicate_idx] cell keys; got "
+            f"{type(data).__name__}"
+        )
+    keys: set[tuple] = set()
+    for i, item in enumerate(data):
+        if not (isinstance(item, list) and len(item) == 5):
+            raise ValueError(
+                f"LEAN_CELL_WHITELIST={path_str!r} entry {i} must be a "
+                f"5-element [model, theorem, k, rung, replicate_idx] list; "
+                f"got {item!r}"
+            )
+        model, theorem, k, rung, replicate_idx = item
+        keys.add(_row_key(str(model), str(theorem), int(k), str(rung), int(replicate_idx)))
+    return frozenset(keys)
+
+
+def hash_cell_keys(keys: Iterable[tuple]) -> str:
+    """Fingerprints a set of cell keys, independent of on-disk order/type.
+
+    Used to record "this exact set of cells" in a manifest sidecar without
+    embedding the (potentially large) key list itself twice: `sweep`'s own
+    `manifest.json` already carries the whitelist PATH (see
+    `notebooks/deduction/run_study.py`'s `build_config`, which stamps a
+    conditional `cell_whitelist: {"path": ..., "sha256": ...}` config entry
+    exactly here), and `scripts/flip_probe.py`'s `sample_manifest.json`
+    records the same digest for the sample it drew -- so the two can be
+    compared byte-for-byte without re-reading or re-diffing either file.
+
+    Parameters
+    ----------
+    keys : Iterable[tuple]
+        Cell keys shaped like `_row_key`'s return value (any JSON-
+        serializable 5-element sequence in that same order also works,
+        e.g. the plain lists `load_cell_whitelist` reads from disk).
+
+    Returns
+    -------
+    str
+        Lowercase hex SHA-256 digest of a canonical JSON encoding of
+        `keys`, SORTED first (tuple/list comparison is well-defined here
+        because every key shares the same per-position types: str, str,
+        int, str, int) and converted to plain lists before serialization
+        (JSON has no tuple type, so a tuple and an equal-valued list must
+        hash identically -- otherwise this function's own two callers,
+        which build keys via two different code paths, could fingerprint
+        the SAME cell set to two different digests).
+
+    Notes
+    -----
+    Not cryptographically sensitive -- this is a content fingerprint for
+    detecting "did the whitelist file change", not a security boundary.
+    SHA-256 is used anyway (rather than a faster non-cryptographic hash)
+    simply because it is already in the standard library and its collision
+    resistance is more than sufficient for a file this small.
+    """
+    canonical = json.dumps(
+        sorted(list(key) for key in keys), separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
@@ -868,8 +1040,18 @@ def _run_cells_at_step(
     verifier,
     write_lock: threading.Lock | None = None,
     print_lock: threading.Lock | None = None,
+    cell_whitelist: frozenset[tuple] | None = None,
 ) -> tuple[int, int, int]:
-    """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped)."""
+    """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped).
+
+    `cell_whitelist` (see `sweep`'s docstring and `load_cell_whitelist`):
+    `None` (the default) applies no extra filtering -- byte-identical to
+    this function's pre-whitelist behavior. When given, a cell whose row key
+    is NOT a member is skipped exactly like an already-`done_keys` cell
+    (counted in the same `n_skipped` return value) -- this function does not
+    distinguish the two reasons for skipping, since both mean "do not
+    generate this cell this call".
+    """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
     print_lock = print_lock or threading.Lock()
@@ -888,7 +1070,9 @@ def _run_cells_at_step(
                 extra_params = mc.get("extra_params")
                 for replicate_idx in range(n_replicates):
                     key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
-                    if key in done_keys:
+                    if key in done_keys or (
+                        cell_whitelist is not None and key not in cell_whitelist
+                    ):
                         n_skipped += 1
                         continue
 
@@ -951,12 +1135,16 @@ def _run_cells_at_step_concurrent(
     write_lock: threading.Lock | None = None,
     print_lock: threading.Lock | None = None,
     model_semaphores: dict[str, threading.Semaphore] | None = None,
+    cell_whitelist: frozenset[tuple] | None = None,
 ) -> tuple[int, int, int]:
     """Concurrent variant: fire all (rung, model, replicate) gen calls in parallel,
     then verify each on the shared Dojo session as the API responses arrive.
 
     Verify still serializes on the single Lean server (Dojo is single-threaded),
     but gen — the dominant cost (~1.3-3s/cell vs ~0.4s/verify) — fans out.
+
+    `cell_whitelist`: see `_run_cells_at_step`'s matching parameter -- same
+    contract, same default.
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
@@ -973,7 +1161,9 @@ def _run_cells_at_step_concurrent(
             display_name = mc.get("display_name", mc["model"])
             for replicate_idx in range(n_replicates):
                 key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
-                if key in done_keys:
+                if key in done_keys or (
+                    cell_whitelist is not None and key not in cell_whitelist
+                ):
                     n_skipped += 1
                     continue
                 pending.append({
@@ -1272,6 +1462,25 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     rungs/models/replicates that branch from it; per theorem runs ONE separate
     sanity-gate Dojo session that re-runs the full ground-truth proof.
 
+    ``LEAN_CELL_WHITELIST`` (env, optional): a path to a JSON file listing
+    specific cell keys (see `load_cell_whitelist`). When set, this call runs
+    ONLY cells whose row key is in that whitelist -- every other cell is
+    skipped exactly like an already-`resume`d one (see
+    `_run_cells_at_step`/`_run_cells_at_step_concurrent`'s `cell_whitelist`
+    parameter), and every theorem that owns NO whitelisted cell is dropped
+    from the pool entirely before its sanity gate would even run (see
+    `_select_theorems`'s `cell_whitelist` parameter). A theorem that DOES
+    own at least one whitelisted cell still gets its full, unconditional
+    sanity-gate replay -- the whitelist narrows WHICH cells generate, not
+    whether a surviving theorem's ground truth gets re-checked. Unset (the
+    default) is byte-identical to this function's pre-whitelist behavior. A
+    missing file or malformed JSON raises `ValueError` here, before a
+    single theorem is even selected -- see `load_cell_whitelist`'s Notes for
+    why silently falling through to an unfiltered (i.e. full-lane) run would
+    be a real, costly mistake for this env var's intended caller
+    (`scripts/flip_probe.py`'s score-level flip experiment, which draws a
+    small n=200-cell sample from an otherwise ~300-theorem lane).
+
     Config keys (all optional; sane defaults below — see the module
     docstring's "Generation dispatch" section for the rationale behind
     each):
@@ -1317,7 +1526,20 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     if verifier is None:
         verifier = _default_verifier()
 
-    theorems = _select_theorems(config["theorems"])
+    # Env-gated cell whitelist -- see this function's own docstring and
+    # `load_cell_whitelist`. Loaded ONCE here (not re-read per theorem/cell)
+    # and threaded explicitly into both the theorem-level pre-filter
+    # (`_select_theorems`) and the cell-level check inside
+    # `_run_cells_at_step[_concurrent]` below, rather than having each of
+    # those re-read the environment independently -- a single load means a
+    # malformed/missing file raises exactly once, at the top of this call,
+    # never partway through a sweep that has already burned real spend.
+    cell_whitelist_path = os.environ.get("LEAN_CELL_WHITELIST", "").strip()
+    cell_whitelist: frozenset[tuple] | None = (
+        load_cell_whitelist(cell_whitelist_path) if cell_whitelist_path else None
+    )
+
+    theorems = _select_theorems(config["theorems"], cell_whitelist=cell_whitelist)
     k_strategy = config.get("k", {}).get("strategy", "last")
     rungs: list[str] = list(config.get("rungs", []))
     for r in rungs:
@@ -1411,6 +1633,19 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         f"{len(models_cfg)} models × {n_replicates} replicates → {n_total_cells} cells",
         flush=True,
     )
+    if cell_whitelist is not None:
+        # `n_total_cells` above is the naive (theorem × k × rung × model ×
+        # replicate) product over the WHITELIST-NARROWED theorem pool -- it
+        # is an upper bound on what this call will actually generate, not
+        # the true count, since a whitelisted theorem can still own only
+        # SOME of its rung/model/replicate combinations. Printed separately
+        # so an operator watching this run does not mistake the inflated
+        # product for how many cells LEAN_CELL_WHITELIST actually selected.
+        print(
+            f"cell whitelist active: {len(cell_whitelist)} cell(s) requested "
+            f"(LEAN_CELL_WHITELIST={cell_whitelist_path})",
+            flush=True,
+        )
     print(f"output: {run_dir}", flush=True)
 
     n_written = 0
@@ -1511,6 +1746,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             max_workers=max_concurrency,
                             write_lock=write_lock, print_lock=print_lock,
                             model_semaphores=model_semaphores,
+                            cell_whitelist=cell_whitelist,
                         )
                     else:
                         written_here, ok_here, skipped_here = _run_cells_at_step(
@@ -1526,6 +1762,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             tdir=tdir, dojo_timeout=dojo_timeout,
                             verifier=verifier,
                             write_lock=write_lock, print_lock=print_lock,
+                            cell_whitelist=cell_whitelist,
                         )
                 except Exception as exc:  # noqa: BLE001
                     with print_lock:
