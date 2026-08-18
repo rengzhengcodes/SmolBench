@@ -28,11 +28,11 @@ Launch order and the family gate
 3. FAMILY GATE (skippable via ``--no-gate``): tiers B and C are held until
    EVERY model in ``GATE_MODELS`` -- three tier-A checkpoints, one per
    *reasoning-toggle style* in the roster -- has logged a healthy serve
-   (``is_serve_healthy``). The whole roster serves under
-   ``EC2_VLLM_IMAGE=vllm/vllm-openai:nightly`` (no tagged release supports
-   these 2026 architectures yet -- see ``ec2.py``'s deploy-spec roster
-   comment), an unproven moving target. Gating converts a 21-way bet on that
-   image into a cheap 3-way bet on single-GPU boxes: if ``gemma-4-e2b``
+   (``is_serve_healthy``). The whole roster serves under the digest-pinned
+   ``FLEET_IMAGE`` (post-study determinism pin, 2026-08-18 -- see
+   ``ec2.py``'s deploy-spec roster comment); pinned or not, that build has
+   only ever served two roster models, so gating still converts a 21-way bet
+   on one image into a cheap 3-way bet on single-GPU boxes: if ``gemma-4-e2b``
    cannot serve, ``gemma-4-31b`` will not either, and finding that out on a
    g6e.4xlarge is a rounding error next to finding it out on six freshly
    provisioned p5e.48xlarge instances.
@@ -148,15 +148,24 @@ from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 # Constants (exact names/values -- pinned by tests/test_run_fleet.py)
 # ---------------------------------------------------------------------------
 DEFAULT_REGIONS = "us-east-1,us-east-2,us-west-2"
-NIGHTLY_IMAGE = "vllm/vllm-openai:nightly"
-# Per-lane image pins (default: NIGHTLY_IMAGE). The V4 lanes run the tagged
+# Post-study determinism pin (2026-08-18, user directive): the fleet used to
+# serve EC2_VLLM_IMAGE=vllm/vllm-openai:nightly, a moving target that >=4
+# distinct builds served the family-ladder study through. Every lane now
+# launches the digest-pinned build the 2026-08-16 hinge experiment certified
+# deterministic (vLLM 0.27.2rc1.dev122+g8efa13b70; Docker Hub tag
+# nightly-8efa13b700f1836657699cae2503dc2feab27fa0). This mirrors ec2.py's
+# EC2_VLLM_IMAGE default -- the fleet sets the env per lane, so it must pin
+# too or the code default is dead letter for fleet runs. Bump deliberately.
+FLEET_IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+# Per-lane image pins (default: FLEET_IMAGE). The V4 lanes run the tagged
 # v0.27.1 release: it is the version whose SM90 serving path (Marlin MXFP4 +
 # FLASHMLA_SPARSE_DSV4, see the DeepSeek block in EC2_DEPLOY_SPECS) was
 # source-verified and issue-proven (vllm#51822 on 4xH200), while nightly
-# drifts daily.
+# drifts daily. Digest-pinned 2026-08-18 to the exact content the tag
+# v0.27.1-cu129-ubuntu2404 resolved to, so the exception is deterministic too.
 LANE_IMAGE_OVERRIDES = {
-    "deepseek-v4-flash": "vllm/vllm-openai:v0.27.1-cu129-ubuntu2404",
-    "deepseek-v4-pro": "vllm/vllm-openai:v0.27.1-cu129-ubuntu2404",
+    "deepseek-v4-flash": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
+    "deepseek-v4-pro": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
 }
 MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
@@ -168,6 +177,11 @@ REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value
 # full ~2h regeneration); 14400s lets a worst-case cell finish in ONE
 # attempt. The box-side idle watchdog keys on vLLM metrics activity, so an
 # hours-long in-flight generation cannot trip it.
+# CAVEAT (2026-08-18): every timeout above/below was computed against BATCHED
+# serving. The determinism bundle (ec2.py DETERMINISM_ARGS) now serves
+# --max-num-seqs 1 fleet-wide, so concurrent requests to one lane serialize
+# on the server and per-request wall time multiplies by the in-flight count.
+# Recompute these against batch-1 throughput before the next paid fleet run.
 LANE_REQUEST_TIMEOUT_OVERRIDES = {
     "deepseek-v4-pro": "14400",
     # gemma-4-12b wedged 2026-08-13 at 14/30: its g6e.12xl (4x L40S) serves
@@ -481,7 +495,7 @@ def lane_env(
             "INDUCTION_MODELS": lane.key,
             "EC2_INSTANCE_TYPES": lane.instance_types,
             "EC2_REGIONS": lane.regions,
-            "EC2_VLLM_IMAGE": LANE_IMAGE_OVERRIDES.get(lane.key, NIGHTLY_IMAGE),
+            "EC2_VLLM_IMAGE": LANE_IMAGE_OVERRIDES.get(lane.key, FLEET_IMAGE),
             "EC2_MAX_LIFETIME_MIN": MAX_LIFETIME_MIN,
             "EC2_REQUEST_TIMEOUT_SECONDS": LANE_REQUEST_TIMEOUT_OVERRIDES.get(
                 lane.key, REQUEST_TIMEOUT_SECONDS
@@ -839,8 +853,14 @@ def preflight(lanes: Sequence[Lane]) -> dict[str, int]:
     return budgets
 
 
-def nightly_image_digest() -> Optional[str]:
-    """Best-effort ``docker manifest inspect`` digest lookup for ``NIGHTLY_IMAGE``.
+def fleet_image_digest() -> Optional[str]:
+    """Best-effort ``docker manifest inspect`` digest lookup for ``FLEET_IMAGE``.
+
+    With FLEET_IMAGE now digest-pinned this is a resolvability sanity check
+    rather than a record of what a moving tag currently points at. NOTE:
+    for a multi-arch image this returns a PER-ARCHITECTURE manifest digest
+    (the parser falls back to ``manifests[0].digest`` on a manifest list),
+    not the index digest embedded in the ref -- do not expect equality.
 
     Returns
     -------
@@ -852,31 +872,32 @@ def nightly_image_digest() -> Optional[str]:
 
     Notes
     -----
-    Purely informational: this is recorded in the run banner so a launch's
-    exact ``:nightly`` build is written down somewhere durable (lane logs,
-    stdout) -- ``:nightly`` is a MOVING tag, and "which nightly build did
-    this study actually run against" is otherwise unanswerable after the
-    fact. Never raises; a digest-lookup failure must never block a launch.
+    Purely informational: this is recorded in the run banner so the launch
+    image is written down somewhere durable (lane logs, stdout). It dates
+    from the ``:nightly`` era, when "which build did this study actually
+    run against" was otherwise unanswerable after the fact; under the
+    digest pin it mostly proves the ref still resolves. Never raises; a
+    digest-lookup failure must never block a launch.
     """
     if shutil.which("docker") is None:
-        logging.info("nightly_image_digest: docker not found on PATH; skipping digest lookup.")
+        logging.info("fleet_image_digest: docker not found on PATH; skipping digest lookup.")
         return None
     try:
         result = subprocess.run(
-            ["docker", "manifest", "inspect", NIGHTLY_IMAGE],
+            ["docker", "manifest", "inspect", FLEET_IMAGE],
             capture_output=True,
             text=True,
             timeout=60,
             check=True,
         )
     except Exception as exc:  # noqa: BLE001 -- best-effort banner info only, never fatal
-        logging.info(f"nightly_image_digest: 'docker manifest inspect' failed: {exc}")
+        logging.info(f"fleet_image_digest: 'docker manifest inspect' failed: {exc}")
         return None
 
     try:
         manifest = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        logging.info(f"nightly_image_digest: could not parse manifest JSON: {exc}")
+        logging.info(f"fleet_image_digest: could not parse manifest JSON: {exc}")
         return None
 
     digest = manifest.get("config", {}).get("digest")
@@ -888,7 +909,7 @@ def nightly_image_digest() -> Optional[str]:
         if entries:
             digest = entries[0].get("digest")
     if not digest:
-        logging.info("nightly_image_digest: manifest JSON had no recognisable digest field.")
+        logging.info("fleet_image_digest: manifest JSON had no recognisable digest field.")
         return None
     return digest
 
@@ -1457,7 +1478,7 @@ def _selected_lanes(raw: str) -> dict[str, Lane]:
 _DRY_RUN_NOTICE = (
     "NOTE: this is a WIRING preview only. It did NOT run preflight (per-lane\n"
     "HuggingFace tokenizer warm-up + completion-budget derivation) and did NOT\n"
-    "check the current vllm/vllm-openai:nightly image digest -- both do real\n"
+    "check that the digest-pinned FLEET_IMAGE resolves -- both do real\n"
     "network I/O (HuggingFace, Docker Hub) and only run on the live path\n"
     "(drop --dry-run). A clean plan below means the commands and per-lane\n"
     "environment are correct; it does NOT mean the lanes will actually start --\n"
@@ -1472,7 +1493,7 @@ def _print_dry_run_plan(lanes: dict[str, Lane], phase_name: str) -> None:
     Notes
     -----
     Prints `_DRY_RUN_NOTICE` immediately under the header -- this preview
-    deliberately never calls `preflight`/`nightly_image_digest` (both do
+    deliberately never calls `preflight`/`fleet_image_digest` (both do
     real network I/O; see the module docstring's "Cost warning" section),
     so the output says so explicitly rather than letting a clean dry run
     read as "the live launch will also succeed".
@@ -1527,8 +1548,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     log_dir = Path(args.log_dir).resolve() if args.log_dir else LOG_DIR
 
     preflight(list(lanes.values()))
-    digest = nightly_image_digest()
-    logging.info(f"run_fleet: launching against {NIGHTLY_IMAGE} (digest={digest or 'unknown'}).")
+    digest = fleet_image_digest()
+    logging.info(f"run_fleet: launching against {FLEET_IMAGE} (digest={digest or 'unknown'}).")
 
     _run_fleet(
         lanes,

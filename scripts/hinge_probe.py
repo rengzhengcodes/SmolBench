@@ -198,8 +198,21 @@ def main() -> int:
     logging.info("hinge[%s]: %d prompts (same deterministic selection as the "
                  "archived baselines)", args.model, len(prompts))
 
-    orig_args = list(ec2.EC2_DEPLOY_SPECS[args.model].get("vllm_args", []))
-    det_args = [a for a in orig_args if a != "--enable-prefix-caching"] + DET_ARGS
+    # 2026-08-18: EC2_DEPLOY_SPECS now ships DETERMINISM_ARGS (== DET_ARGS)
+    # as a suffix on every spec and no longer carries --enable-prefix-caching
+    # (post-study determinism default). Reconstruct both arms from the base
+    # args so the stock/det CONTRAST this probe exists to measure survives:
+    # stock re-adds the study-era --enable-prefix-caching; det appends
+    # DET_ARGS exactly once. (The spec's --revision/--gpu-memory-utilization
+    # pins ride both arms equally and do not affect the contrast.)
+    spec_args = list(ec2.EC2_DEPLOY_SPECS[args.model].get("vllm_args", []))
+    _det = getattr(ec2, "DETERMINISM_ARGS", DET_ARGS)
+    if spec_args[-len(_det):] == _det:
+        base_args = spec_args[:-len(_det)]
+    else:  # pre-2026-08-18 spec shape: strip the study-era caching flag
+        base_args = [a for a in spec_args if a != "--enable-prefix-caching"]
+    orig_args = base_args + ["--enable-prefix-caching"]
+    det_args = base_args + DET_ARGS
     configs = [("stock", orig_args), ("det", det_args)]
 
     report: Dict[str, Any] = {

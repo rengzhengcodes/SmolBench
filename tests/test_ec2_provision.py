@@ -40,7 +40,7 @@ def _base_kwargs(**overrides):
         group_id="sg-def456",
         root_device="/dev/sda1",
         volume_gb=300,
-        user_data="#!/bin/bash\necho hi\n",
+        user_data=b"#!/bin/bash\necho hi\n",
         key_name="",
         iam_profile=None,
     )
@@ -93,7 +93,7 @@ def test_run_instances_kwargs_matches_pinned_shape():
                 ],
             }
         ],
-        "UserData": "#!/bin/bash\necho hi\n",
+        "UserData": b"#!/bin/bash\necho hi\n",
     }
 
 
@@ -124,6 +124,50 @@ def test_run_instances_kwargs_is_pure():
     assert first == second
     first["InstanceType"] = "mutated"
     assert second["InstanceType"] == "p5e.48xlarge"  # no shared mutable state
+
+
+# ---------------------------------------------------------------------------
+# _decode_user_data: gzip-or-plain-text decode, the read-side counterpart of
+# payloads.pack_user_data. Pure (no AWS calls), so it is tested directly
+# rather than through _recover_state_from_instance's DescribeInstanceAttribute
+# call.
+# ---------------------------------------------------------------------------
+# User-data ships gzip-compressed since the 2026-08-18 determinism change
+# (see payloads.pack_user_data), but a live instance launched before that
+# change can outlive the code that provisioned it -- _recover_state_from_
+# instance is exactly the best-effort "state file was lost, rebuild it from
+# whatever is still running" path, so it must tolerate both formats rather
+# than assume every live instance was launched by the current code.
+
+
+def test_decode_user_data_gunzips_pack_user_data_output():
+    """The normal, post-2026-08-18 case: gzip-compressed bytes decode back
+    to the exact rendered script, matching pack_user_data's own round-trip
+    contract (tests/test_ec2_payloads.py exercises that contract from the
+    write side; this is the read side)."""
+    from smolbench.evals.payloads import pack_user_data
+
+    rendered = "#!/bin/bash\necho hi\n"
+    assert ec2._decode_user_data(pack_user_data(rendered)) == rendered
+
+
+def test_decode_user_data_falls_back_to_plain_text():
+    """Backward compatibility: an instance launched before the determinism
+    change shipped its user-data uncompressed. gzip.decompress raises
+    BadGzipFile on non-gzip bytes (no gzip magic number), which must fall
+    back to plain UTF-8 decoding rather than propagate."""
+    rendered = "#!/bin/bash\necho hi\n"
+    assert ec2._decode_user_data(rendered.encode()) == rendered
+
+
+def test_decode_user_data_neither_format_raises():
+    """Genuinely corrupt/foreign bytes (not gzip, not valid UTF-8) must
+    raise rather than silently return garbage -- the caller,
+    _recover_state_from_instance, nets this with its own best-effort
+    ``except Exception`` and returns None (refuse reuse) instead of
+    fabricating a state dict from noise."""
+    with pytest.raises(UnicodeDecodeError):
+        ec2._decode_user_data(b"\xff\xfe\x00\x01not-gzip-not-utf8")
 
 
 # ---------------------------------------------------------------------------
@@ -564,3 +608,21 @@ def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch)
     kwargs = _base_kwargs(max_price=None)
     assert "MaxPrice" not in kwargs["InstanceMarketOptions"]["SpotOptions"]
     assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
+
+
+def test_launch_fresh_wraps_user_data_in_pack_user_data():
+    """gzip is LOAD-BEARING, not an optimization: the raw render is 57 bytes
+    over EC2's 16 KB user-data cap under the digest-pinned image, so a
+    regression that drops the ``pack_user_data`` call would fail only at the
+    live ``RunInstances`` call, with zero local signal. Source-text pin (the
+    same env-independent pattern as
+    test_deploy_specs.test_ec2_vllm_image_default_is_digest_pinned).
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(ec2.__file__.replace(".pyc", ".py")).read_text()
+    assert re.search(r"pack_user_data\(\s*render_user_data\(", src), (
+        "ec2.py must build user-data as pack_user_data(render_user_data(...)) "
+        "-- raw user-data no longer fits EC2's 16 KB cap"
+    )

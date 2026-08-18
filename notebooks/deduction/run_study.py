@@ -283,13 +283,12 @@ def lane_env_defaults(
         - ``"EC2_EXPERIMENT_TAG"``: ``f"scaling-{key}"``.
         - ``"EC2_STATE_FILE"``: absolute path string, derived as described
           above.
-        - ``"EC2_VLLM_IMAGE"``: ``"vllm/vllm-openai:nightly"`` -- the image
-          build that supports this study's 2026-generation architectures
-          (see ``notebooks/induction/run_study.py``'s own module docstring
-          for the per-architecture rationale; this driver reattaches to a
-          box already serving under that same image during the induction
-          phase, so using anything else here would risk a mid-study image
-          swap).
+        - ``"EC2_VLLM_IMAGE"``: digest-pinned to the build the 2026-08-16
+          determinism hinge experiment certified (see
+          ``smolbench.evals.ec2.EC2_VLLM_IMAGE``'s own comment for the full
+          provenance) -- this driver reattaches to a box already serving
+          under that same image during the induction phase, so using
+          anything else here would risk a mid-study image swap.
         - ``"SMOLBENCH_LEAN_RESULTS"``: ``str(repo_root / "notebooks" /
           "deduction" / "results")`` -- set EXPLICITLY here rather than
           left to ``runner.results_root()``'s own independent default
@@ -323,7 +322,7 @@ def lane_env_defaults(
     return {
         "EC2_EXPERIMENT_TAG": f"scaling-{key}",
         "EC2_STATE_FILE": str(resolved_state_file),
-        "EC2_VLLM_IMAGE": "vllm/vllm-openai:nightly",
+        "EC2_VLLM_IMAGE": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
         "SMOLBENCH_LEAN_RESULTS": str(repo_root / "notebooks" / "deduction" / "results"),
     }
 

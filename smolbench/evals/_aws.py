@@ -524,7 +524,7 @@ class DeploySpec(_DeploySpecRequired, total=False):
     max_model_len: int
     #: EC2/vLLM ONLY: extra CLI flags appended verbatim to the ``docker run``
     #: vLLM command (e.g. ``["--trust-remote-code"]``,
-    #: ``["--enable-prefix-caching"]``); read via ``spec.get("vllm_args",
+    #: ``["--reasoning-parser", "qwen3"]``); read via ``spec.get("vllm_args",
     #: [])``.
     vllm_args: List[str]
     #: EC2/vLLM ONLY: a system prompt the provider layer injects ahead of

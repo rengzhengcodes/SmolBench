@@ -293,3 +293,21 @@ instead of asserting content, and the hardware substitution was defended as "sam
 silicon, same tp, so it cannot affect sampling." When a substitution is justified on the
 grounds that it *cannot* matter, the cheap move is to run the thing twice and diff it,
 with a same-box baseline so the comparison has a noise floor to be judged against.
+
+---
+
+## 2026-08-18: the stock-config epoch is closed (default config → determinism bundle)
+
+User directive 2026-08-18 ("make sure all configurations for all models are
+deterministic"): every `EC2_DEPLOY_SPECS` entry now carries the hinge-certified
+bundle (prefix caching OFF, `--max-num-seqs 1`, `--enforce-eager`, `--seed 0`)
+plus `--revision`/`--tokenizer-revision` checkpoint pins, and `EC2_VLLM_IMAGE`
+is digest-pinned to the certified dev122 build
+(DETERMINISM_PLAN_2026-08-16.md §4, ADOPTED block). Consequence for this
+inventory: the study's stock-config epoch ended 2026-08-18. Any object a
+future run appends under the study's experiment names is (a) invisible to
+analysis anyway under the earliest-wins ruling, and (b) config-incomparable
+with everything in this document (cross-config agreement 0/8, hinge). The
+"not worth rerunning" entries gain a third leg: by default, a rerun now runs
+under a different certified configuration than the data it would be compared
+against.

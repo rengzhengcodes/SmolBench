@@ -8,6 +8,7 @@ pre-launch validation they get. They must stay stdlib-only and Python
 """
 
 import ast
+import gzip
 import inspect
 import os
 import re
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import smolbench.evals.ec2 as ec2
 from smolbench.evals import payloads
-from smolbench.evals.payloads import AGENT_PY, WATCHDOG_PY, render_user_data
+from smolbench.evals.payloads import AGENT_PY, WATCHDOG_PY, pack_user_data, render_user_data
 
 
 def _watchdog_env_default(name: str) -> str:
@@ -72,6 +73,10 @@ def test_payloads_are_310_compatible():
 
 
 def test_render_user_data_fills_and_fits():
+    """The cap now binds on ``pack_user_data``'s COMPRESSED output, not the
+    raw rendered text -- render_user_data itself no longer asserts a size
+    bound (see its docstring), so this test's own size check moved with it.
+    """
     rendered = render_user_data(
         control_token="tok",
         vllm_api_key="key",
@@ -79,13 +84,41 @@ def test_render_user_data_fills_and_fits():
         idle_timeout_min=30,
         startup_grace_min=180,
         max_lifetime_min=1440,
-        image="vllm/vllm-openai:v0.11.1",
+        image=_PINNED_IMAGE,
         s3_cache_uri="s3://bucket/hf",
     )
     assert "@@" not in rendered  # every placeholder substituted
-    assert len(rendered.encode()) < 16384  # EC2 user-data cap (pre-base64)
+    assert len(pack_user_data(rendered)) < 16384  # EC2 user-data cap (pre-base64, post-gzip)
     assert AGENT_PY.rstrip("\n") in rendered
     assert WATCHDOG_PY.rstrip("\n") in rendered
+
+
+def test_pack_user_data_is_byte_stable_and_round_trips():
+    """``pack_user_data`` must be a pure, byte-reproducible compressor.
+
+    Two calls on identical input must be byte-for-byte IDENTICAL (this is
+    what ``mtime=0`` buys -- gzip's header otherwise embeds the compression
+    wall-clock time, which would make two calls a second apart differ even
+    though the payload is unchanged). Also checks the round trip: gunzipping
+    the packed bytes must reproduce the original rendered string exactly,
+    which is the same transparent-decompression property cloud-init relies
+    on when it gunzips this on the instance.
+    """
+    rendered = render_user_data(
+        control_token="tok",
+        vllm_api_key="key",
+        hf_token="",
+        idle_timeout_min=30,
+        startup_grace_min=180,
+        max_lifetime_min=1440,
+        image=_PINNED_IMAGE,
+        s3_cache_uri="s3://bucket/hf",
+    )
+    packed_1 = pack_user_data(rendered)
+    packed_2 = pack_user_data(rendered)
+    assert packed_1[:2] == b"\x1f\x8b", "packed user-data must carry the gzip magic (cloud-init keys on it)"
+    assert packed_1 == packed_2, "pack_user_data must be byte-stable across calls on identical input"
+    assert gzip.decompress(packed_1).decode() == rendered, "gunzipping packed bytes must reproduce rendered exactly"
 
 
 def test_startup_grace_default_invariant():
@@ -106,12 +139,25 @@ def test_idle_timeout_default_invariant():
     ) == "30"
 
 
+# The digest literal on purpose, NOT ec2.EC2_VLLM_IMAGE: that constant honors
+# the EC2_VLLM_IMAGE env var, so a developer shell with a short tag exported
+# would silently weaken the size tests below (same env-independence rationale
+# as test_deploy_specs.test_ec2_vllm_image_default_is_digest_pinned).
+_PINNED_IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+
+
 def test_render_user_data_headroom_with_realistic_inputs():
     """Headroom canary: render with realistically sized inputs (43-char
-    tokens, a real image tag, a long S3 URI) so the assert message shows how
-    close the payload sits to EC2's 16 KB user-data cap. As of this pin the
-    headroom is ~160 bytes -- any net growth in AGENT_PY / WATCHDOG_PY /
-    USER_DATA_TEMPLATE eats it directly.
+    tokens, the real digest-pinned image, a long S3 URI) so the assert
+    message shows how close the payload sits to EC2's 16 KB user-data cap.
+
+    The cap now binds on the GZIP-COMPRESSED bytes (``pack_user_data``), not
+    the raw rendered text: the digest-pinned ``EC2_VLLM_IMAGE`` (an 88-char
+    ``vllm/vllm-openai@sha256:<64 hex>`` string, versus the old ~24-char
+    ``vllm/vllm-openai:v0.11.1`` tag) alone pushed the RAW size over 16 KB --
+    this test prints both numbers so that fact stays visible rather than
+    silently fixed by compression. Any net growth in AGENT_PY / WATCHDOG_PY /
+    USER_DATA_TEMPLATE now eats into the compressed headroom instead.
     """
     rendered = render_user_data(
         control_token="x" * 43,
@@ -120,14 +166,19 @@ def test_render_user_data_headroom_with_realistic_inputs():
         idle_timeout_min=30,
         startup_grace_min=180,
         max_lifetime_min=1440,
-        image="vllm/vllm-openai:v0.11.1",
+        image=_PINNED_IMAGE,
         s3_cache_uri="s3://smolbench-model-cache-000000000000/vllm-models",
     )
-    size = len(rendered.encode())
-    assert size < 16384, f"user-data over the 16 KB cap: {size} bytes"
-    headroom = 16384 - size
-    assert headroom > 0, f"no headroom left ({size} bytes rendered)"
-    print(f"user-data headroom: {headroom} bytes ({size}/16384)")
+    raw_size = len(rendered.encode())
+    packed = pack_user_data(rendered)
+    compressed_size = len(packed)
+    compressed_headroom = 16384 - compressed_size
+    assert compressed_size < 16384, f"compressed user-data over the 16 KB cap: {compressed_size} bytes"
+    assert compressed_headroom > 0, f"no compressed headroom left ({compressed_size} bytes packed)"
+    print(
+        f"user-data size: raw={raw_size} bytes (cap {'EXCEEDED' if raw_size >= 16384 else 'OK'}), "
+        f"compressed={compressed_size}/16384 bytes (headroom {compressed_headroom})"
+    )
 
 
 def test_payload_assets_are_byte_clean():

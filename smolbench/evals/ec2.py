@@ -77,6 +77,7 @@ Security model (accepted trade-offs for a short-lived, single-user box):
 """
 
 import contextlib
+import gzip
 import json
 import logging
 import math
@@ -91,7 +92,7 @@ import requests
 from smolbench.evals import _aws
 from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
-from smolbench.evals.payloads import render_user_data
+from smolbench.evals.payloads import pack_user_data, render_user_data
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order. Types are tried type-major (each type across every
@@ -122,9 +123,13 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
 EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
 EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
-# Pinned to vLLM 0.11.1 to match the SageMaker DLC the specs were written
-# against (vllm:0.11.1-gpu-py312-...), keeping serving behavior comparable.
-EC2_VLLM_IMAGE: str = os.getenv("EC2_VLLM_IMAGE", "vllm/vllm-openai:v0.11.1")
+# Digest-pinned to the build the 2026-08-16 determinism hinge experiment
+# certified (vLLM 0.27.2rc1.dev122+g8efa13b70; Docker Hub tag
+# nightly-8efa13b700f1836657699cae2503dc2feab27fa0). :nightly is mutable --
+# >=4 distinct builds served the family-ladder study through it (see
+# notebooks/DETERMINISM_PLAN_2026-08-16.md section 1.4). Bump this digest
+# deliberately, never back to a moving tag.
+EC2_VLLM_IMAGE: str = os.getenv("EC2_VLLM_IMAGE", "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7")
 # Deep Learning Base GPU AMI (Ubuntu 22.04): NVIDIA driver, Docker, and the
 # NVIDIA container toolkit preinstalled -- nothing to install at boot. The SSM
 # parameter resolves to the latest build per region.
@@ -265,13 +270,28 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # smallest native window on the roster is exactly 131072 (gemma-4-E2B,
 # GLM-4.5-Air, EXAONE-4.0-32B), so nothing is down-capped below native, and a
 # scaling study cannot let context vary with the vendor's YaRN generosity.
-# --enable-prefix-caching everywhere: each induction quiz reuses one long
-# prompt prefix across its 9 questions, each Lean theorem reuses its context
-# block across 4 rungs.
-#
-# The whole roster needs EC2_VLLM_IMAGE=vllm/vllm-openai:nightly (the 2026
-# architectures postdate every cut release; only Qwen3.5 support is confirmed
-# in a tagged release, v0.26.0).
+# Post-study determinism default (2026-08-18, user directive: all model
+# configurations must be deterministic): every spec below now serves the
+# hinge-certified determinism bundle (DETERMINISM_ARGS, appended after this
+# dict) on top of the digest-pinned EC2_VLLM_IMAGE default and a per-spec
+# --revision/--tokenizer-revision pin. Prefix caching is OFF everywhere --
+# it was load-bearing for THIS study's throughput (each induction quiz
+# reuses one long prompt prefix across its 9 questions, each Lean theorem
+# reuses its context block across 4 rungs), but the 2026-08-16 hinge
+# experiment certified it as a nondeterminism source: the counter-check
+# showed thousands of prefix-cache hits under the stock config and zero
+# under the determinism config. The throughput cost of the swap is real and
+# accepted -- --max-num-seqs 1 serializes decoding and --enforce-eager drops
+# CUDA-graph capture -- and results generated under this config must NEVER
+# be pooled with the family-ladder study's stock-config data (cross-config
+# byte-agreement measured 0/8; see notebooks/DETERMINISM_PLAN_2026-08-16.md
+# section 3). Every entry's --revision/--tokenizer-revision pins the
+# checkpoint AND the tokenizer to that repo's main-branch commit SHA
+# resolved 2026-08-18 (DETERMINISM_PLAN section 4 row 2). Belt-and-braces:
+# at the pinned build tokenizer_revision INHERITS --revision when unset
+# (vllm/config/model.py:542), so the second flag is redundant today --
+# pinning both makes the pin independent of that inheritance behavior,
+# on every entry, not just this one shared note.
 #
 # Instance tiers (chosen per weights + 128k-KV arithmetic; the fleet
 # supervisor maps these to EC2_INSTANCE_TYPES per lane):
@@ -359,57 +379,91 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # the checkpoint's native window; the family-ladder canary pushes the real
     # ~14k-token extens quiz through it, which the old 16384 cap missed by one
     # token (live 400, 2026-08-11).
-    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768},
+    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768,
+                            "vllm_args": ["--revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+                                          "--tokenizer-revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"]},
     # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8) --
     "qwen3.5-27b":       {"hf_model_id": "Qwen/Qwen3.5-27B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
+                                        "--revision", "fc05daec18b0a78c049392ed2e771dde82bdf654",
+                                        "--tokenizer-revision", "fc05daec18b0a78c049392ed2e771dde82bdf654"]},
     "qwen3.5-122b-a10b": {"hf_model_id": "Qwen/Qwen3.5-122B-A10B", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
+                                        "--revision", "dc4d348443bc740c68e2d77492492c11606384d5",
+                                        "--tokenizer-revision", "dc4d348443bc740c68e2d77492492c11606384d5"]},
     "qwen3.5-397b-a17b": {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only", "--enable-prefix-caching"]},
+                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
+                                        "--revision", "ea5b4f81096f3901c91dea97f81324302495781d",
+                                        "--tokenizer-revision", "ea5b4f81096f3901c91dea97f81324302495781d"]},
     # -- Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B, all BF16 --
     "nemotron-3-nano-4b":         {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "tp": 1, "max_model_len": 131072,
-                                   "vllm_args": ["--enable-prefix-caching"]},
+                                   "vllm_args": ["--revision", "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+                                                 "--tokenizer-revision", "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"]},
     "nemotron-3-nano-30b-a3b":    {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "tp": 4, "max_model_len": 131072,
-                                   "vllm_args": ["--enable-prefix-caching"]},
+                                   "vllm_args": ["--revision", "2d59de1cbd51c0adf384eb906b766d1aee0e0517",
+                                                 "--tokenizer-revision", "2d59de1cbd51c0adf384eb906b766d1aee0e0517"]},
     "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", "tp": 8, "max_model_len": 131072,
-                                   "vllm_args": ["--enable-prefix-caching"]},
+                                   "vllm_args": ["--revision", "d51eab0d1f979ebc26b546e634a04f450d99158e",
+                                                 "--tokenizer-revision", "d51eab0d1f979ebc26b546e634a04f450d99158e"]},
     # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
     "gemma-4-e2b": {"hf_model_id": "google/gemma-4-E2B-it", "tp": 1, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
+                                  "--revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+                                  "--tokenizer-revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7"]},
     # tp=4 (2026-08-12): tier A's g6e.12xlarge capacity fallback means this
     # lane lands on 4x L40S in practice, and a 12B with ~95k-token thinking
     # budgets on ONE L40S hit the 3600s read timeout on long arms. 16 attn /
     # 8 KV heads shard cleanly; on a true single-GPU box vLLM ignores nothing
     # -- tp=4 simply requires the 4-GPU box, which the fallback list provides.
     "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
+                                  "--revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+                                  "--tokenizer-revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"]},
     "gemma-4-31b": {"hf_model_id": "google/gemma-4-31B-it", "tp": 4, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only", "--enable-prefix-caching"]},
+                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
+                                  "--revision", "842da3794eaa0b77d5f08bae87a17459d91ff475",
+                                  "--tokenizer-revision", "842da3794eaa0b77d5f08bae87a17459d91ff475"]},
     # -- GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-generation, flagged) --
     "glm-4.7-flash": {"hf_model_id": "zai-org/GLM-4.7-Flash", "tp": 4, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm47", "--enable-prefix-caching"]},
+                      "vllm_args": ["--reasoning-parser", "glm47",
+                                    "--revision", "7dd20894a642a0aa287e9827cb1a1f7f91386b67",
+                                    "--tokenizer-revision", "7dd20894a642a0aa287e9827cb1a1f7f91386b67"]},
     "glm-4.5-air":   {"hf_model_id": "zai-org/GLM-4.5-Air", "tp": 8, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm45", "--enable-prefix-caching"]},
+                      "vllm_args": ["--reasoning-parser", "glm45",
+                                    "--revision", "a24ceef6ce4f3536971efe9b778bdaa1bab18daa",
+                                    "--tokenizer-revision", "a24ceef6ce4f3536971efe9b778bdaa1bab18daa"]},
     "glm-4.7":       {"hf_model_id": "zai-org/GLM-4.7", "tp": 8, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm47", "--enable-prefix-caching"]},
+                      "vllm_args": ["--reasoning-parser", "glm47",
+                                    "--revision", "602d01efcdd332c5238ca4bcede555defbe83eb7",
+                                    "--tokenizer-revision", "602d01efcdd332c5238ca4bcede555defbe83eb7"]},
     # -- Ministral-3 Reasoning 2512 (Mistral, FR): 3B / 8B / 14B --
     "ministral-3-3b":  {"hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512", "tp": 1, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
+                                      "--revision", "4a36357c811bf511a7b625d132e12f22408aac91",
+                                      "--tokenizer-revision", "4a36357c811bf511a7b625d132e12f22408aac91"],
                         "system_prompt": MINISTRAL_THINK_SYSTEM},
     "ministral-3-8b":  {"hf_model_id": "mistralai/Ministral-3-8B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
+                                      "--revision", "81eaece1948f3875421d9a45bc55487d10e2d894",
+                                      "--tokenizer-revision", "81eaece1948f3875421d9a45bc55487d10e2d894"],
                         "system_prompt": MINISTRAL_THINK_SYSTEM},
     "ministral-3-14b": {"hf_model_id": "mistralai/Ministral-3-14B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only", "--enable-prefix-caching"],
+                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
+                                      "--revision", "51f9210f3cd20f3452a80d5819d15dc61cc50630",
+                                      "--tokenizer-revision", "51f9210f3cd20f3452a80d5819d15dc61cc50630"],
                         "system_prompt": MINISTRAL_THINK_SYSTEM},
     # -- EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B-A23B (cross-gen, flagged) --
     "exaone-4.0-32b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.0-32B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--enable-prefix-caching"]},
+                          "vllm_args": ["--revision", "a1d54d1c148c30881ed27e035b650da489b51b92",
+                                        "--tokenizer-revision", "a1d54d1c148c30881ed27e035b650da489b51b92"]},
     "exaone-4.5-33b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.5-33B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--language-model-only", "--enable-prefix-caching"]},
+                          "vllm_args": ["--language-model-only",
+                                        "--revision", "570aa4b15a4f45ba1133072b45f50198f6e3b4fd",
+                                        "--tokenizer-revision", "570aa4b15a4f45ba1133072b45f50198f6e3b4fd"]},
     "k-exaone-236b-a23b": {"hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B", "tp": 8, "max_model_len": 131072,
-                           "vllm_args": ["--gpu-memory-utilization", "0.92", "--enable-prefix-caching"]},
+                           "vllm_args": ["--gpu-memory-utilization", "0.92",
+                                         "--revision", "61e6d578eb102b578e5704e2916ac841df9eca0a",
+                                         "--tokenizer-revision", "61e6d578eb102b578e5704e2916ac841df9eca0a"]},
     # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
     # !! V4 status (re-corrected 2026-08-12, adversarial re-read of the
     # v0.27.1 source + upstream issue traffic): the earlier "SM100-only"
@@ -439,14 +493,18 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # crash config). Seeds 0-11 were generated on the SM90 marlin/eager
     # stack; 12+ on SM100 native/graphs -- documented replicate-subset
     # numerics difference. --disable-custom-all-reduce kept (proven set).
+    # NOTE (2026-08-18): DETERMINISM_ARGS re-adds --enforce-eager to this
+    # spec; the CUDA-graph decision above is now historical.
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
                                         "--tokenizer-mode", "deepseek_v4",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
                                         "--block-size", "256", "--disable-custom-all-reduce",
-                                        "--enable-prefix-caching"]},
+                                        "--revision", "60d8d70770c6776ff598c94bb586a859a38244f1",
+                                        "--tokenizer-revision", "60d8d70770c6776ff598c94bb586a859a38244f1"]},
     "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--enable-prefix-caching"]},
+                          "vllm_args": ["--revision", "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db",
+                                        "--tokenizer-revision", "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db"]},
     # Pro now targets p6-b200 (SM100) ONLY -- the SM90 story is exhausted:
     # eager decode measured ~5-7h per induction seed (87k-token budget-burners,
     # infeasible x30), and CUDA-graph capture IMA'd on H200 twice (2026-08-12
@@ -458,13 +516,44 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # ON -- that is the experiment. Do NOT serve this marlin-less spec on
     # p5/p5e/p5en: SM90 without the pin is the original undiagnosed crash
     # config. Flash still carries the proven SM90 eager set as the reference.
+    # NOTE (2026-08-18): DETERMINISM_ARGS re-adds --enforce-eager to this
+    # spec; the CUDA-graph decision above is now historical.
     "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
                                         "--tokenizer-mode", "deepseek_v4",
                                         "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
                                         "--block-size", "256", "--disable-custom-all-reduce",
-                                        "--gpu-memory-utilization", "0.93", "--enable-prefix-caching"]},
+                                        "--gpu-memory-utilization", "0.93",
+                                        "--revision", "b5968e9190ef611bbf34a7229255be88a0e937c1",
+                                        "--tokenizer-revision", "b5968e9190ef611bbf34a7229255be88a0e937c1"]},
 }
+
+#: vLLM args certified deterministic by the 2026-08-16 hinge experiment
+#: (8/8 byte-identical within one process, both probe models; cross-config
+#: agreement with the study's stock config is 0/8, so results generated
+#: under this bundle are NOT comparable with the family-ladder study data).
+#: Byte-identical to scripts/hinge_probe.py DET_ARGS -- the certified argv.
+#: Attribution across the four flags was deliberately not separated: relax
+#: any one of them only after re-certifying with a hinge-style probe.
+DETERMINISM_ARGS: List[str] = [
+    "--no-enable-prefix-caching", "--max-num-seqs", "1",
+    "--enforce-eager", "--seed", "0",
+]
+
+for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
+    _args = list(_spec.get("vllm_args") or [])
+    assert "--enable-prefix-caching" not in _args, _spec_key
+    assert not ({a for a in DETERMINISM_ARGS if a.startswith("--")} & set(_args)), _spec_key
+    # Plan §4 row 4: make the KV budget a function of the spec, not of free
+    # VRAM at profiling time. 0.92 == vLLM's default AT THE PINNED BUILD
+    # (vllm/config/cache.py:69 at 8efa13b70), made explicit -- and the value
+    # the hinge det arms actually resolved to (their cache_config_info
+    # records gpu_memory_utilization=0.92), so this changes nothing that
+    # experiment certified. deepseek-v4-pro (0.93) keeps its larger
+    # footprint; k-exaone's explicit 0.92 now coincides with the default.
+    if "--gpu-memory-utilization" not in _args:
+        _args += ["--gpu-memory-utilization", "0.92"]
+    _spec["vllm_args"] = _args + DETERMINISM_ARGS
 
 #: ``num_attention_heads`` per family-ladder checkpoint, copied from each
 #: model's config.json (scripts/arch/arch_configs_raw.json is the archived
@@ -972,9 +1061,11 @@ evaluate = _CLIENT.evaluate
 # ---------------------------------------------------------------------------
 # The payload programs and cloud-init templates live as byte-exact assets in
 # smolbench/evals/payloads/ (agent.py.txt, watchdog.py.txt, user_data.sh),
-# exposed there as string constants and rendered by payloads.render_user_data
-# (imported at the top of this module). See that package's docstring for the
-# payload contract (py3.10/stdlib-only, 16 KB user-data budget) and
+# exposed there as string constants and rendered by payloads.render_user_data,
+# then gzip-compressed by payloads.pack_user_data (both imported at the top of
+# this module) before riding into RunInstances' UserData kwarg. See that
+# package's docstring for the payload contract (py3.10/stdlib-only, 16 KB
+# user-data budget -- now measured post-compression) and
 # tests/test_ec2_payloads.py for their pre-launch validation.
 
 
@@ -1183,6 +1274,45 @@ def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
     return None
 
 
+def _decode_user_data(raw: bytes) -> str:
+    """Decodes base64-decoded user-data bytes back into the rendered script.
+
+    User-data has shipped gzip-compressed (via ``payloads.pack_user_data``)
+    since the 2026-08-18 determinism change, so this gunzips first. A
+    ``gzip.BadGzipFile`` falls back to treating ``raw`` as plain UTF-8 text --
+    the pre-compression format every instance shipped before that change, and
+    a live instance can outlive the code change that provisioned it (this is
+    exactly the codepath ``_recover_state_from_instance`` uses to rebuild
+    state for an instance the local state file has lost track of).
+
+    Parameters
+    ----------
+    raw : bytes
+        Already base64-DEcoded user-data, straight from
+        ``DescribeInstanceAttribute``'s ``UserData.Value`` (which itself is
+        base64 text over the wire; the caller decodes that layer first).
+
+    Returns
+    -------
+    str
+        The rendered cloud-init script, UTF-8 decoded.
+
+    Raises
+    ------
+    UnicodeDecodeError, EOFError
+        UnicodeDecodeError if `raw` is neither valid gzip nor valid UTF-8
+        text; EOFError if it is gzip-magic-prefixed but truncated (the magic
+        matches, so BadGzipFile never fires). Both are left to propagate to
+        the caller's own
+        best-effort ``except Exception``, matching the pre-existing recovery
+        contract (return ``None`` rather than crash).
+    """
+    try:
+        return gzip.decompress(raw).decode()
+    except gzip.BadGzipFile:
+        return raw.decode()
+
+
 def _recover_state_from_instance(
     region: str, instance: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
@@ -1200,7 +1330,7 @@ def _recover_state_from_instance(
         attr = _ec2_client(region).describe_instance_attribute(
             InstanceId=instance["InstanceId"], Attribute="userData"
         )
-        user_data = base64.b64decode(attr["UserData"]["Value"]).decode()
+        user_data = _decode_user_data(base64.b64decode(attr["UserData"]["Value"]))
     except Exception as exc:  # noqa: BLE001 -- recovery is best-effort
         logging.warning(f"state recovery: could not read instance user-data: {exc}")
         return None
@@ -1669,7 +1799,7 @@ def _run_instances_kwargs(
     group_id: str,
     root_device: str,
     volume_gb: int,
-    user_data: str,
+    user_data: bytes,
     key_name: str,
     iam_profile: Optional[str],
     capacity_reservation_id: Optional[str] = None,
@@ -1698,9 +1828,10 @@ def _run_instances_kwargs(
         ``_resolve_ami``.
     volume_gb : int
         Root gp3 volume size in GiB.
-    user_data : str
-        Rendered cloud-init script (see ``payloads.render_user_data``); passed
-        through unencoded -- boto3 base64-encodes it internally.
+    user_data : bytes
+        Gzip-compressed cloud-init script (see ``payloads.pack_user_data``);
+        passed through unencoded -- boto3 base64-encodes bytes ``UserData``
+        directly (see ``base64_encode_user_data`` in botocore's handlers).
     key_name : str
         EC2 key pair name for SSH debugging, or ``""`` to omit the
         ``KeyName`` kwarg entirely (no key pair attached).
@@ -1895,16 +2026,24 @@ def _launch_fresh(
             f"provision_spot_instance: S3 model cache at {EC2_S3_MODEL_CACHE} "
             f"(instance profile {iam_profile})"
         )
-    user_data = render_user_data(
-        control_token=control_token,
-        vllm_api_key=vllm_api_key,
-        hf_token=hf_token,
-        idle_timeout_min=idle_timeout_min,
-        startup_grace_min=EC2_STARTUP_GRACE_MIN,
-        max_lifetime_min=max_lifetime_min,
-        image=EC2_VLLM_IMAGE,
-        s3_cache_uri=EC2_S3_MODEL_CACHE,
-        vllm_port=EC2_VLLM_PORT,
+    # gzip-compressed (pack_user_data) rather than passed raw: raw headroom
+    # under EC2's 16 KB cap was 7 bytes BEFORE the digest-pinned
+    # EC2_VLLM_IMAGE reference, which put the raw render 57 bytes OVER the
+    # cap. Compressed bytes flow
+    # straight into run_instances(UserData=...) -- boto3 base64-encodes
+    # bytes UserData directly, so no manual encoding step is needed.
+    user_data = pack_user_data(
+        render_user_data(
+            control_token=control_token,
+            vllm_api_key=vllm_api_key,
+            hf_token=hf_token,
+            idle_timeout_min=idle_timeout_min,
+            startup_grace_min=EC2_STARTUP_GRACE_MIN,
+            max_lifetime_min=max_lifetime_min,
+            image=EC2_VLLM_IMAGE,
+            s3_cache_uri=EC2_S3_MODEL_CACHE,
+            vllm_port=EC2_VLLM_PORT,
+        )
     )
 
     from botocore.exceptions import ClientError  # lazy: keep the inference path boto3-free

@@ -25,11 +25,26 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
-from smolbench.evals.ec2 import DSV4_CHAT_TEMPLATE, EC2_DEPLOY_SPECS
+from smolbench.evals.ec2 import DETERMINISM_ARGS, DSV4_CHAT_TEMPLATE, EC2_DEPLOY_SPECS
+
+#: All 22 deploy-spec keys (21 study rungs + the qwen2.5-1.5b canary). The
+#: determinism-bundle tests below cover EVERY entry, unlike STUDY_KEYS
+#: (which excludes the canary) -- the 2026-08-18 user ruling ("all model
+#: configurations deterministic") drew no such distinction, and the loop in
+#: ec2.py that appends DETERMINISM_ARGS runs over EC2_DEPLOY_SPECS.items()
+#: unconditionally.
+ALL_KEYS = sorted(EC2_DEPLOY_SPECS)
+
+#: A flag "appears exactly once, followed by a 40-char lowercase hex SHA":
+#: matches both git commit hashes and (by construction) nothing else in any
+#: spec's vllm_args, so this doubles as a sanity check on the hinge/plan
+#: table's transcription into EC2_DEPLOY_SPECS.
+_SHA40 = re.compile(r"[0-9a-f]{40}")
 
 ROSTER = json.loads(
     (Path(__file__).parent / "fixtures" / "roster_configs.json").read_text()
@@ -107,10 +122,131 @@ def test_language_model_only_iff_multimodal_wrapper(key):
     )
 
 
-@pytest.mark.parametrize("key", STUDY_KEYS)
-def test_prefix_caching_on_every_study_spec(key):
-    assert "--enable-prefix-caching" in _args(EC2_DEPLOY_SPECS[key]), (
-        f"{key}: both evals reuse long prompt prefixes; caching is part of the design"
+# ---------------------------------------------------------------------------
+# Post-study determinism default (2026-08-18)
+#
+# User ruling 2026-08-18: all model configurations deterministic; certified
+# bundle from the 2026-08-16 hinge experiment. Every test below covers ALL
+# 22 EC2_DEPLOY_SPECS entries (ALL_KEYS), including qwen2.5-1.5b -- the
+# ruling drew no exception for the smoke-test canary, and neither does the
+# ec2.py loop that appends DETERMINISM_ARGS.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_determinism_args_are_a_contiguous_suffix(key):
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    DETERMINISM_ARGS must land as a contiguous SUFFIX of vllm_args -- not
+    merely "present somewhere" -- because ec2.py builds it by appending
+    (``_args + DETERMINISM_ARGS``); a spec whose bundle is scattered or
+    truncated would mean the append logic broke for that entry specifically.
+    """
+    args = _args(EC2_DEPLOY_SPECS[key])
+    n = len(DETERMINISM_ARGS)
+    assert args[-n:] == DETERMINISM_ARGS, f"{key}: DETERMINISM_ARGS is not a trailing suffix of {args}"
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_prefix_caching_is_off_every_spec(key):
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    ``--enable-prefix-caching`` was load-bearing for study throughput but the
+    hinge experiment certified it as a nondeterminism source (thousands of
+    cache hits under stock, zero under the determinism config); it must be
+    absent everywhere, including the qwen2.5-1.5b canary.
+    """
+    assert "--enable-prefix-caching" not in _args(EC2_DEPLOY_SPECS[key]), (
+        f"{key}: prefix caching is a certified nondeterminism source and must stay off"
+    )
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_revision_and_tokenizer_revision_pinned(key):
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    Belt-and-braces: at the pinned build ``--tokenizer-revision`` INHERITS
+    ``--revision`` when unset (vllm/config/model.py:542), so the second
+    flag is redundant today -- pinning both, each exactly once, each with
+    the SAME 40-char lowercase-hex commit SHA, keeps the checkpoint and
+    tokenizer pinned together independently of that inheritance behavior.
+    """
+    args = _args(EC2_DEPLOY_SPECS[key])
+    for flag in ("--revision", "--tokenizer-revision"):
+        assert args.count(flag) == 1, f"{key}: {flag} must appear exactly once, found {args.count(flag)}"
+    revision = _flag_value(args, "--revision")
+    tokenizer_revision = _flag_value(args, "--tokenizer-revision")
+    assert _SHA40.fullmatch(revision), f"{key}: --revision {revision!r} is not a 40-char lowercase hex SHA"
+    assert _SHA40.fullmatch(tokenizer_revision), (
+        f"{key}: --tokenizer-revision {tokenizer_revision!r} is not a 40-char lowercase hex SHA"
+    )
+    assert revision == tokenizer_revision, (
+        f"{key}: --revision {revision!r} != --tokenizer-revision {tokenizer_revision!r}"
+    )
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_gpu_memory_utilization_pinned(key):
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    DETERMINISM_PLAN section 4 row 4: the KV budget must be an explicit
+    function of the spec, not of free VRAM at profiling time. 0.92 is
+    vLLM's default AT THE PINNED BUILD (vllm/config/cache.py:69 at
+    8efa13b70) made explicit -- and the value the hinge det arms actually
+    resolved to; deepseek-v4-pro (0.93) keeps the larger value its memory
+    footprint already required.
+    """
+    args = _args(EC2_DEPLOY_SPECS[key])
+    assert args.count("--gpu-memory-utilization") == 1, (
+        f"{key}: --gpu-memory-utilization must appear exactly once"
+    )
+    value = _flag_value(args, "--gpu-memory-utilization")
+    assert value in {"0.92", "0.93"}, f"{key}: unexpected --gpu-memory-utilization {value!r}"
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_no_flag_repeats(key):
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    No ``--flag`` token may appear twice in a spec's vllm_args. This is a
+    general well-formedness check (not determinism-specific), but it is
+    exactly the failure mode a careless DETERMINISM_ARGS append could cause
+    (e.g. double-adding ``--gpu-memory-utilization`` to a spec that already
+    pinned one) -- so it rides with this test block rather than loosening
+    to tolerate any repeat.
+    """
+    args = _args(EC2_DEPLOY_SPECS[key])
+    flags = [a for a in args if a.startswith("--")]
+    counts = Counter(flags)
+    repeats = {flag: n for flag, n in counts.items() if n > 1}
+    assert not repeats, f"{key}: flag(s) repeated in vllm_args: {repeats}"
+
+
+def test_ec2_vllm_image_default_is_digest_pinned():
+    """User ruling 2026-08-18: all model configurations deterministic;
+    certified bundle from the 2026-08-16 hinge experiment.
+
+    Reads ec2.py's SOURCE TEXT off disk (not the live ``ec2.EC2_VLLM_IMAGE``
+    module attribute) so a developer's ``EC2_VLLM_IMAGE`` environment
+    override in the test process cannot mask a regression back to a mutable
+    tag -- the whole point of digest-pinning is defeated if the default
+    itself drifts. Anchored via ``__file__`` (this repo's convention, see
+    e.g. ``smolbench/evals/payloads/__init__.py``'s ``_HERE``) rather than a
+    cwd-relative path, so it passes regardless of the directory pytest is
+    invoked from.
+    """
+    ec2_py = Path(__file__).resolve().parents[1] / "smolbench" / "evals" / "ec2.py"
+    source = ec2_py.read_text()
+    match = re.search(r'os\.getenv\("EC2_VLLM_IMAGE",\s*"([^"]+)"', source)
+    assert match, 'no os.getenv("EC2_VLLM_IMAGE", "...") default found in ec2.py'
+    assert re.fullmatch(r"vllm/vllm-openai@sha256:[0-9a-f]{64}", match.group(1)), (
+        f"EC2_VLLM_IMAGE default {match.group(1)!r} is not a digest pin "
+        "(vllm/vllm-openai@sha256:<64 hex>) -- do not repoint it at a mutable tag"
     )
 
 

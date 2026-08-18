@@ -156,7 +156,7 @@ def test_lane_env_is_exact_for_an_induction_lane(fleet):
         "INDUCTION_MODELS": "gemma-4-e2b",
         "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
         "EC2_REGIONS": "us-east-1,us-east-2,us-west-2",
-        "EC2_VLLM_IMAGE": "vllm/vllm-openai:nightly",
+        "EC2_VLLM_IMAGE": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
         "EC2_MAX_LIFETIME_MIN": "2160",
         "EC2_REQUEST_TIMEOUT_SECONDS": "3600",
     }

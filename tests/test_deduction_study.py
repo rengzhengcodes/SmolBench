@@ -322,7 +322,12 @@ def test_lane_env_defaults_values_and_purity(driver, tmp_path):
 
     assert got["EC2_EXPERIMENT_TAG"] == f"scaling-{KEY}"
     assert got["EC2_STATE_FILE"] == str(tmp_path / f".ec2_state_scaling_{KEY}.json")
-    assert got["EC2_VLLM_IMAGE"] == "vllm/vllm-openai:nightly"
+    # Digest-pinned since the 2026-08-18 determinism change (was the mutable
+    # "vllm/vllm-openai:nightly" tag before it) -- see ec2.py's own
+    # EC2_VLLM_IMAGE comment for the full provenance.
+    assert got["EC2_VLLM_IMAGE"] == (
+        "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+    )
     assert got["SMOLBENCH_LEAN_RESULTS"] == str(tmp_path / "notebooks" / "deduction" / "results")
 
     again = driver.lane_env_defaults(KEY, repo_root=tmp_path)
@@ -374,7 +379,10 @@ def test_import_sets_env_before_ec2_freezes_it():
         "spec.loader.exec_module(m)\n"
         "from smolbench.evals import ec2\n"
         "assert ec2.EC2_EXPERIMENT_TAG == 'scaling-glm-4.7', ec2.EC2_EXPERIMENT_TAG\n"
-        "assert ec2.EC2_VLLM_IMAGE == 'vllm/vllm-openai:nightly', ec2.EC2_VLLM_IMAGE\n"
+        "assert ec2.EC2_VLLM_IMAGE == ("
+        "'vllm/vllm-openai@sha256:"
+        "26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7'"
+        "), ec2.EC2_VLLM_IMAGE\n"
         "assert os.environ['EC2_STATE_FILE'].endswith('.ec2_state_scaling_glm-4.7.json')\n"
         "assert os.path.isabs(os.environ['EC2_STATE_FILE'])\n"
         "print('ORDERING-OK')\n"

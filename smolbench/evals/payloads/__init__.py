@@ -8,9 +8,13 @@ Ubuntu 22.04's system python3 (3.10) and bash: keep them stdlib-only and
 validation.
 
 The assets are BYTE-EXACT payloads with a hard budget: EC2 caps user-data at
-16 KB before base64, and the rendered serve bootstrap sits within a couple
-hundred bytes of it (the headroom canary in ``tests/test_ec2_payloads.py``
-prints the live margin). Every byte in ``agent.py.txt`` / ``watchdog.py.txt``
+16 KB before base64. The cap binds on the GZIP-COMPRESSED serve bootstrap
+(see ``pack_user_data`` below), not the raw rendered text -- raw headroom was
+7 bytes even before the digest-pinned ``EC2_VLLM_IMAGE`` reference, which put
+the raw render 57 bytes OVER the cap; compression restores ~10 KB of margin
+(the headroom canary in
+``tests/test_ec2_payloads.py`` prints both the raw and compressed live
+margins). Every byte in ``agent.py.txt`` / ``watchdog.py.txt``
 / ``user_data.sh`` ships verbatim, comments included -- do not reformat, and
 keep them LF-only (pinned by ``.gitattributes``). The non-``.py`` extension
 is deliberate: it keeps black/isort/pylint and the import machinery away from
@@ -22,6 +26,7 @@ The assets are read ONCE at import time into plain ``str`` module constants
 breakage surfaces at import, not mid-provision.
 """
 
+import gzip
 from pathlib import Path
 
 # Anchored to this file, matching the repo's __file__-anchoring convention --
@@ -131,16 +136,17 @@ def render_user_data(
     Returns
     -------
     str
-        The fully rendered cloud-init script, ready for ``RunInstances``'
-        ``UserData`` kwarg (boto3 base64-encodes it internally).
+        The fully rendered cloud-init script. Not yet ready for
+        ``RunInstances``' ``UserData`` kwarg on its own -- pass it through
+        ``pack_user_data`` first, which gzip-compresses it (the size cap now
+        binds on the compressed bytes; see that function's docstring).
 
     Raises
     ------
     AssertionError
         If a heredoc delimiter appears inside an embedded payload script (it
-        would truncate the heredoc early), if any ``@@...@@`` marker survives
-        substitution, or if the rendered result is >= 16 KB (EC2's user-data
-        cap before base64 encoding).
+        would truncate the heredoc early), or if any ``@@...@@`` marker
+        survives substitution.
     """
     for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
         # A heredoc terminates at its delimiter; the scripts must never
@@ -162,6 +168,67 @@ def render_user_data(
     ):
         rendered = rendered.replace(marker, value)
     assert "@@" not in rendered, "unsubstituted placeholder left in user-data"
-    # EC2 caps user-data at 16 KB before base64 (boto3 encodes it for us).
-    assert len(rendered.encode()) < 16384, f"user-data too large: {len(rendered.encode())} bytes"
+    # The 16 KB EC2 user-data cap used to be asserted here, against the raw
+    # rendered text. It now binds on the GZIP-COMPRESSED bytes instead (see
+    # pack_user_data below) -- the digest-pinned EC2_VLLM_IMAGE reference
+    # (an 88-char `vllm/vllm-openai@sha256:<64 hex>` string) put the raw
+    # render 57 bytes over a cap that had only 7 bytes of headroom left to
+    # give, so the cap had to move to survive it.
     return rendered
+
+
+def pack_user_data(rendered: str) -> bytes:
+    """Gzip-compresses rendered cloud-init user-data for the EC2 size cap.
+
+    EC2's 16 KB user-data limit (before boto3's base64 encoding) used to be
+    checked against the raw rendered script inside ``render_user_data``. The
+    digest-pinned ``EC2_VLLM_IMAGE`` reference introduced alongside this
+    function (an 88-character ``vllm/vllm-openai@sha256:<64 hex>`` string,
+    versus a short tag like ``"v0.11.1"``) ate the remaining single-digit-byte
+    headroom, so the cap now applies to these COMPRESSED bytes instead. This
+    is transparent on the instance side: cloud-init auto-detects a gzip
+    magic number on user-data and gunzips it before running -- no change to
+    ``user_data.sh`` or the instance boot path is needed. It is also
+    transparent to the AWS call site: ``RunInstances``' ``UserData`` kwarg
+    accepts either ``str`` or ``bytes``; boto3's ``base64_encode_user_data``
+    handler base64-encodes bytes directly (skipping only the UTF-8 encode
+    step it would otherwise do for a ``str``), so passing these compressed
+    bytes straight through to ``run_instances(UserData=...)`` needs no
+    manual base64 anywhere in the call chain.
+
+    Parameters
+    ----------
+    rendered : str
+        Output of ``render_user_data`` (or any other fully-substituted
+        cloud-init script) to compress.
+
+    Returns
+    -------
+    bytes
+        ``rendered``, UTF-8 encoded then gzip-compressed with ``mtime=0``.
+        Using a fixed ``mtime`` (rather than the default "now") makes the
+        output byte-for-byte reproducible across two calls with identical
+        input -- gzip's header otherwise embeds the compression wall-clock
+        time, which would make this function's output non-deterministic and
+        complicate any future byte-diffing of provisioned user-data.
+
+    Raises
+    ------
+    AssertionError
+        If the compressed result is >= 16 KB (EC2's user-data cap, now
+        measured post-compression rather than pre-compression).
+
+    Notes
+    -----
+    Pure and side-effect-free. ``gzip.compress`` at the default compression
+    level is used -- the payload is small (low tens of KB) and compresses in
+    well under a millisecond, so trading compression ratio for speed via a
+    lower level was not worth the tuning.
+    """
+    # Design: mtime=0 rather than the gzip default (current wall-clock time)
+    # -- see the Returns section above for why byte-reproducibility matters
+    # here (it is also what makes the byte-stability test in
+    # tests/test_ec2_payloads.py meaningful rather than trivially true).
+    packed = gzip.compress(rendered.encode(), mtime=0)
+    assert len(packed) < 16384, f"compressed user-data too large: {len(packed)} bytes"
+    return packed

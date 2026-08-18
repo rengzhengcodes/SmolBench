@@ -485,6 +485,59 @@ because several are not free.
 - **#9 first if it exists** — it would make Tier 2 nearly free.
 - **#10 per lane, on evidence of the fault.**
 
+**[ADOPTED 2026-08-18 — user directive: "make sure all configurations for all
+models are deterministic". The tiering above is now implemented as the DEFAULT
+serving configuration, in the same commit that carries this note.]**
+
+- **#1** `EC2_VLLM_IMAGE`'s default is digest-pinned to the build the §3 hinge
+  certified (`0.27.2rc1.dev122+g8efa13b70`; Docker Hub tag
+  `nightly-8efa13b700f1836657699cae2503dc2feab27fa0`, digest
+  `sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7`).
+  The 88-char digest ref did not fit EC2's 16 KB user-data cap — raw
+  headroom under real inputs was 7 bytes before the pin, and the digest ref
+  put the render 57 bytes over — so user-data is now
+  **gzip-compressed at provision time** (cloud-init auto-detects gzip; the cap
+  now binds on compressed bytes, leaving ~11 KB of headroom). Both notebook
+  `keys.env` files were repointed at the digest as well, since their env value
+  overrides the code default.
+- **#2** every deploy spec pins `--revision` AND `--tokenizer-revision` to the
+  repo's main-branch SHA resolved 2026-08-18. Belt-and-braces: at the pinned
+  build `tokenizer_revision` INHERITS `--revision` when unset
+  (`vllm/config/model.py:542`), so the second flag is redundant today —
+  pinning both makes the pin independent of that inheritance behavior. Caveat: the study never recorded
+  HF revisions, so these pins codify today's branch tips, not (provably) the
+  study's bytes — §1.6 remains unrecoverable.
+- **#3/#6/#7/#8** the full hinge-certified bundle
+  (`--no-enable-prefix-caching --max-num-seqs 1 --enforce-eager --seed 0`,
+  byte-identical to `scripts/hinge_probe.py DET_ARGS`) is appended to every
+  spec's `vllm_args`; `--enable-prefix-caching` is removed everywhere,
+  including the qwen2.5-1.5b canary. The Tier-2 throughput cost is accepted by
+  the directive. Flag-level attribution was deliberately not separated (§3):
+  relaxing any single flag requires a fresh hinge-style certification.
+- **#4** `--gpu-memory-utilization` is explicit on every spec (0.92 where it
+  was implicit — vLLM's default AT THE PINNED BUILD, `vllm/config/cache.py:69`,
+  and the value the hinge det arms actually resolved to; deepseek-v4-pro
+  keeps 0.93, and k-exaone's explicit 0.92 coincides with the default).
+- **#5** the attention backend stays UNPINNED per model (except the two
+  DeepSeek V4 specs, which already pinned `FLASHMLA_SPARSE_DSV4` for serving
+  correctness), deliberately: it was
+  never recorded, so any pin today would be a guess; with the image
+  digest-pinned and each lane's instance type fixed, autoselection is a pure
+  function of pinned inputs. Recording it (§5) is the prerequisite for an
+  explicit pin, not the other way around.
+- Client-side `EC2_MAX_PARALLEL_REQUESTS` is untouched: with
+  `--max-num-seqs 1` the server serializes compute, and with caching off and
+  eager mode each request's computation is isolated, so client arrival order
+  cannot change a request's own tokens (the §3 det arms ran sequentially;
+  concurrent clients only overlap HTTP wait).
+- **Comparability guard:** stock↔det cross-config agreement is 0/8 (§3).
+  Nothing generated under the new default may be pooled with the
+  family-ladder study's stock-config results.
+- **Not yet live-validated:** the gzip user-data path passes offline
+  round-trip tests but has not provisioned a real box. Run the <$1
+  qwen2.5-1.5b lifecycle canary before the next paid fleet.
+
+
 ---
 
 ## 5. What to record so this is diagnosable next time [PROPOSED]
