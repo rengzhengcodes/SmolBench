@@ -210,7 +210,12 @@ FLIP_RUN_NAME: str = f"flip_{MODEL}"
 EC2_TAG: str = f"flip-{MODEL}"
 EC2_STATE_FILE_NAME: str = f".ec2_state_flip_{MODEL}.json"
 EC2_REQUIRE_GPU: str = "L40S:1"
-EC2_INSTANCE_TYPE: str = "g6e.4xlarge"
+# Widened 2026-08-18 after an 11-AZ g6e.4xlarge spot drought on the first
+# launch: all three types carry exactly ONE L40S (the 8xl/2xl differ only in
+# CPU/RAM), and EC2_REQUIRE_GPU=L40S:1 enforces that invariant at serve time
+# -- the same benign-substitution rule the study itself accepted on
+# 2026-08-14 (g6e.4xlarge <-> g6e.2xlarge repair lanes, both 1x L40S).
+EC2_INSTANCE_TYPE: str = "g6e.4xlarge,g6e.8xlarge,g6e.2xlarge"
 
 #: Same bucket/region/prefix as `notebooks/deduction/run_study.py`'s own
 #: SPOOL_BUCKET/SPOOL_REGION/SPOOL_PREFIX -- this study's whole S3 footprint

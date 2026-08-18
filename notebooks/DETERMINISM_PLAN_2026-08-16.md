@@ -613,7 +613,38 @@ it.
 The paper needs a **score-level** term: *given the same cells, how much does the
 headline metric move when the serving process changes?*
 
-### 6.2 The measurement [PROPOSED]
+### 6.2 The measurement [MEASURED 2026-08-18 — flip rate 9.5%, CI [5.8%, 14.4%], ±2.1 pts on pass@1]
+
+> **Run exactly as designed below**: n=200 `Random(0)` cells from
+> nemotron-3-nano-4b's 711-cell measurable Mathlib population, re-generated
+> on one fresh g6e.4xlarge (~3 h box time, ≈$5 — under the $10-17 estimate)
+> under the stock-config reconstruction (the study estimand; the specs now
+> default to the determinism bundle), both sides graded by today's verifier.
+> **b = 6 (orig pass → rerun fail), c = 13 (orig fail → rerun pass), 19/200
+> discordant.** The b-vs-c asymmetry is not significant (two-sided
+> McNemar-binomial p ≈ 0.17). **Verifier drift: 200/200 exact agreement**
+> between the re-verified originals and the study's stored verdicts — every
+> flip is generation, not grading (and this doubles as a 200-cell
+> comparability certificate for the same-day DojoInit recovery, on top of
+> its 30/30 control gate). The write-up sentence this section prescribes,
+> filled in: *"The per-cell flip probability across processes was measured
+> at 9.5% (95% CI [5.8%, 14.4%], n = 200, one model), contributing ±2.1
+> points to a lane's pass@1."* Instructive divergence from §6.3's 0/74:
+> the free bound's outcome-selection concentrated hard, concordantly-failing
+> cells — under-detection, exactly as its MEASURED banner records.
+> Driver: `scripts/flip_probe.py` (sample sha `bf22495e…`); data:
+> `s3://…/deduction/runs/flip_nemotron-3-nano-4b/` and
+> `notebooks/deduction/results/runs/flip_nemotron-3-nano-4b/flip_report.json`.
+>
+> **Ops lesson (one wasted verification pass):** a dead `GITHUB_ACCESS_TOKEN`
+> in `keys.env` (GitHub answers bad auth with 401/404) made LeanDojo's
+> GitHub lookups fail and graded all 400 legs `exception` — producing a
+> degenerate d=200 "0 flips" table that LOOKED like the headline result.
+> Caught because its verifier-drift check read 0/200 against the recovery's
+> fresh 30/30. Unset the token (anonymous API works). Rule: a paired-zeros
+> result whose drift check is ALSO zero is a verifier fault, not a finding.
+
+### 6.2 The measurement [as pre-registered]
 
 **Design.** Take one deduction lane with a clean single-process history —
 `nemotron-3-nano-4b` is the only candidate (inventory: "the only lane in the study
