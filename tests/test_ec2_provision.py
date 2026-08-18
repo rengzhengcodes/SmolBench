@@ -607,7 +607,7 @@ def _patch_s5_fetches(monkeypatch, *, vllm_version="0.27.2rc1.dev122+g8efa13b70"
 
     def fake_agent_fp(state):
         calls["agent"].append(state)
-        return agent_fp
+        return agent_fp, ["INFO Using Flash Attention backend."]
 
     monkeypatch.setattr(ec2, "_fetch_vllm_version", fake_version)
     monkeypatch.setattr(ec2, "_fetch_vllm_cache_config", fake_cache)
@@ -769,7 +769,23 @@ def test_fetch_agent_fingerprint_extracts_the_fingerprint_key(monkeypatch):
             "healthy": True, "fingerprint": {"nvidia_smi": "stub"},
         },
     )
-    assert ec2._fetch_agent_fingerprint(_S5_STATE) == {"nvidia_smi": "stub"}
+    fp, backend = ec2._fetch_agent_fingerprint(_S5_STATE)
+    assert fp == {"nvidia_smi": "stub"}
+    assert backend is None  # no log_tail in the fake status
+
+
+def test_fetch_agent_fingerprint_mines_backend_lines(monkeypatch):
+    """The ninth section-5 field: attention-backend lines mined from the
+    container log tail (best-effort -- a scrolled-away tail yields None)."""
+    monkeypatch.setattr(
+        ec2, "_agent",
+        lambda state, method, path, timeout=None, connect_retries=None: {
+            "fingerprint": {"nvidia_smi": "stub"},
+            "log_tail": "INFO boot\nINFO Using Flash Attention backend on V1 engine.\nINFO ready",
+        },
+    )
+    fp, backend = ec2._fetch_agent_fingerprint(_S5_STATE)
+    assert backend == ["INFO Using Flash Attention backend on V1 engine."]
 
 
 def test_fetch_agent_fingerprint_none_on_failure(monkeypatch):
@@ -777,7 +793,7 @@ def test_fetch_agent_fingerprint_none_on_failure(monkeypatch):
         raise RuntimeError("agent unreachable")
 
     monkeypatch.setattr(ec2, "_agent", boom)
-    assert ec2._fetch_agent_fingerprint(_S5_STATE) is None
+    assert ec2._fetch_agent_fingerprint(_S5_STATE) == (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -906,8 +922,9 @@ def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch)
 
 
 def test_launch_fresh_wraps_user_data_in_pack_user_data():
-    """gzip is LOAD-BEARING, not an optimization: the raw render is 57 bytes
-    over EC2's 16 KB user-data cap under the digest-pinned image, so a
+    """gzip is LOAD-BEARING, not an optimization: the raw render exceeds
+    EC2's 16 KB user-data cap outright (57 B over when the digest pin
+    landed; ~4.6 KB over after the section-5 fingerprint), so a
     regression that drops the ``pack_user_data`` call would fail only at the
     live ``RunInstances`` call, with zero local signal. Source-text pin (the
     same env-independent pattern as

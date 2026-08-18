@@ -89,10 +89,13 @@ dropped from the 21-way intersection gives 712 − 5 = **707**.
 
 These five are worth naming precisely, because they are *not* the same kind of thing as
 the other unmeasurable cells and the exclusion rule was written for those. They are
-**Lean verification timeouts**: generation succeeded (e.g. `glm-4.7` on
+**Lean verifier faults on model-specific candidates** — in three of the five,
+`DojoTacticTimeoutError` after ~600 s of elaboration (e.g. `glm-4.7` on
 `Submodule.iSup_toAddSubmonoid`, 9,413 completion tokens, an ordinary one-line
-`exact AddSubmonoid.add_mem …`), and `DojoTacticTimeoutError` fired after ~600 s of
-elaboration against LeanDojo's per-tactic cap. So unlike a spot-kill `exception` (never
+`exact AddSubmonoid.add_mem …`); in the other two (`nemotron-3-nano-4b`,
+`ministral-3-14b`), `DojoCrashError: Unexpected EOF` on cap-length generations
+[split corrected 2026-08-18 from the primary rows — the earlier "all five are
+timeouts" read the two crash cells' stripped error strings as timeouts]. So unlike a spot-kill `exception` (never
 reached the model) or `replay_failed` (provably model-independent — the identical 232
 cells in all 21 lanes), these are **model-dependent**: five different cells in five
 different lanes, where every other model's candidate on the same cell verified fine. The
@@ -192,7 +195,7 @@ sixth-ranked clean lane runs the other way:
 
 `glm_47` is **not** quarantined and **not** ≥25% non-compliant — it is a clean lane whose
 extensional arm beats its noise arm, and it fails only the m=210 family threshold
-(2.44e-03 vs the ~2.4e-04 it would need). Re-correcting at m=21 would admit it, along
+(2.44e-03 vs the ~5.9e-04 Holm threshold at the boundary rank — 0.05/(210−126+1); the oft-quoted 2.4e-04 is the Bonferroni floor, which binds only for the family's smallest p). Re-correcting at m=21 would admit it, along
 with `glm_air` (which *is* quarantined). So the directional claim is: among lanes that
 clear the pre-registered threshold the effect is unanimous, but the strongest lane just
 below the line points the other way. This study's own record — the `gpt-oss`
@@ -407,16 +410,24 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    prediction on Mathlib**. It is a scope restriction and nothing more should be read
    into it: no model ever attempted those 45 under a verifiable setup, so there is no
    success rate on them to compare and none is recoverable from the collected data.
+   **[Superseded 2026-08-18: 34 of the 45 WERE recovered post-hoc** — the candidates
+   were always in the collected rows; only their *verification* had failed (an
+   incomplete LeanDojo cache), so verification-only compute recovered them. The other
+   11 close their goal before step k and join the prefix class. See caveat 12 and
+   `DOJOINIT_RECOVERY_2026-08-18.md`.]
    Proof length happens to match (3.04 vs 3.05 tactics, p=1.00), but that does **not**
    license "and they are no harder."
 
-3. **24.6% of the deduction theorem set is unusable for everyone.** The same **232
+3. **24.6% of the deduction cells (27.3% of theorems: 82 of 300) are unusable for everyone.** The same **232
    cells** fail in every one of the 21 lanes — 151 where LeanDojo could not open the
    theorem (missing `*.ast.json`) and 81 where the *ground-truth* prefix would not
    replay. 100% overlap across models proves this is not model behaviour. They are
    excluded, never scored 0; scoring them 0 would deflate every marginal rate by up to
    24.6%. Uniform across models, so **no bias — but real lost power**: the measurable
-   denominator is 712 cells / 216 theorem blocks, not 944.
+   denominator is 712 cells / 218 theorem blocks per lane (707 cells / 216 blocks in
+   the 21-way paired analysis; two lanes are 217 because their exception-only cell
+   consumes a whole theorem), not 944. **[Post-recovery accounting, 2026-08-18: the
+   232 shrink to 111 — 151 DojoInit cells → 0 — see caveat 12.]**
 
 4. **Induction hardware attribution is MOSTLY inferred — and the split has a date.**
    Per-object `server_config` stamping landed at **02:06:44Z on 2026-08-14** (`040d2e83`).
@@ -463,8 +474,11 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    paragraph rather than conclude they were forgotten.
 
 6. **Per-process nondeterminism is a study-wide noise term.** vLLM output here is
-   reproducible *within* one server process (8/8 byte-identical) and **not across
-   processes** (0/8, at identical instance type, GPU, tp and image). Nearly every lane
+   reproducible *within* one server process **for some model×config pairs** —
+   `nemotron-3-nano-4b` 8/8 byte-identical, but `ministral-3-3b` 0/8 even back-to-back
+   on one box under the stock config — and **bimodal across processes**: 8/8 in one of
+   six archived pairings, 0/8 in four (do not treat 0/8 as "the" cross-process rate;
+   `DETERMINISM_PLAN_2026-08-16.md` §0/§7.4). Nearly every lane
    spans several boxes — `ministral-3-14b` ×48, `gemma-4-12b` ×21, `glm-4.7-flash` ×4.
    Because every lane runs on its own hardware by design, this does **not** correlate
    with the model axis: it is noise, not bias, and re-runs cannot remove it. Do not
@@ -509,13 +523,46 @@ uncorrected. The single contrast it removes (ministral-3-8b vs ministral-3-14b, 
    accuracy: `exaone_32b`/`exaone_33b` at acc 0.000 with total generative collapse,
    `glm_flash` 48.9% empty, `min3_8b`/`min3_14b` 100% non-compliant, `glm_air` 17.8%
    empty. Contrasts involving them measure whitespace-padding-induced degeneration, not
-   induction, and are reported separately from the findings. A further 16 of 84 cells are
+   induction, and are reported separately from the findings. 16 of 84 cells (including the six quarantined noise arms — so 10 genuinely further) are
    ≥25% non-compliant; findings touching them are flagged `[!]` in the report, because
    the mechanism may be format collapse rather than task difficulty.
 
 10. **`glm_flash` has 132/270 empty completions** on a 110-token prompt against an 86,751
    token budget — an infrastructure symptom, not truncation, and it has not been
    investigated.
+
+11. **[2026-08-18] The deduction leg's cross-process noise term is now MEASURED on one
+   lane, not qualitative.** For `nemotron-3-nano-4b` — the study's *most stable* lane
+   (caveat 7), so plausibly a lower bound elsewhere — the per-cell score flip
+   probability across serving processes is **9.5%** (95% CI [5.8%, 14.4%], n = 200
+   paired cells; the ±2.1-point figure is the 1-SE width of that rate estimate at
+   n = 200, likely too narrow since sampled cells share theorems). On a full 712-cell
+   lane this implies roughly **±1.2 points of process-swap SD on pass@1**. Verifier
+   drift was 200/200 exact, so every flip is generation, not grading; and 178/200
+   (89%) of the re-generations differ in text while only 9.5% flip score — byte
+   agreement is the wrong metric for what this study measures. Noise, not bias:
+   process identity is assigned by spot capacity and does not correlate with the
+   model axis. Two scope cautions: the rerun landed on a g6e.2xlarge in us-west-2
+   (the lane's own g6e.4xlarge fleet was dry; both boxes carry exactly one L40S,
+   enforced by pin), and it pinned image+checkpoint where the study's own build is
+   unrecoverable — so 9.5% upper-bounds the pure process term. Full design and data:
+   `DETERMINISM_PLAN_2026-08-16.md` §6.
+
+12. **[2026-08-18] The 151 DojoInit std cells per lane were recovered — as a SCOPE
+   EXTENSION, not a headline change.** Every number in this document stands on the
+   Mathlib-only 712/711 denominators, unchanged. The recovery (root cause: an incomplete
+   LeanDojo cache on the grading box; 30/30 exact control-cell gate; strictly additive —
+   study S3 objects untouched) adds 121 measurable cells per lane under a separate
+   `dojoinit_recovery_2026-08-18/` prefix, moving the PER-LANE extended denominators
+   to 833/832 (218→252 blocks per lane; 217→251 in `glm-4.7` and `nemotron-3-nano-4b`)
+   and this document's own 21-way PAIRED pools from 707 cells / 216 blocks to
+   **828 cells / 250 blocks**. Any analysis that pools the extension must say so and
+   carry its caveats: `DOJOINIT_RECOVERY_2026-08-18.md`.
+
+13. **[2026-08-18] The stock-config epoch closed after this study.** The serving defaults
+   are now the hinge-certified determinism bundle plus digest/revision pins
+   (`DETERMINISM_PLAN_2026-08-16.md` §4 ADOPTED). Cross-config agreement is 0/8, so any
+   future run under the new defaults is config-incomparable with every number here.
 
 ---
 

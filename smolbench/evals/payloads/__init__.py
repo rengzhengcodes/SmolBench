@@ -10,9 +10,10 @@ validation.
 The assets are BYTE-EXACT payloads with a hard budget: EC2 caps user-data at
 16 KB before base64. The cap binds on the GZIP-COMPRESSED serve bootstrap
 (see ``pack_user_data`` below), not the raw rendered text -- raw headroom was
-7 bytes even before the digest-pinned ``EC2_VLLM_IMAGE`` reference, which put
-the raw render 57 bytes OVER the cap; compression restores ~10 KB of margin
-(the headroom canary in
+7 bytes even before the digest-pinned ``EC2_VLLM_IMAGE`` reference (+57 B
+over the cap), and the section-5 agent fingerprint later grew the raw render
+to ~4.6 KB over; compression keeps ~9 KB of margin (9,025 B measured
+2026-08-18; the headroom canary in
 ``tests/test_ec2_payloads.py`` prints both the raw and compressed live
 margins). Every byte in ``agent.py.txt`` / ``watchdog.py.txt``
 / ``user_data.sh`` ships verbatim, comments included -- do not reformat, and
@@ -173,7 +174,8 @@ def render_user_data(
     # pack_user_data below) -- the digest-pinned EC2_VLLM_IMAGE reference
     # (an 88-char `vllm/vllm-openai@sha256:<64 hex>` string) put the raw
     # render 57 bytes over a cap that had only 7 bytes of headroom left to
-    # give, so the cap had to move to survive it.
+    # give, and later payload growth (the section-5 agent fingerprint)
+    # widened that to ~4.6 KB over -- the cap had to move to survive.
     return rendered
 
 

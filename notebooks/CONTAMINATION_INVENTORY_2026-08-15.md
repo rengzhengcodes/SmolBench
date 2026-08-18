@@ -305,9 +305,14 @@ plus `--revision`/`--tokenizer-revision` checkpoint pins, and `EC2_VLLM_IMAGE`
 is digest-pinned to the certified dev122 build
 (DETERMINISM_PLAN_2026-08-16.md §4, ADOPTED block). Consequence for this
 inventory: the study's stock-config epoch ended 2026-08-18. Any object a
-future run appends under the study's experiment names is (a) invisible to
-analysis anyway under the earliest-wins ruling, and (b) config-incomparable
-with everything in this document (cross-config agreement 0/8, hinge). The
+future run appends for a cell this study ALREADY COLLECTED is invisible to
+analysis under the earliest-wins ruling (earliest-wins is per-(model, seed,
+info) cell — a genuinely NEW cell would be visible, and is excluded only by
+the config-incomparability leg), and (b) anything generated under the new
+default is config-incomparable with everything in this document
+(cross-config agreement 0/8, hinge). One pin exception is disclosed in the
+plan's ADOPTED #1: the two DeepSeek V4 fleet lanes ride a digest-pinned
+v0.27.1 build, not the hinge-certified dev122. The
 "not worth rerunning" entries gain a third leg: by default, a rerun now runs
 under a different certified configuration than the data it would be compared
 against.

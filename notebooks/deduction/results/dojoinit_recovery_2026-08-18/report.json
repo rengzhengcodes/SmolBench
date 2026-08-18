@@ -171,15 +171,15 @@
    },
    "measurable_mathlib": 712,
    "recovered_dist": {
-    "lean_error": 108,
-    "success": 10,
+    "lean_error": 64,
+    "success": 49,
     "replay_failed": 30,
-    "incomplete": 3
+    "incomplete": 8
    },
    "recovered_measurable": 121,
    "measurable_extended": 833,
    "rate_mathlib": 0.3511,
-   "rate_extended": 0.3121
+   "rate_extended": 0.3589
   },
   "glm-4.7-flash": {
    "study_mathlib": {
@@ -251,15 +251,15 @@
    },
    "measurable_mathlib": 711,
    "recovered_dist": {
-    "lean_error": 116,
-    "incomplete": 1,
-    "success": 4,
+    "lean_error": 112,
+    "incomplete": 2,
+    "success": 7,
     "replay_failed": 30
    },
    "recovered_measurable": 121,
    "measurable_extended": 832,
    "rate_mathlib": 0.0661,
-   "rate_extended": 0.0613
+   "rate_extended": 0.0649
   },
   "ministral-3-8b": {
    "study_mathlib": {
@@ -331,15 +331,15 @@
    },
    "measurable_mathlib": 712,
    "recovered_dist": {
-    "lean_error": 97,
-    "success": 22,
+    "lean_error": 91,
+    "success": 28,
     "replay_failed": 30,
     "incomplete": 2
    },
    "recovered_measurable": 121,
    "measurable_extended": 833,
    "rate_mathlib": 0.1601,
-   "rate_extended": 0.1633
+   "rate_extended": 0.1705
   },
   "k-exaone-236b-a23b": {
    "study_mathlib": {
@@ -391,14 +391,14 @@
    },
    "measurable_mathlib": 712,
    "recovered_dist": {
-    "lean_error": 93,
-    "success": 28,
+    "lean_error": 65,
+    "success": 56,
     "replay_failed": 30
    },
    "recovered_measurable": 121,
    "measurable_extended": 833,
    "rate_mathlib": 0.441,
-   "rate_extended": 0.4106
+   "rate_extended": 0.4442
   },
   "deepseek-v4-pro": {
    "study_mathlib": {

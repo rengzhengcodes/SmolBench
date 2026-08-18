@@ -771,23 +771,40 @@ def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
         return None
 
 
-def _fetch_agent_fingerprint(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """The control agent's ``/status`` ``"fingerprint"`` object, or None.
+def _fetch_agent_fingerprint(
+    state: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
+    """(``/status`` ``"fingerprint"`` object, attention-backend log lines).
 
     Reuses ``_agent`` -- the same authenticated control-agent call
     ``_wait_model_ready`` already polls with -- instead of hand-rolling a
     second HTTP client against the same endpoint. ``connect_retries=0``:
     this is a best-effort snapshot, not a wait loop, so a single failed
     attempt degrades to None rather than retrying for minutes.
+
+    The second element mines ``/status``'s ``log_tail`` (the container's
+    last ~300 log lines) for the vLLM attention-backend selection lines --
+    the ninth DETERMINISM_PLAN section-5 field, which appears nowhere in
+    the metrics endpoint. Best-effort squared: the tail is a moving window,
+    so on a long-serving box the startup lines may have scrolled away
+    (None); call ``server_config`` right after serve to catch them.
     """
     try:
         status = _agent(
             state, "GET", "/status",
             timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S, connect_retries=0,
         )
-        return status.get("fingerprint")
     except Exception:  # noqa: BLE001
-        return None
+        return None, None
+    backend_lines: Optional[List[str]] = None
+    try:
+        tail = status.get("log_tail") or ""
+        hits = [ln.strip() for ln in tail.splitlines()
+                if "attention backend" in ln.lower() or "attn_backend" in ln.lower()]
+        backend_lines = hits or None
+    except Exception:  # noqa: BLE001
+        backend_lines = None
+    return status.get("fingerprint"), backend_lines
 
 
 def server_config(model: str) -> Optional[Dict[str, Any]]:
@@ -919,7 +936,8 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
         vllm_key = state.get("vllm_api_key")
         vllm_version = _fetch_vllm_version(ip, vllm_key) if ip and vllm_key else None
         vllm_cache_config = _fetch_vllm_cache_config(ip, vllm_key) if ip and vllm_key else None
-        agent_fp = _fetch_agent_fingerprint(state) if ip else None
+        agent_fp, attention_backend = (
+            _fetch_agent_fingerprint(state) if ip else (None, None))
         vllm_image_digest = None
         if agent_fp:
             digests = agent_fp.get("image_repo_digests")
@@ -956,6 +974,7 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
             "served_at": served_at,
             "vllm_version": vllm_version,
             "vllm_cache_config": vllm_cache_config,
+            "attention_backend_log": attention_backend,
             "agent_fingerprint": agent_fp,
             "vllm_image_digest": vllm_image_digest,
             "max_parallel_requests": max_parallel_requests,
@@ -2224,9 +2243,10 @@ def _launch_fresh(
             f"(instance profile {iam_profile})"
         )
     # gzip-compressed (pack_user_data) rather than passed raw: raw headroom
-    # under EC2's 16 KB cap was 7 bytes BEFORE the digest-pinned
-    # EC2_VLLM_IMAGE reference, which put the raw render 57 bytes OVER the
-    # cap. Compressed bytes flow
+    # under EC2's 16 KB cap was 7 bytes before the digest-pinned
+    # EC2_VLLM_IMAGE reference (+57 B over) and the section-5 agent
+    # fingerprint (~4.6 KB over now) -- the raw render no longer fits at
+    # all; only the compressed form does. Compressed bytes flow
     # straight into run_instances(UserData=...) -- boto3 base64-encodes
     # bytes UserData directly, so no manual encoding step is needed.
     user_data = pack_user_data(

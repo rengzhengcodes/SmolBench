@@ -316,7 +316,7 @@ widen the hunt (this run needed
 - `ChatClient.query`'s `context_length=0` default fails any usage-reporting
   response by design (documented footgun; `evaluate` supplies the real
   value). `seed` must remain in every request.
-- Rendered user-data is at 16074/16384 bytes — ~310 bytes of headroom under
+- Rendered user-data is at 16074/16384 bytes — ~310 bytes of headroom under [historical; superseded 2026-08-18 -- the cap now binds on gzip-COMPRESSED bytes, see payloads.pack_user_data]
   the frozen 16 KB cap. The next payload edit will likely need to reclaim
   space (trim payload comments first).
 - `ReplicateHarness.run_replicates` raises a bare `KeyError` for a model
@@ -407,7 +407,7 @@ New files:
 - `aws.py`'s three SageMaker `CreateX` kwargs builders and its
   teardown-step ordering are pinned against the pre-extraction inline
   literals (dict-equality assertions, no AWS I/O, `test_aws_provision.py`).
-- `ec2.py`'s rendered user-data is unchanged at **16191 bytes** under
+- `ec2.py`'s rendered user-data is unchanged at **16191 bytes** under [historical; superseded 2026-08-18 -- the cap now binds on gzip-COMPRESSED bytes, see payloads.pack_user_data]
   realistic inputs (~190 bytes of headroom under the 16 KB cap) —
   `test_render_user_data_headroom_with_realistic_inputs`.
 - Golden induction quizzes (seeds 1776/1777) stay byte-identical

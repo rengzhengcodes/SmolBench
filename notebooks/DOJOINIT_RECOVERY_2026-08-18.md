@@ -46,18 +46,29 @@ that graded the published 712.
 
 **Two row-selection defects were caught by the tool's own gates during the
 run** — recorded because both are lessons:
-1. The 151-distinct count gate fired on qwen3.5-27b (178 std rows): the six
-   re-collected lanes carry duplicate cell rows from the 2026-08-15
-   resampling era. Fix: dedupe per cell.
+1. The 151-distinct count gate fired on qwen3.5-27b (178 std rows): five of
+   the six re-collected lanes carry duplicate cell rows from the 2026-08-15
+   resampling era (nemotron-3-nano-4b, re-verified cleanly on 08-16, has
+   none). Fix: dedupe per cell.
 2. The report's denominator arithmetic then exposed that earliest-ANY dedupe
    kept spot-kill **exception placeholders** (empty candidates) over later
    surviving rows — and an audit found 27 of qwen3.5-27b's recovered std
    cells had graded an empty placeholder instead of the real candidate,
    **invisibly**: empty candidates verify into measurable buckets, so the
-   cross-lane identity assertions could not catch it. The rule now matches
-   the study loader (`power_analysis.py load_joint_cells`): **first
-   NON-exception row per cell**. qwen3.5-27b was force-rerun under the
-   corrected rule; the other 20 lanes had zero std duplicates.
+   cross-lane identity assertions could not catch it. The corrected rule
+   keeps the **first row that carries a candidate (first non-exception)** —
+   the analysis loader itself (`power_analysis.py load_joint_cells`) drops
+   BOTH exception and replay_failed rows, a rule that cannot apply to std
+   cells (every std study row IS replay_failed); the two rules were measured
+   to coincide on the Mathlib column of all seven S3-streamed lanes.
+   **A second adversarial-review catch (2026-08-18, later the same day):
+   "only qwen3.5-27b had std duplicates" was FALSE** — an artifact of the
+   parallel runner swallowing child logs. Four more lanes (gemma-4-31b 98,
+   ministral-3-3b 76, deepseek-v3.1 56, exaone-4.5-33b 66 duplicated std
+   cells) were recovered inside the 34-minute window between the dedupe
+   commit and the rule fix, grading empty placeholders on those cells. All
+   four were force-rerun under the corrected rule and the table below
+   carries the corrected numbers.
 
 ## 3. Results
 
@@ -74,18 +85,18 @@ Every lane: 121 measurable recovered verdicts + 30 `replay_failed`, and the
 | nemotron-3-super-120b-a12b | 0.1629 (712) | 0.1753 (833) | 30 |
 | gemma-4-e2b | 0.1096 (712) | 0.1248 (833) | 26 |
 | gemma-4-12b | 0.1826 (712) | 0.1909 (833) | 29 |
-| gemma-4-31b | 0.3511 (712) | 0.3121 (833) | 10 |
+| gemma-4-31b | 0.3511 (712) | 0.3589 (833) | 49 |
 | glm-4.7-flash | 0.1461 (712) | 0.1501 (833) | 21 |
 | glm-4.5-air | 0.2163 (712) | 0.2329 (833) | 40 |
 | glm-4.7 | 0.3601 (711) | 0.3702 (832) | 52 |
-| ministral-3-3b | 0.0661 (711) | 0.0613 (832) | 4 |
+| ministral-3-3b | 0.0661 (711) | 0.0649 (832) | 7 |
 | ministral-3-8b | 0.0730 (712) | 0.0756 (833) | 11 |
 | ministral-3-14b | 0.1027 (711) | 0.1046 (832) | 14 |
 | exaone-4.0-32b | 0.1814 (711) | 0.1815 (832) | 22 |
-| exaone-4.5-33b | 0.1601 (712) | 0.1633 (833) | 22 |
+| exaone-4.5-33b | 0.1601 (712) | 0.1705 (833) | 28 |
 | k-exaone-236b-a23b | 0.1039 (712) | 0.1140 (833) | 21 |
 | deepseek-v4-flash | 0.3469 (712) | 0.3481 (833) | 43 |
-| deepseek-v3.1 | 0.4410 (712) | 0.4106 (833) | 28 |
+| deepseek-v3.1 | 0.4410 (712) | 0.4442 (833) | 56 |
 | deepseek-v4-pro | 0.4045 (712) | 0.4166 (833) | 59 |
 
 ("rate" = pooled-over-rungs success share of measurable cells, computed
@@ -93,8 +104,10 @@ under the study loader's first-surviving-row selection; it is a
 self-consistent comparison column, not the study's per-rung headline
 statistic. Full verdict distributions and per-cell data:
 `notebooks/deduction/results/dojoinit_recovery_2026-08-18/report.json`.
-The five (711)-lanes are exactly the coverage diagnosis's
-DojoTacticTimeout lanes — a clean cross-consistency check.)
+The five (711)-lanes are exactly the coverage diagnosis's five
+exception-only-cell lanes — three DojoTacticTimeoutError cells and two
+DojoCrashError ("Unexpected EOF") cells on cap-length generations, per the
+primary rows — a clean cross-consistency check on the lane set.)
 
 **Accounting (replaces the coverage doc's, per its own §6):**
 - DojoInit class: **151 → 0** (pure cache artifact, fully recovered or
@@ -103,12 +116,20 @@ DojoTacticTimeout lanes — a clean cross-consistency check.)
   prefix closes the goal before step k — model-independent, identical in
   every lane).
 - Measurable denominator: **712 → 833** per lane (711 → 832 in the five
-  timeout lanes); block-bootstrap effective blocks **218 → 252**.
+  exception-cell lanes); block-bootstrap effective blocks **218 → 252 per
+  lane** (217 → 251 in `glm-4.7` and `nemotron-3-nano-4b`, whose exception
+  cell consumes a whole theorem); the 21-way PAIRED intersection used by
+  the analysis is **216 → 250 blocks (707 → 828 cells)**.
 - Scope: "Mathlib only" → "Mathlib + 34 of the 45 sampled std theorems".
 
-Notable: three lanes (gemma-4-31b, deepseek-v3.1, ministral-3-3b) score
-LOWER on the extension than on Mathlib — std theorems are not uniformly
-easier; the extension is real signal, not padding.
+Notable — and itself a verification lesson: the first published version of
+this table showed three lanes scoring LOWER on the extension. That pattern
+was **manufactured by the placeholder-grading defect** (§2): once the four
+affected lanes were re-graded on their real candidates, gemma-4-31b,
+deepseek-v3.1 and exaone-4.5-33b all moved ABOVE their Mathlib rates, and
+only ministral-3-3b remains lower by a noise-level 0.12 points. The
+corrected picture: the std extension scores at or slightly above Mathlib
+for essentially every lane.
 
 ## 4. Caveats that must ride any use of these numbers
 

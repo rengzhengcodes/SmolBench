@@ -191,6 +191,14 @@ def test_render_user_data_headroom_with_realistic_inputs():
     compressed_headroom = 16384 - compressed_size
     assert compressed_size < 16384, f"compressed user-data over the 16 KB cap: {compressed_size} bytes"
     assert compressed_headroom > 0, f"no compressed headroom left ({compressed_size} bytes packed)"
+    # Floor at 6 KB: the docs quote the live headroom, and it has silently
+    # drifted once already (10,615 -> 9,025 when the section-5 fingerprint
+    # landed, leaving stale "~11 KB" claims in three files). Tripping this
+    # floor is the signal to re-measure and update every doc site, not to
+    # lower the floor.
+    assert compressed_headroom > 6000, (
+        f"compressed headroom {compressed_headroom} fell below the 6 KB floor -- "
+        "re-measure and update the doc/comment sites quoting the margin")
     print(
         f"user-data size: raw={raw_size} bytes (cap {'EXCEEDED' if raw_size >= 16384 else 'OK'}), "
         f"compressed={compressed_size}/16384 bytes (headroom {compressed_headroom})"

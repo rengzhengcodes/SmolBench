@@ -497,7 +497,12 @@ serving configuration, in the same commit that carries this note.]**
   headroom under real inputs was 7 bytes before the pin, and the digest ref
   put the render 57 bytes over — so user-data is now
   **gzip-compressed at provision time** (cloud-init auto-detects gzip; the cap
-  now binds on compressed bytes, leaving ~11 KB of headroom). Both notebook
+  now binds on compressed bytes — ~10.6 KB of headroom at adoption, **9,025
+  bytes (~8.8 KB) after the §5 fingerprint additions**, floor-guarded at 6 KB
+  by the headroom canary test). One disclosed exception to the dev122 pin:
+  `run_fleet` keeps `deepseek-v4-flash`/`-pro` on the v0.27.1 build (digest
+  `0e1ee527…`) for SM90 serving correctness — digest-pinned, never
+  hinge-certified. Both notebook
   `keys.env` files were repointed at the digest as well, since their env value
   overrides the code default.
 - **#2** every deploy spec pins `--revision` AND `--tokenizer-revision` to the
@@ -523,8 +528,9 @@ serving configuration, in the same commit that carries this note.]**
   correctness), deliberately: it was
   never recorded, so any pin today would be a guess; with the image
   digest-pinned and each lane's instance type fixed, autoselection is a pure
-  function of pinned inputs. Recording it (§5) is the prerequisite for an
-  explicit pin, not the other way around.
+  function of pinned inputs. Recording landed 2026-08-18 (best-effort
+  log-tail mining, `attention_backend_log` in `server_config`); an explicit
+  per-model pin can now be grounded in recorded selections when wanted.
 - Client-side `EC2_MAX_PARALLEL_REQUESTS` is untouched: with
   `--max-num-seqs 1` the server serializes compute, and with caching off and
   eager mode each request's computation is isolated, so client arrival order
@@ -538,15 +544,22 @@ serving configuration, in the same commit that carries this note.]**
   gunzipped it; the control agent came up), the digest-pinned image served
   under the det bundle + revision pin, a seeded 4-question quiz scored 4/4,
   §5 fields all populated (`/version` = the certified dev122 build), clean
-  teardown, zero-instance sweep across all three regions.
+  teardown, and a sweep across all three regions showing zero RUNNING
+  instances (one pre-existing STOPPED `verify-lean` box remains in
+  us-west-2, deliberately untouched).
 
 
 ---
 
 ## 5. What to record so this is diagnosable next time [IMPLEMENTED 2026-08-18]
 
-> **STATUS: implemented and live-verified.** All nine fields below are now
-> captured — client-side in `server_config()` (`/version`, the raw
+> **STATUS: implemented and live-verified — with one gap caught by
+> adversarial review 2026-08-18 and closed the same day.** Eight of the nine
+> fields were captured at the canary; the ninth (the attention backend) was
+> NOT — the cache-config metric carries no backend label — and is now mined
+> best-effort from the container log tail (`attention_backend_log`; startup
+> lines can scroll off a long-serving box's tail, so call `server_config`
+> right after serve). The rest: client-side in `server_config()` (`/version`, the raw
 > `cache_config_info` metrics line, the actually-sent vllm_args/tp/max_model_len
 > stashed at serve time, client parallelism + streaming flags) and box-side via
 > a `fingerprint` object on the control agent's `/status` (docker RepoDigests,
@@ -615,11 +628,18 @@ headline metric move when the serving process changes?*
 
 ### 6.2 The measurement [MEASURED 2026-08-18 — flip rate 9.5%, CI [5.8%, 14.4%], ±2.1 pts on pass@1]
 
-> **Run exactly as designed below**: n=200 `Random(0)` cells from
-> nemotron-3-nano-4b's 711-cell measurable Mathlib population, re-generated
-> on one fresh g6e.4xlarge (~3 h box time, ≈$5 — under the $10-17 estimate)
-> under the stock-config reconstruction (the study estimand; the specs now
-> default to the determinism bundle), both sides graded by today's verifier.
+> **Run as designed below with two disclosed deviations**: n=200 `Random(0)`
+> cells from nemotron-3-nano-4b's 711-cell measurable Mathlib population,
+> re-generated on one fresh box (~3 h, ≈$5 — under the $10-17 estimate) under
+> the stock SAMPLING config (prefix caching on, no determinism bundle) —
+> both sides graded by today's verifier. Deviation 1: the box is a
+> **g6e.2xlarge in us-west-2a** — every g6e.4xlarge and 8xlarge AZ was dry —
+> while the study lane ran a g6e.4xlarge in us-east-2b (both exactly one
+> L40S, enforced by the GPU pin). Deviation 2: the rerun pins the image
+> digest and `--revision`, which the study's `:nightly`-era box did not, and
+> the study's own build/revision are unrecoverable (§1.4/§1.6) — so the 9.5%
+> **upper-bounds the pure process term** (it may include build/weights
+> drift, and instance-size/region are crossed with it).
 > **b = 6 (orig pass → rerun fail), c = 13 (orig fail → rerun pass), 19/200
 > discordant.** The b-vs-c asymmetry is not significant (two-sided
 > McNemar-binomial p ≈ 0.17). **Verifier drift: 200/200 exact agreement**
@@ -628,10 +648,14 @@ headline metric move when the serving process changes?*
 > comparability certificate for the same-day DojoInit recovery, on top of
 > its 30/30 control gate). The write-up sentence this section prescribes,
 > filled in: *"The per-cell flip probability across processes was measured
-> at 9.5% (95% CI [5.8%, 14.4%], n = 200, one model), contributing ±2.1
-> points to a lane's pass@1."* Instructive divergence from §6.3's 0/74:
-> the free bound's outcome-selection concentrated hard, concordantly-failing
-> cells — under-detection, exactly as its MEASURED banner records.
+> at 9.5% (95% CI [5.8%, 14.4%], n = 200, one lane)."* The ±2.1-point
+> figure is the 1-SE width of the flip-RATE estimate at n=200 (the report's
+> own field and caveat say exactly this; cells share theorems, so it is
+> likely too narrow) — the lane-level quantity is smaller: ≈**±1.2 points
+> of process-swap SD on a 712-cell lane's pass@1**. And the byte-level
+> datum for this sample: **178/200 (89%) of the re-generations differ in
+> text** while 9.5% flip score — §6.1's "byte agreement is the wrong
+> metric", now quantitative.
 > Driver: `scripts/flip_probe.py` (sample sha `bf22495e…`); data:
 > `s3://…/deduction/runs/flip_nemotron-3-nano-4b/` and
 > `notebooks/deduction/results/runs/flip_nemotron-3-nano-4b/flip_report.json`.
@@ -677,21 +701,27 @@ not put a number on it that has not been measured.
 
 ### 6.3 A free, biased lower bound that already exists
 
-> **[MEASURED 2026-08-18 — 0/74 flips, exact 95% CI [0, 4.9%].]** Both
-> attempts of all 74 pairs (ministral-3-3b 63, qwen3.5-27b 6, gemma-4-31b 5
-> — reproducing this section's accounting exactly) were re-verified by
-> today's verifier (`scripts/flip_free_bound.py`; results in
-> `notebooks/deduction/results/flip_free_bound_2026-08-18.json`). Zero
-> verdict flips, first-vs-second AND first-vs-last. 7 pairs are
-> byte-identical text; the other 67 differ — token-level cross-process
-> nondeterminism is present in this very sample, and the score level did
-> not move once. The selected-on-outcome caveat below stands, with one
-> correction the measurement itself supplies: the argued bias direction
-> (over-estimate via regression to the mean) did not materialize — the
-> conditioning event was a failed-looking first attempt, which concentrated
-> HARD cells into concordant failures, so this sample plausibly
-> UNDER-detects flips instead. Either way it cannot substitute for §6.2's
-> unbiased n=200 measurement, which is running as designed.
+> **[FIRST MEASUREMENT RETRACTED; REMEASURED 2026-08-18 — 3/74 flips
+> (4.1%), exact 95% CI [0.8%, 11.4%].]** The initially published "0/74
+> flips, CI [0, 4.9%]" was **VOID, not conservative**: the driver omitted
+> the `kind:"cell"` row field, `lean_verify_rows.group_unverified` silently
+> skipped every row, and the zero was arithmetically forced from
+> `unverified` sentinels. Caught by adversarial verification (the detector:
+> a paired-zeros table whose companion drift check ALSO read zero — that
+> combination is a verifier fault, never a finding), fixed (`kind` guard +
+> a hard no-op assertion that refuses to tabulate unverified rows), and
+> re-run. The real result: **3/74 pairs flip**, all fail→pass, all Mathlib
+> (69 Mathlib + 5 std pairs; the 63/6/5 lane accounting reproduced). The
+> sample's structure, also now measured: in ALL 74 pairs the FIRST
+> surviving attempt returned empty text, and no pair holds two distinct
+> non-empty generations — so this sample carries **no token-level
+> nondeterminism signal at all**; it measures "does a resample of an
+> empty-return cell succeed", and its 4.1% UNDER-detects relative to
+> §6.2's unbiased 9.5%, consistent with the selection event (an empty
+> return) marking hard cells. The selected-on-outcome caveat below stands
+> with its direction now measured: under-estimate, not the argued
+> over-estimate. `scripts/flip_free_bound.py`; results in
+> `notebooks/deduction/results/flip_free_bound_2026-08-18.json`.
 
 The resampling bug left **74 cells with more than one surviving attempt**
 (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5 — inventory §"pass@1

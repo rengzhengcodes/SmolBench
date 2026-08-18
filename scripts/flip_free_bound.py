@@ -130,6 +130,13 @@ def main():
         for key, rows in sorted(multi.items()):
             for ai, row in enumerate(rows):
                 vrows.append({
+                    # kind:"cell" is LOAD-BEARING: lean_verify_rows'
+                    # group_unverified() skips any row without it, which
+                    # silently no-ops the whole verification (2026-08-18: the
+                    # first run of this script omitted it and its published
+                    # "0/74 flips" was arithmetically forced from 'unverified'
+                    # sentinels -- caught by adversarial verification, RETRACTED).
+                    "kind": "cell",
                     "theorem_id": key[0], "k": key[1], "rung": key[2],
                     "replicate_idx": key[3], "model": lane,
                     "file_path": rows[0].get("file_path", ""),
@@ -140,6 +147,11 @@ def main():
         t0 = time.monotonic()
         rec.verify_rows_in_place(vrows)
         elapsed = time.monotonic() - t0
+        stuck = [v for v in vrows if v["verdict"] == "unverified"]
+        assert not stuck, (
+            f"{lane}: {len(stuck)} rows still 'unverified' after the pass -- "
+            "verification no-oped (the exact fault the first run of this "
+            "script shipped); refusing to compute a forced-zero flip table")
         by_cell = defaultdict(list)
         for v in vrows:
             by_cell[v["_cell"]].append(v)
@@ -148,13 +160,15 @@ def main():
             atts.sort(key=lambda v: v["_attempt"])
             verdicts = [a["verdict"] for a in atts]
             passes = [v == "success" for v in verdicts]
+            texts = [a["candidate_proof"] or "" for a in atts]
             pairs.append({
                 "lane": lane, "cell": list(key),
-                "is_std": str(atts[0].get("file_path", "")).startswith(STD_PREFIX)
-                          or key[0].split(".")[0] in ("Array", "List", "String",
-                                                      "Std", "Int", "Nat"),
+                "is_std": str(atts[0].get("file_path", "")).startswith(STD_PREFIX),
                 "verdicts": verdicts,
-                "identical_text": len({a["candidate_proof"] for a in atts}) == 1,
+                "identical_text": len(set(texts)) == 1,
+                "n_empty_attempts": sum(1 for t in texts if not t.strip()),
+                "n_nonempty_attempts": sum(1 for t in texts if t.strip()),
+                "first_empty": not texts[0].strip(),
                 "flip_first_vs_second": passes[0] != passes[1],
                 "flip_first_vs_last": passes[0] != passes[-1],
             })
@@ -169,10 +183,17 @@ def main():
     lo, hi = exact_binom_ci(flips, n)
     report["summary"] = {
         "n_pairs": n, "identical_text_pairs": ident,
+        "std_pairs": sum(p["is_std"] for p in all_pairs),
+        "pairs_first_attempt_empty": sum(p["first_empty"] for p in all_pairs),
+        "pairs_with_two_nonempty_attempts": sum(
+            1 for p in all_pairs if p["n_nonempty_attempts"] >= 2),
         "flips_first_vs_second": flips,
         "flip_rate": round(flips / n, 4) if n else None,
         "ci95": [round(lo, 4), round(hi, 4)],
         "flips_first_vs_last": sum(p["flip_first_vs_last"] for p in all_pairs),
+        "flips_mathlib_only": sum(
+            p["flip_first_vs_second"] for p in all_pairs if not p["is_std"]),
+        "n_mathlib_pairs": sum(1 for p in all_pairs if not p["is_std"]),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(report, indent=1))
