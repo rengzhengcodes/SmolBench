@@ -156,6 +156,25 @@ def golden_std_keys(std45: List[Dict[str, Any]]) -> set:
     return {(t["theorem_id"], k) for t in std45 for k in t["ks"]}
 
 
+def dedupe_earliest(rows) -> Tuple[List[Dict[str, Any]], int]:
+    """Earliest-wins dedupe by cell key; returns (rows, n_duplicates_dropped).
+
+    The six re-collected lanes carry duplicate cell rows from the 2026-08-15
+    resampling era (measured live: qwen3.5-27b has 178 std rows over 151
+    distinct cells). File order is chronological append, so keeping the
+    FIRST occurrence implements the standing earliest-wins ruling.
+    """
+    seen: Dict[Tuple, Dict[str, Any]] = {}
+    dupes = 0
+    for r in rows:
+        key = (r["theorem_id"], r["k"], r["rung"], r.get("replicate_idx", 0))
+        if key in seen:
+            dupes += 1
+            continue
+        seen[key] = r
+    return list(seen.values()), dupes
+
+
 # ---------------------------------------------------------------------------
 # Shared verification core (the prototype's loop, factored)
 def verify_rows_in_place(rows: List[Dict[str, Any]]) -> None:
@@ -254,11 +273,11 @@ def stage_controls(args) -> None:
     picked: List[Dict[str, Any]] = []
     for lane in CONTROL_LANES:
         by_verdict: Dict[str, List[Dict[str, Any]]] = {v: [] for v in CONTROL_VERDICTS}
-        for row in s3_stream_rows(lane):
+        lane_cells, _dupes = dedupe_earliest(
+            row for row in s3_stream_rows(lane) if row.get("kind") == "cell")
+        for row in lane_cells:
             # verified_rows carries 300 kind="sanity" rows with NO file_path;
             # only kind="cell" rows are cells (confirmed live 2026-08-18).
-            if row.get("kind") != "cell":
-                continue
             if (not row["file_path"].startswith(STD_PREFIX)
                     and row.get("verdict") in by_verdict):
                 by_verdict[row["verdict"]].append(row)
@@ -302,11 +321,15 @@ def recover_lane(lane: str, force: bool = False) -> Dict[str, Any]:
     require_lake()
     std45 = load_std45()
     golden = golden_std_keys(std45)
-    originals = [r for r in s3_stream_rows(lane)
-                 if r.get("kind") == "cell"
-                 and r["file_path"].startswith(STD_PREFIX)]
+    raw = [r for r in s3_stream_rows(lane)
+           if r.get("kind") == "cell"
+           and r["file_path"].startswith(STD_PREFIX)]
+    originals, dupes = dedupe_earliest(raw)
+    if dupes:
+        log.info("%s: dropped %d duplicate std rows (earliest-wins)", lane, dupes)
     assert len(originals) == STD_ROWS_PER_LANE, (
-        f"{lane}: expected {STD_ROWS_PER_LANE} std rows, found {len(originals)}")
+        f"{lane}: expected {STD_ROWS_PER_LANE} distinct std cells, found "
+        f"{len(originals)} ({len(raw)} rows, {dupes} duplicates dropped)")
     got_keys = {(r["theorem_id"], r["k"]) for r in originals}
     assert got_keys == golden, (
         f"{lane}: std (theorem,k) set diverges from golden: "
@@ -398,10 +421,10 @@ def stage_report(args) -> None:
             assert unrec == ref_unrecovered, (
                 f"{lane}: unrecoverable set diverges ({len(unrec)} vs "
                 f"{len(ref_unrecovered)}) -- the F8 class must be model-independent")
-        study = {"success": 0, "lean_error": 0, "incomplete": 0, "other": 0}
-        for row in s3_stream_rows(lane):
-            if row.get("kind") != "cell":
-                continue  # sanity rows have no file_path and are not cells
+        study = {"success": 0, "lean_error": 0, "incomplete": 0, "given_up": 0, "other": 0}
+        lane_cells, _d = dedupe_earliest(
+            r for r in s3_stream_rows(lane) if r.get("kind") == "cell")
+        for row in lane_cells:
             if row["file_path"].startswith(STD_PREFIX):
                 continue
             v = row.get("verdict")

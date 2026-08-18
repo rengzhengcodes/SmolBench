@@ -110,6 +110,16 @@ def test_recover_lane_count_assert(rec, monkeypatch, tmp_path):
             for _ in range(150)]
     # a sanity row (no file_path) must be skipped, not crash the filter
     rows.append({"theorem_id": "T0", "kind": "sanity", "verdict": "success"})
+    # a DUPLICATE of an existing cell must be dropped earliest-wins, so it
+    # must NOT rescue the 150-distinct count (151 rows, 150 distinct)
+    rows.append(dict(rows[0]))
     monkeypatch.setattr(rec, "s3_stream_rows", lambda lane: iter(rows))
-    with pytest.raises(AssertionError, match="expected 151 std rows, found 150"):
+    with pytest.raises(AssertionError, match="expected 151 distinct std cells, found "):
         rec.recover_lane("some-lane")
+
+
+def test_dedupe_earliest_wins(rec):
+    a = {"theorem_id": "T", "k": 1, "rung": "stepk:1", "replicate_idx": 0, "verdict": "success"}
+    b = dict(a, verdict="lean_error")  # later duplicate must lose
+    kept, dupes = rec.dedupe_earliest([a, b])
+    assert dupes == 1 and kept == [a] and kept[0]["verdict"] == "success"
