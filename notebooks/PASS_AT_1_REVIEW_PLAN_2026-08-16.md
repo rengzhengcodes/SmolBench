@@ -175,6 +175,21 @@ Zero mismatches, zero missing, zero local-only. 2492 = 21 × 4 × 30 − 28, the
 size-based claim in the published doc is now confirmed at content level.
 (Script: `<scratchpad>/md5_sweep.py`, read-only.)
 
+> **[Scope note, 2026-08-21.]** Two limits on what this sweep gates, neither of which
+> changes its PASS:
+>
+> 1. **Coverage is 2,492 of the closed tree's 2,520 cells (98.9%).** The 28 uncovered
+>    cells are `ministral-3-14b` seeds 19 and 24–29 × 4 arms, which had not landed when
+>    the listing was taken. Those 28 are closed by the **post-ruling `sync_down` re-run
+>    (0 downloaded / 2,520 skipped, ETag/MD5-based)** recorded in §5/R1 — not by this
+>    md5 pass.
+> 2. **This sweep compared each local file to the NEWEST S3 object**, because it
+>    predates the 2026-08-16 earliest-wins ruling. The tree it ran against no longer
+>    exists: the §4 banner records the re-sync that replaced 156 files, and the current
+>    tree is earliest-selected (e.g. `gemma4_12b_extens` = 148/270 = 0.5481, the
+>    earliest value, not the newest 0.5407). The post-ruling `sync_down` re-run above is
+>    what content-gates the tree as analyzed.
+
 ### 2.6 Deduction: the 2026-08-15 check RE-VALIDATED on the 2026-08-16 snapshot
 
 The stale check (74 cells / 3 lanes) was re-derived from scratch against
@@ -291,6 +306,14 @@ trace — all 2492 local files are byte-identical to their S3 originals, and `sy
 is documented as a one-way overwrite that *"silently DISCARDS"* local-only edits
 (`results_store.py:1289-1294`). **Not verified:** I did not audit shell history for an
 attempted invocation; the code-level guard plus the byte-level identity is what I have.
+
+> **[Scope note, 2026-08-21 — rest this on the post-ruling sync, not on §2.5.]** §2.5's
+> md5 pass covers 2,492 of 2,520 cells and compared against the NEWEST S3 object, on a
+> tree that the earliest-wins re-sync has since replaced (156 files). The belt-and-braces
+> argument therefore stands on the **post-ruling `sync_down` re-run — 0 downloaded /
+> 2,520 skipped** (§5/R1), which establishes byte-identity of every cell in the analyzed
+> tree against its EARLIEST S3 object, including the 28 late `ministral-3-14b` cells.
+> The conclusion is unchanged; only its supporting measurement moves.
 
 ### 2.10 `scripts/merge_lean_shards.py` — collisions are FATAL, never resolved
 
@@ -824,7 +847,9 @@ cell set across 21 lanes) but for `exception` the argument is causal, not statis
 **Downgraded from "largest unquantified selection risk" — the `deepseek-v3.1` case that
 motivated it does not exist** (orchestrator check, 2026-08-16) [VERIFIED]. The 415 figure
 is a count of *rows*, not of cells: this lane has 529 single-row cells and 415 two-row
-cells, the second row of each being the authorised p5e repair. Resolved per cell under
+cells, the second row of each being the authorised repair [corrected 2026-08-21: the
+repair ran on a second `p5en.48xlarge` in us-east-2a, not the authorised `p5e`
+fallback, which was never exercised]. Resolved per cell under
 the earliest-surviving rule the lane lands at exactly **712 measurable / 232 unmeasurable
 — the same split as every other lane**, with the 232 breaking down as 139 cells whose
 only row is `replay_failed` plus 93 whose first row is an `exception` and whose repair

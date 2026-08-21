@@ -1,0 +1,466 @@
+{
+ "item1_induction_md5_regate": {
+  "gate": "ETag(md5) of the EARLIEST S3 object per (model,seed,arm) vs hashlib.md5 of the local file -- the same rule as results_store.sync_down",
+  "analysis_snapshot_prefix": "analysis/2026-08-16/induction/",
+  "live_prefix": "induction/",
+  "objects": 2660,
+  "cells": 2520,
+  "multi_attempt_cells": 140,
+  "md5_match_earliest": 2520,
+  "missing": 0,
+  "md5_mismatch": 0,
+  "multipart_unverifiable": 0,
+  "lanes_at_R30": 21,
+  "snapshot_vs_live": "identical: same 2660 keys, same sizes, same ETags; 0 cells differ",
+  "dup_lanes": {
+   "gemma-4-12b": 56,
+   "deepseek-v4-flash": 48,
+   "ministral-3-14b": 36
+  },
+  "dup_earliest_vs_latest_md5_differ": 140,
+  "gemma-4-12b_seed8_extens": {
+   "earliest": [
+    "20260812T092129",
+    922083,
+    "c654f7d135eae577a5b39338c7b7ddbe"
+   ],
+   "newest": [
+    "20260814T014842",
+    1319921,
+    "1c5806dee452ecadcd7245759cd0a976"
+   ]
+  },
+  "local_side_bijection": "find rep_*.yaml = 2520 across 84 lane_arm dirs (85th dir = fleet_logs, 0 rep files); every dir holds exactly 30 -> bijection, not one-way cover"
+ },
+ "item3_superseded_file": {
+  "key": "deduction/runs/scaling_nemotron-3-nano-4b/all_rows_SUPERSEDED-mixed-4xl-2xl-2026-08-15.jsonl",
+  "ContentLength": 67197216,
+  "documented": 67197216,
+  "match": true,
+  "ETag": "02cbca989a3e70a6b87947b671b1bb86-9 (multipart, 9 parts)",
+  "LastModified": "2026-08-15T12:59:43+00:00",
+  "second_copy": "analysis/2026-08-16/deduction/nemotron-3-nano-4b/... same 67197216 bytes"
+ },
+ "item2_deduction_box_provenance": {
+  "server_config_sidecars": {
+   "flip_nemotron-3-nano-4b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-078685504837ee403"
+    ],
+    "types": [
+     "g6e.2xlarge"
+    ],
+    "azs": [
+     "us-west-2a"
+    ],
+    "images": [
+     "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+    ],
+    "captured_utc": [
+     "20260818T032554Z",
+     "20260818T032554Z"
+    ]
+   },
+   "scaling_deepseek-v3.1": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-08e296894dd1d0b75"
+    ],
+    "types": [
+     "p5en.48xlarge"
+    ],
+    "azs": [
+     "us-east-2a"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260816T034509Z",
+     "20260816T034509Z"
+    ]
+   },
+   "scaling_exaone-4.5-33b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-0ab8f60bcde4bcd72"
+    ],
+    "types": [
+     "g6e.12xlarge"
+    ],
+    "azs": [
+     "us-east-2c"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260814T224318Z",
+     "20260814T224318Z"
+    ]
+   },
+   "scaling_gemma-4-12b": {
+    "entries": 5,
+    "distinct_instances": [
+     "i-023364e0cc2bf6be0",
+     "i-036cb1a8a1eb106be",
+     "i-07564f7d132a5438b",
+     "i-0be4576505e9b8ca8"
+    ],
+    "types": [
+     "g7.12xlarge"
+    ],
+    "azs": [
+     "us-west-2b"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260814T053231Z",
+     "20260814T115916Z"
+    ]
+   },
+   "scaling_gemma-4-31b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-08a19d741fbaba5f2"
+    ],
+    "types": [
+     "g6e.12xlarge"
+    ],
+    "azs": [
+     "us-east-2c"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260815T053922Z",
+     "20260815T053922Z"
+    ]
+   },
+   "scaling_ministral-3-14b": {
+    "entries": 3,
+    "distinct_instances": [
+     "i-0c9eeffb0d2d6228a",
+     "i-0cb0baefcd76a0688",
+     "i-0ebc4cfd8328b09d4"
+    ],
+    "types": [
+     "g7.24xlarge"
+    ],
+    "azs": [
+     "us-west-2d"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260814T113806Z",
+     "20260814T113810Z"
+    ]
+   },
+   "scaling_ministral-3-3b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-0a3b251ffc3683af9"
+    ],
+    "types": [
+     "g6e.4xlarge"
+    ],
+    "azs": [
+     "us-east-2b"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260815T142214Z",
+     "20260815T142214Z"
+    ]
+   },
+   "scaling_nemotron-3-nano-4b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-05428528f2aef631f"
+    ],
+    "types": [
+     "g6e.4xlarge"
+    ],
+    "azs": [
+     "us-east-2b"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260815T130446Z",
+     "20260815T130446Z"
+    ]
+   },
+   "scaling_qwen3.5-27b": {
+    "entries": 1,
+    "distinct_instances": [
+     "i-035832a2e32489247"
+    ],
+    "types": [
+     "g6e.12xlarge"
+    ],
+    "azs": [
+     "us-east-2c"
+    ],
+    "images": [
+     "vllm/vllm-openai:nightly"
+    ],
+    "captured_utc": [
+     "20260815T030126Z",
+     "20260815T030126Z"
+    ]
+   }
+  },
+  "final_manifests": {
+   "flip_nemotron-3-nano-4b": {
+    "started_at": "2026-08-18T03:25:54",
+    "finished_at": "2026-08-18T06:30:25",
+    "counts": {
+     "written": 200,
+     "skipped": 304,
+     "success": 0
+    }
+   },
+   "scaling_canary": {
+    "started_at": "2026-08-11T06:32:19",
+    "finished_at": "2026-08-11T06:32:19",
+    "counts": {
+     "written": 1,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_deepseek-v3.1": {
+    "started_at": "2026-08-16T03:45:09",
+    "finished_at": "2026-08-16T04:29:26",
+    "counts": {
+     "written": 415,
+     "skipped": 529,
+     "success": 0
+    }
+   },
+   "scaling_deepseek-v4-flash": {
+    "started_at": "2026-08-13T19:39:50",
+    "finished_at": "2026-08-13T20:35:59",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_deepseek-v4-pro": {
+    "started_at": "2026-08-13T17:17:06",
+    "finished_at": "2026-08-13T19:54:51",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_exaone-4.0-32b": {
+    "started_at": "2026-08-11T20:24:55",
+    "finished_at": "2026-08-12T04:29:12",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_exaone-4.5-33b": {
+    "started_at": "2026-08-14T22:43:18",
+    "finished_at": "2026-08-15T01:48:36",
+    "counts": {
+     "written": 141,
+     "skipped": 803,
+     "success": 0
+    }
+   },
+   "scaling_gemma-4-12b": {
+    "started_at": "2026-08-14T11:54:25",
+    "finished_at": "2026-08-14T13:13:35",
+    "counts": {
+     "written": 442,
+     "skipped": 502,
+     "success": 0
+    }
+   },
+   "scaling_gemma-4-31b": {
+    "started_at": "2026-08-15T05:39:22",
+    "finished_at": "2026-08-15T05:44:39",
+    "counts": {
+     "written": 5,
+     "skipped": 939,
+     "success": 0
+    }
+   },
+   "scaling_gemma-4-e2b": {
+    "started_at": "2026-08-11T11:13:46",
+    "finished_at": "2026-08-11T11:49:38",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_glm-4.5-air": {
+    "started_at": "2026-08-11T15:15:50",
+    "finished_at": "2026-08-11T16:30:53",
+    "counts": {
+     "written": 434,
+     "skipped": 510,
+     "success": 0
+    }
+   },
+   "scaling_glm-4.7-flash": {
+    "started_at": "2026-08-13T10:06:29",
+    "finished_at": "2026-08-13T12:55:39",
+    "counts": {
+     "written": 216,
+     "skipped": 728,
+     "success": 0
+    }
+   },
+   "scaling_glm-4.7": {
+    "started_at": "2026-08-11T15:45:06",
+    "finished_at": "2026-08-11T21:13:51",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_k-exaone-236b-a23b": {
+    "started_at": "2026-08-11T15:22:53",
+    "finished_at": "2026-08-12T00:40:10",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_ministral-3-14b": {
+    "started_at": "2026-08-14T11:38:11",
+    "finished_at": "2026-08-14T12:57:20",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_ministral-3-3b": {
+    "started_at": "2026-08-15T14:22:14",
+    "finished_at": "2026-08-15T14:46:57",
+    "counts": {
+     "written": 12,
+     "skipped": 932,
+     "success": 0
+    }
+   },
+   "scaling_ministral-3-8b": {
+    "started_at": "2026-08-11T12:49:42",
+    "finished_at": "2026-08-11T13:16:14",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_nemotron-3-nano-30b-a3b": {
+    "started_at": "2026-08-11T15:14:50",
+    "finished_at": "2026-08-11T23:17:27",
+    "counts": {
+     "written": 779,
+     "skipped": 165,
+     "success": 0
+    }
+   },
+   "scaling_nemotron-3-nano-4b": {
+    "started_at": "2026-08-15T13:04:46",
+    "finished_at": "2026-08-15T22:14:15",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_nemotron-3-super-120b-a12b": {
+    "started_at": "2026-08-11T11:27:54",
+    "finished_at": "2026-08-11T14:15:59",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_qwen3.5-122b-a10b": {
+    "started_at": "2026-08-11T13:34:57",
+    "finished_at": "2026-08-11T14:28:10",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   },
+   "scaling_qwen3.5-27b": {
+    "started_at": "2026-08-15T03:01:26",
+    "finished_at": "2026-08-15T03:01:52",
+    "counts": {
+     "written": 1,
+     "skipped": 943,
+     "success": 0
+    }
+   },
+   "scaling_qwen3.5-397b-a17b": {
+    "started_at": "2026-08-11T11:50:09",
+    "finished_at": "2026-08-11T12:27:05",
+    "counts": {
+     "written": 944,
+     "skipped": 0,
+     "success": 0
+    }
+   }
+  },
+  "headline": "S3 ADDS ZERO NEW LANES. The 8 lanes with a server_config.yaml sidecar are EXACTLY the 8 that already had local logs; the 13 unverifiable lanes stay unverifiable.",
+  "mechanism": "sidecar writing landed in commit 040d2e83; all 13 sidecar-less lanes finished <=2026-08-13, every sidecar-bearing lane's manifest is >=2026-08-14",
+  "lanes_without_any_provenance": [
+   "deepseek-v4-flash",
+   "deepseek-v4-pro",
+   "exaone-4.0-32b",
+   "gemma-4-e2b",
+   "glm-4.5-air",
+   "glm-4.7",
+   "glm-4.7-flash",
+   "k-exaone-236b-a23b",
+   "ministral-3-8b",
+   "nemotron-3-nano-30b-a3b",
+   "nemotron-3-super-120b-a12b",
+   "qwen3.5-122b-a10b",
+   "qwen3.5-397b-a17b"
+  ],
+  "sidecar_inference_broken_both_ways": {
+   "gemma-4-31b": "1 sidecar entry BUT final manifest written=5/skipped=939 -> certifies a 5-cell repair pass, not the lane",
+   "ministral-3-14b": "3 distinct instances WITH written=944/skipped=0 in one pass -> written=944 does not imply one process"
+  },
+  "verdict": "register round2[7] rulings[8] (MODIFIED) and new_findings[4] (OVERCLAIM) STAND UNCHANGED after S3 access. nemotron-3-nano-4b's own single-box claim is SUPPORTED (sidecar: 1 box i-05428528f2aef631f g6e.4xlarge us-east-2b, co-terminous with a manifest that wrote all 944 cells 2026-08-15 13:04:46->22:14:15); 'the only lane' remains unprovable.",
+  "upload_session_table_dropped": "the ~2490 per-lane objects are per-theorem artifacts (meta.json/outputs/*.jsonl/prompts/*.md) uploaded in one burst; the nemotron 2026-08-14T11:59 outlier is verified_rows_BROKEN-dojoinit_archived-2026-08-14.jsonl, an explicitly archived artifact, not a generation object. No anomaly."
+ },
+ "item4_vllm_image": {
+  "scaling_nemotron-3-nano-4b": "vllm/vllm-openai:nightly  (FLOATING TAG, no digest recorded)",
+  "flip_nemotron-3-nano-4b": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+  "verdict": "CONFIRMS DETERMINISM_PLAN 6.2 deviation 2 / 1.4 / 1.6: the study lane's build is unrecoverable, so 9.5% upper-bounds the pure process term"
+ },
+ "item5_loader_glob_safety": {
+  "check": "does any loader ingest the SUPERSEDED/STALE/BROKEN siblings?",
+  "result": "NO -- notebooks/deduction/power_analysis.py:1569 globs runs/scaling_*/verified_rows.jsonl by exact filename; the two *.jsonl globs (smolbench/deduction/lean/cli.py:855, runner.py:781) are scoped to a theorem's outputs/ dir, not the run root",
+  "archived_siblings_in_s3": "14x verified_rows_BROKEN-dojoinit_archived-2026-08-14.jsonl, 6x verified_rows_STALE-pre-rerun-2026-08-16.jsonl, 1x all_rows_SUPERSEDED-mixed-4xl-2xl-2026-08-15.jsonl; all 21 lanes carry a current verified_rows.jsonl"
+ }
+}

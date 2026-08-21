@@ -1,23 +1,40 @@
 """Deduction analogue of the induction `extens` vs `noise_intens` contrast.
 
-The question, on both legs, is the same one: **does the model do better because
-the context carries INFORMATION, or merely because it is longer?**
+Both legs ask a version of the same question -- **does the model do better
+because the context carries INFORMATION, or merely because it is longer?** -- but
+they vary DIFFERENT things, and the scope note below says exactly what this one
+varies before any comparison is drawn.
 
   induction:  `extens`  (fully enumerated position -> label listing)
               vs `noise_intens` (the compact rule, whitespace-padded to exactly
               the same TOKEN count under the model's own tokenizer)
 
-  deduction:  `hint:3`  (three real ground-truth proof tactics handed over)
-              vs `noise:3` (three JUNK tactics in the same slots)
+  deduction:  `hint:3` vs `noise:3` -- see the scope note below
 
 Both hold the context's size fixed and vary only whether it is informative, so
 a significant `hint:3` > `noise:3` says the model is using the content of the
 hint rather than responding to its bulk.
 
+Scope of the deduction arm -- narrower than the induction one
+-------------------------------------------------------------
+[Corrected 2026-08-21.] `hint:3` and `noise:3` are byte-identical through the
+current goal, the full tactic state, the proof so far, the premises used in the
+next tactic, their signatures and their full source. They differ ONLY in
+`hint:3`'s trailing 1-hop TRANSITIVE premise-closure block, which `noise:3`
+replaces with padding to the same token count. So this leg asks "does 1-hop
+transitive background ON TOP OF an already-complete direct-premise context
+help?", not "does the context carry information at all". It is NOT the deduction
+analogue of the induction extens-vs-noise contrast, which swaps the ENCODING of
+the whole evidence set; the two legs manipulate different things and their
+results are not interchangeable.
+
 Pairing: cells are matched on ``(theorem_id, k)`` WITHIN one model, so each
 model is its own control and the two rungs are compared on identical theorems
-at identical prefix depth. That makes exact McNemar the right test, as on the
-induction leg.
+at identical prefix depth. Exact McNemar is the right test HERE and stays the
+primary one -- unlike the two family-ladder families, which needed a cluster
+test in 2026-08-21: this contrast contributes exactly ONE cell per theorem per
+model, so the pairs really are independent and there is no cluster to correct
+for.
 
 Multiplicity: Holm-Bonferroni over the 21 models at FWER 0.05, matching the
 directive for the induction leg. Holm is valid under arbitrary dependence,
@@ -35,6 +52,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import binom
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -77,6 +95,28 @@ def load_rungs(path: Path, model: str) -> dict:
     return out
 
 
+def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
+    """Smallest pi >= 0.5 whose exact power at this rejection region hits `target`.
+
+    The rejection region is ``{b <= k_crit} U {b >= n_disc - k_crit}`` -- the
+    two-sided exact-McNemar region at the threshold `k_crit` was solved for --
+    and under a true discordant-favour probability pi the count b is
+    Binomial(n_disc, pi). Power is therefore available in CLOSED FORM, so this
+    is a deterministic bisection rather than a simulation: no seed, no
+    Monte-Carlo error, and a number that does not move between runs.
+    """
+    lo, hi = 0.5, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        power = binom.cdf(k_crit, n_disc, mid) + binom.sf(n_disc - k_crit - 1,
+                                                          n_disc, mid)
+        if power >= target:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rows-dir", type=Path, required=True)
@@ -96,8 +136,15 @@ def main(argv=None) -> int:
 
     rej = holm(np.array([r["p"] for r in rows]), ALPHA)
 
-    print("DEDUCTION: hint:3 (informative) vs noise:3 (length-matched junk), per model")
-    print("Paired exact McNemar on cells matched by (theorem, k) within each model.")
+    print("DEDUCTION: hint:3 vs noise:3, per model")
+    print("The two rungs are byte-identical except for hint:3's trailing 1-HOP "
+          "TRANSITIVE\npremise-closure block, which noise:3 replaces with "
+          "token-matched padding. So this\ntests supplementary background on top "
+          "of an already-complete direct-premise\ncontext -- NOT the same "
+          "manipulation as the induction extens-vs-noise contrast.")
+    print("Paired exact McNemar on cells matched by (theorem, k) within each "
+          "model -- one cell\nper theorem per model, so no cluster correction "
+          "applies here.")
     print(f"Holm-Bonferroni over m = {len(rows)} models at FWER {ALPHA}.\n")
     hdr = (f"{'model':30s} {'n':>5s} {'hint:3':>7s} {'noise:3':>8s} {'diff':>7s} "
            f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}")
@@ -119,18 +166,35 @@ def main(argv=None) -> int:
 
     # A null is uninterpretable without the effect it could have caught, so
     # report the MINIMUM DETECTABLE EFFECT rather than leaving the reader to
-    # assume the test was well powered. For each model, find the most balanced
-    # discordant split that would still clear Holm's FIRST (strictest)
-    # threshold at its observed discordant total.
+    # assume the test was well powered.
+    #
+    # TWO different quantities, and the earlier version of this report conflated
+    # them by calling the first one "the MDE":
+    #
+    #   boundary  -- the most balanced discordant split that would still clear
+    #                Holm's FIRST (strictest) threshold at the model's OBSERVED
+    #                discordant total. That is the smallest effect that WOULD
+    #                HAVE BEEN CALLED significant had it come out exactly at the
+    #                boundary: a ~50%-power figure, not a design's MDE.
+    #   mde80     -- the smallest TRUE effect this design would detect 80% of
+    #                the time: the smallest pi = P(a discordant pair favours
+    #                hint:3) whose exact-binomial power at that same threshold
+    #                reaches 0.80, expressed back in accuracy points.
+    #
+    # Both condition on the observed discordant total, which is itself random,
+    # so an unconditional MDE would be larger still.
     print(f"\n{'-' * 78}\nMINIMUM DETECTABLE EFFECT -- what this null actually rules out")
     print(f"{'-' * 78}")
-    print(f"At each model's OBSERVED discordant total, the most balanced split "
-          f"that would\nstill clear Holm's strictest step (alpha/{len(rows)} = "
-          f"{ALPHA / len(rows):.2e}), in accuracy points.\n")
-    print(f"{'model':30s} {'disc':>5s} {'needed split':>13s} {'= MDE':>7s} "
-          f"{'observed':>9s}")
-    print("-" * 70)
-    mdes = []
+    print(f"Both columns are evaluated at each model's OBSERVED discordant "
+          f"total, against\nHolm's strictest step (alpha/{len(rows)} = "
+          f"{ALPHA / len(rows):.2e}), in accuracy points.\n"
+          f"  boundary = smallest effect that would have REACHED significance "
+          f"(~50% power)\n  mde80    = smallest TRUE effect this design catches "
+          f"80% of the time\n")
+    print(f"{'model':30s} {'disc':>5s} {'needed split':>13s} {'boundary':>9s} "
+          f"{'mde80':>7s} {'observed':>9s}")
+    print("-" * 80)
+    boundaries, mde80s = [], []
     thresh = ALPHA / len(rows)
     for m in order:
         r = rows[idx[m]]
@@ -141,19 +205,35 @@ def main(argv=None) -> int:
                 need = k
                 break
         if need is None:
-            print(f"{m:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>7s} "
+            print(f"{m:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>9s} {'--':>7s} "
                   f"{r['acc_i'] - r['acc_n']:+9.3f}")
             continue
-        mde = (nd - 2 * need) / r["n"]
-        mdes.append(mde)
-        print(f"{m:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {mde:7.3f} "
-              f"{r['acc_i'] - r['acc_n']:+9.3f}")
-    if mdes:
-        print(f"\nMedian MDE: {np.median(mdes):.3f} accuracy points. Largest "
-              f"observed |difference|: "
+        boundary = (nd - 2 * need) / r["n"]
+        pi = _power_pi(nd, need, target=0.80)
+        mde80 = nd * (2 * pi - 1) / r["n"]
+        boundaries.append(boundary)
+        mde80s.append(mde80)
+        print(f"{m:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {boundary:9.3f} "
+              f"{mde80:7.3f} {r['acc_i'] - r['acc_n']:+9.3f}")
+    if boundaries:
+        print(f"\nMedian significance boundary (~50% power): "
+              f"{np.median(boundaries):.3f} accuracy points.")
+        print(f"Median 80%-power MDE:                      "
+              f"{np.median(mde80s):.3f} accuracy points "
+              f"(range {min(mde80s):.3f}-{max(mde80s):.3f}).")
+        print("  Provenance: mde80 is a deterministic bisection on the "
+              "CLOSED-FORM binomial power,\n  so it does not move between runs. "
+              "A 200k-draw simulated search of the same\n  quantity (external "
+              "audit, 2026-08-20) reported a median of 0.118; the per-model\n  "
+              "range agrees exactly. The one-thousandth gap on the median is "
+              "Monte-Carlo error\n  in that search, not a different "
+              "definition.")
+        print(f"Largest observed |difference|: "
               f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}.")
-        print("So this null rules out LARGE information effects, not small ones "
-              "-- see the\ncaveat in FAMILY_LADDER_ANALYSIS_2026-08-16.md.")
+        print("So this null rules out LARGE effects of 1-hop transitive premise "
+              "background,\nnot small ones. For scale, the induction leg's five "
+              "well-formed extens-vs-noise\neffects run 0.155-0.866 -- far above "
+              "either column here.")
     n_neg = sum(1 for r in rows if r["acc_i"] < r["acc_n"])
     n_pos = sum(1 for r in rows if r["acc_i"] > r["acc_n"])
     print(f"\nDirection of the point estimates, ignoring significance: "

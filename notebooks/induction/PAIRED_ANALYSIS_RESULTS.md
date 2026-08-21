@@ -29,6 +29,17 @@ Rejections at FWER 0.05 over the 210 PRIMARY contrasts:
 | unpaired CMH (what `power_analysis.py` plans) | 121 | 122 |
 | paired exact McNemar (what the design supports) | 120 | **123** |
 
+> **[Corrected 2026-08-21 — this table and the paragraph that follows it are
+> PRE-CLOSURE-R STALE.]** The counts above, and the "118 paired vs 117 unpaired" and
+> "Tier 3 returns 40 discoveries" figures just below, were computed on 2026-08-14 with
+> `min3_14b` at 23 seeds. Recomputed on the closed
+> R = 30 tree (all 21 lanes at 30 seeds, earliest-wins selection): **unpaired
+> harmonic-stratified CMH 122 (Bonferroni) / 124 (Holm); paired exact McNemar 123
+> (Bonferroni) / 125 (Holm).** The thesis is unchanged and was re-checked at the set
+> level rather than by differencing totals: pairing gains exactly **1** contrast and
+> loses **0**, the gained contrast still being `[nemo3 ladder | intens] nemo3_30b vs
+> nemo3_120b` (p_paired 4.88e-04 vs p_unpaired 9.19e-04).
+
 **Exactly one contrast changes status:** `[nemo3 ladder | intens] nemo3_30b vs
 nemo3_120b` (0.956 vs 1.000; p_paired 4.9e-4 vs p_unpaired 9.2e-4). Dropping
 item-pairs where either arm is invalid gives the same picture (118 paired vs 117
@@ -69,10 +80,38 @@ contrasts:
 |---|---|---|---|---|---|---|
 | 1.124 | 1.279 | 0.869 | 1.881 | 2.969 | 0.602 | 0.235 |
 
+> **[Corrected 2026-08-21 — pre-closure-R stale, same cause as the rejection table.]**
+> Recomputed on the closed R = 30 tree with this document's own formula
+> (`paired_analysis.py:202-224`): **n = 195** measurable PRIMARY contrasts, median
+> **1.078**, mean **1.268**, p10 0.869, p90 **1.885**, max 2.969, frac > 1.0 **0.646**,
+> frac > 1.5 **0.241**. `max` and `p10` are unchanged, which is the check that the
+> formula is being read the same way. The drift runs *against* the document — more
+> contrasts anticonservative, not fewer — and the sign conclusion below stands.
+
 **The sign is settled: mildly-to-moderately anticonservative.** The seed × arm
 interaction dominates, as expected, but the effect is ~1.1–1.9×, not the 56× worst case
 the simulation bracketed. Worth fixing with replicate-level resampling; not a reason to
 distrust the landed results.
+
+> **[Corrected 2026-08-21 — this recommendation is now IMPLEMENTED as the primary
+> test.]** "Worth fixing with replicate-level resampling" is no longer an open
+> suggestion: in the 2026-08-21 corrections pass the published family is reported with
+> the replicate **seed** as the resampling unit (exact seed-level cluster sign-flip),
+> which is what
+> `MULTIPLICITY_PLAN.md:286` and `MULTIPLICITY_CMH_VARIANTS.md:103-105` already
+> designated as the resampling unit. The item-level exact-McNemar p-values quoted
+> throughout this document are anticonservative because the 270 items per condition
+> are 30 seeds × 9 harmonics, not 270 independent pairs. Under the seed-level test the
+> Holm(210) rejection count is **119**, not 125 — 6 lost, 0 gained, and all six lost
+> contrasts are family-scaling (ladder) claims; the within-model information contrasts
+> are unchanged at 89 of 126 (measured in the corrections pass, not recomputed here).
+> See the regenerated `SIGNIFICANCE_REPORT.txt` / `EXTENS_VS_NOISE_REPORT.txt` in this
+> directory and `notebooks/FAMILY_LADDER_ANALYSIS_2026-08-16.md` for the current
+> headline. Note also
+> that a *second*, different quantity is sometimes called a design effect — Σd_s²/(b+c),
+> the ratio of sign-flip to McNemar null variance — which is inflated by the true
+> effect and is **not** comparable to the mean-centred figures tabled above; the two do
+> not contradict each other.
 
 ---
 
@@ -100,6 +139,29 @@ the recoverable formatting problem a compliance-aware regrade fixed on chromatic
 "The regrade is already applied" below.)
 
 **Quarantine those six.** The reportable noise finding is what survives with a clean arm:
+
+> **[Corrected 2026-08-21 — USER RULING: OUTPUT COLLAPSE IS A NOTABLE RESULT, NOT A
+> QUARANTINE.]** The "QUARANTINED" category is retired. The six collapsing arms above
+> (`exaone_32b` 99.6%, `exaone_33b` 99.6%, `min3_8b` 100%, `min3_14b` 100%,
+> `glm_flash` 60.0% incl. 48.9% empty, `glm_air` 30.7%) are **first-class findings**:
+> padding a prompt with whitespace to a matched token count destroys the output
+> contract in **6 of 21 models**. Consequences for how this document is read:
+>
+> * No contrast is excluded or fenced from the findings. Collapse is carried as a
+>   *mechanism annotation* on the affected contrasts and stated as a result in its own
+>   right.
+> * The extens-vs-noise story is **two-mechanism**, and both must be stated: an
+>   information / label-density effect where the noise arm stays well-formed, and a
+>   padding-robustness collapse (mechanically extens-higher) where it does not. Never a
+>   single filtered direction.
+> * The collapsed arms also fail their `zero`-arm positive controls. That is *part of*
+>   the collapse result and is reported plainly, not hidden.
+> * The m = 210 Holm correction is numerically unaffected — it always ran over all 210
+>   contrasts; the quarantine was presentational only.
+>
+> The table immediately below therefore reads as "the contrasts whose noise arm stayed
+> well-formed", not as "the only reportable ones". `glm_47` remains the clean
+> information-effect counter-example.
 
 | model | non-compliant | accuracy | p_paired | status |
 |---|---|---|---|---|
@@ -163,6 +225,10 @@ compliance-aware parser. A dry run over the whole study (`--study induction`, no
 accuracy after, `recov = 0` throughout. The landed data is *already* under the
 compliance-aware convention; the `compliance` field records violations that grading has
 already accounted for. **Regrade-vs-quarantine is not a live fork — only quarantine is.**
+**[Corrected 2026-08-21: "quarantine" is retired as a disposition — the collapse is now
+reported as a first-class result. The operative half of this sentence, that the regrade
+is a no-op, stands. See the ruling stamp above the surviving-arm table; the same applies
+to every later use of "quarantine" in this document.]**
 
 Reading the raw responses says why, and the three collapsed lanes are not the same
 failure:
@@ -247,6 +313,10 @@ That safety net does not exist for this study and the docstring should be correc
 5. **Quarantine, don't regrade** — the regrade is already applied and recovers nothing.
    Mark `exaone_32b`/`exaone_33b` noise and `glm_flash` noise UNUSABLE (not acc 0.000);
    report `glm_air` noise as degraded-with-caveat; report **glm_47 as the noise finding**.
+   **[Corrected 2026-08-21: the "quarantine" half is superseded by the user ruling —
+   the collapse is reported as a first-class result on all six lanes, nothing is
+   fenced, and the story is two-mechanism. The "don't regrade" half stands. See the
+   stamp above the surviving-arm table.]**
 6. **Hold all Ministral conclusions.** All four arms are contaminated, and `min3_14b`
    drives the R = 78 figure. Its seed count is **provisional and mid-repair** (see Open
    Questions item 3) — re-derive when it drains rather than caveating on a number that is
@@ -257,7 +327,8 @@ That safety net does not exist for this study and the docstring should be correc
    **27.5% are compliant**: 30.1% degenerate-repetition, 26.6% multiple-values, 15.2%
    empty. Independently measured in both sessions, from S3 and from the local tree, in
    agreement. That is the basis of the quarantine recommendation, and it is a statement
-   about the marks, not about the fleet.
+   about the marks, not about the fleet. *[2026-08-21: "quarantine" here and below reads
+   as "annotate the collapse and report it", per the ruling stamp above.]*
 
    **Keep this separate from the fleet's health.** The recommendation above is about
    whether the lane's *marks* are worth reporting. It never depended on the lane being

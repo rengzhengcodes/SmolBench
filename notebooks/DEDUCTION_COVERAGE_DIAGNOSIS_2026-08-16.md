@@ -6,6 +6,12 @@
 > 21 lanes recovered additively (study S3 objects untouched). New accounting:
 > DojoInit 151→0, prefix class 81→111, measurable 712→833 (711→832),
 > bootstrap blocks 218→252. See `notebooks/DOJOINIT_RECOVERY_2026-08-18.md`.
+>
+> **[Corrected 2026-08-21]** Post-recovery the unmeasurable share is **11.8%**
+> (111 of 944 cells per lane), superseding this document's title figure of
+> **24.6%**. Separately, the model-dependent no-survivor class is **5 cells in
+> TWO error classes**, verified over all 21 lanes — see the correction at the
+> head of §5, which is authoritative for §5.1–§5.4.
 
 > ## Correction, 2026-08-16 (post-review, measured)
 >
@@ -22,6 +28,13 @@
 > `gemma-4-31b` are 712. The `imeout`-substring field scan that found two missed
 > three because the snapshot strips error strings to `null` — the same stripping
 > this document flags as step P1. Count cells, not error text.
+>
+> > [Corrected 2026-08-21: that mechanism is right for only one of the three
+> > missed cells. Two of the five (`nemotron-3-nano-4b`, `ministral-3-14b`) are
+> > `DojoCrashError: Unexpected EOF` on cap-length generations and were never
+> > timeouts, so an `imeout` substring scan structurally could not find them,
+> > stripping or no stripping. The five-lane count and "count cells, not error
+> > text" both stand. See the §5 head note.]
 >
 > **B. `error_bars.py` never bootstrapped against 300, so no published CI is too
 > narrow.** `n_thm` is derived from the blocks the loader returns
@@ -71,6 +84,12 @@ EC2 instance was touched, no money was spent. S3 was read-only (`ls` / `cp` into
    `ministral-3-3b`. They are recorded as `verdict="exception"` with `error="DojoTacticTimeoutError: "`,
    they have **no surviving retry**, and so they make the measurable denominator **711** in those
    two lanes rather than 712. The brief's "~5 cells" is plausible at 21 lanes. Section 5.
+   **[Corrected 2026-08-21, verified over all 21 lanes: there are 5 such cells,
+   one each in five lanes, in TWO error classes — three `DojoTacticTimeoutError`
+   (`glm-4.7`, `ministral-3-3b`, `exaone-4.0-32b`) and two `DojoCrashError:
+   Unexpected EOF` on 32,768-token cap-length generations
+   (`nemotron-3-nano-4b`, `ministral-3-14b`). Denominator 711 in those five
+   lanes. See the §5 head note.]**
 
 ---
 
@@ -139,6 +158,8 @@ these. See §5.
 So the accurate statement is: **944 generated; 232 unmeasurable via `replay_failed` (one verdict,
 two distinct internal causes); plus 0-1 further cells per lane lost to an unretried
 `DojoTacticTimeoutError`; measurable = 712 per lane, or 711 in `glm-4.7` and `ministral-3-3b`.**
+[Corrected 2026-08-21: 711 in **five** lanes, and the further cell is an unretried
+`DojoTacticTimeoutError` **or** `DojoCrashError` — §5 head note.]
 
 ### 1.3 The 232 = 151 + 81, re-derived from the snapshot
 
@@ -181,9 +202,20 @@ Six further lanes were stream-grepped without downloading (`nemotron-3-nano-30b-
 `deepseek-v3.1`) and all show `replay_failed = 232`. **13 of 21 lanes checked; the remaining 8 are
 asserted from the provenance note, not verified here.**
 
+**[Corrected 2026-08-21 — verified on ALL 21 lanes.** A full dedup of every
+lane's `verified_rows.jsonl` finds exactly 232 `replay_failed` cells in each,
+the `replay_failed` cell-key sets identical across all 21 (one distinct
+frozenset, size 232), and the 944-cell-key universe identical across all 21.
+The "remaining 8 are asserted, not verified" hedge is retired.]
+
 A trap worth recording: the raw stream-grep for `ministral-3-3b` returns 246, not 232 — because
 that lane has 580 duplicate attempt rows. **The count is 232 only after dedup.** Anyone re-checking
 this with `grep -c` on the raw file will get the wrong number for the multi-attempt lanes.
+[Corrected 2026-08-21: the trap catches `qwen3.5-27b` too — its raw
+`grep -c '"replay_failed"'` returns **234**. And `deepseek-v3.1`,
+`exaone-4.5-33b` and `gemma-4-31b` are multi-attempt lanes whose raw grep
+returns 232 only by coincidence, so a "correct" raw count on those lanes is not
+validation.]
 
 ### 1.5 A coincidence to kill before someone re-derives it
 
@@ -234,7 +266,11 @@ independent of this study), joined on `full_name` → `theorem_id`; cross-checke
 |---|---|---|---|---|---|---|
 | measurable | 218 | 1 / **2** / 4 / 6 | 3.05 | 16 | 0.188 | 3146 |
 | DojoInit | 45 | 1 / **2** / 4 / 6 | 3.04 | 13 | 0.244 | 3020 |
-| prefix | 37 | 5 / **8** / 11 / 17 | 9.43 | 24 | **0.865** | 2621 |
+| prefix | 37 | 5 / **8** / 11 / **18** | 9.43 | 24 | **0.865** | 2621 |
+
+(The prefix group's p90 was corrected 2026-08-21 from 17 to **18** — numpy's
+default linear interpolation. Every other cell in this table, and both
+permutation p-values below, reproduce exactly.)
 
 Two-sided permutation test on the mean (20 000 shuffles, seed 0), each group vs the 218 measurable:
 
@@ -390,7 +426,9 @@ Two cells (one in `glm-4.7`, one in `ministral-3-3b`) are `verdict="exception"` 
 `error="DojoTacticTimeoutError: "` and **no surviving retry**, so the dedup rule drops them
 entirely. Their lanes' measurable denominator is 711. Full treatment in §5. `verify_ms` over the
 712 measurable cells: p50 = 212 ms, p90 = 2 676 ms, max = 12 466 ms — normal verification is
-~3 orders of magnitude below the 600 s cap.
+~3 orders of magnitude below the 600 s cap. [Corrected 2026-08-21: **five** such
+cells across five lanes, and the class is not timeouts alone — two are
+`DojoCrashError: Unexpected EOF`. See the §5 head note.]
 
 ### F9 — What is not in the snapshot
 
@@ -426,6 +464,20 @@ sufficient for the write-up: the excluded set is not distinguishable from the me
 proof length, and it is defined by a property (source tree) that is independent of any model's
 behaviour. Prefer: *"the leg measures Mathlib only; whether `std` theorems would score
 comparably is unmeasured."*
+
+**[Superseded 2026-08-21 — it is no longer unmeasured.** The 2026-08-18
+DojoInit recovery (`notebooks/DOJOINIT_RECOVERY_2026-08-18.md`) restored 34 of
+these 45 std theorems at `stepk:1` in all 21 lanes, so the rate this paragraph
+says cannot exist does exist. Measured: mean std `stepk:1` rate **0.097** vs
+Mathlib **0.107** over the 21 lanes, mean paired difference **−0.011**
+(SD 0.042, 95% t CI [−0.030, +0.009]), std lower in 11 of 21 lanes,
+Wilcoxon p = **0.69** — i.e. **comparable**. Limit of the finding: the 11 std
+theorems still unrecovered at `stepk:1` skew long (mean 5.55 / median 5 tactics
+vs 2.24 / 2 for the recovered 34), so "comparable" is established on the shorter
+half. Note the basis: this is the `stepk:1` column. Pooled over rungs the
+recovered std cells score *above* Mathlib in most lanes — see
+`DOJOINIT_RECOVERY_2026-08-18.md` §3, which names its own column. The
+Mathlib-only scope restriction still rides every 712-basis number.]**
 
 That matters for any claim about "Lean4 theorem proving"
 generally, and it matters for contamination/memorisation arguments (`std` lemmas are short,
@@ -475,13 +527,25 @@ Caveat on the imputation: it assumes the 37 behave like measurable theorems of t
 That is the standard missing-at-random-within-strata assumption and it is untestable here — the
 whole point is that nobody has an observation for them.
 
+**[Back-tested 2026-08-21 — the method now has out-of-sample support.** The
+2026-08-18 recovery supplies real verdicts for a *different* missing set (the 45
+std theorems), so the same length-bin imputation can be run against them and
+scored. Imputed vs actual recovered rates, over all 21 lanes: **mean signed
+error +0.0008**, MAE 0.0270, Wilcoxon p = 0.412. The imputation is not
+detectably biased. Scope correction that comes with it: the +0.000…+0.005 above
+is the **prefix-37 length-skew component only**. Adding the measured std cells
+moves pooled pass@1 by a further mean **+0.0068** (range −0.0012 for
+`ministral-3-3b` to +0.0166 for `glm-4.5-air`), so the **total** pessimistic
+bias on a 712-basis pass@1 is roughly **+0.007 to +0.012 absolute**, of which
+only +0.000…+0.005 is still imputed.]**
+
 ### 3c. What survives and what needs a caveat
 
 | Claim type | Affected? | Why |
 |---|---|---|
 | Model-vs-model paired McNemar / rank order | **No** | Loss is byte-identical across lanes (§1.4); dropped cells are concordant-missing, not concordant-zero. |
 | `hint:3` vs `noise:3` paired contrast | **No** | Identical measurable theorem sets (F3). |
-| Absolute success **rates** | **Denominator yes, value barely** | Denominator is 712 not 944; but the length skew moves `stepk:1` rates by only +0.000…+0.005 (3b). The Mathlib-only restriction (3a) is the real qualifier. |
+| Absolute success **rates** | **Denominator yes, value barely** | Denominator is 712 not 944; but the length skew moves `stepk:1` rates by only +0.000…+0.005 (3b). The Mathlib-only restriction (3a) is the real qualifier. **[Corrected 2026-08-21: +0.000…+0.005 is the prefix-37 component only. The 45 std theorems are a second, disjoint missing set; their measured add-back moves pooled pass@1 by mean +0.0068 (range −0.0012…+0.0166). Total pessimistic bias ≈ +0.007 to +0.012 absolute — sub-percentage-point and pessimistic, but "value barely" holds in ABSOLUTE terms only: the std component is per-lane (−0.0012 to +0.0166), and on the lowest-rate lanes it is a double-digit *relative* change — `nemotron-3-nano-30b-a3b` 0.0407 → 0.0504 is +24% relative.]** |
 | Bootstrap CIs from `error_bars.py` | **Yes (width)** | **218** effective blocks, not 300 (F4) — a 27.3% reduction. CIs computed against 300 are too narrow. |
 | Any "Lean4 / theorem-proving in general" framing | **Yes** | `std` is 100% absent (3a). |
 
@@ -649,6 +713,45 @@ from data already held)*
 
 ## 5. The `DojoTacticTimeoutError` cells
 
+> **CORRECTION, 2026-08-21 — verified over all 21 lanes. This head note is
+> authoritative for §5.1–§5.4; the original text below is left in place. The
+> section's class definition (timeouts only) is too narrow and its counts are
+> wrong.**
+>
+> There are **exactly 5 no-survivor cells, one each in five of the 21 lanes**,
+> in **two** error classes:
+>
+> | lane | theorem | rung | k | error class |
+> |---|---|---|---|---|
+> | `glm-4.7` | `Submodule.iSup_toAddSubmonoid` | `stepk:1` | 15 | `DojoTacticTimeoutError` (`verify_ms` 600 150) |
+> | `ministral-3-3b` | `IntermediateField.card_algHom_adjoin_integral` | `hint:2` | 0 | `DojoTacticTimeoutError` |
+> | `exaone-4.0-32b` | `IntermediateField.card_algHom_adjoin_integral` | `noise:3` | 0 | `DojoTacticTimeoutError` |
+> | `nemotron-3-nano-4b` | `Polynomial.natSepDegree_eq_natDegree_iff` | `stepk:1` | 1 | `DojoCrashError: Unexpected EOF` (`completion_tokens` 32 768) |
+> | `ministral-3-14b` | `CategoryTheory.GradedObject.ιMapObjOrZero_mapMap` | `noise:3` | 2 | `DojoCrashError: Unexpected EOF` (`completion_tokens` 32 768) |
+>
+> The two crash cells are the verifier dying on cap-length degenerate
+> generations (`ministral-3-14b`'s candidate is repeated `CongrArg _ _ _ _`
+> spam). They are **not** timeouts, so the `imeout`-substring scan used below
+> structurally could not find them. The class is therefore **model-dependent
+> verifier faults: elaboration timeout OR verifier crash on cap-length
+> degenerate generations** — one class, two failure modes.
+>
+> Model-dependence is confirmed cell-by-cell: **each of the five cell keys
+> grades fine in the other 20 of 21 lanes**, so the trigger is what that model
+> emitted, not the cell. One mixed-cause note: `ministral-3-3b`'s cell has two
+> attempt rows — attempt 1 an EC2 spot-kill (`completion_tokens` 0), attempt 2
+> the 600 s timeout — so its earliest row is infrastructure, not a verifier
+> fault.
+>
+> Denominator is **711** in those five lanes under the drop rule. §5.4's
+> prescription (count them as failures) is right and applies unchanged to
+> **both** modes; it was adopted as the study's rule on 2026-08-21 (§7 item 10)
+> — but the analysis loader and `error_bars.py` had NOT been re-run under it at
+> the time of this note, so no published number reflects it yet.
+> **[Amended later on 2026-08-21: `error_bars.py` HAS since been re-run under the
+> rule (712/218 pool, primary 14 of 21 — see §7 item 10). The analysis loader
+> `power_analysis.load_joint_cells` is still the drop rule.]**
+
 **Found: 2 cells across the 13 lanes scanned. They are a genuinely separate, model-dependent
 class, and they are NOT part of the 232.**
 
@@ -710,24 +813,22 @@ tail blows the 600 s cap depends on **what the model produced**. Therefore:
   the affected two, or the lanes stop being comparable.
 - At ~2-5 cells out of 712 (≤0.7%) the choice cannot move any reported contrast. Document it,
   pick "count as failure", move on.
+  **[Corrected 2026-08-21 — the arithmetic overstates it, and the effect is now
+  measured.]** Every affected lane loses exactly ONE cell — the 5 is the 21-lane
+  total — so one cell of 712 is **0.14%** of a lane's denominator, not 0.7%.
+  Switching from drop to count-as-failure changes any pooled pass@1 by at most
+  **0.051 pt** (`glm-4.7` 256/711 = 0.3601 → 256/712 = 0.3596; then
+  `exaone-4.0-32b` −0.025, `ministral-3-14b` −0.014, `nemotron-3-nano-4b`
+  −0.013, `ministral-3-3b` −0.009) and any per-rung rate by at most **0.142 pt**
+  (`exaone-4.0-32b` `noise:3`). The conclusion — document it, count as failure,
+  move on — stands, and was adopted on 2026-08-21 (§7 item 10).
 
-**How they should be treated if any are found.** They are categorically different from the 232:
-generation **succeeded**, and whether a candidate tail exceeds the 600 s tactic cap depends on
-what the model produced (a `simp`-bomb or a deep `decide` from one model, a one-liner from
-another). That makes them **model-dependent**, so:
-
-- Do **not** pool them with `replay_failed`. `replay_failed` is excluded precisely because it is
-  model-independent (§1.4); a model-dependent class excluded the same way would flatter whichever
-  model times out most.
-- Default: **count them as failures** in the denominator, exactly as `incomplete` is
-  (`snapshot_analysis_data.py` note: "`incomplete` IS model-dependent … and stays in the
-  denominator"). A tactic that cannot be checked in 600 s is not a successful next tactic.
-- Raising the cap would "recover" them only in the sense of converting a timeout into a verdict,
-  and would do so **asymmetrically across models** — which is a worse bias than leaving them in.
-  If the cap is raised, it must be raised and re-run for **all 21 lanes**, not just the affected
-  ones.
-- At ≤5 cells out of 712 (≈0.7%) the choice cannot move any reported contrast; document it and
-  move on.
+**[Removed 2026-08-21.]** A second four-bullet copy of the treatment above stood
+here, headed "How they should be treated if any are found" — the same four
+bullets in hypothetical framing, despite §5.1 having already found them. It was
+a drafting artefact carrying no content the surviving bullets lack (and it
+repeated the ≤0.7% arithmetic corrected above), so it is deleted rather than
+stamped.
 
 ---
 
@@ -738,7 +839,7 @@ on CPU); **no model tokens, no GPU, no EC2 required** — the 2026-08-14 pass ra
 
 | Option | Recovers | Compute | Risk | Verdict |
 |---|---|---|---|---|
-| **A. Re-verify the 45 `std` theorems against the current cache** | 151 cells/lane = **65% of the loss**; 712 → 863/lane; denominator 21 lanes × 151 = 3 171 verifications | Dojo session per cell; empirically ~3 s median ground-truth replay (corpus `wall_ms`), realistically minutes/theorem incl. session setup → order **hours**, single box, CPU only | Low. Must not run while the induction fleet is live (flock contention, §P2). Must re-run **all 21 lanes** or the lanes become non-comparable. | **Do it, if D1/D2 confirm the cache is now complete.** Best value in this document. |
+| **A. Re-verify the 45 `std` theorems against the current cache** | 151 cells/lane = **65% of the loss**; 712 → 863/lane; denominator 21 lanes × 151 = 3 171 verifications **[Corrected 2026-08-21 against the executed run of 2026-08-18.]** The actual yield is **121** measurable cells/lane = **52%** of the 232-cell loss, giving **712 → 833**/lane (832 in the five 711-lanes); 30 cells × 21 lanes = 630 verifications still fail and were reclassified into the prefix class. 863 was never reached. | Dojo session per cell; empirically ~3 s median ground-truth replay (corpus `wall_ms`), realistically minutes/theorem incl. session setup → order **hours**, single box, CPU only | Low. Must not run while the induction fleet is live (flock contention, §P2). Must re-run **all 21 lanes** or the lanes become non-comparable. | **Do it, if D1/D2 confirm the cache is now complete.** Best value in this document. |
 | **B. Re-verify the 37 prefix theorems** | up to 81 cells/lane = 35% of the loss | 21 × 81 = 1 701 verifications, but long prefixes (median 7 tactics) → slower per cell | Medium: if P1 says `ProofFinished` (F8), re-running changes nothing without a code fix; if it says `LeanError`, re-running may reproduce identically | **Run P1/P3 first (free).** Only re-verify if the cause is transient or timeout. |
 | **C. Re-sample the corpus to replace the 82** | restores n=300 measurable | full re-generation across 21 lanes = the entire deduction leg again | High: new theorems ≠ paired with existing results; breaks every paired McNemar already computed | **No.** |
 | **D. Do nothing, document the caveat** | 0 | 0 | The write-up must carry §7 | **Acceptable fallback.** The rank orderings and the hint-vs-noise contrast are unaffected (§3c). |
@@ -762,16 +863,31 @@ are quoted. Hand this list to **smolbench-4d**.
 
 1. **The denominator is 712, not 944.** 24.6% of generated cells could not be verified.
    Per-rung: `stepk:1` 218/300, `hint:2` 170/222, `hint:3` 162/211, `noise:3` 162/211.
+   **[Corrected 2026-08-21, post-recovery.]** 111 of 944 cells per lane remain
+   unmeasurable = **11.8%**, denominator **833** (832 in the five no-survivor
+   lanes *under the drop rule*; a uniform **833 in every lane** under the
+   count-as-failure rule adopted in item 10, which is the authority), per-rung
+   `stepk:1` 252/300, `hint:2` 199/222, `hint:3` 191/211, `noise:3` 191/211. The published Mathlib-only headline still quotes the
+   712 basis and must not be re-pooled — `DOJOINIT_RECOVERY_2026-08-18.md`
+   caveat 3.
 2. **The loss is measurement, not generation.** All 944 candidates exist for every lane; 232 of
    them could not be *judged*. `audit_run_completeness.py` reporting clean is about generation.
 3. **The loss is identical in all lanes** (verified on 5 lanes / 4 families, byte-identical cell
    keys; count confirmed on 2 more). Therefore **every model-vs-model contrast, rank ordering, and
    paired McNemar is unaffected** — the missing cells are concordant-missing. Say this explicitly
    so a reader does not discount the comparative findings.
+   **[Corrected 2026-08-21: now verified on ALL 21 lanes — 232 `replay_failed`
+   each, byte-identical `replay_failed` cell-key sets, identical 944-key
+   universe. The "5 lanes / 2 more" hedge is retired.]**
 4. **The `hint:3` vs `noise:3` paired contrast is on identical theorem sets** and is unaffected.
 5. **Scope caveat (the 151):** 45/300 theorems — **100% of the `std`/Batteries theorems in the
    sample, 17 files** — were never verifiable. The leg measures next-tactic prediction on
    **Mathlib only**. Do not describe it as covering Lean's standard library.
+   **[Superseded in part 2026-08-21: 34 of the 45 were recovered on 2026-08-18
+   and DO have a rate — std `stepk:1` 0.097 vs Mathlib 0.107, paired difference
+   −0.011, Wilcoxon p = 0.69 (§3a's stamp). "Never verifiable" and "no such rate
+   exists" are retired; the Mathlib-only scope caveat still rides every
+   712-basis number.]**
 6. **Difficulty caveat (the 81) — state it WITH its measured magnitude, which is small.** 37/300
    theorems were lost to ground-truth prefix-replay failure and they are **4× longer** than the
    measurable set (median 8 vs 2 tactics, 86.5% vs 18.8% at ≥5 tactics, permutation p = 5e-5).
@@ -780,6 +896,11 @@ are quoted. Hand this list to **smolbench-4d**.
    at 3-4 tactics rather than falling monotonically with length. Report it as "length-skewed
    subsample, rate effect < 0.5 pt, sign slightly pessimistic". Do **not** repeat the intuitive
    but wrong claim that the rates are optimistic because the hard theorems were dropped.
+   **[Corrected 2026-08-21: +0.000…+0.005 is the prefix-37 component ONLY.]**
+   The 45 std theorems are a second, disjoint missing set whose measured
+   add-back is larger (mean +0.0068), so the total pessimistic bias on a
+   712-basis pass@1 is ≈ **+0.007 to +0.012 absolute** (§3b's stamp). The
+   direction — pessimistic, sub-percentage-point — is unchanged.
 7. **Bootstrap blocks are 218, not 300** (`error_bars.py` blocks over theorems; the 45 DojoInit
    *and* all 37 prefix theorems lose every cell they have). CIs computed against 300 blocks are
    too narrow by a 27.3% reduction in blocks. An intermediate figure of 255 appears in an earlier
@@ -795,9 +916,36 @@ are quoted. Hand this list to **smolbench-4d**.
     no surviving attempt), so their measurable denominator is **711**, not 712. These cells are
     **model-dependent** and should be counted as failures in the denominator rather than dropped
     (§5.4) — that is a change from current loader behaviour. 8 lanes remain unscanned.
+
+    **[RESOLVED 2026-08-21 — count-as-failure ADOPTED, uniformly, for BOTH
+    model-dependent modes.** Full 21-lane verification supersedes the numbers
+    above: **five** lanes are at 711, not two, and the class is three
+    `DojoTacticTimeoutError` plus two `DojoCrashError: Unexpected EOF` on
+    cap-length generations (§5 head note); "8 lanes remain unscanned" is
+    retired. Grounds for adopting: each of the five cell keys grades fine in
+    20/21 lanes, so the trigger is the model's own output and the cell is a
+    genuine failure. Cost, measured: ≤0.051 pt on any pooled pass@1 and
+    ≤0.142 pt on any per-rung rate. Benefit: a uniform 712 denominator in every
+    lane, and a 21-way paired intersection of **712 cells / 218 blocks** instead
+    of the drop rule's 707 / 216 — post-recovery, **833 / 252** instead of
+    828 / 250 (`DOJOINIT_RECOVERY_2026-08-18.md` §3, stamped to match).
+    **Dependency, CLOSED later the same day:** `notebooks/deduction/error_bars.py`
+    has since been re-run with count-as-failure as its default, and
+    `notebooks/deduction/ERROR_BARS_REPORT.txt` in this commit is on the
+    **712-cell / 218-block** pool. Its primary (block sign-flip) test rejects
+    **14 of 21** ladder contrasts, the same count and the same set as the 707/216
+    drop-rule pool — the perturbation (5 cells, 2 blocks) moves marginal rates and
+    BCa endpoints only in the third decimal. Residual: `power_analysis.load_joint_cells`
+    still implements the drop rule; `error_bars.py` augments on top of it and asserts
+    cell-for-cell agreement with it at runtime. Any restatement must still come from
+    the regenerated report, not from this stamp.]**
 11. **`verified_rows.jsonl` is a multi-attempt log.** `ministral-3-3b` has 1 524 raw rows for 944
     cells. Any recount must apply the earliest-surviving-non-`exception` rule first; a raw
     `grep -c` gives 246 instead of 232 for that lane.
+    **[Corrected 2026-08-21: `qwen3.5-27b` is a second trap lane.]** Its raw
+    `grep -c` gives **234**. `deepseek-v3.1`, `exaone-4.5-33b` and `gemma-4-31b`
+    are multi-attempt lanes whose raw grep returns 232 only by coincidence, so a
+    matching raw count there is not validation.
 
 ---
 
@@ -811,6 +959,10 @@ are quoted. Hand this list to **smolbench-4d**.
 | 232 in 6 further lanes | `aws s3 cp … - \| grep -c '"replay_failed"'` (raw; valid only for single-attempt lanes) |
 | dedup rule reproduces 232 for `glm-4.7` / `ministral-3-3b` | earliest-surviving-non-`exception` per `(theorem_id, rung, k, replicate_idx)`, this session |
 | 2 `DojoTacticTimeoutError` cells, no survivor | scan of `error`/`lean_error` for `DojoTacticTimeout`, 7 downloaded + 6 stream-grepped lanes |
+| **[2026-08-21]** 232 `replay_failed` in ALL 21 lanes; identical cell-key sets; identical 944-key universe | full earliest-surviving dedup of all 21 `verified_rows.jsonl` streams |
+| **[2026-08-21]** 5 no-survivor cells in 2 error classes; each key measurable in 20/21 lanes | `lean_error`/`error` field scan + cell-key lookup over all 21 deduped lanes |
+| **[2026-08-21]** count-as-failure deltas (≤0.051 pt pooled, ≤0.142 pt per-rung); intersections 707/216 vs 712/218 (828/250 vs 833/252 post-recovery) | both scorings recomputed from the same 21 deduped lanes; direct set intersection |
+| **[2026-08-21]** std vs Mathlib `stepk:1` (0.097 vs 0.107, paired −0.011, Wilcoxon p = 0.69); imputation back-test +0.0008 | `notebooks/deduction/results/dojoinit_recovery_2026-08-18/*/recovered_rows.jsonl` joined to the 712 basis |
 | `verify_ms` 0 on all 232; measurable p50 212 / p90 2 676 / max 12 466 ms | `verify_ms` percentiles over gemma-4-e2b rows |
 | block count 218; cells-per-theorem distributions | count of theorems with ≥1 non-`replay_failed` cell, post-dedup |
 | `stepk:1` rate by length bin; imputed +0.000…+0.005 | bin rates over measurable cells, 5 lanes; imputation weights = lost-37 bin counts |
@@ -827,6 +979,12 @@ are quoted. Hand this list to **smolbench-4d**.
 | code asymmetry | `smolbench/deduction/lean/verify.py` L212-234 vs L407-412, L~466 |
 | rate deflation figures | commit `39e73a0d` message |
 | `exception` excluded / `incomplete` retained rules | `scripts/snapshot_analysis_data.py` MANIFEST `notes` |
+
+**[Corrected 2026-08-21 — two items below are now verified and are struck from
+this list: the `replay_failed` count in the 8 unchecked lanes (all 21 verified,
+232 each, byte-identical key sets) and `DojoTacticTimeoutError` in the 8
+unscanned lanes (all 21 scanned; 5 no-survivor cells in 2 error classes, §5 head
+note). The rest of the list stands.]**
 
 **Explicitly NOT verified in this document:** the `replay_failed` count in 8 of the 21 lanes; the
 timing of the `std` build tree's appearance in the live cache (F7, closed by D1); the error strings

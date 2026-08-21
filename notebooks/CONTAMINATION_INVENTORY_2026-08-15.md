@@ -19,6 +19,18 @@
 > [`PASS_AT_1_REVIEW_PLAN_2026-08-16.md`](PASS_AT_1_REVIEW_PLAN_2026-08-16.md):
 > verification absorbed nearly all of the +5.9 pt figure quoted here (now +0.14 pt),
 > and the multi-surviving count is 61, not 74.
+> **[Corrected 2026-08-21: that last clause is wrong — 74 was never stale.]** 74 and
+> 61 are two FILTERS on one snapshot, not an old number and a new one:
+> **74** cells (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5) hold more than
+> one non-`exception` GENERATION attempt — the filter this document's own wording in
+> the pass@1 section below states ("exactly ONE surviving (non-`exception`) row per
+> cell"), and the study loader's rule ("keeps the first NON-exception
+> row", commit 31017b81). **61** of those (51/5/5) hold more than one MEASURED verdict;
+> the remaining extra attempts landed in `replay_failed`, a verdict category that did
+> not exist when 74 was written ("the verification pass has not yet run", below). Both
+> numbers reproduce exactly on the current 2026-08-16 snapshot; neither is stale. Zero
+> cells hold two non-empty candidate proofs. The +5.9 pt → +0.14 pt clause above
+> stands.
 >
 > **User ruling, 2026-08-16 — analysis reads the EARLIEST logged run, both legs**
 > ("use the earliest results to keep pass@1"). This inverts three of this document's
@@ -27,7 +39,12 @@
 > seeds), **`ministral-3-14b`** (9 seeds) and **`deepseek-v4-flash`** (12 seeds)
 > comes from the pre-re-run serving stacks, so those lanes are **mixed-configuration
 > in the analysis** even though their newest objects are homogeneous. The
-> decontaminated re-runs remain in the S3 log as history. This is the accepted cost
+> decontaminated re-runs remain in the S3 log as history. *[Clarified 2026-08-21: those
+> seed counts are the PRE-re-run portion of each 30-seed lane, not the whole lane — the
+> re-collections also supplied seeds with no earlier attempt, so under earliest-wins each
+> lane is internally era-SPLIT: `gemma-4-12b` 14 + 16, `ministral-3-14b` 9 + 14 + 7
+> (three eras), `deepseek-v4-flash` 12 + 18. See the 2026-08-21 header note in
+> `induction/CONFOUND_AUDIT_2026-08-13.md`.]* This is the accepted cost
 > of the ruling, and the determinism plan's finding that the 8/8 cross-process
 > pairing spans two instance types is what prices it as noise rather than bias. The
 > same ruling makes `force_seeds`-style re-collection unable to supersede logged
@@ -121,6 +138,11 @@ Verification of that re-run, all four checks rather than the driver's own comple
 This is the only lane in the study whose deduction cells all come from a single serving
 process, and therefore the only one that is internally bit-reproducible. Box terminated on
 completion.
+*[Scope-corrected 2026-08-21: read as "of the eight lanes whose deduction box provenance
+is on record locally, `nemotron-3-nano-4b` is the only single-box one." The other
+thirteen lanes' original deduction sweeps left no local provisioning log — their
+provenance lives only in S3 sidecars, so the study-wide "only lane" form is consistent
+with all local evidence but not locally verifiable in full.]*
 
 ### Contaminated, not worth rerunning
 
@@ -144,6 +166,13 @@ therefore cannot be bit-reproducible internally. That is **most of the study**:
 `gemma-4-12b` ×21 boxes, `ministral-3-14b` ×48, `glm-4.7-flash` ×4, `exaone-4.5-33b` ×3,
 `qwen3.5-27b` ×3, `gemma-4-e2b` ×3, and every lane whose sweep was resumed after a spot
 reclaim. Single-box lanes are the exception, not the rule.
+
+*[Corrected 2026-08-21: the first two counts above are undercounts. Distinct instance IDs
+across all fleet and deduction shard logs give `gemma-4-12b` **×39** (≥ 36 already by
+2026-08-14 11:54Z) and `ministral-3-14b` **×64** (≥ 54 by 2026-08-15 12:24Z) — both
+before this line was written, so a "snapshot at write time" reading does not hold. The
+other four counts in the sentence are exact. Larger counts strengthen the conclusion
+below, not weaken it.]*
 
 **This is a property of the design, not a repairable defect, and it is noise rather than
 bias.** Every lane already runs on its own hardware by construction — the study compares
@@ -173,10 +202,24 @@ What it does mean:
 
 Several of these ran on **several boxes of the same type** (e.g. `exaone-4.5-33b` ×3,
 `glm-4.7-flash` ×4, `qwen3.5-27b` ×3, and — after re-runs — `gemma-4-12b` ×21 and
-`ministral-3-14b` ×48). **The box-to-box probe has now reported, and it changes the
+`ministral-3-14b` ×48 [corrected 2026-08-21: ×39 and ×64 respectively, see above]).
+**The box-to-box probe has now reported, and it changes the
 reading of everything above.**
 
 ### Authorised within-lane split: `deepseek-v3.1` p5en → p5e (2026-08-15)
+
+> **[Corrected 2026-08-21 — the p5en → p5e split NEVER OCCURRED.]** The authorisation
+> below was real and is left as the dated record, but the p5e fallback was never
+> exercised: `notebooks/deduction/results/repair_deepseek-v3.1.log` logs exactly one
+> provisioning event for the repair — `p5en.48xlarge` `i-08e296894dd1d0b75` in
+> **us-east-2a** — and terminates it right after "DEDUCTION LANE COMPLETE:
+> deepseek-v3.1 (415 cell row(s))". The type-major, p5en-first hunt (commit 160dbf9a)
+> succeeded, exactly as the "if capacity returns the lane completes on its original
+> hardware" hedge below anticipated; the thousands of `p5e.48xlarge` strings in the log
+> are failed capacity probes, not launches. **All 415 repair cells came from a second
+> `p5en.48xlarge` in the same AZ, so NO instance-type split exists — the split is
+> box/process only.** Bullet 2 of "What the box-to-box result means" above is
+> unaffected and remains valid: a new box means a new serving process either way.
 
 After p5en.48xlarge proved unavailable in **all 9 offering AZs across 4 regions, spot AND
 on-demand, for a full day** and two exhausted 40-attempt supervisors, the user authorised
@@ -187,7 +230,7 @@ Resulting lane, if p5en never frees up:
 | segment | cells | hardware |
 |---|---|---|
 | original | 529 | `p5en.48xlarge`, i-0f25d11e3090d452e, us-east-2a |
-| repair | 415 | `p5e.48xlarge`, us-east-2 a/b/c or us-west-2c |
+| repair | 415 | ~~`p5e.48xlarge`, us-east-2 a/b/c or us-west-2c~~ **ACTUAL (2026-08-21): `p5en.48xlarge`, i-08e296894dd1d0b75, us-east-2a** |
 
 The hunt is **type-major and ordered p5en first**, so every p5en AZ is exhausted before a
 single p5e is requested: if capacity returns the lane completes on its original hardware with
@@ -253,6 +296,10 @@ Checked three ways, because the configured value and the collected data can disa
 3. **Actual attempts per cell** — 18 of 21 lanes have exactly ONE surviving (non-`exception`)
    row per cell. Three do not, as fallout from the resampling bug above: **74 cells hold more
    than one surviving attempt** (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5).
+   *[2026-08-21: still exact on the current snapshot under this section's own filter —
+   more than one non-`exception` GENERATION attempt. Naming the filter matters: after the
+   verification pass, 61 of the 74 (51/5/5) hold more than one MEASURED verdict, the rest
+   having extra attempts in `replay_failed`. See the header banner.]*
 
 For those three lanes the metric is pass@1 only under the first-surviving-row rule. Taking
 any-row-with-content instead:
@@ -262,6 +309,13 @@ any-row-with-content instead:
 | `ministral-3-3b` | 850 / 944 = 90.0% | **794 / 944 = 84.1%** | **+5.9 pt** |
 | `qwen3.5-27b` | 929 / 944 = 98.4% | **923 / 944 = 97.8%** | +0.6 pt |
 | `gemma-4-31b` | 943 / 944 = 99.9% | **938 / 944 = 99.4%** | +0.5 pt |
+
+*[Corrected 2026-08-21 — `ministral-3-3b` row: recomputed on the candidate-proof basis
+over non-`exception` rows, both numerators are one cell lower — **849 / 944 = 89.9%**
+any-attempt and **793 / 944 = 84.0%** first-surviving. The difference is **+5.93 pt**,
+so the +5.9 pt headline is unchanged. The `qwen3.5-27b` (929/923) and `gemma-4-31b`
+(943/938) rows reproduce exactly; `all_rows.jsonl` is no longer on disk, so the
+single-cell origin cannot be traced.]*
 
 One `ministral-3-3b` cell's surviving attempts have proof lengths `[0, 0, 0, 65]` — three empty
 answers and then a proof on the fourth draw. Reported as-is that is **pass@4 presented as

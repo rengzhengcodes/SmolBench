@@ -61,6 +61,16 @@ run** — recorded because both are lessons:
    BOTH exception and replay_failed rows, a rule that cannot apply to std
    cells (every std study row IS replay_failed); the two rules were measured
    to coincide on the Mathlib column of all seven S3-streamed lanes.
+   **[Corrected 2026-08-21 — safe in substance, wrong as stated.** Replaying
+   both rules over every duplicated cell in all 21 local `verified_rows.jsonl`
+   streams: they coincide on every Mathlib cell that carries a **measurable**
+   row — the entire 712/711 denominator and every published score — and there
+   is no cell anywhere, Mathlib or std, where the two rules select different
+   *measurable* verdicts. They do differ on 509 all-unmeasurable cells (186
+   Mathlib — `gemma-4-31b` 59, `ministral-3-3b` 41, `deepseek-v3.1` 37,
+   `exaone-4.5-33b` 36, `qwen3.5-27b` 12 — and 323 std), where the tool retains
+   a `replay_failed` placeholder that the study loader drops as ABSENT. That
+   difference can never reach a published number.]**
    **A second adversarial-review catch (2026-08-18, later the same day):
    "only qwen3.5-27b had std duplicates" was FALSE** — an artifact of the
    parallel runner swallowing child logs. Four more lanes (gemma-4-31b 98,
@@ -120,6 +130,23 @@ primary rows — a clean cross-consistency check on the lane set.)
   lane** (217 → 251 in `glm-4.7` and `nemotron-3-nano-4b`, whose exception
   cell consumes a whole theorem); the 21-way PAIRED intersection used by
   the analysis is **216 → 250 blocks (707 → 828 cells)**.
+  **[Corrected 2026-08-21 — those block and intersection figures are stated
+  under the DROP rule for the five model-dependent no-survivor cells.]** That
+  rule was replaced on 2026-08-21 by a uniform COUNT-AS-FAILURE rule covering both
+  its modes — elaboration timeout and verifier crash on cap-length generations
+  (`DEDUCTION_COVERAGE_DIAGNOSIS_2026-08-16.md` §7 item 10 and its §5 head
+  note). Under it the five cells stay in the denominator, so the per-lane
+  denominator is a uniform **712 → 833**, effective blocks are **218 → 252 in
+  every lane** (the `glm-4.7` / `nemotron-3-nano-4b` parenthetical no longer
+  applies — their theorems are retained as blocks), and the 21-way paired
+  intersection is **218 → 252 blocks (712 → 833 cells)**, not 216 → 250
+  (707 → 828). `error_bars.py` had not been re-run under the new rule at the
+  time of this stamp, so no interval or contrast is restated here.
+  **[Amended later on 2026-08-21: it HAS since been re-run.
+  `notebooks/deduction/ERROR_BARS_REPORT.txt` is now on the count-as-failure
+  712/218 pool and carries the 833/252 recovery pool as a SENSITIVITY row
+  (Holm 14 of 21, against 16 of 21 for the drop-rule 828/250 pool — the two
+  extra rejections do not survive a uniform denominator).]**
 - Scope: "Mathlib only" → "Mathlib + 34 of the 45 sampled std theorems".
 
 Notable — and itself a verification lesson: the first published version of
@@ -130,6 +157,26 @@ deepseek-v3.1 and exaone-4.5-33b all moved ABOVE their Mathlib rates, and
 only ministral-3-3b remains lower by a noise-level 0.12 points. The
 corrected picture: the std extension scores at or slightly above Mathlib
 for essentially every lane.
+
+**[Corrected 2026-08-21 — name the column; "slightly" is an artefact of
+pooling.** The table above is the *pooled* column, where the 121 recovered
+cells are 121 of 833, so the extension can only move a lane by ≤1.67 pt no
+matter how differently std scores. On the **std-only** column (recovered
+successes / 121) the 45 sampled std theorems are a materially EASIER corpus:
+std-only pass@1 exceeds the lane's Mathlib rate in **20 of 21 lanes**, median
+**+4.1 pt** and up to **+11.4** — `glm-4.5-air` 0.3306 vs 0.2163 (+11.43),
+`gemma-4-e2b` 0.2149 vs 0.1096 (+10.53), `nemotron-3-super-120b` +8.50,
+`deepseek-v4-pro` +8.31, `exaone-4.5-33b` +7.13, `k-exaone-236b` +6.97,
+`glm-4.7` +6.97, `nemotron-3-nano-30b` +6.67; only `ministral-3-3b` is negative
+(−0.82 pt). **The extension is not scope-neutral.**
+
+That does not contradict the `stepk:1` comparison recorded in
+`DEDUCTION_COVERAGE_DIAGNOSIS_2026-08-16.md` §3a (std 0.097 vs Mathlib 0.107,
+paired difference −0.011, Wilcoxon p = 0.69): that one is restricted to the 34
+std theorems recovered at `stepk:1`, whereas only 34 of these 121 cells are
+`stepk:1` — the other 87 sit at the hint/noise rungs, which carry more
+information and score higher. Different bases, different answers; always state
+which.
 
 ## 4. Caveats that must ride any use of these numbers
 

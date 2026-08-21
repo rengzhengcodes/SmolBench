@@ -1,0 +1,66 @@
+{
+ "n_extens_h1_h8": 15,
+ "finish_reasons_h1_h8": {
+  "stop": 15
+ },
+ "prompt_tokens_h1_h8": {
+  "33437": 8,
+  "34698": 1,
+  "34697": 6
+ },
+ "local_tokenizer_prompt_tokens": {
+  "33421": 8,
+  "34682": 1,
+  "34681": 6
+ },
+ "with_maxpos_any": 15,
+ "maxpos_any_distribution": {
+  "252": 14,
+  "2520": 1
+ },
+ "stops_at_252": 14,
+ "median_ratio": 0.1016,
+ "in_band_0.08_0.13": 15,
+ "correct_h1_h8": 0,
+ "median_completion_tokens_h1_h8": 4240,
+ "GATE_extens_h0": [
+  [
+   0,
+   2520,
+   true,
+   "stop"
+  ],
+  [
+   1,
+   2520,
+   true,
+   "stop"
+  ]
+ ],
+ "GATE_intens_controls": [
+  [
+   0,
+   0,
+   2520,
+   2520,
+   true,
+   "stop"
+  ],
+  [
+   0,
+   4,
+   504,
+   504,
+   true,
+   "stop"
+  ],
+  [
+   0,
+   8,
+   280,
+   280,
+   true,
+   "stop"
+  ]
+ ]
+}

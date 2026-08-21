@@ -5,6 +5,16 @@ hardware/seeding anomalies. This document **plans**; it does not fix, does not
 re-collect, and nothing in it was executed. No instance was launched and no
 study code, data or config was touched in producing it.
 
+**[Corrected 2026-08-21 — scope statement superseded.]** The paragraph above was
+true of the document as written on 2026-08-16 and is no longer true of the record
+it now carries. Sections 3, 5, 6.2 and the §4 adoption were subsequently executed:
+four boxes were launched (2 hinge 2026-08-16, 1 flip 2026-08-18, 1 gzip canary
+2026-08-18), S3 objects were written under
+`deduction/runs/flip_nemotron-3-nano-4b/`, and study code and config were modified
+(`ec2.py`, `agent.py.txt`, `run_fleet.py`, both notebook `keys.env`) by commits
+`91cac390`, `57618f26`, `a1cf5033`, `3f6f342f`, `48c08fb8`. Each executed section
+carries its own dated banner; read those, not this preamble, for status.
+
 Everything below is labelled **[VERIFIED]** (measured, with the file and line that
 shows it) or **[PROPOSED]** (a check to run, not yet run). Where I could not
 verify something I say so rather than asserting it.
@@ -48,6 +58,16 @@ A second, weaker coincidence points the same way: the *other* two boxes
 `Filter.compl_mem_comap/prompts/noise-3.md` — SHA `2021ea7368fa`, 3883 chars, the
 shortest output in the set — while disagreeing on the other seven. [VERIFIED]
 
+> **[Corrected 2026-08-21: "the shortest output in the set" is wrong — it is the
+> SECOND-shortest.]** Per-prompt lengths across all four processes
+> (`hwprobe_archive` `len_a`/`len_b`): `Filter.compl_mem_comap`/noise-3 =
+> [3883, 3484, 3484, 3883], while `Order.pred_eq_iSup`/stepk-1 =
+> [3408, 3348, 3348, 2892] — strictly shorter in every one of the four
+> processes. And `Order.pred_eq_iSup` DISAGREED in this very `P1A`/`P2B`
+> pairing (SHAs `8ef6509369b5` vs `9c96602656f6`). The 1/8 agreement itself
+> stands; only the "shortest" label and the length-based reading of it are
+> retracted (see the corrected paragraph below).
+
 **So cross-process agreement is not 0.** The two archived reports together carry
 per-prompt digests for **four distinct serving processes**, which is enough to
 tabulate all six pairings rather than the two each report printed. Done in full
@@ -56,7 +76,7 @@ tabulate all six pairings rather than the two each report printed. Done in full
 | pairing | agreement | |
 |---|---|---|
 | `P1B` i-039b **2xl** us-west-2a vs `P2A` i-0d26 **4xl** us-east-2b | **8/8** | different type, different region, ~9.5 h apart |
-| `P1A` i-09ec 4xl vs `P2B` i-0845 4xl | **1/8** | only `Filter.compl_mem_comap`, the shortest output |
+| `P1A` i-09ec 4xl vs `P2B` i-0845 4xl | **1/8** | only `Filter.compl_mem_comap` [Corrected 2026-08-21: the SECOND-shortest output, not the shortest] |
 | `P1A` vs `P1B` · `P1A` vs `P2A` · `P1B` vs `P2B` · `P2A` vs `P2B` | **0/8** | |
 
 Reproduce with the script in Appendix A.
@@ -68,6 +88,19 @@ better read as **short outputs diverging less often** than as regime membership:
 divergence is immediate when it happens (common prefixes 0–149 chars on the long
 prompts) but every generation is a fresh chance to diverge, so the shortest one is
 where two otherwise-different regimes are most likely to coincide.
+
+> **[Corrected 2026-08-21 — the length-based reading is RETRACTED; the regime
+> structure is not.]** "Three groups, not two" stands, as does the reading of the
+> regime as a switch with a small number of positions. What does not stand is the
+> *explanation* of the 1/8 agreement. The agreeing prompt
+> (`Filter.compl_mem_comap`, 3,883 chars) is the SECOND-shortest generation in the
+> set; the genuinely shortest, `Order.pred_eq_iSup` at 2,892–3,408 chars in all
+> four processes, **disagreed in exactly this pairing**. The archive's own lengths
+> therefore contradict "short outputs coincide most often", and the inference is
+> dropped. The surviving descriptive facts: 1/8 agreement between `P1A` and `P2B`,
+> and a median generation length of **13,735.5 chars** (min 2,892, max 146,719) —
+> not "near 15,000". The prefix figure in this paragraph is also corrected below
+> (§1.2): common prefixes run **0–1,062 chars**, not 0–149.
 
 The regime tracks neither instance size (the 8/8 pair spans `2xl` and `4xl`),
 region, nor time. This is not gradual numerical drift; it is a switch with a small
@@ -126,6 +159,14 @@ and I am not going to assert it.
 `g6e.4xlarge` (same size, same AZ, 35 minutes apart): 0/8, common prefixes
 0–149 characters.
 
+> **[Corrected 2026-08-21: the prefix range is 0–1,062 characters, not 0–149.]**
+> `nemotron-3-nano-4b_4xl-vs-4xl-BOX2BOX.json`
+> `cross_size.diffs[].common_prefix_chars` = [0, 149, 0, 1062, 85, 894, 486, 573]
+> — four of the eight exceed 149. (The 4xl-vs-2xl file is
+> [0, 74, 0, 1062, 1250, 16, 0, 428], range 0–1,250.) The instance facts in the
+> sentence are correct: both boxes `g6e.4xlarge` in us-east-2b, launched 12:49:32Z
+> and 13:24:34Z, 35m02s apart (`hwprobe_box2box_nemotron.log:27,80`).
+
 **Evidence.** `nemotron-3-nano-4b_4xl-vs-2xl.json` and
 `..._4xl-vs-4xl-BOX2BOX.json`, both `cross_size.rate: 0.0`. (Note the field is
 *named* `cross_size` in the box2box file but is cross-*box at fixed size* — the
@@ -134,7 +175,9 @@ script's key names assume the size comparison,
 
 **What it establishes.** Instance size was never shown to matter. Divergence, when
 it happens, happens almost immediately — a single early token differs and the
-trajectories separate.
+trajectories separate. [Corrected 2026-08-21: "almost immediately" holds for about
+half the prompts; on the rest the trajectories stay identical for several hundred
+to ~1,000 characters before separating.]
 
 **What it does not establish.** That divergence is the normal case. §0 shows it is
 not: the same script's own archive contains an 8/8 cross-process pairing. n = 8
@@ -244,10 +287,22 @@ revision to *that existing dict* is the whole of §5's recording change.
 the `deepseek-v3.1` near-miss got through (inventory §"A separate defect").
 Driver version, GPU UUID, clock/ECC state and actual SM count are unchecked.
 
-### 1.6 What the serving stack does and does not fix [VERIFIED]
+### 1.6 What the serving stack does and does not fix [VERIFIED as of 2026-08-16 — the knob table describes the STUDY-ERA configuration; every row was reversed by `91cac390` on 2026-08-18]
 
 Read from `smolbench/evals/payloads/agent.py.txt:137-153` (the `docker run`
 argument vector) and `smolbench/evals/ec2.py`:
+
+> **[Corrected 2026-08-21: this table is a historical record, not the current
+> configuration.]** It is accurate for the tree the family-ladder study collected
+> under, and that is what it is here to document — but it is present-tense and a
+> reader arriving directly would take it for HEAD. The §4 adoption of 2026-08-18
+> (`91cac390`) reversed every row: at HEAD the spec audit finds **0 of 22** specs
+> with `--enable-prefix-caching`, and **22 of 22** carrying `--revision`,
+> `--tokenizer-revision`, an explicit `--gpu-memory-utilization`, `--seed 0`,
+> `--max-num-seqs 1` and `--enforce-eager`. Only the two unchanged rows —
+> per-request `seed` is still passed, and `EC2_MAX_PARALLEL_REQUESTS` is still
+> untouched at its default — read the same today. Nothing about the study-era
+> facts below is retracted.
 
 | knob | state | note |
 |---|---|---|
@@ -303,7 +358,31 @@ study's own generation regime. Do not touch it.
 
 ---
 
-## 3. The hinge experiment [RUN 2026-08-16 21:08–22:20Z — BOTH PREDICTIONS LANDED]
+## 3. The hinge experiment [RUN 2026-08-16 21:08–22:20Z — BOTH PREDICTIONS LANDED] [Corrected 2026-08-21: window was 21:08–23:00Z, and the accurate reading is "both pre-registered decision rules fired cleanly" — see the correction box below]
+
+> **[Corrected 2026-08-21 — header, run window and cost.]** Two errors in the
+> header line and the cost note above, both verified from the archived logs.
+> (a) **"BOTH PREDICTIONS LANDED" overstates.** §3.2's column is "prediction if
+> the cache/serving-config hypothesis holds", and arm A's entry there is "Drops
+> below 8/8". Measured, arm A stayed **8/8** — so arm A's *prediction* did not
+> land; what fired was §3.3's pre-registered **exoneration** criterion. Arm C's
+> prediction did land (ministral 0/8 stock → 8/8 det). Read the header as **"both
+> pre-registered decision rules fired cleanly"**. The body table below is faithful
+> as written, and the pre-registration in §3-pre is untouched.
+> (b) **Run window and cost.** UTC logs: nemotron `i-0a53a6a4624e29667` launched
+> 21:07:58, terminate requested 22:22:23; ministral `i-06593b5a0a19b656c` launched
+> 21:07:53, terminate requested 22:54:20 (terminations completed 22:27:56 and
+> 23:00:08). The true window is **21:08–23:00Z** and the true usage **3.0
+> box-hours** (3.2 h to termination complete) — matching §3.5's own ~3 box-hour
+> estimate — i.e. **≈$4.2–5.2** at $1.39–1.71/hr, **INSIDE** the $4–7 envelope
+> rather than under it. The published "~2.2 box-hours, ≈$3.5" understates box time
+> by ~27%; the 22:20Z end is nemotron's arm alone and omits ministral's second arm.
+> Independent cross-check from a different field, the reports'
+> `serve_plus_passes_s`: 1800.1 + 2624.4 + 3135.0 + 3199.8 = 10,759.3 s = 2.99 h
+> excluding boot.
+> (c) **Scope.** Both hinge boxes were `g6e.4xlarge` — one L40S, **tp=1**, dense.
+> Everything §3 certifies is certified at tp=1 on single-GPU serving; see the
+> 2026-08-21 scope correction in §4.
 
 > **Results** (user-authorized; `scripts/hinge_probe.py`; reports
 > `notebooks/deduction/results/hwprobe_archive/hinge_<model>.json`; ~2.2 box-hours,
@@ -328,7 +407,14 @@ study's own generation regime. Do not touch it.
 > Two findings beyond the pre-registered questions:
 >
 > 1. **Cross-config is 0/8 on BOTH models** (same box, same seed, same prompts,
->    different serving flags; common prefixes 85–1502 chars). Determinism's scope
+>    different serving flags; common prefixes 85–1502 chars
+>    [Corrected 2026-08-21: **85–2,190 chars**. `hinge_nemotron-3-nano-4b.json`
+>    `cross_config` = [173, 146, 236, 1062, 452, 459, 606, 505];
+>    `hinge_ministral-3-3b.json` `cross_config` = [85, 857, 221, 336, 1379, 2190,
+>    324, 209]. The value 1,502 appears in neither list — it is the maximum of
+>    ministral's *stock same-box baseline* arm ([452, 1502, 221, 1451, 1379, 452,
+>    0, 209]), a different comparison, which itself scored 0/8]).
+>    Determinism's scope
 >    is one process × one configuration — a config change flips generations as
 >    thoroughly as a process change does.
 > 2. **Ministral's stock 0/8 is NOT client concurrency** — the probe is strictly
@@ -519,6 +605,20 @@ serving configuration, in the same commit that carries this note.]**
   including the qwen2.5-1.5b canary. The Tier-2 throughput cost is accepted by
   the directive. Flag-level attribution was deliberately not separated (§3):
   relaxing any single flag requires a fresh hinge-style certification.
+  **[Corrected 2026-08-21 — scope of the certification.]** "Hinge-certified"
+  means certified at **tp=1 on a single L40S**: both hinge models ran on
+  `g6e.4xlarge` (one GPU, dense), the only arms ever run, so multi-GPU
+  all-reduce reduction order was never exercised. At HEAD, **18 of 22 deploy
+  specs default to tp≥4** (9 at tp=4, 9 at tp=8), including every MoE lane
+  (`qwen3.5-397b-a17b`, `k-exaone-236b-a23b`, `nemotron-3-super-120b-a12b`,
+  `deepseek-v4-pro`). Determinism under the bundle is **UNCERTIFIED** for those
+  18 specs; a tp=8 hinge arm is the outstanding certification. Two further
+  recipe rows are unaddressed by this adoption: **#9** (a batch-invariant
+  kernel mode, which Appendix B still lists as [UNVERIFIED] and which would
+  retire the expensive `--max-num-seqs 1`) and **#10** (streaming; the one
+  post-adoption sidecar records `stream: false`). Recipe #6's 10–30%
+  throughput cost also remains unmeasured on this hardware while now a
+  fleet-wide default.
 - **#4** `--gpu-memory-utilization` is explicit on every spec (0.92 where it
   was implicit — vLLM's default AT THE PINNED BUILD, `vllm/config/cache.py:69`,
   and the value the hinge det arms actually resolved to; deepseek-v4-pro
@@ -559,7 +659,18 @@ serving configuration, in the same commit that carries this note.]**
 > NOT — the cache-config metric carries no backend label — and is now mined
 > best-effort from the container log tail (`attention_backend_log`; startup
 > lines can scroll off a long-serving box's tail, so call `server_config`
-> right after serve). The rest: client-side in `server_config()` (`/version`, the raw
+> right after serve). **[Corrected 2026-08-21: `attention_backend_log` is
+> code-landed but NEVER OBSERVED.]** The field appears in **zero stored data
+> files** — a grep for `attention_backend_log` across `notebooks/` returns only
+> this document, and the flip run's own `server_config.yaml` omits it entirely.
+> Treat the ninth field as implemented-but-unconfirmed until a real lane records
+> it populated. Relatedly, the canary's own machine-readable `server_config` was
+> never persisted as a tracked artifact: the sole evidence record,
+> `.claude/smokes/gzip_det_canary_proof.py`, is untracked prose and asserts
+> "`server_config()` populated all fields", which contradicts this section's own
+> eight-of-nine. The eight-of-nine statement is the accurate one.
+>
+> The rest: client-side in `server_config()` (`/version`, the raw
 > `cache_config_info` metrics line, the actually-sent vllm_args/tp/max_model_len
 > stashed at serve time, client parallelism + streaming flags) and box-side via
 > a `fingerprint` object on the control agent's `/status` (docker RepoDigests,
@@ -626,7 +737,15 @@ it.
 The paper needs a **score-level** term: *given the same cells, how much does the
 headline metric move when the serving process changes?*
 
-### 6.2 The measurement [MEASURED 2026-08-18 — flip rate 9.5%, CI [5.8%, 14.4%], ±2.1 pts on pass@1]
+### 6.2 The measurement [MEASURED 2026-08-18 — flip rate 9.5%, CI [5.8%, 14.4%]; ±2.1 pts is the flip-RATE SE at n=200, NOT pass@1 noise — lane term ≈±1.1 pt, see the correction in the box]
+
+> **[Corrected 2026-08-21 — header relabel.]** This heading previously read
+> "±2.1 pts on pass@1". That is a mislabel with a traceable origin:
+> `flip_report.json`'s field is literally named `pass_at_1_se` and equals
+> sqrt(0.095 × 0.905 / 200) = 0.02073 — the 1-SE width of the flip **RATE**
+> estimate at n=200. The lane-level process-swap quantity is roughly half that;
+> see the corrected paragraph in the box below. The same mislabel stands
+> uncorrected in commit `48c08fb8`'s subject line, which is not editable here.
 
 > **Run as designed below with two disclosed deviations**: n=200 `Random(0)`
 > cells from nemotron-3-nano-4b's 711-cell measurable Mathlib population,
@@ -646,16 +765,61 @@ headline metric move when the serving process changes?*
 > between the re-verified originals and the study's stored verdicts — every
 > flip is generation, not grading (and this doubles as a 200-cell
 > comparability certificate for the same-day DojoInit recovery, on top of
-> its 30/30 control gate). The write-up sentence this section prescribes,
+> its 30/30 control gate).
+> **[Corrected 2026-08-21 — the certificate is scoped to Mathlib and certifies
+> no std cell.]** The §6.2 flip sample is Mathlib-ONLY by construction
+> (`flip_probe.py` `measurable_cell_keys` excludes `.lake/packages/std/`;
+> population 711, all 337 flip-run rows Mathlib), and the 30 controls in
+> `controls_report.json` are Mathlib theorems whose intersection with the 45
+> recovered std theorems is **zero**. The DojoInit recovery grades **std** cells
+> (151/151 std paths per lane). So neither gate compares a single std-cell
+> verdict, and this is a **verifier-environment check on Mathlib cells**, not a
+> certificate for the recovered class. On std cells the recovery is
+> **reachability-certified** (17/17 `.ast.json` resolve, 45/45 ground-truth
+> sanity replays succeed) but **not verdict-certified** — and verdict
+> certification there is **impossible, not missing**, since all 151 std study
+> rows per lane were graded `replay_failed`, so no baseline verdict exists to
+> compare against. Separately, the recovery's `report.json` records no grading
+> instance metadata (keys: `lanes`, `recovery`, `unrecovered_cells`,
+> `n_unrecovered`), so the "same-day" link between the two verifier environments
+> is asserted in prose and cannot be checked even for Mathlib cells.
+>
+> The write-up sentence this section prescribes,
 > filled in: *"The per-cell flip probability across processes was measured
 > at 9.5% (95% CI [5.8%, 14.4%], n = 200, one lane)."* The ±2.1-point
 > figure is the 1-SE width of the flip-RATE estimate at n=200 (the report's
 > own field and caveat say exactly this; cells share theorems, so it is
 > likely too narrow) — the lane-level quantity is smaller: ≈**±1.2 points
-> of process-swap SD on a 712-cell lane's pass@1**. And the byte-level
+> of process-swap SD on a 712-cell lane's pass@1**.
+> **[Corrected 2026-08-21 — the lane term, measured, is ±1.09–1.16 pt, and it
+> is a DIFFERENCE SD.]** Two refinements. (a) *Magnitude:* the iid value is
+> sqrt(0.095/712) = 0.011546 = **1.155 pt**; multiplying by the measured signed
+> design effect **deff = Σ Sᵢ²/#flips = 17/19 = 0.895** (block-bootstrap 95%
+> [0.684, 1.000], P(deff>1) = 0.000; within-theorem signed correlation
+> ρ = −0.139) gives **1.093 pt**, and the worst case of all-concordant blocks
+> (deff 1.105) gives 1.214 pt. Quote **≈±1.1 pt (range 1.09–1.16)**; the
+> published "±1.2" over-states by about 0.06 pt. Note the *signed* design
+> effect is the one that enters pass@1 variance and it is **below** 1, unlike
+> the indicator-level deff of 1.150 (ICC ρ = +0.327, m_adj = 1.458), which does
+> not. (b) *How to propagate it:* sqrt(p_flip/N) is the SD of (c−b)/N, and
+> (c−b)/N is identically p_rerun − p_orig (from a=11, b=6, c=13, d=170:
+> 0.1200 − 0.0850 = +0.0350 = (13−6)/200) — so this is already a **two-process
+> difference** SD. The per-run σ is 0.011546/√2 = **0.82 pt**. A contrast
+> between two independently-served lanes therefore adds (0.011546)² **once**,
+> not twice; adding it twice doubles the variance and, on the deduction ladder,
+> costs three Holm rejections on the 707 pool (10/21 instead of 13/21).
+>
+> And the byte-level
 > datum for this sample: **178/200 (89%) of the re-generations differ in
 > text** while 9.5% flip score — §6.1's "byte agreement is the wrong
 > metric", now quantitative.
+> [Corrected 2026-08-21: label the 178/200 precisely — it is the extracted
+> **candidate proof** differing. The raw response differs in **191/200 (95.5%)**
+> and the (reasoning_content, raw_response) pair in **199/200 (99.5%)**, which
+> strengthens §6.1's point rather than weakening it. None of these figures is
+> stored in `flip_report.json` and no such field exists in
+> `scripts/flip_probe.py`: they are reconstructible from the paired rows but
+> were never recorded.]
 > Driver: `scripts/flip_probe.py` (sample sha `bf22495e…`); data:
 > `s3://…/deduction/runs/flip_nemotron-3-nano-4b/` and
 > `notebooks/deduction/results/runs/flip_nemotron-3-nano-4b/flip_report.json`.
@@ -722,6 +886,25 @@ not put a number on it that has not been measured.
 > with its direction now measured: under-estimate, not the argued
 > over-estimate. `scripts/flip_free_bound.py`; results in
 > `notebooks/deduction/results/flip_free_bound_2026-08-18.json`.
+>
+> **[Corrected 2026-08-21 — the DIRECTION CLAIM IS RETRACTED. The bias
+> direction returns to [UNVERIFIED].]** The two clauses immediately above are
+> mutually exclusive: a sample stated to carry *no token-level nondeterminism
+> signal at all* cannot be compared, in either direction, against §6.2's
+> measurement *of* token-level nondeterminism. That is a validity defect, not a
+> power problem, so no increase in n repairs it. The numbers agree: the 2×2
+> [[3, 71], [19, 181]] gives **Fisher exact two-sided p = 0.209** (χ² p = 0.222),
+> and against a fixed 9.5% the one-sided binomial gives **p = 0.070** — n.s. on
+> the most generous framing; §6.3's own Clopper-Pearson CI [0.8%, 11.4%]
+> contains 9.5%. And the estimands differ: **74 of 74** pairs had an empty first
+> surviving attempt, **0** pairs hold two non-empty generations, and all 3 flips
+> are `['lean_error','success']` with `n_nonempty_attempts = 1`. What survives:
+> §6.3 re-measures at **3/74 (4.1%, exact 95% CI [0.8%, 11.4%])**, all fail→pass,
+> and it measures *whether a resample of an empty-return cell succeeds*. No
+> comparison with §6.2 in either direction is supportable, and the original
+> caveat below — **[UNVERIFIED — bias direction argued, not measured]** — is
+> restored as the authoritative statement. Commit `48c08fb8`'s "confirms
+> outcome-selection UNDER-detects" is retracted on the same grounds.
 
 The resampling bug left **74 cells with more than one surviving attempt**
 (`ministral-3-3b` 63, `qwen3.5-27b` 6, `gemma-4-31b` 5 — inventory §"pass@1
@@ -751,6 +934,14 @@ The argument, which **survives the §0 correction**:
    cell was generated on is assigned by spot capacity — which is independent of
    the model axis. A term that does not correlate with the comparison axis inflates
    variance; it does not move a point estimate.
+   **[Corrected 2026-08-21 — this premise is WITHDRAWN as stated.]** Spot
+   capacity is independent of model *size*, not of model *identity*. Process
+   identity is aliased with lane identity: each lane draws one process
+   realization, so that lane's realized offset is indistinguishable from bias in
+   its own point estimate and enters every between-model contrast. §7.2 below
+   concedes the mechanism without correcting this premise. The §6.2 recompute
+   bounds the per-pair mean shift at **+3.5 pts, 95% CI [−0.74, +7.74]**.
+   §7.1's conclusion survives on premises 2 and 3 alone.
 2. **No re-run can restore original outputs anyway.** A re-run necessarily happens
    in a new process. It can only make a lane internally homogeneous *going forward*.
 3. **The cost is absurd relative to the gain.** Twenty-plus lanes, weeks of compute,
@@ -759,6 +950,18 @@ The argument, which **survives the §0 correction**:
    uniformly 0/8, one might worry that "process" is a large latent factor. The 8/8
    pairing shows processes can be *exactly* equivalent — the space of regimes is
    small and discrete, not a continuum of unique per-box behaviours.
+   **[Corrected 2026-08-21 — premise 4 is WITHDRAWN; it points the other way.]**
+   §7.2, eighteen lines below, uses the identical fact as the live worry
+   ("Bimodality makes that assumption testable… a lane's expected score would
+   depend on how many boxes it used"), and §7.2 is right. Discreteness makes
+   within-lane averaging *worse*: a single-box lane sits entirely in one regime
+   and its offset never averages down, whereas a continuum of small per-box
+   perturbations would average toward zero. Withdrawn, not deleted, so the
+   original reasoning stays visible. **§7.1's conclusion — do not re-collect —
+   survives on premises 2 and 3 alone.** Note also that premise 3 prices only
+   re-collect-vs-accept; the option that would actually shrink the term
+   (serving each lane from several processes and averaging) is priced nowhere
+   in §7.
 
 ### 7.2 The one gap in that argument, stated honestly
 
@@ -775,6 +978,19 @@ I want to be precise about how much this is worth worrying about: it is a
 differ in *mean*, not merely in output; nothing observed suggests that, and the
 §6.2 measurement resolves it directly for **$10–17**. **Run §6.2 before the
 write-up; do not run twenty lanes.**
+
+> **[Corrected 2026-08-21 — §6.2 RAN, and it bounds this loosely rather than
+> resolving it.]** The imperative above is spent: §6.2 was measured 2026-08-18.
+> What it delivers is weaker than "resolves it directly". As run it compares
+> **one** study process against **one** rerun process on **one** lane; its
+> mean-shift estimate is (c−b)/n = **+3.5 pts, SE 2.17, 95% CI [−0.7, +7.7]**,
+> exact McNemar p = 0.167, with an **MDE at 80% power of ≈6.1 pts**. Against
+> that lane's pass@1 of 8.5%, the interval admits a shift comparable to the
+> whole score and several times the ≈±1.1 pt SD the analysis propagates. Even
+> at infinite n the design estimates a two-process contrast, not a regime-level
+> mean difference — §0 identifies at least three groups among four processes.
+> Read §7.2 as: the regime-mean question **remains open**, and the bound now
+> available is wider than any ladder contrast the study reports.
 
 ### 7.3 Do not "fix" this by lowering temperature or dropping the seed
 
@@ -797,6 +1013,16 @@ the one configuration tested, and one of its eight baseline rows was a transport
 fault"* — not *"the model is nondeterministic, so nothing can be measured."* §3
 arm C settles it for a few dollars. **Do that before re-running anything.**
 
+> **[Corrected 2026-08-21 — §3 arm C RAN on 2026-08-16; this section's premise
+> is superseded.]** Arm C returned **8/8**: `ministral-3-3b` **is** reproducible
+> under the determinism config, and its archived 0/8 was the *configuration*,
+> not the model. So the standing reason not to re-collect it is no longer
+> unmeasurability — it is **comparability**: cross-config agreement is **0/8 on
+> both hinge models** (§3), so anything re-collected under the determinism
+> default cannot be pooled with the twenty stock-config lanes. (The grounds text
+> committed at `d571f39f` edited only `CONTAMINATION_INVENTORY_2026-08-15.md`
+> and was never propagated into this document; that omission is closed here.)
+
 ---
 
 ## 8. Summary of changes this document asks the inventory to make
@@ -805,8 +1031,8 @@ arm C settles it for a few dollars. **Do that before re-running anything.**
 |---|---|
 | lines 40–41, "reproducible within one process and not across processes" | **Retract the second clause.** Cross-process agreement reaches 8/8 in one measured pairing, across two *different instance types in different regions* (§0). Four processes fall into **three** groups, not two |
 | lines 43–44, "both reported `vllm 0.27.2rc1.dev110+gacb0f1dcd`" | **Do not read as covering the probe.** Probe-1's own log records `dev77`. Five builds spanning `0.26.1`→`0.27.2` served this study (§1.4) |
-| lines 29–30 and line 86, "`ministral-3-3b`... nothing can be measured for it" | **Narrow.** Not reproducible *under the one configuration tested*; 1 of its 8 baseline rows is a transport fault (§1.3). §3 arm C tests it for <$10 |
-| line 25, "this model IS deterministic at a fixed seed" | **Add the limit.** With prefix caching on and identical prompts, the second pass replays the first pass's KV. The baseline may measure the cache (§1.1) |
+| lines 29–30 and line 86, "`ministral-3-3b`... nothing can be measured for it" | **Narrow.** Not reproducible *under the one configuration tested*; 1 of its 8 baseline rows is a transport fault (§1.3). §3 arm C tests it for <$10 — [Corrected 2026-08-21: arm C RAN 2026-08-16 and returned **8/8**, so this row is superseded: the model IS reproducible under the determinism config, and the standing reason not to re-collect is 0/8 cross-config incomparability. See §7.5] |
+| line 25, "this model IS deterministic at a fixed seed" | **Add the limit.** With prefix caching on and identical prompts, the second pass replays the first pass's KV. The baseline may measure the cache (§1.1) — [Corrected 2026-08-21: superseded by §3 arm A, which read 0 cache queries / 0 hits and still scored 8/8. The "may be measuring the cache" limit is RESOLVED (it was not), so this row should no longer be asked of the inventory. The residual scope caveat is different: arm A changed four flags together and ran at tp=1 on one L40S] |
 | lines 121–122, "state this as a known noise term with its measured size (0/8 / 8/8)" | **Replace with a score-level term** (§6). Byte-agreement overstates the problem and is bimodal anyway |
 | line 241, "unpinned nightly digest drift remains a residual" | **Upgrade from residual to confirmed**, and note it is partly recoverable: 4 distinct digests are in the logs, two within one lane (§1.4) |
 
@@ -849,11 +1075,19 @@ does that — and not enough to characterise the regime structure. Sizing that i
 
 **[VERIFIED] — checked in this session, with the command or file cited inline**
 - The 8/8 cross-process SHA match and its instance IDs/types/regions/timestamps (§0)
-- The 1/8 second-regime match on the shortest output (§0)
+- The 1/8 second-regime match on the shortest output (§0) [Corrected 2026-08-21:
+  the 1/8 match is VERIFIED; "on the shortest output" is not — that prompt is the
+  SECOND-shortest and the shortest one disagreed in that pairing (§0)]
 - The probe is strictly sequential and never calls `evaluate()`; concurrency was 1
   in all four passes (§1.6)
 - `--enable-prefix-caching` on every roster model; no `--seed`, `--max-num-seqs`,
   `--enforce-eager`, `--gpu-memory-utilization`, or `--revision` anywhere (§1.6)
+  **[VERIFIED as of 2026-08-16; every clause reversed by `91cac390` on
+  2026-08-18.** At HEAD the spec audit finds 0/22 specs with
+  `--enable-prefix-caching` and 22/22 carrying `--revision`,
+  `--tokenizer-revision`, an explicit `--gpu-memory-utilization`, `--seed 0`,
+  `--max-num-seqs 1` and `--enforce-eager`. §1.6's knob table describes the
+  study-era configuration, not the current one.]
 - Per-request `seed` is sent (`openai_compat.py:659`) (§1.6)
 - `EC2_MAX_PARALLEL_REQUESTS` default 8; lanes use 4 or 8 (§1.6)
 - Four distinct image digests in the logs, two within `deepseek-v4-flash` (§1.4)
@@ -867,17 +1101,39 @@ does that — and not enough to characterise the regime structure. Sizing that i
 **[UNVERIFIED] — stated as such, not asserted**
 - CLI spellings `--no-enable-prefix-caching`, `--max-num-seqs`, `--enforce-eager`,
   `--seed` against build `0.27.2rc1.dev110+gacb0f1dcd`. §3.6 gives the pre-check
+  **[RESOLVED 2026-08-21: all four spellings ran successfully at the §3 hinge
+  (2026-08-16) and the §4 canary (2026-08-18) on build
+  `0.27.2rc1.dev122+g8efa13b70` — which is the pinned build; `dev110` never was.]**
 - Whether this build exposes a batch-invariant kernel mode (recipe #9)
 - The `--enforce-eager` throughput cost figure (10–30%) — an order-of-magnitude
   expectation, not a measurement on this hardware
 - The **direction** of the selection bias in §6.3's free 74-cell sample. The sample
   is definitely biased (selection is on cell outcome); the argument that it
   over-states the flip rate is reasoning, not measurement
+  **[STILL [UNVERIFIED] as of 2026-08-21 — this row is correct and stays here.**
+  §6.3's 2026-08-18 remeasurement briefly reported the direction as measured
+  ("under-estimate"); that claim is retracted (see the §6.3 correction box).
+  3/74 vs 19/200 is Fisher two-sided p = 0.209, one-sided binomial against a
+  fixed 9.5% p = 0.070, and the two are different estimands — 74/74 first
+  attempts were empty and no pair holds two non-empty generations. Neither
+  direction is measured.]
 - Which image digest each of the probe's four boxes ran: **not recoverable.** Their
   logs contain no digest line and the instances are terminated. This is exactly the
   gap §5 closes going forward
 
-**[NOT DONE] — deliberately, per scope**
+**[NOT DONE — as of 2026-08-16; SUPERSEDED, see the stamp below] — deliberately, per scope**
 - No arm of §3 was run. No box was launched. No S3 object was written, moved or
   deleted. No study code, data or config was modified. The live `ministral-3-14b`
   re-collection (babysitter pid 203085) was not touched.
+
+**[Corrected 2026-08-21 — the [NOT DONE] block above describes 2026-08-16 only
+and is contradicted by four later sections of this same document.]** Since then:
+§3 ran (both arms, 2026-08-16 21:08–23:00Z); §6.2 was MEASURED 2026-08-18 on a
+fresh `g6e.2xlarge`; §4 was ADOPTED and live-validated by the qwen2.5-1.5b canary
+2026-08-18; §5 was IMPLEMENTED 2026-08-18. Four boxes were launched in total (2
+hinge, 1 flip, 1 canary), S3 objects were written under
+`deduction/runs/flip_nemotron-3-nano-4b/`, and `ec2.py`, `agent.py.txt`,
+`run_fleet.py` and both notebook `keys.env` files were modified by commits
+`91cac390`, `57618f26`, `a1cf5033`, `3f6f342f` and `48c08fb8`. Appendix B is the
+section a reader consults *for* status; consult each section's dated banner
+instead.

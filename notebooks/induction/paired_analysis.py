@@ -24,6 +24,18 @@ Implements the two corrections specified in ``MULTIPLICITY_PLAN.md`` sections
      effect the CMH denominator is missing (>1 anticonservative, <1
      conservative).
 
+  3. [Added 2026-08-21] The clustering FIX, not just its sign. Measuring the
+     design effect and then reporting an item-level p anyway leaves the
+     inference resting on the assumption the measurement rejects. The exact
+     seed-level sign-flip randomization test (`signflip_exact_p`) resamples the
+     unit the design actually randomizes -- the whole replicate -- and is what
+     `significance_report.py` and `extens_vs_noise.py` now correct over the 210
+     family. This is the repo's own standing recommendation
+     (MULTIPLICITY_PLAN.md section "resampling unit must be the whole seed";
+     MULTIPLICITY_CMH_VARIANTS.md "PERMUTE / BLOCK-BOOTSTRAP WHOLE
+     REPLICATES ... RECOMMENDED HERE"), finally applied to the primary family.
+     Exact McNemar stays in the tables as the DESCRIPTIVE item-level figure.
+
 Marks are read from the local results tree that
 ``InductionExperiment.harness.sync_down()`` produces
 (``{model}_{info}/rep_{seed}.yaml``). The YAMLs carry ``!!python/object`` tags,
@@ -45,6 +57,7 @@ Run (ephemeral env via --no-project, per repo convention):
 
 import re
 import sys
+from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
@@ -139,11 +152,80 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 
     ``b``/``c`` are the discordant counts. With no discordant pairs there is no
     evidence of a difference, so p = 1.
+
+    NOTE (2026-08-21): this treats the 270 marks as 270 independent pairs. They
+    are not -- see `seed_diffs` / `signflip_exact_p`, which are what the reports
+    now use for inference. This function survives as the DESCRIPTIVE item-level
+    figure and as the exact reference the cluster test collapses onto when every
+    cluster is a singleton.
     """
     nd = b + c
     if nd == 0:
         return 1.0
     return float(min(1.0, 2.0 * binom.cdf(min(b, c), nd, 0.5)))
+
+
+def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
+    """Per-replicate arm difference, one integer per seed.
+
+    ``d_s = (# correct in arm A at seed s) - (# correct in arm B at seed s)``,
+    over the items `aligned` kept for that seed. This is the per-cluster
+    summary the sign-flip test below permutes, and ``sum(d_s) == b - c`` exactly
+    (the McNemar discordance margin), so the two tests read the same signal and
+    differ only in what they treat as exchangeable.
+    """
+    a_i, b_i = a.astype(np.int64), b.astype(np.int64)
+    return [
+        int(a_i[seed_idx == s].sum() - b_i[seed_idx == s].sum())
+        for s in np.unique(seed_idx)
+    ]
+
+
+def signflip_exact_p(diffs) -> float:
+    """EXACT two-sided seed-level sign-flip randomization p-value.
+
+    The independent unit in this design is the REPLICATE SEED, not the mark: a
+    seed draws one label alphabet and one answer vector, and the 9 harmonic
+    items inside it share them. Under the null "the two arms are exchangeable
+    WITHIN a replicate", every seed's difference is equally likely to have come
+    out with the opposite sign, so the reference distribution of
+    ``T = sum_s d_s`` is the 2^S sign assignments, and
+
+        p = P(|T*| >= |T_obs|)
+
+    is exact. Enumerated by dynamic programming over the attainable totals --
+    2^30 assignments cost 30 dict passes, not 10^9 draws -- so the value is
+    deterministic and needs no seed.
+
+    Two properties worth stating, because they close the "why this statistic"
+    question rather than leaving it to taste:
+
+      * With one item per cluster the test IS exact McNemar (a singleton's
+        d_s is +-1 and the sign-flip distribution becomes the binomial the
+        conditional test uses).
+      * Studentizing is a provable no-op: ``sum_s d_s^2`` is invariant under
+        sign flips, so a paired-t statistic is a monotone function of |T| and
+        yields an identical p. The unweighted seed sum is therefore the natural
+        member of the cluster-permutation family, not one choice among many.
+
+    The resolution floor is ``2 / 2^S`` (both the observed assignment and its
+    global negation always qualify), i.e. 1.86e-09 at S = 30; contrasts that
+    saturate it are reported at the floor rather than at a fabricated smaller
+    number.
+    """
+    diffs = [int(d) for d in diffs]
+    if not diffs:
+        return 1.0
+    dist: dict[int, int] = {0: 1}
+    for d in diffs:
+        nxt: dict[int, int] = defaultdict(int)
+        for total, weight in dist.items():
+            nxt[total + d] += weight
+            nxt[total - d] += weight
+        dist = nxt
+    observed = abs(sum(diffs))
+    tail = sum(w for total, w in dist.items() if abs(total) >= observed)
+    return tail / 2 ** len(diffs)
 
 
 def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
@@ -187,9 +269,14 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
     Controls FWER under ARBITRARY dependence and is uniformly more powerful
     than single-step Bonferroni -- see MULTIPLICITY_PLAN.md section 1.
+
+    Ties are pervasive in this family (the sign-flip test has a hard resolution
+    floor at 2/2^30, and three lanes sit exactly on it), so the sort is STABLE:
+    the rejection set must not depend on the order the contrasts happen to be
+    built in.
     """
     m = pvals.size
-    order = np.argsort(pvals)
+    order = np.argsort(pvals, kind="stable")
     reject = np.zeros(m, dtype=bool)
     for i, idx in enumerate(order):
         if pvals[idx] <= alpha / (m - i):
@@ -249,11 +336,18 @@ def main() -> None:
             nc = int((~a & b).sum())
             p_paired = mcnemar_exact_p(nb, nc)
             p_unpaired = cmh_unpaired_p(a, b, sidx)
+            # The cluster test is only meaningful on the pre-registered pass:
+            # dropping invalid pairs makes the per-seed sum a sum over a
+            # VARIABLE number of items, which is a different statistic.
+            p_cluster = (
+                signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
+            )
             rows.append(
                 dict(
                     label=label, n=a.size, acc_a=a.mean(), acc_b=b.mean(),
                     disc=(nb + nc) / max(a.size, 1), b=nb, c=nc,
                     p_paired=p_paired, p_unpaired=p_unpaired,
+                    p_cluster=p_cluster,
                     de=design_effect(a, b, sidx),
                 )
             )
@@ -270,6 +364,20 @@ def main() -> None:
             f"  paired McNemar+ Bonferroni : {bonf_pair.sum():3d}\n"
             f"  paired McNemar+ Holm       : {rej_pair.sum():3d}"
         )
+        if not drop_invalid:
+            p_cl = np.array([r["p_cluster"] for r in rows])
+            rej_cl = holm(p_cl)
+            print(
+                f"  seed sign-flip+ Bonferroni : "
+                f"{int((p_cl <= ALPHA / N_PRIMARY).sum()):3d}\n"
+                f"  seed sign-flip+ Holm       : {int(rej_cl.sum()):3d}   "
+                f"<== PRIMARY since 2026-08-21 (correction 3)\n"
+                f"  => vs item-level McNemar: "
+                f"{int((rej_pair & ~rej_cl).sum())} lost, "
+                f"{int((rej_cl & ~rej_pair).sum())} gained "
+                f"(item-level p is anticonservative wherever\n     the seed x "
+                f"arm interaction is positive, which is the majority here)"
+            )
         gained = [r for r, gp, gu in zip(rows, rej_pair, rej_unp) if gp and not gu]
         lost = [r for r, gp, gu in zip(rows, rej_pair, rej_unp) if gu and not gp]
         print(

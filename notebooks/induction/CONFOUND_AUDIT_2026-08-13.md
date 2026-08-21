@@ -12,6 +12,38 @@ A "confound" here = a change to instance/GPU type or count, tp, vLLM
 image/flags, or prompt content, with some of a lane's seeds landing on each
 side. Timeout/monitoring/scheduling changes are not confounds.
 
+> **[Corrected 2026-08-21 — SELECTION RULING SUPERSEDES THIS DOCUMENT'S
+> CONFIG MAP.]** The user ruling of 2026-08-16 is **EARLIEST-logged-run wins,
+> both legs**. Consequences for this audit, which was written under
+> newest-wins:
+>
+> * **Contamination rule 4 below is VOID.** Analysis does not read through
+>   newest-run_ts-wins, and the re-collections therefore do NOT make the
+>   three re-run lanes single-config.
+> * The "Per-lane serving configs" table's rows for **`gemma-4-12b`**,
+>   **`ministral-3-14b`** and **`deepseek-v4-flash`** describe the NEWEST
+>   attempts, i.e. the re-collection stacks — not the data actually analyzed.
+> * Under earliest-wins those three lanes are internally **era-SPLIT**, not
+>   single-config and not uniformly pre-re-collection: the re-collections
+>   also supplied seeds that had no earlier attempt, so each lane mixes
+>   stacks within its own 30 seeds. Measured from the per-seed `date:` fields
+>   of the earliest-selected tree:
+>   * `gemma-4-12b` — 14 seeds (0-13) on the old g6e history + 16 seeds
+>     (14-29) from the g7.12xlarge re-run.
+>   * `ministral-3-14b` — 9 + 14 + 7 across THREE eras: seeds 0-8 on the
+>     2026-08-11/12 g6e stack, seeds 9-18 and 20-23 from the 2026-08-14
+>     g7.24xlarge re-collection, seeds 19 and 24-29 from the 2026-08-16
+>     streaming-transport refill. (Verified against the per-seed `date:`
+>     fields; the 7 refill seeds are the same ones PASS_AT_1 §2.5 counts as
+>     "28 = 7 seeds × 4 arms".)
+>   * `deepseek-v4-flash` — 12 pre-B200 seeds + 18 B200 seeds.
+>
+> Everything else in this document (the single-config lane clearances, the
+> deduction segmentation, the box-to-box result) is unaffected — but note that
+> wherever the text argues a clearance *from* newest-wins selection — as the
+> in-flight re-collection bullets under "Cleared" do — that argument is void too. The
+> original text is left in place as the dated record of the newest-wins era.
+
 ## Confirmed, and their dispositions
 
 ### gemma-4-12b: THREE configs across seeds 0-13 -> CURED by full re-run
@@ -25,6 +57,9 @@ side. Timeout/monitoring/scheduling changes are not confounds.
   user-approved 2026-08-13. Newest-run_ts-wins supersedes the mixed history;
   the old tp1/tp4 results remain in the log as prior versions. The lane's
   analyzed data will be single-config.]
+  [Corrected 2026-08-21: VOID under the 2026-08-16 earliest-wins ruling. The
+  analyzed lane is era-split 14 old-g6e seeds (0-13) + 16 g7.12xlarge seeds
+  (14-29), not single-config. See the header note.]
 
 ### deepseek-v4-flash: SM90 (seeds 0-11) vs SM100/B200 (seeds 12-29)
 - Documented deliberately at migration (9f6e98a2). Audit adds:
@@ -94,8 +129,17 @@ against S3 per-seed timestamps.
 - ministral-3-14b: full 30-seed re-collection in flight on 8x g7.24xlarge
   (4x RTX PRO 4500 32GB, SM120, tp=4), us-east-2c. Same newest-wins rule,
   same >= 2026-08-14T01:00Z cross-check.
+  [Corrected 2026-08-21: the "analyzed data = newest-run_ts-wins" rule in both
+  bullets is VOID (earliest-wins). The re-collections themselves happened as
+  described; what changed is which of a cell's attempts the analysis reads. See
+  the header note for the resulting era splits.]
 
 ## Per-lane serving configs (analyzed data, after newest-wins)
+
+*[Corrected 2026-08-21: "analyzed data" holds for 18 of 21 lanes. Under the
+2026-08-16 earliest-wins ruling the `gemma-4-12b`, `ministral-3-14b` and
+`deepseek-v4-flash` rows below describe their NEWEST attempts, not the analyzed
+data; those three lanes are era-split. See the header note.]*
 
 | lane | induction | deduction |
 |---|---|---|
@@ -106,18 +150,18 @@ against S3 per-seed timestamps.
 | nemotron-3-nano-30b-a3b | g6e.12xl (tp=4), ONE box us-west-2b | same box |
 | nemotron-3-super-120b-a12b | p5e.48xl (8x H200, tp=8), ONE box us-west-2 | same box |
 | gemma-4-e2b | g6e.4xl (1x L40S, tp=1) x3 boxes us-east-2 | same type |
-| gemma-4-12b | RE-RUN: g7.12xl (2x RTX PRO 4500, tp=2) x10, us-west-2b | TO RUN (single lane, sidecar active) |
+| gemma-4-12b | RE-RUN: g7.12xl (2x RTX PRO 4500, tp=2) x10, us-west-2b **[see 2026-08-21 note: analyzed lane is 14 old-g6e + 16 g7.12xl seeds]** | TO RUN (single lane, sidecar active) |
 | gemma-4-31b | g6e.12xl (tp=4), ONE box us-east-2c | same box |
 | glm-4.7-flash | g6e.12xl (tp=4) x4 boxes us-east-2 + us-east-1d | same type, resumed sweep |
 | glm-4.5-air | p5.48xl (8x H100, tp=8) x2 us-east-2c | same type, resumed sweep |
 | glm-4.7 | p5en.48xl (8x H200, tp=8) x2 us-east-2a | same type |
 | ministral-3-3b | g6e.4xl + g6e.12xl MIXED, static tp=1 -- **clearance RETRACTED** | g6e.2xl then g6e.4xl MIXED; model not reproducible on one box (0/8 baseline) so undetectable AND unverifiable by rerun |
 | ministral-3-8b | g6e.12xl (tp=4), ONE box us-west-2b | same box |
-| ministral-3-14b | RE-RUN: g7.24xl (4x RTX PRO 4500, tp=4) x8, us-east-2c | TO RUN (single lane, sidecar active) |
+| ministral-3-14b | RE-RUN: g7.24xl (4x RTX PRO 4500, tp=4) x8, us-east-2c **[see 2026-08-21 note: analyzed lane is 9 + 14 + 7 seeds across three eras]** | TO RUN (single lane, sidecar active) |
 | exaone-4.0-32b | g6e.12xl (tp=4), ONE box us-east-2c | same box |
 | exaone-4.5-33b | g6e.12xl (tp=4) x3 boxes us-east-2 | same type, resumed sweep |
 | k-exaone-236b-a23b | p5.48xl (8x H100, tp=8) x2 us-east-2 | same type |
-| deepseek-v4-flash | p6-b200.48xl (8x B200, tp=8) after re-run | same box class, single segment |
+| deepseek-v4-flash | p6-b200.48xl (8x B200, tp=8) after re-run **[see 2026-08-21 note: analyzed lane is 12 pre-B200 + 18 B200 seeds]** | same box class, single segment |
 | deepseek-v3.1 | p5en.48xl (8x H200, tp=8), ONE box us-east-2a | same box, single segment |
 | deepseek-v4-pro | p6-b200.48xl (8x B200, tp=8), ONE box us-west-2b | same box; first (H200-era) attempt wrote ZERO rows -- the final segment wrote the full 944, so no p5en rows exist |
 
@@ -159,6 +203,10 @@ segments g6e.12xlarge tp=4 (us-east-2c then us-east-1d).
    resolution (harness sync_down does this) -- that alone makes the three
    re-run lanes single-config. The freshness cutoffs above are cross-checks,
    not the mechanism.
+   **[Corrected 2026-08-21: VOID. The 2026-08-16 user ruling is
+   EARLIEST-logged-run wins on both legs; the three re-run lanes are
+   era-split in the analyzed data (14/16, 9/14/7, 12/18). See the header
+   note.]**
 5. Between-rung hardware differences are a DESIGN PROPERTY, not
    contamination: a family's rungs necessarily span GPU tiers (a 397B rung
    cannot run on one L40S), so box type is nested within rung size.
@@ -357,7 +405,9 @@ was my first correction of it. The accurate statement:
 
 Consequence for this audit's framing: "confound" cannot usefully mean "some of a lane's
 cells came from a different box," because that is true of nearly every lane in the study
-(`gemma-4-12b` ×21 boxes, `ministral-3-14b` ×48, `glm-4.7-flash` ×4, `exaone-4.5-33b` ×3,
+(`gemma-4-12b` ×21 boxes [corrected 2026-08-21: ×39; ≥ 36 at write time],
+`ministral-3-14b` ×48 [corrected 2026-08-21: ×64; ≥ 54 at write time],
+`glm-4.7-flash` ×4, `exaone-4.5-33b` ×3,
 `qwen3.5-27b` ×3, and every sweep resumed after a spot reclaim). It is a per-process noise
 term that does not correlate with the model axis — every lane has its own hardware by
 design — and it should be reported as a known noise term with its measured size, not
