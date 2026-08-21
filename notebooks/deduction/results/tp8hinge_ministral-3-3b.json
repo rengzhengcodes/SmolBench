@@ -1,0 +1,422 @@
+{
+ "probe": "tp8_hinge",
+ "model": "ministral-3-3b",
+ "type": "p5.48xlarge,p5e.48xlarge,p5en.48xlarge",
+ "expect_tp": 8,
+ "n_prompts": 8,
+ "seed": 0,
+ "temperature": 0.7,
+ "max_tokens": 32768,
+ "stream": true,
+ "prompt_ids": [
+  "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+  "CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md",
+  "CategoryTheory.essentiallySmall_iff/prompts/noise-3.md",
+  "Filter.compl_mem_comap/prompts/noise-3.md",
+  "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md",
+  "Order.pred_eq_iSup/prompts/stepk-1.md",
+  "Set.Finite.lowerClosure/prompts/hint-3.md",
+  "UpperSet.mem_iInf__iff/prompts/stepk-1.md"
+ ],
+ "prompt_set_matches_tp4_hinge": true,
+ "started_utc": "2026-08-21T21:34:42.618580+00:00",
+ "arms": {
+  "det": {
+   "vllm_args": [
+    "--reasoning-parser",
+    "mistral",
+    "--language-model-only",
+    "--revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--tokenizer-revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--gpu-memory-utilization",
+    "0.92",
+    "--no-enable-prefix-caching",
+    "--max-num-seqs",
+    "1",
+    "--enforce-eager",
+    "--seed",
+    "0"
+   ],
+   "n_prompts_this_arm": 8,
+   "served_tp": 8,
+   "server_config": {
+    "instance_type": "p5.48xlarge",
+    "gpu": "8x H100 80GB",
+    "tp": 8,
+    "region": "us-east-2",
+    "availability_zone": "us-east-2a",
+    "instance_id": "i-03ed51f2b12061e4c",
+    "vllm_image": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512",
+    "vllm_args": [
+     "--reasoning-parser",
+     "mistral",
+     "--language-model-only",
+     "--revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--tokenizer-revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--gpu-memory-utilization",
+     "0.92",
+     "--no-enable-prefix-caching",
+     "--max-num-seqs",
+     "1",
+     "--enforce-eager",
+     "--seed",
+     "0"
+    ],
+    "max_model_len": 131072,
+    "served_at": "2026-08-21T21:40:05.976447+00:00",
+    "vllm_version": "0.27.2rc1.dev122+g8efa13b70",
+    "vllm_cache_config": [
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"44.06640625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5775872\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"360992\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "attention_backend_log": [
+     "(APIServer pid=1) INFO 08-21 21:38:46 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected."
+    ],
+    "agent_fingerprint": {
+     "image_repo_digests": [
+      "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+     ],
+     "nvidia_smi": "NVIDIA H100 80GB HBM3, GPU-22b71083-3d7d-e45a-b839-d7ed771a2585, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-d90c9102-ade2-a5b4-4e7a-62fd83db9471, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-708cfc56-f310-b320-fe01-4ad2775c6b78, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-841aae68-6e40-3b5f-e1eb-91be6d7cbc47, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-3bb00eb7-4cac-9cfe-a2dc-db50078d89c5, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-cf168f66-4fb9-d93b-38fd-31583a21cc3c, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-c6924cb2-ebd9-4608-52bd-0c0fb5c29f69, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-b2569907-ee68-7343-f6a8-b04d14a96e8c, 595.91.07, 81559 MiB, Enabled",
+     "hf_snapshots": [
+      "4a36357c811bf511a7b625d132e12f22408aac91"
+     ],
+     "weights_digest": "6fad24bc2c2cf8863f997a1a8166930ec6f50c4a4679d72d892ff89147e51fb1"
+    },
+    "vllm_image_digest": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "max_parallel_requests": 1,
+    "stream": true
+   },
+   "fingerprint": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787348402469117e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873484024691308e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787348402469144e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873484024691575e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"44.06640625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5775872\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"360992\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log": {
+    "serve_log_tail_chars": 0,
+    "serve_log_tail": "",
+    "topology_lines": []
+   },
+   "sha_table_P1": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "8f093ac12c9a",
+     "len": 93555
+    },
+    "CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md": {
+     "sha256_12": "14864f224174",
+     "len": 47495
+    },
+    "CategoryTheory.essentiallySmall_iff/prompts/noise-3.md": {
+     "sha256_12": "04736725bc11",
+     "len": 36785
+    },
+    "Filter.compl_mem_comap/prompts/noise-3.md": {
+     "sha256_12": "1968830a06cc",
+     "len": 35294
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "64b08a1bf992",
+     "len": 15126
+    },
+    "Order.pred_eq_iSup/prompts/stepk-1.md": {
+     "sha256_12": "78fb1c7577aa",
+     "len": 48340
+    },
+    "Set.Finite.lowerClosure/prompts/hint-3.md": {
+     "sha256_12": "11d754d84386",
+     "len": 39559
+    },
+    "UpperSet.mem_iInf__iff/prompts/stepk-1.md": {
+     "sha256_12": "02edeb492515",
+     "len": 32427
+    }
+   },
+   "pass_done_P1_min": 43.7,
+   "n_prompts_compared": 8,
+   "sha_table_P2": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "8f093ac12c9a",
+     "len": 93555
+    },
+    "CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md": {
+     "sha256_12": "14864f224174",
+     "len": 47495
+    },
+    "CategoryTheory.essentiallySmall_iff/prompts/noise-3.md": {
+     "sha256_12": "04736725bc11",
+     "len": 36785
+    },
+    "Filter.compl_mem_comap/prompts/noise-3.md": {
+     "sha256_12": "1968830a06cc",
+     "len": 35294
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "64b08a1bf992",
+     "len": 15126
+    },
+    "Order.pred_eq_iSup/prompts/stepk-1.md": {
+     "sha256_12": "78fb1c7577aa",
+     "len": 48340
+    },
+    "Set.Finite.lowerClosure/prompts/hint-3.md": {
+     "sha256_12": "11d754d84386",
+     "len": 39559
+    },
+    "UpperSet.mem_iInf__iff/prompts/stepk-1.md": {
+     "sha256_12": "02edeb492515",
+     "len": 32427
+    }
+   },
+   "pass_done_P2_min": 82.1,
+   "fingerprint_after": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787348402469117e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873484024691308e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787348402469144e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873484024691575e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"44.06640625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5775872\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"360992\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log_after": {
+    "serve_log_tail_chars": 0,
+    "serve_log_tail": "",
+    "topology_lines": []
+   },
+   "within_process_baseline": {
+    "n": 8,
+    "identical": 8,
+    "rate": 1.0,
+    "diffs": [],
+    "excluded_empty_rows": [],
+    "n_before_exclusion": 8
+   },
+   "cross_tp_vs_tp4_det_P1": {
+    "available": true,
+    "n": 8,
+    "identical": 0,
+    "tp4_gpu": "L40S (g6e.12xlarge, PCIe)",
+    "confound_note": "tp=4 ran on L40S, tp=8 on H100/H200: GPU model and tp change together, so a mismatch is a cross-CONFIG fact, not a tp-in-isolation fact.",
+    "rows": [
+     {
+      "prompt": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+      "tp4_sha": "6e5f14e4928e",
+      "tp8_sha": "8f093ac12c9a",
+      "tp4_len": 83937,
+      "tp8_len": 93555,
+      "same": false
+     },
+     {
+      "prompt": "CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md",
+      "tp4_sha": "613b3e021d48",
+      "tp8_sha": "14864f224174",
+      "tp4_len": 47420,
+      "tp8_len": 47495,
+      "same": false
+     },
+     {
+      "prompt": "CategoryTheory.essentiallySmall_iff/prompts/noise-3.md",
+      "tp4_sha": "ecfd595f949e",
+      "tp8_sha": "04736725bc11",
+      "tp4_len": 36919,
+      "tp8_len": 36785,
+      "same": false
+     },
+     {
+      "prompt": "Filter.compl_mem_comap/prompts/noise-3.md",
+      "tp4_sha": "6fdcdb30a1a0",
+      "tp8_sha": "1968830a06cc",
+      "tp4_len": 23947,
+      "tp8_len": 35294,
+      "same": false
+     },
+     {
+      "prompt": "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md",
+      "tp4_sha": "263f68fb0928",
+      "tp8_sha": "64b08a1bf992",
+      "tp4_len": 8178,
+      "tp8_len": 15126,
+      "same": false
+     },
+     {
+      "prompt": "Order.pred_eq_iSup/prompts/stepk-1.md",
+      "tp4_sha": "02bfdc1b20e3",
+      "tp8_sha": "78fb1c7577aa",
+      "tp4_len": 55568,
+      "tp8_len": 48340,
+      "same": false
+     },
+     {
+      "prompt": "Set.Finite.lowerClosure/prompts/hint-3.md",
+      "tp4_sha": "1861f4919ab1",
+      "tp8_sha": "11d754d84386",
+      "tp4_len": 41379,
+      "tp8_len": 39559,
+      "same": false
+     },
+     {
+      "prompt": "UpperSet.mem_iInf__iff/prompts/stepk-1.md",
+      "tp4_sha": "cf75e85fb7e9",
+      "tp8_sha": "02edeb492515",
+      "tp4_len": 25684,
+      "tp8_len": 32427,
+      "same": false
+     }
+    ]
+   },
+   "serve_plus_passes_s": 4810.1,
+   "complete": true
+  },
+  "stock": {
+   "vllm_args": [
+    "--reasoning-parser",
+    "mistral",
+    "--language-model-only",
+    "--revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--tokenizer-revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--gpu-memory-utilization",
+    "0.92",
+    "--enable-prefix-caching"
+   ],
+   "n_prompts_this_arm": 4,
+   "served_tp": 8,
+   "server_config": {
+    "instance_type": "p5.48xlarge",
+    "gpu": "8x H100 80GB",
+    "tp": 8,
+    "region": "us-east-2",
+    "availability_zone": "us-east-2a",
+    "instance_id": "i-03ed51f2b12061e4c",
+    "vllm_image": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512",
+    "vllm_args": [
+     "--reasoning-parser",
+     "mistral",
+     "--language-model-only",
+     "--revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--tokenizer-revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--gpu-memory-utilization",
+     "0.92",
+     "--enable-prefix-caching"
+    ],
+    "max_model_len": 131072,
+    "served_at": "2026-08-21T22:58:47.847438+00:00",
+    "vllm_version": "0.27.2rc1.dev122+g8efa13b70",
+    "vllm_cache_config": [
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"43.203369140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5662752\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"353922\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "attention_backend_log": [
+     "(APIServer pid=1) INFO 08-21 22:57:10 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected."
+    ],
+    "agent_fingerprint": {
+     "image_repo_digests": [
+      "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+     ],
+     "nvidia_smi": "NVIDIA H100 80GB HBM3, GPU-22b71083-3d7d-e45a-b839-d7ed771a2585, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-d90c9102-ade2-a5b4-4e7a-62fd83db9471, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-708cfc56-f310-b320-fe01-4ad2775c6b78, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-841aae68-6e40-3b5f-e1eb-91be6d7cbc47, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-3bb00eb7-4cac-9cfe-a2dc-db50078d89c5, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-cf168f66-4fb9-d93b-38fd-31583a21cc3c, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-c6924cb2-ebd9-4608-52bd-0c0fb5c29f69, 595.91.07, 81559 MiB, Enabled\nNVIDIA H100 80GB HBM3, GPU-b2569907-ee68-7343-f6a8-b04d14a96e8c, 595.91.07, 81559 MiB, Enabled",
+     "hf_snapshots": [
+      "4a36357c811bf511a7b625d132e12f22408aac91"
+     ],
+     "weights_digest": "6fad24bc2c2cf8863f997a1a8166930ec6f50c4a4679d72d892ff89147e51fb1"
+    },
+    "vllm_image_digest": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "max_parallel_requests": 1,
+    "stream": true
+   },
+   "fingerprint": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670576e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670707e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670836e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787353115067096e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"43.203369140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5662752\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"353922\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log": {
+    "serve_log_tail_chars": 0,
+    "serve_log_tail": "",
+    "topology_lines": []
+   },
+   "P1_truncated_at_min": 84.2,
+   "P1_rows_done": 0,
+   "pass_done_P1_min": 84.2,
+   "n_prompts_compared": 0,
+   "pass_done_P2_min": 84.2,
+   "fingerprint_after": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670576e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670707e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7873531150670836e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787353115067096e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"43.203369140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"5662752\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"353922\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log_after": {
+    "serve_log_tail_chars": 0,
+    "serve_log_tail": "",
+    "topology_lines": []
+   },
+   "within_process_baseline": {
+    "n": 0,
+    "identical": 0,
+    "rate": 0.0,
+    "diffs": [],
+    "excluded_empty_rows": [],
+    "n_before_exclusion": 0
+   },
+   "serve_plus_passes_s": 125.6,
+   "complete": true
+  }
+ },
+ "instance": {
+  "instance_id": "i-03ed51f2b12061e4c",
+  "instance_type": "p5.48xlarge",
+  "region": "us-east-2",
+  "availability_zone": "us-east-2a",
+  "public_ip": "18.219.67.206"
+ },
+ "provisioned_utc": "2026-08-21T21:36:33.077177+00:00",
+ "finished_utc": "2026-08-21T22:58:48.846552+00:00",
+ "elapsed_min": 84.2
+}

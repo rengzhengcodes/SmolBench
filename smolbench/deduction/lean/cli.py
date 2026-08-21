@@ -26,8 +26,8 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    SANITY_FAILURE_VERDICTS, new_run_id, regenerate_run_artifacts, results_root,
-    run_cell, sweep, write_jsonl,
+    SANITY_FAILURE_VERDICTS, new_run_id, regenerate_run_artifacts,
+    reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
 )
 
 
@@ -852,7 +852,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         n_total = 0
         n_ok = 0
         if out_dir.exists():
-            for f in out_dir.glob("*.jsonl"):
+            jsonl_files = sorted(out_dir.glob("*.jsonl"))
+            reject_superseded_rows(jsonl_files)
+            for f in jsonl_files:
                 with f.open() as fh:
                     for line in fh:
                         try:

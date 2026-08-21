@@ -71,12 +71,17 @@ denominators and their maximum disagreement are all COMPUTED and printed rather
 than quoted, because they move with the denominator rule and with whether the
 DojoInit recovery rows are pooled in.
 
-Row rules follow ``load_joint_cells`` -- earliest-surviving-row-per-cell and the
-unmeasurable-verdict exclusion. ``lane_outcomes`` re-implements them here so the
-count-as-failure augmentation and the recovery rows (a different row schema) can
-be layered on, and ``_check_against_loader`` asserts at runtime that the
-un-augmented pool is IDENTICAL to what ``load_joint_cells`` produces, so the
-tested loader stays the authority. See its docstring and
+Row rules are NOT re-implemented here. ``lane_outcomes`` reads its rows through
+``power_analysis.grade_verdicts`` -- the single implementation of
+earliest-surviving-row-per-cell and the unmeasurable-verdict exclusion, shared
+with ``load_joint_cells`` and ``hint_vs_noise.load_rungs`` -- and layers only
+what is genuinely different here on top of it: the count-as-failure denominator
+rule and the recovery rows' second schema. [Changed 2026-08-21: this file used
+to carry its own copy of the rules plus a ``_check_against_loader`` runtime
+assertion that the two agreed. One rule cannot drift from itself, and the
+equivalence of this pool with ``load_joint_cells``'s is now pinned by
+``tests/test_analysis_stats.py`` instead of re-derived on every run.] See
+``load_joint_cells``'s docstring and
 ``notebooks/CONTAMINATION_INVENTORY_2026-08-15.md``.
 
 Run:
@@ -101,12 +106,13 @@ from power_analysis import (  # noqa: E402
     FAMILIES,
     MODELS,
     Q_SECONDARY,
-    UNMEASURABLE_VERDICTS,
     benjamini_hochberg,
     build_cross_family_contrasts,
     build_within_family_contrasts,
+    grade_verdicts,
     load_joint_cells,
     mcnemar_exact_p,
+    reject_superseded,
 )
 
 #: Sign-flip resamples for the PRIMARY block permutation test. Large enough that
@@ -316,12 +322,13 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     """One lane's graded cells and its no-survivor cells.
 
     Returns ``(graded, no_survivor)`` where ``graded`` maps
-    ``(theorem_id, k, prompt_rung) -> 0/1`` under ``load_joint_cells``'s two
-    rules -- EARLIEST surviving row wins, unmeasurable verdicts are not rows --
-    and ``no_survivor`` is the set of cell keys whose every logged row was
-    unmeasurable. Those are the candidates the count-as-failure rule adjudicates;
-    they are returned rather than silently resolved because whether one is a
-    model-dependent fault or an unrunnable cell is only decidable ACROSS lanes.
+    ``(theorem_id, k, prompt_rung) -> 0/1`` under ``power_analysis.grade_verdicts``
+    -- the shared row rule: EARLIEST surviving row wins, unmeasurable verdicts
+    are not measurements -- and ``no_survivor`` is the set of cell keys the rule
+    could not grade at all (every logged row unmeasurable). Those are the
+    candidates the count-as-failure rule adjudicates; they are returned rather
+    than silently resolved because whether one is a model-dependent fault or an
+    unrunnable cell is only decidable ACROSS lanes.
 
     When ``recovery_dir`` is given, ``<recovery_dir>/<model>/recovered_rows.jsonl``
     is appended after the primary rows (same schema but the verdict field is
@@ -334,6 +341,7 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
         sources.append(
             (recovery_dir / model / "recovered_rows.jsonl", "recovered_verdict")
         )
+    reject_superseded(path for path, _field in sources)
     for path, field in sources:
         for line in path.read_text().splitlines():
             if not line:
@@ -345,41 +353,16 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
             rows.setdefault(key, []).append(row.get(field))
     graded, no_survivor = {}, set()
     for key, verdicts in rows.items():
-        surviving = [v for v in verdicts if v not in UNMEASURABLE_VERDICTS]
-        if surviving:
-            graded[key] = 1 if surviving[0] == "success" else 0
-        else:
+        grade = grade_verdicts(verdicts)
+        if grade is None:
             no_survivor.add(key)
+        else:
+            graded[key] = grade
     return graded, no_survivor
 
 
-def _check_against_loader(rows_dir: Path, blocks: dict) -> None:
-    """Assert the un-augmented pool matches the tested ``load_joint_cells``.
-
-    ``lane_outcomes`` re-implements the row rules so the count-as-failure and
-    recovery layers can sit on top of them. That re-implementation must not be
-    allowed to drift: with neither layer active it has to reproduce the loader's
-    paired blocks EXACTLY, cell for cell and value for value.
-    """
-    files = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
-    ref_models, ref_blocks, _ = load_joint_cells(files, models=tuple(MODELS))
-    mine = {(thm, ck[0], ck[1], m): v
-            for thm, cmap in blocks.items()
-            for ck, mv in cmap.items() for m, v in mv.items()}
-    theirs = {(thm, ck[0], ck[1], m): v
-              for thm, cmap in ref_blocks.items()
-              for ck, mv in cmap.items() for m, v in mv.items()}
-    if mine != theirs:
-        raise SystemExit(
-            f"lane_outcomes has drifted from load_joint_cells: "
-            f"{len(mine)} vs {len(theirs)} graded (model, cell) pairs, "
-            f"{len(set(mine.items()) ^ set(theirs.items()))} disagreements"
-        )
-    assert ref_models == sorted(MODELS)
-
-
 def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
-               count_as_failure: bool = True, verify: bool = True) -> tuple:
+               count_as_failure: bool = True) -> tuple:
     """Paired 21-way pool under an explicit denominator rule.
 
     Returns ``(models, blocks, prompt_rungs, meta)``. ``meta`` records what the
@@ -408,9 +391,6 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
             m: graded[m][(thm, k, rung)] for m in MODELS
         }
     prompt_rungs = sorted({ck[1] for cmap in blocks.values() for ck in cmap})
-
-    if verify and recovery_dir is None and not count_as_failure:
-        _check_against_loader(rows_dir, blocks)
 
     # What the denominator rule COST, measured rather than asserted. Every added
     # cell scores 0, so a lane's successes are unchanged and the whole effect is

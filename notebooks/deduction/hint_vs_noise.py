@@ -61,8 +61,9 @@ from power_analysis import (  # noqa: E402
     ALPHA,
     FAMILIES,
     MODELS,
-    UNMEASURABLE_VERDICTS,
+    grade_verdicts,
     mcnemar_exact_p,
+    reject_superseded,
 )
 
 #: The informative rung and its length-matched uninformative twin.
@@ -72,11 +73,14 @@ RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 def load_rungs(path: Path, model: str) -> dict:
     """(theorem_id, k) -> {rung: 0/1}, earliest surviving row per cell.
 
-    Applies the same two rules as ``load_joint_cells``: the FIRST row whose
-    verdict is measurable wins (a later retry is an independent draw, and
-    last-wins would report pass@N as pass@1), and unmeasurable verdicts are
-    left ABSENT rather than scored 0.
+    Rows are read through ``power_analysis.grade_verdicts``, the single
+    implementation of this study's two row rules: the FIRST row whose verdict
+    is a measurement wins (a later retry is an independent draw, and last-wins
+    would report pass@N as pass@1), and a cell with no measurable row is left
+    ABSENT rather than scored 0. [Changed 2026-08-21: this loader used to carry
+    its own copy of both rules.]
     """
+    reject_superseded([path])
     out: dict = defaultdict(dict)
     for line in path.read_text().splitlines():
         if not line:
@@ -86,12 +90,15 @@ def load_rungs(path: Path, model: str) -> dict:
             continue
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
             continue
-        if row.get("verdict") in UNMEASURABLE_VERDICTS:
+        # None == "this row is not a measurement": it neither scores nor claims
+        # the cell, so the next row still gets its chance.
+        grade = grade_verdicts([row.get("verdict")])
+        if grade is None:
             continue
         cell = (row["theorem_id"], row["k"])
         if row["rung"] in out[cell]:
             continue  # earliest surviving attempt already recorded
-        out[cell][row["rung"]] = 1 if row.get("verdict") == "success" else 0
+        out[cell][row["rung"]] = grade
     return out
 
 

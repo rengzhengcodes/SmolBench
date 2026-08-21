@@ -518,6 +518,83 @@ def _warn_unverified(reasons: list[str]) -> None:
 UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 
 
+#: Filename marker for a RETIRED row artifact. ``run_study.py`` renames a
+#: superseded ``all_rows.jsonl`` to ``all_rows_SUPERSEDED-<stamp>.jsonl`` rather
+#: than deleting it (the audit trail is preserved on purpose), and the S3
+#: analysis snapshot copies those files along with everything else -- so a
+#: byte-identical copy of the retired MIXED-HARDWARE all_rows artifact sits one
+#: directory away from live data. Any glob wide enough to pick it up would pool
+#: two hardware regimes into one lane with nothing but line order to tell them
+#: apart, which is precisely the confound the archiving exists to remove.
+SUPERSEDED_MARKER = "SUPERSEDED"
+
+
+def reject_superseded(paths) -> None:
+    """Refuse retired row artifacts, loudly and by name.
+
+    Raises ``SystemExit`` if ANY of `paths` has `SUPERSEDED_MARKER` in its
+    file name, naming every offender. A warning would not do: these files
+    parse perfectly and their rows are well-formed, so ingesting one produces
+    a complete, plausible, WRONG report rather than a crash.
+
+    The marker is matched on the basename only -- a directory legitimately
+    named after an audit (``.../superseded_audit/verified_rows.jsonl``) is not
+    the thing being guarded against, and the marker is upper-case exactly as
+    ``run_study.py`` writes it.
+    """
+    bad = [str(p) for p in paths if SUPERSEDED_MARKER in Path(p).name]
+    if not bad:
+        return
+    bar = "!" * 78
+    raise SystemExit(
+        "\n".join(
+            [bar, "!!  REFUSING SUPERSEDED ROW FILE(S)", bar]
+            + [f"!!  {b}" for b in bad]
+            + [
+                "!!",
+                "!!  A *_SUPERSEDED-* file is a RETIRED artifact kept as an audit",
+                "!!  trail (see run_study.py --force-rerun). Its rows were collected",
+                "!!  on hardware that has since been superseded; pooling them with",
+                "!!  current rows re-creates the mixed-hardware confound the archive",
+                "!!  was made to remove. Point the loader at verified_rows.jsonl.",
+                bar,
+            ]
+        )
+    )
+
+
+def grade_verdicts(verdicts) -> int | None:
+    """THE row rule of this study, in one place.
+
+    Grades ONE cell from the verdicts of its rows IN FILE ORDER (rows are
+    appended, so file order is chronological). Two rules, and both directions
+    were wrong before -- see `load_joint_cells` for the measurements that
+    settled them:
+
+      * EARLIEST SURVIVING ATTEMPT WINS. A later retry is an independent draw;
+        taking it would report pass@N as pass@1.
+      * An UNMEASURABLE verdict is not a measurement. It neither scores 0 nor
+        claims the cell, so the next row still gets its chance.
+
+    Returns 1 (success), 0 (a real failure) or ``None`` when no row is a
+    measurement at all -- "no surviving attempt", which the callers resolve
+    differently on purpose: `load_joint_cells` and
+    ``hint_vs_noise.load_rungs`` leave the cell ABSENT (the drop rule), while
+    ``error_bars.build_pool`` may score it 0 when another lane graded the same
+    cell (count-as-failure). That policy choice stays with the caller; only the
+    rule for reading rows lives here.
+
+    Accepts a single row's verdict in a one-element list, which is how
+    `load_joint_cells` applies it while streaming: ``None`` there means "this
+    row is not a measurement, keep looking", i.e. the same rule unrolled.
+    """
+    for verdict in verdicts:
+        if verdict in UNMEASURABLE_VERDICTS:
+            continue
+        return 1 if verdict == "success" else 0
+    return None
+
+
 def load_joint_cells(
     row_files: list[Path], models: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict, list[str]]:
@@ -560,6 +637,9 @@ def load_joint_cells(
     without modification if a later run adds more replicates per cell --
     it is a filter, not an assumption that no other replicate exists.
 
+    Refuses (``SystemExit``, via `reject_superseded`) any input file whose
+    name carries the ``SUPERSEDED`` marker, before reading a single row.
+
     Prints a LOUD warning to stderr (`_warn_unverified`) if any input
     file's basename is ``"all_rows.jsonl"`` (the unverified generation-time
     log) or if any loaded cell row's ``verdict`` is still the placeholder
@@ -569,6 +649,7 @@ def load_joint_cells(
     row that gets filtered out downstream for some other reason is still
     evidence the input data is unverified).
     """
+    reject_superseded(row_files)
     cell_rows: list[dict] = []
     warn_reasons: list[str] = []
     unverified_count = 0
@@ -617,6 +698,10 @@ def load_joint_cells(
     #    cells has surviving proof lengths [0, 0, 0, 65] -- three empty answers
     #    then a proof on the fourth draw.
     #
+    #  Both are implemented ONCE, in `grade_verdicts`, and every loader in this
+    #  study reads rows through it (error_bars.lane_outcomes,
+    #  hint_vs_noise.load_rungs). The reasoning and its measurements stay here.
+    #
     #  * UNMEASURABLE verdicts must not score 0. Two kinds, both meaning the
     #    model was never actually tested:
     #
@@ -656,13 +741,18 @@ def load_joint_cells(
         model = row["model"]
         if model not in wanted_set:
             continue
-        if row.get("verdict") in UNMEASURABLE_VERDICTS:
+        # `grade_verdicts` is the ONE implementation of the two rules above;
+        # applied to the row in hand it returns None for a verdict that is not
+        # a measurement, so that row neither scores nor claims the cell and the
+        # next one still gets its chance -- earliest-surviving-wins, unrolled.
+        grade = grade_verdicts([row.get("verdict")])
+        if grade is None:
             continue  # never measured -- see above
         cell_key = (row["k"], row["rung"])  # row["rung"] is this file's prompt_rung
         by_model = raw.setdefault(row["theorem_id"], {}).setdefault(cell_key, {})
         if model in by_model:
             continue  # an earlier attempt already answered this cell
-        by_model[model] = 1 if row.get("verdict") == "success" else 0
+        by_model[model] = grade
 
     # Keep only cells graded for the FULL requested model set (paired), and
     # only theorems with at least one such cell.

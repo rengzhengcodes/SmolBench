@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -757,6 +758,45 @@ def _glyph(v: str) -> str:
     return _VERDICT_GLYPH.get(v, "?")
 
 
+#: Filename marker for a RETIRED row artifact. ``notebooks/deduction/run_study.py``
+#: renames a superseded ``all_rows.jsonl`` to ``all_rows_SUPERSEDED-<stamp>.jsonl``
+#: on ``--force-rerun`` rather than deleting it -- the rows stay as an audit trail,
+#: and they were collected on hardware the rerun exists to leave behind. Anything
+#: that globs row files must therefore refuse them by name; silently pooling them
+#: back in re-creates the mixed-hardware confound the archiving removed.
+#:
+#: (``notebooks/deduction/power_analysis.py`` carries its own copy of this marker
+#: and of the check below. It cannot import this module: the analysis scripts are
+#: run under ``uv run --no-project --with numpy --with scipy``, an environment
+#: with no smolbench installed. The duplication is deliberate and both sides say
+#: so.)
+SUPERSEDED_MARKER = "SUPERSEDED"
+
+
+def reject_superseded_rows(paths) -> None:
+    """Refuse retired row artifacts, loudly and by name.
+
+    Raises ``ValueError`` naming every offending path whose FILE NAME carries
+    `SUPERSEDED_MARKER`. Loud rather than skipped-with-a-warning on purpose:
+    these files parse perfectly and their rows are well-formed, so ingesting
+    one yields a complete, plausible and WRONG summary instead of a crash.
+    """
+    bad = [str(p) for p in paths if SUPERSEDED_MARKER in Path(p).name]
+    if bad:
+        # Logged as well as raised: `write_theorem_summary` runs inside the
+        # sweep's per-theorem worker, whose caller catches Exception and prints
+        # a one-line THEOREM-WORKER-FAIL. The names must survive that path --
+        # a guard nobody hears is decorative exactly where it matters.
+        logging.error(
+            "refusing SUPERSEDED row file(s): %s", ", ".join(bad)
+        )
+        raise ValueError(
+            "refusing SUPERSEDED row file(s) -- these are retired artifacts "
+            "kept as an audit trail (see run_study.py --force-rerun), not "
+            "current data: " + ", ".join(bad)
+        )
+
+
 def _rung_sort_key(rung: str) -> tuple[int, int]:
     """Order rungs by chain then by level: stepk:0..2 before hint:0..4."""
     if ":" not in rung:
@@ -778,7 +818,9 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     meta = json.loads(meta_path.read_text())
 
     cells: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    for jl in sorted(outputs_dir.glob("*.jsonl")):
+    jsonl_files = sorted(outputs_dir.glob("*.jsonl"))
+    reject_superseded_rows(jsonl_files)
+    for jl in jsonl_files:
         # filename: <rung-slug>__<model-slug>.jsonl
         stem = jl.stem
         if "__" not in stem:
