@@ -771,17 +771,23 @@ def _glyph(v: str) -> str:
 #: with no smolbench installed. The duplication is deliberate and both sides say
 #: so.)
 SUPERSEDED_MARKER = "SUPERSEDED"
+#: All three retirement markers the snapshot writes for this audit-trail class
+#: (``*_SUPERSEDED-*``, ``*_STALE-*``, ``*_BROKEN-*``); STALE/BROKEN anchored
+#: ``_MARKER-`` so ordinary words in basenames cannot trip the guard.
+RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
 
 
 def reject_superseded_rows(paths) -> None:
     """Refuse retired row artifacts, loudly and by name.
 
     Raises ``ValueError`` naming every offending path whose FILE NAME carries
-    `SUPERSEDED_MARKER`. Loud rather than skipped-with-a-warning on purpose:
-    these files parse perfectly and their rows are well-formed, so ingesting
-    one yields a complete, plausible and WRONG summary instead of a crash.
+    any of `RETIRED_MARKERS`. Loud rather than skipped-with-a-warning on
+    purpose: these files parse perfectly and their rows are well-formed, so
+    ingesting one yields a complete, plausible and WRONG summary instead of a
+    crash.
     """
-    bad = [str(p) for p in paths if SUPERSEDED_MARKER in Path(p).name]
+    bad = [str(p) for p in paths
+           if any(m in Path(p).name for m in RETIRED_MARKERS)]
     if bad:
         # Logged as well as raised: `write_theorem_summary` runs inside the
         # sweep's per-theorem worker, whose caller catches Exception and prints

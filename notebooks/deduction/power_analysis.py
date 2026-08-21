@@ -527,6 +527,11 @@ UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 #: two hardware regimes into one lane with nothing but line order to tell them
 #: apart, which is precisely the confound the archiving exists to remove.
 SUPERSEDED_MARKER = "SUPERSEDED"
+#: The snapshot writes three retirement markers for the same audit-trail class
+#: (scripts/snapshot_analysis_data.py: ``*_SUPERSEDED-*``, ``*_STALE-*``,
+#: ``*_BROKEN-*``). STALE/BROKEN are anchored ``_MARKER-`` to avoid matching
+#: ordinary words in basenames; SUPERSEDED stays bare (the historical form).
+RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
 
 
 def reject_superseded(paths) -> None:
@@ -542,7 +547,8 @@ def reject_superseded(paths) -> None:
     the thing being guarded against, and the marker is upper-case exactly as
     ``run_study.py`` writes it.
     """
-    bad = [str(p) for p in paths if SUPERSEDED_MARKER in Path(p).name]
+    bad = [str(p) for p in paths
+           if any(m in Path(p).name for m in RETIRED_MARKERS)]
     if not bad:
         return
     bar = "!" * 78

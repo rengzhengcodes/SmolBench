@@ -730,3 +730,26 @@ def test_lean_cli_show_refuses_superseded_outputs(tmp_path, capsys):
     assert cli.cmd_show(argparse.Namespace(run_dir=str(clean_root),
                                            theorem=None)) == 0
     assert "1/1" in capsys.readouterr().out
+
+
+def test_all_three_retirement_markers_are_refused(tmp_path):
+    """The snapshot writes three retirement markers for one audit-trail class
+    (scripts/snapshot_analysis_data.py: *_SUPERSEDED-*, *_STALE-*, *_BROKEN-*);
+    the guard must refuse them all, in both the notebook and package copies."""
+    from smolbench.deduction.lean import runner
+
+    for name in ("all_rows_SUPERSEDED-20260815T000000Z.jsonl",
+                  "all_rows_STALE-20260814T000000Z.jsonl",
+                  "verified_rows_BROKEN-20260813T000000Z.jsonl"):
+        with pytest.raises(SystemExit):
+            ded_pa.reject_superseded([tmp_path / name])
+        with pytest.raises(ValueError):
+            runner.reject_superseded_rows([tmp_path / name])
+    # STALE/BROKEN are anchored ``_MARKER-``: ordinary words containing the
+    # letters must not trip the guard (SUPERSEDED stays bare, the historical
+    # form of the one real retired artifact).
+    for name in ("stale_check_rows.jsonl", "unBROKEN.jsonl",
+                  "rows_STALEMATE.jsonl"):
+        ded_pa.reject_superseded([tmp_path / name])
+        runner.reject_superseded_rows([tmp_path / name])
+    assert ded_pa.RETIRED_MARKERS == runner.RETIRED_MARKERS
