@@ -1,0 +1,12 @@
+{
+  "n": 200,
+  "agree": 200,
+  "agreement_rate": 1.0,
+  "reverified_verdict_counts": {
+    "lean_error": 173,
+    "success": 16,
+    "incomplete": 10,
+    "given_up": 1
+  },
+  "disagreements": []
+}

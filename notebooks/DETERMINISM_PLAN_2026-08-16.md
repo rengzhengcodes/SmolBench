@@ -1009,6 +1009,30 @@ write-up; do not run twenty lanes.**
 > Read §7.2 as: the regime-mean question **remains open**, and the bound now
 > available is wider than any ladder contrast the study reports.
 
+> **[MEASURED 2026-08-21 — n extended 200 → 311 (user-approved, $5.35 of a $20
+> cap): still no significant regime-mean shift, and the bound tightens.]** A
+> second, disjoint `Random(0)` draw of 200 cells from the same 711-cell
+> population ran under the identical stock reconstruction (same build dev122,
+> image digest, weights digest, HF revision, tp=1, seed 0 — provenance in the
+> run dir); 111 of the 200 completed both generation and verification (three
+> spot reclaims took the rest; the 88 losses are listed, cut by reclaim time,
+> not by outcome). Pooled over 311 cells / 160 theorems: rerun-vs-original
+> mean shift **+3.2 pts, cluster-bootstrap 95% CI [−0.3, +6.9]** (naive
+> [−0.1, +6.5]), exact McNemar p = 0.087, b/c = 9/19; **MDE at 80% power
+> ≈4.7–5.1 pts** (the ~3-pt target needed the full 400). The per-cell flip
+> rate **replicates on fresh cells: 8.1%** [3.8, 14.8] vs leg 1's 9.5%,
+> pooled 9.0% [5.5, 12.9] cluster; the two legs are statistically
+> indistinguishable (shift difference 0.8 pt, z = 0.22). Verifier drift was
+> **511/511 exact** across both legs' gates, and the drift gate paid for
+> itself again: leg 2's first grading pass returned 58/58 `replay_failed`
+> because `~/.elan/bin` was missing from PATH — the same
+> infrastructure-masquerading-as-data class as the 2026-08-18 dead-token
+> fault, caught at $0 before any box launched. Standing conclusion: shifts
+> ≳7 pts are excluded; a shift of the observed +3 pts — consistently
+> rerun-HIGHER in both legs — remains neither confirmed nor excluded, and is
+> still a two-process contrast, not a regime-level mean. Data:
+> `notebooks/deduction/results/runs/regime_mean_2026-08-21/`.
+
 ### 7.3 Do not "fix" this by lowering temperature or dropping the seed
 
 Temperature 0.7 with a fixed seed is the study's regime and is reproducible given

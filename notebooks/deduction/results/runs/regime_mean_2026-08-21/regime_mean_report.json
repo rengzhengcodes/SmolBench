@@ -1,0 +1,314 @@
+{
+  "legs": {
+    "leg1_2026-08-18": {
+      "run": "leg1_2026-08-18",
+      "n_whitelist": 200,
+      "n_missing": 0,
+      "missing": [],
+      "n_theorems_dropped_incomplete": 0,
+      "empty_rerun_candidate_proof": {
+        "prompt_tokens_gt_0": 0,
+        "prompt_tokens_0": 0
+      },
+      "flip": {
+        "n": 200,
+        "n_theorems": 137,
+        "a_both_pass": 11,
+        "b_orig_pass_rerun_fail": 6,
+        "c_orig_fail_rerun_pass": 13,
+        "d_both_fail": 170,
+        "discordant": 19,
+        "pass1_orig": 0.085,
+        "pass1_rerun": 0.12,
+        "flip_rate": 0.095,
+        "flip_rate_cp_ci95": [
+          0.05816960972512025,
+          0.14437663997685252
+        ],
+        "mean_shift_pts": 3.5000000000000004,
+        "mean_shift_se_naive_pts": 2.165352165353248,
+        "mean_shift_ci95_naive_pts": [
+          -0.7440902440923658,
+          7.744090244092367
+        ],
+        "mcnemar_exact_p": 0.1670684814453125,
+        "mean_shift_boot_se_pts": 2.0592446949302214,
+        "mean_shift_ci95_cluster_boot_pts": [
+          -0.4975124378109453,
+          7.650273224043716
+        ],
+        "flip_rate_ci95_cluster_boot": [
+          0.05527638190954774,
+          0.13978494623655913
+        ],
+        "deff_cluster_vs_naive": 0.9043964198556674,
+        "mde80_naive_pts": 6.0673167673198005,
+        "mde80_cluster_pts": 5.77000363519448
+      },
+      "verifier_drift": {
+        "n": 200,
+        "agree": 200,
+        "agreement_rate": 1.0,
+        "reverified_verdict_counts": {
+          "lean_error": 171,
+          "success": 17,
+          "incomplete": 10,
+          "given_up": 2
+        },
+        "disagreements": []
+      }
+    },
+    "leg2_2026-08-21": {
+      "run": "leg2_2026-08-21",
+      "n_whitelist": 200,
+      "n_missing": 88,
+      "missing": [
+        [
+          "nemotron-3-nano-4b",
+          "Basis.eq_bot_of_rank_eq_zero",
+          8,
+          "hint:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Adjunction.leftAdjointUniq_hom_app_counit",
+          1,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Cat.HasLimits.limit_\u03c0_homDiagram_eqToHom",
+          1,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Functor.isLeftKanExtension_iff_of_iso",
+          5,
+          "hint:2",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.GradedObject.\u03b9_mapBifunctorAssociator_hom",
+          4,
+          "hint:2",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Groupoid.Free.congr_reverse_comp",
+          1,
+          "hint:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.InjectiveResolution.isoRightDerivedToHomotopyCategoryObj_hom_naturality",
+          3,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.IsPushout.of_isBilimit",
+          0,
+          "hint:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.IsPushout.of_isBilimit",
+          0,
+          "noise:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.Types.Pushout.condition",
+          1,
+          "hint:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.Types.Pushout.inl_eq_inr_iff",
+          5,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.Types.colimit_sound",
+          0,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.Types.isLimit_iff",
+          4,
+          "hint:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.Types.isLimit_iff",
+          4,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.biproduct.conePointUniqueUpToIso_inv",
+          1,
+          "noise:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.hasLimitsOfShape_of_equivalence",
+          2,
+          "hint:2",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.hasLimitsOfShape_of_equivalence",
+          2,
+          "noise:3",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.hasLimitsOfShape_of_equivalence",
+          2,
+          "stepk:1",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.prod.leftUnitor_inv_naturality",
+          0,
+          "hint:2",
+          0
+        ],
+        [
+          "nemotron-3-nano-4b",
+          "CategoryTheory.Limits.prod.leftUnitor_inv_naturality",
+          0,
+          "hint:3",
+          0
+        ]
+      ],
+      "n_theorems_dropped_incomplete": 65,
+      "empty_rerun_candidate_proof": {
+        "prompt_tokens_gt_0": 0,
+        "prompt_tokens_0": 0
+      },
+      "flip": {
+        "n": 111,
+        "n_theorems": 66,
+        "a_both_pass": 5,
+        "b_orig_pass_rerun_fail": 3,
+        "c_orig_fail_rerun_pass": 6,
+        "d_both_fail": 97,
+        "discordant": 9,
+        "pass1_orig": 0.07207207207207207,
+        "pass1_rerun": 0.0990990990990991,
+        "flip_rate": 0.08108108108108109,
+        "flip_rate_cp_ci95": [
+          0.03774640400345536,
+          0.14834168596236835
+        ],
+        "mean_shift_pts": 2.7027027027027026,
+        "mean_shift_se_naive_pts": 2.690500822315319,
+        "mean_shift_ci95_naive_pts": [
+          -2.5706789090353226,
+          7.976084314440729
+        ],
+        "mcnemar_exact_p": 0.5078125,
+        "mean_shift_boot_se_pts": 2.9744675817486725,
+        "mean_shift_ci95_cluster_boot_pts": [
+          -2.7777777777777777,
+          8.928571428571429
+        ],
+        "flip_rate_ci95_cluster_boot": [
+          0.0297029702970297,
+          0.14150943396226415
+        ],
+        "deff_cluster_vs_naive": 1.2222279802432974,
+        "mde80_naive_pts": 7.538783304127524,
+        "mde80_cluster_pts": 8.33445816405978
+      },
+      "verifier_drift": {
+        "n": 111,
+        "agree": 111,
+        "agreement_rate": 1.0,
+        "reverified_verdict_counts": {
+          "lean_error": 97,
+          "success": 8,
+          "incomplete": 6
+        },
+        "disagreements": []
+      }
+    }
+  },
+  "pooled": {
+    "flip": {
+      "n": 311,
+      "n_theorems": 160,
+      "a_both_pass": 16,
+      "b_orig_pass_rerun_fail": 9,
+      "c_orig_fail_rerun_pass": 19,
+      "d_both_fail": 267,
+      "discordant": 28,
+      "pass1_orig": 0.08038585209003216,
+      "pass1_rerun": 0.11254019292604502,
+      "flip_rate": 0.09003215434083602,
+      "flip_rate_cp_ci95": [
+        0.06066056592918062,
+        0.12749107916614882
+      ],
+      "mean_shift_pts": 3.215434083601286,
+      "mean_shift_se_naive_pts": 1.691650126747835,
+      "mean_shift_ci95_naive_pts": [
+        -0.10020016482447033,
+        6.531068332027043
+      ],
+      "mcnemar_exact_p": 0.08715855330228806,
+      "mean_shift_boot_se_pts": 1.8097443052684374,
+      "mean_shift_ci95_cluster_boot_pts": [
+        -0.31645569620253167,
+        6.862745098039216
+      ],
+      "flip_rate_ci95_cluster_boot": [
+        0.05519480519480519,
+        0.12903225806451613
+      ],
+      "deff_cluster_vs_naive": 1.1444935412974018,
+      "mde80_naive_pts": 4.740003655147433,
+      "mde80_cluster_pts": 5.070903543362162
+    },
+    "verifier_drift": {
+      "n": 311,
+      "agree": 311,
+      "agreement_rate": 1.0,
+      "reverified_verdict_counts": {
+        "lean_error": 268,
+        "success": 25,
+        "incomplete": 16,
+        "given_up": 2
+      },
+      "disagreements": []
+    }
+  },
+  "leg_heterogeneity": {
+    "shift_diff_pts": 0.7972972972972978,
+    "se_pts": 3.6177266492193763,
+    "z": 0.22038627420049456
+  }
+}
