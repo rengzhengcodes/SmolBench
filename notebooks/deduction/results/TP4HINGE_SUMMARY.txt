@@ -1,0 +1,51 @@
+tp4 HINGE -- 2026-08-21 -- ministral-3-3b + nemotron-3-nano-4b on g6e.12xlarge (4x L40S, PCIe), tp=4
+
+model=ministral-3-3b type=g6e.12xlarge expect_tp=4 prompts_match_tp1=True
+instance=i-0d4caadcfc7650af3 g6e.12xlarge @ us-east-2c
+
+--- arm det ---
+  served_tp=4 gpu=4x L40S 48GB vllm=0.27.2rc1.dev122+g8efa13b70 backend=None
+  args=['--reasoning-parser', 'mistral', '--language-model-only', '--revision', '4a36357c811bf511a7b625d132e12f22408aac91', '--tokenizer-revision', '4a36357c811bf511a7b625d132e12f22408aac91', '--gpu-memory-utilization', '0.92', '--no-enable-prefix-caching', '--max-num-seqs', '1', '--enforce-eager', '--seed', '0']
+  serve+passes_s=4383.5
+  WITHIN-PROCESS: 8/8 byte-identical (rate 1.000); excluded-empty=[]; n_before_exclusion=8
+    SAME AlgHom.fieldRange_of_normal/prompts/hint-2.md: sha=6e5f14e4928e len=83937
+    SAME CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md: sha=613b3e021d48 len=47420
+    SAME CategoryTheory.essentiallySmall_iff/prompts/noise-3.md: sha=ecfd595f949e len=36919
+    SAME Filter.compl_mem_comap/prompts/noise-3.md: sha=6fdcdb30a1a0 len=23947
+    SAME LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md: sha=263f68fb0928 len=8178
+    SAME Order.pred_eq_iSup/prompts/stepk-1.md: sha=02bfdc1b20e3 len=55568
+    SAME Set.Finite.lowerClosure/prompts/hint-3.md: sha=1861f4919ab1 len=41379
+    SAME UpperSet.mem_iInf__iff/prompts/stepk-1.md: sha=cf75e85fb7e9 len=25684
+
+--- arm stock ---
+  served_tp=4 gpu=4x L40S 48GB vllm=0.27.2rc1.dev122+g8efa13b70 backend=None
+  args=['--reasoning-parser', 'mistral', '--language-model-only', '--revision', '4a36357c811bf511a7b625d132e12f22408aac91', '--tokenizer-revision', '4a36357c811bf511a7b625d132e12f22408aac91', '--gpu-memory-utilization', '0.92', '--enable-prefix-caching']
+  serve+passes_s=955.7
+  retried_rows_P1: {'AlgHom.fieldRange_of_normal/prompts/hint-2.md': {'original_len': 1, 'retry_len': 52487}}
+  WITHIN-PROCESS: 1/4 byte-identical (rate 0.250); excluded-empty=[]; n_before_exclusion=4
+    DIFF CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md: len 69286 vs 81170, sha e99134793e01 vs deea4a1d42ea, common_prefix=567
+    DIFF CategoryTheory.essentiallySmall_iff/prompts/noise-3.md: len 42454 vs 64335, sha 566c6e1b277f vs a1ddee91e857, common_prefix=38
+    DIFF Filter.compl_mem_comap/prompts/noise-3.md: len 29555 vs 37004, sha 40992a82361c vs 589187f4f158, common_prefix=682
+
+  [stock control reading] 3/3 divergent among rows compared as-drawn; the 4th (AlgHom) was a length-1 delivery fault in P1 whose SEPARATE retry happened to match P2 -- do not fold into a rate.
+
+model=nemotron-3-nano-4b type=g6e.12xlarge expect_tp=4 prompts_match_tp1=True
+instance=i-0a93c9445d6915f4e g6e.12xlarge @ us-east-2c
+
+--- arm det ---
+  served_tp=4 gpu=4x L40S 48GB vllm=0.27.2rc1.dev122+g8efa13b70 backend=None
+  args=['--revision', 'dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f', '--tokenizer-revision', 'dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f', '--gpu-memory-utilization', '0.92', '--no-enable-prefix-caching', '--max-num-seqs', '1', '--enforce-eager', '--seed', '0']
+  serve+passes_s=4512.5
+  WITHIN-PROCESS: 8/8 byte-identical (rate 1.000); excluded-empty=[]; n_before_exclusion=8
+    SAME AlgHom.fieldRange_of_normal/prompts/hint-2.md: sha=e91bc49c9fd6 len=98508
+    SAME CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md: sha=7a2e6ff4eafe len=12077
+    SAME CategoryTheory.essentiallySmall_iff/prompts/noise-3.md: sha=a1e0d630482d len=32091
+    SAME Filter.compl_mem_comap/prompts/noise-3.md: sha=2d07efd0667e len=11162
+    SAME LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md: sha=915f96e841ca len=116258
+    SAME Order.pred_eq_iSup/prompts/stepk-1.md: sha=53ced6f17eea len=3339
+    SAME Set.Finite.lowerClosure/prompts/hint-3.md: sha=44485fe4e4f6 len=16761
+    SAME UpperSet.mem_iInf__iff/prompts/stepk-1.md: sha=e6a21e757030 len=4535
+
+CROSS-TP (length-based, both models): 8/8 rows differ in length between the tp=1 det arm (2026-08-16) and this tp=4 det arm -> tp is a pooling boundary.
+SPEND: box1 i-0d4caadcfc7650af3 09:08:13->10:44:52 = 1.611h; box2 i-0a93c9445d6915f4e 10:46:07->12:08:30 = 1.373h; spot us-east-2c $4.1559/h => $12.41 + ~$0.2 EBS
+TEARDOWN: both terminated; region sweep us-east-1/us-east-2/us-west-2 clean
