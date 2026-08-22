@@ -647,7 +647,29 @@ serving configuration, in the same commit that carries this note.]**
   120B+ model; ~$60-80 more on p5-class, out of the approved cap), and
   `--disable-custom-all-reduce` (both deepseek specs) is still untested.
   Data: `notebooks/deduction/results/tp8hinge_ministral-3-3b.json`,
-  `scripts/tp8_hinge_probe.py`. Two further
+  `scripts/tp8_hinge_probe.py`.
+  **[MEASURED 2026-08-22 — MoE-at-tp=8 and the no-custom-AR path both HOLD;
+  stock control 0/4.]** `nemotron-3-super-120b-a12b` (the smallest tp=8 MoE
+  spec) under the bundle on `p5.48xlarge`: **byte-identical within process
+  in two independent server processes on two different boxes** (1/1 each;
+  33,897 and 105,359 chars; routed-expert lines live on all 8 TP ranks;
+  prefix-cache counters 0.0 before and after every bundle arm).
+  `ministral-3-3b` at tp=8 with `--disable-custom-all-reduce` (the deepseek
+  specs' NCCL path, flag confirmed in the parsed engine config): 1/1
+  byte-identical over a 92,486-char row. The **stock control at tp=8 fired
+  0/4** (first divergences at bytes 85–1,735; cache counters 14,036/7,840),
+  closing the positive-control gap the first tp=8 arm deadline-missed — the
+  clean arms are a property of the bundle, not a blind probe. SCOPE, stated
+  plainly: the MoE result is **2/2 on a single prompt** — zero
+  expert-routing diversity — so it is evidence, not certification; 3–4 more
+  MoE prompts (~$40) would close that. Also measured: arm A vs A2
+  cross-process on the MoE agree 0/1 with a 3.1× length difference
+  (consistent with the dense cross-process behavior, §6.2), and the
+  bundle's `--enforce-eager` costs ~12× throughput vs stock CUDA graphs
+  (~9–11 tok/s on the 120B MoE, ~33 tok/s dense-3B, vs ~400 stock) — the
+  Tier-2 cost §4 accepts is now a number. Data:
+  `notebooks/deduction/results/moe_tp8_report*.json` + `MOETP8_SUMMARY.md`,
+  `scripts/moe_tp8_probe.py`. Two further
   recipe rows are unaddressed by this adoption: **#9** (a batch-invariant
   kernel mode, which Appendix B still lists as [UNVERIFIED] and which would
   retire the expensive `--max-num-seqs 1`) and **#10** (streaming; the one
