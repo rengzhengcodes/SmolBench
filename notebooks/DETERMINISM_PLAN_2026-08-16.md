@@ -1051,6 +1051,37 @@ write-up; do not run twenty lanes.**
 > still a two-process contrast, not a regime-level mean. Data:
 > `notebooks/deduction/results/runs/regime_mean_2026-08-21/`.
 
+> **[FINAL 2026-08-22 — the draw COMPLETED at n=399; the shift ATTENUATED and
+> the sign is process-unstable.]** The 88 reclaim-lost cells were finished
+> ($3.55, box reattached mid-flight; one cell is deterministically
+> unmeasurable — 2/2-reproducible `DojoCrashError` on a 110,920-char runaway
+> candidate — so the full draw is 399 of 400). Pooled 399 cells / 189
+> theorems: mean shift **+2.01 pt, cluster 95% CI [−1.01, +5.19]**, exact
+> McNemar p = 0.243, b/c = 14/22; flip rate 9.0% [6.1, 12.3], stable across
+> every extension. The estimate moved DOWN with more data (+3.5 at n=200 →
+> +3.22 at n=311 → +2.01 at n=399), and MDE80 = 4.40 pt still exceeds the
+> point estimate: this draw **bounds** the process term at ≈±5 pt, it does
+> not establish one. Most informative single fact: the four serving-process
+> strata are +3.50 / 0.00 / +4.35 / **−2.30** pt — boxes 3 and 4 are the
+> same instance type in the same AZ on the same day under the same pinned
+> reconstruction and differ by 6.65 pt with opposite signs (homogeneity
+> Q p = 0.40, but per-stratum SEs are 3–4 pt: "undetectably different," not
+> "agreeing"). Conclusion: the rerun-higher trend is NOT a stable regime
+> property; §7.1's noise-not-bias stance stands, now with a measured ±5 pt
+> bound and a demonstrated sign flip between nominally identical processes.
+> Full-draw data: `regime_mean_report_full.json`, `by_process_full.json`,
+> `REPORT_full_draw.md` in the same run dir (the n=311 report is kept as the
+> interim record). Tooling defects found en route, RECORDED NOT YET FIXED:
+> (a) `verify_run` cannot grade a second generation pass over a run dir
+> (seeds outputs from the prior `verified_rows` but indexes pending against
+> the new `all_rows` → IndexError; loud, no damage); (b) more serious,
+> `resume_done_groups` marks a (theorem, k) group done if ANY cell in it has
+> a verdict, so a second pass can silently leave a cell unverified — the
+> full-draw run caught one such cell and verified it in isolation; (c) the
+> teardown sweep scripts filter tag key `Experiment` while the harness tags
+> `smolbench:experiment`, making the sweep a no-op (teardown was confirmed
+> by direct instance-id describe instead).
+
 ### 7.3 Do not "fix" this by lowering temperature or dropping the seed
 
 Temperature 0.7 with a fixed seed is the study's regime and is reproducible given
