@@ -1104,6 +1104,17 @@ write-up; do not run twenty lanes.**
 > `smolbench:experiment`, making the sweep a no-op (teardown was confirmed
 > by direct instance-id describe instead).
 
+> **[PROCESS RULE 2026-08-23 — teardown sweeps.]** Do not write per-run
+> teardown scripts. Use `scripts/fleet_teardown.py` for every sweep. It
+> filters the correct key `tag:smolbench:experiment` (the key
+> `ec2.py:2125` writes at launch) and re-checks client-side. Defect (c)
+> above came from a hand-rolled script with the wrong key.
+> **[EVIDENCE 2026-08-23.]** The producing sessions' /tmp-only run
+> evidence for all five bundle packages (preregistration, estimator,
+> true leg-2 raw, per-process inputs, drift gates, teardown sweeps, run
+> logs) is preserved and committed under
+> `notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/`.
+
 ### 7.3 Do not "fix" this by lowering temperature or dropping the seed
 
 Temperature 0.7 with a fixed seed is the study's regime and is reproducible given
