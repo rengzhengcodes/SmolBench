@@ -1,0 +1,346 @@
+{
+  "schema": "smolbench-evidence-manifest/1",
+  "note": "Evidence manifest for the section-7.2 regime-mean full draw (n=399), whose writeup is REPORT_full_draw.md. This is the package the D9 audit was written from: its preregistration, its estimator and its TRUE raw were never committed and survive only inside the preserved scratchpad tarballs, which the tarball: entries below pin by sha256. Members are streamed, never extracted. Only load-bearing members are named; every other member is still integrity-covered because the archive's own sha256 is pinned in ../../uncommitted_evidence_preserved_2026-08-22/EVIDENCE.json.",
+  "entries": [
+    {
+      "relpath": "REPORT_full_draw.md",
+      "sha256": "f4025eb51ff39e742019622898b84fbb2d2a3b05f671bd64f64522247f480bf2",
+      "role": "writeup",
+      "note": "Byte-identical to the as-run r6-regime/REPORT.md in the preserved tarball."
+    },
+    {
+      "relpath": "all_rows_leg2_final_raw.jsonl.gz",
+      "sha256": "e80df495d43d12d6368a35ea75f85bd3ccb83999fd3f94df17376eea3055513b",
+      "role": "raw",
+      "note": "INTERIM leg-2 raw despite the '_final_' in its name: 243 rows, 111 analyzable leg-2 pairs (43+68 in leg2_by_process.json) -- the spot-truncated sweep REPORT_full_draw.md records as reaching 112 of 200 whitelisted cells (that 112 is the writeup's figure, restated here, not re-derived), which produced the committed n=311 draw. SUPERSEDED for the n=399 full draw by all_rows_leg2_full_raw.jsonl.gz (331 rows = +88 regenerated cells), which is pinned below as a tarball member. Byte-identical to r5-regime/all_rows_leg2_final_raw.jsonl.gz (verified 2026-08-23)."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/all_rows_leg2_full_raw.jsonl.gz",
+      "sha256": "a75fc4ddfcdd383790d366df9faf6a365c47ea43a83e71c0664ef268458ead46",
+      "role": "raw",
+      "note": "THE TRUE RAW of the n=399 full draw: 331 rows, the 243 interim rows plus the 88 regenerated cells. Cited by the writeup's 'What was regenerated' section and committed nowhere -- it exists only inside this tarball."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/preregistered_framing.md",
+      "sha256": "ab8b7740e48a213bf32c0f22d28fb0c1b6471e9104e017973204cbb32d112fe9",
+      "role": "preregistration",
+      "note": "The decision rule, fixed before these cells were graded (21:45Z) and cited three times by the writeup. CAVEAT recorded in the preserved dir's README: the anti-HARKing value of its mtime cannot be restored retroactively -- content is preserved, the timestamp's provenance is not."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/pool_analyze.py",
+      "sha256": "3824a49b1eb9489f546a3aacdb21069988cd06a900e6b7a8ec91a1f255e004d8",
+      "role": "estimator",
+      "note": "The estimator that computed every number in the writeup. sha256 begins 3824a49b1eb9489f, equal in the r5 and r6 tarballs -- the writeup's 'estimator byte-identical to the committed run' claim, verified 2026-08-23."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/pool_analyze.py",
+      "sha256": "3824a49b1eb9489f546a3aacdb21069988cd06a900e6b7a8ec91a1f255e004d8",
+      "role": "estimator",
+      "note": "The r5 copy; byte-identical to r6's (same 3824a49b1eb9489f...)."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/by_process.py",
+      "sha256": "19bfa178af50c8aa31239c42a68dc8191c19dad62b106c279ad05938b6071544",
+      "role": "estimator",
+      "note": "Produced the per-process (rule 5) split table."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/mkreport.py",
+      "sha256": "4b8dd3855099a9567ae2ac30984566f9489ed761b5c10b96f1b62c1c6ef7aebc",
+      "role": "estimator",
+      "note": "Rendered REPORT.md."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/content_gate.py",
+      "sha256": "cc954ed939c66c86013b8608449ec1430e8d46700e45668e930f08ab60535f78",
+      "role": "estimator",
+      "note": "The content gate: reads VERDICTS, not row counts."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/leg_check.py",
+      "sha256": "1bd9a85a679d29843b29ee0b79c63c47502b2fe43f829a188d5f11a9937e920a",
+      "role": "estimator",
+      "note": "Leg-completeness gate."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/merge_new.py",
+      "sha256": "13054ed1bf0f5c45c134c8ecd28565d9d81fa30edcbaa9ff5cebec149e8e75a2",
+      "role": "estimator",
+      "note": "The explicit merge of the 88 verified cells."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/verify_new.py",
+      "sha256": "c71576dd2e87ba73629a4e1b4ea15f31e3888d9bb93004c90c29c63abbaeaadc",
+      "role": "estimator",
+      "note": "Isolated verification of the 88 new cells (no_resume=True), the fix for the resume-by-group defect the writeup documents."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/drift_gate_pre.json",
+      "sha256": "077658582e9cd7f103bd1891607b5d07fbcab08fd164df1d97b6008178223c9f",
+      "role": "gate",
+      "note": "The banked pre-spend verifier-drift gate: 88/88 originals reproduced."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/keys_full.json",
+      "sha256": "24b605a87ab976935091f6caaa6d8efc83c1845460ebf573a180e6073b434082",
+      "role": "gate",
+      "note": "Full key census of the regenerated draw."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/keys_before_box3.json",
+      "sha256": "4cfd126e25c9b6b215c64377418d31d18e73051ab38736880c8c9a7d4a4a0411",
+      "role": "gate",
+      "note": "Key census taken before box 3 joined leg 2."
+    },
+    {
+      "relpath": "drift_gate_legb.json",
+      "sha256": "2e9f104c2fea73208cc3cc9839553d310c5a0ee674f64a2d521266c34ae2d55c",
+      "role": "gate",
+      "note": "Leg-B drift gate."
+    },
+    {
+      "relpath": "leg_check.json",
+      "sha256": "baf00e8e879ba5db05e51cc1a4a0253a0080544064b7cb00a753e859627dff95",
+      "role": "gate",
+      "note": "Leg-completeness gate output (200/200 and 199/200)."
+    },
+    {
+      "relpath": "merge_result.json",
+      "sha256": "ed0f9dbea096d4276c27b8657851106feeb3c252283c6e7614995ffc36ec4d82",
+      "role": "gate",
+      "note": "Merge accounting for the 88 regenerated cells."
+    },
+    {
+      "relpath": "keys_final.json",
+      "sha256": "fcd673cc149ba84e610cb8beed84c6869d34fafb26a7d56aabaf73b0a89a6508",
+      "role": "gate",
+      "note": "byte-identical to its preserved-tarball twin (verified 2026-08-23). Key census of the committed draw."
+    },
+    {
+      "relpath": "whitelist_new.json",
+      "sha256": "b8bfada299b3039b7fe300b617858ba06b7412d40718dbcd6c746b62054f99d0",
+      "role": "config",
+      "note": "The whitelisted cells of the leg-2 extension."
+    },
+    {
+      "relpath": "sample_manifest_new.json",
+      "sha256": "dd7a8a77477ff15a9295a2a85f9c5abf42118140a188fff0e71d59b191e6fac5",
+      "role": "config",
+      "note": "The sampled cells."
+    },
+    {
+      "relpath": "regime_mean_report_full.json",
+      "sha256": "14d5443f6f843dcc29e885e1e37bf92cb42feb64afca76dea25c167eca3ecc9b",
+      "role": "analysis_input",
+      "note": "The n=399 headline numbers the writeup tabulates. byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "regime_mean_report.json",
+      "sha256": "c85f14919ca72946121a93aa9c43572629fac0544612eaee074fb0e7d38bb065",
+      "role": "analysis_input",
+      "note": "The committed n=311 draw, kept for the movement table."
+    },
+    {
+      "relpath": "by_process_full.json",
+      "sha256": "6a2a47c041521ddce8eb07011fc9403ea7816ad61b556e9fd0a5fdeb5e6b95bd",
+      "role": "analysis_input",
+      "note": "The four-stratum split (rule 5). byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "leg2_by_process.json",
+      "sha256": "ea81d682a090f8330d2847dc8644ac206ecc83e4b31dfa1963edf035cfa59dab",
+      "role": "analysis_input",
+      "note": "Leg-2 per-process split of the interim draw (43 + 68 = 111 pairs)."
+    },
+    {
+      "relpath": "provenance.json",
+      "sha256": "2b487aa63b9c7326d09e04d9e3ae6a1a73db6d03c39f2964ce45b17493b2d72b",
+      "role": "analysis_input",
+      "note": "Run provenance record."
+    },
+    {
+      "relpath": "spend.json",
+      "sha256": "14904699264d1cd40d89ffdf0d78bbd0f32b03758ff470a56152e46c7e166944",
+      "role": "log",
+      "note": "Spend accounting ($3.55 this package)."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/all_rows.jsonl",
+      "sha256": "9ab820d60fdc47efb004de30198467f95485969ce8eb447d60fde1564682003b",
+      "role": "raw",
+      "note": "Pre-merge backup: the 243-row all_rows.jsonl the writeup's index-misalignment audit is stated against."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/verified_rows.jsonl",
+      "sha256": "12e06467bc3eb7fd28663d743a05301bcec3cae09af00a2083854ed19862de14",
+      "role": "raw",
+      "note": "Pre-merge verified rows -- the file the writeup proves stayed byte-identical (sha 12e06467...) after the crashed verification pass."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/originals_verified_rows.jsonl",
+      "sha256": "d77dcbbe47a66178b53fdfaca56ffa3186e53ac9101eab4cd11b0f99ced1c936",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/whitelist.json",
+      "sha256": "b8bfada299b3039b7fe300b617858ba06b7412d40718dbcd6c746b62054f99d0",
+      "role": "config"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/manifest.json",
+      "sha256": "431cd45ee5b47672376f6c6f0f2253dbca773a88e36dd91952930956356afb2b",
+      "role": "config"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/flip_report.json",
+      "sha256": "b365938a5688c1d13389d2b124e3ccd53a20c78f2c6e57c2fed77c273d2b570f",
+      "role": "analysis_input"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/backup_pre_r6/SHA256SUMS",
+      "sha256": "ff321cc9ad2bafb6dcbfa44ef38a7ac01abc60854886814364deb119ba101a07",
+      "role": "gate",
+      "note": "The backup's own checksums, taken before the merge."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/verified_rows_before_merge.jsonl",
+      "sha256": "12e06467bc3eb7fd28663d743a05301bcec3cae09af00a2083854ed19862de14",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/server_config_box3_vs_box4_diff.json",
+      "sha256": "183ff80349b392ce13847e0d2b1ac53ed7fa3412841ecf953c1fd6796584317b",
+      "role": "config",
+      "note": "Cited by the writeup: box 3 and box 4 differ ONLY in instance id, GPU UUID and timestamp."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/server_config_box4.yaml",
+      "sha256": "f346743f26a5c480841947ca8cc3ffde249da0b1e32600c3072ca08340647d18",
+      "role": "config",
+      "note": "The box-4 serving config (the process drawn fresh for this package)."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/server_config_leg2.yaml",
+      "sha256": "a8b27587eea074dbc95fe34b192eb4a9d64ecfbd05ea47f6df88e5094c00818c",
+      "role": "config",
+      "note": "The leg-2 serving config."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/env.sh",
+      "sha256": "c2c1f1361128b00899a259022f413282552981715a4a1fb6a30e5f50b77e2c31",
+      "role": "config",
+      "note": "The r6 run environment, including the GITHUB_ACCESS_TOKEN-unset state the gates are stated against."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/env.sh",
+      "sha256": "bc607d54a6e7cd3e457fe30c59cb7a3d6f571cd4d45cc56429514d5804d91fe7",
+      "role": "config",
+      "note": "The r5 run environment."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/box4.json",
+      "sha256": "e841d3af2a47ab673c1354eaf25df2c798ed66ed966dffa64177dd3221436d26",
+      "role": "config",
+      "note": "Box-4 instance record."
+    },
+    {
+      "relpath": "teardown_final.txt",
+      "sha256": "8d2c94bc23c5e6ff98deeb3e18af7966db794e56f071cf9385ad4d40ea8e271b",
+      "role": "teardown",
+      "note": "The three-region termination check. byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "teardown_check_final.txt",
+      "sha256": "da948770b5851b27bcd658d5ae9293c8855a802eb926dc1d7ee5f81079eb170a",
+      "role": "teardown",
+      "note": "Teardown re-check."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/teardown_r6.sh",
+      "sha256": "193d6819d02af34ae9edfb39d32eadf146cc58fbfdca98ce551658c8d7193c3e",
+      "role": "teardown",
+      "note": "Cited by the writeup precisely as a DEFECT: it filtered on tag key 'Experiment' while this repo writes 'smolbench:experiment', so its terminate step was a silent no-op. Preserved so that finding stays checkable."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/teardown_final.sh",
+      "sha256": "d3fe1b0c35e9e0f9fd6491b7fbacf44ec5170d47cb917d63af49e9ab6b9081f7",
+      "role": "teardown",
+      "note": "Same tag-key defect as teardown_r6.sh."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/generate_r6.log",
+      "sha256": "e2f5d86d15d991f3fc9300808ebbf31045c1537c59086770e203bbd0655b6fa8",
+      "role": "log",
+      "note": "Generation of the 88 cells on box 4."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/gate.log",
+      "sha256": "49061860fabed1d0cf09a76f9225f95e0e7d3a938b1fec139c1e3dff2c36659c",
+      "role": "log",
+      "note": "Pre-spend drift gate run."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/verify_new.log",
+      "sha256": "c2c6ade44c965cdaed86a05f953ac02ebfe9ee06739b6b4257fd96cd31784eb6",
+      "role": "log",
+      "note": "Isolated verification of the 88."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/pool.log",
+      "sha256": "14d5443f6f843dcc29e885e1e37bf92cb42feb64afca76dea25c167eca3ecc9b",
+      "role": "log",
+      "note": "Pooling / estimator run."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/postcut_r6.log",
+      "sha256": "069a4ee74c5ad8c016c1414df2614bf3ae52ae465eb35291b0d81745c079710f",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/timer_cut_r6.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/generate.log",
+      "sha256": "5ead73f52edff1aa0c461202f3d440dcca6ee4af21b62a3022fe21128b202d38",
+      "role": "log",
+      "note": "Leg-2 generation, box 1."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/generate2.log",
+      "sha256": "272c436a1326b64b8126da0e4de2a0554b936f2aca5eecfea96dbfcaf83ba9ff",
+      "role": "log",
+      "note": "Leg-2 generation, box 2."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/generate3.log",
+      "sha256": "31fddeb139fa56a90f03933d5dc622d1aa2018429d177f57bae13071b57de621",
+      "role": "log",
+      "note": "Leg-2 generation, box 3."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/legb.log",
+      "sha256": "4b48968d5f50e67640c27c094f9a96577d9629f05458b8821af6d2e5924688f0",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/hardcut.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "log",
+      "note": "The spot-reclaim hard cut."
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r5-regime_scratch_evidence.tar.gz!r5-regime/postcut.log",
+      "sha256": "1f7694dc6eaf8f882b39c2c70db40a2af0314abc3dcf488621f8bf7ccb42ea3d",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:../../uncommitted_evidence_preserved_2026-08-22/r6-regime_scratch_evidence.tar.gz!r6-regime/REPORT.md",
+      "sha256": "f4025eb51ff39e742019622898b84fbb2d2a3b05f671bd64f64522247f480bf2",
+      "role": "other",
+      "note": "The as-run report; byte-identical to the committed REPORT_full_draw.md."
+    }
+  ],
+  "allowlist": []
+}

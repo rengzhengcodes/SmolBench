@@ -1,0 +1,43 @@
+{
+  "schema": "smolbench-evidence-manifest/1",
+  "note": "Evidence manifest for the preserved-scratchpad store itself. README.md is the writeup; the five tarballs are byte-copies of the PRODUCING sessions' ephemeral /tmp scratchpads. Pinning the archives here is what makes every tarball: entry in the sibling manifests trustworthy: those name individual members, this pins the archives whole, so a member that no manifest happens to name is still covered.",
+  "entries": [
+    {
+      "relpath": "README.md",
+      "sha256": "df8938d4094ff08b52ff05f80c62bc1a75f840d15370bb880532a81de70dae58",
+      "role": "writeup",
+      "note": "Why these tarballs exist and what each maps to."
+    },
+    {
+      "relpath": "r4-tp4hinge_scratch_evidence.tar.gz",
+      "sha256": "a4acd91e032d277db2efc64cbe91d37016c4f132db78114dfa886e6b3d949e24",
+      "role": "other",
+      "note": "Preserved scratchpad of the tp=4 hinge package (commit 4d5dee14). Members are named by ../EVIDENCE.json."
+    },
+    {
+      "relpath": "r5-regime_scratch_evidence.tar.gz",
+      "sha256": "faeeafc1ba3542fbedeb1c52190dacaa8c1750cb9bccb51f00d14f6d75cd53cc",
+      "role": "other",
+      "note": "Preserved scratchpad of the regime-mean leg-2 extension, n=311 (commit f9a3e5db). Members are named by ../runs/regime_mean_2026-08-21/EVIDENCE.json."
+    },
+    {
+      "relpath": "r6-regime_scratch_evidence.tar.gz",
+      "sha256": "8ed9f6cd37ee099330fdcb896a7121125f98a19c74598676b47d470ddf2d2089",
+      "role": "other",
+      "note": "Preserved scratchpad of the regime-mean full draw, n=399 (commit cbc3c862). Holds the preregistration, the estimator and the TRUE 331-row raw that were never committed. Members are named by ../runs/regime_mean_2026-08-21/EVIDENCE.json."
+    },
+    {
+      "relpath": "r6-tp8_scratch_evidence.tar.gz",
+      "sha256": "144ee0c9516ab6251b2ded614969ee933a986b9313d56f380c6242112a6610f5",
+      "role": "other",
+      "note": "Preserved scratchpad of the tp=8 dense hinge (commit 6f411981). Members are named by ../EVIDENCE.json."
+    },
+    {
+      "relpath": "r7-moe-tp8_scratch_evidence.tar.gz",
+      "sha256": "7d8fd729fe074abbba93703dd7cc532166eb87147b98fa09b5cc91950c7d1455",
+      "role": "other",
+      "note": "Preserved scratchpad of the MoE-at-tp=8 package (commit e3068d21). Holds the only byte-level backing for the MoE arms. Members are named by ../EVIDENCE.json."
+    }
+  ],
+  "allowlist": []
+}

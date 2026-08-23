@@ -1,0 +1,361 @@
+{
+  "schema": "smolbench-evidence-manifest/1",
+  "note": "Evidence manifest for the determinism-certification packages whose writeups live in this directory: the tp=4 hinge (TP4HINGE_SUMMARY.txt), the tp=8 dense hinge (TP8HINGE_SUMMARY.txt) and MoE-at-tp=8 (MOETP8_SUMMARY.md). OWNERSHIP RULE: a tracked file belongs to exactly one manifest -- the nearest enclosing directory that carries an EVIDENCE.json. This manifest therefore also covers dojoinit_recovery_2026-08-18/, hwprobe_archive/ and runs/flip_nemotron-3-nano-4b/, and deliberately does NOT re-pin runs/regime_mean_2026-08-21/ or the tarball FILES under uncommitted_evidence_preserved_2026-08-22/ -- each has its own manifest. TARBALL MEMBERS: entries of the form tarball:<archive>!<member> name evidence that exists only inside a preserved scratchpad tarball. Only the load-bearing members are listed by name; every other member is still integrity-covered, because the archive's own sha256 is pinned in uncommitted_evidence_preserved_2026-08-22/EVIDENCE.json.",
+  "entries": [
+    {
+      "relpath": "TP4HINGE_SUMMARY.txt",
+      "sha256": "b4e68619cae5a9b3f93e10f7a00440f77d881064452b026c84eda4cec990b025",
+      "role": "writeup",
+      "note": "The committed tp=4 render. Byte-identical to the as-run r4-tp4hinge/COMBINED_SUMMARY.txt preserved in the tarball."
+    },
+    {
+      "relpath": "tp4hinge_ministral-3-3b.json",
+      "sha256": "093c93cd04b9fe8dd328f1d04a4e90be05d37690897a2b338507f851a1e1dc9f",
+      "role": "analysis_input",
+      "note": "byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "tp4hinge_nemotron-3-nano-4b.json",
+      "sha256": "ca287fdd30e99a356f2cbb8fac3ccb86266b25521c830b841caffc0bb4e539a4",
+      "role": "analysis_input",
+      "note": "byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "hwprobe_archive/hinge_ministral-3-3b.json",
+      "sha256": "5f8e9c21be070611f143b1db1fa5f5d56b8d8f39aa85c1987663c6c2a512343f",
+      "role": "analysis_input",
+      "note": "Archived tp=1 hinge report -- the arm the tp=4/tp=8 cross-tp blocks compare against."
+    },
+    {
+      "relpath": "hwprobe_archive/hinge_nemotron-3-nano-4b.json",
+      "sha256": "82df22ec65c49fc9f579421c572988f7ea85b9ff75e5af60d3bafe5c64f15224",
+      "role": "analysis_input",
+      "note": "Archived tp=1 hinge report."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_ministral-3-3b_det_P1.json.gz",
+      "sha256": "2bf62c645aaa3041d7af68097e57907d89657aed0da00f405026f78819c2ca1b",
+      "role": "raw",
+      "note": "Byte-level backing for the tp=4 SHA table: the generations the identity verdict was computed over. Exists only in the preserved tarball."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_ministral-3-3b_det_P2.json.gz",
+      "sha256": "2c0063e595bfae5eeb38d276e2acb88c8e7392360ce55f332d553b51a0ae6b8b",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_ministral-3-3b_stock_P1.json.gz",
+      "sha256": "35d7ffc8baac46787012d4abd91950550142037ccc2c8955603f68fe943c6f80",
+      "role": "raw",
+      "note": "Stock (positive-control) arm generations."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_ministral-3-3b_stock_P2.json.gz",
+      "sha256": "322dd8aa858df551942078612e531877c647680c19fd35df0c5902fb4795eac1",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_nemotron-3-nano-4b_det_P1.json.gz",
+      "sha256": "7f457e47cda25b904d9cd151950eb4e6884c5f12fdb7c0c6efbcfb886d5904c3",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/texts_nemotron-3-nano-4b_det_P2.json.gz",
+      "sha256": "a03b5bad4eaa984d845d4b2803b6da6c073ad96ebacba13c34297b12f4df640f",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/summarize.py",
+      "sha256": "03cfb54042337af6c0be7c97bd7df661489f7f30a02de90f6846b96b38317179",
+      "role": "estimator",
+      "note": "The as-run renderer that produced TP4HINGE_SUMMARY.txt."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/tp4_hinge_probe.py",
+      "sha256": "877c31230f2c10dfd7bb4f654e0c207f5016bacb2a1a776dd75a5d87501f3690",
+      "role": "other",
+      "note": "As-run copy of scripts/tp4_hinge_probe.py (the tracked source may have moved on)."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/COMBINED_SUMMARY.txt",
+      "sha256": "b4e68619cae5a9b3f93e10f7a00440f77d881064452b026c84eda4cec990b025",
+      "role": "other",
+      "note": "As-run render; byte-identical to the committed TP4HINGE_SUMMARY.txt."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/tp4hinge.log",
+      "sha256": "4f0b8829e32213e55d32f6ad96b51142aa5dcb5d16ed1a5ef99c0212aa214924",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/tp4hinge_nemotron.log",
+      "sha256": "7e74f4d9732ea4e752e7e4884aadc8983a5e51bc9ee62fa14ce1adfdd39b7ad0",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r4-tp4hinge_scratch_evidence.tar.gz!r4-tp4hinge/run_start_utc.txt",
+      "sha256": "52e289b6b8d63ba6990cc93140b209a0bea4ba7ec4a8cb9c12ff2d0eb69aba27",
+      "role": "log",
+      "note": "Run start stamp."
+    },
+    {
+      "relpath": "TP8HINGE_SUMMARY.txt",
+      "sha256": "c4b3dde636bde8a2f818cba11368f2382530464414a7ef9dabc3cede8704be78",
+      "role": "writeup",
+      "note": "Re-rendered 2026-08-23 by `.venv/bin/python scripts/tp8_hinge_summary.py ministral-3-3b` -- a read-only render from the committed tp8hinge_ministral-3-3b.json, no probe or GPU work. It REPLACES an 862-byte mid-run render that stopped before any verdict; the 43-line render carries the 8/8 within-process result, the per-row SHA table, the cross-tp block and the stock arm. Rendered for ministral-3-3b only: the default model list also asks for nemotron-3-super-120b-a12b, which has no tp8hinge report (its MoE-at-tp=8 evidence is moe_tp8_report.json) and would emit only a '(no report for ...)' line."
+    },
+    {
+      "relpath": "tp8hinge_ministral-3-3b.json",
+      "sha256": "1e09d7cf74b76b28497602e81f531470b9f09740847604b59b1ad1971ce475cc",
+      "role": "analysis_input",
+      "note": "The tp=8 dense hinge report; sole input to the render above."
+    },
+    {
+      "relpath": "texts_tp8_ministral-3-3b_det_P1.json.gz",
+      "sha256": "34716de920adb5afb81a6db497d792c0e328f40f3258f7ca79143527e8b44ea7",
+      "role": "raw",
+      "note": "The ONLY byte-level backing for the tp=8 dense 8/8. Verified 2026-08-23: all 8 rows reproduce sha_table_P1's sha256_12 and len from this file."
+    },
+    {
+      "relpath": "texts_tp8_ministral-3-3b_det_P2.json.gz",
+      "sha256": "2a56980767c7e9312f4eab174b43cacf14150e059c2c24a9a6d01ead90024ba1",
+      "role": "raw",
+      "note": "Pass-2 generations; all 8 rows reproduce sha_table_P2's sha256_12 and len."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/tp8_topology_evidence.json",
+      "sha256": "72f59d6f30e25577f42030602ea7f5232e64b980704db9e105bcd666ec8055a1",
+      "role": "gate",
+      "note": "The topology evidence that the arm really ran at tp=8 (worker ranks / engine config), as opposed to being asserted."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/status_det_ministral.json",
+      "sha256": "cac47479bff23f832801ad8a6d8975cda8c6806478d952f33cdd35f6f5ea4e22",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/box1_ministral.log",
+      "sha256": "0d4f896b7dffe56f199119142a6dfdb8bf4b8b2083d8d83f1a5f645e8bec873d",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/run_box1.sh",
+      "sha256": "de94d844dec47127b5b303ee380caa53ce4265ec704e0d03b97f75f2f59e76cf",
+      "role": "other",
+      "note": "As-run box driver."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/sweep.sh",
+      "sha256": "f06ddde9be970581fb56e5f9b2ea2813fa76009d383fda15c9d3ba81b029270d",
+      "role": "other"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/spend.sh",
+      "sha256": "0e39ce699b1f81bc98730f493965a7c15193997f5c092ac58282db82d67c5042",
+      "role": "other",
+      "note": "Spend accounting helper."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r6-tp8_scratch_evidence.tar.gz!r6-tp8/REPORT.md",
+      "sha256": "51e2a96979a5c9895d79f0e5d0dbdc338f86084841df1189ffbc74874f88e45e",
+      "role": "other",
+      "note": "The producing session's own report for this arm; TP8HINGE_SUMMARY.txt is the committed writeup."
+    },
+    {
+      "relpath": "MOETP8_SUMMARY.md",
+      "sha256": "afba30b1c2a83b9dff959bcfbf72c17fd4ef30216644641208052da7aa250ba3",
+      "role": "writeup"
+    },
+    {
+      "relpath": "moe_tp8_report.json",
+      "sha256": "b250dc7f3898478c58117857dd42dd7b93bc69db021425a0285d95a0d585bf85",
+      "role": "analysis_input",
+      "note": "byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "moe_tp8_report_run2.json",
+      "sha256": "b250b0830d91444a6fec936d72fdc5f457746f26ae5cd2302c4626da3af1a670",
+      "role": "analysis_input",
+      "note": "byte-identical to its preserved-tarball twin (verified 2026-08-23)."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_A_nemotron-3-super-120b-a12b_P1.json.gz",
+      "sha256": "9a069925ed2647c025d1ca10761ee7c315ade5a2f02b8f52c35e0491dd20072a",
+      "role": "raw",
+      "note": "Byte-level backing for arm A (MoE, tp=8) -- exists only in the preserved tarball."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_A_nemotron-3-super-120b-a12b_P2.json.gz",
+      "sha256": "95fd82ee3ab8148ab52cd3f506f2dbde873aa901a07b78839b014454570b84e7",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_B_ministral-3-3b_P1.json.gz",
+      "sha256": "390264e29e272eeb87f89ba29cab7aa4bdf750234ebeb9b250a2bb1996a57af8",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_B_ministral-3-3b_P2.json.gz",
+      "sha256": "44ba41149847ed8cf269c6c871dca418e09bbf529d2fed576849feb34a89d2e1",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_C_ministral-3-3b_P1.json.gz",
+      "sha256": "fb500965ffe2cf42c064e3e105f75175fd5cb1c4d4e38c679e7f585091fac560",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moetp8_C_ministral-3-3b_P2.json.gz",
+      "sha256": "51776fbe035d37c54e9869775d951c7313e3b1c9e78a17b223b74a91bd664700",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moe_tp8_report_run2_A2_nemotron-3-super-120b-a12b_P1.json.gz",
+      "sha256": "324163b364d46f33c60e7339156dbb58f9ffc33c5f15aecbb88e862edf819b69",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moe_tp8_report_run2_A2_nemotron-3-super-120b-a12b_P2.json.gz",
+      "sha256": "c04b9f840b6c772b89323cdc6efb0473d0cb94aba43d4c16b8f1d541fd92368b",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moe_tp8_report_run2_C_ministral-3-3b_P1.json.gz",
+      "sha256": "05d6136c7145b83ea1d462d33551a7d887f39193a6c3d7d95ea870343c8f1fb0",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/texts_moe_tp8_report_run2_C_ministral-3-3b_P2.json.gz",
+      "sha256": "f610405d2c857ba2dd1a8f417921d09183e020b6c8cd64c0d8f0c5bd7e363ed4",
+      "role": "raw"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/moe_tp8_probe.py",
+      "sha256": "e8a7ea8e1bd1196164b21aeafa0327a9afe56e3f7705ab0d4f40fc14550344a0",
+      "role": "other",
+      "note": "As-run copy of scripts/moe_tp8_probe.py."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/moe_tp8_probe_run2.py",
+      "sha256": "92d14b2648a13f3a51d632cffe512958f60a5abbf28bc970f902c13bfabdd0f7",
+      "role": "other",
+      "note": "As-run driver for the second (run2) sweep."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/run.log",
+      "sha256": "a83138d54d001cd596b4fd6c2b94b83bbb6dbadc99355e7e51fd0f8409b780e3",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/run2.log",
+      "sha256": "e8e0fde1eeb57b7aad7550cd78ed3db791d5b807d5cb353b6836a363bf22f76c",
+      "role": "log"
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/teardown_sweep_run1.txt",
+      "sha256": "9f1f2fe34a4a089144ff7aa827e973fbb3c9a78b1645b7f16cdd274ff7619272",
+      "role": "teardown",
+      "note": "Cited by MOETP8_SUMMARY.md; exists only in the preserved tarball."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/teardown_sweep_final.txt",
+      "sha256": "2d6d91859e24b526c7ba2af7b0de8b59bbd6d8b3b0d55b5f7faae47cff9037e1",
+      "role": "teardown",
+      "note": "Cited by MOETP8_SUMMARY.md; the three-region termination check."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/spot_price_actual.txt",
+      "sha256": "5dc9eeb9ef78b0fa54b38d93c494d57451bb6d54ea09e69892402f2210f3d222",
+      "role": "log",
+      "note": "The spot price actually paid, backing the spend statement."
+    },
+    {
+      "relpath": "tarball:uncommitted_evidence_preserved_2026-08-22/r7-moe-tp8_scratch_evidence.tar.gz!r7-moe-tp8/REPORT.md",
+      "sha256": "482ba4b18085945d333124cca6bf9cf6e4adecf2bd94830396c30159b2209291",
+      "role": "other",
+      "note": "The producing session's own report; MOETP8_SUMMARY.md is the committed writeup."
+    },
+    {
+      "relpath": "flip_free_bound_2026-08-18.json",
+      "sha256": "c347416a6efb19c78c070c6de4fd0f215cfccad0dbe0d346cba32e08ce7cb96d",
+      "role": "analysis_input",
+      "note": "DETERMINISM_PLAN section 6.3 free flip bound, produced by scripts/flip_free_bound.py. Not cited by the writeups in this directory; pinned because the ownership rule puts it here."
+    },
+    {
+      "relpath": "dojoinit_recovery_2026-08-18/report.json",
+      "sha256": "2d8d10e4af793448ef5c0678a5acd452f525fecc0826b35e32b7fd943560d782",
+      "role": "analysis_input",
+      "note": "DojoInit recovery package (2026-08-18)."
+    },
+    {
+      "relpath": "dojoinit_recovery_2026-08-18/controls_report.json",
+      "sha256": "486240eb575de67674830a70c797e0c0c8629b7d8bdc43057e62e66dfc4d2e55",
+      "role": "gate",
+      "note": "The recovery's control arm."
+    },
+    {
+      "relpath": "dojoinit_recovery_2026-08-18/inputs/std_45.json",
+      "sha256": "9534635559ed80e2e5941cc85fb8297cd6c49b69b9f75c341a2d810baa1b65ea",
+      "role": "analysis_input"
+    },
+    {
+      "relpath": "dojoinit_recovery_2026-08-18/inputs/sanity_sweep_std45.json",
+      "sha256": "0771ed9bf7e5b736e83bb164f8cf8fd35779dbee6f38ebf654b15101412ff004",
+      "role": "gate"
+    },
+    {
+      "relpath": "runs/flip_nemotron-3-nano-4b/flip_report.json",
+      "sha256": "78173f6d80d1e377def0df528ee6d58552fcc8891bfd76d4ee741f074ec73def",
+      "role": "analysis_input",
+      "note": "Section 6.2 flip-rate run."
+    },
+    {
+      "relpath": "runs/flip_nemotron-3-nano-4b/sample_manifest.json",
+      "sha256": "6a0a7afcb3e6abd9c7a4ea1f775fda41a37f45e0b0f1e11c051cd7385690a667",
+      "role": "config",
+      "note": "The sampled cells for that run."
+    }
+  ],
+  "allowlist": [
+    {
+      "name": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+      "reason": "Row label in a SHA table naming a prompt file inside the study's S3 run directory (<theorem_id>/prompts/<rung>.md, written by smolbench/deduction/lean/runner.py) -- S3-resident study data, not an artifact of this package."
+    },
+    {
+      "name": "AlgHom.fieldRange_of_normal/…/hint-2.md",
+      "reason": "Same prompt path, elided with U+2026 in prose; not a filename."
+    },
+    {
+      "name": "CategoryTheory.Limits.Types.Pushout.condition/…/hint-2.md",
+      "reason": "Elided S3 prompt path used as a row label; not a filename."
+    },
+    {
+      "name": "CategoryTheory.essentiallySmall_iff/…/noise-3.md",
+      "reason": "Elided S3 prompt path used as a row label; not a filename."
+    },
+    {
+      "name": "Filter.compl_mem_comap/…/noise-3.md",
+      "reason": "Elided S3 prompt path used as a row label; not a filename."
+    },
+    {
+      "name": "scripts/tp4_hinge_probe.py",
+      "reason": "Tracked repo source outside the gitignored results tree: git already guarantees delivery, and pinning a live source file's sha here would break the gate on every legitimate edit. The as-run copy IS pinned, as a tarball member."
+    },
+    {
+      "name": "scripts/tp8_hinge_probe.py",
+      "reason": "Tracked repo source outside the results tree (see above)."
+    },
+    {
+      "name": "smolbench/evals/openai_compat.py",
+      "reason": "Tracked repo source outside the results tree (see above)."
+    },
+    {
+      "name": "tests/test_determinism_probes.py",
+      "reason": "Tracked repo source outside the results tree (see above)."
+    },
+    {
+      "name": "tests/test_openai_compat.py",
+      "reason": "Tracked repo source outside the results tree (see above)."
+    }
+  ]
+}
