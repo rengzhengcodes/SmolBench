@@ -1,0 +1,66 @@
+{
+ "schema": "smolbench-evidence-manifest/1",
+ "note": "validation package for the audit-repair probe changes",
+ "entries": [
+  {
+   "relpath": "VALIDATION_SUMMARY.txt",
+   "sha256": "3c9d6ae353958407a8c58b3604a677c0f4062f9dfb62a5c0bb96abae6729a19a",
+   "role": "writeup",
+   "note": "validation of the audit-repair probe mechanisms; first GPU run since fadfab16"
+  },
+  {
+   "relpath": "tp4hinge_ministral-3-3b.json",
+   "sha256": "34865fcfb742561bad5fa9cc813cf07eef2b37f4c6d45e462f169c908b4ab6e1",
+   "role": "analysis_input",
+   "note": "the validation report: gate_basis=engine_config both arms, sensitivity SENSITIVE both arms, det 2/2 HOLDS (byte-equal to the archived 2026-08-21 det arm), stock 0/2 control fired"
+  },
+  {
+   "relpath": "texts_ministral-3-3b_det_P1.json.gz",
+   "sha256": "67e40b7b84c4089295edc7f40d496cd2ecb59ec7f072e308a99631e2acb95b5d",
+   "role": "raw",
+   "note": "det P1 raw texts (byte-level backing)"
+  },
+  {
+   "relpath": "texts_ministral-3-3b_det_P2.json.gz",
+   "sha256": "755384ef8cc4aaeb437037077138344bcdb6fb6a5997c09c1b999ce25085517e",
+   "role": "raw",
+   "note": "det P2 raw texts"
+  },
+  {
+   "relpath": "texts_ministral-3-3b_stock_P1.json.gz",
+   "sha256": "d93d52bcebd3583d5f009b7d1dc755d618cf1d017052474c0e3dd81e0f8d8b95",
+   "role": "raw",
+   "note": "stock P1 raw texts"
+  },
+  {
+   "relpath": "texts_ministral-3-3b_stock_P2.json.gz",
+   "sha256": "7e2bce9bf95804641b3f427ec588f8df1ec69ac454c31564fad1b547a27236f0",
+   "role": "raw",
+   "note": "stock P2 raw texts"
+  },
+  {
+   "relpath": "validation_run.log",
+   "sha256": "6cde8591bcd2198ec216be7d32597c08bc3a0644f733343e585da443c61cfd6a",
+   "role": "log",
+   "note": "full driver log incl. both tp GATE PASSED via engine_config lines, verdict lines with control scope, and the terminate call"
+  }
+ ],
+ "allowlist": [
+  {
+   "name": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+   "reason": "row label naming a prompt in the study S3 run dir, not an artifact of this package"
+  },
+  {
+   "name": "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md",
+   "reason": "row label naming a prompt in the study S3 run dir, not an artifact of this package"
+  },
+  {
+   "name": "EVIDENCE.json",
+   "reason": "self-reference: the writeup cites this manifest; a manifest cannot pin its own sha"
+  },
+  {
+   "name": "fleet_teardown.py",
+   "reason": "tracked repo source outside the gitignored tree; git guarantees delivery"
+  }
+ ]
+}

@@ -1,0 +1,493 @@
+{
+ "probe": "tp4_hinge",
+ "model": "ministral-3-3b",
+ "type": "g6e.12xlarge",
+ "expect_tp": 4,
+ "n_prompts": 2,
+ "seed": 0,
+ "temperature": 0.7,
+ "max_tokens": 32768,
+ "stream": true,
+ "prompt_ids": [
+  "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+  "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md"
+ ],
+ "prompt_set_matches_tp1_hinge": false,
+ "started_utc": "2026-08-23T18:54:20.474002+00:00",
+ "arms": {
+  "det": {
+   "vllm_args": [
+    "--reasoning-parser",
+    "mistral",
+    "--language-model-only",
+    "--revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--tokenizer-revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--gpu-memory-utilization",
+    "0.92",
+    "--no-enable-prefix-caching",
+    "--max-num-seqs",
+    "1",
+    "--enforce-eager",
+    "--seed",
+    "0"
+   ],
+   "n_prompts_this_arm": 2,
+   "served_tp": 4,
+   "server_config": {
+    "instance_type": "g6e.12xlarge",
+    "gpu": "4x L40S 48GB",
+    "tp": 4,
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "instance_id": "i-03ba751ae30c17577",
+    "vllm_image": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512",
+    "vllm_args": [
+     "--reasoning-parser",
+     "mistral",
+     "--language-model-only",
+     "--revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--tokenizer-revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--gpu-memory-utilization",
+     "0.92",
+     "--no-enable-prefix-caching",
+     "--max-num-seqs",
+     "1",
+     "--enforce-eager",
+     "--seed",
+     "0"
+    ],
+    "max_model_len": 131072,
+    "served_at": "2026-08-23T18:59:00.453061+00:00",
+    "vllm_version": "0.27.2rc1.dev122+g8efa13b70",
+    "vllm_cache_config": [
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.9449462890625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1565648\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97853\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "attention_backend_log": [
+     "(APIServer pid=1) INFO 08-23 18:57:49 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected."
+    ],
+    "agent_fingerprint": {
+     "image_repo_digests": [
+      "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+     ],
+     "nvidia_smi": "NVIDIA L40S, GPU-3f951b98-2895-3fdd-e2e7-d731648e4d7e, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-45065f65-74b7-adea-21b0-a37fa54b90c4, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-5d8b6176-51b9-3d49-b5a5-55966ff3d736, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-97a4e51b-94cc-c080-0e26-88b272ab3d04, 595.91.07, 46068 MiB, Enabled",
+     "hf_snapshots": [
+      "4a36357c811bf511a7b625d132e12f22408aac91"
+     ],
+     "weights_digest": "6fad24bc2c2cf8863f997a1a8166930ec6f50c4a4679d72d892ff89147e51fb1"
+    },
+    "vllm_image_digest": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "max_parallel_requests": 1,
+    "stream": true
+   },
+   "fingerprint": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365555e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365708e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365837e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365973e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.9449462890625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1565648\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97853\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log": {
+    "http_status": 200,
+    "container": "running",
+    "healthy": true,
+    "vllm_log_chars": 14000,
+    "vllm_log_tail": "WARNING 08-23 18:57:37 [argparse_utils.py:257] With `vllm serve`, you should provide the model as a positional argument or in a config file instead of via the `--model` option. The `--model` option will be removed in a future version.\n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333] \n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333]        \u2588     \u2588     \u2588\u2584   \u2584\u2588\n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333]  \u2584\u2584 \u2584\u2588 \u2588     \u2588     \u2588 \u2580\u2584\u2580 \u2588  version 0.27.2rc1.dev122+g8efa13b70\n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333]   \u2588\u2584\u2588\u2580 \u2588     \u2588     \u2588     \u2588  model   mistralai/Ministral-3-3B-Reasoning-2512\n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333]    \u2580\u2580  \u2580\u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580\u2580 \u2580     \u2580\n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:333] \n(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'enforce_eager': True, 'served_model_name': ['ministral-3-3b'], 'reasoning_parser': 'mistral', 'tensor_parallel_size': 4, 'enable_prefix_caching': False, 'language_model_only': True, 'max_num_seqs': 1}\n(APIServer pid=1) INFO 08-23 18:57:38 [config.py:394] Inferred from consolidated*.safetensors files torch.bfloat16 dtype.\n(APIServer pid=1) INFO 08-23 18:57:47 [model.py:672] Resolved architecture: PixtralForConditionalGeneration\n(APIServer pid=1) INFO 08-23 18:57:47 [model.py:1965] Using max model len 131072\n(APIServer pid=1) INFO 08-23 18:57:49 [registry.py:141] All limits of multimodal modalities supported by the model are set to 0, running in text-only mode.\n(APIServer pid=1) INFO 08-23 18:57:49 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected.\n(APIServer pid=1) WARNING 08-23 18:57:49 [vllm.py:1268] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none\n(APIServer pid=1) WARNING 08-23 18:57:49 [vllm.py:1337] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.\n(APIServer pid=1) INFO 08-23 18:57:49 [kernel.py:308] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])\n(APIServer pid=1) INFO 08-23 18:57:49 [vllm.py:1516] Cudagraph is disabled under eager mode\n(APIServer pid=1) INFO 08-23 18:57:49 [compilation.py:329] Enabled custom fusions: norm_quant, act_quant\n(EngineCore pid=300) INFO 08-23 18:57:57 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=131072, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='mistral', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=ministral-3-3b, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, enable_jit_warmup=True, enable_bf16x3_router_gemm=False, moe_backend='auto', linear_backend='auto'config with `--kv-cache-memory=41526593291` (38.67 GiB) to fit into requested memory, or `--kv-cache-memory=44656078848` (41.59 GiB) to fully utilize gpu memory. Current kv cache memory in use is 38.82 GiB.\n(Worker_TP3 pid=418) INFO 08-23 18:58:50 [gpu_worker.py:804] Free memory on device (43.76/44.39 GiB) on startup. Desired GPU memory utilization is (0.92, 40.84 GiB). Actual usage is 1.94 GiB for consumed memory (weights + non-torch), 0.09 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=41526593291` (38.67 GiB) to fit into requested memory, or `--kv-cache-memory=44656078848` (41.59 GiB) to fully utilize gpu memory. Current kv cache memory in use is 38.82 GiB.\n(Worker_TP2 pid=417) INFO 08-23 18:58:50 [gpu_worker.py:804] Free memory on device (43.76/44.39 GiB) on startup. Desired GPU memory utilization is (0.92, 40.84 GiB). Actual usage is 1.94 GiB for consumed memory (weights + non-torch), 0.09 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=41526593291` (38.67 GiB) to fit into requested memory, or `--kv-cache-memory=44656078848` (41.59 GiB) to fully utilize gpu memory. Current kv cache memory in use is 38.82 GiB.\n(Worker_TP0 pid=415) INFO 08-23 18:58:54 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.\n(Worker_TP3 pid=418) INFO 08-23 18:58:54 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.\n(Worker_TP2 pid=417) INFO 08-23 18:58:54 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.\n(Worker_TP1 pid=416) INFO 08-23 18:58:54 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.\n(Worker_TP0 pid=415) INFO 08-23 18:58:54 [torch_utils.py:262] Reducing Torch threads from 12 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.\n(EngineCore pid=300) INFO 08-23 18:58:55 [core.py:354] init engine (profile, create kv cache, warmup model) took 9.28 s\n(EngineCore pid=300) INFO 08-23 18:58:55 [config.py:394] Inferred from consolidated*.safetensors files torch.bfloat16 dtype.\n(EngineCore pid=300) INFO 08-23 18:58:59 [registry.py:141] All limits of multimodal modalities supported by the model are set to 0, running in text-only mode.\n(EngineCore pid=300) WARNING 08-23 18:58:59 [vllm.py:1268] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none\n(EngineCore pid=300) WARNING 08-23 18:58:59 [vllm.py:1337] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.\n(EngineCore pid=300) INFO 08-23 18:58:59 [kernel.py:308] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])\n(EngineCore pid=300) INFO 08-23 18:58:59 [vllm.py:1516] Cudagraph is disabled under eager mode\n(EngineCore pid=300) INFO 08-23 18:58:59 [compilation.py:329] Enabled custom fusions: norm_quant, act_quant\n(APIServer pid=1) INFO 08-23 18:58:59 [api_server.py:653] Supported tasks: ['generate']\n(APIServer pid=1) INFO 08-23 18:58:59 [api_server.py:657] Starting vLLM server on http://0.0.0.0:8000\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:51] Available routes are:\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /openapi.json, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /docs, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /docs/oauth2-redirect, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /redoc, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /load, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /version, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /health, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /metrics, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /tokenize, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /detokenize, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/models, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /ping, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /ping, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /invocations, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/chat/completions, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/chat/completions/batch, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/responses, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/responses/{response_id}, Methods: GET\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/responses/{response_id}/cancel, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/completions, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/messages, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/messages/count_tokens, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /generative_scoring, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /scale_elastic_ep, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /is_scaling_elastic_ep, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/chat/completions/render, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/completions/render, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/chat/completions/derender, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /v1/completions/derender, Methods: POST\n(APIServer pid=1) INFO 08-23 18:58:59 [launcher.py:60] Route: /inference/v1/generate, Methods: POST\n(APIServer pid=1) INFO:     172.17.0.1:52708 - \"GET /health HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:48676 - \"GET /v1/models HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:48680 - \"GET /version HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:48684 - \"GET /metrics HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     172.17.0.1:52720 - \"GET /health HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:48698 - \"GET /version HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:48710 - \"GET /metrics HTTP/1.1\" 200 OK\n(APIServer pid=1) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n(Worker_TP0 pid=415) \nLoading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]\n(Worker_TP0 pid=415) \nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.63it/s]\n(Worker_TP0 pid=415) \nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.63it/s]\n(Worker_TP0 pid=415) \n(APIServer pid=1) INFO:     Started server process [1]\n(APIServer pid=1) INFO:     Waiting for application startup.\n(APIServer pid=1) INFO:     Application startup complete.\n",
+    "launcher_log_tail": "r\nf6a21a045a03: Pulling fs layer\nc567a87f21d2: Pulling fs layer\ndf75ca659f06: Pulling fs layer\n70f87b6ed43e: Pulling fs layer\ned1abecb79f1: Pulling fs layer\n526d5438c009: Pulling fs layer\n396946fb8d4c: Pulling fs layer\ncaf6d88ca8cf: Pulling fs layer\n870221e8b0a5: Pulling fs layer\n0204566b2c86: Pulling fs layer\ncecb7ff398e8: Pulling fs layer\n4f4fb700ef54: Pulling fs layer\na2d9e26fa130: Pulling fs layer\n0b3b5bd92824: Pulling fs layer\n3b11277777c3: Pulling fs layer\n320eb62ff27c: Pulling fs layer\n695d9f69654b: Pulling fs layer\nefb32220bef4: Pulling fs layer\n3cf99c596850: Pulling fs layer\n5c0dbaa8f644: Pulling fs layer\n5c0dbaa8f644: Pulling fs layer\n1378324d1566: Pulling fs layer\na930200807ae: Pulling fs layer\nedd1ad6f92d3: Pulling fs layer\nbc166f7b0861: Pulling fs layer\ncda57975454c: Pulling fs layer\n127b80fd9009: Pulling fs layer\n2a0dfd6d5a71: Pulling fs layer\n52582fb9a265: Pulling fs layer\n3cf99c596850: Already exists\n52582fb9a265: Already exists\n526d5438c009: Already exists\nedd1ad6f92d3: Already exists\nc567a87f21d2: Already exists\n70f87b6ed43e: Already exists\n0b3b5bd92824: Already exists\n695d9f69654b: Already exists\n127b80fd9009: Already exists\ned1abecb79f1: Already exists\n320eb62ff27c: Download complete\n5c0dbaa8f644: Download complete\n870221e8b0a5: Download complete\ncecb7ff398e8: Download complete\ncaf6d88ca8cf: Download complete\nefb32220bef4: Download complete\n1378324d1566: Download complete\n396946fb8d4c: Download complete\nf6a21a045a03: Download complete\ncda57975454c: Download complete\n53958767af31: Download complete\ndf75ca659f06: Download complete\n2a0dfd6d5a71: Download complete\n4f4fb700ef54: Download complete\na930200807ae: Download complete\n4adeb3c05418: Download complete\ncf57d2112d89: Download complete\ncf57d2112d89: Pull complete\n0204566b2c86: Download complete\nc567a87f21d2: Pull complete\n3b11277777c3: Download complete\n70f87b6ed43e: Pull complete\n0b3b5bd92824: Pull complete\n526d5438c009: Pull complete\n870221e8b0a5: Pull complete\ncecb7ff398e8: Pull complete\n320eb62ff27c: Pull complete\nbc166f7b0861: Download complete\nbc166f7b0861: Pull complete\nedd1ad6f92d3: Pull complete\ncaf6d88ca8cf: Pull complete\n0204566b2c86: Pull complete\n5c0dbaa8f644: Pull complete\nefb32220bef4: Pull complete\nf6a21a045a03: Pull complete\n4adeb3c05418: Pull complete\na2d9e26fa130: Download complete\na2d9e26fa130: Pull complete\n3b11277777c3: Pull complete\n52582fb9a265: Pull complete\n695d9f69654b: Pull complete\na930200807ae: Pull complete\n127b80fd9009: Pull complete\n1378324d1566: Pull complete\n2a0dfd6d5a71: Pull complete\n4f4fb700ef54: Pull complete\ned1abecb79f1: Pull complete\n396946fb8d4c: Pull complete\n3cf99c596850: Pull complete\ncda57975454c: Pull complete\ndf75ca659f06: Pull complete\n53958767af31: Pull complete\nDigest: sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7\nStatus: Downloaded newer image for vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7\n9149b2f3e511ff5bee4b4b2d4d3741e5b59aef2708b1159d6b0b0d8888ad3373\n",
+    "topology_lines": [
+     "(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'enforce_",
+     "(EngineCore pid=300) INFO 08-23 18:57:57 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_le"
+    ],
+    "engine_config_lines": [
+     "(APIServer pid=1) INFO 08-23 18:57:37 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'enforce_eager': True, 'served_model_name': ['ministral-3-3b'], 'reasoning_parser': 'mistral', 'tensor_parallel_size': 4, 'enable_prefix_caching': False, 'language_model_only': True, 'max_num_seqs': 1}",
+     "(EngineCore pid=300) INFO 08-23 18:57:57 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=131072, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='mistral', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=ministral-3-3b, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, enable_jit_warmup=True, enable_bf16x3_router_gemm=False, moe_backend='auto', linear_backend='auto'config with `--kv-cache-memory=41526593291` (38.67 GiB) to fit into requested memory, or `--kv-cache-memory=44656078848` (41.59 GiB) to fully utilize gpu memory. Current kv cache memory in use is 38.82 GiB."
+    ],
+    "engine_config_parsed": {
+     "tensor_parallel_size": "4",
+     "disable_custom_all_reduce": "False",
+     "enforce_eager": "True",
+     "enable_prefix_caching": "False",
+     "seed": "0",
+     "pipeline_parallel_size": "1"
+    },
+    "worker_ranks": [
+     "Worker_TP0",
+     "Worker_TP1",
+     "Worker_TP2",
+     "Worker_TP3"
+    ]
+   },
+   "mechanism_evidence": "engine_config",
+   "gate_basis": "engine_config",
+   "engine_tp": 4,
+   "payload_agrees": true,
+   "sha_table_P1": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "6e5f14e4928e",
+     "len": 83937
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "263f68fb0928",
+     "len": 8178
+    }
+   },
+   "row_meta_P1": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 22326,
+     "prompt_tokens": 1319,
+     "chars": 83937
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 2011,
+     "prompt_tokens": 672,
+     "chars": 8178
+    }
+   },
+   "sha_table_P2": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "6e5f14e4928e",
+     "len": 83937
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "263f68fb0928",
+     "len": 8178
+    }
+   },
+   "row_meta_P2": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 22326,
+     "prompt_tokens": 1319,
+     "chars": 83937
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 2011,
+     "prompt_tokens": 672,
+     "chars": 8178
+    }
+   },
+   "fingerprint_after": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365555e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365708e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365837e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875115395365973e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"False\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.9449462890625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1565648\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97853\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "sensitivity_row": {
+    "chars": 56038,
+    "base_chars": 83937,
+    "sha12": "30b49b80d33c",
+    "base_sha12": "6e5f14e4928e",
+    "common_prefix_chars": 6,
+    "comparable_chars": 56038,
+    "differs": true,
+    "reason": "diverged at byte 6",
+    "prompt_id": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+    "perturbation": "[[SENSITIVITY-CONTROL-A7F3]]\n",
+    "max_tokens": 32768,
+    "finish_reason": "stop",
+    "completion_tokens": 15356
+   },
+   "control_status": "SENSITIVE",
+   "within_process_baseline": {
+    "n": 2,
+    "identical": 2,
+    "rate": 1.0,
+    "diffs": [],
+    "excluded_empty_rows": [],
+    "one_sided_empty_rows": [],
+    "n_before_exclusion": 2
+   },
+   "verdict_line": "det: 2/2 identical -- bundle HOLDS (control: sensitivity SENSITIVE on ministral-3-3b@i-03ba751ae30c17577; stock control absent)",
+   "serve_plus_passes_s": 1682.2,
+   "complete": true
+  },
+  "stock": {
+   "vllm_args": [
+    "--reasoning-parser",
+    "mistral",
+    "--language-model-only",
+    "--revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--tokenizer-revision",
+    "4a36357c811bf511a7b625d132e12f22408aac91",
+    "--gpu-memory-utilization",
+    "0.92",
+    "--enable-prefix-caching"
+   ],
+   "n_prompts_this_arm": 2,
+   "served_tp": 4,
+   "server_config": {
+    "instance_type": "g6e.12xlarge",
+    "gpu": "4x L40S 48GB",
+    "tp": 4,
+    "region": "us-east-2",
+    "availability_zone": "us-east-2c",
+    "instance_id": "i-03ba751ae30c17577",
+    "vllm_image": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512",
+    "vllm_args": [
+     "--reasoning-parser",
+     "mistral",
+     "--language-model-only",
+     "--revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--tokenizer-revision",
+     "4a36357c811bf511a7b625d132e12f22408aac91",
+     "--gpu-memory-utilization",
+     "0.92",
+     "--enable-prefix-caching"
+    ],
+    "max_model_len": 131072,
+    "served_at": "2026-08-23T19:24:47.892765+00:00",
+    "vllm_version": "0.27.2rc1.dev122+g8efa13b70",
+    "vllm_cache_config": [
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.843994140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1552416\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97026\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "attention_backend_log": [
+     "(APIServer pid=1) INFO 08-23 19:23:37 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected."
+    ],
+    "agent_fingerprint": {
+     "image_repo_digests": [
+      "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+     ],
+     "nvidia_smi": "NVIDIA L40S, GPU-3f951b98-2895-3fdd-e2e7-d731648e4d7e, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-45065f65-74b7-adea-21b0-a37fa54b90c4, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-5d8b6176-51b9-3d49-b5a5-55966ff3d736, 595.91.07, 46068 MiB, Enabled\nNVIDIA L40S, GPU-97a4e51b-94cc-c080-0e26-88b272ab3d04, 595.91.07, 46068 MiB, Enabled",
+     "hf_snapshots": [
+      "4a36357c811bf511a7b625d132e12f22408aac91"
+     ],
+     "weights_digest": "6fad24bc2c2cf8863f997a1a8166930ec6f50c4a4679d72d892ff89147e51fb1"
+    },
+    "vllm_image_digest": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+    "max_parallel_requests": 1,
+    "stream": true
+   },
+   "fingerprint": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787513081568521e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685353e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685487e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685625e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.843994140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1552416\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97026\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "serve_log": {
+    "http_status": 200,
+    "container": "running",
+    "healthy": true,
+    "vllm_log_chars": 14000,
+    "vllm_log_tail": "WARNING 08-23 19:23:35 [argparse_utils.py:257] With `vllm serve`, you should provide the model as a positional argument or in a config file instead of via the `--model` option. The `--model` option will be removed in a future version.\n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333] \n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333]        \u2588     \u2588     \u2588\u2584   \u2584\u2588\n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333]  \u2584\u2584 \u2584\u2588 \u2588     \u2588     \u2588 \u2580\u2584\u2580 \u2588  version 0.27.2rc1.dev122+g8efa13b70\n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333]   \u2588\u2584\u2588\u2580 \u2588     \u2588     \u2588     \u2588  model   mistralai/Ministral-3-3B-Reasoning-2512\n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333]    \u2580\u2580  \u2580\u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580\u2580 \u2580     \u2580\n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:333] \n(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'served_model_name': ['ministral-3-3b'], 'reasoning_parser': 'mistral', 'tensor_parallel_size': 4, 'enable_prefix_caching': True, 'language_model_only': True}\n(APIServer pid=1) INFO 08-23 19:23:36 [config.py:394] Inferred from consolidated*.safetensors files torch.bfloat16 dtype.\n(APIServer pid=1) INFO 08-23 19:23:36 [model.py:672] Resolved architecture: PixtralForConditionalGeneration\n(APIServer pid=1) INFO 08-23 19:23:36 [model.py:1965] Using max model len 131072\n(APIServer pid=1) INFO 08-23 19:23:37 [registry.py:141] All limits of multimodal modalities supported by the model are set to 0, running in text-only mode.\n(APIServer pid=1) INFO 08-23 19:23:37 [model.py:875] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected.\n(APIServer pid=1) INFO 08-23 19:23:37 [kernel.py:308] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])\n(EngineCore pid=156) INFO 08-23 19:23:45 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=131072, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='mistral', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=ministral-3-3b, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'ir_enable_torch_wrap': True, 'splitting_ops': ['vllm::unified_attention_with_output', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 'vllm::qwen_gdn_attention_core_fused_norm_packed', 'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native']), enable_flashinfer_autotune=Trulable routes are:\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /openapi.json, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /docs, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /docs/oauth2-redirect, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /redoc, Methods: HEAD, GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /load, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /version, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /health, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /metrics, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /tokenize, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /detokenize, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/models, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /ping, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /ping, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /invocations, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/chat/completions, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/chat/completions/batch, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/responses, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/responses/{response_id}, Methods: GET\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/responses/{response_id}/cancel, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/completions, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/messages, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/messages/count_tokens, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /generative_scoring, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /scale_elastic_ep, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /is_scaling_elastic_ep, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/chat/completions/render, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/completions/render, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/chat/completions/derender, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /v1/completions/derender, Methods: POST\n(APIServer pid=1) INFO 08-23 19:24:41 [launcher.py:60] Route: /inference/v1/generate, Methods: POST\n(APIServer pid=1) INFO:     172.17.0.1:42098 - \"GET /health HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:37876 - \"GET /v1/models HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:37886 - \"GET /version HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:37890 - \"GET /metrics HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     172.17.0.1:42114 - \"GET /health HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:37902 - \"GET /version HTTP/1.1\" 200 OK\n(APIServer pid=1) INFO:     18.25.26.207:37906 - \"GET /metrics HTTP/1.1\" 200 OK\n(APIServer pid=1) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n(Worker_TP0 pid=271) \nLoading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]\n(Worker_TP0 pid=271) \nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.65it/s]\n(Worker_TP0 pid=271) \nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.65it/s]\n(Worker_TP0 pid=271) \n(Worker_TP0 pid=271) \nCapturing CUDA graphs (PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]\nCapturing CUDA graphs (PIECEWISE):   2%|\u258f         | 1/51 [00:00<00:05,  9.64it/s]\nCapturing CUDA graphs (PIECEWISE):   4%|\u258d         | 2/51 [00:00<00:05,  9.54it/s]\nCapturing CUDA graphs (PIECEWISE):   8%|\u258a         | 4/51 [00:00<00:04, 10.43it/s]\nCapturing CUDA graphs (PIECEWISE):  12%|\u2588\u258f        | 6/51 [00:00<00:04, 10.80it/s]\nCapturing CUDA graphs (PIECEWISE):  16%|\u2588\u258c        | 8/51 [00:00<00:03, 11.18it/s]\nCapturing CUDA graphs (PIECEWISE):  20%|\u2588\u2589        | 10/51 [00:00<00:03, 11.56it/s]\nCapturing CUDA graphs (PIECEWISE):  24%|\u2588\u2588\u258e       | 12/51 [00:01<00:03, 11.94it/s]\nCapturing CUDA graphs (PIECEWISE):  27%|\u2588\u2588\u258b       | 14/51 [00:01<00:02, 12.40it/s]\nCapturing CUDA graphs (PIECEWISE):  31%|\u2588\u2588\u2588\u258f      | 16/51 [00:01<00:02, 12.87it/s]\nCapturing CUDA graphs (PIECEWISE):  35%|\u2588\u2588\u2588\u258c      | 18/51 [00:01<00:02, 13.24it/s]\nCapturing CUDA graphs (PIECEWISE):  39%|\u2588\u2588\u2588\u2589      | 20/51 [00:01<00:02, 13.66it/s]\nCapturing CUDA graphs (PIECEWISE):  43%|\u2588\u2588\u2588\u2588\u258e     | 22/51 [00:01<00:02, 14.13it/s]\nCapturing CUDA graphs (PIECEWISE):  47%|\u2588\u2588\u2588\u2588\u258b     | 24/51 [00:01<00:01, 14.44it/s]\nCapturing CUDA graphs (PIECEWISE):  51%|\u2588\u2588\u2588\u2588\u2588     | 26/51 [00:02<00:01, 14.81it/s]\nCapturing CUDA graphs (PIECEWISE):  55%|\u2588\u2588\u2588\u2588\u2588\u258d    | 28/51 [00:02<00:01, 15.11it/s]\nCapturing CUDA graphs (PIECEWISE):  59%|\u2588\u2588\u2588\u2588\u2588\u2589    | 30/51 [00:02<00:01, 15.39it/s]\nCapturing CUDA graphs (PIECEWISE):  63%|\u2588\u2588\u2588\u2588\u2588\u2588\u258e   | 32/51 [00:02<00:01, 15.70it/s]\nCapturing CUDA graphs (PIECEWISE):  67%|\u2588\u2588\u2588\u2588\u2588\u2588\u258b   | 34/51 [00:02<00:01, 16.15it/s]\nCapturing CUDA graphs (PIECEWISE):  71%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588   | 36/51 [00:02<00:00, 16.57it/s]\nCapturing CUDA graphs (PIECEWISE):  75%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258d  | 38/51 [00:02<00:00, 17.00it/s]\nCapturing CUDA graphs (PIECEWISE):  78%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258a  | 40/51 [00:02<00:00, 17.32it/s]\nCapturing CUDA graphs (PIECEWISE):  82%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258f | 42/51 [00:02<00:00, 17.40it/s]\nCapturing CUDA graphs (PIECEWISE):  86%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258b | 44/51 [00:03<00:00, 17.65it/s]\nCapturing CUDA graphs (PIECEWISE):  90%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 | 46/51 [00:03<00:00, 17.99it/s]\nCapturing CUDA graphs (PIECEWISE):  94%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258d| 48/51 [00:03<00:00, 18.27it/s]\nCapturing CUDA graphs (PIECEWISE):  98%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258a| 50/51 [00:03<00:00, 18.30it/s]\nCapturing CUDA graphs (PIECEWISE): 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 51/51 [00:03<00:00, 14.80it/s]\n(Worker_TP0 pid=271) \nCapturing CUDA graphs (FULL):   0%|          | 0/35 [00:00<?, ?it/s]\nCapturing CUDA graphs (FULL):   6%|\u258c         | 2/35 [00:00<00:01, 19.78it/s]\nCapturing CUDA graphs (FULL):  14%|\u2588\u258d        | 5/35 [00:00<00:01, 20.58it/s]\nCapturing CUDA graphs (FULL):  23%|\u2588\u2588\u258e       | 8/35 [00:00<00:01, 21.26it/s]\nCapturing CUDA graphs (FULL):  31%|\u2588\u2588\u2588\u258f      | 11/35 [00:00<00:01, 22.02it/s]\nCapturing CUDA graphs (FULL):  40%|\u2588\u2588\u2588\u2588      | 14/35 [00:00<00:00, 22.91it/s]\nCapturing CUDA graphs (FULL):  49%|\u2588\u2588\u2588\u2588\u258a     | 17/35 [00:00<00:00, 23.93it/s]\nCapturing CUDA graphs (FULL):  57%|\u2588\u2588\u2588\u2588\u2588\u258b    | 20/35 [00:00<00:00, 24.51it/s]\nCapturing CUDA graphs (FULL):  66%|\u2588\u2588\u2588\u2588\u2588\u2588\u258c   | 23/35 [00:00<00:00, 25.66it/s]\nCapturing CUDA graphs (FULL):  74%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258d  | 26/35 [00:01<00:00, 26.37it/s]\nCapturing CUDA graphs (FULL):  83%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258e | 29/35 [00:01<00:00, 27.28it/s]\nCapturing CUDA graphs (FULL):  91%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258f| 32/35 [00:01<00:00, 28.01it/s]\nCapturing CUDA graphs (FULL): 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 35/35 [00:01<00:00, 25.41it/s]\n(EngineCore pid=156) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n(APIServer pid=1) INFO:     Started server process [1]\n(APIServer pid=1) INFO:     Waiting for application startup.\n(APIServer pid=1) INFO:     Application startup complete.\n",
+    "launcher_log_tail": "3bba55503f4e73e0b902e82edd23d88dfc02c690bd97e574665bc330ee5f44f9\n",
+    "topology_lines": [
+     "(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'served_m",
+     "(EngineCore pid=156) INFO 08-23 19:23:45 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_le"
+    ],
+    "engine_config_lines": [
+     "(APIServer pid=1) INFO 08-23 19:23:35 [api_utils.py:272] non-default args: {'model_tag': 'mistralai/Ministral-3-3B-Reasoning-2512', 'api_key': ['e7As7B-7GGc78l5Rpz4y3QTxr8Sjsod8XXj71clPKJg'], 'model': 'mistralai/Ministral-3-3B-Reasoning-2512', 'revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'tokenizer_revision': '4a36357c811bf511a7b625d132e12f22408aac91', 'max_model_len': 131072, 'served_model_name': ['ministral-3-3b'], 'reasoning_parser': 'mistral', 'tensor_parallel_size': 4, 'enable_prefix_caching': True, 'language_model_only': True}",
+     "(EngineCore pid=156) INFO 08-23 19:23:45 [core.py:122] Initializing a V1 LLM engine (v0.27.2rc1.dev122+g8efa13b70) with config: model='mistralai/Ministral-3-3B-Reasoning-2512', speculative_config=None, tokenizer='mistralai/Ministral-3-3B-Reasoning-2512', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=131072, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='mistral', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=ministral-3-3b, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'ir_enable_torch_wrap': True, 'splitting_ops': ['vllm::unified_attention_with_output', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 'vllm::qwen_gdn_attention_core_fused_norm_packed', 'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native']), enable_flashinfer_autotune=Trulable routes are:"
+    ],
+    "engine_config_parsed": {
+     "tensor_parallel_size": "4",
+     "disable_custom_all_reduce": "False",
+     "enforce_eager": "False",
+     "enable_prefix_caching": "True",
+     "seed": "0",
+     "pipeline_parallel_size": "1"
+    },
+    "worker_ranks": [
+     "Worker_TP0"
+    ]
+   },
+   "mechanism_evidence": "engine_config",
+   "gate_basis": "engine_config",
+   "engine_tp": 4,
+   "payload_agrees": true,
+   "sha_table_P1": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "df0a25327a9e",
+     "len": 52679
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "81e0215c61c7",
+     "len": 74824
+    }
+   },
+   "row_meta_P1": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 14111,
+     "prompt_tokens": 1319,
+     "chars": 52679
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 24611,
+     "prompt_tokens": 672,
+     "chars": 74824
+    }
+   },
+   "sha_table_P2": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "sha256_12": "25cde1dec24e",
+     "len": 55388
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "sha256_12": "2e87811e7f70",
+     "len": 49197
+    }
+   },
+   "row_meta_P2": {
+    "AlgHom.fieldRange_of_normal/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 14042,
+     "prompt_tokens": 1319,
+     "chars": 55388
+    },
+    "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md": {
+     "finish_reason": "stop",
+     "completion_tokens": 13621,
+     "prompt_tokens": 672,
+     "chars": 49197
+    }
+   },
+   "fingerprint_after": {
+    "vllm_version": {
+     "version": "0.27.2rc1.dev122+g8efa13b70"
+    },
+    "cache_metric_lines": [
+     "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 3982.0",
+     "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.787513081568521e+09",
+     "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 2096.0",
+     "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685353e+09",
+     "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685487e+09",
+     "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"ministral-3-3b\"} 0.0",
+     "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"ministral-3-3b\"} 1.7875130815685625e+09",
+     "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.92\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"11.843994140625\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1552416\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"None\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"none\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"auto\",num_cpu_blocks=\"None\",num_gpu_blocks=\"97026\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"} 1.0"
+    ],
+    "image_digest_lines": []
+   },
+   "sensitivity_row": {
+    "chars": 73266,
+    "base_chars": 52679,
+    "sha12": "009e346870bb",
+    "base_sha12": "df0a25327a9e",
+    "common_prefix_chars": 6,
+    "comparable_chars": 52679,
+    "differs": true,
+    "reason": "diverged at byte 6",
+    "prompt_id": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+    "perturbation": "[[SENSITIVITY-CONTROL-A7F3]]\n",
+    "max_tokens": 32768,
+    "finish_reason": "stop",
+    "completion_tokens": 19480
+   },
+   "control_status": "SENSITIVE",
+   "within_process_baseline": {
+    "n": 2,
+    "identical": 0,
+    "rate": 0.0,
+    "diffs": [
+     {
+      "prompt": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+      "len_a": 52679,
+      "len_b": 55388,
+      "sha_a": "df0a25327a9e",
+      "sha_b": "25cde1dec24e",
+      "common_prefix_chars": 1844
+     },
+     {
+      "prompt": "LinearMap.mem_skewAdjointSubmodule/prompts/hint-2.md",
+      "len_a": 74824,
+      "len_b": 49197,
+      "sha_a": "81e0215c61c7",
+      "sha_b": "2e87811e7f70",
+      "common_prefix_chars": 2534
+     }
+    ],
+    "excluded_empty_rows": [],
+    "one_sided_empty_rows": [],
+    "n_before_exclusion": 2
+   },
+   "verdict_line": "stock: 0/2 identical -- bundle DOES NOT HOLD (control: sensitivity SENSITIVE on ministral-3-3b@i-03ba751ae30c17577; stock control 0/2)",
+   "serve_plus_passes_s": 555.9,
+   "complete": true
+  }
+ },
+ "instance": {
+  "instance_id": "i-03ba751ae30c17577",
+  "instance_type": "g6e.12xlarge",
+  "region": "us-east-2",
+  "availability_zone": "us-east-2c",
+  "public_ip": "18.225.6.102"
+ },
+ "provisioned_utc": "2026-08-23T18:55:13.423464+00:00",
+ "sensitivity_rows": {
+  "ministral-3-3b@i-03ba751ae30c17577@det": {
+   "chars": 56038,
+   "base_chars": 83937,
+   "sha12": "30b49b80d33c",
+   "base_sha12": "6e5f14e4928e",
+   "common_prefix_chars": 6,
+   "comparable_chars": 56038,
+   "differs": true,
+   "reason": "diverged at byte 6",
+   "prompt_id": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+   "perturbation": "[[SENSITIVITY-CONTROL-A7F3]]\n",
+   "max_tokens": 32768,
+   "finish_reason": "stop",
+   "completion_tokens": 15356
+  },
+  "ministral-3-3b@i-03ba751ae30c17577@stock": {
+   "chars": 73266,
+   "base_chars": 52679,
+   "sha12": "009e346870bb",
+   "base_sha12": "df0a25327a9e",
+   "common_prefix_chars": 6,
+   "comparable_chars": 52679,
+   "differs": true,
+   "reason": "diverged at byte 6",
+   "prompt_id": "AlgHom.fieldRange_of_normal/prompts/hint-2.md",
+   "perturbation": "[[SENSITIVITY-CONTROL-A7F3]]\n",
+   "max_tokens": 32768,
+   "finish_reason": "stop",
+   "completion_tokens": 19480
+  }
+ },
+ "finished_utc": "2026-08-23T19:32:31.504478+00:00",
+ "elapsed_min": 38.2
+}
