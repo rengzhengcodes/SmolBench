@@ -466,6 +466,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
+    # `path` is arbitrary and user-supplied -- unlike the run-directory globs
+    # elsewhere in this file, nothing upstream has already filtered it. That
+    # makes this the likeliest place a retired `all_rows_SUPERSEDED-<stamp>.jsonl`
+    # (see runner.RETIRED_MARKERS) gets pointed at by accident. Reject before
+    # the file is opened: its rows parse cleanly and are well-formed, so an
+    # admitted SUPERSEDED file wouldn't crash here, it would aggregate into a
+    # complete, plausible, and wrong summary -- a warning can't substitute for
+    # the raise when the bad output is indistinguishable from good output.
+    reject_superseded_rows([args.path])
     with open(args.path) as f:
         for line in f:
             r = json.loads(line)

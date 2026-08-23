@@ -113,6 +113,7 @@ from power_analysis import (  # noqa: E402
     load_joint_cells,
     mcnemar_exact_p,
     reject_superseded,
+    reject_unverified_verdicts,
 )
 
 #: Sign-flip resamples for the PRIMARY block permutation test. Large enough that
@@ -334,6 +335,12 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     is appended after the primary rows (same schema but the verdict field is
     ``recovered_verdict``), so a recovered cell fills a hole and never overrides
     an already-measured one.
+
+    Each source is screened by `reject_unverified_verdicts` on ITS OWN verdict
+    field (``"verdict"`` for the primary rows, ``"recovered_verdict"`` for the
+    recovery sibling) before any row reaches `grade_verdicts` -- a generation-
+    time ``"unverified"`` sentinel that survives to here would otherwise grade
+    as a real failure, biasing this lane's rate invisibly.
     """
     rows: dict = {}
     sources = [(rows_dir / model / "verified_rows.jsonl", "verdict")]
@@ -343,10 +350,12 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
         )
     reject_superseded(path for path, _field in sources)
     for path, field in sources:
-        for line in path.read_text().splitlines():
-            if not line:
-                continue
-            row = json.loads(line)
+        parsed = [json.loads(line) for line in path.read_text().splitlines() if line]
+        # Refused HERE, on this source's own field, before a single row is
+        # graded -- see reject_unverified_verdicts for why the field must be
+        # checked per-source rather than always on "verdict".
+        reject_unverified_verdicts(parsed, field, path)
+        for row in parsed:
             if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
                 continue
             key = (row["theorem_id"], row["k"], row["rung"])

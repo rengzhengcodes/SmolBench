@@ -64,6 +64,7 @@ from power_analysis import (  # noqa: E402
     grade_verdicts,
     mcnemar_exact_p,
     reject_superseded,
+    reject_unverified_verdicts,
 )
 
 #: The informative rung and its length-matched uninformative twin.
@@ -79,13 +80,19 @@ def load_rungs(path: Path, model: str) -> dict:
     would report pass@N as pass@1), and a cell with no measurable row is left
     ABSENT rather than scored 0. [Changed 2026-08-21: this loader used to carry
     its own copy of both rules.]
+
+    Refuses (via `reject_unverified_verdicts`) any row still carrying the
+    generation-time ``"unverified"`` sentinel on its ``"verdict"`` field, at
+    INGESTION -- before the rung filter below. An ungraded row in a rung this
+    comparison does not even read is still evidence the verification pass on
+    this file did not finish, and letting it hide inside an unrelated rung
+    would mean it goes unnoticed.
     """
     reject_superseded([path])
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    reject_unverified_verdicts(rows, "verdict", path)
     out: dict = defaultdict(dict)
-    for line in path.read_text().splitlines():
-        if not line:
-            continue
-        row = json.loads(line)
+    for row in rows:
         if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
             continue
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):

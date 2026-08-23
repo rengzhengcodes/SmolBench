@@ -611,8 +611,127 @@ def clopper_pearson_interval(k: int, n: int, alpha: float = 0.05) -> tuple[float
     return lower, upper
 
 
+def reject_unverified_rows(rows: Iterable[dict], source: Path | str) -> None:
+    """Refuse a re-verified rows file that still carries the ungraded sentinel.
+
+    `_stage_analyze` calls this on BOTH legs it pairs -- the study-originals
+    re-verification and the flip run's own rerun -- immediately after reading
+    each ``verified_rows.jsonl``, before either leg is dedupe'd or paired.
+    Both are supposed to be files a verification pass has already run over in
+    full; one that still contains the generation-time placeholder means that
+    pass silently no-oped for some rows rather than grading them.
+
+    Parameters
+    ----------
+    rows : Iterable[dict]
+        Rows exactly as parsed from one of the two ``verified_rows.jsonl``
+        files this experiment pairs. Consumed by iteration, so a generator is
+        fine here, but this function does not re-use it -- do not pass one
+        you still need afterward.
+    source : Path or str
+        Where `rows` came from, embedded verbatim in the raised message.
+        A local `Path` for a file read off disk, or an ``s3://...`` URI
+        string when `_read_flip_run_verified_rows` fell back to a download
+        (see that function's `Returns`) -- so the message tells a reader the
+        TRUE origin of the bad rows rather than always naming a local path
+        that may not even have existed when the bug happened.
+
+    Raises
+    ------
+    SystemExit
+        One or more rows have ``row["kind"] == "cell"`` and
+        ``row["verdict"] == "unverified"``. The message states the offending
+        count and `source`, modeled on
+        ``notebooks/deduction/power_analysis.py``'s `reject_superseded`
+        banner: a loud bar, a shouted headline, the offending detail, and an
+        explanation of what to do -- not a warning, because a warning here
+        would be silently ignored by exactly the caller (an unattended
+        `--stage analyze` invocation) most likely to hit this.
+
+    Notes
+    -----
+    Checks ONLY the ``verdict`` field, never ``_study_verdict``.
+    ``_study_verdict`` legitimately carries the STUDY's own original verdict
+    (stashed by `_prepare_originals_rows` before re-verification overwrites
+    ``verdict`` with a fresh one) -- a different thing entirely, and this
+    guard has no business flagging it.
+    """
+    count = sum(
+        1 for row in rows
+        if row.get("kind") == "cell" and row.get("verdict") == "unverified"
+    )
+    if count == 0:
+        return
+    bar = "!" * 78
+    raise SystemExit(
+        "\n".join(
+            [
+                bar,
+                "!!  REFUSING UNVERIFIED ROW(S)",
+                bar,
+                f"!!  {count} cell row(s) in {source} still carry the",
+                '!!  generation-time placeholder verdict "unverified".',
+                "!!",
+                "!!  A re-verified rows file containing this sentinel means",
+                "!!  scripts/lean_verify_rows.py's verification pass silently",
+                "!!  no-oped for those rows -- it never replayed them against",
+                "!!  real Lean, so they carry no judgment on the candidate at",
+                "!!  all. Pairing them anyway would have flip_stats' is_pass",
+                "!!  score them as failures, biasing the b/c discordance",
+                "!!  counts downward and doing so invisibly: the report comes",
+                "!!  out complete and plausible, not obviously wrong.",
+                "!!",
+                "!!  Re-run --stage verify for this leg before analyzing.",
+                bar,
+            ]
+        )
+    )
+
+
 def is_pass(verdict: str) -> bool:
-    """True iff a verdict string counts as a pass@1 success."""
+    """True iff a verdict string counts as a pass@1 success.
+
+    Parameters
+    ----------
+    verdict : str
+        A cell row's ``verdict`` field, expected to be one of the real
+        outcomes `scripts/lean_verify_rows.py` writes (e.g. ``"success"``,
+        ``"lean_error"``, ``"incomplete"``, ``"given_up"``, ``"replay_failed"``,
+        ``"exception"``).
+
+    Returns
+    -------
+    bool
+        ``True`` iff `verdict` is exactly ``"success"``. Every other REAL
+        outcome (``"lean_error"``, ``"incomplete"``, ``"given_up"``,
+        ``"replay_failed"``, ``"exception"``, or anything else) is a failure.
+
+    Raises
+    ------
+    ValueError
+        `verdict` is the generation-time placeholder ``"unverified"``. This
+        is a raise, deliberately not a ``return False``: ``"unverified"``
+        is not a graded outcome, it is the ABSENCE of one -- the sentinel
+        every cell row is written with at generation time, before a later,
+        separate verification pass replays it against real Lean and
+        overwrites the field with a real verdict. Scoring the sentinel as a
+        failure would treat "never measured" identically to "measured and
+        lost", biasing every paired b/c statistic this function feeds
+        (`flip_stats`) downward -- and doing so INVISIBLY, since the
+        resulting report is complete and plausible, never obviously wrong.
+        Callers that can legitimately hold ungraded rows must filter them
+        out BEFORE calling this function; `measurable_cell_keys` (above)
+        already does exactly that, restricting to a positive-verdict
+        whitelist before anything reaches here.
+    """
+    if verdict == "unverified":
+        raise ValueError(
+            'is_pass: verdict is "unverified" -- the generation-time '
+            "sentinel for an ungraded row, not a graded outcome. This cell "
+            "was never verified; scoring it as a pass@1 failure would "
+            "silently bias the flip-rate statistics. Filter ungraded rows "
+            "out before calling is_pass (see measurable_cell_keys)."
+        )
     return verdict == "success"
 
 
@@ -1357,18 +1476,31 @@ def _stage_verify(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read_flip_run_verified_rows() -> list[dict]:
+def _read_flip_run_verified_rows() -> tuple[list[dict], Path | str]:
     """Reads the flip run's own re-verified rows.
 
     Local copy if present (``--stage verify`` ran on this same machine),
     else downloaded from S3 (the ``flip_*`` prefix, read-only, permitted --
     see the module docstring's HARD RULE).
+
+    Returns
+    -------
+    tuple[list[dict], Path | str]
+        ``(rows, source)``. `rows` is parsed from whichever copy was read.
+        `source` names WHERE they actually came from -- the local `Path`
+        when the on-disk copy was used, or the ``f"s3://{SPOOL_BUCKET}/..."``
+        URI string when this function fell back to a download. The sole
+        caller, `_stage_analyze`, feeds `source` straight into
+        `reject_unverified_rows`'s refusal message: without this, that
+        message would always name the local path even on a run where the
+        rows in fact came from S3, misleading whoever has to go investigate.
     """
     local_path = _flip_run_dir() / VERIFIED_FILENAME
     if local_path.exists():
-        return [
+        rows = [
             json.loads(line) for line in local_path.read_text().splitlines() if line.strip()
         ]
+        return rows, local_path
     from smolbench.evals import _aws
 
     client = _aws.fresh_client("s3", SPOOL_REGION)
@@ -1378,11 +1510,12 @@ def _read_flip_run_verified_rows() -> list[dict]:
         local_path, SPOOL_BUCKET, key,
     )
     obj = client.get_object(Bucket=SPOOL_BUCKET, Key=key)
-    return [
+    rows = [
         json.loads(line)
         for line in obj["Body"].read().decode("utf-8").splitlines()
         if line.strip()
     ]
+    return rows, f"s3://{SPOOL_BUCKET}/{key}"
 
 
 def _stage_analyze(args: argparse.Namespace) -> None:
@@ -1438,7 +1571,12 @@ def _stage_analyze(args: argparse.Namespace) -> None:
         for line in originals_verified_path.read_text().splitlines()
         if line.strip()
     ]
-    rerun_rows = _read_flip_run_verified_rows()
+    # Refuse either leg BEFORE dedupe/pairing: is_pass would otherwise score
+    # a still-"unverified" row as a failure, biasing flip_stats' b/c counts
+    # invisibly -- see reject_unverified_rows.
+    reject_unverified_rows(originals_rows, originals_verified_path)
+    rerun_rows, rerun_source = _read_flip_run_verified_rows()
+    reject_unverified_rows(rerun_rows, rerun_source)
 
     originals_by_key = dedupe_rows_earliest_wins(originals_rows)
     rerun_by_key = dedupe_rows_earliest_wins(rerun_rows)

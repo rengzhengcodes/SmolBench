@@ -666,6 +666,74 @@ def test_hint_vs_noise_refuses_a_superseded_file(tmp_path):
         hint_vs_noise.load_rungs(path, "m1")
 
 
+# --------------------------------------------------------------------------- #
+# The ungraded sentinel. Cell rows are written with verdict "unverified" at
+# GENERATION time and graded by a later verification pass. `grade_verdicts`
+# scores that placeholder 0 -- a real failure -- because it is not in
+# UNMEASURABLE_VERDICTS, and it must not be added there either: that would
+# convert a loud condition into a silent drop. So the loaders refuse it at the
+# point rows enter, the same way they refuse a superseded artifact, and for the
+# same reason: the resulting report is complete, plausible, and wrong.
+# --------------------------------------------------------------------------- #
+def test_lane_outcomes_refuses_ungraded_rows(tmp_path):
+    """Both of ``lane_outcomes``' sources are screened, and clean rows load.
+
+    Each source is checked on the verdict field IT reads -- ``verdict`` for
+    the primary rows, ``recovered_verdict`` for the recovery sibling -- so a
+    sentinel cannot enter through either one.
+    """
+    _write_rows(tmp_path / "rows" / "m1" / "verified_rows.jsonl",
+                [_cell("m1", "t1", "success"), _cell("m1", "t2", "unverified")])
+    with pytest.raises(SystemExit) as excinfo:
+        error_bars.lane_outcomes(tmp_path / "rows", "m1")
+    message = str(excinfo.value)
+    assert "unverified" in message
+    assert "1" in message, "the message must carry the offending row COUNT"
+    assert "verified_rows.jsonl" in message, "the message must name the FILE"
+
+    # The recovery sibling is screened on ITS field, not on `verdict`.
+    _write_rows(tmp_path / "clean" / "m1" / "verified_rows.jsonl",
+                [_cell("m1", "t1", "success")])
+    rec = _cell("m1", "t2", None)
+    rec.pop("verdict")
+    rec["recovered_verdict"] = "unverified"
+    _write_rows(tmp_path / "rec" / "m1" / "recovered_rows.jsonl", [rec])
+    with pytest.raises(SystemExit, match="unverified"):
+        error_bars.lane_outcomes(tmp_path / "clean", "m1", tmp_path / "rec")
+
+    # Positive path: a fully graded lane still loads, so the guard is not a
+    # blanket refusal of every input.
+    graded, no_survivor = error_bars.lane_outcomes(tmp_path / "clean", "m1")
+    assert graded == {("t1", 1, "stepk:1"): 1}
+    assert no_survivor == set()
+
+
+def test_hint_vs_noise_refuses_ungraded_rows(tmp_path):
+    """``load_rungs`` refuses a sentinel row and still loads a graded file.
+
+    The refusal is on INGESTION, before the rung filter: an ungraded row in a
+    rung this comparison does not read is still evidence the verification pass
+    did not finish, and the paired hint-vs-noise b/c counts are exactly the
+    statistic a silently-failed row biases.
+    """
+    path = _write_rows(tmp_path / "verified_rows.jsonl",
+                       [_cell("m1", "t1", "success", rung="hint:3"),
+                        _cell("m1", "t1", "unverified", rung="noise:3")])
+    with pytest.raises(SystemExit) as excinfo:
+        hint_vs_noise.load_rungs(path, "m1")
+    message = str(excinfo.value)
+    assert "unverified" in message
+    assert "1" in message, "the message must carry the offending row COUNT"
+    assert "verified_rows.jsonl" in message, "the message must name the FILE"
+
+    clean = _write_rows(tmp_path / "clean.jsonl",
+                        [_cell("m1", "t1", "success", rung="hint:3"),
+                         _cell("m1", "t1", "lean_error", rung="noise:3")])
+    assert hint_vs_noise.load_rungs(clean, "m1") == {
+        ("t1", 1): {"hint:3": 1, "noise:3": 0}
+    }
+
+
 def _theorem_dir_with(tmp_path: Path, filename: str) -> Path:
     """A ``theorems/<slug>/`` tree whose outputs hold exactly `filename`."""
     theorem_dir = tmp_path / "theorems" / "T"

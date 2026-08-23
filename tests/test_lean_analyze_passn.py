@@ -24,6 +24,8 @@ import json
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 from smolbench.deduction.lean.cli import cmd_analyze
 
 
@@ -552,3 +554,34 @@ def test_only_sanity_rows_returns_1(tmp_path, capsys):
     rc, _out = _run_analyze(p, capsys)
 
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# Retired-artifact refusal. `run_study.py --force-rerun` archives a superseded
+# all_rows.jsonl as `all_rows_SUPERSEDED-<stamp>.jsonl` INSIDE the run
+# directory, so a retired artifact sits one `ls` away from live data --
+# and `cmd_analyze` is the one loader that takes an arbitrary user path.
+# The file parses perfectly, so nothing but this guard distinguishes it.
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
+    """A retired artifact must fail loudly and by name, not summarize."""
+    p = tmp_path / "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
+    _write_jsonl(p, [_row()])
+
+    with pytest.raises(ValueError) as excinfo:
+        cmd_analyze(Namespace(path=str(p)))
+    assert "SUPERSEDED" in str(excinfo.value)
+    assert p.name in str(excinfo.value)
+
+
+def test_cmd_analyze_still_reads_a_normal_rows_file(tmp_path, capsys):
+    """Positive control: the guard does not refuse ordinary run artifacts."""
+    p = tmp_path / "all_rows.jsonl"
+    _write_jsonl(p, [_row()])
+
+    rc, out = _run_analyze(p, capsys)
+
+    assert rc == 0
+    assert "stepk:0" in out

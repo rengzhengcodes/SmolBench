@@ -327,7 +327,23 @@ def test_verifier_drift_stats_hand_built_pairs():
 def test_is_pass():
     assert flip_probe.is_pass("success") is True
     assert flip_probe.is_pass("lean_error") is False
-    assert flip_probe.is_pass("unverified") is False
+
+
+def test_is_pass_refuses_the_ungraded_sentinel():
+    """``"unverified"`` is not a verdict -- it is the ABSENCE of one.
+
+    Rows are written with this placeholder at generation time and graded
+    later. Scoring it as a failure (which `is_pass` used to do) silently
+    biases every paired b/c statistic downward, and does so invisibly: the
+    report looks complete. Callers that can legitimately hold ungraded rows
+    filter them out first (`measurable_cell_keys` does), so reaching here with
+    one is a bug, not a case to handle.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        flip_probe.is_pass("unverified")
+    message = str(excinfo.value)
+    assert "unverified" in message
+    assert "ungraded" in message.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +517,15 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
-def _stage_analyze_fixture(tmp_path, monkeypatch, *, sample_sha: str):
+def _stage_analyze_fixture(tmp_path, monkeypatch, *, sample_sha: str,
+                           originals_verdict: str = "success",
+                           rerun_verdict: str = "success"):
+    """A minimal ``--stage analyze`` input tree.
+
+    `originals_verdict` / `rerun_verdict` set the verdict on the one cell row
+    of each of the two legs analyze pairs, so a test can plant the ungraded
+    sentinel in either leg independently.
+    """
     monkeypatch.setenv("SMOLBENCH_LEAN_RESULTS", str(tmp_path))
     run_dir = tmp_path / "runs" / flip_probe.FLIP_RUN_NAME
     key = ["m", "T0", 1, "stepk:1", 0]
@@ -513,12 +537,12 @@ def _stage_analyze_fixture(tmp_path, monkeypatch, *, sample_sha: str):
     )
     _write_jsonl(run_dir / "originals_rerun" / "verified_rows.jsonl", [{
         "kind": "cell", "model": "m", "theorem_id": "T0", "k": 1, "rung": "stepk:1",
-        "replicate_idx": 0, "verdict": "success", "_study_verdict": "success",
+        "replicate_idx": 0, "verdict": originals_verdict, "_study_verdict": "success",
         "candidate_proof": "p",
     }])
     _write_jsonl(run_dir / "verified_rows.jsonl", [{
         "kind": "cell", "model": "m", "theorem_id": "T0", "k": 1, "rung": "stepk:1",
-        "replicate_idx": 0, "verdict": "success", "candidate_proof": "p2",
+        "replicate_idx": 0, "verdict": rerun_verdict, "candidate_proof": "p2",
         "prompt_tokens": 5,
     }])
     return run_dir, key
@@ -544,4 +568,37 @@ def test_stage_analyze_provenance_check_raises_on_mismatched_sha256(tmp_path, mo
     with pytest.raises(SystemExit, match="does not match"):
         flip_probe._stage_analyze(argparse.Namespace())
 
+    assert not (run_dir / "flip_report.json").exists()
+
+
+@pytest.mark.parametrize(
+    "leg, filename",
+    [("originals", "originals_rerun/verified_rows.jsonl"),
+     ("rerun", "verified_rows.jsonl")],
+)
+def test_stage_analyze_refuses_ungraded_rows_in_either_leg(tmp_path, monkeypatch, leg, filename):
+    """An ungraded row must stop the pairing, not be scored as a failure.
+
+    Both legs are re-verified files and neither should ever contain the
+    generation-time sentinel; one that does means verification silently
+    no-oped for those rows. Pairing them anyway produces a complete flip table
+    whose b/c counts are biased by however many rows were never graded -- the
+    exact failure mode `flip_free_bound.py`'s own assert exists to prevent.
+    """
+    from smolbench.deduction.lean import runner
+
+    sha = runner.hash_cell_keys([("m", "T0", 1, "stepk:1", 0)])
+    verdicts = {"originals_verdict": "success", "rerun_verdict": "success"}
+    verdicts[f"{'originals' if leg == 'originals' else 'rerun'}_verdict"] = "unverified"
+    run_dir, _ = _stage_analyze_fixture(tmp_path, monkeypatch, sample_sha=sha, **verdicts)
+
+    with pytest.raises(SystemExit) as excinfo:
+        flip_probe._stage_analyze(argparse.Namespace())
+
+    message = str(excinfo.value)
+    assert "unverified" in message
+    assert "1" in message, "the message must carry the offending row COUNT"
+    assert Path(filename).name in message and str(run_dir) in message, (
+        "the message must name the offending FILE"
+    )
     assert not (run_dir / "flip_report.json").exists()

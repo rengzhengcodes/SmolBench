@@ -569,6 +569,76 @@ def reject_superseded(paths) -> None:
     )
 
 
+def reject_unverified_verdicts(rows, field, source) -> None:
+    """Refuse re-verified rows that still carry the ungraded sentinel.
+
+    Raises ``SystemExit`` if any row has ``kind == "cell"`` and `field` equal
+    to the generation-time placeholder ``"unverified"``, naming the offending
+    count and `source`. A warning would not do here, for the same reason as
+    `reject_superseded`: a cell whose `field` is still the placeholder loads
+    and grades exactly like a real measurement -- `grade_verdicts` has no
+    special case for it, and it is deliberately NOT a member of
+    `UNMEASURABLE_VERDICTS` (adding it there would convert this loud
+    condition into a SILENT DROP, which is worse than the bug this guard
+    exists to catch). Left unchecked, the sentinel is scored as a failure,
+    and the resulting report is complete, plausible, and wrong.
+
+    Parameters
+    ----------
+    rows : Iterable[dict]
+        Already-parsed rows from ONE source file. This function does no I/O
+        of its own -- a caller reading from a local path, an S3 download, or
+        an in-memory test fixture uses it identically -- and it must run
+        BEFORE those rows reach `grade_verdicts`.
+    field : str
+        The verdict field to check. Different callers read different fields
+        for the same concept: `error_bars.lane_outcomes` checks ``"verdict"``
+        on its primary rows and ``"recovered_verdict"`` on its recovery
+        sibling (whose rows do not even have a ``"verdict"`` key), and
+        `hint_vs_noise.load_rungs` checks ``"verdict"``. Passing the field
+        explicitly, rather than hardcoding ``"verdict"``, is what lets one
+        helper serve every one of those without a caller silently checking
+        the wrong key.
+    source : Path or str
+        Where `rows` came from, embedded verbatim in the raised message so a
+        reader is told exactly which file to go re-verify.
+
+    Raises
+    ------
+    SystemExit
+        One or more rows have ``row["kind"] == "cell"`` and
+        ``row[field] == "unverified"``.
+    """
+    count = sum(
+        1 for row in rows
+        if row.get("kind") == "cell" and row.get(field) == "unverified"
+    )
+    if count == 0:
+        return
+    bar = "!" * 78
+    raise SystemExit(
+        "\n".join(
+            [bar, "!!  REFUSING UNVERIFIED ROW(S)", bar,
+             f"!!  {count} cell row(s) in {source} still carry the",
+             f'!!  generation-time placeholder "unverified" in their '
+             f"{field!r} field.",
+             "!!",
+             "!!  This field is filled in LATER, by a deferred verification",
+             "!!  pass that replays each candidate against real Lean -- a row",
+             "!!  still reading \"unverified\" here means that pass silently",
+             "!!  never reached it, not that the candidate failed. Loading it",
+             "!!  anyway scores a NEVER-MEASURED cell as a real outcome,",
+             "!!  biasing every rate and paired statistic that includes it",
+             "!!  downward, and doing so invisibly: the report comes out",
+             "!!  complete and plausible, not obviously wrong.",
+             "!!",
+             "!!  Run the verification pass to completion for this file",
+             "!!  before loading it for analysis.",
+             bar]
+        )
+    )
+
+
 def grade_verdicts(verdicts) -> int | None:
     """THE row rule of this study, in one place.
 
