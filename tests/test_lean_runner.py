@@ -236,6 +236,11 @@ REQUIRED_ROW_KEYS = {
     "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
     "gen_ms", "verify_ms", "candidate_proof", "raw_response",
     "reasoning_content", "verdict", "lean_error", "final_state_pp",
+    # 2026-08-23 (defect D6): the server's stop reason. "length" with a large
+    # completion_tokens is what distinguishes a finished generation from one
+    # that spent its whole budget in the reasoning channel -- the population
+    # whose rows were being recorded as indistinguishably empty.
+    "finish_reason",
 }
 
 
@@ -503,6 +508,58 @@ def test_run_cell_path(sweep_ctx):
     assert len(pi_posts) == 2
     assert {p["body"]["model"] for p in pi_posts} == {M1}
     assert {p["body"]["seed"] for p in pi_posts} == {1000, 1001}
+
+
+# ---------------------------------------------------------------------------
+# D6 (2026-08-23): finish_reason on every cell row
+# ---------------------------------------------------------------------------
+
+
+def test_run_cell_records_the_servers_finish_reason(sweep_ctx):
+    """The row carries the server's stop reason verbatim."""
+    sweep_ctx.pi.default_response = {
+        "choices": [{"message": {"content": MARKER}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 32768, "total_tokens": 40},
+    }
+    theorem = {t.full_name: t for t in corpus.load_split("random", "val")}["Mini.theoremA"]
+    rows = list(runner.run_cell(
+        provider="primeintellect", model=M1, theorem=theorem, k=2,
+        chain="stepk", level=0, n_replicates=1, seed=1000,
+        request_timeout=30, max_retries=2, verifier=FakeVerifier(),
+    ))
+    assert len(rows) == 1
+    assert rows[0]["finish_reason"] == "length"
+    assert rows[0]["completion_tokens"] == 32768
+
+
+def test_reasoning_only_cap_hit_is_never_graded_as_a_proof(sweep_ctx):
+    """THE study-side safety property behind defect D3.
+
+    The client now RETAINS the reasoning text on a null-content cap-hit
+    instead of discarding it. This pins that the retained text stays out of
+    the candidate: the success marker is placed in the REASONING channel and
+    nowhere else, so a runner that conflated the two channels would grade
+    this row "success". It must grade it as a failure with an EMPTY
+    candidate, while still recording the reasoning and the finish reason.
+    """
+    sweep_ctx.pi.default_response = {
+        "choices": [{"message": {"content": None,
+                                 "reasoning_content": f"I will now write {MARKER}"},
+                     "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 32768, "total_tokens": 40},
+    }
+    theorem = {t.full_name: t for t in corpus.load_split("random", "val")}["Mini.theoremA"]
+    rows = list(runner.run_cell(
+        provider="primeintellect", model=M1, theorem=theorem, k=2,
+        chain="stepk", level=0, n_replicates=1, seed=1000,
+        request_timeout=30, max_retries=2, verifier=FakeVerifier(),
+    ))
+    row = rows[0]
+    assert row["verdict"] != "success"          # the marker did NOT become a proof
+    assert row["candidate_proof"] == ""
+    assert row["raw_response"] == ""
+    assert MARKER in row["reasoning_content"]   # but the reasoning IS preserved
+    assert row["finish_reason"] == "length"
 
 
 # ---------------------------------------------------------------------------

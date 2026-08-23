@@ -267,15 +267,17 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     # not: vLLM's non-streamed body sends `"content": null` when a generation
     # spends its whole budget in the reasoning channel, and the caller has a
     # dedicated early-return for that case which yields (content="",
-    # reasoning=None) -- it DISCARDS the reasoning. Measured live on
-    # 2026-08-16 against ministral-3-14b: the same prompt returned
-    # content=None with 1,553 characters of `reasoning` non-streamed, and an
-    # earlier version of this function returned "" instead, which skipped that
-    # branch and recorded reasoning where the non-streamed path records null.
-    # That is precisely the cap-length population this lane is missing, so the
-    # difference would have landed in the data rather than staying in the
-    # transport. Whether discarding the reasoning is the RIGHT behaviour is a
-    # separate question from whether the two transports agree; they must agree.
+    # reasoning=<the reasoning text>) -- it now RETAINS the reasoning instead
+    # of discarding it. Measured live on 2026-08-16 against ministral-3-14b:
+    # the same prompt returned content=None with 1,553 characters of
+    # `reasoning` non-streamed, and an earlier version of this function
+    # returned "" instead, which skipped that branch and recorded reasoning
+    # where the non-streamed path at the time recorded null. That is precisely the
+    # cap-length population this lane is missing, so the difference would
+    # have landed in the data rather than staying in the transport. The two
+    # transports must agree regardless of what the caller's early-return does
+    # with the reasoning it receives -- they now agree on retention, not just
+    # on presence/absence.
     message: Dict[str, Any] = {"content": "".join(content_parts) if saw_content else None}
     if saw_reasoning:
         message["reasoning_content"] = "".join(reasoning_parts)
@@ -714,9 +716,24 @@ class ChatClient:
 
                 if msg["content"] is None:
                     logging.warning("Body returned none value: \n" f"{body}")
+                    # Design: this branch used to hardcode reasoning=None, which
+                    # turned a reasoning-only cap-hit (server spends the whole
+                    # budget in the reasoning channel and returns
+                    # content=null) into an indistinguishably empty row and
+                    # destroyed real generations -- measured live as a
+                    # 106,545-character reasoning body collapsed to a "1
+                    # chars" empty result. The reasoning channel is now read
+                    # with the same key handling as the normal branch below,
+                    # so the streamed and non-streamed transports agree on
+                    # retention instead of disagreeing on which spelling of
+                    # the channel they honor. `content` deliberately stays ""
+                    # here: study-side scoring reads content only, so a
+                    # cap-hit still grades as an empty/failed candidate
+                    # rather than a proof -- only the raw reasoning text is
+                    # preserved, not the pass/fail outcome.
                     return ChatResult(
                         content="",
-                        reasoning=None,
+                        reasoning=msg.get("reasoning_content") or msg.get("reasoning"),
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         cached_prompt_tokens=cached_prompt_tokens,

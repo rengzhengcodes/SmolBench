@@ -129,13 +129,19 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
     """A reasoning-only generation must parse the same over both transports.
 
     vLLM sends ``"content": null`` when the whole budget went to the reasoning
-    channel, and the client has a dedicated early-return for that which
-    DISCARDS the reasoning. Measured live on ministral-3-14b: content=None
-    with 1,553 characters of reasoning. If the streamed path reassembled that
-    as ``""`` it would skip the branch and record reasoning where the
-    non-streamed path records null -- a difference in the DATA, from a change
-    that is only supposed to touch the transport. This is the cap-length case
-    the lane is missing, so it is the case most likely to occur.
+    channel. Measured live on ministral-3-14b: content=None with 1,553
+    characters of reasoning. If the streamed path reassembled that as ``""``
+    it would skip the branch and record reasoning where the non-streamed path
+    records something else -- a difference in the DATA, from a change that is
+    only supposed to touch the transport. This is the cap-length case the lane
+    is missing, so it is the case most likely to occur.
+
+    2026-08-23 (defect D3): the pinned value moved from ``("", None)`` to
+    ``("", "long thought")``. The early-return used to hardcode
+    ``reasoning=None``, DISCARDING a reasoning-only cap-hit; it now returns
+    the reasoning channel faithfully. The INVARIANT this test exists for --
+    both transports parse the same body identically -- is unchanged, and the
+    assertion is now strictly stronger: it pins both parity AND retention.
     """
     from smolbench.evals import ec2
 
@@ -151,7 +157,82 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
     ec2_env.queue_response(reasoning_only)
     streamed = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
 
-    assert streamed == plain == ("", None)
+    assert streamed == plain == ("", "long thought")
+
+
+# ---------------------------------------------------------------------------
+# D3 (2026-08-23): the null-content early return must not discard reasoning
+# ---------------------------------------------------------------------------
+# A reasoning-only cap-hit (content=None, finish_reason="length") used to
+# surface as a fully EMPTY row: the early-return hardcoded reasoning=None
+# while the normal branch read the reasoning key. In the determinism probes
+# that manufactured rows of length <= 1 -- an "empty" row that was really a
+# 106,545-character generation -- and one such row was mis-scored as
+# "excluded (empty)" in a published positive control. What must NOT move is
+# the study-side semantics: content stays "", so a reasoning-only cap-hit is
+# still an empty/failed candidate and can never be graded as a proof.
+
+
+def test_ec2_null_content_retains_reasoning_and_keeps_content_empty(ec2_env):
+    """content=None + reasoning_content -> reasoning kept, content STILL "".
+
+    The ``content == ""`` assertion is the load-bearing one: every scorer in
+    the repo reads content only (``extract_tactic_block(rsp.content)``,
+    ``parse_for(q, raw)``), so it is what proves retaining the reasoning
+    channel cannot promote a cap-hit into a graded answer or a Lean proof.
+    """
+    from smolbench.evals import ec2
+
+    ec2_env.queue_response({
+        "choices": [{"message": {"content": None,
+                                 "reasoning_content": "a long reasoning-only cap hit"},
+                     "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 32768, "total_tokens": 50},
+    })
+    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert result.content == ""                      # study-side semantics UNCHANGED
+    assert result.reasoning == "a long reasoning-only cap hit"
+    assert result.finish_reason == "length"
+    assert result.completion_tokens == 32768
+
+
+def test_ec2_null_content_retains_legacy_reasoning_key(ec2_env):
+    """The early return must use the NORMAL branch's key handling.
+
+    Some servers spell the channel ``reasoning`` rather than
+    ``reasoning_content``; ``collect_stream`` already folds both spellings
+    into ``reasoning_content``. Reading only ``reasoning_content`` here would
+    therefore make the non-streamed path disagree with the streamed one on
+    exactly this body -- measured, not hypothesised. This test is the
+    discriminator between the two readings.
+    """
+    from smolbench.evals import ec2
+
+    ec2_env.queue_response({
+        "choices": [{"message": {"content": None, "reasoning": "legacy key"},
+                     "finish_reason": "length"}],
+        "usage": {"total_tokens": 10},
+    })
+    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert result.content == ""
+    assert result.reasoning == "legacy key"
+
+
+def test_ec2_null_content_and_no_reasoning_stays_none(ec2_env):
+    """A genuinely empty response is still (content="", reasoning=None).
+
+    Without this, "retain the reasoning" could be implemented as `or ""` and
+    a truly empty row would become indistinguishable from a cap-hit.
+    """
+    from smolbench.evals import ec2
+
+    ec2_env.queue_response({
+        "choices": [{"message": {"content": None}, "finish_reason": "stop"}],
+        "usage": {"total_tokens": 10},
+    })
+    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    assert result.content == ""
+    assert result.reasoning is None
 
 
 def test_collect_stream_survives_usage_only_chunk():

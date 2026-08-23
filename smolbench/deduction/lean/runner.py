@@ -302,6 +302,7 @@ def run_cell(
             "completion_tokens": rsp.completion_tokens,
             "cache_read_tokens": rsp.cached_prompt_tokens,
             "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+            "finish_reason": rsp.finish_reason,
             "context_chars": len(rendered.text),
             "gen_ms": gen_ms,
             "verify_ms": verify_ms,
@@ -1316,6 +1317,12 @@ def _run_cells_at_step_concurrent(
                         **base_row,
                         "prompt_tokens": 0, "completion_tokens": 0,
                         "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                        # No response object exists on this path (the request
+                        # itself raised), so there is no server-reported stop
+                        # reason to record -- but the key must still be
+                        # present so every cell row, success or exception,
+                        # can be indexed with row["finish_reason"] uniformly.
+                        "finish_reason": None,
                         "gen_ms": gen_ms, "verify_ms": 0,
                         "candidate_proof": "", "raw_response": "",
                         "verdict": "exception",
@@ -1340,6 +1347,7 @@ def _run_cells_at_step_concurrent(
                         "completion_tokens": rsp.completion_tokens,
                         "cache_read_tokens": rsp.cached_prompt_tokens,
                         "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+                        "finish_reason": rsp.finish_reason,
                         "gen_ms": gen_ms, "verify_ms": verify_ms,
                         "candidate_proof": candidate, "raw_response": rsp.content,
                         "reasoning_content": rsp.reasoning,
@@ -1421,6 +1429,12 @@ def _execute_one_cell(
             **base_row,
             "prompt_tokens": 0, "completion_tokens": 0,
             "cache_read_tokens": 0, "cache_creation_tokens": 0,
+            # No response object exists on this path (the request itself
+            # raised), so there is no server-reported stop reason to
+            # record -- but the key must still be present so every cell
+            # row, success or exception, can be indexed with
+            # row["finish_reason"] uniformly.
+            "finish_reason": None,
             "gen_ms": gen_ms, "verify_ms": 0,
             "candidate_proof": "", "raw_response": "",
             "verdict": "exception",
@@ -1448,6 +1462,7 @@ def _execute_one_cell(
         "completion_tokens": rsp.completion_tokens,
         "cache_read_tokens": rsp.cached_prompt_tokens,
         "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+        "finish_reason": rsp.finish_reason,
         "gen_ms": gen_ms, "verify_ms": verify_ms,
         "candidate_proof": candidate, "raw_response": rsp.content,
         "reasoning_content": rsp.reasoning,

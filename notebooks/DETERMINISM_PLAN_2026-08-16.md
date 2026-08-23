@@ -347,7 +347,7 @@ independent of size/region/time — not by generic plausibility.
 | 8 | **Driver / GPU-instance variation** (same L40S SKU, different host, clocks, ECC) | Small, and *continuous* — would produce a smear, not two regimes; poor fit to the data | `nvidia-smi` fingerprint at serve time (§5) | Yes, recording only |
 | 9 | **Per-request sampler seeding** | Near-zero. Seed is passed per request and is constant; a *server* `--seed` mainly affects init-time RNG | Pass `--seed 0` and compare | Yes, one flag |
 | 10 | **Tokenizer version drift** | Near-zero for divergence *mid*-generation with identical prompts; would change the prompt token IDs, not the 1000th token | Covered by #1's revision pin | Free with #1 |
-| 11 | **Transport / silent socket loss** (`73469ad7`, `50ea57f5`) | Not a *sampling* mechanism, but it **corrupts determinism measurements** by turning a delivered response into an empty one — confirmed in 1 of 8 ministral rows (§1.3) | Use the streaming transport, and treat empty rows as unmeasured rather than divergent | Free — already implemented, opt-in |
+| 11 | **Transport / silent socket loss** (`73469ad7`, `50ea57f5`) | Not a *sampling* mechanism, but it **corrupts determinism measurements** by turning a delivered response into an empty one — confirmed in 1 of 8 ministral rows (§1.3) | Use the streaming transport, and treat empty rows as unmeasured rather than divergent [Superseded 2026-08-23 — see "RULE NOTE 2026-08-23" at the end of this document: exclusion applies only when BOTH passes are empty; a one-sided empty row is DIVERGENT.] | Free — already implemented, opt-in |
 
 **Not on this list, deliberately:** temperature and `top_p`. Temperature 0.7 with a
 *fixed seed* is not a source of cross-process divergence — the sampler is
@@ -402,7 +402,7 @@ study's own generation regime. Do not touch it.
 > **0 queries / 0 hits**. Both boxes ran build `0.27.2rc1.dev122+g8efa13b70`
 > (recorded per §5 — the study's sixth recorded build), same build across both
 > configs per box. The one length-1 row (ministral stock:P2) re-asked per §3.3 was
-> empty twice → a genuine cap-out, kept as the response.
+> empty twice → a genuine cap-out, kept as the response. [Confirmed 2026-08-23 by the "RULE NOTE 2026-08-23" at the end of this document: twice-empty is exactly the both-passes-empty case, so this row's handling was correct.]
 >
 > Two findings beyond the pre-registered questions:
 >
@@ -465,7 +465,7 @@ is cache-sensitive.
 - **Discard and re-run any row whose stored length is ≤ 1 character** — that is the
   delivery-fault signature (§1.3), not a divergence. Run these arms with the
   streaming transport (`50ea57f5`) enabled, or the experiment will re-measure the
-  transport bug instead of the sampler.
+  transport bug instead of the sampler. [Clarified 2026-08-23 — see "RULE NOTE 2026-08-23" at the end of this document: this remains the RETRY trigger, unchanged. What changed is the fate of a row that is STILL one-sided empty after the retry — it now counts as DIVERGENT rather than being dropped from the denominator.]
 
 ### 3.4 Sample size
 
@@ -1260,3 +1260,146 @@ hinge, 1 flip, 1 canary), S3 objects were written under
 `91cac390`, `57618f26`, `a1cf5033`, `3f6f342f` and `48c08fb8`. Appendix B is the
 section a reader consults *for* status; consult each section's dated banner
 instead.
+
+---
+
+## RULE NOTE 2026-08-23 — the empty-row rule, stated once and authoritatively
+
+*Additive. The earlier text is left in place as the record of what was believed;
+this note supersedes it on this one point.*
+
+This document states the empty-row rule in three places and they do not agree:
+
+- **§2, mechanism 11** (the transport/silent-socket-loss row) — "treat empty rows
+  as unmeasured rather than divergent";
+- **§3 results block** — "The one length-1 row (ministral stock:P2) re-asked per
+  §3.3 was empty twice → a genuine cap-out, kept as the response";
+- **§3.3 refutation criteria** — "Discard and re-run any row whose stored length
+  is ≤ 1 character".
+
+Read together they license excluding a row whenever *either* pass is empty. That
+is wrong, and it put a wrong number in a published result.
+
+### The rule
+
+A stored row is `reasoning + "\x00" + content`, so a row with neither channel is
+exactly the **one separator byte**; "empty" therefore means stored length ≤ 1.
+
+- A row is **EXCLUDED** from the identity denominator only when **BOTH** passes
+  are empty. That is the sole case in which "nothing was measured" is a true
+  description of what happened.
+- A row where **exactly one** pass is empty is **DIVERGENT**. It stays in the
+  denominator, it enters `diffs`, and it is additionally named under
+  `one_sided_empty_rows` in the arm entry. It cannot be identical by
+  construction — one side ≤ 1 character and the other longer can never be
+  byte-equal — so admitting it can only ever *lower* a measured agreement rate,
+  never manufacture one.
+
+### Why the old "either side" rule was wrong
+
+In the moe run-2 stock@tp8 control, prompt
+`CategoryTheory.Limits.Types.Pushout.condition/…/hint-2.md` had P1 = 83 661
+characters (sha `1e6e5acf9886`) and P2 = 1 character. The P2 row was a
+**106 545-character reasoning-only cap-hit** (`finish_reason=length`,
+`completion_tokens=32768`) that the client discarded on delivery; the re-ask
+returned the same body and was discarded too. One pass produced 83k characters
+and the other produced nothing — the most divergent outcome the probe can
+observe — and the old rule scored it "excluded (empty)", turning a 0/4 positive
+control into a reported 0/3 (and the pooled control from 0/5 into 0/4). See
+`notebooks/deduction/results/MOETP8_SUMMARY.md`, correction block of 2026-08-23.
+
+### Root cause, fixed as of this commit
+
+The empty rows were **manufactured by the client**, not by the wire.
+`ChatClient.complete`'s null-content early return
+(`smolbench/evals/openai_compat.py`) hardcoded `reasoning=None`, so a generation
+that spent its whole budget in the reasoning channel arrived as a completely
+empty row. It now returns the reasoning channel faithfully, using the same key
+handling as the normal branch so the streamed and non-streamed transports agree.
+`content` still stays `""`, so study-side scoring — which reads content only — is
+unchanged and a reasoning-only cap-hit still grades as an empty/failed candidate,
+never as a proof.
+
+Consequence for cross-run comparison: for the **cap-hit population only**, rows
+recorded after this commit are not SHA-comparable to rows recorded before it. A
+mismatch across that boundary may be a serialization change rather than a kernel
+change.
+
+### What is unchanged
+
+§3.3's "discard and re-run any row whose stored length is ≤ 1" still stands **as
+a retry trigger** — an apparently-empty row is still re-asked once, and both
+results are still recorded. What changed is only what happens to a row that is
+*still* one-sided empty after the retry: it is now counted as divergent rather
+than dropped.
+
+---
+
+## DESIGN NOTE 2026-08-23 — per-arm sensitivity control, and what the stock controls actually cover
+
+*Additive.*
+
+### The gap
+
+No verdict rule tied a HOLD to a control that had actually fired. The rule was
+"k/k byte-identical (empty rows excluded) ⇒ the bundle HOLDS for that arm", full
+stop — so the **tp=8 dense HOLD was banked alongside a stock control that
+collected zero rows** (`tp8hinge_ministral-3-3b.json`, arm `stock`, `n = 0`,
+deadline-cut before its first prompt returned).
+
+### Why a same-model stock control cannot close it
+
+The obvious fix — "the stock arm must diverge before a det arm may HOLD" — is
+unimplementable for at least one model already in the inventory.
+`nemotron-3-nano-4b`'s tp=1 **STOCK** arm was itself **8/8 byte-identical**
+(`hinge_nemotron-3-nano-4b.json`: rate 1.0, with 15 258 prefix-cache queries —
+pass 2 replaying pass 1's prefill). A rule requiring stock to diverge could never
+be satisfied for that model, so it cannot be a general gate.
+
+Stated plainly, because the summaries do not: **every dense stock divergence on
+record comes from `ministral-3-3b` only.** `nemotron-3-nano-4b`'s tp=1 stock arm
+was 8/8 via prefix-cache hits, and the tp=4 nemotron arm ran no stock arm at all.
+"The stock control fired" is therefore a statement about ministral, not about the
+silicon or the build in general.
+
+### The control that replaces it
+
+Each arm now generates **one extra row, inside the same server process**, from a
+deterministically perturbed copy of that arm's own first prompt — a fixed
+distinctive prefix, no randomness and no timestamp, so the stimulus is
+reproducible across arms, runs and boxes. Recorded under
+`entry["sensitivity_row"]` (and indexed in the report by `<model>@<instance_id>`)
+as `{prompt_id, perturbation, sha12, chars, differs, common_prefix_chars, …}`.
+
+- **`differs` is prefix-aware, deliberately.** It is true only when the perturbed
+  output diverges from the unperturbed P1 row-1 output *within the span the two
+  share* (`common_prefix_chars < min(len)`). A plain `!=` would call a perturbed
+  row SENSITIVE merely for stopping at a different length, which makes the whole
+  control vacuous whenever the control row runs under a smaller token cap than
+  the passes it controls. A perturbed row that is a strict prefix of the base is
+  truncation, not sensitivity. A perturbed row of length ≤ 1 is a delivery fault
+  and is never evidence of sensitivity.
+- **The gate.** `differs` false ⇒ `control_status = "BLIND"` and the arm's verdict
+  reports **UNMEASURED**, never HOLD. `differs` true ⇒ `control_status =
+  "SENSITIVE"`. An absent or errored control row is BLIND: no evidence is not
+  evidence.
+- **It never enters the identity denominator.** The control row has no P2 twin;
+  it is not written to the sha tables, the gz archives, or `n_prompts_compared`.
+- **It runs after P2**, so it cannot perturb prefix-cache state between the two
+  passes being compared.
+- **Every HOLD string names its control scope**, e.g.
+  `control: sensitivity SENSITIVE on <model>@<instance>; stock control <result or
+  absent>` — a bare "8/8 identical" in a log can no longer be read as a
+  certification.
+
+An arm that compared **zero** rows reports UNMEASURED rather than a vacuous 0/0
+HOLD.
+
+### Cost, stated honestly
+
+The control row is generated at the study's own `max_tokens` by default, so on a
+slow arm (the 120B MoE ran at ~9–11 tok/s under `--enforce-eager`, 15–48 min per
+row) it costs roughly one extra row of wall clock. `--sensitivity-max-tokens`
+lowers it; that stays sound precisely because `differs` is prefix-aware, and the
+observed first-differing bytes on this study's divergent rows were 85 / 264 / 754
+/ 1 735, so a few thousand characters of overlap is ample to detect divergence.

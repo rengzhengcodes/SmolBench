@@ -27,9 +27,12 @@ WHAT IS NEW vs the HEAD probe
   * ARM-RELATIVE deadlines. The HEAD probe's pass deadline is absolute from
     process start, which is why tonight's stock arm recorded 0 rows. Each arm
     here gets its own t0 and its own minute budget.
-  * A THROUGHPUT PROBE (max_tokens=256) issued right after each serve, so k is
+  * A THROUGHPUT PROBE (max_tokens=2048) issued right after each serve, so k is
     chosen from a measured tokens/s rather than a guess. A 120B MoE at tp=8 in
     eager mode could be anywhere from 6 to 30 tok/s and that changes k by 4x.
+    When the probe returns nothing measurable, a hardcoded fallback rate is
+    substituted and recorded under `fallback_rate_used` so that substitution
+    is never silent (D5.2).
   * k IS THE ONLY KNOB. max_tokens stays at the study's 32768 and the seed /
     temperature / prompt set stay fixed, so every row measured here is
     comparable to the tp=1 / tp=4 / tp=8-dense arms. Cutting max_tokens would
@@ -46,14 +49,38 @@ WHAT IS NEW vs the HEAD probe
     3-key shape), and it is the sole producer of arm B's headline evidence.
     If it comes back empty we learn it in minute 1, not after an hour of
     generation -- and arm B carries an independent fallback: the recorded
-    launch payload proves the flag was passed, and a SHA diff against tonight's
-    custom-all-reduce run proves the collective actually changed.
+    launch payload proves the flag was passed, and a SHA diff against
+    tonight's custom-all-reduce run IS CONSISTENT WITH the collective having
+    changed (D8.3 correction -- this comparison is confounded by cross-process
+    variance and is not, on its own, mechanistic proof; see `_vs_head`'s
+    docstring, which retracts the same claim in the same words). The actual
+    mechanistic evidence for which collective was active is the PARSED
+    engine-config line (`hardware_equivalence_probe.mechanism_evidence` /
+    `entry["serve_log"]["engine_config_parsed"]`).
 
 PRE-COMMITTED VERDICT RULE (fixed before any data was seen)
-  k/k byte-identical, empty rows excluded (DETERMINISM_PLAN section 1.3) =>
-  the bundle HOLDS for that arm at tp=8; any non-empty divergence => it does
-  not, and the first differing byte offset is reported. k is stated in every
-  verdict sentence -- "2/2 over N tokens" is not "certified", it is 2/2.
+  k/k byte-identical => the bundle HOLDS for that arm at tp=8, subject to two
+  gates fixed before any data was seen (D8.3 correction -- both gates below
+  were missing from the rule as originally stated):
+    - EMPTY ROWS. A row is excluded from k ONLY when BOTH passes came back
+      <= 1 char -- verified against DETERMINISM_PLAN's own "RULE NOTE
+      2026-08-23" section, which states this exact rule authoritatively and
+      retracts the earlier "either side empty" reading (§2 mechanism 11 /
+      §3.3) as wrong. A row where exactly ONE pass is empty is DIVERGENT and
+      stays IN k, named under `one_sided_empty_rows` -- see
+      `tp8_hinge_probe.guarded_compare`, imported and reused here unchanged.
+    - THE D8 SENSITIVITY CONTROL. A k/k result HOLDS only when the arm's own
+      in-process control (`hardware_equivalence_probe.run_sensitivity_row`, a
+      deterministically perturbed copy of the arm's first prompt) came back
+      SENSITIVE. A BLIND control -- the perturbation produced no divergence --
+      reports the arm UNMEASURED regardless of k/k, because nothing then ties
+      the agreement to a probe that is known to be capable of detecting a
+      difference; an arm that compared zero rows (k=0) likewise reports
+      UNMEASURED, never a vacuous "0/0 HOLDS" (the incident this closes: the
+      tp=8 dense HOLD banked next to a `stock` control that recorded n=0).
+  Any non-empty divergence => the bundle does not hold, and the first
+  differing byte offset is reported. k is stated in every verdict sentence --
+  "2/2 over N tokens" is not "certified", it is 2/2.
 """
 
 import argparse
@@ -66,7 +93,7 @@ import os
 import pathlib
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = pathlib.Path("/workspace/SmolBench")
 OUT_DIR = pathlib.Path(
@@ -91,10 +118,52 @@ def _load(name: str, path: str):
 def throughput_probe(ec2, hw, model: str, text: str, entry: Dict[str, Any]) -> float:
     """One short generation, timed. Returns rough output tokens/s.
 
-    Deliberately NOT part of the comparison: it is issued at max_tokens=256 and
-    its output is discarded. It exists so k is picked from this box's measured
-    rate. It runs on the same server process as the passes that follow, which
-    is exactly the process whose speed we need.
+    Deliberately NOT part of the comparison: it is issued at max_tokens=2048
+    and its output is discarded. It exists so k is picked from this box's
+    measured rate. It runs on the same server process as the passes that
+    follow, which is exactly the process whose speed we need.
+
+    Parameters
+    ----------
+    ec2 : module
+        The loaded ``smolbench.evals.ec2`` module, supplying ``query()`` and
+        ``_CLIENT.context_length()``.
+    hw : module
+        The loaded ``hardware_equivalence_probe`` module, supplying ``SEED``
+        and ``TEMPERATURE``.
+    model : str
+        Deploy-spec model id currently being served.
+    text : str
+        The warm-up prompt text. Chosen by the caller to fall outside the
+        rows that will actually be compared (see the call site's comment on
+        prefix-caching contamination).
+    entry : dict
+        The report entry for the current arm. Mutated in place: this
+        function always sets ``entry["throughput_probe"]`` (merging into it
+        rather than replacing it -- see Notes) and, when a fallback rate is
+        substituted, adds ``entry["throughput_probe"]["fallback_rate_used"]``.
+
+    Returns
+    -------
+    float
+        The measured (or, on a degenerate probe, hardcoded fallback)
+        tokens/second rate. Always positive.
+
+    Notes
+    -----
+    Design (D5.2): when the probe returns nothing measurable (``dt <= 0`` or
+    a zero-token completion), a hardcoded rate is substituted -- 9.1 tok/s for
+    the 120B MoE, 33 tok/s for the dense 3B, both measured on this exact
+    silicon/bundle -- and recorded under
+    ``entry["throughput_probe"]["fallback_rate_used"]``. That flag used to be
+    written with ``entry.setdefault("throughput_probe", {})[...] = rate`` and
+    then destroyed by the very next statement, an UNCONDITIONAL reassignment
+    of ``entry["throughput_probe"]`` to a brand-new dict -- so no report ever
+    recorded that a hardcoded rate had silently stood in for a measured one,
+    even though ``k`` (how many prompts the arm measures) is chosen from this
+    rate. The fix merges into the existing dict (``setdefault(...).update(
+    ...)``) instead of replacing it, so the flag and the measurement coexist.
+    The flag is ABSENT whenever no fallback was used.
     """
     ctx = ec2._CLIENT.context_length(model)
     t0 = time.time()
@@ -115,8 +184,15 @@ def throughput_probe(ec2, hw, model: str, text: str, entry: Dict[str, Any]) -> f
         rate = 9.1 if "120b" in model else 33.0
         entry.setdefault("throughput_probe", {})["fallback_rate_used"] = rate
         logging.warning("throughput probe returned nothing; falling back to %.1f tok/s", rate)
-    entry["throughput_probe"] = {"seconds": round(dt, 1), "chars": chars,
-                                 "approx_tokens": round(toks), "approx_tok_s": round(rate, 2)}
+    # Design (D5.2): MERGE the measurement into whatever's already in
+    # entry["throughput_probe"] (the fallback_rate_used flag set above, if
+    # any) rather than replacing the dict wholesale -- the old unconditional
+    # `entry["throughput_probe"] = {...}` here destroyed the flag on every
+    # fallback, so no report could ever show that a hardcoded rate had stood
+    # in for a measured one.
+    entry.setdefault("throughput_probe", {}).update({
+        "seconds": round(dt, 1), "chars": chars,
+        "approx_tokens": round(toks), "approx_tok_s": round(rate, 2)})
     logging.info("throughput probe: %d chars in %.1fs -> ~%.1f tok/s", chars, dt, rate)
     return rate
 
@@ -151,7 +227,53 @@ def _row_token_estimates(prompts) -> List[float]:
     return out
 
 
+def _stock_control_str(report: Dict[str, Any]) -> Optional[str]:
+    """``"identical/n"`` for arm C (the stock positive control), or `None`.
+
+    Design (D8): `hardware_equivalence_probe.verdict_line`'s `stock_control`
+    parameter wants a short summary of the stock arm's own within-process
+    byte comparison, so a HOLD verdict names the positive control it was
+    banked alongside -- the exact provenance that was missing when the tp=8
+    dense HOLD was reported next to a stock control that had collected zero
+    rows. Unlike `tp4_hinge_probe.py`/`tp8_hinge_probe.py` (whose stock arm
+    is keyed by the string `"stock"`), this driver's arm plan keys its stock
+    control as arm code ``"C"`` (``STOCK-TP8-CONTROL``, see `ARMS` in
+    `main`).
+
+    Parameters
+    ----------
+    report : dict
+        The in-progress report dict; read from ``report["arms"]["C"]``.
+
+    Returns
+    -------
+    str or None
+        ``f"{identical}/{n}"`` when arm C's own ``within_process_baseline``
+        has already been recorded in `report`, else `None` -- arm C has not
+        run yet, is still in progress, was skipped for budget, or failed
+        before producing a comparison. `None` is the literal signal
+        `verdict_line` renders as ``"absent"``.
+
+    Notes
+    -----
+    Pure and side-effect-free: reads `report`, mutates nothing.
+    """
+    c = (report.get("arms", {}).get("C", {}) or {}).get("within_process_baseline")
+    if not c:
+        return None
+    return f"{c['identical']}/{c['n']}"
+
+
 def main() -> int:
+    # Design (D8.2): loaded before the argparse parser is built so
+    # --sensitivity-max-tokens can default to hw.MAX_TOKENS directly rather
+    # than duplicating its literal value here, which would silently drift if
+    # the study's own token budget ever changed. Safe to load this early:
+    # neither this module nor `smolbench.evals.ec2` reads any environment
+    # variable at import time (only inside functions, after the env vars this
+    # driver sets below are already in place).
+    hw = _load("hardware_equivalence_probe", "scripts/hardware_equivalence_probe.py")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--moe-model", default="nemotron-3-super-120b-a12b")
     ap.add_argument("--dense-model", default="ministral-3-3b")
@@ -177,6 +299,17 @@ def main() -> int:
                          "temperature and the prompt prefix are untouched.")
     ap.add_argument("--hard-stop-min", type=float, default=205.0,
                     help="No new pass starts after this many minutes from process start.")
+    ap.add_argument("--sensitivity-max-tokens", type=int, default=hw.MAX_TOKENS,
+                    help="max_tokens for the D8 in-process sensitivity-control row "
+                         "(one extra generation per arm from a deterministically "
+                         "perturbed copy of the arm's first prompt). Defaults to "
+                         "the study's own max_tokens so the default changes no "
+                         "protocol. Lowering it is sound: evaluate_sensitivity() "
+                         "is prefix-aware, so a control row that diverges before "
+                         "it hits a smaller cap is still scored SENSITIVE, not "
+                         "merely truncated -- and a smaller cap bounds the "
+                         "control's added cost on slow arms (a 120B MoE at "
+                         "tp=8 in eager mode can be 6-30 tok/s).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -194,7 +327,6 @@ def main() -> int:
     os.environ["EC2_REGIONS"] = args.regions
     os.environ.setdefault("EC2_MAX_LIFETIME_MIN", "215")
 
-    hw = _load("hardware_equivalence_probe", "scripts/hardware_equivalence_probe.py")
     hinge = _load("hinge_probe", "scripts/hinge_probe.py")
     tp8 = _load("tp8_hinge_probe", "scripts/tp8_hinge_probe.py")
     from smolbench.evals import ec2
@@ -314,6 +446,25 @@ def main() -> int:
                                  code, sl.get("http_status"), sl.get("vllm_log_chars"),
                                  sl.get("engine_config_parsed"))
                     entry["serve_log_usable"] = bool(sl.get("vllm_log_chars"))
+                    # Design (D5.1): a captured-but-empty log (the pre-fix
+                    # unauthenticated /status call returned HTTP 401, so this
+                    # field was empty BY CONSTRUCTION, not because the box
+                    # was quiet) must not silently support a config claim --
+                    # a tp=8 dense arm once banked a "custom all-reduce
+                    # ACTIVE" claim in a commit title on exactly such a
+                    # capture. mechanism_evidence is the single choke point
+                    # every config claim (custom all-reduce, enforce-eager,
+                    # prefix-caching) must route through; the byte-comparison
+                    # result (within_process_baseline) stays reportable
+                    # either way -- only the MECHANISM claim is gated.
+                    entry["mechanism_evidence"] = hw.mechanism_evidence(sl)
+                    if entry["mechanism_evidence"] == "UNMEASURED":
+                        logging.warning(
+                            "moetp8[%s]: mechanism_evidence=UNMEASURED -- no "
+                            "config claim (custom all-reduce state, "
+                            "enforce-eager, prefix-caching) may be made for "
+                            "this arm; the byte-comparison result below "
+                            "remains fully reportable regardless.", code)
                     save()
 
                     # Probe once per MODEL. Arm C serves with prefix caching
@@ -360,15 +511,67 @@ def main() -> int:
                     entry["pass_done_P1_min"] = round((time.time() - arm_t0) / 60.0, 1)
                     save()
                     p2_prompts = [(pid, txt) for pid, txt in arm_prompts if pid in p1]
-                    entry["n_prompts_compared"] = len(p2_prompts)
+                    # Design (D5.4): the reported comparison count is assigned
+                    # AFTER p2 returns, not from len(p2_prompts) here --
+                    # resilient_pass can stop early on its own wall-clock
+                    # deadline (p2_cap), so "what P2 was ASKED to cover" can
+                    # overstate "what it actually delivered". Every "k/k
+                    # identical" verdict is quoted against this number, so it
+                    # must reflect rows both passes actually completed.
                     p2 = tp8.resilient_pass(
                         hw, ec2, model, p2_prompts, f"{code}:P2", entry, "P2",
                         OUT_DIR / f"texts_{_tag}_{code}_{model}_P2.json.gz",
                         p2_cap, arm_t0, save)
+                    entry["n_prompts_compared"] = len(set(p1) & set(p2))
                     entry["pass_done_P2_min"] = round((time.time() - arm_t0) / 60.0, 1)
                     entry["fingerprint_after"] = hinge.fingerprint(state, model)
                     entry["serve_log_after"] = tp8.capture_serve_log(state)
+
+                    # D8: the arm's own in-process control. Runs AFTER P2 so
+                    # it can never perturb prefix-cache state between the two
+                    # passes being compared. Design: nothing previously tied
+                    # a HOLD verdict to a control that had actually fired --
+                    # the tp=8 dense HOLD was banked alongside a `stock`
+                    # (arm C) positive control that recorded n=0
+                    # (deadline-cut before its first prompt returned,
+                    # notebooks/deduction/results/tp8hinge_ministral-3-3b.json).
+                    # A same-model stock control cannot close this in general
+                    # either: nemotron-3-nano-4b's own tp=1 `stock` arm was
+                    # itself 8/8 byte-identical (prefix-cache replay), so
+                    # "stock must diverge" can never be satisfiable for that
+                    # model. Each arm therefore carries its own control.
+                    try:
+                        _spid, _sptext = arm_prompts[0]
+                        entry["sensitivity_row"] = hw.run_sensitivity_row(
+                            ec2, model, _spid, _sptext, p1.get(_spid, ""),
+                            max_tokens=args.sensitivity_max_tokens)
+                    except Exception as exc:  # noqa: BLE001 -- a failed control is BLIND, not fatal
+                        entry["sensitivity_row"] = {"error": f"{type(exc).__name__}: {exc}"}
+                        logging.exception("moetp8[%s]: sensitivity control FAILED", code)
+                    entry["control_status"] = hw.control_status(entry["sensitivity_row"])
+                    # Design (D8 follow-up): index by (model, instance_id,
+                    # arm) via the shared helper, not a hand-rolled
+                    # (model, instance_id) f-string -- this driver runs FOUR
+                    # arm codes (A, A2, B, C) against just two models on the
+                    # same box, and the two-part key let each later arm's
+                    # control silently overwrite the previous one's in the
+                    # report-level index. See hw.sensitivity_key's docstring
+                    # for the full incident.
+                    report.setdefault("sensitivity_rows", {})[
+                        hw.sensitivity_key(model, state.get("instance_id"), code)
+                    ] = entry["sensitivity_row"]
+                    save()
+
                     entry["within_process_baseline"] = tp8.guarded_compare(hw, p1, p2)
+                    c = entry["within_process_baseline"]
+                    entry["verdict_line"] = hw.verdict_line(
+                        arm=code, identical=c["identical"], n=c["n"],
+                        control_status=entry["control_status"], model=model,
+                        instance_id=state.get("instance_id"),
+                        stock_control=_stock_control_str(report),
+                        mechanism_evidence=entry.get("mechanism_evidence"))
+                    logging.info("moetp8[%s]: %s (excluded empty: %s)",
+                                 code, entry["verdict_line"], c["excluded_empty_rows"])
                     # First differing byte offset for any divergent row.
                     diffs = []
                     for pid in sorted(set(p1) & set(p2)):
@@ -388,9 +591,6 @@ def main() -> int:
                     entry["arm_total_min"] = round((time.time() - arm_t0) / 60.0, 1)
                     entry["complete"] = True
                     save()
-                    c = entry["within_process_baseline"]
-                    logging.info("moetp8[%s]: %d/%d identical (excluded empty: %s)",
-                                 code, c["identical"], c["n"], c["excluded_empty_rows"])
             except Exception as exc:  # noqa: BLE001 -- an arm must not kill the run
                 entry["FAILED"] = f"{type(exc).__name__}: {exc}"
                 try:
@@ -407,7 +607,13 @@ def main() -> int:
         for code, e in report["arms"].items():
             c = e.get("within_process_baseline")
             if c:
-                print(f"  {code} {e.get('arm_name')}: {c['identical']}/{c['n']} identical")
+                # Design (D8.2): print the scoped verdict line, not a bare
+                # "k/k identical" -- a HOLD must always name the control that
+                # earned it. `or` fallback covers a report saved by a
+                # pre-D8 run of this driver, whose entries have no
+                # `verdict_line` key.
+                line = e.get("verdict_line") or f"{c['identical']}/{c['n']} identical"
+                print(f"  {code} {e.get('arm_name')}: {line}")
             else:
                 print(f"  {code} {e.get('arm_name')}: {e.get('FAILED') or e.get('skipped_at_min')}")
         print("report:", report_path)
@@ -431,10 +637,32 @@ def _vs_head(this_sha: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """SHA comparison against tonight's committed tp=8 dense det arm.
 
     Same model, prompts, seed, temperature, max_tokens, vLLM image digest and
-    instance family -- differing ONLY in the collective/config flag under test.
-    A mismatch here is mechanistic evidence that the collective kernel actually
-    changed; combined with an internally k/k arm it says "different kernel,
-    still deterministic" without depending on any log parsing.
+    instance family -- differing ONLY in the collective/config flag under
+    test.
+
+    Design (D5.5b): a mismatch here is CONSISTENT with the collective kernel
+    having changed, but it does not ISOLATE the collective as the cause. This
+    docstring previously claimed a mismatch was "mechanistic evidence" the
+    kernel changed; the package's own summary retracted that claim because
+    the comparison is confounded by cross-process variance -- this study
+    measured a ~9.5% cross-process flip rate for dense models (plan section
+    6.2), and its own arm-A-vs-A2 cross-process comparison (`_vs_run1`) on
+    the SAME config came back 0/1 identical with a 3.1x length difference. A
+    different server process alone is enough to change the bytes, with no
+    config difference at all -- so a SHA mismatch here is corroborating
+    context, not mechanistic proof. The mechanistic evidence for which
+    collective was active is the PARSED engine-config line
+    (``hardware_equivalence_probe.mechanism_evidence`` /
+    ``entry["serve_log"]["engine_config_parsed"]``).
+
+    Caveat -- serialization boundary (D5.5b): as of 2026-08-23 the client
+    RETAINS reasoning text on a null-content cap-hit where it previously
+    DISCARDED it on delivery. For the cap-hit population, a row recorded
+    after this fix is not SHA-comparable to the archived HEAD_TP8 row
+    recorded before it -- a mismatch across that boundary may reflect the
+    serialization change rather than a kernel change. Check the row's
+    ``finish_reason``/``completion_tokens`` on both sides before reading a
+    mismatch as evidence about the collective.
     """
     try:
         prev = json.loads(HEAD_TP8.read_text())["arms"]["det"]["sha_table_P1"]
@@ -458,7 +686,16 @@ def _vs_run1(this_sha: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     reading for a tp=8 MoE, the regime where the study has only ever measured a
     dense cross-process flip rate (9.5%, plan section 6.2). Agreement is a
     bonus; disagreement is expected-and-documented, NOT a within-process
-    failure, and must never be reported as one."""
+    failure, and must never be reported as one.
+
+    Caveat -- serialization boundary (D5.5b): as of 2026-08-23 the client
+    RETAINS reasoning text on a null-content cap-hit where it previously
+    DISCARDED it on delivery. For the cap-hit population, rows recorded on
+    either side of this fix are not SHA-comparable -- a mismatch across the
+    boundary may be a serialization change, not a cross-process or kernel
+    change. Check ``finish_reason``/``completion_tokens`` on both rows
+    before reading a mismatch as evidence of anything cross-process.
+    """
     try:
         prev = json.loads((OUT_DIR / "moe_tp8_report.json").read_text())[
             "arms"]["A"]["sha_table_P1"]

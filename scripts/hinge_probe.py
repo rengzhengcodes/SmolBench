@@ -63,7 +63,7 @@ import os
 import pathlib
 import sys
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / "notebooks" / "deduction" / "results"
@@ -134,7 +134,8 @@ def fingerprint(state: Dict[str, Any], model: str) -> Dict[str, Any]:
 
 
 def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
-                 label: str) -> Dict[str, str]:
+                 label: str,
+                 meta: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, str]:
     """One probe pass with the delivery-fault guard from plan section 3.3.
 
     A stored row of length <= 1 is the transport fault's signature (an empty
@@ -142,10 +143,54 @@ def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
     the retry under ``retried_rows`` for the record, the retry's text in the
     comparison IF it is non-empty (a real generation), the original otherwise
     (twice-empty means empty IS the response and belongs in the comparison).
+
+    Parameters
+    ----------
+    hw : module
+        The loaded ``hardware_equivalence_probe`` module, supplying
+        ``SEED``/``TEMPERATURE``/``MAX_TOKENS`` and ``run_pass``.
+    model : str
+        Deploy-spec model id being served.
+    prompts : list of (str, str)
+        ``(prompt_id, prompt_text)`` pairs.
+    label : str
+        Log-line prefix for this pass.
+    meta : dict of str to dict, optional
+        Forwarded to ``hw.run_pass`` and then, on the retry path, updated IN
+        PLACE (see Notes). Omit to skip metadata collection.
+
+    Returns
+    -------
+    dict of str to str
+        ``{prompt_id: reasoning + "\\x00" + content}``, plus (only when at
+        least one row was retried) a ``"_retried_rows"`` marker key holding a
+        JSON-encoded ``{prompt_id: {"original_len", "retry_len"}}`` map --
+        popped by the caller before the dict is used as a comparison pass.
+
+    Notes
+    -----
+    Design: the retry call uses ``ec2.complete()`` rather than ``ec2.query()``
+    for the same reason ``hardware_equivalence_probe.run_pass`` does -- the
+    delivery-fault retry is exactly where a real cap-hit (``finish_reason ==
+    "length"``, a large ``completion_tokens``) is most likely to be sitting
+    behind an apparently-empty row, and that fact would otherwise be lost the
+    moment the retry runs.
+
+    When ``meta`` is given, ``hw.run_pass`` has already populated
+    ``meta[pid]`` for every prompt (including the ones retried here, from
+    their FIRST attempt). On this retry path:
+
+    * an ACCEPTED retry (``len(redo) > 1``) OVERWRITES ``meta[pid]`` with the
+      retry's own metadata plus ``"from_retry": True`` -- the retry's numbers,
+      not the discarded first attempt's, describe the row that is actually
+      compared;
+    * a REJECTED retry (``len(redo) <= 1``, i.e. still empty) leaves the
+      original ``meta[pid]`` untouched and adds ``"retry_rejected": True`` to
+      it, so a twice-empty row's metadata is not silently discarded either.
     """
     from smolbench.evals import ec2
 
-    results = hw.run_pass(model, prompts, label)
+    results = hw.run_pass(model, prompts, label, meta=meta)
     retried: Dict[str, str] = {}
     for pid, text in list(results.items()):
         if len(text) <= 1:
@@ -153,16 +198,30 @@ def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
                             "signature; re-asking once", label, pid, len(text))
             prompt_text = dict(prompts)[pid]
             ctx = ec2._CLIENT.context_length(model)
-            content, reasoning = ec2.query(
-                prompt_text, model, hw.SEED, ctx,
+            # `ChatClient.complete` takes `context_length` KEYWORD-ONLY
+            # (unlike `query`'s positional-or-keyword parameter of the same
+            # name) -- pass it by keyword rather than positionally.
+            rsp = ec2.complete(
+                prompt_text, model, hw.SEED,
+                context_length=ctx,
                 extra_args={"temperature": hw.TEMPERATURE,
                             "max_tokens": hw.MAX_TOKENS},
                 request_timeout=1800,
             )
-            redo = (reasoning or "") + "\x00" + (content or "")
+            redo = (rsp.reasoning or "") + "\x00" + (rsp.content or "")
             retried[pid] = {"original_len": len(text), "retry_len": len(redo)}
             if len(redo) > 1:
                 results[pid] = redo
+                if meta is not None:
+                    meta[pid] = {
+                        "finish_reason": rsp.finish_reason,
+                        "completion_tokens": rsp.completion_tokens,
+                        "prompt_tokens": rsp.prompt_tokens,
+                        "chars": len(redo),
+                        "from_retry": True,
+                    }
+            elif meta is not None:
+                meta[pid]["retry_rejected"] = True
     if retried:
         results["_retried_rows"] = json.dumps(retried)  # marker, popped by caller
     return results
@@ -249,12 +308,17 @@ def main() -> int:
                                  cfg_name, json.dumps(fp)[:400])
                     for i in (1, 2):
                         label = f"{cfg_name}:P{i}"
-                        res = guarded_pass(hw, args.model, prompts, label)
+                        # D6.4: a fresh dict per pass -- guarded_pass mutates
+                        # it in place with per-row finish_reason/token counts.
+                        row_meta: Dict[str, Dict[str, Any]] = {}
+                        res = guarded_pass(hw, args.model, prompts, label, meta=row_meta)
                         retr = res.pop("_retried_rows", None)
                         passes[label] = res
                         if retr:
                             report["configs"].setdefault(cfg_name, {})[
                                 f"retried_rows_P{i}"] = json.loads(retr)
+                        report["configs"].setdefault(cfg_name, {})[
+                            f"row_meta_P{i}"] = row_meta
                     fp_after = fingerprint(state, args.model)
                     report["configs"].setdefault(cfg_name, {}).update(
                         vllm_args=vllm_args, fingerprint=fp,

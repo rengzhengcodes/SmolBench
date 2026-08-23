@@ -326,3 +326,91 @@ bundle, not of a blind probe.
 process and box — gave 33 897 vs 105 359 chars on the same prompt at the same seed.
 That is the first MoE reading of the cross-process regime the study measured at 9.5%
 for dense models, and it is consistent with it.
+
+---
+
+## CORRECTION 2026-08-23 — run 2's arm C control was 0/4, not 0/3
+
+*Appended, not rewritten. Everything above records what was believed on 2026-08-22
+and is left intact; this block supersedes it on the points named here.*
+
+### What was wrong
+
+The "Run 2 arm C" table above marks
+`CategoryTheory.Limits.Types.Pushout.condition/…/hint-2.md` as `— / — / excluded
+(empty)`. That row was **not** unmeasured. It was the most divergent outcome the
+arm produced:
+
+| pass | sha256_12 | stored chars | what it actually was |
+|---|---|---|---|
+| P1 | `1e6e5acf9886` | 83 661 | a normal generation |
+| P2 | `6e340b9cffb3` | 1 | a **106 545-character reasoning-only cap-hit** (`finish_reason=length`, `completion_tokens=32768`) that the client DISCARDED on delivery |
+
+The P2 request was issued twice — the length-≤1 delivery-fault retry fired — and
+**both attempts returned the same 106 545-character reasoning body**, so the row
+was reproducible on the wire. It was the *client* that threw the text away, not
+the network. Recovered from the run log, that discarded P2 body and P1 share a
+common prefix of **754 characters** and diverge thereafter. (Against the row as
+actually stored, `"\x00"`, the common prefix is 0.)
+
+Two defects combined to produce the `—` cells:
+
+1. **The client's null-content early return hardcoded `reasoning=None`**, so a
+   generation that spent its whole budget in the reasoning channel collapsed to
+   the single `\x00` separator byte and became indistinguishable from a row that
+   was never delivered.
+2. **`guarded_compare` excluded a row when EITHER pass was ≤ 1 character**, so an
+   83 661-vs-nothing row left the denominator entirely instead of counting as the
+   divergence it is.
+
+Both are fixed as of this commit
+(`smolbench/evals/openai_compat.py`, `scripts/tp4_hinge_probe.py`,
+`scripts/tp8_hinge_probe.py`; pinned by `tests/test_openai_compat.py` and
+`tests/test_determinism_probes.py`).
+
+### Corrected numbers
+
+Under the corrected rule a one-sided empty row is **DIVERGENT** and stays in the
+denominator. Replayed against the archived pass texts:
+
+| | published 2026-08-22 | corrected |
+|---|---|---|
+| run 2 arm C (stock@tp8 control) | 0/3, 1 row excluded | **0/4**, 0 rows excluded |
+| pooled control, run 1 + run 2 | 0/4 | **0/5** |
+
+The two `—` cells in the run-2 arm C table should be read as `1e6e5acf9886` /
+83 661 (P1) and `6e340b9cffb3` / 1 (P2). Every row in that arm diverged.
+
+### Blast radius: this row and no other
+
+Every other comparison in the committed archive recorded
+`excluded_empty_rows: []`, so the corrected rule changes no other number —
+verified across `moe_tp8_report.json` (arms A, B, C), `moe_tp8_report_run2.json`
+(arm A2), `tp4hinge_ministral-3-3b.json`, `tp4hinge_nemotron-3-nano-4b.json` and
+`tp8hinge_ministral-3-3b.json`.
+
+**No HOLD verdict changes.** The correction moves only the positive control's
+denominator, and the control still fired on every measurable row — now 0/5 rather
+than 0/4. "The clean arms are a property of the bundle, not of a blind probe"
+stands, with one more divergence behind it than was reported.
+
+The committed report JSONs are deliberately **not** edited: they are the primary
+record of what the run observed, and the corrected reading belongs here.
+
+### Verdict lines restated with their control scope
+
+`HOLDS` on its own does not say what would have caught a failure, so the two
+verdicts are restated with the scope of the control that backs them:
+
+- **Gap A — MoE at tp=8: HOLDS, 2/2** — control: stock@tp8 **0/5** pooled; per-arm
+  perturbation sensitivity row **ABSENT** (that mechanism postdates this run).
+  Both comparisons use the same single prompt, so this remains evidence, not
+  certification.
+- **Gap B — the `--disable-custom-all-reduce` path: HOLDS, 1/1** — control:
+  stock@tp8 **0/5** pooled; per-arm perturbation sensitivity row **ABSENT**.
+
+Arms run after this commit carry a per-arm perturbation sensitivity row
+(`hardware_equivalence_probe.run_sensitivity_row` / `evaluate_sensitivity` /
+`verdict_line`). An arm whose control comes back BLIND now reports **UNMEASURED**
+and can no longer report HOLD, and every emitted verdict string names its own
+control scope.
