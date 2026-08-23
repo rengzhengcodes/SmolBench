@@ -49,3 +49,23 @@ instance=i-0a93c9445d6915f4e g6e.12xlarge @ us-east-2c
 CROSS-TP (length-based, both models): 8/8 rows differ in length between the tp=1 det arm (2026-08-16) and this tp=4 det arm -> tp is a pooling boundary.
 SPEND: box1 i-0d4caadcfc7650af3 09:08:13->10:44:52 = 1.611h; box2 i-0a93c9445d6915f4e 10:46:07->12:08:30 = 1.373h; spot us-east-2c $4.1559/h => $12.41 + ~$0.2 EBS
 TEARDOWN: both terminated; region sweep us-east-1/us-east-2/us-west-2 clean
+
+CORRECTIONS 2026-08-23 (adversarial audit; appended, nothing above rewritten):
+- Commit 4d5dee14's "3h05m" matches no run artifact (it is reconstructible only
+  as 09:08:13 -> the commit stamp 12:13:10 = 3h04m57s); the SPEND windows above
+  sum to 2h59m02s and span 3h00m17s; the probe JSON's own probe windows are
+  09:08:07->10:38:03 and 10:46:00->12:02:12. Three of the four window stamps
+  above ARE corroborated verbatim by the preserved r4 tarball logs (launch
+  09:08:13, terminate 10:44:52, launch 10:46:07); the fourth, 12:08:30, appears
+  nowhere — the log records box-2 termination at 12:08:47 (17 s later, ~$0.02).
+- "=> $12.41": the stated windows x $4.1559/h give $12.40 (both roundings).
+- Commit 4d5dee14's "same build/digest/pins as the tp=1 hinge" is REFUTED at
+  the launch-args level, not merely uncheckable: the tp=1 hinge passed NO
+  --revision/--tokenizer-revision (its det_args carry none; image digest lines
+  empty) while the tp=4 arms pin both. Only resolved-weights identity is truly
+  uncheckable; the vLLM version string matches. Cross-tp "8/8 rows differ in length" could
+  be upgraded to SHA inequality from the committed tables.
+- The det arms' tp gate here was the driver's own payload readback (served_tp),
+  not a container check; corroborated indirectly by KV-block counts 4.5-4.9x
+  the same models' tp=1 runs. Since commit fadfab16 the tp4 probe parses the
+  container's engine config (gate_basis recorded) and aborts on mismatch.

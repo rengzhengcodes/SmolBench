@@ -414,3 +414,76 @@ Arms run after this commit carry a per-arm perturbation sensitivity row
 `verdict_line`). An arm whose control comes back BLIND now reports **UNMEASURED**
 and can no longer report HOLD, and every emitted verdict string names its own
 control scope.
+
+---
+
+## FURTHER CORRECTIONS 2026-08-23 — adversarial-audit findings applied
+
+*Appended, not rewritten; same convention as the block above. Source: the
+2026-08-22 adversarial verification campaign (65 agents, two refutation
+rounds) plus the 2026-08-23 independent re-verification. Each item names
+what the text above (or the commit message) got wrong.*
+
+1. **Commit e3068d21's "~12x" is wrong as written; this document's is right.**
+   The commit message pairs "~12x throughput" with "(~9-11 tok/s on the 120B
+   MoE vs ~400 stock)". Those numbers give 36-44x and cross models: ~400 tok/s
+   was measured on the DENSE 3B stock arm, 9-11 tok/s on the 120B MoE bundle.
+   The ~12x above (Arm C aside: 400 vs ~33 tok/s) is dense-vs-dense and
+   correct. **No MoE stock arm exists, so the eager-vs-graphs cost for the MoE
+   is unmeasured.**
+
+2. **A2 "cap-truncated" is unsupported and probably wrong.** No finish_reason
+   or token count was recorded for A2's accepted row (the run-2 log carries
+   them only for arm C's client-REJECTED bodies; recording on accepted rows
+   was added at fadfab16); the doc's own chars/4 proxy gives ~26.3k tokens,
+   BELOW the 32,768 cap; and the raw text ends in a complete final answer
+   (`rw [AlgHom.fieldRange_eq_map]`, exactly the tactic the reasoning
+   announced). The one pairing that lands near the cap — 47.6 min at the
+   engine's 11.3 tok/s = 32,273 tokens, 1.5% below — means truncation cannot
+   be fully excluded, only unsupported.
+
+3. **"First differing byte" columns are CHARACTER offsets.** The comparator
+   zipped Python strings. As UTF-8 bytes: 243 -> 243, 85 -> 85, 1,735 ->
+   1,763, 264 -> 276. Identity verdicts are unaffected (sha256 is computed
+   over encoded bytes).
+
+4. **The "k is the only knob, from a measured tokens/s" rule governed 1 of 5
+   arms.** Run-1 arms B and C picked k from a 0.0 tok/s broken probe (the
+   256-token bug disclosed above) via the `max(1, k - 1)` floor. Run-2 arms
+   A2 AND C overrode the estimator (k_from_estimator=1) with `--force-k 4`;
+   A2's override is disclosed above ("k requested = 4"), arm C's was not —
+   this line is that disclosure. Under the corrected control counting above
+   (0/5), 4 of the 5 pooled control rows exist only via that override
+   (run-2 arm C's 4 rows; run-1 contributed 1); they strengthen the
+   control, so no verdict changes.
+
+5. **Line "run 2 ... same ... prompt prefix; k=3" conflicts with "k requested
+   = 4".** The record: `k_forced=4, k_chosen=4, k_from_estimator=1`; the
+   deadline landed A2 at k=1. The "k=3" was the pre-run plan and is wrong as
+   a description of the request.
+
+6. **"tp=4 ... stock control 1/4" (context section) folds a rate the tp=4
+   record forbids.** TP4HINGE_SUMMARY.txt: "3/3 divergent among rows compared
+   as-drawn; the 4th (AlgHom) was a length-1 delivery fault in P1 whose
+   SEPARATE retry happened to match P2 -- do not fold into a rate."
+
+7. **Spend-ledger details.** (a) "EBS, 700 GB gp3 x2": the probe never set a
+   volume size, so the harness default **300 GB** applied; EBS is ~$0.10, not
+   ~$0.24. (b) "~3 h 15 min ... wall" matches no artifact: the ledger's
+   box-time sums to 3h01m, launch-to-final-teardown spans ~3h06m; the figure
+   is session clock, unauditable from the record. (c) The prose launch times 23:48:45Z /
+   00:59:30Z are LOCAL post-IP-wait stamps. The ledger is mixed-basis: box
+   1's row starts from the local stamp (AWS LaunchTime 23:48:39Z, a 6 s /
+   ~$0.03 gap), while box 2's row starts from 00:59:24, which IS the AWS
+   LaunchTime.
+
+8. **The two vLLM API keys embedded in the committed report JSONs were
+   redacted on 2026-08-23** (`api_key` values inside the captured
+   `engine_config_lines`, 9 occurrences in `moe_tp8_report.json`, 6 in
+   `moe_tp8_report_run2.json`, replaced by `REDACTED-DEAD-KEY-2026-08-23`).
+   Both keys were per-run server credentials for boxes terminated on
+   2026-08-22. The original bytes remain BOTH in git history at e3068d21 AND
+   in plaintext inside the committed r7-moe-tp8 evidence tarball (unmodified
+   here — evidence archives are not rewritten), so this redaction is hygiene
+   for the working reports, not removal from the record. The EVIDENCE.json
+   shas for both files were updated in the same commit.

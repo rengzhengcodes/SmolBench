@@ -669,7 +669,35 @@ serving configuration, in the same commit that carries this note.]**
   (~9–11 tok/s on the 120B MoE, ~33 tok/s dense-3B, vs ~400 stock) — the
   Tier-2 cost §4 accepts is now a number. Data:
   `notebooks/deduction/results/moe_tp8_report*.json` + `MOETP8_SUMMARY.md`,
-  `scripts/moe_tp8_probe.py`. Two further
+  `scripts/moe_tp8_probe.py`.
+  **[CORRECTIONS 2026-08-23 — adversarial audit, applied to this section's
+  claims.]** (i) Commit e3068d21's "~12x throughput ... (~9-11 tok/s on the
+  120B MoE vs ~400 stock)" is wrong as written: 400/9-11 = 36-44x and it
+  crosses models (the ~400 tok/s is the DENSE 3B stock arm). ~12x is
+  supportable only dense-vs-dense (400 vs ~33); **no MoE stock arm exists, so
+  the MoE's eager-vs-graphs cost is unmeasured.** (ii) The tp=8 dense arm's
+  "custom all-reduce ACTIVE" (6f411981's title) IS supported by a live
+  artifact — but not the one the probe committed. The probe JSON's own
+  serve-log capture is empty (pre-fix capture), which is what the
+  2026-08-22 audit could see; the mechanism was in fact recorded during the
+  run by an authenticated GET /status at 21:41Z on i-03ed51f2b12061e4c:
+  `tp8_topology_evidence.json` (engine config `tensor_parallel_size=8,
+  disable_custom_all_reduce=False, enforce_eager=True, seed=0`, all 8
+  Worker_TP ranks, the `allreduce_rms` fusion line). That artifact reached
+  the repo only at 1567b876 (evidence tarball r6-tp8) and is sha-pinned by
+  results/EVIDENCE.json since b238ba13 — so the audit's "unauditable from
+  the record" was true when written and is CLOSED now, and fadfab16's
+  commit message repeats the pre-closure framing. The 8/8 byte result was
+  always independent of this (raw texts now committed). Since fadfab16
+  every probe refuses to attach a config claim to an unusable capture
+  (mechanism_evidence gate, all three drivers). (iii) 6f411981's "$~50 of
+  $80 cap" is uncorroborated by any run artifact and wrong: launch-to-
+  terminate 1.398 box-hours (21:34:57 -> 22:58:49, box1_ministral.log) x
+  the verified us-east-2a spot rate $19.9802/h = ~$27.9; "$~50" looks like
+  the stale ~$36/h figure. (iv) The dense stock positive controls on record are
+  ministral-3-3b-only: nemotron's tp=1 stock arm was itself 8/8 byte-identical
+  (prefix-cache replay) and tp=4 nemotron ran no stock arm. Arms run after
+  fadfab16 carry a per-arm perturbation sensitivity control instead. Two further
   recipe rows are unaddressed by this adoption: **#9** (a batch-invariant
   kernel mode, which Appendix B still lists as [UNVERIFIED] and which would
   retire the expensive `--max-num-seqs 1`) and **#10** (streaming; the one
@@ -1103,6 +1131,31 @@ write-up; do not run twenty lanes.**
 > teardown sweep scripts filter tag key `Experiment` while the harness tags
 > `smolbench:experiment`, making the sweep a no-op (teardown was confirmed
 > by direct instance-id describe instead).
+
+> **[CORRECTIONS 2026-08-23 — adversarial audit, applied to the two §7.2
+> notes above.]** (i) The n=311 note's "three spot reclaims" (commit f9a3e5db:
+> "3 spot reclaims") is wrong, and the FINAL note's "88 reclaim-lost cells"
+> folds the same error: the committed `spend.json` records TWO spot
+> reclaims plus a deadline-timer cut on box 3 (`timer_cut.sh`, HARD CUT
+> 16:20:58Z) — equally outcome-independent, so the sampling argument is
+> unaffected. (ii) The
+> "verifier drift 511/511" figure double-counts overlapping gate sets
+> (200 leg-1 + 200 leg-2 pre-spend + 111 pooled re-checks, the 111 a subset
+> of the 200); distinct cells drift-checked were 400, and the honest pooled
+> figure is the full draw's 399/399. (iii) CI labels: the leg-2
+> "[3.8, 14.8]" is the CLOPPER-PEARSON interval (its cluster-bootstrap
+> counterpart is [3.0, 14.2]); the interim pooled "[5.5, 12.9]" is already
+> labeled cluster inline; only the FINAL note's "[6.1, 12.3]" lacked its
+> label — it is the cluster-bootstrap interval (Clopper-Pearson pooled is
+> [6.4, 12.3]). (iv) "flip rate ... stable across every extension":
+> the n=200 point was 9.5% (then 9.0% at n=311 and n=399); 9.5% lies inside
+> the pooled CI, so "consistent", not identical. (v) The three tooling
+> defects above are now FIXED: (a)+(b) repo-wide at commit 2c98e2ee
+> (ALL-cells resume, identity-keyed pairing, full-pass sentinel gate that
+> fires on resumed passes); (c) by the fleet_teardown-only process rule
+> below (1567b876). The full-draw REPORT's "found and fixed" heading and
+> this note's "NOT YET FIXED" were both partial at their write times; this
+> supersedes both.
 
 > **[PROCESS RULE 2026-08-23 — teardown sweeps.]** Do not write per-run
 > teardown scripts. Use `scripts/fleet_teardown.py` for every sweep. It

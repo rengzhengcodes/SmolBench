@@ -206,3 +206,51 @@ Two teardown notes worth carrying forward:
   alone. (Also present: `i-0e52cb0bb33999a94`, m7i.16xlarge, **stopped** since 2026-08-16,
   tagged `verify-lean`.) Flagging it because a p5.48xlarge is the most expensive box in this
   account's rotation and it should be confirmed as intentionally owned by that workflow.
+
+---
+
+## CORRECTIONS 2026-08-23 — adversarial-audit findings applied
+
+*Appended, not rewritten. Everything above records what was believed on
+2026-08-22 and is left intact; this block supersedes it on the points named
+here. Source: the 2026-08-22 adversarial verification campaign plus the
+2026-08-23 independent re-verification.*
+
+1. **"three spot reclaims" is wrong; the committed `spend.json` in this
+   directory is right.** Boxes 1 and 2 ended on SPOT RECLAIM; box 3 ended on
+   a deadline timer plus explicit terminate (`timer_cut.sh`, HARD CUT
+   16:20:58Z, preserved in the r5 tarball). So the 88 missing cells came from
+   **two reclaims + one deliberate wall-clock cut** — also outcome-independent,
+   so the COMPLETE-THEOREM argument above is unaffected. The same "three spot
+   reclaims" phrasing in commit f9a3e5db and the plan is corrected in the
+   plan.
+
+2. **The Verdict's "0.01 pt above a 2.0 pt floor" overstates the margin 2x.**
+   The estimate is 2.00501 pt: **0.005 pt** above the floor. The qualitative
+   point stands — one discordant cell moves the shift by 1/399 = 0.251 pt and
+   flips the classification.
+
+3. **"Every per-stratum McNemar p is >= 0.17" is false as written.** Leg 1's
+   stratum p = 0.1671 (`by_process_full.json`). Correct floor: >= 0.167.
+
+4. **The heading "Two defects found and fixed in the verification tail"
+   overstated what happened on 2026-08-21.** No code was changed then; the
+   defects were worked around (isolation via `_LocalRunClient`) and recorded
+   as NOT YET FIXED in the plan and the commit message. **They are now
+   actually fixed** — repo-wide, at commit 2c98e2ee (2026-08-23): ALL-cells
+   resume rule, identity-keyed second-pass pairing, and a full-pass sentinel
+   gate that fires on resumed passes. Defect (3) (teardown tag key) is
+   addressed by the fleet_teardown-only process rule (commit 1567b876).
+
+5. **The evidence this report cites is now pinned in the record.**
+   `preregistered_framing.md`, `pool_analyze.py` (sha 3824a49b…, equal in r5
+   and r6 as claimed above), `server_config_box3_vs_box4_diff.json`,
+   `backup_pre_r6`, and the TRUE 331-row `all_rows_leg2_full_raw.jsonl.gz`
+   existed only in the producing session's /tmp when this report was
+   committed. They are now sha-pinned by this directory's `EVIDENCE.json`
+   (commit b238ba13) inside the committed evidence tarballs (commit
+   1567b876). The committed `all_rows_leg2_final_raw.jsonl.gz` is the INTERIM raw
+   despite its name (243 rows, 111 analyzable pairs; the sweep reached 112
+   of 200 cells) — see its manifest note. Caveat that stands:
+   the preregistration's "fixed 21:45Z before grading" ordering rests on a
+   mutable /tmp mtime and cannot be certified retroactively.
