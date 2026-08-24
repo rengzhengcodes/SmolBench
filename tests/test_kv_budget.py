@@ -1,10 +1,10 @@
-"""Pins ``scripts/arch/kv_budget.py`` to the 2026-08-13 fleet audit's table.
+"""Pin ``scripts/arch/kv_budget.py`` to the 2026-08-13 fleet audit's table.
 
 Each expected value below was independently derived in the audit (and the
-sliding/MLA rows hand-checked again when this tool was written): they are the
-corrected KV@131k figures whose divergence from the naive all-full assumption
-motivated re-deriving tier assignments for the replication study. A formula
-regression here silently re-poisons that sizing.
+sliding/MLA rows hand-checked again when this tool was written). They are
+the corrected KV@131k figures whose divergence from the naive all-full
+assumption motivated re-deriving tier assignments for the replication
+study. A formula regression here silently re-poisons that sizing.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def test_naive_kv_reproduces_the_wrong_assumption(model, expected):
 
 
 def test_kv_head_replication_scales_with_tp():
-    # DeepSeek-V4-Pro has ONE KV head: tp=8 replicates its KV 8x. This is
+    # DeepSeek-V4-Pro has one KV head: tp=8 replicates its KV 8x. This is
     # why the model is genuinely KV-huge despite MQA.
     assert _kv_gb("deepseek-v4-pro", tp=8) == pytest.approx(
         8 * _kv_gb("deepseek-v4-pro", tp=1), rel=1e-6
@@ -62,7 +62,7 @@ def test_kv_head_replication_scales_with_tp():
 
 
 def test_mla_ignores_tp_replication():
-    # MLA caches one shared latent -- there are no KV heads to replicate.
+    # MLA caches one shared latent: there are no KV heads to replicate.
     assert _kv_gb("deepseek-v3.1", tp=8) == _kv_gb("deepseek-v3.1", tp=1)
 
 
@@ -82,10 +82,10 @@ def test_exaone_lllg_pattern_expands_correctly():
 
 
 def test_bare_sliding_window_without_mix_fields_is_not_applied():
-    # DeepSeek-V4 carries sliding_window=128 for its CSA/HCA sparse scheme
-    # but has neither layer_types nor sliding_window_pattern -- its KV stays
-    # full-length (treating it as windowed would shrink KV ~1000x and
-    # produce boxes that OOM at serve).
+    # DeepSeek-V4 carries sliding_window=128 for its CSA/HCA sparse scheme,
+    # but has neither layer_types nor sliding_window_pattern. Its KV stays
+    # full-length. (If it were treated as windowed, KV would shrink about
+    # 1000x and produce boxes that OOM at serve.)
     cfg = _text_config(RAW["deepseek-v4-pro"])
     assert cfg.get("sliding_window") and not cfg.get("layer_types")
     assert _kv_gb("deepseek-v4-pro") == pytest.approx(

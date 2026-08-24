@@ -1,11 +1,11 @@
-"""Offline tests for scripts/merge_lean_shards.py's merge gates.
+"""Test scripts/merge_lean_shards.py's merge gates.
 
-The merge is the single point where three shard boxes' outputs become the
-canonical lane object the verify pass and analysis read, so its gates
-(uniqueness, expected totals, no-clobber, theorems/ disjointness) are what
-stand between a mis-sharded fleet and silently corrupt study data. Spool
-behaviour is NOT re-tested here -- --spool reuses the deduction driver's own
-spool_to_s3, which has its own tests.
+The merge is the single point where three shard boxes' outputs become
+the canonical lane object the verify pass and analysis read. So its
+gates (uniqueness, expected totals, no-clobber, theorems/ disjointness)
+are what stand between a mis-sharded fleet and silently corrupt study
+data. Spool behavior is NOT re-tested here. --spool reuses the
+deduction driver's own spool_to_s3, which has its own tests.
 """
 
 import importlib.util

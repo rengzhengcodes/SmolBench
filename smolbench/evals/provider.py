@@ -1,36 +1,39 @@
 """
-Dispatches to the active inference provider based on INFERENCE_PROVIDER.
+Dispatch to the active inference provider, based on INFERENCE_PROVIDER.
 
-Set INFERENCE_PROVIDER=openrouter (default), primeintellect, aws (Amazon
-Bedrock by default; set AWS_INFERENCE_BASE_URL to target a SageMaker
-endpoint), or ec2 (a self-provisioned EC2 spot instance running vLLM; the
-endpoint is resolved at call time from the local state file written by
-smolbench.evals.ec2.provision_spot_instance) in keys.env, then import
-query/complete/evaluate/get_model_context_length from this module instead of
-a provider-specific one.
+Set INFERENCE_PROVIDER in keys.env to one of: openrouter (the default),
+primeintellect, aws (Amazon Bedrock by default; set AWS_INFERENCE_BASE_URL
+to target a SageMaker endpoint instead), or ec2 (a self-provisioned EC2
+spot instance running vLLM). For ec2, the endpoint is resolved at call
+time from the local state file written by
+smolbench.evals.ec2.provision_spot_instance. Then import
+query/complete/evaluate/get_model_context_length from this module, instead
+of from a provider-specific one.
 
-Dispatch happens at CALL time: INFERENCE_PROVIDER is read (and the provider
-module imported) on each call, not when this module is imported. Notebooks
-therefore only need their env configured -- e.g. via load_dotenv(keys.env) --
-before the first query/evaluate call, not before any import, and switching
-providers mid-session is just a matter of changing the env var.
+Dispatch happens at CALL time: this module reads INFERENCE_PROVIDER, and
+imports the provider module, on each call -- not when this module itself
+is imported. A notebook therefore only needs its env configured (e.g. via
+load_dotenv(keys.env)) before the first query/evaluate call, not before
+any import. Switching providers mid-session is just a matter of changing
+the env var.
 
-Callers that need to mix providers per model within one process -- e.g. a
-Lean sweep runner iterating over models that live on different providers,
-where a single INFERENCE_PROVIDER env var can't express "this model via ec2,
-that one via openrouter" at the same time -- can resolve a provider module
-explicitly via provider_module("ec2"), bypassing the environment entirely,
-instead of going through the env-dispatched query/evaluate/complete/
-get_model_context_length functions below (smolbench.deduction.lean uses exactly this
-explicit-name pattern; everything else uses env dispatch).
+A caller that needs to mix providers per model within one process -- e.g.
+a Lean sweep runner iterating over models that live on different
+providers, where a single INFERENCE_PROVIDER env var cannot express "this
+model via ec2, that one via openrouter" at the same time -- can resolve a
+provider module explicitly via provider_module("ec2"). That call bypasses
+the environment entirely, instead of going through the env-dispatched
+query/evaluate/complete/get_model_context_length functions below.
+smolbench.deduction.lean uses exactly this explicit-name pattern;
+everything else uses env dispatch.
 
-This module only dispatches; it has no provisioning logic of its own. The
-AWS-specific provisioning primitives shared by aws.py (SageMaker) and
+This module only dispatches; it holds no provisioning logic of its own.
+The AWS-specific provisioning primitives shared by aws.py (SageMaker) and
 ec2.py (EC2 Spot) -- fresh-Session clients, IAM role setup, the generic
-poll loop, teardown -- live in smolbench.evals._aws, with each provider's
-own deploy/serve/teardown lifecycle built on top in aws.py/ec2.py
-respectively; see _aws.py's module docstring for the lifecycle-
-correspondence table between the two.
+poll loop, teardown -- live in smolbench.evals._aws. Each provider builds
+its own deploy/serve/teardown lifecycle on top of those primitives, in
+aws.py/ec2.py respectively; see _aws.py's module docstring for the
+lifecycle-correspondence table between the two.
 """
 
 import importlib
@@ -50,41 +53,42 @@ _PROVIDER_MODULES: dict[str, str] = {
 
 
 def provider_module(name: Optional[str] = None) -> ModuleType:
-    """Resolves a provider module, explicitly or from the environment.
+    """Resolve a provider module, either explicitly or from the environment.
 
     ``name=None`` (the default) reproduces the original env-dispatch
-    behavior: INFERENCE_PROVIDER is read from the environment (default
-    "openrouter" when unset). Passing an explicit ``name`` bypasses the
-    environment entirely and resolves that provider directly -- see the
+    behavior: this function reads INFERENCE_PROVIDER from the environment
+    (default "openrouter" when unset). Passing an explicit `name` bypasses
+    the environment entirely and resolves that provider directly. See the
     module docstring for why a caller (e.g. a Lean sweep runner mixing
-    providers per model) would want that instead of the env-dispatched
+    providers per model) would want that, instead of the env-dispatched
     query/evaluate/complete/get_model_context_length functions below.
 
-    Raises an actionable error for unknown providers (explicit or from
-    INFERENCE_PROVIDER), and for a resolved name of "sagemaker" without a
-    base URL: the aws module defaults to the Bedrock URL, so selecting
-    sagemaker without one would silently hit Bedrock instead. This guard
-    applies identically whether "sagemaker" came from the environment or was
-    passed explicitly as ``name``. (The ec2 provider needs no such guard --
-    it raises its own actionable error at call time when no instance has
-    been provisioned.)
+    This function raises an actionable error for an unknown provider name
+    (explicit or from INFERENCE_PROVIDER). It also raises when the
+    resolved name is "sagemaker" with no base URL set: the aws module
+    defaults to the Bedrock URL, so selecting sagemaker with no base URL
+    would silently hit Bedrock instead. This guard applies the same way
+    whether "sagemaker" came from the environment or was passed explicitly
+    as `name`. The ec2 provider needs no such guard -- it raises its own
+    actionable error at call time when it finds no provisioned instance.
 
     Parameters
     ----------
-    name:
+    name : str, optional
         Provider name (e.g. "openrouter", "aws", "bedrock", "sagemaker",
         "ec2"), or None to dispatch from INFERENCE_PROVIDER instead.
 
     Returns
     -------
-    The imported provider module (exposes ``query``/``complete``/
-    ``evaluate``/``get_model_context_length``).
+    ModuleType
+        The imported provider module. It exposes ``query``/``complete``/
+        ``evaluate``/``get_model_context_length``.
 
     Raises
     ------
     ValueError
-        The resolved name is not a recognized provider, or resolves to
-        "sagemaker" without AWS_INFERENCE_BASE_URL set.
+        The resolved name is not a recognized provider, or it resolves to
+        "sagemaker" with no AWS_INFERENCE_BASE_URL set.
     """
     # Design: an explicit `name` bypasses the environment lookup entirely
     # rather than merely overriding it, so a caller resolving "ec2" here
@@ -111,30 +115,31 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
 
 
 def query(*args, **kwargs):
-    """The active provider's query; see ChatClient.query for parameters."""
+    """Query the active provider; see ChatClient.query for the parameters."""
     return provider_module().query(*args, **kwargs)
 
 
 def complete(*args, **kwargs):
-    """The active provider's complete; see ChatClient.complete for parameters.
+    """Query the active provider; see ChatClient.complete for the parameters.
 
     Returns the full ``ChatResult`` (content, reasoning, token usage,
-    server-reported model, finish_reason) instead of query's narrowed
+    server-reported model, finish_reason), instead of query's narrowed
     ``(content, reasoning)`` 2-tuple.
     """
     return provider_module().complete(*args, **kwargs)
 
 
 def evaluate(*args, **kwargs):
-    """The active provider's evaluate; see ChatClient.evaluate for parameters.
+    """Evaluate a quiz on the active provider; see ChatClient.evaluate.
 
-    Every provider shares one implementation (smolbench.evals.openai_compat),
-    so per-call tuning -- extra_args, max_parallel, request_timeout,
-    show_progress -- works identically regardless of INFERENCE_PROVIDER.
+    Every provider shares one implementation
+    (smolbench.evals.openai_compat), so per-call tuning -- extra_args,
+    max_parallel, request_timeout, show_progress -- works the same way
+    regardless of INFERENCE_PROVIDER.
     """
     return provider_module().evaluate(*args, **kwargs)
 
 
 def get_model_context_length(model: str) -> int:
-    """The active provider's context-window lookup for ``model``."""
+    """Look up the active provider's context window for `model`."""
     return provider_module().get_model_context_length(model)

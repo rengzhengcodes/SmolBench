@@ -1,27 +1,28 @@
-"""Offline tests for the determinism probes' PURE comparison/verdict logic.
+"""Test the determinism probes' pure comparison and verdict logic, offline.
 
 The four probes (`scripts/hardware_equivalence_probe.py`, `hinge_probe.py`,
-`tp4_hinge_probe.py`, `tp8_hinge_probe.py`, `moe_tp8_probe.py`) cannot be run
-end-to-end without provisioning an 8-GPU box, so what is pinned here is the
-logic that decides what a run MEANS: the empty-row rule that sets the identity
-denominator, the per-arm sensitivity control that decides whether a k/k result
-is a HOLD or an UNMEASURED, the throughput fallback flag, and the row
-serialization every committed SHA table was recorded against.
+`tp4_hinge_probe.py`, `tp8_hinge_probe.py`, `moe_tp8_probe.py`) cannot run
+end-to-end without provisioning an 8-GPU box. So this file pins the logic
+that decides what a run means. That logic covers the empty-row rule that
+sets the identity denominator, and the per-arm sensitivity control that
+decides whether a k/k result is a HOLD or an UNMEASURED. It also covers
+the throughput fallback flag and the row serialization every committed
+SHA table was recorded against.
 
 Three of these guard defects that already put a wrong number in a published
 result (2026-08-23 repair):
 
-* the empty-row rule excluded a row when EITHER pass was empty, so a real
-  wire-level divergence (P1 = 83,661 chars vs P2 = a discarded 106,545-char
-  reasoning-only cap-hit) was published as "excluded (empty)" and the
-  positive control was reported 0/3 instead of 0/4;
-* nothing tied a HOLD verdict to a control that had actually fired, so a
-  tp=8 dense HOLD was banked alongside a 0-row control;
-* `fallback_rate_used` was written into a dict that the very next statement
-  reassigned, so the flag never survived into any report.
+* The empty-row rule excluded a row when either pass was empty, so a real
+  wire-level divergence (P1 = 83,661 chars vs P2 = a discarded
+  106,545-char reasoning-only cap-hit) was published as "excluded (empty)"
+  and the positive control was reported 0/3 instead of 0/4.
+* Nothing tied a HOLD verdict to a control that had actually fired, so a
+  tp=8 dense HOLD was banked alongside a 0-row control.
+* `fallback_rate_used` was written into a dict that the very next
+  statement reassigned, so the flag never survived into any report.
 
-``scripts/`` is not an importable package, so each probe is loaded by path
-(mirrors ``tests/test_flip_probe.py`` / ``tests/test_delivery_probe.py``).
+``scripts/`` is not an importable package, so each probe loads by path
+(mirroring ``tests/test_flip_probe.py`` and ``tests/test_delivery_probe.py``).
 """
 
 from __future__ import annotations
@@ -37,23 +38,24 @@ _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
 def _load(name: str, filename: str):
-    """Loads a `scripts/*.py` probe by path, WITHOUT leaking its sys.path edit.
+    """Load a `scripts/*.py` probe by path, without leaking its sys.path edit.
 
-    `tp4_hinge_probe`, `tp8_hinge_probe` and `moe_tp8_probe` each run
-    ``sys.path.insert(0, "/workspace/SmolBench")`` at module scope. Inside the
-    repo that is a no-op in effect, but it is an import-time mutation of
-    global interpreter state that outlives this module and reorders `sys.path`
-    for every test that runs afterwards. It has a concrete false-green mode:
-    running this suite against a COPY of the tree (e.g. a `git archive HEAD`
-    baseline used to prove a test fails pre-change) puts the live
-    `/workspace/SmolBench` ahead of the copy, so `import smolbench...` in any
-    later test silently resolves to the live, already-fixed package and the
-    baseline run passes. Measured: the same baseline copy reported 3 failures
-    with this file absent and 0 with it collected first.
+    `tp4_hinge_probe`, `tp8_hinge_probe`, and `moe_tp8_probe` each run
+    ``sys.path.insert(0, "/workspace/SmolBench")`` at module scope. Inside
+    the repo that has no effect, but it is still an import-time mutation of
+    global interpreter state. It outlives this module and reorders
+    `sys.path` for every test that runs afterwards. It has a concrete
+    false-green mode. If you run this suite against a copy of the tree,
+    for example a `git archive HEAD` baseline used to prove a test fails
+    pre-change, the live `/workspace/SmolBench` ends up ahead of the
+    copy. So `import smolbench...` in any later test silently resolves to
+    the live, already-fixed package, and the baseline run passes.
+    Measured: the same baseline copy reported 3 failures with this file
+    absent, and 0 with it collected first.
 
-    `sys.path` is therefore snapshotted and restored around the exec. The
-    probe modules are fully loaded by then and resolve `smolbench` through
-    the entry pytest already provides for the tree under test.
+    `sys.path` is therefore snapshotted and restored around the exec. By
+    then the probe modules are fully loaded, and they resolve `smolbench`
+    through the entry pytest already provides for the tree under test.
     """
     saved = list(sys.path)
     try:
@@ -74,20 +76,20 @@ moe = _load("moe_tp8_probe", "moe_tp8_probe.py")
 
 
 # ---------------------------------------------------------------------------
-# D6 -- the empty-row rule: exclude only when BOTH passes are empty
+# D6 -- the empty-row rule: exclude only when both passes are empty
 # ---------------------------------------------------------------------------
-# A row is "empty" at length <= 1 because the stored text is
+# A row is "empty" at length <= 1, because the stored text is
 # `reasoning + "\x00" + content`: a row with neither channel is exactly the
-# one separator byte. Excluding on EITHER side made a one-sided empty row --
-# a pass that delivered 83k characters against a pass that delivered nothing
-# -- silently vanish from the denominator. That is the single most divergent
-# outcome possible, and it was being scored as "unmeasured".
+# one separator byte. If either side was excluded, a one-sided empty row
+# (a pass that delivered 83k characters against a pass that delivered
+# nothing) would silently vanish from the denominator. That is the single
+# most divergent outcome possible, and it was being scored as "unmeasured".
 
 
 #: One fixture exercising all four cases at once:
 #:   p_same       both non-empty and identical  -> identical, in n
 #:   p_diff       both non-empty and different  -> divergent,  in n
-#:   p_one_sided  A empty, B a real generation  -> DIVERGENT,  in n   (the fix)
+#:   p_one_sided  A empty, B a real generation  -> divergent,  in n   (the fix)
 #:   p_both_empty neither pass delivered        -> excluded,   not in n
 _A = {"p_same": "AAA", "p_diff": "BBB", "p_one_sided": "\x00", "p_both_empty": ""}
 _B = {"p_same": "AAA", "p_diff": "CCC", "p_one_sided": "a real 83k generation",
@@ -96,11 +98,11 @@ _B = {"p_same": "AAA", "p_diff": "CCC", "p_one_sided": "a real 83k generation",
 
 @pytest.mark.parametrize("mod", [tp4, tp8], ids=["tp4_copy", "tp8_copy"])
 def test_guarded_compare_excludes_only_both_empty_rows(mod):
-    """Both copies of the rule must agree; a fix to one only is still a bug.
+    """Both copies of the rule must agree; a fix to only one is still a bug.
 
-    tp4 and tp8 carry independent copies of ``guarded_compare`` and
-    ``moe_tp8_probe`` reuses tp8's, so parametrizing over both is what stops
-    a half-applied fix from passing.
+    tp4 and tp8 carry independent copies of ``guarded_compare``, and
+    ``moe_tp8_probe`` reuses tp8's. So parametrizing over both is what
+    stops a half-applied fix from passing.
     """
     out = mod.guarded_compare(hwprobe, _A, _B)
 
@@ -109,7 +111,7 @@ def test_guarded_compare_excludes_only_both_empty_rows(mod):
     assert out["identical"] == 1
     assert out["n_before_exclusion"] == 4
 
-    # Only the row where NEITHER pass delivered is excluded.
+    # Only the row where neither pass delivered is excluded.
     assert out["excluded_empty_rows"] == ["p_both_empty"]
     assert out["one_sided_empty_rows"] == ["p_one_sided"]
 
@@ -121,9 +123,10 @@ def test_guarded_compare_excludes_only_both_empty_rows(mod):
 def test_guarded_compare_one_sided_row_can_never_be_identical(mod):
     """A one-sided empty row entering n must always lower the rate.
 
-    Pins the property the rule rests on: one side <= 1 char and the other
-    side longer cannot be byte-equal, so admitting the row to the denominator
-    can only ever reduce `identical/n` -- it can never manufacture agreement.
+    This pins the property the rule rests on: one side <= 1 char and the
+    other side longer cannot be byte-equal. So admitting the row to the
+    denominator can only ever reduce `identical/n`; it can never
+    manufacture agreement.
     """
     a = {"only": "\x00"}
     b = {"only": "x" * 500}
@@ -156,20 +159,20 @@ class _FakeChatResult(SimpleNamespace):
 
 
 def _fake_ec2(responses, monkeypatch, allow_query=False):
-    """Points the probes' `ec2` module at canned ChatResults.
+    """Point the probes' `ec2` module at canned ChatResults.
 
-    ``_CLIENT`` is a frozen dataclass, so it is REPLACED wholesale rather
-    than mutated, and ``ec2.complete`` is patched separately because it is a
-    bound method captured at import time.
+    ``_CLIENT`` is a frozen dataclass, so this function replaces it
+    wholesale instead of mutating it. ``ec2.complete`` is patched
+    separately, because it is a bound method captured at import time.
 
     ``allow_query`` decides whether ``ec2.query`` is a working narrowing
-    wrapper over the same queue or a tripwire. The COMPARISON passes must go
-    through ``complete()`` -- ``query()`` discards the finish reason and token
-    counters that D6 exists to record -- so those tests leave it a tripwire
-    and get a diagnostic failure instead of a confusing one. The throughput
-    warm-up probe discards its output entirely and has no such requirement,
-    so its tests allow either call and pin only the behavior actually
-    specified.
+    wrapper over the same queue, or a tripwire. The comparison passes must
+    go through ``complete()``: ``query()`` discards the finish reason and
+    token counters that D6 exists to record. So those tests leave it a
+    tripwire, and get a diagnostic failure instead of a confusing one. The
+    throughput warm-up probe discards its output entirely and has no such
+    requirement, so its tests allow either call and pin only the behavior
+    actually specified.
     """
     from smolbench.evals import ec2
 
@@ -214,7 +217,7 @@ def test_run_pass_row_serialization_is_byte_identical(monkeypatch):
     Every committed `sha_table_P1/P2` and every `cross_tp` / `_vs_head`
     comparison is recorded against this exact byte layout. A change in
     separator, field order, or None handling would read downstream as a
-    kernel change rather than a serialization change.
+    kernel change, not a serialization change.
     """
     responses = [
         _result(content="C", reasoning="R"),
@@ -233,7 +236,8 @@ def test_run_pass_records_finish_reason_and_completion_tokens(monkeypatch):
 
     `finish_reason == "length"` with a large `completion_tokens` is what
     distinguishes "the model stopped" from "the model ran out of budget in
-    the reasoning channel" -- the population the empty-row bug was hiding.
+    the reasoning channel." This is the population the empty-row bug was
+    hiding.
     """
     responses = [_result(content="", reasoning="R" * 40,
                          finish_reason="length", completion_tokens=32768,
@@ -248,7 +252,7 @@ def test_run_pass_records_finish_reason_and_completion_tokens(monkeypatch):
 
 
 def test_run_pass_meta_is_optional(monkeypatch):
-    """Omitting `meta` must keep the historical Dict[str, str] return shape."""
+    """Without `meta`, the historical Dict[str, str] return shape must hold."""
     _fake_ec2([_result(content="C", reasoning="R")], monkeypatch)
     out = hwprobe.run_pass("m", [("a", "pa")], "L")
     assert out == {"a": "R\x00C"}
@@ -262,12 +266,13 @@ def test_run_pass_meta_is_optional(monkeypatch):
 
 
 def test_throughput_probe_fallback_flag_survives_the_write(monkeypatch):
-    """`fallback_rate_used` and the measurement must coexist in ONE dict.
+    """`fallback_rate_used` and the measurement must coexist in one dict.
 
-    The flag was written with `setdefault(...)[...] = rate` and then destroyed
-    by a full reassignment on the very next statement, so no report ever
-    recorded that a HARDCODED rate had been substituted for a measured one --
-    exactly the provenance that k, chosen from that rate, depends on.
+    The flag was written with `setdefault(...)[...] = rate` and then
+    destroyed by a full reassignment on the very next statement. So no
+    report ever recorded that a hardcoded rate had been substituted for a
+    measured one. That is exactly the provenance that k, chosen from that
+    rate, depends on.
     """
     _fake_ec2([_result(content="", reasoning=None)], monkeypatch, allow_query=True)
     from smolbench.evals import ec2
@@ -276,7 +281,7 @@ def test_throughput_probe_fallback_flag_survives_the_write(monkeypatch):
     rate = moe.throughput_probe(ec2, hwprobe, "nemotron-3-super-120b-a12b",
                                 "prompt", entry)
     tp = entry["throughput_probe"]
-    assert tp["fallback_rate_used"] == rate          # the flag SURVIVED
+    assert tp["fallback_rate_used"] == rate          # the flag survived
     assert rate == 9.1                               # the 120b fallback
     assert "approx_tok_s" in tp                      # the measurement is still there
     assert tp["chars"] == 0
@@ -302,7 +307,7 @@ def test_throughput_probe_measured_rate_sets_no_fallback_flag(monkeypatch):
 # title on a capture that was in fact empty (the pre-fix `/status` call was
 # unauthenticated and returned HTTP 401, so the field was empty by
 # construction, not because the box was quiet). The byte result stays
-# reportable; the MECHANISM claim must be marked UNMEASURED.
+# reportable; the mechanism claim must be marked UNMEASURED.
 
 
 def test_mechanism_evidence_present_when_engine_config_parsed():
@@ -317,7 +322,7 @@ def test_mechanism_evidence_present_when_engine_config_parsed():
     {},
     {"vllm_log_chars": 0},
     {"error": "HTTPError: 401"},
-    # Log captured, but NOTHING parsed out of it: the config claim has no basis.
+    # Log captured, but nothing parsed out of it: the config claim has no basis.
     {"vllm_log_chars": 14000, "engine_config_parsed": {}},
     {"vllm_log_chars": 14000},
 ], ids=["none", "empty", "zero-chars", "http-error", "chars-but-no-parse", "no-parse-key"])
@@ -326,13 +331,14 @@ def test_mechanism_evidence_unmeasured_without_a_parsed_config(sl):
 
 
 # ---------------------------------------------------------------------------
-# D5 -- the tp gate must read the CONTAINER, not the driver's own readback
+# D5 -- the tp gate must read the container, not the driver's own readback
 # ---------------------------------------------------------------------------
 # tp4's gate asserted `state["last_serve"]["tp"]`, which is the value the
-# driver itself computed and POSTed -- it can only ever confirm the driver
-# agrees with itself. Certifying tp=4 from a tp=1 container is the exact
-# failure the gate exists to prevent, and the payload readback cannot detect
-# it. The gate now reads vLLM's own engine-config line.
+# driver itself computed and posted. It can only ever confirm the driver
+# agrees with itself. If tp=4 were certified from a tp=1 container, that
+# would be exactly the failure the gate exists to prevent, and the
+# payload readback could not detect it. The gate now reads vLLM's own
+# engine-config line.
 
 
 def test_tp_gate_passes_on_matching_engine_config():
@@ -346,7 +352,7 @@ def test_tp_gate_passes_on_matching_engine_config():
 
 
 def test_tp_gate_rejects_a_container_serving_a_different_tp():
-    """The payload says 4, the container says 1 -- this must abort the arm."""
+    """The payload says 4, the container says 1: this must abort the arm."""
     with pytest.raises(RuntimeError) as exc:
         tp8.tp_gate({"vllm_log_chars": 9000,
                      "engine_config_parsed": {"tensor_parallel_size": "1"}},
@@ -362,10 +368,11 @@ def test_tp_gate_rejects_a_container_serving_a_different_tp():
     {"vllm_log_chars": 9000, "engine_config_parsed": {"enforce_eager": "True"}},
 ], ids=["none", "empty", "zero-chars", "nothing-parsed", "no-tp-key"])
 def test_tp_gate_aborts_rather_than_falling_back_to_the_payload(sl):
-    """An unparseable log must ABORT, never silently re-gate on the payload.
+    """An unparseable log must abort, never silently re-gate on the payload.
 
-    A silent fallback would restore exactly the blindness this change removes,
-    while leaving a `gate_basis` field claiming the container was checked.
+    A silent fallback would restore exactly the blindness this change
+    removes, while leaving a `gate_basis` field that claims the container
+    was checked.
     """
     with pytest.raises(RuntimeError):
         tp8.tp_gate(sl, expect_tp=4, payload_tp=4)
@@ -386,14 +393,14 @@ def test_tp_gate_rejects_payload_disagreeing_with_the_container():
 
 @pytest.mark.parametrize("mod", [tp8, moe], ids=["tp8", "moe"])
 def test_n_prompts_compared_is_assigned_after_the_p2_pass(mod):
-    """A source-ORDER pin, because this defect is purely one of ordering.
+    """A source-order pin, because this defect is purely one of ordering.
 
-    `n_prompts_compared` was set to `len(p2_prompts)` BEFORE P2 ran. P2 can
-    stop early on its wall-clock deadline, so a truncated pass left a stale k
-    in the report that overstated how many rows were actually compared -- the
-    number a k/k verdict is quoted against. There is no pure function to test
-    here: the fix is that the assignment happens after the pass returns, so
-    that is what is pinned.
+    `n_prompts_compared` was set to `len(p2_prompts)` before P2 ran. P2 can
+    stop early on its wall-clock deadline, so a truncated pass left a stale
+    k in the report that overstated how many rows were actually compared,
+    the number a k/k verdict is quoted against. There is no pure function
+    to test here. The fix is that the assignment happens after the pass
+    returns, so that is what this test pins.
     """
     import inspect
     import re
@@ -412,14 +419,14 @@ def test_n_prompts_compared_is_assigned_after_the_p2_pass(mod):
 # ---------------------------------------------------------------------------
 # D8 -- the per-arm sensitivity control
 # ---------------------------------------------------------------------------
-# Nothing tied a HOLD verdict to a control that had actually fired: the rule
-# was "k/k identical => HOLDS", full stop, and the tp=8 dense HOLD was banked
-# alongside a stock control that collected ZERO rows. A same-model stock
-# control cannot fix this in general -- nemotron-3-nano-4b's own tp=1 STOCK
-# arm was 8/8 identical (prefix-cache replay, 15,258 cache queries), so
-# "stock must diverge" can never gate that model. Each arm therefore carries
-# its own in-process control: one extra row from a deterministically
-# perturbed copy of the arm's first prompt, which MUST come back different.
+# Nothing tied a HOLD verdict to a control that had actually fired. The rule
+# was "k/k identical => HOLDS," full stop, and the tp=8 dense HOLD was
+# banked alongside a stock control that collected zero rows. A same-model
+# stock control cannot fix this in general: nemotron-3-nano-4b's own tp=1
+# STOCK arm was 8/8 identical (prefix-cache replay, 15,258 cache queries),
+# so "stock must diverge" can never gate that model. Each arm therefore
+# carries its own in-process control: one extra row from a deterministically
+# perturbed copy of the arm's first prompt, which must come back different.
 
 
 def test_sensitivity_verdict_differing_output_is_sensitive():
@@ -430,20 +437,20 @@ def test_sensitivity_verdict_differing_output_is_sensitive():
 
 
 def test_sensitivity_verdict_identical_output_is_blind():
-    """Same bytes out for a perturbed prompt in => the probe is not measuring."""
+    """Same bytes out for a perturbed prompt in: the probe is not measuring."""
     sens = hwprobe.evaluate_sensitivity(perturbed="identical", base="identical")
     assert sens["differs"] is False
     assert hwprobe.control_status(sens) == "BLIND"
 
 
 def test_sensitivity_truncated_prefix_is_blind_not_sensitive():
-    """THE discriminating case: a perturbed row that is a strict PREFIX of base.
+    """The discriminating case: a perturbed row that is a strict prefix of base.
 
-    A plain `perturbed != base` test calls this SENSITIVE purely because the
-    lengths differ, which makes the whole control vacuous whenever the
-    sensitivity row is generated under a smaller token cap than the passes it
-    controls. Sensitivity means the bytes DIVERGED, not that one generation
-    stopped earlier.
+    A plain `perturbed != base` test calls this SENSITIVE purely because
+    the lengths differ. That makes the whole control vacuous whenever the
+    sensitivity row is generated under a smaller token cap than the passes
+    it controls. Sensitivity means the bytes diverged, not that one
+    generation stopped earlier.
     """
     base = "the model said this and then a great deal more"
     sens = hwprobe.evaluate_sensitivity(perturbed="the model said this", base=base)
@@ -453,7 +460,7 @@ def test_sensitivity_truncated_prefix_is_blind_not_sensitive():
 
 
 def test_sensitivity_divergence_inside_the_common_span_is_sensitive():
-    """Shorter than base, but it DIVERGED before it stopped -> SENSITIVE."""
+    """Shorter than base, but it diverged before it stopped -> SENSITIVE."""
     base = "the model said this and then a great deal more"
     sens = hwprobe.evaluate_sensitivity(perturbed="the model said THAT", base=base)
     assert sens["differs"] is True
@@ -475,18 +482,18 @@ def test_sensitivity_empty_base_row_is_blind():
 
 
 def test_sensitivity_missing_row_is_blind():
-    """No control row at all is no evidence -- it must not default to SENSITIVE."""
+    """No control row at all is no evidence. It must not default to SENSITIVE."""
     assert hwprobe.control_status(None) == "BLIND"
     assert hwprobe.control_status({}) == "BLIND"
     assert hwprobe.control_status({"error": "RuntimeError: boom"}) == "BLIND"
 
 
 def test_run_sensitivity_row_perturbs_the_prompt_deterministically(monkeypatch):
-    """The perturbation is a FIXED prefix on the arm's own first prompt.
+    """The perturbation is a fixed prefix on the arm's own first prompt.
 
-    Deterministic by construction: no randomness and no timestamp, so the
-    control row is reproducible across arms, runs and boxes, and two arms on
-    the same model are controlling with the same stimulus.
+    This is deterministic by construction: no randomness and no timestamp.
+    So the control row is reproducible across arms, runs, and boxes, and
+    two arms on the same model control with the same stimulus.
     """
     _, calls = _fake_ec2([_result(content="a quite different output"),
                           _result(content="a quite different output")], monkeypatch)
@@ -535,7 +542,7 @@ def test_run_sensitivity_row_identical_output_reports_blind(monkeypatch):
 
 
 def test_verdict_line_blind_control_reports_unmeasured_never_hold():
-    """k/k identical + a BLIND control => UNMEASURED. This is the whole gate."""
+    """k/k identical plus a BLIND control equals UNMEASURED. This is the whole gate."""
     line = hwprobe.verdict_line(arm="det", identical=8, n=8,
                                 control_status="BLIND",
                                 model="ministral-3-3b", instance_id="i-abc")
@@ -550,7 +557,7 @@ def test_verdict_line_sensitive_control_holds_and_names_its_scope():
                                 stock_control="0/4")
     assert "HOLDS" in line
     assert "UNMEASURED" not in line
-    # D8.4: the control's SCOPE is named inside the verdict string itself.
+    # D8.4: the control's scope is named inside the verdict string itself.
     assert "SENSITIVE" in line
     assert "ministral-3-3b" in line
     assert "i-abc" in line
@@ -577,8 +584,8 @@ def test_verdict_line_divergence_does_not_hold():
 def test_verdict_line_zero_rows_is_unmeasured():
     """0/0 is not a HOLD: an arm that compared nothing certifies nothing.
 
-    The tp=8 stock control recorded n=0 and was still summarised as a fired
-    control; an arm that compared no rows must say so.
+    The tp=8 stock control recorded n=0 and was still summarized as a
+    fired control. An arm that compared no rows must say so.
     """
     line = hwprobe.verdict_line(arm="det", identical=0, n=0,
                                 control_status="SENSITIVE",
@@ -588,8 +595,11 @@ def test_verdict_line_zero_rows_is_unmeasured():
 
 
 def test_verdict_line_unmeasured_mechanism_evidence_is_named():
-    """D5.1: the byte result stays reportable, but the CONFIG claim cannot ride
-    on an empty serve-log capture -- the word must appear in the verdict."""
+    """D5.1: the byte result stays reportable.
+
+    But the config claim cannot ride on an empty serve-log capture. The
+    word must appear in the verdict.
+    """
     line = hwprobe.verdict_line(arm="B", identical=1, n=1,
                                 control_status="SENSITIVE",
                                 model="m", instance_id="i-1",
@@ -609,11 +619,11 @@ def test_verdict_line_measured_mechanism_evidence_adds_no_caveat():
 
 @pytest.mark.parametrize("mod,label", [(tp4, "tp4"), (tp8, "tp8"), (moe, "moe")])
 def test_drivers_emit_a_verdict_line_and_a_sensitivity_row(mod, label):
-    """Every probe driver must WIRE the control, not merely have it available.
+    """Every probe driver must wire the control, not merely have it available.
 
-    A source pin: the shared helpers existing while no driver calls them is
-    exactly the shape of the defect being fixed (a control that is available
-    but never gates anything).
+    This is a source pin. The shared helpers existing while no driver
+    calls them is exactly the shape of the defect being fixed: a control
+    that is available but never gates anything.
     """
     import inspect
 
@@ -627,9 +637,10 @@ def test_drivers_emit_a_verdict_line_and_a_sensitivity_row(mod, label):
 def test_sensitivity_row_is_kept_out_of_the_identity_denominator(mod, label):
     """The control row has no P2 twin and must never reach the sha table or gz.
 
-    Pinned as a source property: the sensitivity row is produced by
-    `run_sensitivity_row` and stored under `entry["sensitivity_row"]`, never
-    fed through `sha_table(...)`, the gz archive, or the compared pass dicts.
+    This is pinned as a source property. The sensitivity row is produced
+    by `run_sensitivity_row` and stored under `entry["sensitivity_row"]`,
+    never fed through `sha_table(...)`, the gz archive, or the compared
+    pass dicts.
     """
     import inspect
     import re
@@ -641,28 +652,30 @@ def test_sensitivity_row_is_kept_out_of_the_identity_denominator(mod, label):
         assert "sensitivity" not in m.group(1)
 
 # ---------------------------------------------------------------------------
-# D5.1 follow-up (2026-08-23) -- the config gate must be ARM-AGNOSTIC
+# D5.1 follow-up (2026-08-23) -- the config gate must be arm-agnostic
 # ---------------------------------------------------------------------------
-# The first pass wired `mechanism_evidence` into tp4 and moe only, because the
-# directive named those two files. That left tp8 -- THE arm of the motivating
-# incident -- ungated: a tp=8 dense arm banked a "custom all-reduce ACTIVE"
-# claim in a commit title on a serve-log capture that was empty by
-# construction (the pre-fix /status call was unauthenticated and returned
-# HTTP 401). tp8 already captured the log; it simply never asked whether the
-# capture supported a claim, and `entry.get("mechanism_evidence")` returned
-# None, which verdict_line correctly reads as "append no caveat". The gate is
-# arm-agnostic: every driver that can emit a config claim must compute it.
+# The first pass wired `mechanism_evidence` into tp4 and moe only, because
+# the directive named those two files. That left tp8, the arm of the
+# motivating incident, ungated: a tp=8 dense arm banked a "custom
+# all-reduce ACTIVE" claim in a commit title on a serve-log capture that
+# was empty by construction (the pre-fix /status call was unauthenticated
+# and returned HTTP 401). tp8 already captured the log; it simply never
+# asked whether the capture supported a claim, and
+# `entry.get("mechanism_evidence")` returned None, which verdict_line
+# correctly reads as "append no caveat." The gate is arm-agnostic: every
+# driver that can emit a config claim must compute it.
 
 
 @pytest.mark.parametrize("mod,label", [(tp4, "tp4"), (tp8, "tp8"), (moe, "moe")])
 def test_every_driver_gates_its_config_claim_on_the_serve_log(mod, label):
-    """All THREE drivers must compute mechanism_evidence AND pass it on.
+    """All three drivers must compute mechanism_evidence and pass it on.
 
-    A symmetric census. Before this fix the counts were tp4 computes:1
-    passes:2, moe computes:1 passes:2, but tp8 computes:0 passes:1 -- the lone
-    `passes` hit being `entry.get("mechanism_evidence")`, which can only ever
-    yield None there. An asymmetric census is the signature of a gate applied
-    file-by-file instead of to the behaviour.
+    This is a symmetric census. Before this fix the counts were tp4
+    computes:1 passes:2, moe computes:1 passes:2, but tp8 computes:0
+    passes:1, with the lone `passes` hit being
+    `entry.get("mechanism_evidence")`, which can only ever yield None
+    there. An asymmetric census is the signature of a gate applied
+    file-by-file instead of to the behavior.
     """
     import inspect
 
@@ -686,8 +699,8 @@ def test_empty_capture_forces_unmeasured_into_the_verdict_line(serve_log):
     """The end-to-end composition the drivers must perform, pinned directly.
 
     `mechanism_evidence(capture)` -> `verdict_line(..., mechanism_evidence=)`
-    is the whole gate. A k/k arm still reports its byte result, but the word
-    UNMEASURED must be present so no config claim can be read off it.
+    is the whole gate. A k/k arm still reports its byte result, but the
+    word UNMEASURED must be present, so no config claim can be read off it.
     """
     evidence = hwprobe.mechanism_evidence(serve_log)
     assert evidence == "UNMEASURED"
@@ -701,17 +714,18 @@ def test_empty_capture_forces_unmeasured_into_the_verdict_line(serve_log):
 # ---------------------------------------------------------------------------
 # D8 follow-up (2026-08-23) -- the sensitivity index must not be last-arm-wins
 # ---------------------------------------------------------------------------
-# The report-level index was keyed `f"{model}@{instance_id}"`, taken literally
-# from the spec's "keyed by (model, instance_id)". But every driver runs
-# SEVERAL arms against the same model on the same box -- tp4/tp8 run det and
-# stock; moe runs B and C on the dense model and A/A2 on the MoE -- so each
-# arm's control row overwrote the previous one and the top-level index
-# retained only the last. Per-arm `entry["sensitivity_row"]` was always
-# complete, so no verdict was ever wrong; the audit trail was.
+# The report-level index was keyed `f"{model}@{instance_id}"`, taken
+# literally from the spec's "keyed by (model, instance_id)." But every
+# driver runs several arms against the same model on the same box: tp4/tp8
+# run det and stock, and moe runs B and C on the dense model and A/A2 on
+# the MoE. So each arm's control row overwrote the previous one, and the
+# top-level index retained only the last. Per-arm
+# `entry["sensitivity_row"]` was always complete, so no verdict was ever
+# wrong; the audit trail was.
 
 
 def test_sensitivity_key_separates_arms_on_the_same_model_and_box():
-    """Two arms, same model, same instance -> two distinct index entries."""
+    """Two arms with the same model and instance give two distinct index entries."""
     det = hwprobe.sensitivity_key("ministral-3-3b", "i-abc", "det")
     stock = hwprobe.sensitivity_key("ministral-3-3b", "i-abc", "stock")
     assert det != stock
@@ -743,9 +757,9 @@ def test_sensitivity_key_distinguishes_boxes_and_models_too():
 def test_drivers_key_the_sensitivity_index_by_arm(mod, label):
     """Every driver must build the index key through the shared helper.
 
-    Pinned at source level because the alternative -- three hand-rolled
-    f-strings -- is exactly how the three copies drifted into a last-arm-wins
-    key in the first place.
+    This is pinned at source level, because the alternative, three
+    hand-rolled f-strings, is exactly how the three copies drifted into a
+    last-arm-wins key in the first place.
     """
     import inspect
 
@@ -763,9 +777,9 @@ def test_drivers_key_the_sensitivity_index_by_arm(mod, label):
 def test_loading_the_probes_does_not_mutate_sys_path():
     """The probes' module-scope `sys.path.insert` must not leak into the session.
 
-    See `_load`'s docstring: the leak makes a `git archive HEAD` baseline run
-    resolve `smolbench` to the live tree, which turns a should-fail baseline
-    proof into a false green.
+    See `_load`'s docstring: the leak makes a `git archive HEAD` baseline
+    run resolve `smolbench` to the live tree, which turns a should-fail
+    baseline proof into a false green.
     """
     before = list(sys.path)
     _load("moe_tp8_probe_hygiene_check", "moe_tp8_probe.py")

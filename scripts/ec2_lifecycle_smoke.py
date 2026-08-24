@@ -1,8 +1,10 @@
-"""Staged live-smoke driver for the cleaned-up smolbench EC2 provider.
+"""Run a staged live smoke test of the smolbench EC2 provider.
 
-Run as: smoke.py <step>, with env (EC2_EXPERIMENT_TAG, EC2_STATE_FILE,
-EC2_INSTANCE_TYPES, EC2_REGIONS, EC2_ROOT_VOLUME_GB, EC2_IDLE_TIMEOUT_MIN)
-exported BEFORE launch, since the provisioning knobs are import-time captures.
+Run this script as `ec2_lifecycle_smoke.py <step>`. Set these environment
+variables before you start the script: EC2_EXPERIMENT_TAG, EC2_STATE_FILE,
+EC2_INSTANCE_TYPES, EC2_REGIONS, EC2_ROOT_VOLUME_GB, EC2_IDLE_TIMEOUT_MIN.
+The provisioning code reads these variables at import time, so you must
+set them before the script starts.
 """
 import json
 import os
@@ -19,7 +21,7 @@ def log(msg: str) -> None:
     print(f"[{time.time() - T0:7.1f}s] {msg}", flush=True)
 
 
-from smolbench.evals import ec2  # noqa: E402  (env already set by shell)
+from smolbench.evals import ec2  # noqa: E402  (the shell already set env vars)
 
 log(f"tag={ec2.EC2_EXPERIMENT_TAG} types={ec2.EC2_INSTANCE_TYPES} "
     f"regions={ec2.EC2_REGIONS} state_file={ec2._state_path()}")

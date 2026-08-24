@@ -1,10 +1,12 @@
-"""Offline tests for smolbench.deduction.lean.runner (and cli import-cleanliness).
+"""Test smolbench.deduction.lean.runner, and check cli import-cleanliness.
 
-The Lean verifier is faked (FakeVerifier below) so the whole sweep runs with
-no lean_dojo and no Lean process: generation goes to two local OpenAI-compatible
-stub servers (one per provider), verification is a pure-Python stand-in driven
-off a marker string in the model's reply. This exercises the runner's dispatch,
-seed threading, row schema, resume, and artifact writing on ANY interpreter.
+The Lean verifier is faked (FakeVerifier below), so the whole sweep runs
+with no lean_dojo and no Lean process. Generation goes to two local
+OpenAI-compatible stub servers, one per provider. Verification is a
+pure-Python stand-in, driven by a marker string in the model's reply.
+
+This exercises the runner's dispatch, seed threading, row schema,
+resume, and artifact writing, on ANY interpreter.
 """
 
 import gzip
@@ -100,11 +102,13 @@ class FakeVerifier:
 
 
 class SpyVerifier(FakeVerifier):
-    """FakeVerifier variant that counts/records calls instead of just faking
-    verdicts, to pin sweep()'s "one shared Dojo session per (theorem, k)"
-    contract: every rung/model/replicate branching off the same (theorem, k)
-    must reuse the SAME `open_at_step` context (never open a fresh one), and
-    each theorem gets exactly one `replay_ground_truth` sanity replay.
+    """FakeVerifier that counts and records calls to pin sweep()'s Dojo contract.
+
+    Rather than just faking verdicts like the base FakeVerifier, this variant counts and
+    records calls, to pin sweep()'s "one shared Dojo session per (theorem, k)" contract.
+    Every rung, model, and replicate branching off the same (theorem, k) must reuse the
+    SAME `open_at_step` context, and never open a fresh one. Each theorem gets exactly
+    one `replay_ground_truth` sanity replay.
     """
 
     def __init__(self):
@@ -132,14 +136,14 @@ class SpyVerifier(FakeVerifier):
 
 
 class ConfigurableSanityVerifier(FakeVerifier):
-    """FakeVerifier variant whose sanity-gate verdict is configurable per
-    theorem, to pin the resume-exclusion fix in `_sanity_done` /
-    `_process_one_theorem`: a theorem whose ground-truth replay was
-    recorded as non-success must stay excluded from cell generation on
-    resume, even if a LATER verifier instance passed to a resumed `sweep()`
-    call would now report success for it. `_sanity_done` returns a
-    `dict[str, str]` of verdicts (not just a set of "done" names)
-    specifically so this resume-time re-exclusion is possible.
+    """FakeVerifier variant whose sanity-gate verdict is configurable per theorem.
+
+    This pins the resume-exclusion fix in `_sanity_done` and `_process_one_theorem`. A
+    theorem whose ground-truth replay was recorded as non-success must stay excluded
+    from cell generation on resume. This holds even if a LATER verifier instance, passed
+    to a resumed `sweep()` call, would now report success for it. `_sanity_done` returns
+    a `dict[str, str]` of verdicts, not just a set of "done" names, specifically so this
+    resume-time re-exclusion is possible.
     """
 
     def __init__(self, verdict_by_theorem: dict[str, str]):
@@ -236,10 +240,11 @@ REQUIRED_ROW_KEYS = {
     "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
     "gen_ms", "verify_ms", "candidate_proof", "raw_response",
     "reasoning_content", "verdict", "lean_error", "final_state_pp",
-    # 2026-08-23 (defect D6): the server's stop reason. "length" with a large
-    # completion_tokens is what distinguishes a finished generation from one
-    # that spent its whole budget in the reasoning channel -- the population
-    # whose rows were being recorded as indistinguishably empty.
+    # 2026-08-23 (defect D6): the server's stop reason. "length" with a
+    # large completion_tokens is what distinguishes a finished
+    # generation from one that spent its whole budget in the reasoning
+    # channel. That is the population whose rows were being recorded as
+    # indistinguishably empty.
     "finish_reason",
 }
 
@@ -394,21 +399,24 @@ def test_sweep_resume_and_exception_rerun(sweep_ctx, concurrent):
 def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
     """`prompt_tokens > 0` is the line between lost data and real data.
 
-    A cell whose attempts all died before the server saw the prompt was never
-    measured -- re-run it. A cell the model actually answered, even emptily, has
-    given its answer; re-running it until it happens to emit a proof is
-    resampling, and generation is NOT deterministic across server processes
-    (measured: 8/8 byte-identical within one vLLM process, 0/8 across two), so
-    the retry really does eventually "succeed".
+    A cell whose attempts all died before the server saw the prompt was
+    never measured, so it must re-run. A cell the model actually
+    answered, even emptily, has given its answer. Re-running it until it
+    happens to emit a proof is resampling. Generation is NOT
+    deterministic across server processes (measured: 8/8 byte-identical
+    within one vLLM process, 0/8 across two), so the retry really can
+    eventually "succeed".
 
-    That is not hypothetical: the rule this replaces re-ran any contentless cell
-    that owned an old `exception` row, and 67 cells across three lanes were
-    resampled from empty to a proof before it was caught -- 0.4% of all cells
-    carrying a proof, straight into a pass@1 numerator.
+    That is not hypothetical. The rule this replaces re-ran any
+    contentless cell that owned an old `exception` row. 67 cells across
+    three lanes were resampled from empty to a proof before it was
+    caught, 0.4% of all cells carrying a proof, straight into a pass@1
+    numerator.
 
-    The tempting alternative -- "it burned the full token budget, so retrying is
-    pointless" -- is refuted: qwen3.5-27b cells that hit the 32,768-token cap
-    emptily went on to produce proofs on a later attempt.
+    The tempting alternative, "it burned the full token budget, so
+    retrying is pointless", is refuted: qwen3.5-27b cells that hit the
+    32,768-token cap emptily went on to produce proofs on a later
+    attempt.
     """
     def cell(theorem, verdict, proof="", error="", prompt_tokens=0):
         return {
@@ -434,9 +442,10 @@ def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
         cell("data.plain_empty", "unverified", proof="", prompt_tokens=398),
         # (4) DONE: has a proof.
         cell("done.has_proof", "unverified", proof="exact foo", prompt_tokens=398),
-        # (5) RE-RUN: the only record is an exception. Even though proof text
-        #     survived, an exception can come from the VERIFIER, so the proof
-        #     was never checked -- deliberate older behaviour, preserved.
+        # (5) RE-RUN: the only record is an exception. Even though proof
+        #     text survived, an exception can come from the VERIFIER, so
+        #     the proof was never checked. This is deliberate older
+        #     behavior, preserved.
         cell("rerun.only_an_exception", "exception", proof="exact bar",
              error="RuntimeError: dojo", prompt_tokens=398),
     ]
@@ -535,12 +544,13 @@ def test_run_cell_records_the_servers_finish_reason(sweep_ctx):
 def test_reasoning_only_cap_hit_is_never_graded_as_a_proof(sweep_ctx):
     """THE study-side safety property behind defect D3.
 
-    The client now RETAINS the reasoning text on a null-content cap-hit
-    instead of discarding it. This pins that the retained text stays out of
-    the candidate: the success marker is placed in the REASONING channel and
-    nowhere else, so a runner that conflated the two channels would grade
-    this row "success". It must grade it as a failure with an EMPTY
-    candidate, while still recording the reasoning and the finish reason.
+    The client now RETAINS the reasoning text on a null-content cap-hit,
+    instead of discarding it. This pins that the retained text stays out
+    of the candidate. The success marker sits in the REASONING channel
+    and nowhere else, so a runner that conflated the two channels would
+    grade this row "success". It must grade the row as a failure with an
+    EMPTY candidate, while still recording the reasoning and the finish
+    reason.
     """
     sweep_ctx.pi.default_response = {
         "choices": [{"message": {"content": None,
@@ -568,9 +578,10 @@ def test_reasoning_only_cap_hit_is_never_graded_as_a_proof(sweep_ctx):
 
 
 def test_runner_and_cli_import_without_lean_dojo():
-    # This module already imports runner at top level; on the main .venv
-    # (Python 3.14, no lean_dojo) that import succeeding at collection time is
-    # itself the guarantee. Confirm both modules and their public surface.
+    # This module already imports runner at top level. On the main .venv
+    # (Python 3.14, no lean_dojo), that import succeeding at collection
+    # time is itself the guarantee. Confirm both modules and their
+    # public surface.
     import smolbench.deduction.lean.cli as cli
     import smolbench.deduction.lean.runner as rnr
 
@@ -598,18 +609,21 @@ def test_cli_help_subprocess():
 def test_complete_receives_max_retries_request_timeout_system_seed(
     sweep_ctx, monkeypatch, concurrent
 ):
-    """Wraps the REAL provider `complete` in a recording spy -- patched on
-    the module OBJECT the runner resolves via `provider_module`, exactly
-    the attribute `mod.complete(...)` looks up at call time (see the
-    runner module docstring's "Generation dispatch" note) -- and asserts
-    EVERY call the sweep makes forwards `max_retries`, `request_timeout`,
-    `system`, the resolved `context_length`, and a correctly-threaded
-    `seed`. This is the test that fails if any generation code path
-    silently drops one of these kwargs: an unbounded retry loop against a
-    wedged endpoint, a truncated-CoT timeout, or (worst) an unseeded,
-    non-reproducible generation would all be invisible to the
-    response-shape assertions in `test_sweep_schema_and_dispatch` above,
-    which only inspect what came BACK, never what was actually sent.
+    """Wrap the REAL provider `complete` in a recording spy.
+
+    The spy patches the module OBJECT the runner resolves via
+    `provider_module`. That is exactly the attribute `mod.complete(...)`
+    looks up at call time (see the runner module docstring's "Generation
+    dispatch" note). The test then asserts EVERY call the sweep makes
+    forwards `max_retries`, `request_timeout`, `system`, the resolved
+    `context_length`, and a correctly-threaded `seed`.
+
+    This is the test that fails if any generation code path silently
+    drops one of these kwargs: an unbounded retry loop against a wedged
+    endpoint, a truncated-CoT timeout, or, worst, an unseeded,
+    non-reproducible generation. All of these would stay invisible to
+    the response-shape assertions in `test_sweep_schema_and_dispatch`
+    above, which only inspect what came BACK, never what was sent.
     """
     import smolbench.evals.openrouter as orr
     import smolbench.evals.primeintellect as pi
@@ -622,11 +636,11 @@ def test_complete_receives_max_retries_request_timeout_system_seed(
             return real(*args, **kwargs)
         return _wrapped
 
-    # Design: patch the MODULE ATTRIBUTE, not a locally-bound reference --
-    # `_provider_and_ctx_for` caches the module object itself and every call
-    # site does `mod.complete(...)`, a fresh attribute lookup each time, so
-    # patching the attribute is sufficient regardless of when the module
-    # was resolved/cached relative to this patch.
+    # Design: patch the MODULE ATTRIBUTE, not a locally-bound reference.
+    # `_provider_and_ctx_for` caches the module object itself, and every
+    # call site does `mod.complete(...)`, a fresh attribute lookup each
+    # time. So patching the attribute works no matter when the module
+    # was resolved or cached relative to this patch.
     monkeypatch.setattr(pi, "complete", _spy(pi.complete))
     monkeypatch.setattr(orr, "complete", _spy(orr.complete))
 
@@ -648,10 +662,11 @@ def test_complete_receives_max_retries_request_timeout_system_seed(
         # complete(prompt, model, seed, ...) -- seed is the 3rd positional.
         seeds_seen.append(call["args"][2])
 
-    # Seed threading: every call's seed is base_seed(1000) + replicate_idx in
-    # {0, 1} (the replicate index is the seed-varying axis; see `sweep`'s
-    # docstring), and both replicate seeds are exercised in equal numbers (one
-    # per rung x model combination: 2 rungs x 2 models = 4 calls each).
+    # Seed threading: every call's seed is base_seed(1000) + replicate_idx,
+    # in {0, 1} (the replicate index is the seed-varying axis; see
+    # `sweep`'s docstring). Both replicate seeds are exercised in equal
+    # numbers: one per rung x model combination, so 2 rungs x 2 models =
+    # 4 calls each.
     assert set(seeds_seen) == {1000, 1001}
     assert seeds_seen.count(1000) == seeds_seen.count(1001) == EXPECTED_CELLS // 2
 
@@ -664,15 +679,16 @@ def test_complete_receives_max_retries_request_timeout_system_seed(
 
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_sweep_shares_one_dojo_session_per_theorem_k(sweep_ctx, concurrent):
-    """Pins the "open once per (theorem, k), share across all
-    rungs/models/replicates" contract documented in `sweep`'s docstring and
-    implemented by the single `with verifier.open_at_step(...)` in both
-    `_run_cells_at_step` and `_run_cells_at_step_concurrent`. A regression
-    that opened a fresh Dojo session per cell instead would still pass the
-    schema/dispatch tests (the fake verdicts don't depend on which token
-    was used) but would be catastrophically slower/wrong against the real
-    Lean verifier, which this test would catch via the open-count and
-    per-theorem token assertions below.
+    """Pins the one-Dojo-session-per-(theorem, k) sharing contract.
+
+    This is the "open once per (theorem, k), share across all rungs, models, and
+    replicates" contract. It is documented in `sweep`'s docstring and implemented by the
+    single `with verifier.open_at_step(...)` in both `_run_cells_at_step` and
+    `_run_cells_at_step_concurrent`. A regression that opened a fresh Dojo session per
+    cell instead would still pass the schema and dispatch tests, because the fake
+    verdicts do not depend on which token was used. But it would be catastrophically
+    slower and wrong against the real Lean verifier. This test catches that, via the
+    open-count and per-theorem token assertions below.
     """
     cfg = _make_config(concurrent)
     run_dir = sweep_ctx.tmp / "run"
@@ -714,12 +730,12 @@ def _make_trivial_config(concurrent: bool = False) -> dict:
             "kind": "random",
             "split": "val",
         },
-        # k.strategy "first" (unlike _make_config's "last"): under this
+        # k.strategy "first" (unlike _make_config's "last"). Under this
         # fixture, Mini.theoremB's k=0 tactic state has NO hypotheses, so
         # stepk:1 is trivial there (verified via is_trivial_rung directly
-        # in the test below, not hardcoded) -- k.strategy "last" produces
-        # no trivial rungs in this fixture at all, per `_make_config`'s own
-        # "no deterministic skips" comment.
+        # in the test below, not hardcoded). k.strategy "last" produces
+        # no trivial rungs in this fixture at all, per `_make_config`'s
+        # own "no deterministic skips" comment.
         "k": {"strategy": "first"},
         "rungs": ["stepk:0", "stepk:1"],
         "skip_trivial": True,
@@ -739,12 +755,13 @@ def _make_trivial_config(concurrent: bool = False) -> dict:
 
 
 def test_sweep_skips_trivial_rungs(sweep_ctx):
-    """skip_trivial=True must drop exactly the (theorem, rung) cells
-    `is_trivial_rung` calls trivial -- no more, no less. The expected set is
-    derived by PROBING `is_trivial_rung` directly against the fixture in
-    this test (not hardcoded as a magic cell count), so the test fails
-    loudly instead of silently passing/drifting if the fixture data or
-    `is_trivial_rung`'s rules ever change.
+    """skip_trivial=True drops exactly the cells `is_trivial_rung` calls trivial.
+
+    This must drop exactly the (theorem, rung) cells `is_trivial_rung` calls trivial, no
+    more and no less. The expected set comes from PROBING `is_trivial_rung` directly
+    against the fixture in this test, not from a hardcoded magic cell count. So the test
+    fails loudly, instead of silently passing or drifting, if the fixture data or
+    `is_trivial_rung`'s rules change.
     """
     theorems = {t.full_name: t for t in corpus.load_split("random", "val")}
     k_strategy = "first"
@@ -789,14 +806,16 @@ def test_sweep_skips_trivial_rungs(sweep_ctx):
 
 
 def test_sanity_gate_fail_and_resume_exclusion(sweep_ctx):
-    """Pins the resume-exclusion behavior of `_sanity_done` /
-    `_process_one_theorem`: a theorem whose ground-truth replay was
-    recorded as failed must STAY excluded from cell generation on resume,
-    even when a FRESH verifier instance passed to the resumed `sweep()`
-    call would now report success for it. Before `_sanity_done` returned
-    verdicts (just names), a resumed sweep could only tell "a sanity row
-    exists", not "what it said" -- silently starting to generate cells for
-    a theorem the first pass explicitly refused to run.
+    """Pins the resume-exclusion behavior of `_sanity_done` and `_process_one_theorem`.
+
+    A theorem whose ground-truth replay was recorded as failed must
+    STAY excluded from cell generation on resume. This holds even when
+    a FRESH verifier instance, passed to the resumed `sweep()` call,
+    would now report success for it. Before `_sanity_done` returned
+    verdicts, and not just names, a resumed sweep could only tell "a
+    sanity row exists", not "what it said". It could silently start
+    generating cells for a theorem the first pass explicitly refused to
+    run.
     """
     cfg = _make_config(concurrent=False)
     run_dir = sweep_ctx.tmp / "run"
@@ -815,12 +834,13 @@ def test_sanity_gate_fail_and_resume_exclusion(sweep_ctx):
     assert n_written == EXPECTED_CELLS // 2
     assert first_verifier.replay_calls == ["Mini.theoremA", "Mini.theoremB"]
 
-    # Resume with a verifier that WOULD now report success for A: the
+    # Resume with a verifier that WOULD now report success for A. The
     # recorded "lean_error" sanity row must still gate it out. B's cells
-    # are already recorded and must be skipped as done, not regenerated,
-    # and neither theorem's sanity gate should re-run at all (A stays
-    # excluded via the recorded verdict; B's recorded "success" short-
-    # circuits straight past the replay -- see `_process_one_theorem`).
+    # are already recorded, so they must be skipped as done, not
+    # regenerated. Neither theorem's sanity gate should re-run at all: A
+    # stays excluded via the recorded verdict, and B's recorded
+    # "success" short-circuits straight past the replay (see
+    # `_process_one_theorem`).
     second_verifier = ConfigurableSanityVerifier({})  # empty -> "success" for all
     second_written = runner.sweep(cfg, run_dir, verifier=second_verifier)
 
@@ -841,19 +861,20 @@ def test_sanity_gate_fail_and_resume_exclusion(sweep_ctx):
 
 
 def test_select_theorems_seeded_selection_is_deterministic(sweep_ctx):
-    """`_select_theorems`'s `limit` + `seed` sampling (`random.Random(seed).
-    sample(...)`) must be a pure function of its inputs: calling it twice
-    with the IDENTICAL spec must return the IDENTICAL theorem, in the same
-    order. A sweep resumed later, or run a second time against the same
-    config, must draw the same sub-sample rather than a fresh random draw
-    each call -- otherwise `resume` semantics (keyed by theorem full_name)
-    would be meaningless across separate sweep() invocations of one config.
+    """`_select_theorems`'s sampling must be a pure function of `limit` and `seed`.
 
-    (The end-to-end version of this guarantee -- two FRESH sweeps drawing
-    identical (model, theorem, k, rung, replicate, seed) key sets, including
-    per-row seed values -- is already covered by `test_sweep_determinism`
-    above; its key tuple already includes `seed`, so it already fails if a
-    differing seed ever leaked in.)
+    `random.Random(seed).sample(...)` means calling it twice with the
+    IDENTICAL spec must return the IDENTICAL theorem, in the same order.
+    A sweep resumed later, or run a second time against the same config,
+    must draw the same sub-sample, not a fresh random draw each call.
+    Otherwise `resume` semantics, keyed by theorem full_name, would be
+    meaningless across separate sweep() invocations of one config.
+
+    The end-to-end version of this guarantee is already covered by
+    `test_sweep_determinism` above: two FRESH sweeps draw identical
+    (model, theorem, k, rung, replicate, seed) key sets, including
+    per-row seed values. Its key tuple already includes `seed`, so it
+    already fails if a differing seed ever leaked in.
     """
     spec = {"source": "with_proof", "kind": "random", "split": "val", "limit": 1, "seed": 5}
     first = runner._select_theorems(spec)
@@ -863,12 +884,14 @@ def test_select_theorems_seeded_selection_is_deterministic(sweep_ctx):
 
 
 def test_select_theorems_shards_partition_the_unsharded_selection(sweep_ctx):
-    """`theorems.shard: "i/n"` slices AFTER the seeded sample, so the n
-    shards of one spec must be pairwise disjoint and their union (in stride
-    order) must be exactly the unsharded selection. This is the invariant a
-    sharded multi-box lane rests on: every shard recomputes the identical
-    pool and takes only its own slice, so merged shard outputs equal one
-    unsharded run's output with no duplicated and no dropped theorems.
+    """`theorems.shard: "i/n"` slices AFTER the seeded sample.
+
+    So the n shards of one spec must be pairwise disjoint, and their
+    union, in stride order, must be exactly the unsharded selection.
+    This is the invariant a sharded multi-box lane rests on: every shard
+    recomputes the identical pool and takes only its own slice. So
+    merged shard outputs equal one unsharded run's output, with no
+    duplicated and no dropped theorems.
     """
     base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
     whole = [t.full_name for t in runner._select_theorems(base)]
@@ -887,9 +910,11 @@ def test_select_theorems_shards_partition_the_unsharded_selection(sweep_ctx):
 
 
 def test_select_theorems_shard_rejects_malformed_values(sweep_ctx):
-    """A malformed shard spec must raise, never silently return the FULL
-    pool: on a live sharded fleet, a shard that silently ran everything
-    would triple the spend and corrupt the merged rows with duplicates."""
+    """A malformed shard spec must raise, never silently return the FULL pool.
+
+    On a live sharded fleet, a shard that silently ran everything would triple the
+    spend and corrupt the merged rows with duplicates.
+    """
     import pytest
 
     base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
@@ -905,9 +930,11 @@ def test_select_theorems_shard_rejects_malformed_values(sweep_ctx):
 
 
 def test_load_cell_whitelist_parses_and_dedupes(tmp_path):
-    """Valid entries parse into `_row_key`-shaped tuples; a repeated entry
-    collapses to one set member (the file format allows duplicates -- the
-    caller need not pre-dedupe before writing it)."""
+    """Valid entries parse into `_row_key`-shaped tuples.
+
+    A repeated entry collapses to one set member. The file format allows duplicates,
+    so the caller need not pre-dedupe before writing it.
+    """
     path = tmp_path / "wl.json"
     path.write_text(json.dumps([
         ["m", "T", 1, "stepk:1", 0],
@@ -945,11 +972,13 @@ def test_load_cell_whitelist_rejects_wrong_length_entries(tmp_path):
 
 
 def test_hash_cell_keys_is_order_and_type_independent():
-    """The digest must depend only on the SET of keys, not their on-disk
-    order or whether they arrive as tuples or plain JSON-decoded lists --
-    `notebooks/deduction/run_study.py`'s sidecar stamp and
-    `scripts/flip_probe.py`'s sample_manifest.json compute this digest via
-    two different code paths and must agree for the SAME cell set."""
+    """The digest must depend only on the SET of keys, not on-disk order or type.
+
+    It must not depend on their on-disk order, nor on whether they arrive as tuples or
+    plain JSON-decoded lists. `notebooks/deduction/run_study.py`'s sidecar stamp and
+    `scripts/flip_probe.py`'s sample_manifest.json compute this digest through two
+    different code paths, and must agree for the SAME cell set.
+    """
     keys_a = [("m", "T", 1, "stepk:1", 0), ("m", "U", 2, "hint:2", 1)]
     keys_b = [["m", "U", 2, "hint:2", 1], ["m", "T", 1, "stepk:1", 0]]
     assert runner.hash_cell_keys(keys_a) == runner.hash_cell_keys(keys_b)
@@ -962,8 +991,11 @@ def test_hash_cell_keys_changes_with_content():
 
 
 def test_select_theorems_cell_whitelist_none_is_unchanged(sweep_ctx):
-    """`cell_whitelist=None` (the default) must be byte-identical to calling
-    `_select_theorems` with no such argument at all."""
+    """`cell_whitelist=None` (the default) is byte-identical to omitting the argument.
+
+    This equivalence must hold when calling `_select_theorems` with no such argument
+    at all.
+    """
     base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
     assert (
         [t.full_name for t in runner._select_theorems(base)]
@@ -972,9 +1004,11 @@ def test_select_theorems_cell_whitelist_none_is_unchanged(sweep_ctx):
 
 
 def test_select_theorems_cell_whitelist_narrows_to_whitelisted_theorems(sweep_ctx):
-    """A cell_whitelist narrows the pool to exactly the theorems that own at
-    least one whitelisted cell key -- mirrors the shard test's structure,
-    but at theorem-name granularity rather than a stride."""
+    """A cell_whitelist narrows the pool to theorems owning >=1 whitelisted cell key.
+
+    This mirrors the shard test's structure, but at theorem-name granularity rather
+    than a stride.
+    """
     base = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
     whole = runner._select_theorems(base)
     assert len(whole) >= 2  # fixture must give this something to narrow
@@ -986,8 +1020,10 @@ def test_select_theorems_cell_whitelist_narrows_to_whitelisted_theorems(sweep_ct
 
 
 def test_cell_whitelist_unset_leaves_sweep_enumeration_unchanged(sweep_ctx):
-    """LEAN_CELL_WHITELIST unset must be byte-identical to today's behavior:
-    every one of the 16 cells `_make_config` describes still generates."""
+    """LEAN_CELL_WHITELIST unset must be byte-identical to today's behavior.
+
+    Every one of the 16 cells `_make_config` describes still generates.
+    """
     cfg = _make_config(concurrent=False)
     run_dir = sweep_ctx.tmp / "run"
     n_written = runner.sweep(cfg, run_dir, verifier=FakeVerifier())
@@ -1001,10 +1037,13 @@ def test_cell_whitelist_unset_leaves_sweep_enumeration_unchanged(sweep_ctx):
 
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(sweep_ctx, monkeypatch, concurrent):
-    """LEAN_CELL_WHITELIST=<path> runs ONLY the whitelisted cells: every other
-    (theorem, k, rung, model, replicate_idx) is skipped, including an entire
-    theorem that owns no whitelisted cell (whose sanity gate must therefore
-    never even run -- see `_select_theorems`'s theorem-level pre-filter)."""
+    """LEAN_CELL_WHITELIST=<path> runs ONLY the whitelisted cells.
+
+    Every other (theorem, k, rung, model, replicate_idx) is skipped,
+    including a whole theorem that owns no whitelisted cell. That
+    theorem's sanity gate must therefore never even run (see
+    `_select_theorems`'s theorem-level pre-filter).
+    """
     cfg = _make_config(concurrent)
 
     # Baseline: discover the full 16-key set with no whitelist in effect.
@@ -1017,9 +1056,9 @@ def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(sweep_ctx, m
     assert len(all_keys) == EXPECTED_CELLS
 
     # Whitelist a strict subset of Mini.theoremA's own cells, leaving
-    # Mini.theoremB with ZERO whitelisted cells -- exercises the theorem-level
-    # pre-filter (theoremB excluded whole) AND the cell-level filter
-    # (theoremA's own non-whitelisted cells still skip).
+    # Mini.theoremB with ZERO whitelisted cells. This exercises the
+    # theorem-level pre-filter (theoremB excluded whole) AND the
+    # cell-level filter (theoremA's own non-whitelisted cells still skip).
     theorem_a_keys = [k for k in all_keys if k[1] == "Mini.theoremA"]
     assert len(theorem_a_keys) >= 3
     whitelist_keys = theorem_a_keys[:3]
@@ -1042,8 +1081,10 @@ def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(sweep_ctx, m
 
 
 def test_cell_whitelist_missing_file_raises_and_writes_nothing(sweep_ctx, monkeypatch, tmp_path):
-    """A missing LEAN_CELL_WHITELIST file must raise loudly at sweep start --
-    never fall through to a full, unfiltered (and, live, expensive) run."""
+    """A missing LEAN_CELL_WHITELIST file must raise loudly at sweep start.
+
+    It must never fall through to a full, unfiltered, and live-expensive, run.
+    """
     cfg = _make_config(concurrent=False)
     monkeypatch.setenv("LEAN_CELL_WHITELIST", str(tmp_path / "does_not_exist.json"))
     run_dir = sweep_ctx.tmp / "run"
@@ -1080,24 +1121,25 @@ def test_cell_whitelist_malformed_shape_raises_and_writes_nothing(sweep_ctx, mon
 
 
 def test_sweep_frozen_ordering_and_artifacts(sweep_ctx, monkeypatch):
-    """Pins two invariants not covered by the schema/dispatch tests above:
+    """Pins two invariants not covered by the schema and dispatch tests above:
 
     1. A SERIAL sweep (`concurrent_gen=False`) writes cell rows to
        `all_rows.jsonl` in the EXACT loop-nest order the module docstring
-       promises -- theorem -> k -> rung -> model -> replicate, theorems in
-       `_select_theorems` order, rungs/models in config order. A consumer
-       that streams `all_rows.jsonl` incrementally (e.g. a live dashboard)
-       depends on this ordering, not just on the eventual row SET being
-       correct.
+       promises. That order is theorem, then k, then rung, then model, then
+       replicate, with theorems in `_select_theorems` order and rungs/models in
+       config order. A consumer that streams `all_rows.jsonl` incrementally, for
+       example a live dashboard, depends on this ordering, not just on the
+       eventual row SET being correct.
     2. Every artifact `sweep()` promises actually exists: the `latest`
-       symlink next to `run_dir`, and each theorem's `summary.md` /
-       `meta.json`. Also checks `results_root()`'s documented fallback when
-       `SMOLBENCH_LEAN_RESULTS` is unset.
+       symlink next to `run_dir`, and each theorem's `summary.md` and
+       `meta.json`. This also checks `results_root()`'s documented
+       fallback when `SMOLBENCH_LEAN_RESULTS` is unset.
 
-    Concurrent sweeps are explicitly OUT of scope for the ordering check:
-    `_run_cells_at_step_concurrent` writes rows in `as_completed()` arrival
-    order, which is non-deterministic BY DESIGN (gen is fanned out over a
-    thread pool) -- frozen ordering is a serial-path-only guarantee.
+    Concurrent sweeps are explicitly OUT of scope for the ordering
+    check. `_run_cells_at_step_concurrent` writes rows in
+    `as_completed()` arrival order, which is non-deterministic BY
+    DESIGN, because gen is fanned out over a thread pool. Frozen
+    ordering is a serial-path-only guarantee.
     """
     cfg = _make_config(concurrent=False)
     run_dir = sweep_ctx.tmp / "run"
@@ -1132,9 +1174,9 @@ def test_sweep_frozen_ordering_and_artifacts(sweep_ctx, monkeypatch):
         assert (tdir / "summary.md").exists()
         assert (tdir / "meta.json").exists()
 
-    # results_root() falls back to notebooks/deduction/results when the env
-    # override is unset (repo-anchored, never cwd-relative -- see that
-    # function's docstring).
+    # results_root() falls back to notebooks/deduction/results when the
+    # env override is unset. It is repo-anchored, never cwd-relative
+    # (see that function's docstring).
     monkeypatch.delenv("SMOLBENCH_LEAN_RESULTS", raising=False)
     root = runner.results_root()
     assert root.is_absolute()
@@ -1148,15 +1190,18 @@ def test_sweep_frozen_ordering_and_artifacts(sweep_ctx, monkeypatch):
 
 
 def test_run_cell_prompt_is_byte_identical_to_build_user_prompt(sweep_ctx):
-    """The request body's user-message content must be BYTE-IDENTICAL to
-    `prompt.build_user_prompt(context.render(theorem, k, chain, level))`
-    computed independently right here in the test, and the system message
-    must be `prompt.SYSTEM` exactly. Pins the prompt-assembly contract
-    end-to-end: a refactor that trimmed whitespace, changed the
-    text-join separator, or reordered system/user construction in
-    `run_cell` would still pass the looser
-    `body["messages"][1]["content"].endswith(prompt.INSTRUCTION)` check in
-    `test_sweep_schema_and_dispatch`, but would fail this exact-equality one.
+    """The request body's user message must be BYTE-IDENTICAL to the expected prompt.
+
+    That expected prompt is `prompt.build_user_prompt(context.render(theorem, k, chain,
+    level))`, computed independently right here in the test. The system message must be
+    `prompt.SYSTEM` exactly.
+
+    This pins the prompt-assembly contract end-to-end. A refactor that
+    trimmed whitespace, changed the text-join separator, or reordered
+    system/user construction in `run_cell` would still pass the looser
+    `body["messages"][1]["content"].endswith(prompt.INSTRUCTION)` check
+    in `test_sweep_schema_and_dispatch`, but would fail this
+    exact-equality one.
     """
     theorem = {t.full_name: t for t in corpus.load_split("random", "val")}["Mini.theoremA"]
     k, chain, level = 2, "stepk", 1
@@ -1206,14 +1251,14 @@ def _make_alias_config(concurrent: bool) -> dict:
 
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_display_name_aliasing_and_per_model_semaphore(sweep_ctx, concurrent):
-    """Two model-config entries can share the SAME underlying `model` id
-    while being tracked as distinct rows via `display_name` -- rows are
-    keyed (written AND resumed) by display_name, not the raw provider model
-    id, so a sweep can run one model under two configurations (e.g. one
-    `max_concurrency`-capped, one not) without their rows colliding into a
-    single key. Also confirms a `max_concurrency` entry doesn't crash sweep
-    construction (`model_semaphores`) or, under `concurrent_gen=True`, the
-    semaphore-gated `_gated_complete` call path.
+    """Two model-config entries can share the SAME underlying `model` id.
+
+    They stay tracked as distinct rows via `display_name`. Rows are keyed, both written
+    and resumed, by display_name, not the raw provider model id. So a sweep can run one
+    model under two configurations, for example one `max_concurrency`-capped and one
+    not, without their rows colliding into a single key. This also confirms a
+    `max_concurrency` entry does not crash sweep construction (`model_semaphores`), or,
+    under `concurrent_gen=True`, the semaphore-gated `_gated_complete` call path.
     """
     cfg = _make_alias_config(concurrent)
     run_dir = sweep_ctx.tmp / "run"
@@ -1226,9 +1271,9 @@ def test_display_name_aliasing_and_per_model_semaphore(sweep_ctx, concurrent):
     for r in by_alias.values():
         assert r["api_model"] == M1  # shared underlying provider-facing id
 
-    # Resume respects display_name: both aliases' single cell is already
-    # recorded, so a second sweep must skip everything -- 0 new rows, and
-    # the two aliases must never collide into one resume key.
+    # Resume respects display_name. Both aliases' single cell is already
+    # recorded, so a second sweep must skip everything: 0 new rows. The
+    # two aliases must never collide into one resume key.
     second_written = runner.sweep(cfg, run_dir, verifier=FakeVerifier())
     assert second_written == 0
     assert len(_rows(run_dir, "cell")) == 2
@@ -1241,14 +1286,16 @@ def test_display_name_aliasing_and_per_model_semaphore(sweep_ctx, concurrent):
 
 
 def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
-    """`_ctx_len_for`'s best-effort guard: a context-length catalog lookup
-    failure (a flaky metadata endpoint, an unlisted model id) must not
-    abort the whole sweep. It falls back to `10**9` so `complete()`'s
-    token-usage guard simply never fires for this model; a GENUINE
-    overflow then surfaces later as the `ValueError` that guard raises,
-    which the per-cell exception handling already resumes from (see the
-    module docstring's `_ctx_len_for` note) -- trading a hard abort for a
-    soft, retryable failure mode instead of silently hiding real problems.
+    """`_ctx_len_for`'s best-effort guard.
+
+    A context-length catalog lookup failure, for example a flaky
+    metadata endpoint or an unlisted model id, must not abort the whole
+    sweep. It falls back to `10**9`, so `complete()`'s token-usage guard
+    simply never fires for this model. A GENUINE overflow then surfaces
+    later as the `ValueError` that guard raises, which the per-cell
+    exception handling already resumes from (see the module docstring's
+    `_ctx_len_for` note). This trades a hard abort for a soft, retryable
+    failure mode, instead of silently hiding real problems.
     """
     class _BrokenModule:
         def get_model_context_length(self, model):
@@ -1261,26 +1308,26 @@ def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
 # ---------------------------------------------------------------------------
 # (p) `write_run_analysis`'s `l3` leak-rate column (WP-B2).
 #
-# Design: `write_run_analysis` is pure JSONL aggregation over an
-# `all_rows.jsonl` it can be handed directly (no Dojo session, no sweep) --
-# so, mirroring `tests/test_lean_analyze_passn.py`'s approach for the
-# separate `cli.cmd_analyze` table (NOT this function; the two share a
-# near-identical column layout by convention but are independent
-# implementations, and this WP only touches `write_run_analysis`), these
-# tests hand-write a small `all_rows.jsonl` straight into a tmp run dir and
-# call `write_run_analysis` directly rather than driving a full
-# `FakeVerifier` sweep, which would be unable to control `candidate_proof`
-# content precisely enough to target specific relic kinds.
+# Design: `write_run_analysis` is pure JSONL aggregation over an `all_rows.jsonl` it can
+# be handed directly, with no Dojo session and no sweep. A full `FakeVerifier` sweep
+# could not control `candidate_proof` content precisely enough to target specific relic
+# kinds. So instead, these tests hand-write a small `all_rows.jsonl` straight into a tmp
+# run dir and call `write_run_analysis` directly. This mirrors
+# `tests/test_lean_analyze_passn.py`'s approach for the separate `cli.cmd_analyze`
+# table. That is NOT this function: the two share a near-identical column layout by
+# convention, but are independent implementations, and this WP only touches
+# `write_run_analysis`.
 # ---------------------------------------------------------------------------
 
 
 def _l3_row(*, model: str = "m", rung: str = "stepk:0", verdict: str, candidate_proof: str) -> dict:
     """Build one synthetic ``kind: "cell"`` row for the `l3`-column tests.
 
-    Only the fields `write_run_analysis` actually reads are populated;
-    token/timing fields are omitted deliberately (the function's own
-    ``r.get(..., 0)`` defaults cover their absence) to keep each fixture
-    row focused on the one thing each test varies: `candidate_proof`.
+    Only the fields `write_run_analysis` actually reads are populated.
+    Token and timing fields are omitted on purpose: the function's own
+    ``r.get(..., 0)`` defaults cover their absence. This keeps each
+    fixture row focused on the one thing each test varies:
+    `candidate_proof`.
     """
     return {
         "kind": "cell", "rung": rung, "model": model,
@@ -1299,11 +1346,12 @@ def _write_all_rows(run_dir: Path, rows: list[dict]) -> None:
 def _l3_data_row(analysis_text: str) -> list[str]:
     """Whitespace-split fields of the single (rung, model) data row.
 
-    `write_run_analysis` emits exactly one table (unlike `cli.cmd_analyze`'s
-    three), so the data row directly follows the ``"-" * len(header)``
-    separator line; every field is whitespace-delimited with no internal
-    spaces (see the header's fixed-width format strings in `runner.py`), so
-    a plain `str.split()` per row is unambiguous.
+    `write_run_analysis` emits exactly one table, unlike
+    `cli.cmd_analyze`'s three tables. So the data row directly follows
+    the ``"-" * len(header)`` separator line. Every field is
+    whitespace-delimited with no internal spaces (see the header's
+    fixed-width format strings in `runner.py`), so a plain `str.split()`
+    per row is unambiguous.
     """
     lines = analysis_text.splitlines()
     sep_idx = next(i for i, line in enumerate(lines) if line.startswith("---"))
@@ -1318,16 +1366,18 @@ def _header_l3_index(analysis_text: str) -> int:
 
 
 def test_l3_counts_parse_level_relics_and_excludes_clean(tmp_path, monkeypatch):
-    """`existsi z` and `intros f,` are parse-level relics (no align map
-    needed -- see `lean3.find_relics`'s `existsi` and `trailing-comma`
-    rules); `rfl` is clean Lean 4. Chosen so this test is env-independent:
-    with no align map, `l3` must count exactly 2 of the 3 cells, not 3, and
-    the "align asset not built" marker line must appear."""
-    # Point SMOLBENCH_LEAN_DATA at a tmp subdir so `AlignMap.load()` (which
-    # resolves the asset BESIDE the data root, at data_root().parent --
-    # i.e. tmp_path here, which holds no asset) deterministically returns
-    # `None` regardless of whether a real `lean3_align.json.gz` has been
-    # built elsewhere in this checkout.
+    """`existsi z` and `intros f,` are parse-level relics; `rfl` is clean Lean 4.
+
+    No align map is needed to catch the first two (see `lean3.find_relics`'s `existsi`
+    and `trailing-comma` rules). These cases are chosen so this test is env-independent.
+    With no align map, `l3` must count exactly 2 of the 3 cells, not 3, and the "align
+    asset not built" marker line must appear.
+    """
+    # Point SMOLBENCH_LEAN_DATA at a tmp subdir. `AlignMap.load()`
+    # resolves the asset BESIDE the data root, at data_root().parent,
+    # which is tmp_path here and holds no asset. So it deterministically
+    # returns `None`, no matter whether a real `lean3_align.json.gz` has
+    # been built elsewhere in this checkout.
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     _write_all_rows(run_dir, [
@@ -1349,9 +1399,11 @@ def test_l3_counts_parse_level_relics_and_excludes_clean(tmp_path, monkeypatch):
 
 
 def test_l3_counts_name_level_relic_when_align_map_present(tmp_path, monkeypatch):
-    """With a `lean3_align.json.gz` present, a comma-free mathlib3 lemma
-    name (`supr_le`, uncatchable at parse level alone) is now counted, and
-    the "not built" marker line disappears."""
+    """A comma-free mathlib3 lemma name now counts, given a `lean3_align.json.gz`.
+
+    With a `lean3_align.json.gz` present, this example is `supr_le`, a name uncatchable
+    at parse level alone. The "not built" marker line disappears.
+    """
     data_dir = tmp_path / "data"
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(data_dir))
     data_dir.mkdir(parents=True)
@@ -1378,15 +1430,16 @@ def test_l3_counts_name_level_relic_when_align_map_present(tmp_path, monkeypatch
 # (n) NullVerifier: generation-only sweeps.
 #
 # `smolbench.deduction.lean.nullverify.NullVerifier` satisfies the same
-# verifier seam as FakeVerifier above, but verifies NOTHING: it exists so a
-# sweep can be run for GENERATION ONLY on an interpreter without lean_dojo
-# (the main .venv), leaving verification to a later pass under .venv-lean.
+# verifier seam as FakeVerifier above, but verifies NOTHING. It exists
+# so a sweep can run for GENERATION ONLY on an interpreter without
+# lean_dojo (the main .venv), leaving verification to a later pass under
+# .venv-lean.
 #
-# The paired runner contract these pin: the sanity gate must exclude a
-# theorem from cell generation only on an EXPLICIT FAILURE verdict. A
-# "skipped" sanity verdict -- which is all NullVerifier can produce -- must
-# pass through, otherwise a generation-only sweep would exclude every
-# theorem and generate nothing at all.
+# The paired runner contract these tests pin: the sanity gate must
+# exclude a theorem from cell generation only on an EXPLICIT FAILURE
+# verdict. A "skipped" sanity verdict, which is all NullVerifier can
+# produce, must pass through. Otherwise a generation-only sweep would
+# exclude every theorem and generate nothing at all.
 # ---------------------------------------------------------------------------
 
 
@@ -1399,11 +1452,12 @@ def _nullverifier():
 def test_nullverify_imports_without_verify_module_subprocess():
     """`nullverify` must import WITHOUT dragging in `verify` (and lean_dojo).
 
-    Checked in a SUBPROCESS with a clean interpreter: this module already
-    imports plenty at collection time, so an in-process check could pass on
-    a `sys.modules` entry some other import put there. The point of the
-    module is that generation-only sweeps run on the main venv, where
-    `smolbench.deduction.lean.verify` raises ImportError on `lean_dojo`.
+    This is checked in a SUBPROCESS with a clean interpreter. This
+    module already imports plenty at collection time, so an in-process
+    check could pass on a `sys.modules` entry some other import put
+    there. The point of the module is that generation-only sweeps run on
+    the main venv, where `smolbench.deduction.lean.verify` raises
+    ImportError on `lean_dojo`.
     """
     code = (
         "import sys\n"
@@ -1468,13 +1522,14 @@ def test_nullverify_sweep_generates_all_theorems(sweep_ctx, concurrent):
 
 
 def test_nullverify_sweep_resume_and_exception_rerun(sweep_ctx):
-    """Resume/exception-rerun semantics are unchanged under NullVerifier.
+    """Resume and exception-rerun semantics are unchanged under NullVerifier.
 
-    A "skipped" sanity verdict must not be treated as a recorded FAILURE on
-    resume either -- the resume path applies the same exclusion rule as the
-    fresh path, so a second pass must skip completed cells rather than
-    excluding the theorems outright (which would also report 0, for entirely
-    the wrong reason -- hence the explicit cell-count check below).
+    A "skipped" sanity verdict must not be treated as a recorded FAILURE
+    on resume either. The resume path applies the same exclusion rule as
+    the fresh path. So a second pass must skip completed cells, rather
+    than excluding the theorems outright, which would also report 0,
+    for entirely the wrong reason. Hence the explicit cell-count check
+    below.
     """
     cfg = _make_config(concurrent=False)
     run_dir = sweep_ctx.tmp / "run"
@@ -1534,9 +1589,9 @@ def test_sanity_gate_passes_through_non_failure_verdict_on_fresh_and_resume(swee
     """A non-failure, non-success verdict ("skipped") generates cells on BOTH paths.
 
     The fresh path and the resume path each apply the exclusion rule
-    independently (`_process_one_theorem` re-applies it from the recorded
-    verdict), so both need pinning -- a fix applied to only one of them
-    would leave generation-only resumes silently empty.
+    independently (`_process_one_theorem` re-applies it from the
+    recorded verdict). So both need pinning. A fix applied to only one
+    of them would leave generation-only resumes silently empty.
     """
     cfg = _make_config(concurrent=False)
     run_dir = sweep_ctx.tmp / "run"

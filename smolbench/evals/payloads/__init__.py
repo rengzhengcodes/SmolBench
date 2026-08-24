@@ -1,30 +1,32 @@
-"""On-instance payloads: control agent, idle watchdog, cloud-init bootstraps.
+"""Hold the on-instance payloads: control agent, idle watchdog, cloud-init.
 
 The ``.py.txt`` / ``.sh`` assets in this directory ride to EC2 inside
-cloud-init user-data (or, for the train template, ``RunInstances``' UserData
-directly); nothing on the client ever imports them as modules. They run under
-Ubuntu 22.04's system python3 (3.10) and bash: keep them stdlib-only and
-3.10-compatible. ``tests/test_ec2_payloads.py`` is their only pre-launch
-validation.
+cloud-init user-data (or, for the train template, directly inside
+``RunInstances``' UserData). Nothing on the client ever imports them as
+modules. They run under Ubuntu 22.04's system python3 (3.10) and bash:
+keep them stdlib-only and 3.10-compatible. ``tests/test_ec2_payloads.py``
+is their only pre-launch validation.
 
-The assets are BYTE-EXACT payloads with a hard budget: EC2 caps user-data at
-16 KB before base64. The cap binds on the GZIP-COMPRESSED serve bootstrap
-(see ``pack_user_data`` below), not the raw rendered text -- raw headroom was
-7 bytes even before the digest-pinned ``EC2_VLLM_IMAGE`` reference (+57 B
-over the cap), and the section-5 agent fingerprint later grew the raw render
-to ~4.6 KB over; compression keeps ~9 KB of margin (9,025 B measured
-2026-08-18; the headroom canary in
-``tests/test_ec2_payloads.py`` prints both the raw and compressed live
-margins). Every byte in ``agent.py.txt`` / ``watchdog.py.txt``
-/ ``user_data.sh`` ships verbatim, comments included -- do not reformat, and
-keep them LF-only (pinned by ``.gitattributes``). The non-``.py`` extension
-is deliberate: it keeps black/isort/pylint and the import machinery away from
-files whose bytes are a production contract (the agent also reads required
-env vars at module top, so importing it would raise).
+The assets are BYTE-EXACT payloads with a hard budget: EC2 caps user-data
+at 16 KB before base64. The cap binds on the GZIP-COMPRESSED serve
+bootstrap (see ``pack_user_data`` below), not the raw rendered text. Raw
+headroom was only 7 bytes even before the digest-pinned
+``EC2_VLLM_IMAGE`` reference (+57 B over the cap). The section-5 agent
+fingerprint later grew the raw render to about 4.6 KB over. Compression
+keeps about 9 KB of margin (9,025 B measured 2026-08-18; the headroom
+canary in ``tests/test_ec2_payloads.py`` prints both the raw and
+compressed live margins). Every byte in ``agent.py.txt`` /
+``watchdog.py.txt`` / ``user_data.sh`` ships verbatim, comments included
+-- do not reformat them, and keep them LF-only (pinned by
+``.gitattributes``). The non-``.py`` extension is deliberate: it keeps
+black/isort/pylint and the import machinery away from files whose bytes
+are a production contract (the agent also reads required env vars at
+module top, so importing it would raise).
 
-The assets are read ONCE at import time into plain ``str`` module constants
-(not lazily) so tests can ``ast.parse()`` them directly and any missing-file
-breakage surfaces at import, not mid-provision.
+This module reads the assets ONCE, at import time, into plain ``str``
+module constants -- not lazily. A test can then ``ast.parse()`` them
+directly, and any missing-file breakage surfaces at import, not
+mid-provision.
 """
 
 import gzip
@@ -96,13 +98,14 @@ def render_user_data(
     s3_cache_uri: str = "",
     vllm_port: int = 8000,
 ) -> str:
-    """Fills the cloud-init user-data template; validates size and completeness.
+    """Fill the cloud-init user-data template; validate size and completeness.
 
-    Substitutes every ``@@PLACEHOLDER@@`` marker in ``USER_DATA_TEMPLATE`` via
-    plain ``str.replace`` (not ``str.format``/f-strings -- the embedded bash
-    and python are full of literal braces and dollar signs that would collide
-    with template syntax), then asserts the result is fully substituted and
-    fits EC2's user-data size cap.
+    This function substitutes every ``@@PLACEHOLDER@@`` marker in
+    ``USER_DATA_TEMPLATE`` via plain ``str.replace`` (not
+    ``str.format``/f-strings -- the embedded bash and python are full of
+    literal braces and dollar signs that would collide with template
+    syntax). It then asserts the result is fully substituted, and fits
+    EC2's user-data size cap.
 
     Parameters
     ----------
@@ -112,41 +115,44 @@ def render_user_data(
     vllm_api_key : str
         Per-experiment bearer token vLLM requires on ``ec2.EC2_VLLM_PORT``.
     hf_token : str
-        Hugging Face token baked in for gated checkpoints, or ``""``. Empty is
-        fine for the default (all-ungated) deploy specs.
+        Hugging Face token baked in for gated checkpoints, or ``""``.
+        Empty is fine for the default (all-ungated) deploy specs.
     idle_timeout_min : int
         Minutes of inactivity before the on-instance watchdog self-halts.
     startup_grace_min : int
-        Minutes a loading-but-not-yet-healthy model still counts as activity.
+        Minutes a loading-but-not-yet-healthy model still counts as
+        activity.
     max_lifetime_min : int
-        Absolute backstop: ``shutdown -h`` scheduled this many minutes after
-        boot, regardless of activity.
+        Absolute backstop: ``shutdown -h`` scheduled this many minutes
+        after boot, regardless of activity.
     image : str
         vLLM Docker image reference (``docker pull``-able).
     s3_cache_uri : str, optional
-        ``s3://bucket/prefix`` model-cache mirror, or ``""`` to disable it
-        (HF-only, the pre-S3 behavior). Default ``""``.
+        ``s3://bucket/prefix`` model-cache mirror, or ``""`` to disable
+        it (HF-only, the pre-S3 behavior). Default ``""``.
     vllm_port : int, optional
-        Port threaded into the instance as ``SMOLBENCH_VLLM_PORT`` (read by
-        AGENT_PY/WATCHDOG_PY for their localhost health/metrics probes and the
-        docker port-publish in ``_serve()``). The ``8000`` default mirrors
-        ``ec2.EC2_VLLM_PORT`` (a fixed, non-env constant; this package must
-        not import ec2 -- ec2 imports it); ec2.py passes the constant
-        explicitly at its provision call site.
+        Port threaded into the instance as ``SMOLBENCH_VLLM_PORT`` (read
+        by AGENT_PY/WATCHDOG_PY for their localhost health/metrics probes
+        and the docker port-publish in ``_serve()``). The ``8000``
+        default mirrors ``ec2.EC2_VLLM_PORT`` (a fixed, non-env
+        constant; this package must not import ec2 -- ec2 imports it);
+        ec2.py passes the constant explicitly at its provision call
+        site.
 
     Returns
     -------
     str
-        The fully rendered cloud-init script. Not yet ready for
-        ``RunInstances``' ``UserData`` kwarg on its own -- pass it through
-        ``pack_user_data`` first, which gzip-compresses it (the size cap now
-        binds on the compressed bytes; see that function's docstring).
+        The fully rendered cloud-init script. This is not yet ready for
+        ``RunInstances``' ``UserData`` kwarg on its own -- pass it
+        through ``pack_user_data`` first, which gzip-compresses it (the
+        size cap now binds on the compressed bytes; see that function's
+        docstring).
 
     Raises
     ------
     AssertionError
-        If a heredoc delimiter appears inside an embedded payload script (it
-        would truncate the heredoc early), or if any ``@@...@@`` marker
+        A heredoc delimiter appears inside an embedded payload script (it
+        would truncate the heredoc early), or an ``@@...@@`` marker
         survives substitution.
     """
     for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
@@ -171,32 +177,34 @@ def render_user_data(
     assert "@@" not in rendered, "unsubstituted placeholder left in user-data"
     # The 16 KB EC2 user-data cap used to be asserted here, against the raw
     # rendered text. It now binds on the GZIP-COMPRESSED bytes instead (see
-    # pack_user_data below) -- the digest-pinned EC2_VLLM_IMAGE reference
-    # (an 88-char `vllm/vllm-openai@sha256:<64 hex>` string) put the raw
-    # render 57 bytes over a cap that had only 7 bytes of headroom left to
-    # give, and later payload growth (the section-5 agent fingerprint)
-    # widened that to ~4.6 KB over -- the cap had to move to survive.
+    # pack_user_data below). The digest-pinned EC2_VLLM_IMAGE reference (an
+    # 88-char `vllm/vllm-openai@sha256:<64 hex>` string) put the raw render
+    # 57 bytes over a cap that had only 7 bytes of headroom left to give.
+    # Later payload growth (the section-5 agent fingerprint) widened that
+    # to about 4.6 KB over -- the cap had to move to survive.
     return rendered
 
 
 def pack_user_data(rendered: str) -> bytes:
-    """Gzip-compresses rendered cloud-init user-data for the EC2 size cap.
+    """Gzip-compress rendered cloud-init user-data for the EC2 size cap.
 
-    EC2's 16 KB user-data limit (before boto3's base64 encoding) used to be
-    checked against the raw rendered script inside ``render_user_data``. The
-    digest-pinned ``EC2_VLLM_IMAGE`` reference introduced alongside this
-    function (an 88-character ``vllm/vllm-openai@sha256:<64 hex>`` string,
-    versus a short tag like ``"v0.11.1"``) ate the remaining single-digit-byte
-    headroom, so the cap now applies to these COMPRESSED bytes instead. This
-    is transparent on the instance side: cloud-init auto-detects a gzip
-    magic number on user-data and gunzips it before running -- no change to
-    ``user_data.sh`` or the instance boot path is needed. It is also
-    transparent to the AWS call site: ``RunInstances``' ``UserData`` kwarg
-    accepts either ``str`` or ``bytes``; boto3's ``base64_encode_user_data``
-    handler base64-encodes bytes directly (skipping only the UTF-8 encode
-    step it would otherwise do for a ``str``), so passing these compressed
-    bytes straight through to ``run_instances(UserData=...)`` needs no
-    manual base64 anywhere in the call chain.
+    EC2's 16 KB user-data limit (before boto3's base64 encoding) used to
+    be checked against the raw rendered script, inside
+    ``render_user_data``. The digest-pinned ``EC2_VLLM_IMAGE`` reference
+    introduced alongside this function (an 88-character
+    ``vllm/vllm-openai@sha256:<64 hex>`` string, versus a short tag like
+    ``"v0.11.1"``) ate the remaining single-digit-byte headroom, so the
+    cap now applies to these COMPRESSED bytes instead. This is
+    transparent on the instance side: cloud-init auto-detects a gzip
+    magic number on user-data and gunzips it before running -- no change
+    to ``user_data.sh`` or the instance boot path is needed. It is also
+    transparent to the AWS call site: ``RunInstances``' ``UserData``
+    kwarg accepts either ``str`` or ``bytes``. boto3's
+    ``base64_encode_user_data`` handler base64-encodes bytes directly
+    (skipping only the UTF-8 encode step it would otherwise do for a
+    ``str``), so passing these compressed bytes straight through to
+    ``run_instances(UserData=...)`` needs no manual base64 anywhere in
+    the call chain.
 
     Parameters
     ----------
@@ -207,25 +215,27 @@ def pack_user_data(rendered: str) -> bytes:
     Returns
     -------
     bytes
-        ``rendered``, UTF-8 encoded then gzip-compressed with ``mtime=0``.
-        Using a fixed ``mtime`` (rather than the default "now") makes the
-        output byte-for-byte reproducible across two calls with identical
-        input -- gzip's header otherwise embeds the compression wall-clock
-        time, which would make this function's output non-deterministic and
-        complicate any future byte-diffing of provisioned user-data.
+        ``rendered``, UTF-8 encoded then gzip-compressed with
+        ``mtime=0``. A fixed ``mtime`` (rather than the default "now")
+        makes the output byte-for-byte reproducible across two calls
+        with identical input. gzip's header otherwise embeds the
+        compression wall-clock time, which would make this function's
+        output non-deterministic, and would complicate any future
+        byte-diffing of provisioned user-data.
 
     Raises
     ------
     AssertionError
-        If the compressed result is >= 16 KB (EC2's user-data cap, now
+        The compressed result is >= 16 KB (EC2's user-data cap, now
         measured post-compression rather than pre-compression).
 
     Notes
     -----
-    Pure and side-effect-free. ``gzip.compress`` at the default compression
-    level is used -- the payload is small (low tens of KB) and compresses in
-    well under a millisecond, so trading compression ratio for speed via a
-    lower level was not worth the tuning.
+    This function is pure and side-effect-free. It uses
+    ``gzip.compress`` at the default compression level: the payload is
+    small (low tens of KB) and compresses in well under a millisecond,
+    so trading compression ratio for speed via a lower level was not
+    worth the tuning.
     """
     # Design: mtime=0 rather than the gzip default (current wall-clock time)
     # -- see the Returns section above for why byte-reproducibility matters

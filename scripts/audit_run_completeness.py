@@ -1,48 +1,52 @@
-"""Content-level completeness audit -- catches SILENT data faults.
+"""Audit content-level run completeness. Catches SILENT data faults.
 
 WHY THIS EXISTS
 ---------------
-On 2026-08-14 the deduction leg was found to be missing 2,564 of 19,824 cells
-(12.9%), concentrated in five lanes, one of which had lost 93.8% of its data.
-Nothing flagged it. Every check that existed passed:
+On 2026-08-14, an audit found the deduction leg missing 2,564 of 19,824
+cells (12.9%). The loss concentrated in five lanes; one lane had lost
+93.8% of its data. Nothing flagged it. Every check that existed passed:
 
   * the fleet driver reported the lane COMPLETE (it had run to the end);
-  * the shard merge gates passed (944 cells + 300 sanity = 1,244 rows -- the
-    KEYS were all present);
+  * the shard merge gates passed (944 cells + 300 sanity = 1,244 rows;
+    the KEYS were all present);
   * the verification pass reported 0 tracebacks and uploaded 22/22 files.
 
-The rows were there. They were just EMPTY -- ``candidate_proof: ""``,
-``completion_tokens: 0`` -- because the generating box died mid-run and the
-driver recorded the failure as an ordinary per-cell ``exception`` row. The
-loss only surfaced when someone asked why one lane's verified output was 90%
-``exception``.
+The rows were there. They were just EMPTY: ``candidate_proof: ""``,
+``completion_tokens: 0``. The generating box had died mid-run, and the
+driver recorded the failure as an ordinary per-cell ``exception`` row.
+The loss surfaced only when someone asked why one lane's verified output
+was 90% ``exception``.
 
-The lesson, and the rule this script enforces: **a completeness check that
-counts rows is not a completeness check.** Presence of a key proves an
-attempt was made, not that data came back. Assert on CONTENT.
+The lesson, and the rule this script enforces: **a completeness check
+that counts rows is not a completeness check.** The presence of a key
+proves an attempt was made, not that data came back. Assert on CONTENT.
 
 WHAT COUNTS AS A FAULT
 ----------------------
-A cell is DEAD when no row for its key carries a non-empty candidate_proof.
-Dead cells split into two populations that must NOT be conflated:
+A cell is DEAD when no row for its key carries a non-empty
+candidate_proof. Dead cells split into two populations. Do NOT conflate
+them:
 
-  INFRA   some row carries an infrastructure error (spot interruption, idle
-          watchdog, unreachable endpoint, connection/timeout). This is LOST
-          DATA and is recoverable by re-running -- runner._existing_keys()
-          re-runs a cell whose surviving rows are all empty when the cell also
-          owns an ``exception`` row, so a plain relaunch regenerates exactly
-          these. (Until 2026-08-14 that function decided per ROW, so an empty
-          non-exception row could pin a dead cell as done and no relaunch
-          could ever reach it; qwen3.5-27b lost 6 cells that way and reported
-          COMPLETE having written nothing.)
+  INFRA   Some row carries an infrastructure error (spot interruption,
+          idle watchdog, unreachable endpoint, a connection or timeout
+          error). This is LOST DATA, and you can recover it by
+          re-running. ``runner._existing_keys()`` re-runs a cell when
+          all its surviving rows are empty AND the cell also owns an
+          ``exception`` row, so a plain relaunch regenerates exactly
+          these cells. (Until 2026-08-14, that function decided per ROW
+          instead of per cell, so one empty non-exception row could pin
+          a dead cell as done, and no relaunch could ever reach it.
+          qwen3.5-27b lost 6 cells that way, and reported COMPLETE
+          having written nothing.)
 
-  GENUINE no error anywhere: the model was asked and returned nothing. This
-          is DATA, not loss (962 such cells exist across the study, e.g. 272
-          in gemma-4-12b). Regenerating them would fabricate results by
-          resampling until the model happens to answer. Never "repair" these.
+  GENUINE No error anywhere: the model was asked and returned nothing.
+          This is DATA, not loss (962 such cells exist across the
+          study, for example 272 in gemma-4-12b). A regeneration of
+          these cells would fabricate results by resampling until the
+          model happens to answer. Never "repair" these cells.
 
-Exit status is 1 when INFRA loss exists, so this can gate a pipeline. Genuine
-empties are reported but never fail the run.
+This script exits with status 1 when INFRA loss exists, so a pipeline can
+gate on it. It reports genuine empties, but never fails the run over them.
 
 USAGE
     scripts/audit_run_completeness.py                  # all lanes, from S3
@@ -71,9 +75,9 @@ EXPECTED_CELLS = 944
 #: Expected induction seeds per (model, arm): base_seed=0, R=30.
 EXPECTED_SEEDS = 30
 
-#: Substrings that mark a row's failure as INFRASTRUCTURE rather than model
-#: behaviour. Deliberately broad: a false "infra" costs one re-run, a false
-#: "genuine" silently keeps a hole in the dataset.
+#: Substrings that mark a row's failure as INFRASTRUCTURE, not model
+#: behavior. This pattern is deliberately broad. A false "infra" costs one
+#: re-run; a false "genuine" silently keeps a hole in the dataset.
 INFRA_PATTERNS = re.compile(
     r"spot interruption|shutting-down|idle watchdog|unreachable|Connection|"
     r"Timeout|RemoteDisconnected|RuntimeError|ProtocolError|Max retries",
@@ -91,11 +95,25 @@ def _s3():
 
 
 def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
-    """Yields (lane_name, all_rows_text) for every deduction lane."""
+    """Yield (lane_name, all_rows_text) for every deduction lane.
+
+    Parameters
+    ----------
+    local : bool
+        If ``True``, read local run directories. If ``False``, read
+        every lane's ``all_rows.jsonl`` from S3.
+
+    Yields
+    ------
+    tuple[str, str]
+        ``(lane_name, all_rows_text)``. ``all_rows_text`` is the raw
+        text of the lane's ``all_rows.jsonl``, or ``""`` if S3 has no
+        object for that lane.
+    """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
-        # Skip symlinks: the driver keeps a `latest -> scaling_<key>` pointer,
-        # and following it double-counts that lane in the totals.
+        # Skip symlinks: the driver keeps a `latest -> scaling_<key>`
+        # pointer, and following it double-counts that lane in the totals.
         for d in sorted(p for p in runs.iterdir() if p.is_dir() and not p.is_symlink()):
             rows = d / "all_rows.jsonl"
             if rows.exists():
@@ -119,7 +137,22 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
 
 
 def audit_lane(text: str) -> Dict[str, object]:
-    """Classifies one lane's cells into ok / infra-dead / genuine-empty."""
+    """Classify one lane's cells into ok, infra-dead, or genuine-empty.
+
+    Parameters
+    ----------
+    text : str
+        Raw text of the lane's ``all_rows.jsonl``, as returned by
+        `iter_deduction_lanes`.
+
+    Returns
+    -------
+    dict
+        Keys: ``cells`` (distinct cell-key count), ``infra`` (dead cells
+        classified as infrastructure loss), ``genuine`` (dead cells
+        classified as genuine empty completions), and ``sanity_missing``
+        (sanity theorems with no passing verdict in any row).
+    """
     rows_by_key: Dict[tuple, List[dict]] = collections.defaultdict(list)
     sanity: Dict[str, bool] = {}
     for line in text.splitlines():
@@ -142,15 +175,17 @@ def audit_lane(text: str) -> Dict[str, object]:
         if any((r.get("candidate_proof") or "").strip() for r in rows):
             continue
         # A cell is INFRA loss only if NO attempt ever reached the model.
-        # `prompt_tokens > 0` means the server counted a prompt, so the model
-        # WAS asked and the empty result is its answer -- data, not loss.
+        # `prompt_tokens > 0` means the server counted a prompt, so the
+        # model WAS asked, and the empty result is its answer: data, not
+        # loss.
         #
-        # Classifying on the error text instead (any row matching
-        # INFRA_PATTERNS) made a cell infra FOREVER once it had lost a single
-        # attempt to a spot kill, even after later attempts ran cleanly and
-        # answered emptily. Eight cells were stuck that way on 2026-08-15,
-        # keeping two lanes permanently red and, worse, feeding an unbounded
-        # retry loop that resampled 67 cells from empty to a proof.
+        # An earlier version classified on the error text alone (any row
+        # matching INFRA_PATTERNS). That made a cell infra FOREVER once it
+        # had lost a single attempt to a spot kill, even after later
+        # attempts ran cleanly and answered emptily. Eight cells were
+        # stuck that way on 2026-08-15. This kept two lanes permanently
+        # red, and, worse, fed an unbounded retry loop that resampled 67
+        # cells from empty to a proof.
         reached_model = any(int(r.get("prompt_tokens") or 0) > 0 for r in rows)
         blob = " ".join(str(r.get("lean_error") or "") for r in rows)
         if not reached_model and INFRA_PATTERNS.search(blob):
@@ -166,11 +201,24 @@ def audit_lane(text: str) -> Dict[str, object]:
 
 
 def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, int]]:
-    """Reports induction (model, arm) pairs missing seeds.
+    """Report induction (model, arm) pairs that are missing seeds.
 
-    The induction analogue of an empty cell is a MISSING seed: the arm file is
-    written only when a seed completes, so a lane that died mid-seed leaves no
-    trace at all in S3 -- silent in a different way than deduction's empty rows.
+    The induction analogue of an empty cell is a MISSING seed. The arm
+    file is written only when a seed completes, so a lane that died
+    mid-seed leaves no trace at all in S3. This is silent in a different
+    way than deduction's empty rows.
+
+    Parameters
+    ----------
+    models : list[str] or None, optional
+        If given, report only these model names. If ``None`` (the
+        default), report every model found in S3.
+
+    Returns
+    -------
+    dict[str, dict[str, int]]
+        Maps each model with at least one gap to a dict of
+        ``{arm: missing_seed_count}``.
     """
     s3 = _s3()
     seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)
@@ -231,12 +279,13 @@ def main() -> int:
     )
 
     if not audited:
-        # An audit that examined NOTHING must never report success -- that is
-        # the exact failure this script exists to catch, turned on itself.
-        # Hit for real on 2026-08-15: `--local --lane qwen3.5-27b` printed
-        # "All audited lanes complete" and exited 0 because the driver had
-        # already pruned the local spool after uploading to S3. The lane in
-        # fact still had a dead cell, which the S3 audit found immediately.
+        # An audit that examined NOTHING must never report success. That
+        # would be the exact failure this script exists to catch, turned
+        # on itself. This happened for real on 2026-08-15:
+        # `--local --lane qwen3.5-27b` printed "All audited lanes
+        # complete" and exited 0, because the driver had already pruned
+        # the local spool after uploading to S3. The lane in fact still
+        # had a dead cell, which the S3 audit found immediately.
         where = "local run dirs" if args.local else "S3"
         print(
             f"\n*** AUDITED NOTHING: no lane in {where} matched "

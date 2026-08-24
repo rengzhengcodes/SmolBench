@@ -1,9 +1,9 @@
 """
-Interfacing directly with the OpenRouter API.
+Interface directly with the OpenRouter API.
 
 A thin configuration over :mod:`smolbench.evals.openai_compat`, which holds
 the retry loop, response parsing, and parallel evaluation shared by every
-provider; only OpenRouter's endpoint, auth, and context-length lookup live
+provider. Only OpenRouter's endpoint, auth, and context-length lookup live
 here.
 
 Setup
@@ -28,22 +28,26 @@ _DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 
 def _base_url() -> str:
-    """API root, resolved at call time so env overrides need no re-import."""
+    """Return the API root, resolved at call time.
+
+    This resolves at call time, so an env override needs no re-import.
+    """
     return os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
 def _connection(model: str) -> Tuple[str, str]:
-    """Returns the chat-completions URL and bearer token."""
+    """Return the chat-completions URL and bearer token."""
     return f"{_base_url()}/chat/completions", os.getenv("OPENROUTER_API_KEY", "")
 
 
 @functools.lru_cache(maxsize=None)
 def get_model_context_length(model: str) -> int:
-    """Fetches the model context window from segments.
+    """Get `model`'s context window from its OpenRouter endpoint listing.
 
-    A model's window is constant, so the network lookup is cached: evaluate()
-    is called once per replicate and re-fetching one integer per call costs
-    a round trip plus a fresh chance to trip a 429.
+    A model's window is constant, so this function caches the network
+    lookup. evaluate() calls it once per replicate, and re-fetching one
+    integer per call would cost a round trip, plus a fresh chance to trip
+    a 429.
     """
     response: Dict[str, Any] = metadata_get(
         f"{_base_url()}/models/{model}/endpoints",

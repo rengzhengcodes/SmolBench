@@ -1,40 +1,47 @@
 #!/usr/bin/env python
-"""Additive recovery of the 151 DojoInit ``std`` cells per deduction lane.
+"""Additively recover the 151 DojoInit ``std`` cells for each deduction lane.
 
-Background (notebooks/DEDUCTION_COVERAGE_DIAGNOSIS_2026-08-16.md + the
-2026-08-18 diagnosis): 151 cells/lane (45 theorems, byte-identical across all
-21 lanes, 100% ``.lake/packages/std/``) were graded ``replay_failed`` with
-``DojoInitError: Cannot find the *.ast.json file`` because the grading box's
-LeanDojo traced cache (under ``/root/.cache``) lacked the std build tree.
-Today's local cache verifies them: 45/45 sanity replays succeed, and a
-micro-proof recovered real verdicts (6/6 Mathlib control cells reproduce
-their recorded verdicts exactly across both grading waves).
+Background (notebooks/DEDUCTION_COVERAGE_DIAGNOSIS_2026-08-16.md, and the
+2026-08-18 diagnosis): 151 cells per lane (45 theorems, byte-identical
+across all 21 lanes, 100% ``.lake/packages/std/``) were graded
+``replay_failed`` with ``DojoInitError: Cannot find the *.ast.json
+file``. The cause: the grading box's LeanDojo traced cache (under
+``/root/.cache``) lacked the std build tree. Today's local cache
+verifies them: 45/45 sanity replays succeed, and a micro-proof recovered
+real verdicts (6/6 Mathlib control cells reproduce their recorded
+verdicts exactly, across both grading waves).
 
 ADDITIVE CONTRACT -- the load-bearing property of this tool:
-  * The study's ``scaling_*`` S3 prefixes are READ-ONLY here. Nothing is ever
-    overwritten, deleted, or written under them; the results bucket stays an
-    append-only experiment log (standing user directive).
-  * Recovered verdicts are NEW rows: the original row's fields verbatim plus
-    ``recovered_*`` fields appended, written to
-    ``notebooks/deduction/results/dojoinit_recovery_2026-08-18/<lane>/`` and
-    uploaded ONLY under ``deduction/runs/dojoinit_recovery_2026-08-18/``
-    (guarded by an assertion in :func:`s3_put`).
-  * The study headline (Mathlib-only) is closed; joining these rows is a
-    SCOPE EXTENSION performed by ``--stage report`` and the addendum doc.
+  * The study's ``scaling_*`` S3 prefixes are READ-ONLY here. This tool
+    never overwrites, deletes, or writes under them. The results bucket
+    stays an append-only experiment log (a standing user directive).
+  * Recovered verdicts are NEW rows: this tool writes the original row's
+    fields verbatim, plus appended ``recovered_*`` fields, to
+    ``notebooks/deduction/results/dojoinit_recovery_2026-08-18/<lane>/``.
+    It uploads them ONLY under
+    ``deduction/runs/dojoinit_recovery_2026-08-18/`` (an assertion in
+    :func:`s3_put` guards this).
+  * The study headline (Mathlib-only) is closed. A join of these rows
+    is a SCOPE EXTENSION, performed by ``--stage report`` and the addendum doc.
 
-Stages (run under ``.venv-lean`` with ``~/.elan/bin`` on PATH):
-  gate      lake-on-PATH + 45/45 sanity content gate (``--sanity-json``).
-  controls  re-verify ~30 Mathlib control cells across 5 lanes spanning both
-            grading waves; EXACT agreement with recorded verdicts required.
-  recover   one lane (``--lane``) or all 21 (``--all``, 2 lanes in parallel):
-            re-verify the 151 std rows, write/upload recovered_rows.jsonl.
-  report    join recovered + study rows: per-lane extended-scope table +
-            cross-lane identity assertions; writes report.json.
+Stages (run under ``.venv-lean``, with ``~/.elan/bin`` on PATH):
+  gate      Check lake is on PATH, and run the 45/45 sanity content gate
+            (``--sanity-json``).
+  controls  Re-verify about 30 Mathlib control cells across 5 lanes,
+            spanning both grading waves. Requires EXACT agreement with
+            the recorded verdicts.
+  recover   Recover one lane (``--lane``) or all 21 (``--all``, 2 lanes
+            in parallel): re-verify the 151 std rows, and write and
+            upload recovered_rows.jsonl.
+  report    Join recovered rows with study rows: build a per-lane
+            extended-scope table, run cross-lane identity assertions,
+            and write report.json.
 
-Verification code paths are ``scripts/lean_verify_rows.py``'s own
-(``group_unverified`` / ``_lookup_theorem`` / ``unique_candidates`` /
-``fan_out_verdict`` + the verifier's ``open_at_step``/``try_tail``), so a
-recovered verdict is produced by exactly the machinery that graded the 712.
+This tool's verification code paths are ``scripts/lean_verify_rows.py``'s
+own (``group_unverified``, ``_lookup_theorem``, ``unique_candidates``,
+``fan_out_verdict``, plus the verifier's ``open_at_step`` and
+``try_tail``). So a recovered verdict comes from exactly the machinery
+that graded the 712.
 """
 from __future__ import annotations
 
@@ -60,7 +67,7 @@ RECOVERY_NAME = "dojoinit_recovery_2026-08-18"
 RECOVERY_SOURCE = "dojoinit-recovery-2026-08-18"
 S3_BUCKET = "smolbench-results-414266451290"
 S3_RUNS_PREFIX = "deduction/runs"
-#: The ONLY key prefix this tool may PUT under (see :func:`s3_put`).
+#: The ONLY key prefix this tool may PUT to (see :func:`s3_put`).
 RECOVERY_S3_PREFIX = f"{S3_RUNS_PREFIX}/{RECOVERY_NAME}/"
 LOCAL_ROOT = REPO / "notebooks" / "deduction" / "results" / RECOVERY_NAME
 STD_PREFIX = ".lake/packages/std/"
@@ -78,25 +85,28 @@ LANES: List[str] = [
     "deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro",
 ]
 #: Lanes re-verified in the 2026-08-16 grading wave (the six re-collected
-#: lanes, per the coverage diagnosis); the other 15 were graded 2026-08-14.
+#: lanes, per the coverage diagnosis). The other 15 were graded 2026-08-14.
 WAVE_0816 = {"nemotron-3-nano-4b", "deepseek-v3.1", "exaone-4.5-33b",
              "gemma-4-31b", "ministral-3-3b", "qwen3.5-27b"}
-#: 3 lanes from the 08-14 wave + 2 from the 08-16 wave, fixed deterministically.
+#: 3 lanes from the 08-14 wave, plus 2 from the 08-16 wave, fixed
+#: deterministically.
 CONTROL_LANES = ["gemma-4-e2b", "glm-4.5-air", "ministral-3-8b",
                  "qwen3.5-27b", "nemotron-3-nano-4b"]
 CONTROL_VERDICTS = ("success", "lean_error", "incomplete")
-#: given_up: the candidate tactic drove Lean to a given-up proof state -- a
-#: judgment on the CANDIDATE (measured live 2026-08-18: 4 such Mathlib cells
-#: in the nemotron-3-nano-4b lane; they are part of the 711/712 measurable
-#: denominators). Not a CONTROL verdict (too rare to stratify on).
+#: given_up: the candidate tactic drove Lean to a given-up proof state.
+#: This is a judgment on the CANDIDATE (measured live 2026-08-18: 4 such
+#: Mathlib cells in the nemotron-3-nano-4b lane; they are part of the
+#: 711/712 measurable denominators). Not a CONTROL verdict: it is too
+#: rare to stratify on.
 MEASURABLE_VERDICTS = frozenset(CONTROL_VERDICTS) | {"given_up"}
 
 log = logging.getLogger("recover_dojoinit")
 
 
 # ---------------------------------------------------------------------------
-# lean_verify_rows is imported lazily: the gate/report/S3 plumbing must work
-# (and the module must import) in environments without lean_dojo (.venv).
+# This module imports lean_verify_rows lazily. The gate/report/S3 plumbing
+# must work, and this module must import cleanly, in environments without
+# lean_dojo (.venv).
 _LVR = None
 
 
@@ -115,7 +125,23 @@ def lvr():
 # ---------------------------------------------------------------------------
 # S3 plumbing (aws CLI subprocess: creds from the ambient chain, streaming)
 def s3_stream_rows(lane: str) -> Iterator[Dict[str, Any]]:
-    """Yields the lane's study ``verified_rows.jsonl`` rows, read-only."""
+    """Yield the lane's study ``verified_rows.jsonl`` rows, read-only.
+
+    Parameters
+    ----------
+    lane : str
+        Lane key, for example ``"qwen3.5-27b"``.
+
+    Yields
+    ------
+    dict
+        Each parsed row.
+
+    Raises
+    ------
+    RuntimeError
+        If the ``aws s3 cp`` read fails.
+    """
     uri = f"s3://{S3_BUCKET}/{S3_RUNS_PREFIX}/scaling_{lane}/verified_rows.jsonl"
     proc = subprocess.Popen(["aws", "s3", "cp", uri, "-"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -130,10 +156,22 @@ def s3_stream_rows(lane: str) -> Iterator[Dict[str, Any]]:
 
 
 def s3_put(local: Path, key: str) -> None:
-    """Uploads `local` to the recovery prefix -- and ONLY the recovery prefix.
+    """Upload `local` to the recovery prefix, and ONLY the recovery prefix.
 
     The assertion below is the additive-contract guard: this tool must be
     physically incapable of writing anywhere else in the results bucket.
+
+    Parameters
+    ----------
+    local : Path
+        Local file to upload.
+    key : str
+        Destination S3 key. Must start with `RECOVERY_S3_PREFIX`.
+
+    Raises
+    ------
+    AssertionError
+        If `key` does not start with `RECOVERY_S3_PREFIX`.
     """
     assert key.startswith(RECOVERY_S3_PREFIX), (
         f"ADDITIVE-CONTRACT VIOLATION: refusing to PUT s3 key {key!r}; only "
@@ -152,18 +190,40 @@ def load_std45() -> List[Dict[str, Any]]:
 
 
 def golden_std_keys(std45: List[Dict[str, Any]]) -> set:
-    """The (theorem_id, k) group set every lane's 151 std rows must span."""
+    """Return the (theorem_id, k) group set every lane's 151 std rows must span.
+
+    Parameters
+    ----------
+    std45 : list[dict]
+        The 45-theorem golden std set, as returned by `load_std45`.
+
+    Returns
+    -------
+    set[tuple]
+        The full ``(theorem_id, k)`` key set the std rows must cover.
+    """
     return {(t["theorem_id"], k) for t in std45 for k in t["ks"]}
 
 
 def dedupe_earliest(rows) -> Tuple[List[Dict[str, Any]], int]:
-    """Earliest-wins dedupe by cell key; returns (rows, n_duplicates_dropped).
+    """Dedupe rows by cell key, keeping the earliest surviving row.
 
-    The six re-collected lanes carry duplicate cell rows from the 2026-08-15
-    resampling era (measured live: qwen3.5-27b has 178 std rows over 151
-    distinct cells). File order is chronological append; the kept row is the
-    FIRST NON-exception occurrence (see inline comment), matching the study
-    loader's earliest-surviving rule.
+    The six re-collected lanes carry duplicate cell rows from the
+    2026-08-15 resampling era (measured live: qwen3.5-27b has 178 std
+    rows over 151 distinct cells). File order is chronological append.
+    This function keeps the FIRST NON-exception occurrence (see the
+    inline comment below), matching the study loader's earliest-surviving
+    rule.
+
+    Parameters
+    ----------
+    rows : iterable of dict
+        Cell rows to dedupe.
+
+    Returns
+    -------
+    tuple[list[dict], int]
+        The deduped rows, and the count of duplicate rows dropped.
     """
     seen: Dict[Tuple, Dict[str, Any]] = {}
     dupes = 0
@@ -173,14 +233,15 @@ def dedupe_earliest(rows) -> Tuple[List[Dict[str, Any]], int]:
             seen[key] = r
             continue
         dupes += 1
-        # First NON-exception row per cell wins -- the study loader's own
-        # documented rule (notebooks/deduction/power_analysis.py
-        # load_joint_cells: an exception row means the attempt never produced
-        # an answer, so the earliest SURVIVING row is the cell's answer).
-        # Earliest-ANY was measured live to keep spot-kill exception
-        # placeholders and shrink five re-collected lanes' measurable Mathlib
-        # counts (qwen3.5-27b 520 vs 712, deepseek-v3.1 390, gemma-4-31b 231,
-        # ministral-3-3b 350, exaone-4.5-33b 344).
+        # The first NON-exception row per cell wins. This is the study
+        # loader's own documented rule (notebooks/deduction/power_analysis.py
+        # load_joint_cells: an exception row means the attempt never
+        # produced an answer, so the earliest SURVIVING row is the
+        # cell's answer). A prior "earliest-ANY" rule was measured live to
+        # keep spot-kill exception placeholders and shrink five
+        # re-collected lanes' measurable Mathlib counts (qwen3.5-27b 520
+        # vs 712, deepseek-v3.1 390, gemma-4-31b 231, ministral-3-3b 350,
+        # exaone-4.5-33b 344).
         if (seen[key].get("verdict") == "exception"
                 and r.get("verdict") != "exception"):
             seen[key] = r
@@ -190,13 +251,20 @@ def dedupe_earliest(rows) -> Tuple[List[Dict[str, Any]], int]:
 # ---------------------------------------------------------------------------
 # Shared verification core (the prototype's loop, factored)
 def verify_rows_in_place(rows: List[Dict[str, Any]]) -> None:
-    """Re-verifies `rows` (their ``verdict`` pre-set to ``"unverified"``).
+    """Re-verify `rows` in place.
 
-    Writes the fresh verdict/error/final_state_pp/verify_ms back onto each
-    row via ``fan_out_verdict`` -- exactly the prototype's logic: one Dojo
-    session per (theorem_id, k) group, candidate-text dedup inside it, and
-    the ``prefix tactic ... -> ProofFinished`` RuntimeError captured as the
-    F8-class ``replay_failed`` reason.
+    The caller must pre-set each row's ``verdict`` to ``"unverified"``.
+    This function writes the fresh verdict, error, final_state_pp, and
+    verify_ms back onto each row through ``fan_out_verdict``. This is
+    exactly the prototype's logic: one Dojo session per (theorem_id, k)
+    group, candidate-text dedup inside it, and the ``prefix tactic ... ->
+    ProofFinished`` RuntimeError captured as the F8-class
+    ``replay_failed`` reason.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows to re-verify. This function mutates each row in place.
     """
     L = lvr()
     groups = L.group_unverified(rows)
@@ -239,10 +307,16 @@ def verify_rows_in_place(rows: List[Dict[str, Any]]) -> None:
 
 
 def take_lock():
-    """Advisory exclusive lock against a concurrent lean_verify_rows sweep.
+    """Take an advisory exclusive lock against a concurrent lean_verify_rows sweep.
 
-    Children spawned by ``--all`` inherit the parent's lock via the
-    RECOVERY_HAS_LOCK env instead of contending for it.
+    Children spawned by ``--all`` inherit the parent's lock through the
+    RECOVERY_HAS_LOCK environment variable, instead of contending for it.
+
+    Returns
+    -------
+    IO or None
+        The open, locked file handle, or ``None`` if this process
+        already holds the lock through an inherited RECOVERY_HAS_LOCK.
     """
     if os.environ.get("RECOVERY_HAS_LOCK") == "1":
         return None
@@ -255,8 +329,8 @@ def take_lock():
 def require_lake():
     if shutil.which("lake") is None:
         sys.exit("FATAL: `lake` is not on PATH. The known trap: elan lives at "
-                 "~/.elan/bin (or /root/.elan/bin) and non-login shells miss it "
-                 "-- run with PATH=$HOME/.elan/bin:$PATH (README trap #1; this "
+                 "~/.elan/bin (or /root/.elan/bin), and non-login shells miss it. "
+                 "Run with PATH=$HOME/.elan/bin:$PATH (README trap #1; this "
                  "silently produced 160 bogus replay_failed groups on 2026-08-16).")
 
 
@@ -288,8 +362,9 @@ def stage_controls(args) -> None:
         lane_cells, _dupes = dedupe_earliest(
             row for row in s3_stream_rows(lane) if row.get("kind") == "cell")
         for row in lane_cells:
-            # verified_rows carries 300 kind="sanity" rows with NO file_path;
-            # only kind="cell" rows are cells (confirmed live 2026-08-18).
+            # verified_rows carries 300 kind="sanity" rows with NO
+            # file_path. Only kind="cell" rows are cells (confirmed live
+            # 2026-08-18).
             if (not row["file_path"].startswith(STD_PREFIX)
                     and row.get("verdict") in by_verdict):
                 by_verdict[row["verdict"]].append(row)
@@ -375,7 +450,7 @@ def stage_recover(args) -> None:
         lock = take_lock()  # noqa: F841
         print(json.dumps(recover_lane(args.lane, force=args.force)))
         return
-    # --all: parent holds the lock; 2 self-invocations at a time.
+    # --all: the parent holds the lock; it runs 2 self-invocations at a time.
     assert args.all, "recover needs --lane <key> or --all"
     avail_kb = int(next(l for l in Path("/proc/meminfo").read_text().splitlines()
                         if l.startswith("MemAvailable")).split()[1])

@@ -1,13 +1,14 @@
-"""Offline tests for ``InductionExperiment`` (no AWS, no network).
+"""Test ``InductionExperiment``, offline: no AWS, no network.
 
-Mirrors ``tests/test_replicates.py``'s style: a stub quiz factory, a fake
-``provider.evaluate``-free approach here since ``InductionExperiment`` never
-calls the provider directly -- it delegates to ``ReplicateHarness`` (already
-covered by ``test_replicates.py``) and to ``smolbench.evals.ec2``'s public
-lifecycle functions, both of which are monkeypatched rather than hit for
-real. See ``smolbench/induction/experiment.py``'s module docstring for the
-lazy-import contract this file's ``test_importing_experiment_does_not_import_ec2``
-exists to pin down.
+This mirrors ``tests/test_replicates.py``'s style: a stub quiz factory,
+with no fake ``provider.evaluate`` needed here since
+``InductionExperiment`` never calls the provider directly. It delegates to
+``ReplicateHarness`` (already covered by ``test_replicates.py``) and to
+``smolbench.evals.ec2``'s public lifecycle functions, both of which are
+monkeypatched instead of hit for real. See
+``smolbench/induction/experiment.py``'s module docstring for the
+lazy-import contract this file's
+``test_importing_experiment_does_not_import_ec2`` exists to pin down.
 """
 
 import contextlib
@@ -104,8 +105,9 @@ def test_harness_forwards_prefix():
 
 
 def test_harness_is_cached_across_accesses(exp):
-    # cached_property must build ReplicateHarness exactly once per instance:
-    # repeated access returns the SAME object, not an equal-but-distinct one.
+    # cached_property must build ReplicateHarness exactly once per
+    # instance. Repeated access returns the same object, not an
+    # equal-but-distinct one.
     first = exp.harness
     second = exp.harness
     assert first is second
@@ -131,10 +133,11 @@ def test_apply_env_sets_inference_provider_and_state_file(monkeypatch):
 
 
 def test_apply_env_pops_state_file_when_none(monkeypatch, exp):
-    # Simulate a prior chromatic experiment having set EC2_STATE_FILE in the
-    # same kernel/session; a state_file=None experiment (periodic) must not
-    # silently inherit it -- see _apply_env's docstring for why the pop is
-    # load-bearing rather than merely leaving the variable untouched.
+    # This simulates a prior chromatic experiment having set EC2_STATE_FILE
+    # in the same kernel or session. A state_file=None experiment
+    # (periodic) must not silently inherit it. See _apply_env's docstring
+    # for why the pop is load-bearing, not merely leaving the variable
+    # untouched.
     monkeypatch.setenv("EC2_STATE_FILE", "/tmp/some_other_experiments_state.json")
     exp._apply_env()
     assert "EC2_STATE_FILE" not in os.environ
@@ -144,12 +147,13 @@ def test_apply_env_pops_state_file_when_none(monkeypatch, exp):
 
 
 def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
-    # run() now skips serving when the model has no outstanding replicates
-    # (serving means pulling the checkpoint, so doing it for no work is
-    # billed time). This test is about the serve/forward SEQUENCING, so it
-    # states the precondition explicitly rather than depending on whatever
-    # happens to be in the repo's real results tree -- which is what `exp`
-    # points at, and which is fully populated for this archetype.
+    # run() now skips serving when the model has no outstanding
+    # replicates. (A serve call pulls the checkpoint, so doing it for
+    # no work is billed time.) This test is about the serve/forward
+    # sequencing, so it states the precondition explicitly, instead of
+    # depending on whatever happens to be in the repo's real results
+    # tree, which is what `exp` points at and which is fully populated
+    # for this archetype.
     monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
     events = []
 
@@ -186,11 +190,11 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
         ("run_replicates", "stub-model"),
         ("exit", "stub-model"),
     ]
-    # Only the kwargs the caller passed carry a non-None value through;
+    # Only the kwargs the caller passed carry a non-None value through.
     # request_timeout (never passed here) forwards as None, which
     # ReplicateHarness.run_replicates treats identically to "omitted".
-    # server_config is ALWAYS captured inside the serve block (provenance
-    # is not caller-optional); with no live state file it degrades to a
+    # server_config is always captured inside the serve block (provenance
+    # is not caller-optional). With no live state file it degrades to a
     # schema-complete snapshot of Nones, never to an error.
     assert isinstance(captured_kwargs.pop("server_config"), dict)
     assert captured_kwargs == {
@@ -203,12 +207,13 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp):
 
 
 def test_run_skips_serving_when_nothing_is_outstanding(monkeypatch, exp):
-    """No work => do not swap the instance's vLLM container.
+    """No work: do not swap the instance's vLLM container.
 
-    Entering serve_model pulls and loads the checkpoint -- hundreds of GB for
-    the large archetypes -- so doing it only to find every replicate already
-    on disk is pure billed time. Hit for real on a resumed run, where the
-    finished arms are re-served before the outstanding one is reached.
+    Each call to serve_model pulls and loads the checkpoint, hundreds of
+    GB for the large archetypes. A call that only finds every replicate
+    already on disk is pure billed time. This is hit for real on a
+    resumed run, where the finished arms are re-served before the
+    outstanding one is reached.
     """
     served = []
     monkeypatch.setattr(
@@ -257,11 +262,12 @@ def test_run_forwards_no_kwargs_when_caller_passes_none(monkeypatch, exp):
 
 
 def test_summarize_prints_harness_format(exp, tmp_path, capsys):
-    # Precompute the cached `harness` property against tmp_path instead of
-    # the real repo results tree, by writing directly into the frozen
-    # instance's __dict__ -- exactly the mechanism functools.cached_property
-    # itself uses internally (see InductionExperiment.harness's docstring),
-    # so this doubles as a demonstration that the trick is safe.
+    # This precomputes the cached `harness` property against tmp_path
+    # instead of the real repo results tree, by writing directly into the
+    # frozen instance's __dict__. This is exactly the mechanism
+    # functools.cached_property itself uses internally (see
+    # InductionExperiment.harness's docstring), so it doubles as a
+    # demonstration that the trick is safe.
     exp.__dict__["harness"] = ReplicateHarness(
         results_dir=tmp_path,
         archetype_tags=exp.archetype_tags,
@@ -313,10 +319,10 @@ def test_provision_applies_env_prints_summary_and_returns_state(
     assert returned is fixed_state
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
     out = capsys.readouterr().out
-    # Locks the one-line summary format against drift -- this must keep
+    # This locks the one-line summary format against drift. It must keep
     # matching every notebook's cell-3 print exactly (see provision()'s
-    # docstring), since it is the one facade method with real logic beyond
-    # a pure ReplicateHarness/ec2 delegate.
+    # docstring), since it is the one facade method with real logic
+    # beyond a pure ReplicateHarness/ec2 delegate.
     assert (
         "instance i-0123456789abcdef0 (p5.48xlarge) in us-east-1a at 203.0.113.5" in out
     )
@@ -326,11 +332,12 @@ def test_provision_applies_env_prints_summary_and_returns_state(
 
 
 def test_importing_experiment_does_not_import_ec2():
-    """Importing the facade module alone must never pull in ``ec2`` -- see
-    the module docstring's CRITICAL section. Run in a fresh subprocess so an
-    ``ec2`` import anywhere else in this test session (e.g. this very test
-    file's own ``from smolbench.evals import ec2``) cannot mask a real
-    regression.
+    """A bare import of the facade module must never pull in ``ec2``.
+
+    (See the module docstring's critical section.) This runs in a fresh
+    subprocess, so an ``ec2`` import anywhere else in this test session
+    (for example this very test file's own ``from smolbench.evals import
+    ec2``) cannot mask a real regression.
     """
     result = subprocess.run(
         [
@@ -394,14 +401,14 @@ def _sharded(count, index, n_replicates=30):
 
 
 def test_shards_partition_the_replicates_exactly():
-    """Across all shards every replicate appears EXACTLY once.
+    """Across all shards, every replicate appears exactly once.
 
-    This is the only correctness property sharding needs, and it is the one
-    that costs money to get wrong in either direction: an overlap means two
-    instances race on the same ``rep_{seed}.yaml`` and one pays GPU time for
-    a result the other already has, while a gap means the study quietly
-    finishes short of R and every downstream power number is computed against
-    a replicate count that never existed.
+    This is the only correctness property sharding needs, and it is the
+    one that costs money to get wrong in either direction. An overlap
+    means two instances race on the same ``rep_{seed}.yaml``, and one
+    pays GPU time for a result the other already has. A gap means the
+    study quietly finishes short of R, and every downstream power number
+    is computed against a replicate count that never existed.
     """
     unsharded = InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
@@ -414,12 +421,13 @@ def test_shards_partition_the_replicates_exactly():
 
 
 def test_shards_stay_within_one_replicate_of_each_other():
-    """Striding must keep shard sizes balanced when count does not divide R.
+    """A striding split must keep shard sizes balanced when count does not divide R.
 
-    The point of sharding is wall-clock, which is set by the SLOWEST shard, so
-    an unbalanced split gives back the speedup it was bought for. Striding
-    splits 30 over 4 as 8/8/7/7; contiguous blocking would give 8/8/8/6, and
-    that last shard finishes early while everyone waits on the first.
+    The point of sharding is wall-clock time, which is set by the
+    slowest shard, so an unbalanced split gives back the speedup it was
+    bought for. A striding split divides 30 over 4 as 8/8/7/7. Contiguous
+    blocking would give 8/8/8/6, and that last shard finishes early while
+    everyone waits on the first.
     """
     for count in (4, 7, 8, 9):
         sizes = [len(_sharded(count, i).seeds) for i in range(count)]
@@ -428,8 +436,11 @@ def test_shards_stay_within_one_replicate_of_each_other():
 
 
 def test_unsharded_is_unchanged():
-    """shard=None must behave exactly as before the flag existed, so already
-    collected studies and any un-sharded relaunch stay bit-for-bit comparable."""
+    """shard=None must behave exactly as before the flag existed.
+
+    So already collected studies and any un-sharded relaunch stay
+    bit-for-bit comparable.
+    """
     exp = InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
         make_quizzes=make_quizzes, n_replicates=5, base_seed=1776,
@@ -441,9 +452,10 @@ def test_unsharded_is_unchanged():
 def test_seed_identity_is_shard_independent():
     """A seed must name the same replicate regardless of which shard runs it.
 
-    Seeds are both the quiz generator's seed and the decoding seed, so if
-    sharding renumbered them, two shards would produce different quizzes for
-    the "same" replicate and the results tree would silently mix them.
+    Seeds are both the quiz generator's seed and the decoding seed. If
+    sharding renumbered them, two shards would produce different quizzes
+    for the "same" replicate, and the results tree would silently mix
+    them.
     """
     assert _sharded(3, 0).seeds[0] == 1776
     assert _sharded(3, 1).seeds[0] == 1777
@@ -456,8 +468,10 @@ def test_seed_identity_is_shard_independent():
 
 @pytest.mark.parametrize("bad", [(0, 0), (3, 3), (-1, 2), (2, 2), (5, 3)])
 def test_invalid_shards_are_rejected(bad):
-    """A malformed shard must fail at construction, not silently collect the
-    wrong slice -- an out-of-range index yields an EMPTY seed list, which
-    looks exactly like 'already finished' to a resume-skipping run."""
+    """A malformed shard must fail at construction, not silently collect a wrong slice.
+
+    An out-of-range index yields an empty seed list, which looks
+    exactly like "already finished" to a resume-skipping run.
+    """
     with pytest.raises(ValueError, match="shard"):
         _sharded(bad[1], bad[0])

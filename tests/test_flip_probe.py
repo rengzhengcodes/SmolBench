@@ -1,20 +1,20 @@
-"""Offline tests for scripts/flip_probe.py's PURE helpers and small,
-locally-mockable I/O pieces.
+"""Test scripts/flip_probe.py's pure helpers and small, locally-mockable I/O pieces.
 
-Covers logic that does not touch AWS, Lean, or the network: stock
+This covers logic that does not touch AWS, Lean, or the network: stock
 vllm_args reconstruction, cell-key deduplication, the Mathlib-only
 measurable-population filter and its exact-count gate (2026-08-18 spec
-amendment -- see the module docstring's "Sample-stage population" section),
-sample-draw determinism, the Clopper-Pearson interval, the flip/verifier-
-drift statistics, the study-originals row-prep helper, the local-file S3
-client stand-in used by ``--stage verify``'s leg (b), the ``_spool_flip_run``
-upload filter, and ``--stage analyze``'s whitelist-provenance self-check
-(driven end-to-end against a `tmp_path` results tree via
-``SMOLBENCH_LEAN_RESULTS``, with no AWS client involved since both required
-inputs are placed on local disk directly).
+amendment; see the module docstring's "Sample-stage population" section),
+sample-draw determinism, the Clopper-Pearson interval, the flip and
+verifier-drift statistics, the study-originals row-prep helper, the
+local-file S3 client stand-in used by ``--stage verify``'s leg (b), the
+``_spool_flip_run`` upload filter, and ``--stage analyze``'s
+whitelist-provenance self-check. That last check runs end-to-end against a
+`tmp_path` results tree through ``SMOLBENCH_LEAN_RESULTS``, with no AWS
+client involved, since both required inputs are placed on local disk
+directly.
 
-``scripts/`` is not an importable package, so `flip_probe` is loaded by path
-(mirrors ``tests/test_delivery_probe.py``'s own convention for a sibling
+``scripts/`` is not an importable package, so `flip_probe` loads by path
+(mirroring ``tests/test_delivery_probe.py``'s own convention for a sibling
 ``scripts/*.py`` file).
 """
 
@@ -54,8 +54,11 @@ def test_stock_vllm_args_strips_determinism_suffix_and_adds_caching_flag():
 
 
 def test_stock_vllm_args_pre_determinism_shape_strips_bare_caching_flag():
-    """A pre-2026-08-18 spec shape (no determinism suffix, but already
-    carrying a bare --enable-prefix-caching) must not end up with two."""
+    """A pre-2026-08-18 spec shape must not end up with two prefix-caching flags.
+
+    This shape has no determinism suffix, but already carries a bare
+    --enable-prefix-caching flag.
+    """
     det = ["--no-enable-prefix-caching", "--max-num-seqs", "1", "--enforce-eager", "--seed", "0"]
     spec_args = ["--revision", "abc123", "--enable-prefix-caching"]
     got = flip_probe.stock_vllm_args(spec_args, det)
@@ -124,9 +127,14 @@ def test_is_mathlib_cell_excludes_std_package_paths():
 
 
 def _synthetic_study_rows():
-    """9 measurable Mathlib cells (4 theorems x 2 rungs + 1 given_up), 2 exception cells,
-    1 replay_failed (prefix-class) cell, 1 Std-package cell, and 1 duplicate row (same key as T0/stepk:1, arriving
-    SECOND with a verdict that would flip the outcome if it won)."""
+    """Build a synthetic study-rows fixture.
+
+    It has 9 measurable Mathlib cells (4 theorems x 2 rungs plus 1
+    given_up), 2 exception cells, 1 replay_failed (prefix-class) cell, 1
+    Std-package cell, and 1 duplicate row. The duplicate row has the
+    same key as T0/stepk:1, arriving second with a verdict that would
+    flip the outcome if it won.
+    """
     rows = []
     for ti in range(4):
         for ri, rung in enumerate(["stepk:1", "hint:2"]):
@@ -134,17 +142,17 @@ def _synthetic_study_rows():
             rows.append(_row("m", f"T{ti}", 1, rung, 0, verdict))
     rows.append(_row("m", "T4", 1, "stepk:1", 0, "exception"))
     rows.append(_row("m", "T5", 1, "stepk:1", 0, "exception"))
-    # Mathlib prefix-failure cell: verifier infrastructure, NOT measurable
-    # (settled live 2026-08-18 -- the 792-vs-711 gate firing; see
+    # Mathlib prefix-failure cell: verifier infrastructure, not measurable
+    # (settled live 2026-08-18, the 792-vs-711 gate firing; see
     # measurable_cell_keys's RESOLVED note).
     rows.append(_row("m", "T6", 1, "stepk:1", 0, "replay_failed"))
-    # given_up IS measurable: the candidate drove Lean to a given-up proof
-    # state -- a judgment on the candidate, like lean_error (4 such cells
+    # given_up is measurable: the candidate drove Lean to a given-up proof
+    # state, a judgment on the candidate, like lean_error (4 such cells
     # measured live in the study lane; 707+4=711).
     rows.append(_row("m", "T7", 1, "stepk:1", 0, "given_up"))
     rows.append(_row("m", "S0", 1, "stepk:1", 0, "success", file_path=".lake/packages/std/Std/Foo.lean"))
-    # Duplicate of ("m","T0",1,"stepk:1",0) -- earliest (success) must win,
-    # not this later exception row (which would otherwise wrongly EXCLUDE it).
+    # Duplicate of ("m","T0",1,"stepk:1",0). Earliest (success) must win,
+    # not this later exception row, which would otherwise wrongly exclude it.
     rows.append(_row("m", "T0", 1, "stepk:1", 0, "exception"))
     return rows
 
@@ -157,7 +165,7 @@ def test_measurable_cell_keys_excludes_exception_std_and_resolves_duplicates():
     assert ("m", "T4", 1, "stepk:1", 0) not in measurable  # exception excluded
     assert ("m", "T5", 1, "stepk:1", 0) not in measurable  # exception excluded
     assert ("m", "T6", 1, "stepk:1", 0) not in measurable  # replay_failed (prefix class) excluded
-    # The duplicated key survives (via its EARLIEST, "success" occurrence).
+    # The duplicated key survives, through its earliest "success" occurrence.
     assert ("m", "T0", 1, "stepk:1", 0) in measurable
     assert measurable == sorted(measurable)  # ascending-sorted
 
@@ -167,15 +175,21 @@ def test_assert_population_size_passes_on_exact_match():
 
 
 def test_assert_population_size_raises_with_observed_count_in_message():
-    """A concurrent std-recovery workstream growing the population must be
-    caught loudly, with the observed count actionable in the message."""
+    """A population grown by a concurrent std-recovery workstream must be caught loudly.
+
+    The raised message includes the observed count so it stays actionable.
+    """
     with pytest.raises(ValueError, match=r"expected exactly 711.*found 715"):
         flip_probe.assert_population_size(list(range(715)), 711)
 
 
 def test_measurable_cell_keys_feeds_the_exact_population_gate():
-    """End-to-end: the synthetic fixture's Mathlib-only population (8) must
-    fail the 711 gate loudly rather than silently sampling a shifted pool."""
+    """The synthetic fixture's Mathlib-only population must fail the 711 gate loudly.
+
+    This end-to-end check on the fixture's 9-cell Mathlib-only population
+    ensures the gate raises instead of silently sampling from a shifted
+    pool.
+    """
     measurable = flip_probe.measurable_cell_keys(_synthetic_study_rows())
     with pytest.raises(ValueError, match=r"expected exactly 711"):
         flip_probe.assert_population_size(measurable, 711)
@@ -187,9 +201,11 @@ def test_measurable_cell_keys_feeds_the_exact_population_gate():
 
 
 def test_select_sample_keys_is_deterministic_and_matches_golden_values():
-    """Random(0) over the SORTED population must reproduce an exact, golden
-    draw -- pinned so a future refactor of the sampling machinery cannot
-    silently change which cells a live run would draw."""
+    """Random(0) over the sorted population must reproduce an exact, golden draw.
+
+    This is pinned so a future refactor of the sampling machinery cannot
+    silently change which cells a live run would draw.
+    """
     measurable = flip_probe.measurable_cell_keys(_synthetic_study_rows())
     drawn = flip_probe.select_sample_keys(measurable, 5, 0)
     assert sorted(drawn) == [
@@ -206,7 +222,7 @@ def test_select_sample_keys_is_deterministic_and_matches_golden_values():
         runner.hash_cell_keys(sorted(drawn))
         == "2a7d2b72c4c196a9d56e81dacf6f0a95c5aaef138ad5227645dc4e43c74fb315"
     )
-    # Determinism: calling again with the SAME seed reproduces it exactly.
+    # Determinism: calling again with the same seed reproduces it exactly.
     assert sorted(flip_probe.select_sample_keys(measurable, 5, 0)) == sorted(drawn)
 
 
@@ -234,9 +250,12 @@ def test_clopper_pearson_degenerate_bounds():
 
 @pytest.mark.parametrize("k,n", [(1, 50), (10, 50), (25, 50), (49, 50), (3, 10), (100, 200)])
 def test_clopper_pearson_bounds_satisfy_the_defining_equation(k, n):
-    """The CP lower bound is the p at which P(X >= k) == alpha/2; the upper
-    bound is the p at which P(X <= k) == alpha/2 -- verify both via
-    `_binom_cdf` directly, rather than pinning a remembered numeric table."""
+    """The CP lower bound is the p where P(X >= k) == alpha/2.
+
+    The upper bound is the p where P(X <= k) == alpha/2. This checks
+    both through `_binom_cdf` directly, instead of pinning a remembered
+    numeric table.
+    """
     alpha = 0.05
     lower, upper = flip_probe.clopper_pearson_interval(k, n, alpha=alpha)
     # P(X >= k | lower) == 1 - _binom_cdf(k-1, n, lower) == alpha/2
@@ -330,14 +349,14 @@ def test_is_pass():
 
 
 def test_is_pass_refuses_the_ungraded_sentinel():
-    """``"unverified"`` is not a verdict -- it is the ABSENCE of one.
+    """``"unverified"`` is not a verdict; it is the absence of one.
 
     Rows are written with this placeholder at generation time and graded
-    later. Scoring it as a failure (which `is_pass` used to do) silently
-    biases every paired b/c statistic downward, and does so invisibly: the
-    report looks complete. Callers that can legitimately hold ungraded rows
-    filter them out first (`measurable_cell_keys` does), so reaching here with
-    one is a bug, not a case to handle.
+    later. If you score it as a failure (which `is_pass` used to do), you
+    silently bias every paired b/c statistic downward, invisibly: the
+    report still looks complete. Callers that can legitimately hold
+    ungraded rows filter them out first (`measurable_cell_keys` does), so
+    reaching here with one is a bug, not a case to handle.
     """
     with pytest.raises(ValueError) as excinfo:
         flip_probe.is_pass("unverified")
@@ -360,7 +379,7 @@ def test_prepare_originals_rows_resets_verdict_and_stashes_study_verdict():
 
     out = flip_probe._prepare_originals_rows(study_rows, whitelist)
 
-    assert [r["theorem_id"] for r in out] == ["T0", "T1"]  # SORTED key order
+    assert [r["theorem_id"] for r in out] == ["T0", "T1"]  # sorted key order
     t0, t1 = out
     assert t0["verdict"] == "unverified"
     assert t0["_study_verdict"] == "success"
@@ -383,8 +402,10 @@ def test_prepare_originals_rows_raises_on_missing_whitelisted_key():
 
 
 def test_prepare_originals_rows_dedupes_earliest_wins_before_selection():
-    """A duplicated study row for a whitelisted key must resolve via the
-    SAME earliest-wins rule as everywhere else in this module."""
+    """A duplicated study row for a whitelisted key must resolve via earliest-wins.
+
+    This is the same rule used everywhere else in this module.
+    """
     first = _row("m", "T0", 1, "stepk:1", 0, "success", candidate_proof="EARLIEST")
     dup = _row("m", "T0", 1, "stepk:1", 0, "lean_error", candidate_proof="LATER")
     out = flip_probe._prepare_originals_rows([first, dup], [("m", "T0", 1, "stepk:1", 0)])
@@ -452,8 +473,11 @@ def test_local_run_client_upload_file_populates_owned_verified_path(tmp_path):
 
 
 class _FakeSpoolClient:
-    """Records uploads; head_object reports back exactly what was uploaded
-    (a passing size-verification path) unless overridden by a subclass."""
+    """Record uploads.
+
+    head_object reports back exactly what was uploaded (a passing
+    size-verification path), unless overridden by a subclass.
+    """
 
     def __init__(self) -> None:
         self.uploaded: dict[str, int] = {}
@@ -481,8 +505,8 @@ def test_spool_flip_run_excludes_originals_rerun_subtree(tmp_path):
     assert not any("originals_rerun" in k for k in uploaded_keys)
     assert any(k.endswith("/all_rows.jsonl") for k in uploaded_keys)
     assert any(k.endswith("/manifest.json") for k in uploaded_keys)
-    # Correctly-prefixed destination -- the whole point of NOT reusing
-    # run_study.spool_to_s3 (see the module docstring's HARD RULE section).
+    # Correctly-prefixed destination: the whole point of not reusing
+    # run_study.spool_to_s3 (see the module docstring's hard-rule section).
     assert all(k.startswith(f"{flip_probe.SPOOL_PREFIX}/{flip_probe.FLIP_RUN_NAME}/") for k in uploaded_keys)
 
 
@@ -522,9 +546,9 @@ def _stage_analyze_fixture(tmp_path, monkeypatch, *, sample_sha: str,
                            rerun_verdict: str = "success"):
     """A minimal ``--stage analyze`` input tree.
 
-    `originals_verdict` / `rerun_verdict` set the verdict on the one cell row
-    of each of the two legs analyze pairs, so a test can plant the ungraded
-    sentinel in either leg independently.
+    `originals_verdict` and `rerun_verdict` set the verdict on the one
+    cell row of each of the two legs analyze pairs, so a test can plant
+    the ungraded sentinel in either leg independently.
     """
     monkeypatch.setenv("SMOLBENCH_LEAN_RESULTS", str(tmp_path))
     run_dir = tmp_path / "runs" / flip_probe.FLIP_RUN_NAME
@@ -579,11 +603,12 @@ def test_stage_analyze_provenance_check_raises_on_mismatched_sha256(tmp_path, mo
 def test_stage_analyze_refuses_ungraded_rows_in_either_leg(tmp_path, monkeypatch, leg, filename):
     """An ungraded row must stop the pairing, not be scored as a failure.
 
-    Both legs are re-verified files and neither should ever contain the
-    generation-time sentinel; one that does means verification silently
-    no-oped for those rows. Pairing them anyway produces a complete flip table
-    whose b/c counts are biased by however many rows were never graded -- the
-    exact failure mode `flip_free_bound.py`'s own assert exists to prevent.
+    Both legs are re-verified files, and neither should ever contain the
+    generation-time sentinel. One that does means verification silently
+    no-oped for those rows. If you pair them anyway, you get a complete
+    flip table whose b/c counts are biased by however many rows were
+    never graded, the exact failure mode `flip_free_bound.py`'s own
+    assert exists to prevent.
     """
     from smolbench.deduction.lean import runner
 

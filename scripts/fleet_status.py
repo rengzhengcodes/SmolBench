@@ -1,21 +1,21 @@
-"""Read-only enumeration of the family-ladder scaling study's live EC2 fleet.
+"""List the family-ladder scaling study's live EC2 fleet, read-only.
 
-Companion to ``scripts/run_fleet.py`` (the supervisor that launches and
-monitors the fleet) and ``scripts/fleet_teardown.py`` (which can terminate
-it). This module does exactly one thing -- list every EC2 instance tagged
-for this study, across every region it might have landed in -- and does it
-in a way that is safe to call from ANYWHERE: a notebook cell (this module is
-also imported directly by an analysis notebook to render a live fleet
-table), a test (via dependency injection -- see `client_factory` below), or
-this file's own ``__main__`` CLI.
+This module is a companion to ``scripts/run_fleet.py`` (the supervisor
+that launches and monitors the fleet) and ``scripts/fleet_teardown.py``
+(which can terminate it). This module does exactly one thing: it lists
+every EC2 instance tagged for this study, across every region the study
+might use it. You can call it safely from anywhere: a notebook cell (an
+analysis notebook also imports this module directly, to render a live
+fleet table), a test, or this file's own ``__main__`` CLI. Tests reach
+it through dependency injection; see `client_factory` below.
 
-No boto3 import at module scope. Importing this module -- for the notebook,
-for `run_fleet.py`'s monitor loop, or for the offline test suite -- must
-never require the AWS SDK to be installed; `boto3` is imported lazily,
-inside `_default_client_factory`, only when a real (non-injected) client is
-actually needed.
+This module does not import boto3 at module scope. None of its callers --
+the notebook, `run_fleet.py`'s monitor loop, or the offline test suite --
+may need the AWS SDK installed just to import it.
+`_default_client_factory` imports `boto3` lazily, only when it needs a
+real (non-injected) client.
 
-Run (repo root, main venv)::
+Run this script from the repo root, in the main venv::
 
     .venv/bin/python scripts/fleet_status.py
 """
@@ -28,20 +28,31 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Sequence
 
 #: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``) -- this is the ONE constant that
-#: has to agree between the two modules for this file to find anything.
+#: (see ``run_fleet.Lane.experiment_tag``). This is the ONE constant that
+#: must agree between the two modules, or this file finds nothing.
 SCALING_TAG_PREFIX = "scaling-"
-#: Every region a lane might have provisioned in -- the union of
-#: ``run_fleet.DEFAULT_REGIONS`` and its tier-D override
-#: (``us-east-2,us-west-2``, already a subset of these three).
+#: Every region a lane might have provisioned in. This matches
+#: ``run_fleet.DEFAULT_REGIONS``. Tier D used a two-region override until
+#: 2026-08-13, but its override now spans all three regions too (for
+#: p6-b200/SM100 capacity hunts), so these three regions cover every tier.
 STATUS_REGIONS: tuple[str, ...] = ("us-east-1", "us-east-2", "us-west-2")
 
 
 def _default_client_factory(region: str) -> Any:
-    """Builds a real boto3 EC2 client bound to `region`.
+    """Build a real boto3 EC2 client bound to `region`.
 
-    boto3 is imported HERE, not at module scope -- see the module
-    docstring's "No boto3 import at module scope" section.
+    This function imports boto3 here, not at module scope. See the module
+    docstring for why.
+
+    Parameters
+    ----------
+    region : str
+        AWS region name to bind the client to.
+
+    Returns
+    -------
+    Any
+        A boto3 EC2 client for `region`.
     """
     import boto3
 
@@ -53,57 +64,60 @@ def fleet_rows(
     tag_prefix: str = SCALING_TAG_PREFIX,
     client_factory: Optional[Callable[[str], Any]] = None,
 ) -> list[dict]:
-    """Lists every running/pending EC2 instance tagged for this study, across `regions`.
+    """List every running or pending EC2 instance tagged for this study.
+
+    This function queries each region in `regions` in turn.
 
     Parameters
     ----------
     regions : Sequence[str], optional
         AWS regions to query. Defaults to `STATUS_REGIONS`.
     tag_prefix : str, optional
-        Only instances whose ``smolbench:experiment`` tag starts with this
-        prefix are returned. Defaults to `SCALING_TAG_PREFIX`.
+        This function returns only instances whose ``smolbench:experiment``
+        tag starts with this prefix. Defaults to `SCALING_TAG_PREFIX`.
     client_factory : Callable[[str], Any] or None, optional
-        Maps a region name to an object exposing ``describe_instances(
-        **kwargs)`` (the shape of a boto3 EC2 client). ``None`` (the
-        default) uses `_default_client_factory`, which builds a real boto3
-        client lazily. This injection seam is what makes this function
-        testable with zero AWS SDK dependency -- see
+        Maps a region name to an object that exposes
+        ``describe_instances(**kwargs)`` (the shape of a boto3 EC2 client).
+        The default, ``None``, uses `_default_client_factory`, which
+        builds a real boto3 client lazily. This injection seam makes this
+        function testable with zero AWS SDK dependency; see
         ``tests/test_run_fleet.py``'s ``_FakeEc2Client``.
 
     Returns
     -------
     list[dict]
-        One dict per matching instance, with EXACTLY these keys: `region`,
+        One dict per matching instance, with exactly these keys: `region`,
         `experiment_tag`, `lane` (the `experiment_tag` with `tag_prefix`
         stripped), `instance_id`, `instance_type`, `availability_zone`,
         `state`, `launch_time` (the raw ``datetime``, or ``None`` if EC2
-        reported none), `age_hours` (float, computed against
+        reported none), and `age_hours` (float, computed against
         ``datetime.now(timezone.utc)`` at call time; ``0.0`` when
         `launch_time` is ``None``).
 
     Notes
     -----
-    The tag filter is applied SERVER-SIDE
+    This function applies the tag filter SERVER-SIDE
     (``Filters=[{"Name": "tag:smolbench:experiment", "Values":
-    [f"{tag_prefix}*"]}, ...]``) -- EC2 tag filters support a trailing
-    ``*`` wildcard, so this call never lists (or pays the latency/cost of
-    listing) the whole account's instances. On top of that, every returned
-    instance's tag is re-checked CLIENT-SIDE against `tag_prefix` -- belt
-    and braces against a future change to the server-side filter, so an
-    instance tagged e.g. ``"periodic-induction"`` (a sibling experiment's
-    tag) can never leak into this listing even if the filter itself
-    regresses.
+    [f"{tag_prefix}*"]}, ...]``). EC2 tag filters support a trailing ``*``
+    wildcard, so this call never lists the whole account's instances, and
+    never pays the latency or cost of listing them. This function also
+    re-checks every returned instance's tag CLIENT-SIDE against
+    `tag_prefix`, as a second guard against a future change to the
+    server-side filter. This guard stops an instance tagged for a sibling
+    experiment (for example ``"periodic-induction"``) from leaking into
+    this listing, even if the server-side filter regresses.
 
-    A region that raises (no credentials for it, the region is disabled for
-    this account, a throttle) is LOGGED and SKIPPED, not fatal -- one bad
-    region must not blind the operator to the fleet state in the other two.
+    If a region raises an error (no credentials for it, the region is
+    disabled for this account, a throttle), this function logs the error
+    and skips the region. It does not treat the error as fatal, because
+    one bad region must not hide the fleet state in the other two.
 
-    Only ``instance-state-name`` in ``{"running", "pending"}`` is queried,
-    matching what an operator cares about for a LIVE fleet -- a terminated
-    or terminating instance is not "in the fleet" for this listing's
-    purpose (``fleet_teardown.py``'s ``--terminate`` path reads this same
-    listing to decide what to kill, and killing an already-dead instance a
-    second time is pointless).
+    This function queries only instances where ``instance-state-name`` is
+    ``"running"`` or ``"pending"``. This matches what an operator cares
+    about for a LIVE fleet: a terminated or terminating instance is not
+    "in the fleet" for this listing's purpose. (``fleet_teardown.py``'s
+    ``--terminate`` path reads this same listing to decide what to kill,
+    and killing an already-dead instance a second time serves no purpose.)
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -118,7 +132,7 @@ def fleet_rows(
                     {"Name": "instance-state-name", "Values": ["running", "pending"]},
                 ]
             )
-        except Exception as exc:  # noqa: BLE001 -- one bad region must not blind the operator
+        except Exception as exc:  # noqa: BLE001 -- one bad region must not hide others
             logging.warning(f"fleet_rows: {region} describe_instances failed, skipping: {exc}")
             continue
 
@@ -127,7 +141,7 @@ def fleet_rows(
                 tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
                 experiment_tag = tags.get("smolbench:experiment", "")
                 if not experiment_tag.startswith(tag_prefix):
-                    continue  # belt-and-braces re-check -- see docstring
+                    continue  # second guard re-check -- see docstring Notes
                 launch_time = instance.get("LaunchTime")
                 age_hours = (
                     (now - launch_time).total_seconds() / 3600 if launch_time is not None else 0.0
@@ -151,7 +165,7 @@ def fleet_rows(
 
 
 def format_fleet_table(rows: Sequence[dict]) -> str:
-    """Renders `rows` (as returned by `fleet_rows`) as a fixed-width text table.
+    """Render `rows` (as returned by `fleet_rows`) as a fixed-width text table.
 
     Parameters
     ----------
@@ -161,13 +175,14 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
     Returns
     -------
     str
-        A fixed-width table containing, for every row, its `lane`,
+        A fixed-width table with, for every row, its `lane`,
         `instance_id`, `instance_type`, `availability_zone`, `state`, and
-        age (formatted from `age_hours`). ALWAYS non-empty, even for an
-        empty `rows` -- an empty fleet and a broken query must read
-        differently to the operator, so an empty `rows` renders an explicit
-        "no scaling-* instances found" line rather than an empty string
-        that could be mistaken for output that never printed.
+        age (formatted from `age_hours`). This function always returns a
+        non-empty string, even for an empty `rows`. An empty fleet and a
+        broken query must read differently to the operator. An empty
+        `rows` renders an explicit "no scaling-* instances found" line,
+        not an empty string that could look like output that never
+        printed.
     """
     if not rows:
         return f"fleet_status: no {SCALING_TAG_PREFIX}* instances found in any region.\n"
@@ -200,21 +215,21 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """CLI entry point: prints the live fleet table and returns 0.
+    """Run the CLI entry point: print the live fleet table and return 0.
 
     Parameters
     ----------
     argv : list[str] or None, optional
-        Arguments to parse; ``None`` parses ``sys.argv[1:]``. This script
-        takes no flags -- `fleet_rows`'s defaults cover every region this
-        study could have provisioned in.
+        Arguments to parse. ``None`` parses ``sys.argv[1:]``. This script
+        takes no flags: `fleet_rows`'s defaults already cover every region
+        this study could have provisioned in.
 
     Returns
     -------
     int
-        Always ``0`` -- a region that fails to describe is logged and
-        skipped by `fleet_rows`, not raised, so there is no fatal path here
-        short of an unrecognised argument.
+        Always ``0``. `fleet_rows` logs and skips a region that fails to
+        describe; it does not raise. So this function has no fatal path,
+        short of an unrecognized argument.
     """
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."

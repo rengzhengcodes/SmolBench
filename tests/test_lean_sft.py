@@ -1,10 +1,11 @@
-"""Offline tests for smolbench.deduction.lean.sft against the lean_mini fixture.
+"""Test smolbench.deduction.lean.sft against the lean_mini fixture.
 
-Exercises the two load-bearing properties of the LoRA SFT builder: the
-decontamination holdout (eval theorems never leak into training) and
-prompt-format parity with the eval (`prompt.SYSTEM` / `build_user_prompt` /
-`context.render`). Points SMOLBENCH_LEAN_DATA at the committed 2-theorem
-fixture, exactly like test_lean_corpus.py.
+This file checks two load-bearing properties of the LoRA SFT builder:
+the decontamination holdout (eval theorems never leak into training)
+and prompt-format parity with the eval (`prompt.SYSTEM`,
+`build_user_prompt`, `context.render`). The tests point
+SMOLBENCH_LEAN_DATA at the committed 2-theorem fixture, the same
+fixture test_lean_corpus.py uses.
 """
 
 from pathlib import Path

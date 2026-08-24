@@ -1,8 +1,9 @@
-"""The shared replication harness: pooling, resume-skip, and summaries.
+"""Test the shared replication harness: pooling, resume-skip, and summaries.
 
-Exercised against the LOCAL store throughout -- ``tmp_path`` is outside the
-repo, so ``resolve_store`` always falls back to local here even if the S3
-env var is set. The S3 log backend is covered in ``test_results_store.py``.
+This exercises the LOCAL store throughout. ``tmp_path`` is outside the
+repo, so ``resolve_store`` always falls back to local here, even if
+the S3 env var is set. The S3 log backend is covered in
+``test_results_store.py``.
 """
 
 from datetime import datetime, timezone
@@ -121,29 +122,33 @@ def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
 
 
 def test_run_replicates_unknown_model_raises_keyerror(harness):
-    """archetype_tags is looked up with a plain ``self.archetype_tags[model]``
-    subscript (see run_replicates' source) -- no ``.get()``, no try/except.
-    An unconfigured model is therefore a caller bug the harness surfaces
-    immediately as KeyError, rather than silently skipping the archetype or
-    falling back to some placeholder tag that would corrupt the results
-    layout."""
+    """archetype_tags is looked up with a plain subscript, not ``.get()``.
+
+    See ``self.archetype_tags[model]`` in run_replicates' source: no ``.get()``, no
+    try/except. An unconfigured model is therefore a caller bug the harness surfaces
+    immediately as KeyError, rather than silently skipping the archetype or falling back
+    to some placeholder tag that would corrupt the results layout.
+    """
     with pytest.raises(KeyError):
         harness.run_replicates("some-unconfigured-model")
 
 
 def test_cot_chain_lengths_reports_word_counts(harness, capsys):
-    """cot_chain_lengths has no return value (see its source): like
-    summarize(), its contract is entirely print-based, so this test drives
-    it through capsys rather than inspecting a return value.
+    """cot_chain_lengths has no return value (see its source).
 
-    Builds the cached CoT replicate files through the harness's own store
-    (never hand-crafting the YAML format or the layout) at the keys its
-    ``ReplicateAddress`` layout expects, with a mix of
-    substantive, empty-string, and None ``Mark.reasoning`` values. The
-    empty/None entries must be excluded from the word-count stats (the
-    source's ``if mark.reasoning:`` guard skips falsy values) -- this
-    mirrors real runs, where non-reasoning archetypes or truncated
-    responses leave ``reasoning`` unset.
+    Like summarize(), its contract is entirely print-based, so this
+    test drives it through capsys rather than inspecting a return
+    value.
+
+    This test builds the cached CoT replicate files through the
+    harness's own store, never hand-crafting the YAML format or the
+    layout, at the keys its ``ReplicateAddress`` layout expects. It
+    uses a mix of substantive, empty-string, and None
+    ``Mark.reasoning`` values. The empty and None entries must be
+    excluded from the word-count stats: the source's ``if
+    mark.reasoning:`` guard skips falsy values. This mirrors real runs,
+    where non-reasoning archetypes or truncated responses leave
+    ``reasoning`` unset.
     """
     # seed 1 contributes word counts [3, 2] (the None entry is skipped);
     # seed 2 contributes [4] (the empty string is falsy and skipped too).
@@ -183,13 +188,14 @@ def test_cot_chain_lengths_reports_word_counts(harness, capsys):
 
 
 def test_has_outstanding_tracks_serialized_replicates(harness, fake_evaluate):
-    """Reports whether a model has work left, so callers can skip SERVING it.
+    """Report whether a model has work left.
 
-    This is a spend guard, not an optimisation. ``InductionExperiment.run``
-    enters ``serve_model`` before looking for work, which swaps the
-    instance's vLLM container to that checkpoint -- hundreds of GB for the
-    large archetypes. On a resumed run the already-finished arms get served
-    first and the pull is billed to discover there is nothing to do.
+    Callers use this to skip SERVING it. This is a spend guard, not an
+    optimisation. ``InductionExperiment.run`` enters ``serve_model``
+    before looking for work, which swaps the instance's vLLM container
+    to that checkpoint, hundreds of GB for the large archetypes. On a
+    resumed run, the already-finished arms get served first, and the
+    pull is billed just to discover there is nothing to do.
     """
     assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
@@ -204,8 +210,10 @@ def test_has_outstanding_is_true_when_only_one_arm_is_missing(harness, fake_eval
 
 
 def test_store_defaults_to_the_local_results_dir(harness, tmp_path):
-    """With no S3 env var configured the harness stores replicates on disk,
-    exactly where ``results_dir`` points."""
+    """With no S3 env var configured the harness stores replicates on disk.
+
+    That is exactly where ``results_dir`` points.
+    """
     from smolbench.evals.results_store import LocalResultsStore
 
     assert isinstance(harness.store, LocalResultsStore)
@@ -216,10 +224,12 @@ def test_store_defaults_to_the_local_results_dir(harness, tmp_path):
 def test_store_stays_local_for_a_tmp_dir_even_with_the_s3_env_set(
     harness, tmp_path, monkeypatch
 ):
-    """Hermeticity: a developer shell exporting SMOLBENCH_RESULTS_S3 must not
-    turn this offline suite into a credentialed, networked one. Only
-    repo-anchored results directories map onto S3 (see
-    ``smolbench.evals.results_store.resolve_store``)."""
+    """This test guards hermeticity.
+
+    A developer shell exporting SMOLBENCH_RESULTS_S3 must not turn this offline suite
+    into a credentialed, networked one. Only repo-anchored results directories map onto
+    S3 (see ``smolbench.evals.results_store.resolve_store``).
+    """
     from smolbench.evals.results_store import LocalResultsStore
 
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://smolbench-results-414266451290")
@@ -227,13 +237,15 @@ def test_store_stays_local_for_a_tmp_dir_even_with_the_s3_env_set(
 
 
 def test_prefix_namespaces_the_local_replicate_directory(tmp_path):
-    """``prefix`` namespaces the replicate DIRECTORY, not the file name --
-    that is what lets ``induction_eval_one_hop`` share one results dir with
-    its sibling experiment without their replicates colliding.
+    """``prefix`` namespaces the replicate DIRECTORY, not the file name.
 
-    Asserted through the store's own rendering (the harness no longer builds
-    keys itself), so this pins the layout the analysis scripts read rather
-    than a string the harness happens to compute.
+    That is what lets ``induction_eval_one_hop`` share one results dir
+    with its sibling experiment without their replicates colliding.
+
+    This is asserted through the store's own rendering, since the
+    harness no longer builds keys itself. So this pins the layout the
+    analysis scripts read, rather than a string the harness happens to
+    compute.
     """
     prefixed = ReplicateHarness(
         results_dir=tmp_path,
@@ -271,10 +283,10 @@ def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
 def test_force_seeds_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
     """force_seeds re-collects replicates the store already has.
 
-    Exists for deliberate re-collection (re-running a lane's early seeds on
-    new hardware to remove a within-lane serving-stack confound); the
-    append-only store makes this safe because every reader resolves the
-    newest run_ts per key.
+    This exists for deliberate re-collection: re-running a lane's early
+    seeds on new hardware to remove a within-lane serving-stack
+    confound. The append-only store makes this safe, because every
+    reader resolves the newest run_ts per key.
     """
     import dataclasses
 
@@ -293,9 +305,11 @@ def test_force_seeds_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
 
 
 def test_force_seeds_subset_recollects_only_those_seeds(harness, fake_evaluate):
-    """A seed subset re-runs exactly the forced seeds (the hardware-migration
-    case: early seeds re-collect on the new box, the homogeneous tail is
-    left alone)."""
+    """A seed subset re-runs exactly the forced seeds.
+
+    This is the hardware-migration case: early seeds re-collect on the
+    new box, and the homogeneous tail is left alone.
+    """
     import dataclasses
 
     harness.run_replicates("stub-model")

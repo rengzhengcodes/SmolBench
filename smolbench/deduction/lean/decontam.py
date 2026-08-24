@@ -1,24 +1,25 @@
 """Content-level decontamination of Lean 4 SFT data against the eval holdout.
 
 `smolbench.deduction.lean.sft` holds eval theorems out of training **by
-``full_name``** -- sufficient within LeanDojo Benchmark 4's own splits (the
-``random`` and ``novel_premises`` kinds partition one shared theorem pool),
-but blind to two leak channels:
+``full_name``**. This is sufficient within LeanDojo Benchmark 4's own
+splits (the ``random`` and ``novel_premises`` kinds partition one shared
+theorem pool), but it is blind to two leak channels:
 
-1. **Same statement, different name.** Mathlib contains duplicate lemmas;
-   an external corpus (autoformalized or machine-generated) shares no
+1. **Same statement, different name.** Mathlib contains duplicate lemmas.
+   An external corpus (autoformalized or machine-generated) shares no
    naming with mathlib at all, so a restatement of an eval theorem passes
    a name-based holdout untouched.
 2. **Answer-content overlap without the theorem.** The eval's context
    rungs expose, per theorem, its goal states at every step ``k``, its
    tactic prefix, and its ground-truth tactic tail
-   (see ``notebooks/deduction/README.md``). Mathlib-derived synthetic corpora
-   (e.g. LeanNavigator's state-graph traversal) can reproduce exactly
-   those states and tactic chains inside *other* theorems.
+   (see ``notebooks/deduction/README.md``). Mathlib-derived synthetic
+   corpora (e.g. LeanNavigator's state-graph traversal) can reproduce
+   exactly those states and tactic chains inside *other* theorems.
 
-This module closes both: `HoldoutIndex` fingerprints every eval theorem's
-statement, per-step goal states, and tactic chains, and `HoldoutIndex.check`
-reports which (if any) of those keys a candidate training example hits.
+This module closes both leaks. `HoldoutIndex` fingerprints every eval
+theorem's statement, per-step goal states, and tactic chains.
+`HoldoutIndex.check` reports which (if any) of those keys a candidate
+training example hits.
 
 Key families
 ------------
@@ -32,20 +33,21 @@ Key families
   every step is answer-conditional, not just step 0).
 - **K4 tactic chain** -- (a) the full normalized tactic chain, and any
   3-consecutive-tactic window of it, for eval proofs with >= 3 tactics;
-  (b) ``(state, next-tactic)`` pairs -- the exact answer unit of the
+  (b) ``(state, next-tactic)`` pairs, the exact answer unit of the
   headline ``k=last`` cells. Chains of 1-2 tactics are deliberately NOT
-  chain-indexed: single tactics (``simp``) and short generic runs
+  chain-indexed. Single tactics (``simp``) and short generic runs
   (``intro h`` + ``simp``) are ubiquitous idioms whose match reveals no
-  answer; the pair key covers them *with* their state, which is the part
+  answer. The pair key covers them *with* their state, which is the part
   that makes them answer-conditional.
 
-Everything is deterministic -- normalization is pure text processing, the
-MinHash permutations are seeded, and no model/embedding calls are made --
-so a dataset build is reproducible byte-for-byte from its manifest config.
+Everything here is deterministic. Normalization is pure text processing,
+the MinHash permutations are seeded, and this module makes no
+model/embedding calls. So a dataset build is reproducible byte-for-byte
+from its manifest config.
 
 Like `sft`, this module imports only generation-side siblings (`corpus`,
-`context`) -- never `verify` -- so it runs on the main 3.14 venv; no Lean
-toolchain is needed to decontaminate a dataset.
+`context`), never `verify`. So it runs on the main 3.14 venv; a
+decontamination run needs no Lean toolchain.
 """
 
 from __future__ import annotations
@@ -68,14 +70,15 @@ from .sft import DEFAULT_EVAL_SPECS
 
 
 # Incidental, context-specific tokens that Lean allocates deterministically
-# per elaboration but which differ between two traces of the *same* goal
-# (different proof context, or a different mathlib commit -- LeanNavigator
-# pins none). Canonicalizing them lets a mathlib-derived corpus's goal states
-# and tactic chains match the eval's even when these counters diverge. On a
-# full 4.7M-row LeanNavigator scan this recovered 29 goal-state and 22
-# (state, tactic) matches that exact byte-match missed, while collapsing only
-# 4 of the eval's ~20.5k state variants -- i.e. near-injective on real states,
-# so the added recall costs almost no over-drop.
+# per elaboration. These differ between two traces of the *same* goal, e.g.
+# under a different proof context, or a different mathlib commit
+# (LeanNavigator pins none). This canonicalization lets a mathlib-derived
+# corpus's goal states and tactic chains match the eval's, even when these
+# counters diverge. On a full 4.7M-row LeanNavigator scan, this recovered 29
+# goal-state and 22 (state, tactic) matches that exact byte-match missed,
+# while collapsing only 4 of the eval's ~20.5k state variants. That is,
+# canonicalization is near-injective on real states, so the added recall
+# costs almost no over-drop.
 _METAVAR_RE = re.compile(r"\?[\w]+(?:\.\d+)?")  # ?m.248692, ?a, ?_  -> ?m
 # Superscript digits span TWO Unicode blocks: ¹²³ are Latin-1 (U+00B9/B2/B3),
 # ⁰⁴⁵⁶⁷⁸⁹ are Superscripts-and-Subscripts (U+2070/2074-2079) -- so a range
@@ -145,12 +148,12 @@ def state_variants(state_pp: str) -> list[str]:
 
 #: Minimum normalized length for a *goal-only* variant to become a
 #: statement/state index key. Bare goals shorter than this (``⊢ False``,
-#: ``⊢ a = b``) recur across unrelated theorems all over mathlib -- they
+#: ``⊢ a = b``) recur across unrelated theorems all over mathlib. They
 #: identify nothing, and indexing them would mass-drop harmless training
-#: rows. The full-state variant (hypotheses included) is always indexed,
-#: and `pairs` keys keep even short goal variants: a (state, tactic) match
-#: must reproduce the eval cell's *answer*, which is answer-conditional at
-#: any length.
+#: rows. The full-state variant (hypotheses included) is always indexed.
+#: `pairs` keys keep even short goal variants, since a (state, tactic)
+#: match must reproduce the eval cell's *answer*, which is
+#: answer-conditional at any length.
 _MIN_GOAL_KEY_CHARS = 24
 
 
@@ -174,8 +177,8 @@ _SHINGLE_N = 5
 #: below puts the LSH candidate threshold safely under `_JACCARD_THRESHOLD`.
 _NUM_PERM = 64
 #: LSH banding: 8 bands x 8 rows over the 64-slot signature. Candidate
-#: recall threshold ~ (1/8)^(1/8) ~= 0.77 -- below the decision threshold,
-#: so true near-dups at 0.85 are reliably surfaced as candidates and then
+#: recall threshold ~ (1/8)^(1/8) ~= 0.77, below the decision threshold.
+#: So true near-dups at 0.85 are reliably surfaced as candidates, then
 #: confirmed by exact Jaccard (no false drops from LSH alone).
 _BANDS = 8
 _ROWS = _NUM_PERM // _BANDS
@@ -200,10 +203,11 @@ _PERMS = _perm_params()
 def _shingles(text: str) -> frozenset[int]:
     """Hashed character `_SHINGLE_N`-gram shingle set of normalized `text`.
 
-    Each shingle is reduced to a 64-bit ``blake2b`` integer (stable across
-    processes and Python versions, unlike built-in ``hash``); the MinHash
-    permutations then act on these integers. Texts shorter than the shingle
-    width contribute their whole text as a single shingle.
+    Each shingle is reduced to a 64-bit ``blake2b`` integer, which stays
+    stable across processes and Python versions, unlike built-in
+    ``hash``. The MinHash permutations then act on these integers. Texts
+    shorter than the shingle width contribute their whole text as a
+    single shingle.
     """
     if len(text) <= _SHINGLE_N:
         grams = [text] if text else []
@@ -457,11 +461,11 @@ class HoldoutIndex:
     def count_name_mentions(self, text: str) -> int:
         """Count eval-theorem names appearing *inside* `text` (report-only).
 
-        A synthetic proof that merely *invokes* an eval theorem as a premise
-        (``exact Nat.add_comm ...``) reveals the eval theorem's existence --
-        which pretraining on mathlib already does -- but not its proof, so
-        such rows are **not** dropped; builders report this count in their
-        manifest for transparency instead.
+        A synthetic proof that merely *invokes* an eval theorem as a
+        premise (``exact Nat.add_comm ...``) reveals the eval theorem's
+        existence, which pretraining on mathlib already does, but not its
+        proof. So such rows are **not** dropped; builders report this
+        count in their manifest for transparency instead.
 
         Parameters
         ----------

@@ -1,26 +1,28 @@
 """Load LeanDojo Benchmark 4 splits and the premise corpus.
 
-`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a snapshot
-of mathlib4 (commit ``fe4454af``, March 2024) traced by
-`LeanDojo <https://leandojo.org>`_: every theorem's tactic-by-tactic proof
-state transitions (this module), plus a corpus of every premise
-(theorem/def/etc.) declared in the traced repo, with source position and
-containing file (``smolbench.deduction.lean.premises``). See
-``notebooks/deduction/README.md`` for the full dataset description, pool sizes,
-and bootstrap instructions.
+`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a
+snapshot of mathlib4 (commit ``fe4454af``, March 2024), traced by
+`LeanDojo <https://leandojo.org>`_. It provides two things: every
+theorem's tactic-by-tactic proof state transitions (this module), and a
+corpus of every premise (theorem/def/etc.) declared in the traced repo,
+with source position and containing file
+(``smolbench.deduction.lean.premises``). See
+``notebooks/deduction/README.md`` for the full dataset description, pool
+sizes, and bootstrap instructions.
 
-Two independent axes select which slice of the benchmark to load, both
-threaded through every loader in this module as ``(kind, split)``:
+Two independent axes select which slice of the benchmark to load. Every
+loader in this module threads both through as ``(kind, split)``:
 
-- ``SplitKind`` (``kind``) -- ``"random"`` (an i.i.d. train/val/test split)
-  or ``"novel_premises"`` (val/test theorems chosen so their premises are
-  under-represented in train -- the harder generalization slice).
+- ``SplitKind`` (``kind``) -- ``"random"`` (an i.i.d. train/val/test
+  split) or ``"novel_premises"`` (val/test theorems chosen so their
+  premises are under-represented in train -- the harder generalization
+  slice).
 - ``Split`` (``split``) -- ``"train"``, ``"val"``, or ``"test"`` within a
   ``kind``.
 
-The dataset itself is not shipped in this repo (a ~700 MB external
-download); every loader here raises ``FileNotFoundError`` with an
-actionable remedy when the expected file is missing rather than failing
+The dataset itself is not shipped in this repo (it is a ~700 MB external
+download). Every loader here raises ``FileNotFoundError`` with an
+actionable remedy when the expected file is missing, rather than failing
 with a bare "file not found".
 """
 
@@ -37,26 +39,28 @@ import smolbench
 
 
 def data_root() -> Path:
-    """Root directory of the LeanDojo Benchmark 4 dataset.
+    """Get the root directory of the LeanDojo Benchmark 4 dataset.
 
     Resolution order:
       1. The ``SMOLBENCH_LEAN_DATA`` environment variable, if set.
       2. ``notebooks/deduction/data/leandojo_benchmark_4`` under the repo root.
 
     The default is anchored to the installed ``smolbench`` package
-    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root)
-    rather than the current working directory. Anchoring off the top-level
-    package -- instead of counting ``parents`` up from *this* file -- keeps
-    the resolution correct no matter how deeply this module is nested, so
-    moving the subpackage (e.g. ``smolbench/lean`` -> ``smolbench/deduction/
-    lean``) cannot silently break it. This mirrors the repo-anchoring pattern
-    used for ``_DEFAULT_STATE_FILE`` in ``smolbench/evals/ec2.py`` and
-    ``repo_root()`` in ``smolbench/induction/experiment.py``: notebook kernels
-    and test runners invoke this module from arbitrary cwds (temp dirs
-    included), so a cwd-relative default would silently resolve to the wrong
-    place — or nowhere at all — depending on who imports the module.
+    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root),
+    not to the current working directory. This anchors off the top-level
+    package, instead of counting ``parents`` up from *this* file, which
+    keeps the resolution correct no matter how deeply this module is
+    nested. So moving the subpackage (e.g. ``smolbench/lean`` ->
+    ``smolbench/deduction/lean``) cannot silently break it. This mirrors
+    the repo-anchoring pattern used for ``_DEFAULT_STATE_FILE`` in
+    ``smolbench/evals/ec2.py`` and ``repo_root()`` in
+    ``smolbench/induction/experiment.py``. Notebook
+    kernels and test runners invoke this module from arbitrary cwds
+    (temp dirs included), so a cwd-relative default would silently
+    resolve to the wrong place, or nowhere at all, depending on who
+    imports the module.
 
-    The env var is read at *call* time (not import time), so callers
+    This reads the env var at *call* time, not import time. So callers
     (including tests) may set ``SMOLBENCH_LEAN_DATA`` at any point before
     calling this function, or before calling `reset_caches` to drop any
     memoized results computed under a stale value.
@@ -65,9 +69,9 @@ def data_root() -> Path:
     -------
     Path
         Directory containing ``metadata.json``, ``corpus.jsonl``, and the
-        ``random``/``novel_premises`` split subdirectories. Not guaranteed
-        to exist; callers that read files under it will raise on a missing
-        path.
+        ``random``/``novel_premises`` split subdirectories. Not
+        guaranteed to exist; callers that read files under it raise on a
+        missing path.
     """
     override = os.getenv("SMOLBENCH_LEAN_DATA")
     if override:
@@ -105,13 +109,13 @@ class TracedTactic:
     state_after: str
     #: Premises referenced by name inside `tactic`, one dict per reference:
     #: ``{full_name, def_path, def_pos, def_end_pos}``. This is a lighter,
-    #: distinct shape from ``smolbench.deduction.lean.premises.Premise`` (no
-    #: ``code``/``kind``) -- ``full_name`` is the join key used to look the
-    #: full premise up via ``smolbench.deduction.lean.premises.lookup`` (see
-    #: ``context._render_hint_parts``). Empty when the tactic references no
-    #: known premise (most tactics -- e.g. ``intro h``, bare ``simp``). See
-    #: ``_from_json`` for how this is extracted from the raw
-    #: ``annotated_tactic`` field.
+    #: distinct shape from ``smolbench.deduction.lean.premises.Premise``
+    #: (no ``code``/``kind``). ``full_name`` is the join key used to look
+    #: the full premise up via ``smolbench.deduction.lean.premises.lookup``
+    #: (see ``context._render_hint_parts``). Empty when the tactic
+    #: references no known premise (most tactics -- e.g. ``intro h``, bare
+    #: ``simp``). See ``_from_json`` for how this is extracted from the
+    #: raw ``annotated_tactic`` field.
     premises: list[dict]
 
 
@@ -130,16 +134,16 @@ class BenchmarkTheorem:
     full_name: str
     #: ``(line, column)`` of the declaration's start, as recorded in the
     #: LeanDojo trace. Nothing in this codebase consumes these fields for
-    #: source slicing (unlike the parallel ``smolbench.deduction.lean.premises.
-    #: Premise.start``/``.end``, whose *line* is provably 1-indexed --
-    #: see ``premises.slice_full_decl``'s explicit ``start_line - 1``
-    #: conversion before list-indexing a file's lines), so their indexing
-    #: convention is not independently exercised here. The fixture data is
-    #: consistent with a 1-indexed line (``start == (1, 1)`` for a
-    #: declaration at the very top of its file), but the column's indexing
-    #: is not distinguishable from that alone -- treat both as opaque
-    #: LeanDojo trace positions unless a caller adds code that depends on
-    #: the exact convention.
+    #: source slicing. This differs from the parallel
+    #: ``smolbench.deduction.lean.premises.Premise.start``/``.end``, whose
+    #: *line* is provably 1-indexed (see ``premises.slice_full_decl``'s
+    #: explicit ``start_line - 1`` conversion before list-indexing a
+    #: file's lines). So this field's indexing convention is not
+    #: independently exercised here. The fixture data is consistent with
+    #: a 1-indexed line (``start == (1, 1)`` for a declaration at the very
+    #: top of its file), but the column's indexing is not distinguishable
+    #: from that alone. Treat both as opaque LeanDojo trace positions,
+    #: unless a caller adds code that depends on the exact convention.
     start: tuple[int, int]
     #: ``(line, column)`` of the declaration's end. See `start`.
     end: tuple[int, int]
@@ -184,12 +188,12 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
     Notes
     -----
     Premise-extraction contract: each raw tactic's ``annotated_tactic`` is
-    nominally a ``[annotated_text, premises]`` pair, but some records give
-    only ``[annotated_text]`` (length 1, no premises element at all) rather
-    than an explicit ``[annotated_text, []]``. Reading
-    ``annotated[1] if len(annotated) > 1 else []`` normalizes both
+    nominally a ``[annotated_text, premises]`` pair. But some records give
+    only ``[annotated_text]`` (length 1, no premises element at all),
+    rather than an explicit ``[annotated_text, []]``. This function reads
+    ``annotated[1] if len(annotated) > 1 else []``, which normalizes both
     no-premise shapes -- a missing second element, or an explicit empty
-    list -- to ``TracedTactic.premises == []``, so no caller downstream
+    list -- to ``TracedTactic.premises == []``. So no caller downstream
     needs to length-check ``annotated_tactic`` itself.
     """
     tts = []
@@ -243,15 +247,16 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
 
     Notes
     -----
-    Memoized per ``(kind, split)`` argument pair via `functools.lru_cache`
-    (``maxsize=8`` comfortably covers all 6 combinations plus slack). The
-    cache key does NOT include `data_root`'s current return value, so
-    repointing ``SMOLBENCH_LEAN_DATA`` mid-process (as tests do, via
-    ``monkeypatch.setenv``) will keep returning theorems loaded from
-    whichever root was active the first time a given ``(kind, split)`` pair
-    was requested. Call `reset_caches` after changing the environment
-    variable to force this (and the other memoized loaders it clears) to
-    re-read from disk.
+    This memoizes per ``(kind, split)`` argument pair, via
+    `functools.lru_cache` (``maxsize=8`` comfortably covers all 6
+    combinations, plus slack). The cache key does NOT include
+    `data_root`'s current return value. So repointing
+    ``SMOLBENCH_LEAN_DATA`` mid-process (as tests do, via
+    ``monkeypatch.setenv``) keeps returning theorems loaded from whichever
+    root was active the first time a given ``(kind, split)`` pair was
+    requested. Call `reset_caches` after changing the environment
+    variable, to force this loader (and the other memoized loaders it
+    clears) to re-read from disk.
     """
     path = data_root() / kind / f"{split}.json"
     raw = json.loads(path.read_text())
@@ -317,11 +322,12 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
 
     Notes
     -----
-    Design: anchored on ``data_root().parent`` (the ``data/`` directory that
-    contains ``leandojo_benchmark_4/``), not `data_root` itself. This
-    matches the pre-move layout where ``replay_passing_*.jsonl`` sidecars
-    sat alongside the ``leandojo_benchmark_4/`` directory rather than inside
-    it, and keeps these small, committed sidecars out of the large,
+    Design: this path anchors on ``data_root().parent`` (the ``data/``
+    directory that contains ``leandojo_benchmark_4/``), not on
+    `data_root` itself. This matches the pre-move layout, where
+    ``replay_passing_*.jsonl`` sidecars sat alongside the
+    ``leandojo_benchmark_4/`` directory rather than inside it. It also
+    keeps these small, committed sidecars out of the large,
     wholesale-gitignored dataset directory (see ``notebooks/deduction/
     README.md``'s "Data bootstrap": the sidecars are committed once
     generated, unlike the raw ~700 MB dataset download).
@@ -332,8 +338,25 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
 def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
     """Yield theorems whose ground-truth replay was recorded as `success`.
 
-    Reads `data/replay_passing_<kind>_<split>.jsonl`, produced by
-    `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
+    Parameters
+    ----------
+    kind : {"random", "novel_premises"}, default "random"
+        Forwarded to `load_split` and `replay_passing_path`.
+    split : {"train", "val", "test"}, default "val"
+        Forwarded to `load_split` and `replay_passing_path`.
+
+    Yields
+    ------
+    BenchmarkTheorem
+        Each theorem from ``load_split(kind, split)`` whose ``full_name``
+        appears with ``verdict == "success"`` in
+        `data/replay_passing_<kind>_<split>.jsonl`.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the sidecar file does not exist. Produce it first with
+        `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():
@@ -355,27 +378,28 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
 def reset_caches() -> None:
     """Clear every `functools.lru_cache` in `corpus` and `premises`.
 
-    `data_root()` re-reads `SMOLBENCH_LEAN_DATA` on every call, but the
-    lru_cache-memoized loaders in this module (`load_split`) and in
-    `smolbench.deduction.lean.premises` (`_index`, `_traced_root`, `slice_full_decl`,
-    `_file_records`, `_short_name_index`, `referenced_premises`) key their
-    results only on their own arguments — not on the current `data_root()`
-    value. A test that repoints `SMOLBENCH_LEAN_DATA` to a fixture directory
-    mid-run would otherwise keep seeing theorems/premises loaded from
-    whatever root was active the first time each cache was populated. Call
-    this after changing `SMOLBENCH_LEAN_DATA` (directly or via
-    `monkeypatch.setenv`) to force every cache to re-read from disk on next
-    use.
+    `data_root()` re-reads `SMOLBENCH_LEAN_DATA` on every call. But the
+    lru_cache-memoized loaders in this module (`load_split`), and in
+    `smolbench.deduction.lean.premises` (`_index`, `_traced_root`,
+    `slice_full_decl`, `_file_records`, `_short_name_index`,
+    `referenced_premises`), key their results only on their own
+    arguments, not on the current `data_root()` value. A test that
+    repoints `SMOLBENCH_LEAN_DATA` to a fixture directory mid-run would
+    otherwise keep seeing theorems/premises loaded from whatever root was
+    active the first time each cache was populated. Call this after
+    changing `SMOLBENCH_LEAN_DATA` (directly or via
+    `monkeypatch.setenv`), to force every cache to re-read from disk on
+    next use.
 
     Notes
     -----
-    `smolbench.deduction.lean.premises` is imported inside this function body, not at
-    module level, because `premises` imports `data_root` from `corpus`
-    (this module): a top-level `from . import premises` here would create
-    an import cycle (`corpus` -> `premises` -> `corpus`) that fails at
-    package-import time. Deferring the import to call time sidesteps this —
-    by the time anything calls `reset_caches()`, both modules are already
-    fully initialized.
+    This function imports `smolbench.deduction.lean.premises` inside its
+    own body, not at module level, because `premises` imports `data_root`
+    from `corpus` (this module). A top-level `from . import premises`
+    here would create an import cycle (`corpus` -> `premises` ->
+    `corpus`) that fails at package-import time. This function defers the
+    import to call time, which sidesteps that: by the time anything calls
+    `reset_caches()`, both modules are already fully initialized.
     """
     load_split.cache_clear()
 

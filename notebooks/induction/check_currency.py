@@ -1,13 +1,14 @@
 """Re-gate the local induction tree on CONTENT, under the EARLIEST-wins ruling.
 
-The gate itself has to flip with the rule. The 2026-08-16 ruling selects, per
-(model, seed, arm), the object with the MINIMUM run timestamp -- so a tree that
-matched the newest version (as the pre-ruling gate certified) is now WRONG for
-the 140 multi-attempt cells. Size discriminates them: the gemma-4-12b seed=8
-extens pair is 922,083 vs 1,319,921 bytes.
+The gate itself has to flip with the rule. The 2026-08-16 ruling
+selects, per (model, seed, arm), the object with the MINIMUM run
+timestamp. So a tree that matched the newest version, as the
+pre-ruling gate certified, is now WRONG for the 140 multi-attempt
+cells. Size discriminates them: the gemma-4-12b seed=8 extens pair is
+922,083 vs 1,319,921 bytes.
 
-Expected after the R=30 closure: 2,520 cells = 21 models x 4 arms x 30 seeds,
-from 2,660 snapshot objects (2,520 + 140 duplicates).
+Expected after the R=30 closure: 2,520 cells (21 models x 4 arms x 30
+seeds), from 2,660 snapshot objects (2,520 + 140 duplicates).
 """
 import re
 import sys

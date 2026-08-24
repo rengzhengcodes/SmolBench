@@ -1,8 +1,9 @@
-"""Offline tests for smolbench.deduction.lean.corpus against a tiny committed fixture.
+"""Test smolbench.deduction.lean.corpus against a tiny committed fixture.
 
-All tests point SMOLBENCH_LEAN_DATA at tests/fixtures/lean_mini/ (a hand-built
-LeanDojo-Benchmark-4-shaped tree) and reset the corpus/premises lru_caches so
-the loaders re-read from the fixture rather than any real dataset root.
+All tests point SMOLBENCH_LEAN_DATA at tests/fixtures/lean_mini/, a
+hand-built LeanDojo-Benchmark-4-shaped tree. Each test resets the
+corpus/premises lru_caches, so the loaders re-read from the fixture and
+not from any real dataset root.
 """
 
 from pathlib import Path
@@ -82,16 +83,16 @@ def test_data_root_default_anchoring(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Sidecar resolution off data_root().parent -- teeth for the notebooks/lean ->
+# Sidecar resolution off data_root().parent: teeth for the notebooks/lean ->
 # notebooks/deduction relocation.
 #
-# These assert the resolved default paths EXIST on disk rather than only
-# re-deriving the path arithmetic: all four sidecars are COMMITTED files
-# (unlike leandojo_benchmark_4/ itself, which is wholesale-gitignored), so a
-# checkout always has them and the existence check is a real gate. If
-# data_root() still pointed at the retired notebooks/lean/data, every one of
-# these paths would resolve to a nonexistent file and these tests fail --
-# which is exactly the regression they exist to catch.
+# These tests check that the resolved default paths EXIST on disk. They do
+# not just re-derive the path arithmetic. All four sidecars are COMMITTED
+# files, unlike leandojo_benchmark_4/ itself, which is wholesale-gitignored.
+# So a checkout always has them, and the existence check is a real gate.
+# If data_root() still pointed at the retired notebooks/lean/data, every one
+# of these paths would resolve to a nonexistent file, and these tests would
+# fail. That is exactly the regression they exist to catch.
 # ---------------------------------------------------------------------------
 
 
@@ -108,9 +109,9 @@ def test_replay_passing_sidecars_resolve_to_committed_files(monkeypatch):
 def test_align_asset_loads_from_relocated_data_dir(monkeypatch):
     """`lean3.AlignMap.load()` resolves its asset off `data_root().parent`.
 
-    `load()` returns None (not an error) when the asset is absent, so a
-    non-None result is the proof that the default resolution actually lands
-    on the committed `lean3_align.json.gz` in its new home.
+    `load()` returns None, not an error, when the asset is absent. So a
+    non-None result proves the default resolution lands on the committed
+    `lean3_align.json.gz` file in its new home.
     """
     import smolbench.deduction.lean.lean3 as lean3
 

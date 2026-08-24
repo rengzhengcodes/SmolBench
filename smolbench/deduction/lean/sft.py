@@ -1,7 +1,7 @@
 """Build a decontaminated Lean 4 SFT dataset from LeanDojo Benchmark 4.
 
 This module turns the benchmark's *traced tactics* into supervised
-fine-tuning pairs for LoRA-tuning a model on the exact task the
+fine-tuning pairs. These pairs LoRA-tune a model on the exact task the
 ``smolbench.deduction.lean`` eval scores: given the proof state at step
 ``k`` of a theorem, emit the remaining Lean 4 tactics.
 
@@ -10,40 +10,41 @@ Two properties make the dataset a faithful, honest training signal:
 - **Prompt-format parity with the eval.** Each example's ``system`` /
   ``user`` text is built with the *same* `smolbench.deduction.lean.prompt`
   / `smolbench.deduction.lean.context` code the runner uses at eval time
-  (`prompt.SYSTEM`, `prompt.build_user_prompt`, `context.render`), so the
+  (`prompt.SYSTEM`, `prompt.build_user_prompt`, `context.render`). So the
   LoRA sees the identical wire format it will be evaluated under -- no
   train/serve prompt skew.
 - **Decontamination.** Every theorem used in the eval is held out of the
   training pool by ``full_name`` (see `iter_dataset`). The benchmark's
-  ``random`` and ``novel_premises`` kinds are two *different* partitionings
-  of the same theorem pool, so a ``novel_premises/test`` theorem can appear
-  in ``random/train``; the explicit ``full_name`` exclusion here removes
-  that leak regardless of which ``train_kind`` is used. Training on
-  ``novel_premises/train`` additionally inherits that split's premise-level
-  decontamination (test premises are under-represented in its train split).
+  ``random`` and ``novel_premises`` kinds are two *different*
+  partitionings of the same theorem pool, so a ``novel_premises/test``
+  theorem can appear in ``random/train``. The explicit ``full_name``
+  exclusion here removes that leak, regardless of which ``train_kind`` is
+  used. A run trained on ``novel_premises/train`` also inherits that
+  split's premise-level decontamination (test premises are
+  under-represented in its train split).
 
 Context rung
 ------------
-Examples render at ``stepk:1`` by default -- the full tactic state (goal +
-hypotheses) with *no* premise hints. This is the canonical
-state-to-tactic formulation used by neural theorem provers, and it
-deliberately avoids teaching the model to exploit the eval's answer-
-conditional ``hint`` rungs (which leak the true premises). The eval then
-measures how *added* context (the ``hint``/``noise`` rungs) moves a model
-that was only ever trained on the bare state.
+Examples render at ``stepk:1`` by default: the full tactic state (goal +
+hypotheses), with *no* premise hints. This is the canonical
+state-to-tactic formulation used by neural theorem provers. It
+deliberately avoids teaching the model to exploit the eval's
+answer-conditional ``hint`` rungs, which leak the true premises. The eval
+then measures how *added* context (the ``hint``/``noise`` rungs) moves a
+model that was only ever trained on the bare state.
 
 Target
 ------
-The assistant target is the ground-truth *tail* -- the tactics from step
-``k`` to the end of the proof -- rendered as raw newline-separated tactic
-lines (no code fence), matching what `prompt.SYSTEM` instructs the model to
-produce and what `prompt.extract_tactic_block` parses back out. At the
-default ``k_strategy="last"`` the tail is the single final tactic, exactly
-the cell the headline sweep scores (``k.strategy: last``).
+The assistant target is the ground-truth *tail*: the tactics from step
+``k`` to the end of the proof, rendered as raw newline-separated tactic
+lines (no code fence). This matches what `prompt.SYSTEM` instructs the
+model to produce, and what `prompt.extract_tactic_block` parses back out.
+At the default ``k_strategy="last"``, the tail is the single final
+tactic -- exactly the cell the headline sweep scores (``k.strategy: last``).
 
 This module imports only the generation-side siblings (`corpus`,
-`context`, `prompt`) -- never `verify` -- so it stays importable on the
-main 3.14 venv (no ``lean_dojo``); dataset construction needs no Lean.
+`context`, `prompt`), never `verify`. So it stays importable on the main
+3.14 venv (no ``lean_dojo``); dataset construction needs no Lean.
 """
 
 from __future__ import annotations
@@ -58,11 +59,11 @@ from .corpus import BenchmarkTheorem, Split, SplitKind
 
 #: Splits held out of training by default: everything the eval can draw
 #: from. The headline slice is ``novel_premises/test``; ``novel_premises/val``
-#: is the pilot slice -- both excluded so neither a pilot nor the headline
-#: run can be trained on. Held out at the *whole-split* level (every theorem
-#: in the split, via `corpus.load_split`), which is stricter than the
-#: replay-passing subset the eval actually uses and needs no ``filter``
-#: sidecar to compute.
+#: is the pilot slice. Both are excluded, so neither a pilot nor the
+#: headline run can be trained on. This holds out the *whole-split* level
+#: (every theorem in the split, via `corpus.load_split`), which is
+#: stricter than the replay-passing subset the eval actually uses, and
+#: needs no ``filter`` sidecar to compute.
 DEFAULT_EVAL_SPECS: tuple[tuple[SplitKind, Split], ...] = (
     ("novel_premises", "val"),
     ("novel_premises", "test"),
@@ -179,12 +180,12 @@ def _train_pool(
 ) -> Iterator[BenchmarkTheorem]:
     """Yield the training-theorem pool for ``(kind, split)``.
 
-    ``source="with_proof"`` (default) uses `corpus.iter_with_proof` -- every
+    ``source="with_proof"`` (default) uses `corpus.iter_with_proof`: every
     theorem LeanDojo traced at least one tactic for. ``source="replay_passing"``
-    uses `corpus.iter_replay_passing`, restricting to theorems whose recorded
-    ground truth actually replays in Dojo (needs the ``filter`` sidecar; far
-    smaller and slower to produce, but guarantees each target is a
-    machine-verified valid proof).
+    uses `corpus.iter_replay_passing`, restricted to theorems whose
+    recorded ground truth actually replays in Dojo. This needs the
+    ``filter`` sidecar, and is far smaller and slower to produce, but it
+    guarantees each target is a machine-verified valid proof.
     """
     if source == "with_proof":
         return corpus.iter_with_proof(kind, split)

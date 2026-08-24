@@ -1,26 +1,27 @@
-"""Offline unit tests for smolbench/evals/aws.py's SageMaker provisioning --
-the pure kwargs-builders (``_create_model_kwargs`` / ``_create_endpoint_config_
-kwargs`` / ``_create_endpoint_kwargs`` / ``_teardown_steps``) and
-``provision_endpoint``'s control flow (the no-op fast path for non-SageMaker
-providers, the unknown-spec ``KeyError``, and -- in the happy-path tests below
--- the full deploy/poll/yield/teardown sequence).
+"""Test smolbench/evals/aws.py's SageMaker provisioning, offline.
 
-Every pinned literal in the builder tests is transcribed from the PRE-
-REFACTOR inline code this module's ``provision_endpoint`` used to contain
-(the ``create_model``/``create_endpoint_config``/``create_endpoint`` calls and
-the teardown loop, formerly inline at roughly aws.py:350-412) rather than
-derived from the builders themselves -- like ``tests/test_aws_shared.py`` and
-``tests/test_ec2_provision.py``, the point is to catch the extraction
-silently drifting from what the inline code did, not merely to describe
-whatever the builders happen to return today.
+This file covers the pure kwargs builders (``_create_model_kwargs``,
+``_create_endpoint_config_kwargs``, ``_create_endpoint_kwargs``,
+``_teardown_steps``) and ``provision_endpoint``'s control flow: the no-op
+fast path for non-SageMaker providers, the unknown-spec ``KeyError``, and, in
+the happy-path tests below, the full deploy/poll/yield/teardown sequence.
 
-No boto3 credentials or network access are used anywhere in this file:
-``provision_endpoint`` is exercised against small hand-rolled recording fakes
-standing in for the SageMaker client (see ``_FakeSagemakerClient`` below), and
-``aws._ensure_exec_role`` / ``aws.mint_sagemaker_token`` are monkeypatched out
-entirely rather than exercised (their own behavior is covered elsewhere --
-``_ensure_exec_role``'s underlying primitive by ``tests/test_aws_shared.py``'s
-``ensure_sagemaker_execution_role`` tests).
+Every pinned literal in the builder tests is copied from the pre-refactor
+inline code that ``provision_endpoint`` used to contain (the
+``create_model``/``create_endpoint_config``/``create_endpoint`` calls and the
+teardown loop, formerly inline at roughly aws.py:350-412). The tests do not
+derive the literals from the builders themselves. Like
+``tests/test_aws_shared.py`` and ``tests/test_ec2_provision.py``, the point
+is to catch the extraction drifting silently from what the inline code did,
+not to describe whatever the builders happen to return today.
+
+No boto3 credentials or network access are used anywhere in this file.
+``provision_endpoint`` runs against small hand-rolled recording fakes that
+stand in for the SageMaker client (see ``_FakeSagemakerClient`` below).
+``aws._ensure_exec_role`` and ``aws.mint_sagemaker_token`` are monkeypatched
+out entirely, not exercised here. Their own behavior is covered elsewhere:
+``_ensure_exec_role``'s underlying primitive is covered by
+``tests/test_aws_shared.py``'s ``ensure_sagemaker_execution_role`` tests.
 """
 
 import os
@@ -52,7 +53,7 @@ _ROLE_ARN = "arn:aws:iam::0:role/x"
 
 
 def test_create_model_kwargs_pinned_default_image():
-    """Default image (no spec override) -- the base image constant, verbatim."""
+    """Check the default image (no spec override): the base image constant, verbatim."""
     kwargs = aws._create_model_kwargs("my-model", _SPEC, _ROLE_ARN)
     assert kwargs == {
         "ModelName": "my-model-model",
@@ -87,10 +88,12 @@ def test_create_model_kwargs_tp_absent_defaults_to_str_one():
 
 
 def test_create_model_kwargs_env_merge_spec_key_overrides_base_key():
-    """The ``|`` merge is base-dict-then-spec-env, so a spec env key with the
-    SAME name as a base key (e.g. SAGEMAKER_ENABLE_LOAD_AWARE) wins -- and an
-    unrelated spec env key (HF_TOKEN) is simply added alongside the base
-    keys."""
+    """Check the ``|`` merge order: base dict, then spec env.
+
+    A spec env key with the same name as a base key (for example
+    SAGEMAKER_ENABLE_LOAD_AWARE) wins. An unrelated spec env key (HF_TOKEN)
+    is simply added alongside the base keys.
+    """
     spec = {**_SPEC, "env": {"SAGEMAKER_ENABLE_LOAD_AWARE": "0", "HF_TOKEN": "hf_xyz"}}
     kwargs = aws._create_model_kwargs("my-model", spec, _ROLE_ARN)
     env = kwargs["PrimaryContainer"]["Environment"]
@@ -100,8 +103,11 @@ def test_create_model_kwargs_env_merge_spec_key_overrides_base_key():
 
 
 def test_create_model_kwargs_no_env_key_is_base_dict_unchanged():
-    """No spec["env"] at all -- merging with {} must not alter the base dict's
-    keys or values (guards the `| spec.get("env", {})` default)."""
+    """Check that no spec["env"] key leaves the base dict unchanged.
+
+    If you merge with {}, the base dict's keys and values must not
+    change. This guards the `| spec.get("env", {})` default.
+    """
     kwargs = aws._create_model_kwargs("my-model", _SPEC, _ROLE_ARN)
     assert kwargs["PrimaryContainer"]["Environment"] == {
         "HF_MODEL_ID": "org/model",
@@ -182,8 +188,9 @@ def test_teardown_steps_order_and_calls():
     sm = _RecordingSagemakerClient()
     steps = aws._teardown_steps(sm, "my-model")
 
-    # Order matters: endpoint before endpoint-config before model -- deleting
-    # an endpoint before its config/model is the dependency-safe direction.
+    # Order matters: endpoint, then endpoint-config, then model. Delete an
+    # endpoint before its config or model. That is the dependency-safe
+    # direction.
     assert [label for label, _ in steps] == ["endpoint", "endpoint-config", "model"]
 
     for _, call in steps:
@@ -213,8 +220,9 @@ def test_provision_endpoint_noop_for_non_sagemaker(monkeypatch, provider_env):
         monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     else:
         monkeypatch.setenv("INFERENCE_PROVIDER", provider_env)
-    # AWS_INFERENCE_BASE_URL absent must NOT accidentally make
-    # _is_sagemaker_provider() true via a stray "{model}"/"sagemaker" default.
+    # AWS_INFERENCE_BASE_URL absent must not accidentally make
+    # _is_sagemaker_provider() true through a stray "{model}"/"sagemaker"
+    # default.
     monkeypatch.delenv("AWS_INFERENCE_BASE_URL", raising=False)
     _assert_never_calls_sagemaker_client(monkeypatch)
 
@@ -249,9 +257,12 @@ def test_provision_endpoint_unknown_spec_raises_keyerror(monkeypatch):
 
 
 class _FakeSagemakerClient:
-    """Records every SageMaker call. ``describe_endpoint`` reports InService
-    on its very first call, so the poll loop inside ``provision_endpoint``
-    exits after exactly one iteration without any real sleeping."""
+    """Record every SageMaker call.
+
+    ``describe_endpoint`` reports InService on its very first call, so the
+    poll loop inside ``provision_endpoint`` exits after exactly one
+    iteration, with no real sleeping.
+    """
 
     def __init__(self):
         self.calls: list = []
@@ -281,16 +292,20 @@ class _FakeSagemakerClient:
 
 @pytest.fixture
 def _sagemaker_env(monkeypatch):
-    """Common env/monkeypatch setup for the full-lifecycle tests below: makes
-    _is_sagemaker_provider() true, stubs _ensure_exec_role/mint_sagemaker_token
-    (their own behavior is covered elsewhere -- see module docstring), and
-    seeds AWS_INFERENCE_API_KEY via setenv (never delenv/raw-assignment) so
-    monkeypatch's built-in teardown restores the ORIGINAL env var state
-    afterwards even though provision_endpoint mutates os.environ directly
-    inside the `with` body -- a delenv(raising=False) on an already-absent
-    var registers no undo and would leak the minted token into later tests
-    (e.g. tests/test_openai_compat.py, tests/test_provider_dispatch.py, which
-    also read AWS_INFERENCE_API_KEY through aws._api_key())."""
+    """Common env and monkeypatch setup for the full-lifecycle tests below.
+
+    This fixture makes ``_is_sagemaker_provider()`` true, and stubs
+    ``_ensure_exec_role``/``mint_sagemaker_token`` (their own behavior is
+    covered elsewhere; see the module docstring). It seeds
+    ``AWS_INFERENCE_API_KEY`` with ``setenv``, never ``delenv`` or a raw
+    assignment, so monkeypatch's built-in teardown restores the original env
+    var state afterwards, even though ``provision_endpoint`` mutates
+    ``os.environ`` directly inside the `with` body. A
+    ``delenv(raising=False)`` on an already-absent var registers no undo,
+    and would leak the minted token into later tests (for example
+    tests/test_openai_compat.py and tests/test_provider_dispatch.py, which
+    also read ``AWS_INFERENCE_API_KEY`` through ``aws._api_key()``).
+    """
     monkeypatch.setenv("INFERENCE_PROVIDER", "sagemaker")
     monkeypatch.setenv(
         "AWS_INFERENCE_BASE_URL",
@@ -314,8 +329,9 @@ def test_provision_endpoint_happy_path_full_lifecycle(_sagemaker_env):
 
     with aws.provision_endpoint("qwen2.5-1.5b-test") as yielded:
         assert yielded == "qwen2.5-1.5b-test"
-        # Token refresh happens before yield -- the inference path reads this
-        # env var at call time, so it must already be set once the body runs.
+        # Token refresh happens before yield. The inference path reads this
+        # env var at call time, so it must already be set once the body
+        # runs.
         assert os.environ["AWS_INFERENCE_API_KEY"] == "sagemaker-api-key-stub"
 
     call_names = [name for name, _ in fake.calls]
@@ -342,9 +358,11 @@ def test_provision_endpoint_happy_path_full_lifecycle(_sagemaker_env):
 
 
 def test_provision_endpoint_teardown_runs_even_when_body_raises(_sagemaker_env):
-    """Teardown is in a `finally` -- it must run (all three deletes) even
-    when the `with` body raises, and the body's own exception must still
-    propagate (teardown must never mask it)."""
+    """Check that teardown runs from a `finally` block, even when the body raises.
+
+    All three deletes must run when the `with` body raises. The body's own
+    exception must still propagate; teardown must never mask it.
+    """
     fake = _sagemaker_env
 
     with pytest.raises(RuntimeError, match="boom"):

@@ -1,16 +1,18 @@
-"""Offline tests for smolbench.deduction.lean.decontam against the lean_mini fixture.
+"""Test smolbench.deduction.lean.decontam against the lean_mini fixture.
 
-Plants one leak of each key family (K1 name, K2 exact/near statement,
-K3 mid-proof state, K4 chain / 3-gram / (state, tactic) pair) and asserts
-`HoldoutIndex.check` catches it, plus that clean rows and premise-name-only
-mentions pass. Points SMOLBENCH_LEAN_DATA at the committed 2-theorem
-fixture, exactly like test_lean_sft.py.
+Each test plants one leak from a key family: K1 name, K2 exact or near
+statement, K3 mid-proof state, or K4 chain, 3-gram, or (state, tactic)
+pair. Each test checks that `HoldoutIndex.check` catches its leak, and
+that clean rows and premise-name-only mentions pass.
+
+The tests point SMOLBENCH_LEAN_DATA at the committed 2-theorem fixture,
+the same fixture test_lean_sft.py uses.
 
 Fixture cheat-sheet (tests/fixtures/lean_mini/random/val.json):
-- Mini.theoremA: 3 tactics (``intro h`` / ``simp`` / ``exact Mini.premiseA
+- Mini.theoremA: 3 tactics (``intro h``, ``simp``, ``exact Mini.premiseA
   h (Mini.premiseB n)``), step-0 state ``n : ℕ\\nhn : n > 0\\n⊢ P n → Q n``.
-- Mini.theoremB: 2 tactics -- short proof, so it contributes NO chain/3-gram
-  keys, only pair keys.
+- Mini.theoremB: 2 tactics. This is a short proof, so it gives NO
+  chain or 3-gram keys, only pair keys.
 """
 
 from pathlib import Path
@@ -75,9 +77,9 @@ def test_state_variants_full_and_goal_only():
 def test_index_stats_cover_both_theorems(index):
     s = index.stats()
     assert s["names"] == 2
-    # theoremA's full step-0 state plus theoremB's (goal-only-form) state;
+    # theoremA's full step-0 state plus theoremB's (goal-only-form) state.
     # theoremA's bare "⊢ P n → Q n" goal variant is under the
-    # _MIN_GOAL_KEY_CHARS gate (short generic goals identify nothing).
+    # _MIN_GOAL_KEY_CHARS gate: short generic goals identify nothing.
     assert s["statements"] == 2
     # Only theoremA (3 tactics) contributes chain/3-gram keys.
     assert s["chains"] == 1 and s["tactic_ngrams"] == 1
@@ -102,9 +104,9 @@ def test_k2_exact_statement_hit_despite_reformatting(index):
 
 
 def test_k2_short_goal_only_restatement_is_not_a_key(index):
-    # Bare short goals recur across unrelated theorems (⊢ False, ⊢ a = b);
-    # they are below _MIN_GOAL_KEY_CHARS and deliberately NOT indexed --
-    # only the full state (or a long, identifying goal) drops a row.
+    # Bare short goals recur across unrelated theorems (⊢ False, ⊢ a = b).
+    # They are below _MIN_GOAL_KEY_CHARS, so they are deliberately NOT
+    # indexed. Only the full state, or a long, identifying goal, drops a row.
     assert index.check(statement="⊢ P n → Q n") == []
 
 
@@ -156,9 +158,9 @@ def test_k2_near_duplicate_alpha_rename_hit(index):
         ],
     )
     index._add_theorem(fake)
-    # One renamed hypothesis: shingle overlap stays >= 0.85 (renaming more
-    # would sink Jaccard below threshold on a statement this short -- and
-    # such heavier rewrites are the goal-only exact variant's job to catch).
+    # One renamed hypothesis: shingle overlap stays >= 0.85. A larger rename would sink
+    # the Jaccard score below threshold on a statement this short. The goal-only exact
+    # variant's job is to catch heavier rewrites.
     renamed = long_stmt.replace("hs :", "h1 :")
     hits = index.check(statement=renamed)
     assert hits and hits[0].key == "statement_near" and hits[0].theorem == "Mini.longStatement"
@@ -206,9 +208,9 @@ def test_clean_row_passes(index):
 
 
 def test_short_generic_chains_do_not_hit(index):
-    # theoremB's whole proof is 2 tactics -- deliberately NOT chain-indexed;
-    # ``rfl`` alone (or with company) must never be a drop key without its
-    # state (the pair key is what covers short proofs).
+    # theoremB's whole proof is 2 tactics, so it is deliberately NOT
+    # chain-indexed. ``rfl`` alone, or with company, must never be a drop
+    # key without its state. The pair key is what covers short proofs.
     assert index.check(tactics=["rfl"]) == []
     assert index.check(tactics=["rfl", "exact Mini.premiseA h"]) == []
     # But the pair (state, tactic) IS answer-conditional and does hit.

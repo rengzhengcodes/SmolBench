@@ -1,4 +1,4 @@
-"""Offline checks for scripts/run_shards.py (the direct-shard babysitter)."""
+"""Test scripts/run_shards.py, the direct-shard babysitter."""
 
 from __future__ import annotations
 

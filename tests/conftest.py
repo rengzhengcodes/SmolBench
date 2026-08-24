@@ -1,10 +1,10 @@
-"""Shared fixtures: a local OpenAI-compatible stub server + stub tokenizers.
+"""Provide shared fixtures: a local OpenAI-compatible stub server and stub tokenizers.
 
-Everything in tests/ runs OFFLINE -- no AWS credentials, no network. The stub
-server speaks just enough of the Chat Completions dialect to exercise the
-shared client in smolbench/evals/openai_compat.py through every provider
-module, and `StubTokenizer` stands in for the model tokenizers the induction
-generators would otherwise download.
+All tests in this directory run offline. They use no AWS credentials and no
+network access. The stub server implements enough of the Chat Completions
+API to exercise the shared client in ``smolbench/evals/openai_compat.py``
+through every provider module. ``StubTokenizer`` replaces the real model
+tokenizers that the induction generators would otherwise download.
 """
 
 import json
@@ -28,16 +28,16 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _reply_sse(self, obj):
-        """Re-emits a chat-completions body as an SSE stream.
+        """Re-emit a chat-completions body as an SSE stream.
 
-        Chunked deliberately -- one character per delta for both channels --
-        so a test exercises real REASSEMBLY rather than a single-frame
-        passthrough that would pass even if the client dropped everything
-        but the last chunk. The frame ORDER mirrors vLLM: content/reasoning
-        deltas, then a chunk carrying only ``finish_reason``, then (for
-        ``stream_options: {"include_usage": true}``) a usage-only chunk whose
-        ``choices`` list is EMPTY -- the shape most likely to crash a naive
-        ``choices[0]`` reader -- and finally ``[DONE]``.
+        The stream sends one character per delta, on both channels. This
+        makes a test exercise real reassembly, not a single-frame passthrough
+        that would still pass even if the client dropped every chunk but the
+        last. The frame order matches vLLM: content and reasoning deltas
+        first, then a chunk that carries only ``finish_reason``, then (when
+        ``stream_options`` sets ``{"include_usage": true}``) a usage-only
+        chunk whose ``choices`` list is empty -- the shape most likely to
+        crash a naive ``choices[0]`` reader -- and finally ``[DONE]``.
         """
         message = (obj.get("choices") or [{}])[0].get("message") or {}
         self.send_response(200)
@@ -63,23 +63,23 @@ class _StubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
-        # Headers are recorded alongside the body so tests can assert on
-        # auth/routing headers (e.g. Prime Intellect's X-Prime-Team-ID).
+        # Record the headers with the body. Tests can then check auth and
+        # routing headers, for example Prime Intellect's X-Prime-Team-ID.
         self.server.requests.append(
             {"path": self.path, "body": payload, "headers": dict(self.headers)}
         )
         response = self.server.next_response()
-        # The stub answers in whichever transport the CLIENT asked for, so a
-        # streaming test and a non-streaming test can queue the exact same
-        # response object and assert the parsed results match.
+        # The stub replies in whatever transport the client asks for. A
+        # streaming test and a non-streaming test can queue the same
+        # response object and check that the parsed results match.
         if payload.get("stream"):
             self._reply_sse(response)
         else:
             self._reply(response)
 
     def do_GET(self):
-        # Headers recorded for the same reason as in do_POST (e.g. asserting
-        # metadata_get's Authorization bearer header).
+        # Record headers for the same reason as in do_POST, for example to
+        # check metadata_get's Authorization bearer header.
         self.server.requests.append(
             {"path": self.path, "body": None, "headers": dict(self.headers)}
         )
@@ -136,36 +136,35 @@ def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
 # Stub tokenizers (smolbench.evals.tokenization.Tokenizer implementations)
 # ---------------------------------------------------------------------------
 # The induction generators need a tokenizer to size their token-matched noise
-# arm. Driving the offline suite with a REAL one would mean either a network
-# download (`HFTokenizer`) or a tiktoken BPE file that may or may not be in the
-# local cache -- neither acceptable for tests whose whole contract is that they
-# run offline and deterministically. These stubs are pure Python, exact, and
-# stable forever, which also makes them what the golden-hash fixture is
-# recorded against.
+# arm. A real tokenizer would need either a network download (`HFTokenizer`)
+# or a tiktoken BPE file that may or may not be in the local cache. Neither
+# fits the offline, deterministic contract of this suite. These stubs are
+# pure Python. They give exact, stable results, so the golden-hash fixture is
+# recorded against them.
 
 _CHUNK_RE = re.compile(r"\s+|\S+")
 
 
 class StubTokenizer:
-    """Deterministic tokenizer that imitates the BPE behaviour that matters.
+    """Deterministic tokenizer that copies the BPE behavior that matters.
 
-    Two real-tokenizer properties drive the noise-padding machinery, and this
-    stub reproduces both so tests exercise the same code paths a served model
-    would:
+    Two properties of real tokenizers drive the noise-padding logic. This
+    stub copies both, so tests exercise the same code paths a served model
+    would use.
 
-    1. **Whitespace runs merge.** A long run of ONE repeated whitespace
+    1. Whitespace runs merge. A long run of one repeated whitespace
        character collapses to a single token (``" " * 128`` really is one
-       token in ``cl100k_base``), which is why a naive space pad cannot reach
-       a large token target and why `choose_whitespace_unit` exists.
-    2. **Mixed whitespace does not.** Alternating characters defeat the run
-       merge, so ``" \\t" * n`` costs ~n tokens -- the property the pad atom
-       is selected for.
+       token in ``cl100k_base``). This is why a plain space pad cannot reach
+       a large token target, and why `choose_whitespace_unit` exists.
+    2. Mixed whitespace does not merge. Alternating characters defeat the run
+       merge, so ``" \\t" * n`` costs about n tokens. This is the property
+       the pad atom is chosen for.
 
-    Everything else is a coarse length model (a token per 2 whitespace
-    characters, per 4 other characters). Boundary effects are real here too:
-    the pad fuses with adjacent whitespace in the template, so the count of a
-    padded prompt is NOT the sum of its parts -- exactly the second-order
-    behaviour the padding search has to absorb.
+    All other text follows a coarse length model: one token per 2 whitespace
+    characters, and one token per 4 other characters. Boundary effects are
+    real here too. The pad fuses with adjacent whitespace in the template, so
+    the token count of a padded prompt is not the sum of its parts. This is
+    the same second-order behavior the padding search must handle.
     """
 
     name = "stub"
@@ -187,13 +186,13 @@ class StubTokenizer:
 class TruncatingTokenizer:
     """`StubTokenizer` with a hard cap, like a tokenizer.json truncation stanza.
 
-    Models the live failure found in
+    This models a real failure found in
     ``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8``: its ``tokenizer.json``
-    embeds ``truncation: {max_length: 512}``, so every count above the cap
-    comes back AS the cap. A capped tokenizer looks perfectly linear right up
-    to the cap, which is why the pad-atom probe has to reach past any
-    plausible one -- a saturating counter would otherwise report a
-    26,000-token prompt and its pad as equal at 512.
+    sets ``truncation: {max_length: 512}``, so every count above the cap
+    comes back as the cap. A capped tokenizer looks linear right up to the
+    cap. This is why the pad-atom probe must reach past any plausible cap --
+    otherwise a saturating counter could report a 26,000-token prompt and its
+    pad as equal, both at 512.
     """
 
     name = "truncating-512"
@@ -208,11 +207,11 @@ class TruncatingTokenizer:
 
 
 class MergeEverythingTokenizer:
-    """Pathological tokenizer: ANY whitespace run is one token.
+    """Pathological tokenizer: any whitespace run is one token.
 
-    No repeating whitespace atom can grow the count under it, so it is the
-    case `choose_whitespace_unit` must refuse rather than silently return a
-    pad that saturates far below its target.
+    No repeating whitespace atom can grow the count under this tokenizer.
+    This is the case `choose_whitespace_unit` must refuse, instead of
+    silently returning a pad that saturates far below its target.
     """
 
     name = "merge-everything"
@@ -243,20 +242,22 @@ def stub_server():
 
 @pytest.fixture(autouse=True)
 def _clear_provider_context_length_caches():
-    """Autouse: clear the openrouter/primeintellect `get_model_context_length`
-    `lru_cache`s before AND after every test.
+    """Clear the openrouter and primeintellect `get_model_context_length` caches.
 
-    Several existing tests work around cross-test cache bleed by picking a
-    globally-unique model-name string per test (see the "Unique model name
-    per test avoids ... lru_cache" comments sprinkled through
-    test_openai_compat.py / test_lean_runner.py) -- a fragile convention
-    that silently breaks the moment two tests happen to reuse the same
-    model id against two different stub servers. Clearing both caches
-    around every test makes that isolation an actual guarantee instead of a
-    naming convention every test author has to remember. Guarded by
-    ImportError so this fixture degrades gracefully (skips silently) if a
-    provider module is ever renamed/removed rather than failing collection
-    for the whole suite.
+    This fixture is autouse. It clears both `lru_cache` caches before and
+    after every test.
+
+    Some tests avoid cross-test cache bleed by picking a globally unique
+    model-name string per test (see the "Unique model name per test avoids
+    ... lru_cache" comments in test_openai_compat.py and
+    test_lean_runner.py). This convention is fragile: it breaks silently the
+    moment two tests reuse the same model id against two different stub
+    servers. This cache-clearing around every test makes that isolation a
+    real guarantee, not a naming convention every test author must remember.
+
+    The clear step is guarded by ImportError, so this fixture degrades
+    gracefully (skips silently) if a provider module is ever renamed or
+    removed, instead of failing collection for the whole suite.
     """
     def _clear() -> None:
         try:

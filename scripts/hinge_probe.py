@@ -1,49 +1,57 @@
-"""The hinge experiment: is the 8/8 determinism "noise floor" prefix-cache replay?
+"""Run the hinge experiment: is the 8/8 determinism "noise floor" prefix-cache replay?
 
 WHY THIS EXISTS
 ---------------
-`notebooks/DETERMINISM_PLAN_2026-08-16.md` section 3 specifies this run; read it
-first -- the predictions and refutation criteria are pre-registered there and this
-script only executes them. In brief: the study's same-box reproducibility baseline
-(`nemotron-3-nano-4b` 8/8 byte-identical across two back-to-back passes) was
-measured with `--enable-prefix-caching` ON, and the second pass re-sends the first
-pass's exact prompts -- so its prefill is a cache hit replaying the first pass's
-KV. The celebrated noise floor may be measuring the cache, not the kernels. And
-`ministral-3-3b`'s 0/8 on its OWN same-box baseline -- the result that got it
-written off as "nothing can be measured for it" -- was measured only under that
-same configuration.
+`notebooks/DETERMINISM_PLAN_2026-08-16.md` section 3 specifies this run.
+Read it first: the predictions and refutation criteria are pre-registered
+there, and this script only executes them. In brief: the study measured
+its same-box reproducibility baseline (`nemotron-3-nano-4b` 8/8
+byte-identical across two back-to-back passes) with
+`--enable-prefix-caching` ON. The second pass re-sends the first pass's
+exact prompts, so its prefill is a cache hit that replays the first
+pass's KV. The celebrated noise floor may be measuring the cache, not
+the kernels. And `ministral-3-3b`'s 0/8 on its OWN same-box baseline,
+the result that got it written off as "nothing can be measured for it",
+was measured only under that same configuration.
 
-Four arms, two boxes, ONE box per model serving BOTH configs (the control agent's
-``/serve`` swaps containers, and each swap is a fresh process -- exactly what a
-within-process baseline requires):
+This script runs four arms, on two boxes, with ONE box per model serving
+BOTH configs. (The control agent's ``/serve`` swaps containers, and each
+swap is a fresh process, exactly what a within-process baseline
+requires.)
 
   stock  the archived configuration, unchanged  -> replicates the archived number
   det    prefix caching OFF, --max-num-seqs 1, --enforce-eager, --seed 0
 
-Per config: two back-to-back passes over the SAME 8 archived prompts, byte-compared.
+Per config, this script runs two back-to-back passes over the SAME 8
+archived prompts, and byte-compares them.
 
   arm A = nemotron det   : drops below 8/8  => the floor was cache replay
   arm B = nemotron stock : expected 8/8     (comparability control)
   arm C = ministral det  : goes to 8/8      => the "unmeasurable" verdict is wrong
   arm D = ministral stock: expected 0/8     (replication)
 
-REFUTED if arm C stays at 0/8. Exonerated if arm A stays 8/8.
+The hypothesis is REFUTED if arm C stays at 0/8, and exonerated if arm A
+stays at 8/8.
 
-Lessons from the archive this script bakes in rather than repeats:
-  - STREAMING TRANSPORT ON (``EC2_STREAM_COMPLETIONS=1``), else a cap-length
-    response can vanish on the wire and the probe re-measures the transport
-    fault instead of the sampler. Any row of length <= 1 is the fault's
-    signature: re-asked once and BOTH results recorded.
-  - FINGERPRINT RECORDED PER CONFIG (vLLM /version, image digest from the agent
-    log, prefix-cache metric lines) -- the archived probes' "same image"
-    assumption was unverifiable because nobody wrote the build down, and the
-    study ended with five recorded builds plus at least one unrecorded one.
-  - The determinism args REPLACE ``--enable-prefix-caching`` rather than append
-    after it: prefix caching is default-ON in vLLM V1, so the explicit negation
-    is required and the positive flag must not be left to argue with it.
-  - The study spec is overridden IN PROCESS only; ``EC2_DEPLOY_SPECS`` on disk
-    is never edited, and the probe runs under its own tag/state file so it can
-    never adopt a study lane's box.
+This script bakes in these lessons from the archive, instead of
+repeating its mistakes:
+  - STREAMING TRANSPORT stays ON (``EC2_STREAM_COMPLETIONS=1``). Without
+    it, a cap-length response can vanish on the wire, and the probe
+    would re-measure the transport fault instead of the sampler. Any row
+    of length <= 1 is the fault's signature: this script re-asks it once
+    and records BOTH results.
+  - This script RECORDS A FINGERPRINT PER CONFIG (vLLM /version, image
+    digest from the agent log, prefix-cache metric lines). The archived
+    probes' "same image" assumption was unverifiable, because nobody had
+    written the build down, and the study ended with five recorded
+    builds plus at least one unrecorded one.
+  - The determinism args REPLACE ``--enable-prefix-caching``, instead of
+    appending after it. Prefix caching is default-ON in vLLM V1, so the
+    explicit negation is required, and the positive flag must not be
+    left to argue with it.
+  - This script overrides the study spec IN PROCESS only; it never edits
+    ``EC2_DEPLOY_SPECS`` on disk. It runs under its own tag and state
+    file, so it can never adopt a study lane's box.
 
 USAGE
     set -a && source notebooks/deduction/keys.env && source notebooks/ec2-operator.env && set +a
@@ -51,8 +59,9 @@ USAGE
     .venv/bin/python scripts/hinge_probe.py --model nemotron-3-nano-4b
     .venv/bin/python scripts/hinge_probe.py --model ministral-3-3b
 
-Writes ``notebooks/deduction/results/hinge_<model>.json`` and tears its box down
-in a ``finally``. Roughly 45-70 min and ~$2-3.5 per model at g6e.4xlarge spot.
+This script writes ``notebooks/deduction/results/hinge_<model>.json``,
+and tears its box down in a ``finally`` block. Expect roughly 45-70
+minutes and about $2-3.5 per model at g6e.4xlarge spot.
 """
 
 import argparse
@@ -68,19 +77,27 @@ from typing import Any, Dict, List, Optional, Tuple
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / "notebooks" / "deduction" / "results"
 
-#: The determinism configuration under test. Replaces the spec's
-#: ``--enable-prefix-caching`` (see module docstring); model-specific args like
-#: ministral's reasoning parser are PRESERVED from the original spec.
+#: The determinism configuration under test. This replaces the spec's
+#: ``--enable-prefix-caching`` (see the module docstring). This script
+#: PRESERVES model-specific args, like ministral's reasoning parser, from
+#: the original spec.
 DET_ARGS = ["--no-enable-prefix-caching", "--max-num-seqs", "1",
             "--enforce-eager", "--seed", "0"]
 
 
 def _load_hwprobe():
-    """Imports the archived probe's helpers (load_prompts / run_pass / compare).
+    """Import the archived probe's helpers (load_prompts, run_pass, compare).
 
-    Reused rather than copied so the hinge arms measure with byte-identical
-    machinery to the archived baselines they replicate -- same prompt selection
-    (deterministic S3 sort+stride), same request shape, same comparison.
+    This function reuses these helpers, instead of copying them, so the
+    hinge arms measure with byte-identical machinery to the archived
+    baselines they replicate. That machinery covers the same prompt
+    selection (deterministic S3 sort and stride), the same request
+    shape, and the same comparison.
+
+    Returns
+    -------
+    module
+        The loaded ``hardware_equivalence_probe`` module.
     """
     spec = importlib.util.spec_from_file_location(
         "hardware_equivalence_probe",
@@ -93,11 +110,28 @@ def _load_hwprobe():
 
 
 def fingerprint(state: Dict[str, Any], model: str) -> Dict[str, Any]:
-    """Records what the archived probes failed to: WHICH server this is.
+    """Record what the archived probes failed to record: WHICH server this is.
 
-    Best-effort by design -- a missing endpoint is recorded as missing, never
-    fatal, because the run's scientific payload is the byte comparison and a
+    This function is best-effort by design. It records a missing
+    endpoint as missing; it never treats a missing endpoint as fatal,
+    because the run's scientific payload is the byte comparison, and a
     partial fingerprint is still more than the archive had.
+
+    Parameters
+    ----------
+    state : dict
+        EC2 provider state, with at least ``public_ip`` and
+        ``vllm_api_key``.
+    model : str
+        Deploy-spec model id being served. This function does not
+        currently read this parameter.
+
+    Returns
+    -------
+    dict
+        Keys ``vllm_version``, ``cache_metric_lines``, and
+        ``image_digest_lines``. Each value is either the recorded data,
+        or an ``"unavailable: <ExceptionType>"`` string.
     """
     import requests
 
@@ -136,19 +170,20 @@ def fingerprint(state: Dict[str, Any], model: str) -> Dict[str, Any]:
 def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
                  label: str,
                  meta: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, str]:
-    """One probe pass with the delivery-fault guard from plan section 3.3.
+    """Run one probe pass, with the delivery-fault guard from plan section 3.3.
 
-    A stored row of length <= 1 is the transport fault's signature (an empty
-    body, not a divergence). Such a row is re-asked ONCE and both results kept:
-    the retry under ``retried_rows`` for the record, the retry's text in the
-    comparison IF it is non-empty (a real generation), the original otherwise
-    (twice-empty means empty IS the response and belongs in the comparison).
+    A stored row of length <= 1 is the transport fault's signature: an
+    empty body, not a divergence. This function re-asks such a row ONCE,
+    and keeps both results. It records the retry under ``retried_rows``.
+    It uses the retry's text in the comparison IF the retry is non-empty
+    (a real generation). Otherwise it keeps the original: a twice-empty
+    row means empty IS the response, and belongs in the comparison.
 
     Parameters
     ----------
     hw : module
-        The loaded ``hardware_equivalence_probe`` module, supplying
-        ``SEED``/``TEMPERATURE``/``MAX_TOKENS`` and ``run_pass``.
+        The loaded ``hardware_equivalence_probe`` module. It supplies
+        ``SEED``, ``TEMPERATURE``, ``MAX_TOKENS``, and ``run_pass``.
     model : str
         Deploy-spec model id being served.
     prompts : list of (str, str)
@@ -156,37 +191,39 @@ def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
     label : str
         Log-line prefix for this pass.
     meta : dict of str to dict, optional
-        Forwarded to ``hw.run_pass`` and then, on the retry path, updated IN
-        PLACE (see Notes). Omit to skip metadata collection.
+        Forwarded to ``hw.run_pass``, then, on the retry path, updated IN
+        PLACE (see Notes). Omit this to skip metadata collection.
 
     Returns
     -------
     dict of str to str
-        ``{prompt_id: reasoning + "\\x00" + content}``, plus (only when at
-        least one row was retried) a ``"_retried_rows"`` marker key holding a
-        JSON-encoded ``{prompt_id: {"original_len", "retry_len"}}`` map --
-        popped by the caller before the dict is used as a comparison pass.
+        ``{prompt_id: reasoning + "\\x00" + content}``, plus, only when
+        at least one row was retried, a ``"_retried_rows"`` marker key
+        holding a JSON-encoded ``{prompt_id: {"original_len",
+        "retry_len"}}`` map. The caller pops this key before it uses the
+        dict as a comparison pass.
 
     Notes
     -----
-    Design: the retry call uses ``ec2.complete()`` rather than ``ec2.query()``
-    for the same reason ``hardware_equivalence_probe.run_pass`` does -- the
-    delivery-fault retry is exactly where a real cap-hit (``finish_reason ==
-    "length"``, a large ``completion_tokens``) is most likely to be sitting
-    behind an apparently-empty row, and that fact would otherwise be lost the
-    moment the retry runs.
+    Design: the retry call uses ``ec2.complete()``, not ``ec2.query()``,
+    for the same reason ``hardware_equivalence_probe.run_pass`` does. The
+    delivery-fault retry is exactly where a real cap-hit
+    (``finish_reason == "length"``, a large ``completion_tokens``) is
+    most likely to be sitting behind an apparently-empty row. Without
+    this, that fact would be lost the moment the retry runs.
 
-    When ``meta`` is given, ``hw.run_pass`` has already populated
-    ``meta[pid]`` for every prompt (including the ones retried here, from
-    their FIRST attempt). On this retry path:
+    When the caller passes `meta`, ``hw.run_pass`` has already populated
+    ``meta[pid]`` for every prompt (including the ones retried here,
+    from their FIRST attempt). On this retry path:
 
-    * an ACCEPTED retry (``len(redo) > 1``) OVERWRITES ``meta[pid]`` with the
-      retry's own metadata plus ``"from_retry": True`` -- the retry's numbers,
-      not the discarded first attempt's, describe the row that is actually
-      compared;
-    * a REJECTED retry (``len(redo) <= 1``, i.e. still empty) leaves the
-      original ``meta[pid]`` untouched and adds ``"retry_rejected": True`` to
-      it, so a twice-empty row's metadata is not silently discarded either.
+    * An ACCEPTED retry (``len(redo) > 1``) OVERWRITES ``meta[pid]``
+      with the retry's own metadata, plus ``"from_retry": True``. The
+      retry's numbers, not the discarded first attempt's, describe the
+      row that is actually compared.
+    * A REJECTED retry (``len(redo) <= 1``, still empty) leaves the
+      original ``meta[pid]`` untouched, and adds
+      ``"retry_rejected": True`` to it. This way, this function does not
+      silently discard a twice-empty row's metadata either.
     """
     from smolbench.evals import ec2
 
@@ -198,9 +235,9 @@ def guarded_pass(hw, model: str, prompts: List[Tuple[str, str]],
                             "signature; re-asking once", label, pid, len(text))
             prompt_text = dict(prompts)[pid]
             ctx = ec2._CLIENT.context_length(model)
-            # `ChatClient.complete` takes `context_length` KEYWORD-ONLY
-            # (unlike `query`'s positional-or-keyword parameter of the same
-            # name) -- pass it by keyword rather than positionally.
+            # `ChatClient.complete` takes `context_length` KEYWORD-ONLY,
+            # unlike `query`'s positional-or-keyword parameter of the
+            # same name. Pass it by keyword, not positionally.
             rsp = ec2.complete(
                 prompt_text, model, hw.SEED,
                 context_length=ctx,
@@ -240,9 +277,10 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
 
-    # Transport: streaming ON before any client machinery is touched -- see
-    # module docstring. Own tag/state so a live study lane's box can never be
-    # adopted; GPU pinned so a mismatched box never serves a single prompt.
+    # Transport: turn streaming ON before this script touches any client
+    # machinery; see the module docstring. Use this script's own tag and
+    # state file, so it can never adopt a live study lane's box. Pin the
+    # GPU, so a mismatched box never serves a single prompt.
     os.environ["EC2_STREAM_COMPLETIONS"] = "1"
     os.environ["EC2_EXPERIMENT_TAG"] = f"hinge-{args.model}"
     os.environ["EC2_STATE_FILE"] = str(REPO_ROOT / f".ec2_state_hinge_{args.model}.json")
@@ -258,12 +296,13 @@ def main() -> int:
                  "archived baselines)", args.model, len(prompts))
 
     # 2026-08-18: EC2_DEPLOY_SPECS now ships DETERMINISM_ARGS (== DET_ARGS)
-    # as a suffix on every spec and no longer carries --enable-prefix-caching
-    # (post-study determinism default). Reconstruct both arms from the base
-    # args so the stock/det CONTRAST this probe exists to measure survives:
-    # stock re-adds the study-era --enable-prefix-caching; det appends
-    # DET_ARGS exactly once. (The spec's --revision/--gpu-memory-utilization
-    # pins ride both arms equally and do not affect the contrast.)
+    # as a suffix on every spec, and no longer carries
+    # --enable-prefix-caching (the post-study determinism default). This
+    # script reconstructs both arms from the base args, so the stock/det
+    # CONTRAST this probe exists to measure survives: stock re-adds the
+    # study-era --enable-prefix-caching, and det appends DET_ARGS exactly
+    # once. (The spec's --revision and --gpu-memory-utilization pins ride
+    # both arms equally, and do not affect the contrast.)
     spec_args = list(ec2.EC2_DEPLOY_SPECS[args.model].get("vllm_args", []))
     _det = getattr(ec2, "DETERMINISM_ARGS", DET_ARGS)
     if spec_args[-len(_det):] == _det:
@@ -296,7 +335,7 @@ def main() -> int:
                                "availability_zone", "public_ip")}
 
         for cfg_name, vllm_args in configs:
-            # In-process override ONLY -- the spec on disk is never edited.
+            # In-process override ONLY. This script never edits the spec on disk.
             ec2.EC2_DEPLOY_SPECS[args.model]["vllm_args"] = vllm_args
             logging.info("hinge[%s]: serving config=%s vllm_args=%s",
                          args.model, cfg_name, vllm_args)
@@ -308,8 +347,9 @@ def main() -> int:
                                  cfg_name, json.dumps(fp)[:400])
                     for i in (1, 2):
                         label = f"{cfg_name}:P{i}"
-                        # D6.4: a fresh dict per pass -- guarded_pass mutates
-                        # it in place with per-row finish_reason/token counts.
+                        # D6.4: use a fresh dict per pass. guarded_pass
+                        # mutates it in place with per-row finish_reason
+                        # and token counts.
                         row_meta: Dict[str, Dict[str, Any]] = {}
                         res = guarded_pass(hw, args.model, prompts, label, meta=row_meta)
                         retr = res.pop("_retried_rows", None)
@@ -326,9 +366,10 @@ def main() -> int:
                         serve_plus_passes_s=round(time.time() - t0, 1),
                     )
             except Exception:
-                # A rejected flag kills the container and serve_model raises on
-                # its health wait; capture the serve log so the spelling can be
-                # fixed without guessing, then let the failure surface.
+                # A rejected flag kills the container, and serve_model
+                # raises on its health wait. Capture the serve log, so
+                # the spelling can be fixed without guessing, then let
+                # the failure surface.
                 try:
                     import requests
                     st = requests.get(f"http://{state['public_ip']}:9000/status",

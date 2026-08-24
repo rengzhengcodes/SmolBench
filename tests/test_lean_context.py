@@ -1,7 +1,7 @@
-"""Offline tests for smolbench.deduction.lean.context render + trivial-rung logic.
+"""Test render() and is_trivial_rung() in smolbench.deduction.lean.context.
 
-Golden expectations below were derived by RUNNING render() on the fixture and
-hand-verifying the output, not by copying whatever the code currently emits.
+The golden values below come from running render() on the fixture and
+checking the output by hand. They do not copy what the code emits now.
 """
 
 from pathlib import Path
@@ -117,17 +117,16 @@ def test_is_trivial_stepk_branches(thms):
 
 
 # ---------------------------------------------------------------------------
-# noise:N invariants — WHITESPACE padding at EXACT token equality.
+# noise:N invariants: WHITESPACE padding at EXACT token equality.
 #
-# The contract these pin (a user directive): a `noise:N` rendering must be its
-# `hint:(N-1)` baseline followed by pure WHITESPACE padding, sized so the
-# rendered context's token count is EXACTLY EQUAL to the paired `hint:N`
-# rendering's token count -- not approximately, and not with prose filler.
+# This is a user directive. A `noise:N` rendering must equal its
+# `hint:(N-1)` baseline plus pure WHITESPACE padding. The padding must make
+# the token count match the paired `hint:N` rendering EXACTLY, not
+# approximately, and never with prose filler.
 #
-# Token counts here are taken with an INDEPENDENT tiktoken cl100k_base
-# encoder rather than through `context`'s own counter, so these assertions
-# describe the contract rather than whatever the implementation happens to
-# measure with.
+# These tests count tokens with an INDEPENDENT tiktoken cl100k_base encoder,
+# not with `context`'s own counter. This way the tests check the contract
+# itself, not just what the current implementation happens to measure.
 # ---------------------------------------------------------------------------
 
 
@@ -169,11 +168,11 @@ def test_noise_token_count_exactly_equals_paired_hint(thms):
 
 
 def test_noise_padding_is_whitespace_only_and_not_lorem(thms):
-    """The pad is the `hint:(N-1)` baseline plus WHITESPACE and nothing else.
+    """The pad is the `hint:(N-1)` baseline plus WHITESPACE, and nothing else.
 
-    Also pins the removal of the previous lorem-ipsum filler: prose padding
-    is informational content the paired hint rung does not have, and the
-    old `## Filler ...` header was itself unmatched content.
+    This also confirms removal of the old lorem-ipsum filler. Prose padding
+    adds information the paired hint rung does not have. The old
+    `## Filler ...` header was itself unmatched content.
     """
     pytest.importorskip("tiktoken")
     padded_seen = 0
@@ -208,12 +207,12 @@ def test_noise_render_is_deterministic(thms):
 
 
 def test_noise_raises_when_baseline_exceeds_target(thms, monkeypatch):
-    """A baseline LONGER than its target must fail loudly, never under-pad.
+    """A baseline LONGER than its target must fail loudly, not under-pad.
 
-    Appending whitespace cannot shrink a rendering, so if `hint:(N-1)` ever
-    rendered longer than `hint:N` the exact-match contract is unsatisfiable.
-    Silently emitting a short "length control" would reintroduce exactly the
-    length confound this arm exists to remove, so the renderer must raise.
+    You cannot shrink a rendering by appending whitespace. So if `hint:(N-1)` renders
+    longer than `hint:N`, the exact-match contract cannot hold. The renderer must raise
+    instead of silently emitting a short "length control", which would bring back the
+    length confound this arm removes.
     """
     pytest.importorskip("tiktoken")
     t = thms["Mini.theoremA"]

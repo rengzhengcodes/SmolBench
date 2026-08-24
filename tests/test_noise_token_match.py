@@ -1,24 +1,25 @@
-"""The induction noise arm: whitespace padding matched on TOKEN count.
+"""Test the induction noise arm: whitespace padding matched on TOKEN count.
 
-``noise_intens`` is a LENGTH CONTROL -- the intensional context padded until
-its prompt is as long as the extensional prompt, so an intens-vs-extens gap
-cannot be explained by prompt length. It only works if "as long as" is exact
-and measured in the unit the model consumes. It used to be neither: random
-alphanumerics matched on CHARACTER count came out 1.4-1.6x the extensional
-prompt's token count, so the control was longer than the thing it controlled
-for.
+``noise_intens`` is a LENGTH CONTROL. The intensional context is padded
+until its prompt is as long as the extensional prompt, so an
+intens-vs-extens gap cannot be explained by prompt length. This only
+works if "as long as" is exact, and measured in the unit the model
+consumes. It used to be neither: random alphanumerics matched on
+CHARACTER count came out 1.4-1.6x the extensional prompt's token count,
+so the control was longer than the thing it controlled for.
 
 These tests pin the properties that make the replacement a control:
 
-* the noise prompt's token count EQUALS its extensional counterpart's, per
-  question, not on average and not within a tolerance;
-* the pad adds only whitespace -- no content the model could read as signal;
-* the intensional and extensional arms are untouched by any of it.
+* the noise prompt's token count EQUALS its extensional counterpart's,
+  per question, not on average and not within a tolerance;
+* the pad adds only whitespace, no content the model could read as
+  signal;
+* the intensional and extensional arms stay untouched by any of it.
 
-They run against `conftest.StubTokenizer` (always) and against real tiktoken
-encodings (when the encoding files are locally available), so the machinery
-is exercised both under a controlled model of BPE behaviour and under the
-real thing.
+They run against `conftest.StubTokenizer` always, and against real
+tiktoken encodings when the encoding files are locally available. So
+the machinery is exercised both under a controlled model of BPE
+behavior and under the real thing.
 """
 
 import string
@@ -64,13 +65,13 @@ CHROM_SUB = {"role": "Twislax", "parade": "Gildane"}
 
 
 def tiktoken_tokenizer(encoding_name: str):
-    """Returns a `TiktokenTokenizer`, or skips if it cannot be built offline.
+    """Return a `TiktokenTokenizer`, or skip if it cannot be built offline.
 
-    ``tiktoken`` is an optional extra and its BPE files are fetched on first
-    use, so neither is guaranteed in a bare checkout. The offline suite must
-    not fail (or reach for the network) on that account -- the stub-tokenizer
-    parametrization already covers the logic, and these params add real-BPE
-    coverage wherever it happens to be available.
+    ``tiktoken`` is an optional extra, and its BPE files are fetched on
+    first use, so neither is guaranteed in a bare checkout. The offline
+    suite must not fail, or reach for the network, on that account. The
+    stub-tokenizer parametrization already covers the logic, and these
+    params add real-BPE coverage wherever it happens to be available.
     """
     from smolbench.evals.tokenization import TiktokenTokenizer
 
@@ -108,12 +109,12 @@ def test_periodic_noise_prompt_matches_extens_token_count(tokenizer, seed):
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_chromatic_noise_prompt_matches_extens_token_count(tokenizer, seed):
-    """Same, chromatic -- including the extens-only ``$query_years`` block.
+    """Same, chromatic, including the extens-only ``$query_years`` block.
 
-    This is the case a context-level match could not have handled: the
+    This is the case a context-level match could not have handled. The
     extensional prompt carries an entire enumerated year list the noise
-    prompt's template never renders, so matching the CONTEXTS would leave the
-    prompts unequal by however long that block is.
+    prompt's template never renders. So matching the CONTEXTS would
+    leave the prompts unequal by however long that block is.
     """
     intens, extens, noise = get_random_exclusive_quiz(
         ChromaticIntervalsConfig(n=250, intervals=62, colors=45, seed=seed),
@@ -135,11 +136,11 @@ def test_chromatic_noise_prompt_matches_extens_token_count(tokenizer, seed):
 def test_pad_adds_only_whitespace(tokenizer):
     """The noise prompt is its intensional twin plus whitespace, nothing else.
 
-    Stripping whitespace from both must leave IDENTICAL strings: the pad
-    introduces no characters a model could read as content (the previous
-    implementation appended random letters and digits, which is filler a
-    model can at least try to parse), and it removes nothing from the rules
-    the intensional arm states.
+    Whitespace stripped from both must leave IDENTICAL strings. The
+    pad introduces no characters a model could read as content. (The
+    previous implementation appended random letters and digits, which
+    is filler a model can at least try to parse.) The pad also removes
+    nothing from the rules the intensional arm states.
     """
     intens, _extens, noise = get_periodic_numeric_quiz(
         PeriodicConfig(n=5, labels=5, seed=99),
@@ -155,8 +156,8 @@ def test_other_arms_are_independent_of_the_tokenizer():
     """Only ``noise_intens`` varies with the tokenizer.
 
     Cross-model comparisons stay paired on identical prompts for the
-    intensional and extensional conditions; the quiz factory taking a model
-    argument must not leak into anything but the control arm.
+    intensional and extensional conditions. The quiz factory taking a
+    model argument must not leak into anything but the control arm.
     """
     args = (
         PeriodicConfig(n=5, labels=5, seed=7),
@@ -187,10 +188,11 @@ def test_choose_whitespace_unit_picks_a_linear_atom(tokenizer):
 def test_repeated_single_space_is_not_a_usable_pad(tokenizer):
     """A naive `" " * n` pad cannot reach a large token target.
 
-    The reason `choose_whitespace_unit` exists: BPE vocabularies carry tokens
-    for runs of a single whitespace character, so hundreds of spaces cost a
-    handful of tokens. Anyone "simplifying" the pad to plain spaces would
-    reintroduce the length confound, silently.
+    This is the reason `choose_whitespace_unit` exists. BPE
+    vocabularies carry tokens for runs of a single whitespace character,
+    so hundreds of spaces cost a handful of tokens. Anyone
+    "simplifying" the pad to plain spaces would silently reintroduce the
+    length confound.
     """
     assert tokenizer.count(" " * 512) < 64
 
@@ -198,12 +200,13 @@ def test_repeated_single_space_is_not_a_usable_pad(tokenizer):
 def test_choose_whitespace_unit_rejects_a_truncating_tokenizer():
     """A tokenizer that SATURATES is refused, not quietly accepted.
 
-    The dangerous case, and a live one: a capped tokenizer is perfectly
-    linear below its cap, so a probe that stops at 256 repetitions sees a
-    healthy atom and hands back a pad that can never grow past 512 tokens.
-    The extensional prompt and its pad would then both measure 512 and the
-    search would call them matched. The top probe exists to reach past any
-    plausible cap so this fails loudly here instead.
+    This is the dangerous case, and a live one. A capped tokenizer is
+    perfectly linear below its cap, so a probe that stops at 256
+    repetitions sees a healthy atom, and hands back a pad that can never
+    grow past 512 tokens. The extensional prompt and its pad would then
+    both measure 512, and the search would call them matched. The top
+    probe exists to reach past any plausible cap, so this fails loudly
+    here instead.
     """
     with pytest.raises(ValueError, match="1 token per repetition"):
         choose_whitespace_unit(TruncatingTokenizer(cap=512))
@@ -212,8 +215,9 @@ def test_choose_whitespace_unit_rejects_a_truncating_tokenizer():
 def test_choose_whitespace_unit_raises_when_everything_merges():
     """A tokenizer that merges all whitespace gets an exception, not a pad.
 
-    Silently returning a saturated pad would leave the control arm SHORTER
-    than the extensional arm -- the same confound in the other direction.
+    If the function silently returns a saturated pad, the control arm
+    ends up SHORTER than the extensional arm, the same confound in the
+    other direction.
     """
     with pytest.raises(ValueError, match="1 token per repetition"):
         choose_whitespace_unit(MergeEverythingTokenizer())
@@ -240,9 +244,9 @@ def test_token_matched_noise_prompt_hits_arbitrary_targets(tokenizer, target):
 def test_unreachable_target_returns_the_unpadded_prompt(tokenizer, caplog):
     """A target below the unpadded prompt cannot be reached by appending.
 
-    Appending only grows a prompt, so this asks for the impossible. The
-    documented behaviour is to return the unpadded render and warn -- the
-    caller gets a usable (if unmatched) prompt and a log line saying so,
+    An append only grows a prompt, so this asks for the impossible. The
+    documented behavior is to return the unpadded render and warn. The
+    caller gets a usable, if unmatched, prompt and a log line saying so,
     rather than an exception in the middle of generating a replicate.
     """
     render = context_renderer(
@@ -258,13 +262,13 @@ def test_unreachable_target_returns_the_unpadded_prompt(tokenizer, caplog):
 
 
 def test_no_silent_mismatch_when_the_target_is_unhittable():
-    """A tokenizer whose count jumps over the target raises rather than
-    returning a close-enough prompt.
+    """A tokenizer whose count jumps over the target raises an error.
 
-    ``MergeEverythingTokenizer`` cannot grow a whitespace pad at all, so with
-    an explicit unit (bypassing `choose_whitespace_unit`'s refusal) no
-    repetition count reaches the target. Returning the nearest prompt would
-    be the one outcome this module exists to prevent.
+    The function does not fall back to a close-enough prompt.
+    ``MergeEverythingTokenizer`` cannot grow a whitespace pad at all. So
+    with an explicit unit, bypassing `choose_whitespace_unit`'s refusal,
+    no repetition count reaches the target. The nearest-prompt fallback
+    would be the one outcome this module exists to prevent.
     """
     render = context_renderer(
         PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),

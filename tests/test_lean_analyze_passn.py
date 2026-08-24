@@ -1,21 +1,19 @@
-"""Offline tests for `smolbench.deduction.lean.cli.cmd_analyze`'s pass@N and
-truncation additions.
+"""Test `cmd_analyze`'s pass@N and truncation additions, offline.
 
-`cmd_analyze` is pure JSONL aggregation (no Dojo session, no lean_dojo import),
-so these tests build small synthetic ``all_rows.jsonl`` fixtures by hand --
-using only the row-schema fields `cmd_analyze` actually reads (see
-`runner.py`'s `base_row`/`row` construction inside its `sweep` function for
-the authoritative field list) -- and drive `cmd_analyze` the same way `main`
-does: build an `argparse.Namespace` with a `path` attribute and call it
-directly, capturing stdout with `capsys`. This runs on either venv.
+This is `smolbench.deduction.lean.cli.cmd_analyze`. It is pure JSONL aggregation (no
+Dojo session, no lean_dojo import). So these tests build small synthetic
+``all_rows.jsonl`` fixtures by hand, using only the row-schema fields `cmd_analyze`
+actually reads (see `runner.py`'s `base_row`/`row` construction inside its `sweep`
+function for the authoritative field list). They drive `cmd_analyze` the same way `main`
+does: build an `argparse.Namespace` with a `path` attribute and call it directly,
+capturing stdout with `capsys`. This runs on either venv.
 
-Row-extraction helpers below are marker-anchored rather than naive
-``str.startswith`` scans: `cmd_analyze` prints THREE different tables whose
-rows can all start with the same rung slug (e.g. ``"stepk:0"``) -- the ASCII
-bar chart, the detail table, and (when triggered) the pass@N table -- so a
-plain "first line starting with the rung" search can silently grab a row
-from the wrong table. Anchoring on each table's unique header text avoids
-that trap.
+Row-extraction helpers below are marker-anchored, not naive ``str.startswith`` scans.
+`cmd_analyze` prints three different tables whose rows can all start with the same rung
+slug (for example ``"stepk:0"``): the ASCII bar chart, the detail table, and (when
+triggered) the pass@N table. So a plain "first line starting with the rung" search can
+silently grab a row from the wrong table. These helpers instead anchor on each table's
+unique header text, which avoids that trap.
 """
 
 from __future__ import annotations
@@ -50,36 +48,39 @@ def _row(
     Parameters
     ----------
     model, rung, theorem_id, k : see module row schema
-        Identify the (model, rung, theorem_id, k) cell this replicate belongs
-        to -- `cmd_analyze` groups pass@N on exactly this tuple.
+        Identify the (model, rung, theorem_id, k) cell this replicate
+        belongs to. `cmd_analyze` groups pass@N on exactly this tuple.
     replicate_idx : int, default 0
-        Recorded but NOT read by `cmd_analyze`'s pass@N grouping (which
-        groups by row occurrence, not by distinct `replicate_idx`); kept here
-        only for schema fidelity with real sweep output.
+        Recorded but not read by `cmd_analyze`'s pass@N grouping (which
+        groups by row occurrence, not by distinct `replicate_idx`). This
+        is kept here only for schema fidelity with real sweep output.
     verdict : str, default "success"
         One of the verdict strings `cmd_analyze` recognizes
         (``success``/``lean_error``/``incomplete``/``given_up``/
-        ``replay_failed``/``exception``); anything else falls into the
+        ``replay_failed``/``exception``). Anything else falls into the
         ``exception`` bucket, mirroring the real aggregator.
     raw_response : str, default a closed fenced tactic block
-        Populates the row's ``raw_response`` field, the primary source for
-        the trunc (unclosed ``<think>``) check.
+        Populates the row's ``raw_response`` field, the primary source
+        for the trunc (unclosed ``<think>``) check.
     content : str or None, default None
-        When given, also written under the row's ``content`` key -- used to
-        exercise `cmd_analyze`'s ``raw_response``-missing fallback path.
+        When given, this is also written under the row's ``content`` key.
+        This exercises `cmd_analyze`'s ``raw_response``-missing fallback
+        path.
     reasoning_content : str or None, default None
-        When given, also written under the row's ``reasoning_content`` key
-        -- used to exercise `cmd_analyze`'s reasoning-parser-served
-        truncation path (reasoning present, `raw_response` empty).
+        When given, this is also written under the row's
+        ``reasoning_content`` key. This exercises `cmd_analyze`'s
+        reasoning-parser-served truncation path (reasoning present,
+        `raw_response` empty).
     prompt_tokens, completion_tokens, gen_ms, verify_ms : int
-        Small nonzero defaults so avg_in/avg_out/avg_s arithmetic in the
+        Small nonzero defaults, so avg_in/avg_out/avg_s arithmetic in the
         detail table has something to divide.
 
     Returns
     -------
     dict
-        A JSON-serializable row matching the real sweep schema's ``kind:
-        "cell"`` rows closely enough for `cmd_analyze` to aggregate.
+        A JSON-serializable row that matches the real sweep schema's
+        ``kind: "cell"`` rows closely enough for `cmd_analyze` to
+        aggregate.
     """
     row = {
         "kind": "cell",
@@ -122,8 +123,8 @@ def _run_analyze(path: Path, capsys) -> tuple[int, str]:
     path : Path
         Sweep JSONL file to analyze.
     capsys : pytest fixture
-        Standard pytest stdout/stderr capture fixture, passed through from
-        the calling test (not imported -- injected by pytest itself).
+        Standard pytest stdout/stderr capture fixture, passed through
+        from the calling test. It is not imported; pytest injects it.
 
     Returns
     -------
@@ -137,19 +138,19 @@ def _run_analyze(path: Path, capsys) -> tuple[int, str]:
 def _header_index(lines: list[str], *markers: str) -> int:
     """Return the index of the first line containing every string in `markers`.
 
-    Design: both the detail table and the pass@N table print a header
-    starting with the ``rung`` column, and both tables' data rows can start
-    with the same rung slug -- so callers must locate a table by header
-    text unique to it (e.g. ``"trunc"`` for the detail table, ``"grp"`` for
-    the pass@N table) rather than by scanning for a data-row prefix, or they
-    risk silently reading a row from the wrong table.
+    Design: both the detail table and the pass@N table print a header starting with the
+    ``rung`` column, and both tables' data rows can start with the same rung slug. So
+    callers must locate a table by header text unique to it (for example ``"trunc"`` for
+    the detail table, ``"grp"`` for the pass@N table), instead of scanning for a
+    data-row prefix. Otherwise they risk silently reading a row from the wrong table.
 
     Raises
     ------
     StopIteration
-        If no line contains all of `markers` (propagated from `next`) --
-        deliberately left unwrapped so a broken assumption fails loudly at
-        the assertion site instead of being masked by a default.
+        If no line contains all of `markers` (propagated from `next`).
+        This is deliberately left unwrapped, so a broken assumption fails
+        loudly at the assertion site, instead of being masked by a
+        default.
     """
     return next(i for i, line in enumerate(lines) if all(m in line for m in markers))
 
@@ -170,9 +171,10 @@ def _table_rows(lines: list[str], header_idx: int) -> list[str]:
 
 
 def _section_rows(out: str, marker: str) -> list[str]:
-    """Collect the non-blank lines immediately following the line equal to
-    `marker` (used for the per-model rollup sections, which have no
-    ``"---"`` separator of their own -- just a title line then data rows).
+    """Collect the non-blank lines immediately following the line equal to `marker`.
+
+    This is used for the per-model rollup sections, which have no ``"---"`` separator
+    of their own, just a title line then data rows.
     """
     lines = out.splitlines()
     idx = next(i for i, line in enumerate(lines) if line.strip() == marker)
@@ -211,9 +213,11 @@ def test_single_replicate_omits_passn_table(tmp_path, capsys):
 
 
 def test_single_replicate_detail_table_gets_trunc_column_only(tmp_path, capsys):
-    """The one sanctioned change to old output: a `trunc` column is always
-    added to the detail table's header and rows, even when every cell has
-    exactly one replicate and the pass@N tables are skipped."""
+    """The one sanctioned change to old output is an always-added `trunc` column.
+
+    It is added to the detail table's header and rows, even when every cell has exactly
+    one replicate and the pass@N tables are skipped.
+    """
     rows = [_row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success")]
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -236,7 +240,7 @@ def test_single_replicate_detail_table_gets_trunc_column_only(tmp_path, capsys):
 
 def test_multi_replicate_pass_at_n_counts_any_success(tmp_path, capsys):
     rows = [
-        # T1: replicates [lean_error, success] -> counts as ONE pass.
+        # T1: replicates [lean_error, success] -> counts as one pass.
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="lean_error"),
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="success"),
         # T2: replicates [lean_error, lean_error] -> fail.
@@ -267,8 +271,11 @@ def test_multi_replicate_pass_at_n_counts_any_success(tmp_path, capsys):
 
 
 def test_multi_replicate_group_pass_ignores_which_replicate_succeeded(tmp_path, capsys):
-    """Order/index of the successful replicate must not matter -- ANY success
-    in the group is enough (replicate 0 succeeding here, not the last one)."""
+    """The order or index of the successful replicate must not matter.
+
+    Any success in the group is enough (replicate 0 succeeding here, not
+    the last one).
+    """
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="given_up"),
@@ -291,8 +298,10 @@ def test_multi_replicate_group_pass_ignores_which_replicate_succeeded(tmp_path, 
 
 
 def test_multi_replicate_n_is_max_across_all_cells(tmp_path, capsys):
-    """N in the header reflects the MAX replicate count seen anywhere in the
-    file, even if most cells only have 1 replicate (mixed replication)."""
+    """N in the header reflects the max replicate count seen anywhere in the file.
+
+    This holds even if most cells only have 1 replicate (mixed replication).
+    """
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
         _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=0, verdict="lean_error"),
@@ -392,9 +401,11 @@ def test_trunc_zero_for_model_that_never_emits_think(tmp_path, capsys):
 
 
 def test_trunc_falls_back_to_content_field_when_raw_response_missing(tmp_path, capsys):
-    """`cmd_analyze` must check `content` defensively when `raw_response`
-    itself is empty/absent -- exercise a row where only `content` carries an
-    unclosed <think> block."""
+    """`cmd_analyze` must check `content` when `raw_response` is empty or absent.
+
+    This is a defensive check. It exercises a row where only `content` carries an
+    unclosed <think> block.
+    """
     rows = [
         _row(
             model="model-a", rung="stepk:0", theorem_id="T1", k=1,
@@ -414,12 +425,15 @@ def test_trunc_falls_back_to_content_field_when_raw_response_missing(tmp_path, c
 
 
 def test_trunc_counts_reasoning_parser_death_with_empty_raw_response(tmp_path, capsys):
-    """When the box is served WITH a vLLM --reasoning-parser, a truncated
-    generation's <think> content is split server-side into
-    `reasoning_content` and never reaches `raw_response`/`content` at all --
-    so the unclosed-<think>-in-raw_text check alone reads 0. A row with
-    non-empty `reasoning_content` and empty `raw_response` must still count
-    as truncated (the generation died inside the think channel)."""
+    """A vLLM reasoning-parser can route truncated content away from `raw_response`.
+
+    Specifically, when the box is served with a vLLM `--reasoning-parser` flag, a
+    truncated generation's <think> content is split server-side into `reasoning_content`
+    and never reaches `raw_response`/`content` at all. So the
+    unclosed-<think>-in-raw_text check alone reads 0. A row with non-empty
+    `reasoning_content` and empty `raw_response` must still count as truncated (the
+    generation died inside the think channel).
+    """
     rows = [
         _row(
             model="model-a", rung="stepk:0", theorem_id="T1", k=1,
@@ -446,10 +460,12 @@ def test_trunc_counts_reasoning_parser_death_with_empty_raw_response(tmp_path, c
 
 
 def test_trunc_reasoning_content_with_nonempty_raw_response_not_counted(tmp_path, capsys):
-    """A reasoning-parser-served row whose `raw_response` DID come through
-    (the model finished inside its think channel and still emitted an
-    answer) must not be misclassified as truncated just because
-    `reasoning_content` is also present."""
+    """A reasoning-parser-served row whose `raw_response` did come through.
+
+    (The model finished inside its think channel and still emitted an
+    answer.) It must not be misclassified as truncated just because
+    `reasoning_content` is also present.
+    """
     rows = [
         _row(
             model="model-a", rung="stepk:0", theorem_id="T1", k=1,
@@ -557,16 +573,17 @@ def test_only_sanity_rows_returns_1(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
-# Retired-artifact refusal. `run_study.py --force-rerun` archives a superseded
-# all_rows.jsonl as `all_rows_SUPERSEDED-<stamp>.jsonl` INSIDE the run
-# directory, so a retired artifact sits one `ls` away from live data --
-# and `cmd_analyze` is the one loader that takes an arbitrary user path.
-# The file parses perfectly, so nothing but this guard distinguishes it.
+# Retired-artifact refusal. `run_study.py --force-rerun` archives a
+# superseded all_rows.jsonl as `all_rows_SUPERSEDED-<stamp>.jsonl` inside
+# the run directory, so a retired artifact sits one `ls` away from live
+# data, and `cmd_analyze` is the one loader that takes an arbitrary user
+# path. The file parses perfectly, so nothing but this guard distinguishes
+# it.
 # ---------------------------------------------------------------------------
 
 
 def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
-    """A retired artifact must fail loudly and by name, not summarize."""
+    """A retired artifact must fail loudly and name the file, not be summarized."""
     p = tmp_path / "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
     _write_jsonl(p, [_row()])
 

@@ -1,24 +1,25 @@
-"""
-Plotting helpers for the induction analysis notebook(s).
+"""Provide plotting helpers for the induction analysis notebook(s).
 
-Extracted from ``notebooks/chromatic/induction_eval_analysis.ipynb`` (a
-PINNED HISTORICAL figure -- see that notebook's intro cell), which had grown
-an inline accuracy/loading/plotting pipeline directly in its code cells. That
-pipeline is centralized here so the same three steps (scoring a ``Marks``
-into a scalar accuracy, loading a ``{(model, condition): accuracy}`` table
-from a directory of result YAMLs, and rendering the grouped-bar comparison
-figure) can be reused by a future periodic-benchmark analysis notebook
-without re-copy-pasting the cell contents, and so the plotting logic is
-covered by an offline test (``tests/test_induction_figures.py``) instead of
-only ever being exercised by re-running the notebook by hand.
+This module was extracted from ``notebooks/chromatic/induction_eval_analysis.
+ipynb`` (a PINNED HISTORICAL figure; see that notebook's intro cell; the
+notebook itself is now archived, see f13b60d0), which had grown an inline
+accuracy/loading/plotting pipeline directly in its code cells. That pipeline
+is centralized here, so the same three steps (score a ``Marks`` into a
+scalar accuracy, load a ``{(model, condition): accuracy}`` table from a
+directory of result YAMLs, and render the grouped-bar comparison figure)
+could be reused by a future periodic-benchmark analysis notebook without
+re-copy-pasting the cell contents. No such notebook has used this module
+yet; today it is exercised only by the offline test
+``tests/test_induction_figures.py``, rather than by re-running a notebook
+by hand.
 
-Matplotlib is imported LAZILY, inside :func:`plot_archetype_accuracy` only --
-it lives in this project's ``notebook`` extra (see ``pyproject.toml``), not
-the core dependency set, so importing this module (or the rest of
-``smolbench.induction``) must not require it. ``accuracy`` and
-``load_condition_accuracies`` need only ``smolbench.evals.Marks``, which is
-core, so they import cleanly with no extras installed; only actually
-building a figure pulls in matplotlib.
+This module imports matplotlib LAZILY, inside :func:`plot_archetype_accuracy`
+only. Matplotlib lives in this project's ``notebook`` extra (see
+``pyproject.toml``), not the core dependency set, so importing this module
+(or the rest of ``smolbench.induction``) must not require it. ``accuracy``
+and ``load_condition_accuracies`` need only ``smolbench.evals.Marks``,
+which is core, so they import cleanly with no extras installed. Only
+actually building a figure pulls in matplotlib.
 """
 
 from pathlib import Path
@@ -28,11 +29,11 @@ from smolbench.evals import Marks
 
 
 def accuracy(marks: Marks) -> float:
-    """Fraction of a quiz's questions the model answered correctly.
+    """Compute the fraction of a quiz's questions the model answered correctly.
 
-    Moved verbatim (same formula, same zero-division handling) from the
-    ``accuracy`` function inline in ``induction_eval_analysis.ipynb``'s
-    loading cell.
+    This function moved verbatim (same formula, same zero-division
+    handling) from the ``accuracy`` function inline in
+    ``induction_eval_analysis.ipynb``'s loading cell.
 
     Parameters
     ----------
@@ -44,15 +45,15 @@ def accuracy(marks: Marks) -> float:
     -------
     float
         ``correct / (correct + incorrect + invalid)``, i.e. correct answers
-        as a fraction of all questions (invalid/unparseable responses count
-        against the model, same as incorrect ones, for this denominator).
-        ``0.0`` if ``marks`` has no questions at all (``total == 0``) --
-        this is the notebook's original behavior, preserved here rather than
-        raising: the notebook's ``FILES`` table only ever calls this on
+        as a fraction of all questions. Invalid/unparseable responses count
+        against the model in this denominator, the same as incorrect ones.
+        Returns ``0.0`` if ``marks`` has no questions at all (``total == 0``).
+        This is the notebook's original behavior, preserved here rather than
+        raising: the notebook's ``FILES`` table only ever called this on
         ``Marks`` loaded from a non-empty result file, so the zero-question
-        case never actually arises for its real inputs, but returning 0.0
-        (a valid, in-range accuracy value) is a safer default than raising
-        for any future caller that happens to pass an empty ``Marks``.
+        case never actually arose for its real inputs. But returning 0.0 (a
+        valid, in-range accuracy value) is a safer default than raising, for
+        any future caller that happens to pass an empty ``Marks``.
     """
     total = marks.correct + marks.incorrect + marks.invalid
     return marks.correct / total if total > 0 else 0.0

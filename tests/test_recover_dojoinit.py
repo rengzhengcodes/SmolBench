@@ -1,8 +1,9 @@
-"""Offline tests for scripts/recover_dojoinit_std.py (no network, no lean_dojo).
+"""Test scripts/recover_dojoinit_std.py. No network, no lean_dojo.
 
-The tool's load-bearing property is the ADDITIVE CONTRACT: it must be unable
-to write anywhere in the results bucket except its own recovery prefix, and
-its gates must fail on content, not counts. These tests pin exactly that.
+The tool's load-bearing property is the ADDITIVE CONTRACT. It must be
+unable to write anywhere in the results bucket except its own recovery
+prefix, and its gates must fail on content, not counts. These tests
+pin exactly that.
 """
 from __future__ import annotations
 
@@ -31,9 +32,14 @@ def test_imports_without_lean_dojo(rec):
 
 
 def test_s3_put_guard_rejects_study_prefix(rec, tmp_path):
-    """ADDITIVE CONTRACT: a PUT outside the recovery prefix must die on the
-    assertion BEFORE any aws subprocess runs (study scaling_* prefixes are
-    read-only to this tool, per the append-only bucket directive)."""
+    """ADDITIVE CONTRACT.
+
+    A PUT outside the recovery prefix must die on the assertion BEFORE any
+    aws subprocess runs.
+
+    Study scaling_* prefixes are read-only to this tool, per the
+    append-only bucket directive.
+    """
     f = tmp_path / "x.jsonl"
     f.write_text("{}\n")
     for bad in ("deduction/runs/scaling_gemma-4-e2b/verified_rows.jsonl",
@@ -63,9 +69,13 @@ def test_golden_std_keys_arithmetic(rec):
 
 
 def test_gate_fails_on_dojoinit_in_sanity(rec, tmp_path, monkeypatch):
-    """CONTENT gate: one DojoInitError among 45 'success' rows must fail the
-    gate even though the row COUNT is perfect (counting rows is the exact
-    failure mode this recovery exists to fix)."""
+    """CONTENT gate.
+
+    One DojoInitError among 45 'success' rows must fail the gate, even though the row
+    COUNT is perfect.
+
+    This recovery exists to fix exactly the failure mode of counting rows.
+    """
     monkeypatch.setattr(rec, "require_lake", lambda: None)
     monkeypatch.setattr(rec, "LOCAL_ROOT", tmp_path)
     (tmp_path / "inputs").mkdir(parents=True)

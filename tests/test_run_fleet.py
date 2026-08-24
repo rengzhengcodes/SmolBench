@@ -1,27 +1,31 @@
-"""Offline contract tests for the 21-lane scaling-study fleet supervisor.
+"""Test the 21-lane scaling-study fleet supervisor's offline contract.
 
-``scripts/run_fleet.py`` launches one subprocess per study model, each of
-which provisions its own EC2 spot instance. Nothing here touches AWS: every
-boto3 seam is either injected (``client_factory``) or unreached, and the
-lane-environment builder is a PURE function precisely so it can be pinned
-here rather than discovered on a live fleet.
+``scripts/run_fleet.py`` launches one subprocess per study model, each
+of which provisions its own EC2 spot instance. Nothing here touches
+AWS: every boto3 seam is either injected (``client_factory``) or
+unreached. The lane-environment builder is a PURE function, precisely
+so it can be pinned here rather than discovered on a live fleet.
 
-The four failure modes these tests exist to catch:
+These tests exist to catch four failure modes:
 
-* **Lane drift.** ``LANES`` is derived from a hand-written tier table; if a
-  rung is added to ``EC2_DEPLOY_SPECS`` and not to a tier, that model
-  silently never runs and the study quietly ships 20 of 21 ladders.
-* **Env bleed.** Building a lane's environment by mutating ``os.environ``
-  (the obvious implementation) makes lane N+1 inherit lane N's experiment
-  tag and state file -- which means two lanes reattach to ONE instance and
-  swap the served checkpoint out from under each other. The builder must be
-  pure and its output exact.
-* **Region pins.** ``p5e.48xlarge`` exists only in us-east-2 (a/b/c) and
-  us-west-2c, so the three tier-D models must not be offered us-east-1.
-* **Restart misclassification.** A spot reclaim deserves unlimited retries;
-  a crash loop deserves 2 and then a halt. Getting the classifier backwards
-  either abandons a study lane on a routine interruption or burns money
-  relaunching a lane that will always crash.
+* **Lane drift.** ``LANES`` is derived from a hand-written tier table.
+  If a rung is added to ``EC2_DEPLOY_SPECS`` and not to a tier, that
+  model silently never runs, and the study quietly ships 20 of 21
+  ladders.
+* **Env bleed.** Building a lane's environment by mutating
+  ``os.environ``, the obvious implementation, makes lane N+1 inherit
+  lane N's experiment tag and state file. That means two lanes
+  reattach to ONE instance and swap the served checkpoint out from
+  under each other. The builder must be pure, and its output exact.
+* **Region pins.** Tier D hunts ``p6-b200.48xlarge`` across all three
+  study regions (us-east-1, us-east-2, us-west-2) for its four
+  models. (Before the 2026-08-13 switch to p6-b200, tier D hunted
+  ``p5e.48xlarge``, which exists only in us-east-2 and us-west-2, so
+  the tier-D models of that era were excluded from us-east-1.)
+* **Restart misclassification.** A spot reclaim deserves unlimited
+  retries; a crash loop deserves 2 and then a halt. A backwards
+  classifier either abandons a study lane on a routine interruption,
+  or burns money relaunching a lane that will always crash.
 """
 
 from __future__ import annotations
@@ -64,13 +68,13 @@ def _load(path: Path, name: str):
     """Imports a script by PATH under a private module name, env restored.
 
     ``run_fleet`` imports the induction driver, which calls
-    ``load_dotenv(keys.env)`` at import time (it must -- ``ec2.py`` freezes
-    its ``EC2_*`` constants at import). That would leak the study's real
-    ``SMOLBENCH_RESULTS_S3`` into the pytest process and through into every
-    later test, so the import is bracketed by a snapshot/restore of
-    ``os.environ``. Loading by path (rather than putting ``scripts/`` on
-    ``sys.path``) also keeps these module names from colliding with anything
-    else in the repo.
+    ``load_dotenv(keys.env)`` at import time. It must: ``ec2.py``
+    freezes its ``EC2_*`` constants at import. That would leak the
+    study's real ``SMOLBENCH_RESULTS_S3`` into the pytest process, and
+    through into every later test. So the import is bracketed by a
+    snapshot and restore of ``os.environ``. A path-based load, rather
+    than putting ``scripts/`` on ``sys.path``, also keeps these module
+    names from colliding with anything else in the repo.
     """
     saved = dict(os.environ)
     try:
@@ -114,8 +118,11 @@ def test_tier_membership_partitions_the_roster(fleet):
 
 
 def test_lane_tags_come_from_the_study_driver(fleet):
-    """The fleet must not re-declare the analysis tags -- run_study.py is the
-    single source of truth, so a tag rename there propagates here."""
+    """The fleet must not re-declare the analysis tags.
+
+    run_study.py is the single source of truth, so a tag rename there
+    propagates here.
+    """
     assert {key: lane.tag for key, lane in fleet.LANES.items()} == dict(
         fleet.run_study.MODELS
     )
@@ -163,8 +170,11 @@ def test_lane_env_is_exact_for_an_induction_lane(fleet):
 
 
 def test_lane_env_tier_d_overrides_the_regions(fleet):
-    """Tier D hunts p6-b200 in ALL 3 study regions (B200 placement is still
-    shifting, unlike p5e's fixed us-east-2/us-west-2 footprint)."""
+    """Tier D hunts p6-b200 in ALL 3 study regions.
+
+    B200 placement is still shifting, unlike p5e's fixed
+    us-east-2/us-west-2 footprint.
+    """
     for key in EXPECTED_TIERS["D"]:
         env = fleet.lane_env(fleet.LANES[key], "induction", base_env={})
         assert env["EC2_REGIONS"] == "us-east-1,us-east-2,us-west-2"
@@ -295,8 +305,11 @@ def test_family_gate_is_the_three_cheap_tier_a_models(fleet):
 
 
 def test_serve_healthy_marker_matches_the_provider_log_line(fleet):
-    """``ec2.serve_model`` logs ``serve_model: 'x' is up at http://...`` when
-    the model is live; the gate watches lane logs for exactly that."""
+    """``ec2.serve_model`` logs ``serve_model: 'x' is up at http://...``
+    when the model is live.
+
+    The gate watches lane logs for exactly that.
+    """
     line = "INFO:root:serve_model: 'gemma-4-e2b' is up at http://1.2.3.4:8000/v1"
     assert fleet.is_serve_healthy(line)
     assert not fleet.is_serve_healthy("INFO:root:serve_model: requesting 'gemma-4-e2b' ...")
@@ -356,9 +369,12 @@ def test_cot_threshold_separates_dead_toggle_from_variable_protocol(fleet):
 
 
 def test_reasoning_fraction_counts_long_content_as_reasoning(fleet):
-    """A reasoning chain carried in ``response`` (soft-protocol models that
-    reason without their think markup -- the live Ministral/EXAONE incident,
-    2026-08-11) counts as thinking; a compliant bare integer does not."""
+    """A reasoning chain carried in ``response`` counts as thinking.
+
+    This covers soft-protocol models that reason without their think
+    markup, the live Ministral/EXAONE incident from 2026-08-11. A
+    compliant bare integer does not count as thinking.
+    """
     chain = "Alright, let's tackle this problem step by step. " * 10  # >200 chars
     store = _FakeStore(
         {

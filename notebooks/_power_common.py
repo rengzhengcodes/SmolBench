@@ -1,45 +1,41 @@
-"""Shared scaffolding for the periodic and chromatic power-analysis scripts.
+"""Share scaffolding for the induction and deduction power-analysis scripts.
 
-``notebooks/periodic/power_analysis.py`` and ``notebooks/chromatic/power_analysis.py``
-are sibling analyses over sibling induction-eval benchmarks: the same
-experiment design (3 model archetypes x 3 information types), the same
-planned family of 18 pairwise contrasts (9 archetype-within-info + 9
-info-within-model), Bonferroni-corrected at the same alpha, and the same
-reproducibility requirement (a fixed SEED so a re-run is byte-identical).
+Two live scripts import this module: ``notebooks/induction/power_analysis.py``
+and ``notebooks/deduction/power_analysis.py``. Both need the same
+reproducibility guarantee, a fixed `SEED` so a re-run gives byte-identical
+output, and the same small presentation helpers, `fmt_r` and `results_dir`.
+That is genuinely all they share: each script defines its own model
+roster, its own contrast family, and its own statistics, and imports only
+`ALPHA`, `POWER_TARGETS`, `SEED`, `fmt_r`, and `results_dir` from here.
 
-Only the experiment-design constants and small presentation helpers that are
-genuinely identical between the two scripts live here. The STATISTICS
-deliberately stay in each script, because they differ for a load-bearing
-reason, not an accidental one:
+`MODELS`, `INFOS`, `N_TESTS`, `ALPHA_CORRECTED`, and `build_contrasts`
+below predate both current callers. They pin the 3-model-archetype x
+3-information-type design of two retired induction analyses (periodic
+and chromatic). Neither current script imports them: each study's
+roster and contrast family are given verbatim by its own spec instead
+(see each script's module docstring for why `_power_common`'s design
+does not apply). `notebooks/induction/response_audit.py` and
+`notebooks/induction/compare_selection_rules.py` also reference this
+module, but only for its YAML-safety convention below and its
+``sys.modules``-clearing pattern, not for these design constants.
 
-  * periodic's outcome is a stratified binomial -- one binary result per
-    harmonic k = 1..9 -- so its planned test is Cochran-Mantel-Haenszel (CMH)
-    stratified by harmonic.
-  * chromatic's outcome is a single ~120-question quiz whose answers are
-    bias-correlated (not per-difficulty strata), so the natural unit of
-    observation is the whole quiz, and its planned test is a quiz-level
-    two-sample Welch t-test across replicate quizzes.
-
-Merging those analyses behind a shared abstraction would either force one
-script's statistics onto the other's data-generating process or produce a
-leaky abstraction that saves no real duplication -- so this module stops at
-the pieces that are truly shared.
-
-Shared YAML-scanning TECHNIQUE (also intentionally not shared as code)
+YAML-scanning technique (not shared as code)
 -----------------------------------------------------------------------
-Both scripts' result files are YAMLs written by a pre-``Marks.dump``
-serializer that tags dataclass instances with ``!!python/object:...``;
-``yaml.safe_load`` refuses those tags, and unsafe-loading arbitrary
-repository-generated files is not worth the risk just to save a regex. Both
-scripts therefore read the file as plain text and regex out the fields they
-need (a `` score:`` line per mark) rather than parsing YAML at all. Despite
-sharing this technique, each script keeps its own bespoke scanner: periodic
-needs exactly one ``score:`` per harmonic in generator order, while
-chromatic needs paired ``answer:``/``score:`` fields per True/False question
-grouped by mark boundary. The fields, shapes, and failure modes differ
-enough that a shared "parse a mark" primitive would need to special-case
-both callers anyway -- duplication here is cheaper than a leaky shared
-scanner.
+A pre-``Marks.dump`` serializer writes mark-shaped result files as YAML
+and tags dataclass instances with ``!!python/object:...``. ``yaml.safe_load``
+refuses those tags. `notebooks/induction/power_analysis.py` avoids an
+unsafe loader for arbitrary repository-generated files: that risk is not
+worth taking, just to save one regex. So it reads the file as plain text
+and uses a regex to pull out the fields it needs (a `` score:`` line per
+mark, one per harmonic), instead of parsing YAML at all. This technique
+originated in periodic's power analysis and survives in induction's,
+which descends from it.
+
+`notebooks/deduction/power_analysis.py` reads a differently shaped
+format, JSONL verified-tactic rows, not YAML marks, so this technique
+does not apply there. This module stops at the pieces above because a
+shared "parse a mark" primitive would need to special-case each caller's
+format anyway; duplication here costs less than a leaky shared scanner.
 """
 
 from itertools import combinations
@@ -53,8 +49,9 @@ from pathlib import Path
 MODELS = ("decode", "cot", "moe")
 INFOS = ("intens", "extens", "noise_intens")
 
-# SEED is fixed for reproducibility (repo rule: seeded generations
-# everywhere) -- running either script twice must produce identical output.
+# SEED is fixed for reproducibility. The repo rule requires seeded
+# generations everywhere: running either script twice must produce
+# identical output.
 SEED = 0
 ALPHA = 0.05
 N_TESTS = 18  # 9 archetype contrasts + 9 info-type contrasts
@@ -79,14 +76,16 @@ def results_dir(file: str) -> Path:
 
     Notes
     -----
-    # Design: anchored on `__file__` (never on the process cwd) per repo
-    # convention -- otherwise `uv run --no-project ... python
-    # notebooks/x/power_analysis.py` would resolve `results/` relative to
-    # wherever the shell happened to be invoked from, silently breaking when
-    # run from a different directory.
-    Calling `.resolve()` normalizes the path (e.g. through symlinks); both
-    call sites' `__file__` are already absolute during normal execution, so
-    this is a no-op there and only matters for exotic invocations.
+    # Design: anchor on `__file__`, not the process cwd, to follow repo
+    # convention. Otherwise `uv run --no-project ... python
+    # notebooks/x/power_analysis.py` would resolve `results/` relative to the
+    # shell's invocation directory, and break silently when run from a
+    # different directory.
+
+    `.resolve()` normalizes the path, for example through symlinks. Both
+    call sites' `__file__` values are already absolute during normal
+    execution, so this call is a no-op there. It matters only for unusual
+    invocations.
     """
     return Path(file).resolve().parent / "results"
 
@@ -94,25 +93,30 @@ def results_dir(file: str) -> Path:
 def build_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
     """Build the 18 planned pairwise contrasts.
 
-    9 archetype-within-info contrasts (compare the 3 models pairwise, within
-    each of the 3 information types) plus 9 info-within-model contrasts
-    (compare the 3 information types pairwise, within each of the 3 models).
+    The 18 contrasts are 9 archetype-within-info contrasts (compare the 3
+    models pairwise, within each of the 3 information types) plus 9
+    info-within-model contrasts (compare the 3 information types pairwise,
+    within each of the 3 models).
 
     Returns
     -------
     list of (str, (str, str), (str, str))
-        Each entry is ``(label, key_a, key_b)`` where ``key_a``/``key_b`` are
-        ``(model, info)`` condition keys to compare. Order: all 9 archetype
-        contrasts (grouped by info, in `INFOS` order; within each info group,
-        pairs in `itertools.combinations(MODELS, 2)` order), followed by all
-        9 info-type contrasts (grouped by model, in `MODELS` order; within
-        each model group, pairs in `itertools.combinations(INFOS, 2)` order).
+        Each entry is ``(label, key_a, key_b)``. ``key_a`` and ``key_b`` are
+        ``(model, info)`` condition keys to compare.
+
+        The list holds all 9 archetype contrasts first, then all 9
+        info-type contrasts. The archetype contrasts group by info, in
+        `INFOS` order; within each info group, pairs follow
+        `itertools.combinations(MODELS, 2)` order. The info-type contrasts
+        group by model, in `MODELS` order; within each model group, pairs
+        follow `itertools.combinations(INFOS, 2)` order.
 
     Notes
     -----
-    Verified structurally identical (element-for-element `==`) to periodic's
-    former inline contrast-building loop before this function replaced it;
-    see the commit that introduced this module for the check.
+    A check confirmed this function's output is structurally identical
+    (element-for-element `==`) to periodic's former inline
+    contrast-building loop, the loop this function replaced. See the commit
+    that introduced this module for that check.
     """
     contrasts = []
     for info in INFOS:

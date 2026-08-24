@@ -9,37 +9,40 @@ live on 2026-08-16, on ONE box with the original client stack:
     08:04:51Z  running=0 waiting=0 gen_tok=354,389 finished={'stop': 1,
                'length': 4} | client ESTAB=4 recvq=[0, 0, 0, 0]
 
-Four cap-length responses finished on the server; 58 minutes later the client
-still held four ESTABLISHED sockets with EMPTY receive queues, and all four
-eventually hit the 5400 s read timeout. The one short (``stop``) response
-landed normally. So the tokens exist and the body never crosses the wire, and
-the loss is selective by generation LENGTH.
+Four cap-length responses finished on the server. 58 minutes later, the
+client still held four ESTABLISHED sockets with EMPTY receive queues, and
+all four eventually hit the 5400 s read timeout. The one short
+(``stop``) response landed normally. So the tokens exist, and the body
+never crosses the wire; the loss is selective by generation LENGTH.
 
-That leaves two candidate mechanisms, and they are confounded in the study
-workload because a cap-length completion is both SLOW and BIG:
+That leaves two candidate mechanisms. They are confounded in the study
+workload, because a cap-length completion is both SLOW and BIG:
 
-  silence   a non-streaming completion sends nothing between the request and
-            the finished body, so a ~32-minute-idle flow is dropped by
-            something on the path and the response lands in a dead mapping;
+  silence   a non-streaming completion sends nothing between the request
+            and the finished body, so something on the path drops a
+            ~32-minute-idle flow, and the response lands in a dead
+            mapping;
   size      a ~350 KB body fails where a small one succeeds.
 
-This probe does not try to separate them -- it tests the FIX. Two requests,
-identical in every sampling parameter, differing only in ``stream``:
+This probe does not try to separate these mechanisms; it tests the FIX
+instead. It fires two requests, identical in every sampling parameter,
+that differ only in ``stream``:
 
   A  stream=False   the study's current transport: one silent wait, one body
   B  stream=True    server-sent events: bytes flow continuously from token 1
 
-``min_tokens`` forces both to run long regardless of what the model would
-naturally do, so the silent window is guaranteed rather than hoped for. They
-run CONCURRENTLY, so both see the same box, the same load and the same
-network conditions in the same minutes.
+``min_tokens`` forces both requests to run long, regardless of what the
+model would naturally do, so this probe guarantees the silent window
+instead of hoping for it. Both requests run CONCURRENTLY, so both see
+the same box, the same load, and the same network conditions in the same
+minutes.
 
-If B arrives and A times out, streaming is the fix and the mechanism is the
-silence (or anything cured by keeping bytes flowing). If BOTH fail, the fault
-is not about idleness and streaming is not the answer.
+If B arrives and A times out, streaming is the fix, and the mechanism is
+the silence (or anything a continuous byte flow cures). If BOTH fail,
+idleness is not the mechanism, and streaming is not the answer.
 
-This writes NO study data. It is a transport measurement against a box that
-is already up.
+This script writes NO study data. It is a transport measurement against
+a box that is already up.
 
 USAGE
     scripts/streaming_ab_probe.py --state .ec2_state_induction-...json
@@ -57,10 +60,10 @@ import requests
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-#: A prompt is irrelevant to a transport test -- what matters is that the
-#: generation runs long, which ``min_tokens`` guarantees. This one is lifted
-#: from the study's own arm text so the request shape (system+user, same
-#: template) matches what actually fails.
+#: The prompt text is irrelevant to a transport test; what matters is that
+#: the generation runs long, which ``min_tokens`` guarantees. This prompt
+#: is lifted from the study's own arm text, so the request shape (system
+#: plus user, same template) matches what actually fails.
 PROMPT = (
     "There is a counting game. Positions are counted starting from 1. "
     "At each position, words are written according to the following rules:\n"
@@ -82,12 +85,33 @@ def _endpoint(state_path: pathlib.Path) -> Dict[str, str]:
 
 def run_one(ep: Dict[str, str], stream: bool, max_tokens: int, min_tokens: int,
             timeout: int, out: Dict[str, Any]) -> None:
-    """Issues one completion and records WHEN bytes arrived, not just whether.
+    """Issue one completion, and record WHEN bytes arrived, not just whether.
 
-    ``first_byte_s`` is the discriminator between the two arms: for the
-    streamed request it should be seconds (the first SSE chunk), for the
-    non-streamed one it is the entire generation -- which is precisely the
-    silent window under suspicion.
+    ``first_byte_s`` is the discriminator between the two arms. For the
+    streamed request, it should be a few seconds (the first SSE chunk).
+    For the non-streamed request, it is the whole generation time, which
+    is precisely the silent window under suspicion.
+
+    Parameters
+    ----------
+    ep : dict
+        Endpoint info from `_endpoint`: ``url``, ``key``, ``model``.
+    stream : bool
+        Whether to request server-sent-event streaming.
+    max_tokens : int
+        ``max_tokens`` to send in the completion body.
+    min_tokens : int
+        ``min_tokens`` to send in the completion body.
+    timeout : int
+        Read timeout in seconds.
+    out : dict
+        Result dict this function updates in place, so a caller running
+        this function in a background thread can read the result after
+        the thread joins. On success, this function sets ``ok=True`` and
+        records ``first_byte_s``, ``bytes``, ``chunks``, and (for a
+        non-streamed request) ``finish_reason`` and
+        ``completion_tokens``. On failure, it sets ``ok=False`` and
+        records ``error``. It always records ``elapsed_s``.
     """
     body = {
         "model": ep["model"],

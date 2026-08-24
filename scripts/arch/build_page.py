@@ -1,15 +1,15 @@
 """Inject the page data into the atlas template and emit the publishable page.
 
-Kept separate from ``build_page_data.py`` so the two things that change on
-different schedules stay apart: the data changes when a checkpoint moves or an
-annotation is written, the template changes when the design does. This script
-only does the join.
+This script stays separate from ``build_page_data.py`` because the two files
+change on different schedules. The data changes when a checkpoint moves or
+someone writes a new annotation. The template changes when the design
+changes. This script only joins the two.
 
-The template carries the literal token ``__PAGE_DATA__`` inside a
-``<script type="application/json">`` element; it is replaced with the compact
-JSON of ``page_data.json``. Two characters are escaped on the way in --
-``<`` and ``&`` -- because an unescaped ``</script>`` inside JSON string data
-would close the element early and silently truncate the page.
+The template holds the literal token ``__PAGE_DATA__`` inside a
+``<script type="application/json">`` element. This script replaces the token
+with the compact JSON of ``page_data.json``. It escapes two characters on the
+way in, ``<`` and ``&``: an unescaped ``</script>`` inside the JSON string
+data would close the element early and silently truncate the page.
 
 Usage
 -----
@@ -32,8 +32,9 @@ _PLACEHOLDER = "__PAGE_DATA__"
 
 
 def main() -> int:
-    # Rebuild the data first so the page can never lag the configs or the
-    # annotations -- a stale page that looks fresh is the failure mode here.
+    # Rebuild the data first. This stops the page from lagging the configs
+    # or the annotations. A stale page that looks fresh is the failure mode
+    # this guards against.
     subprocess.run([sys.executable, str(_HERE / "build_page_data.py")], check=True,
                    stdout=subprocess.DEVNULL)
 

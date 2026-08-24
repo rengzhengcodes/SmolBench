@@ -1,102 +1,125 @@
 # Induction
 
-The current operational definition of induction is information derived from empirical evidence. In induction,  propositions that have to fit empirical evidence and any change in empirical evidence necessitates the model change (i.e., the model does not control the observables, but the observables control the model). The full enumerative list of empirical evidence is called the extensional representation. The pattern-fitted version is called the intensional representation. Our hypothesis is that while extensional and intensional representations both represent positive information, the fact that extensional representations usually require more tokens leads to performance degradation compared to intensional representations.
+We define induction operationally: induction is information derived from
+empirical evidence. Propositions must fit the empirical evidence. Any
+change in the evidence forces a change in the model. The model does not
+control the observables; the observables control the model.
 
-The following are a non-exhaustive list of types of induction, which all follow the same format: extensional representations are compacted into shorter intensional representations. Note that, for induction, all intensional representations supervene on extensional representations and that changes in the extensional representation by necessity can change the intensional representation.
+The full enumerative list of empirical evidence is the extensional
+representation. The pattern-fitted version is the intensional
+representation. Our hypothesis: both representations carry positive
+information, but the extensional representation usually needs more
+tokens, and that extra length degrades performance relative to the
+intensional representation.
 
-## Chromatic Intervals
+The types of induction below all follow the same format: an extensional
+representation compacts into a shorter intensional representation. For
+induction, every intensional representation supervenes on its
+extensional representation. A change in the extensional representation
+can, by necessity, change the intensional representation.
 
-Chromatic intervals are examples where an interval has a certain "color" and whatever color is contained in the interval leads to certain properties. For example, the terms of presidencies are chromatic intervals, where the president is the color, the intervals are on time, and the additional properties are how one conducts the duties of the presidency.
+## Chromatic intervals
 
-The extensional representation for presidencies is "George Washington was President Apr. 30 1789, May 1 1789, May 2 1789,... and Mar. 4 1797." The intensional representation is "George Washington was President between Apr. 30 1789 and Mar. 4 1797." Note that if George Washington's presidency had for some reason changed (e.g., if he sought a third term, retired early, been temporarily incapacitated, etc.) the extensional representation changes which induces a change in the intensional representation.
+A chromatic interval is an interval that has a "color", and the color of
+an interval gives it certain properties. Presidency terms are an
+example. The president is the color, the intervals lie on time, and the
+extra properties are how the office holder conducts the duties of the
+presidency.
 
-A query on a chromatic interval always involves the form "was the interval [color] from [start, end]." For example, "could George Washington have signed the Judiciary Act of 1789" involves querying "was the presidency 'George Washington' from [Sep. 24 1789, Sep. 24 1789]."
+The extensional representation for a presidency is "George Washington
+was President Apr. 30 1789, May 1 1789, May 2 1789, ... and Mar. 4
+1797." The intensional representation is "George Washington was
+President between Apr. 30 1789 and Mar. 4 1797." If the presidency had
+changed (a third term, an early retirement, a temporary incapacity),
+the extensional representation would change, and that change would
+induce a change in the intensional representation.
 
-The above distinguishes itself from classical needle-in-a-haystack (NIAH) problems because the queries are not necessarily limited to just one date but can encompass multiple dates. For example, the query "could George Washington have signed a bill on Jan. 1 1800" requires taking the complement of all of time and the time George Washington was President. In that case, both intensional and extensional representations are positive utility information but the intensional representation has less tokens that need to be processed.
+A query on a chromatic interval always has the form "was the interval
+[color] from [start, end]." For example, "could George Washington have
+signed the Judiciary Act of 1789" queries "was the presidency 'George
+Washington' from [Sep. 24 1789, Sep. 24 1789]."
 
-## Running the notebook experiments
+This is not a classical needle-in-a-haystack (NIAH) problem. A query is
+not limited to one date; it can span many dates. The query "could
+George Washington have signed a bill on Jan. 1 1800" takes the
+complement of the presidency interval over all of time. Both
+representations are positive-utility information there, but the
+intensional one needs fewer tokens.
 
-Each of the three eval notebooks —
-`notebooks/periodic/induction_eval.ipynb`,
-`notebooks/chromatic/induction_eval.ipynb`, and
-`notebooks/chromatic/induction_eval_one_hop.ipynb` — builds one
-`smolbench.induction.experiment.InductionExperiment` instead of hand-rolling
-the harness/EC2-provisioning/serve-loop cells that used to be copy-pasted
-(and had begun to drift) across all three. A notebook cell reduces to
-constructing the experiment and then calling its methods in lifecycle
-order: `EXPERIMENT.provision()` once, `EXPERIMENT.run(model, ...)` once per
-archetype section, `EXPERIMENT.summarize(model)` / `.cot_chain_lengths()`
-any number of times, `EXPERIMENT.teardown()` once at the end.
+## The experiment API
 
-The three notebooks' constructors differ only in `notebook_dir`,
-`state_file`, and `prefix` — everything else (`archetype_tags`,
-`make_quizzes`, `n_replicates=30`, `base_seed=BASE_SEED`) is
-experiment-specific config the notebook already computes above the cell:
+`smolbench.induction.experiment.InductionExperiment` is the one shared
+harness for induction evals. A driver constructs the experiment once
+and then calls its methods in lifecycle order: `provision()` once,
+`run(model, ...)` once per model section, `summarize(model)` /
+`cot_chain_lengths()` any number of times, and `teardown()` once at the
+end.
 
-| Notebook | `notebook_dir` | `state_file` | `prefix` |
-|---|---|---|---|
-| `periodic/induction_eval.ipynb` | `"periodic"` | (default — `ec2.py`'s own `.ec2_state.json` at the repo root) | (none) |
-| `chromatic/induction_eval.ipynb` | `"chromatic"` | `".ec2_state_chromatic.json"` | (none) |
-| `chromatic/induction_eval_one_hop.ipynb` | `"chromatic"` | `".ec2_state_chromatic.json"` | `"one_hop_"` |
-
-The one-hop notebook shares both its EC2 state file AND its `results/`
-directory with the sibling chromatic notebook (same `notebook_dir`); the
-`prefix` is what keeps their replicate directories from colliding
-(`results/one_hop_{tag}_{info}/` vs. `results/{tag}_{info}/}`) — see
-`smolbench/evals/replicates.py`'s `ReplicateHarness.prefix`.
+The live driver is `notebooks/induction/run_study.py` (with its sibling
+notebook `notebooks/induction/induction_eval.ipynb`). The three retired
+Jupyter notebooks that this API was extracted for
+(`periodic/induction_eval.ipynb`, `chromatic/induction_eval.ipynb`, and
+`chromatic/induction_eval_one_hop.ipynb`) now live only in the archive
+zip and the git history. `smolbench/evals/replicates.py` keeps the
+record of why the shared harness exists: the three notebooks used to
+copy-paste these cells, and the copies had begun to drift.
 
 ### keys.env first, then import
 
-Every notebook's first cell calls `load_dotenv(Path.cwd() / "keys.env")`
-*before* importing anything that reads `EC2_*` provisioning config.
-This is not stylistic: `smolbench.evals.ec2`'s provisioning constants
-(`EC2_EXPERIMENT_TAG`, `EC2_INSTANCE_TYPES`, `EC2_S3_MODEL_CACHE`, ...) are
-captured once at IMPORT time as ordinary module attributes (so notebooks
-can read them back as `ec2.EC2_EXPERIMENT_TAG`), not re-read per call — an
-import that runs ahead of `load_dotenv` silently freezes them to their
-un-overridden defaults for the rest of the kernel's life. Accordingly,
-`smolbench.induction.experiment` never imports `smolbench.evals.ec2` at
-module scope either: every `InductionExperiment` method that needs the EC2
-lifecycle (`provision`, `run`, `agent_status`, `teardown`) imports it
-lazily, inside the method body, so a notebook that does
-`import smolbench.induction.experiment` ahead of its `load_dotenv` call (a
-perfectly ordinary cell order) still gets the override. See that module's
-docstring (the "CRITICAL: no `smolbench.evals.ec2` import at module scope"
+Load `keys.env` (via `load_dotenv`) before you import anything that
+reads `EC2_*` provisioning config. This is not stylistic.
+`smolbench.evals.ec2` captures its provisioning constants
+(`EC2_EXPERIMENT_TAG`, `EC2_INSTANCE_TYPES`, `EC2_S3_MODEL_CACHE`, ...)
+once at IMPORT time as ordinary module attributes; it does not re-read
+them per call. An import that runs ahead of `load_dotenv` silently
+freezes them to their un-overridden defaults for the rest of the
+process. For this reason `smolbench.induction.experiment` never imports
+`smolbench.evals.ec2` at module scope: every `InductionExperiment`
+method that needs the EC2 lifecycle (`provision`, `run`,
+`agent_status`, `teardown`) imports it lazily, inside the method body.
+A driver that imports `smolbench.induction.experiment` ahead of its
+`load_dotenv` call still gets the override. See that module's docstring
+(the "CRITICAL: no `smolbench.evals.ec2` import at module scope"
 section) for the full contract.
 
 ### Seed conventions
 
 A "replicate" is the SAME quiz regenerated under a fresh seed, not a
 different quiz. `InductionExperiment.seeds` is always
-`tuple(base_seed + r for r in range(n_replicates))`; every notebook to date
-uses `base_seed=1776` (the July 4th, 1776 nod) and `n_replicates=30`, so
-replicate `r`'s seed is `1776 + r`. That one seed does double duty: it
-drives the quiz's OWN randomness (label/interval/color sampling — see
-`PeriodicConfig.seed` / `ChromaticIntervalsConfig.seed`) AND, in the same
-call, is threaded through as the per-request decoding seed. This is what
-makes a replicate's on-disk artifact (`rep_{seed}.yaml`) fully reproducible
-from its filename alone — regenerating `make_quizzes(seed)` reproduces
+`tuple(base_seed + r for r in range(n_replicates))`. The constructor's
+default is `base_seed=1776` (the July 4th, 1776 nod), which every
+retired notebook used with `n_replicates=30`. The current family-ladder
+study deliberately overrides this: `notebooks/induction/run_study.py`
+locks `BASE_SEED=0` (seeds 0..29) — see its docstring for why. One seed
+does double duty: it drives the quiz's OWN randomness (label, interval,
+and color sampling — see `PeriodicConfig.seed` /
+`ChromaticIntervalsConfig.seed`) AND, in the same call, threads through
+as the per-request decoding seed. This makes a replicate's on-disk
+artifact (`rep_{seed}.yaml`) fully reproducible from its filename
+alone. Regenerate `make_quizzes(seed, model)` (the model matters: the
+noise arm pads under that model's own tokenizer) and you get
 byte-identical prompts, and the filename's seed is exactly the decoding
-seed that was used against them.
+seed used against them.
 
 ### Offline vs. billed methods
 
-`InductionExperiment.summarize(model)` and `.cot_chain_lengths()` only read
-cached YAML off disk — no AWS or network calls, safe to call any number of
-times. `.provision()`, `.run(model, ...)`, `.agent_status()`, and
-`.teardown()` are LIVE AWS calls against a self-provisioned EC2 spot
-instance billed for the duration it is up (see `smolbench/evals/ec2.py`
-for the current per-hour rate and the idle-watchdog/max-lifetime safety
-nets that cover an abandoned notebook).
+`InductionExperiment.summarize(model)` and `.cot_chain_lengths()` only
+read cached YAML off disk. They make no AWS or network calls, so you
+can call them any number of times. `.provision()`, `.run(model, ...)`,
+`.agent_status()`, and `.teardown()` are LIVE AWS calls against a
+self-provisioned EC2 spot instance, billed for the duration it is up.
+See `smolbench/evals/ec2.py` for the current per-hour rate and the
+idle-watchdog / max-lifetime safety nets that cover an abandoned
+driver.
 
 ### Figures and the analysis notebook
 
-`smolbench/induction/figures.py` (`accuracy`, `load_condition_accuracies`,
-`plot_archetype_accuracy`) backs
-`notebooks/chromatic/induction_eval_analysis.ipynb`, which is a PINNED
-HISTORICAL figure over the archived `result2/` pilot directory (flat,
-single-run result files — not the per-replicate `results/<tag>/rep_<seed>.yaml`
-tree the current `InductionExperiment`-driven notebooks write). Matplotlib
-is imported lazily inside `plot_archetype_accuracy` only, so importing
-`figures.py` (or the rest of `smolbench.induction`) does not require the
-`notebook` extra.
+`smolbench/induction/figures.py` (`accuracy`,
+`load_condition_accuracies`, `plot_archetype_accuracy`) was extracted
+from `induction_eval_analysis.ipynb`, a PINNED HISTORICAL figure over
+the archived `result2/` pilot directory (flat, single-run result files
+— not the per-replicate `results/<tag>/rep_<seed>.yaml` tree that
+`InductionExperiment` writes). That notebook is retired to the archive
+zip with the rest of the old trees. Matplotlib imports lazily inside
+`plot_archetype_accuracy` only, so an import of `figures.py` (or the
+rest of `smolbench.induction`) does not require the `notebook` extra.

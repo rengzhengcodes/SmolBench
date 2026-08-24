@@ -1,61 +1,64 @@
-"""Posterior power check: at the R actually collected, what is still undecided?
+"""Check posterior power: at the R already collected, what is still undecided?
 
-The ``notebooks/*/power_analysis.py`` scripts SIZE a study from its pilot and
-deliberately refuse to read the completed replicates -- feeding the finished
-block back into the sizing analysis would be circular. Their docstrings say
-so explicitly, and name this as the separate analysis to write if a posterior
-check is ever wanted. This is that analysis.
+The ``notebooks/*/power_analysis.py`` scripts size a study from its pilot
+data. They refuse to read the completed replicates on purpose: feeding the
+finished block back into the sizing analysis would be circular. Their
+docstrings say so, and they name this script as the separate analysis to
+write if you ever want a posterior check. This is that analysis.
 
-It answers one question: **having collected R replicates, which planned
-contrasts are settled and which need more data?**
+It answers one question: after you collect R replicates, which planned
+contrasts are settled, and which need more data?
 
 WHY THIS IS NOT "OBSERVED POWER"
 --------------------------------
-The tempting move -- compute the power of the test you just ran, at the
-effect you just observed -- is a known fallacy. Observed power is a monotone
-function of the p-value, so it carries no information the p-value did not
-already carry: a non-significant result ALWAYS yields low observed power, and
-reporting it as "we were underpowered" merely restates "p was large" in a way
-that sounds like independent evidence. It is not.
+It is tempting to compute the power of the test you just ran, at the effect
+you just observed. This move is a known fallacy. Observed power is a
+monotone function of the p-value, so it carries no information beyond the
+p-value: a non-significant result always yields low observed power. A
+report of "we were underpowered" only restates "p was large," but it
+sounds like independent evidence. It is not independent evidence.
 
-So each contrast is sorted into one of three states instead:
+Instead, this script sorts each contrast into one of three states:
 
-  DECIDED     CMH rejects at the Bonferroni-corrected alpha. Settled; more
-              replicates cannot unsettle it.
-  EQUIVALENT  Not significant, AND the bootstrap CI for the accuracy
-              difference lies entirely inside +-MEI. The contrast is a
-              demonstrated near-tie, not an absence of evidence. Settled.
-  UNDECIDED   Not significant, and the CI still spans MEI. This -- and only
-              this -- is a contrast where more replicates would help, and
-              it is the only case where an R is quoted.
+  DECIDED     The CMH test rejects at the Bonferroni-corrected alpha. The
+              result is settled; more replicates cannot unsettle it.
+  EQUIVALENT  The test is not significant, and the bootstrap CI for the
+              accuracy difference lies entirely inside +-MEI. The contrast
+              is a demonstrated near-tie, not an absence of evidence. The
+              result is settled.
+  UNDECIDED   The test is not significant, and the CI still spans MEI. Only
+              this state means more replicates would help. This script
+              quotes a required R only for this state.
 
 MEI is a PRE-SPECIFIED minimum effect of interest, not the observed effect.
-That is what keeps the equivalence claim honest: "no difference worth caring
-about" requires stating in advance how big "worth caring about" is.
+This keeps the equivalence claim honest: a claim of "no difference worth
+caring about" must state in advance how big "worth caring about" is.
 
-For UNDECIDED contrasts the required R is simulated at the MEI (the effect we
-would not want to miss), with the observed-effect sizing reported alongside
-and explicitly labelled, since sizing from an observed effect is biased
-upward in power by the same selection that made it look interesting.
+For UNDECIDED contrasts, this script simulates the required R at the MEI
+(the effect we do not want to miss). It also reports the observed-effect
+sizing, clearly labeled, because sizing from an observed effect is biased:
+the same selection that made the effect look interesting also biases its
+estimated power upward.
 
 DESIGN
 ------
-One binary outcome per harmonic per replicate, so the data are a stratified
-binomial with the harmonic as stratum -- not iid Bernoulli draws, because
-difficulty varies systematically with the harmonic. The planned test is
-therefore Cochran-Mantel-Haenszel stratified by harmonic, matching the
-sibling sizing scripts. Confidence intervals bootstrap over REPLICATES, the
-independent unit; harmonics within a replicate are not resampled because they
-are strata, not draws.
+Each replicate produces one binary outcome per harmonic. This makes the
+data a stratified binomial, with the harmonic as the stratum, not iid
+Bernoulli draws, because difficulty varies systematically with the
+harmonic. The planned test is therefore Cochran-Mantel-Haenszel, stratified
+by harmonic, to match the sibling sizing scripts. Confidence intervals
+bootstrap over REPLICATES, the independent unit. Harmonics within a
+replicate are strata, not draws, so this script does not resample them.
 
-Invalid marks (``score: null``) count as failures, matching the convention in
-notebooks/periodic/power_analysis.py. Their count is reported separately so a
-truncation problem cannot hide inside an accuracy number.
+Invalid marks (``score: null``) count as failures. This matches the
+convention in notebooks/induction/power_analysis.py. This script reports
+the invalid count separately, so a truncation problem cannot hide inside
+an accuracy number.
 
-Run (repo root, main venv):
+Run this script from the repo root, in the main venv:
     .venv/bin/python scripts/posterior_power.py <study> [--mei 0.05]
 
-``study`` is a notebook directory name, e.g. ``periodic_divisor``.
+``study`` is a notebook directory name, for example ``periodic_divisor``.
 """
 
 import argparse
@@ -72,10 +75,11 @@ MODELS = ("gptoss", "nemotron3", "qwen35")
 INFOS = ("intens", "extens", "noise_intens", "zero")
 SEED = 0
 ALPHA = 0.05
-#: 12 model-within-info + 18 info-within-model. Kept as one family, including
-#: the chance-floor `zero` contrasts: they are huge-effect and trivially
-#: significant, but dropping them from the correction after seeing the data
-#: would be exactly the multiplicity abuse the correction exists to prevent.
+#: 12 model-within-info contrasts plus 18 info-within-model contrasts. This
+#: family includes the chance-floor `zero` contrasts on purpose. Those
+#: contrasts have a huge effect and are trivially significant, but dropping
+#: them from the correction after seeing the data would be exactly the
+#: multiplicity abuse the correction exists to prevent.
 N_TESTS = len(INFOS) * len(list(combinations(MODELS, 2))) + len(MODELS) * len(
     list(combinations(INFOS, 2))
 )
@@ -83,23 +87,45 @@ ALPHA_CORRECTED = ALPHA / N_TESTS
 N_BOOT = 4000
 N_SIMS = 2000
 TARGET_POWER = 0.80
-#: Minimum replicates per side before an EQUIVALENT verdict is allowed.
-#: A bootstrap over 2 replicates that happen to agree has near-zero width, so
-#: its CI fits inside any MEI and manufactures an equivalence claim out of
-#: having almost no data. Equivalence is a positive claim and needs enough
-#: replicates to have been capable of refuting itself; below this it is
-#: reported as UNDECIDED (insufficient), which is what it actually is.
+#: Minimum replicates per side before this script allows an EQUIVALENT
+#: verdict. A bootstrap over 2 agreeing replicates has near-zero width, so
+#: its CI fits inside any MEI and manufactures an equivalence claim from
+#: almost no data. Equivalence is a positive claim: it needs enough
+#: replicates to have been able to refute itself. Below this threshold,
+#: this script reports the contrast as UNDECIDED (insufficient data), which
+#: is the honest state.
 MIN_R_FOR_EQUIVALENCE = 5
 
 
 def load_study(study: str) -> dict[tuple[str, str], np.ndarray]:
-    """Loads every replicate as an (R, n_harmonics) 0/1 outcome matrix.
+    """Load every replicate as an (R, n_harmonics) 0/1 outcome matrix.
 
-    The result YAMLs carry ``!!python/object`` tags that ``yaml.safe_load``
-    refuses, and unsafe-loading repository-generated files to save a regex is
-    not a trade worth making -- so, like the sibling scripts, this scans the
-    ``score:`` lines as text. Marks are serialized in the generator's
-    ascending-period order, so column index recovers the harmonic.
+    The result YAML files carry ``!!python/object`` tags that
+    ``yaml.safe_load`` refuses to load. An unsafe load of
+    repository-generated files just to avoid a regex is not a trade
+    worth making, so, like the sibling scripts, this function scans the
+    ``score:`` lines as text. The generator serializes marks in
+    ascending-period order, so the column index recovers the harmonic.
+
+    Parameters
+    ----------
+    study : str
+        Notebook directory name under ``notebooks/``, for example
+        ``"periodic_divisor"``.
+
+    Returns
+    -------
+    dict[tuple[str, str], numpy.ndarray]
+        Maps each ``(model, info)`` condition to an ``(R, n_harmonics)``
+        float array, where 1.0 marks a correct answer and 0.0 marks a
+        wrong or invalid answer.
+
+    Raises
+    ------
+    SystemExit
+        If the study has no ``results`` directory, if a condition's
+        replicates disagree on harmonic count, or if no replicates exist
+        for the study.
     """
     results = NOTEBOOKS / study / "results"
     if not results.is_dir():
@@ -130,11 +156,23 @@ def load_study(study: str) -> dict[tuple[str, str], np.ndarray]:
 
 
 def invalid_counts(study: str) -> dict[tuple[str, str], int]:
-    """Counts ``score: null`` marks per condition, reported separately.
+    """Count ``score: null`` marks per condition.
 
-    Invalids are folded into the accuracy as failures, which is the right
-    conservative default but also makes a truncation problem look like a
-    competence problem. Surfacing the count keeps the two distinguishable.
+    This script folds invalid marks into the accuracy as failures. That is
+    the right conservative default, but it also makes a truncation problem
+    look like a competence problem. This separate count keeps the two
+    distinguishable.
+
+    Parameters
+    ----------
+    study : str
+        Notebook directory name under ``notebooks/``.
+
+    Returns
+    -------
+    dict[tuple[str, str], int]
+        Maps each ``(model, info)`` condition to its count of
+        ``score: null`` marks across all replicates.
     """
     results = NOTEBOOKS / study / "results"
     out: dict[tuple[str, str], int] = {}
@@ -151,24 +189,39 @@ def invalid_counts(study: str) -> dict[tuple[str, str], int]:
 
 
 def cmh(a: np.ndarray, b: np.ndarray) -> float:
-    """Cochran-Mantel-Haenszel chi-square (1 df) for two conditions.
+    """Compute the Cochran-Mantel-Haenszel chi-square (1 df) for two conditions.
 
-    Strata are harmonics (columns). Within stratum k the 2x2 table is
-    correct/wrong x condition, pooled over replicates. Returns the statistic
-    with the Yates-style continuity correction the sibling scripts use; a
-    stratum contributing zero variance (both conditions all-correct or
-    all-wrong) drops out, which is correct -- it carries no information about
-    a difference.
+    Each harmonic (column) is a stratum. Within stratum k, the 2x2 table is
+    correct/wrong by condition, pooled over replicates. This function
+    applies the Yates-style continuity correction the sibling scripts use.
+    A stratum that contributes zero variance (both conditions all-correct
+    or all-wrong) drops out. This is correct: such a stratum carries no
+    information about a difference.
 
-    Note for anyone checking this against a Pearson chi-square by hand: on a
-    SINGLE stratum this returns Pearson x (N-1)/N, not Pearson. That is not a
-    bug -- the hypergeometric variance here carries an (N-1) denominator,
-    which is what makes the statistic Mantel-Haenszel rather than Pearson.
-    Verified numerically: an 18/20-vs-10/20 table gives 5.6875 here against a
-    Yates-corrected Pearson of 5.8333, and 5.8333 * 39/40 == 5.6875 exactly.
-    Null calibration was checked by simulation over heterogeneous strata: the
-    false-positive rate is 0.0453 at alpha=0.05, i.e. correctly sized and
-    very slightly conservative.
+    Parameters
+    ----------
+    a, b : numpy.ndarray
+        (R, n_harmonics) 0/1 outcome matrices for the two conditions to
+        compare. The replicate count R may differ between `a` and `b`.
+
+    Returns
+    -------
+    float
+        The CMH chi-square statistic with 1 degree of freedom.
+
+    Notes
+    -----
+    On a SINGLE stratum, this function returns the Pearson chi-square value
+    times (N-1)/N, not the plain Pearson value. This is not a bug: the
+    hypergeometric variance here carries an (N-1) denominator, which is
+    what makes the statistic Mantel-Haenszel rather than Pearson. A manual
+    check confirms this: an 18/20-vs-10/20 table gives 5.6875 here, against
+    a Yates-corrected Pearson value of 5.8333, and 5.8333 * 39/40 equals
+    5.6875 exactly.
+
+    A simulation over heterogeneous strata checked the null calibration:
+    the false-positive rate is 0.0453 at alpha=0.05. The test is correctly
+    sized, and very slightly conservative.
     """
     num = 0.0
     var = 0.0
@@ -190,11 +243,23 @@ def cmh(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def chi2_sf_1df(x: float) -> float:
-    """Upper tail of chi-square with 1 df, via the normal survival function.
+    """Compute the upper tail of the chi-square distribution with 1 df.
 
-    chi2(1) is the square of a standard normal, so P(X > x) = 2*(1 - Phi(sqrt
-    x)). Implemented off math.erfc to keep this script free of a scipy
-    dependency, matching the sibling scripts' numpy-only footprint.
+    chi2(1) is the square of a standard normal variable, so
+    P(X > x) = 2 * (1 - Phi(sqrt(x))). This function computes that value
+    from ``math.erfc``, to keep this script free of a scipy dependency.
+    This matches the numpy-only footprint of the sibling scripts.
+
+    Parameters
+    ----------
+    x : float
+        The chi-square statistic.
+
+    Returns
+    -------
+    float
+        The upper-tail probability P(X > x). Returns 1.0 when `x` is
+        non-positive.
     """
     from math import erfc, sqrt
     if x <= 0:
@@ -203,13 +268,30 @@ def chi2_sf_1df(x: float) -> float:
 
 
 def boot_ci(a: np.ndarray, b: np.ndarray, rng, level: float) -> tuple[float, float, float]:
-    """Bootstrap CI for the accuracy difference, resampling REPLICATES.
+    """Bootstrap a confidence interval for the accuracy difference.
 
-    Replicates are the independent unit; harmonics are strata within a
-    replicate and are deliberately NOT resampled, since treating 26 strata of
-    differing difficulty as exchangeable draws would understate the variance.
-    Conditions are resampled independently because they are separate runs, not
-    paired measurements of one draw.
+    This function resamples REPLICATES, the independent unit. Harmonics are
+    strata within a replicate, so this function does not resample them:
+    treating strata of differing difficulty as exchangeable draws would
+    understate the variance. This function resamples the two conditions
+    independently, because they are separate runs, not paired measurements
+    of one draw.
+
+    Parameters
+    ----------
+    a, b : numpy.ndarray
+        (R, n_harmonics) 0/1 outcome matrices for the two conditions to
+        compare.
+    rng : numpy.random.Generator
+        Random number generator used for the resampling.
+    level : float
+        Confidence level of the interval, in (0, 1).
+
+    Returns
+    -------
+    tuple[float, float, float]
+        ``(diff, lo, hi)``: the observed accuracy difference ``a - b``, and
+        the lower and upper bounds of the bootstrap confidence interval.
     """
     ra, rb = a.shape[0], b.shape[0]
     ia = rng.integers(0, ra, size=(N_BOOT, ra))
@@ -223,11 +305,27 @@ def boot_ci(a: np.ndarray, b: np.ndarray, rng, level: float) -> tuple[float, flo
 
 
 def replicates_needed(rates_a: np.ndarray, rates_b: np.ndarray, rng, cap: int = 400) -> int | None:
-    """Smallest R giving TARGET_POWER against the CMH test, or None past `cap`.
+    """Find the smallest R that reaches TARGET_POWER against the CMH test.
 
-    Simulates per-harmonic binomial outcomes at the supplied rate vectors,
-    which preserves the difficulty structure across strata rather than
-    assuming a flat rate -- the same modelling choice the sizing scripts make.
+    This function simulates per-harmonic binomial outcomes at the given
+    rate vectors. This preserves the difficulty structure across strata,
+    instead of assuming a flat rate, matching the modeling choice the
+    sizing scripts make.
+
+    Parameters
+    ----------
+    rates_a, rates_b : numpy.ndarray
+        Per-harmonic success-rate vectors for the two simulated conditions.
+    rng : numpy.random.Generator
+        Random number generator used for the simulation.
+    cap : int, default 400
+        Largest R this function tries before it gives up.
+
+    Returns
+    -------
+    int or None
+        The smallest R in the search ladder that reaches TARGET_POWER, or
+        None if no R up to `cap` reaches it.
     """
     for r in _ladder(cap):
         hits = 0
@@ -242,7 +340,20 @@ def replicates_needed(rates_a: np.ndarray, rates_b: np.ndarray, rng, cap: int = 
 
 
 def _ladder(cap: int) -> list[int]:
-    """Coarse-to-fine R ladder, so the common (small R) answers stay cheap."""
+    """Build a coarse-to-fine ladder of R values up to `cap`.
+
+    The ladder keeps common, small-R answers cheap to compute.
+
+    Parameters
+    ----------
+    cap : int
+        Largest R value to include in the ladder.
+
+    Returns
+    -------
+    list[int]
+        Candidate R values in increasing order, all at most `cap`.
+    """
     return [r for r in (5, 10, 15, 20, 25, 30, 40, 50, 65, 80, 100, 130, 160, 200, 260, 320, 400)
             if r <= cap]
 
@@ -290,9 +401,9 @@ def main() -> int:
             continue
         a, b = data[ka], data[kb]
         p = chi2_sf_1df(cmh(a, b))
-        # The equivalence CI uses 1-2*alpha (the TOST convention): a
-        # (1-2a) interval inside +-MEI is exactly the two one-sided tests
-        # both rejecting at a.
+        # The equivalence CI uses 1-2*alpha (the TOST convention). A
+        # (1-2a) interval inside +-MEI gives the same result as two
+        # one-sided tests that both reject at alpha.
         diff, lo, hi = boot_ci(a, b, rng, level=1 - 2 * ALPHA_CORRECTED)
         enough = min(a.shape[0], b.shape[0]) >= MIN_R_FOR_EQUIVALENCE
         if p < ALPHA_CORRECTED:

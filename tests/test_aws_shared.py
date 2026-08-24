@@ -1,19 +1,22 @@
-"""Offline unit tests for smolbench/evals/_aws.py -- the primitives shared by
-aws.py (SageMaker) and ec2.py (EC2 Spot).
+"""Test smolbench/evals/_aws.py, offline: primitives shared by aws.py and ec2.py.
 
-Every pinned literal in this file (the two AssumeRole trust-policy dicts, the
-IAM call kwargs, the deploy-spec key sets) is transcribed from the PRE-
-REFACTOR source (aws.py's ``_ensure_exec_role``, ec2.py's
+``aws.py`` covers SageMaker, and ``ec2.py`` covers EC2 Spot.
+
+Every pinned literal in this file (the two AssumeRole trust-policy dicts,
+the IAM call kwargs, the deploy-spec key sets) is copied from the
+pre-refactor source: aws.py's ``_ensure_exec_role``, and ec2.py's
 ``_ensure_instance_profile`` / ``EC2_DEPLOY_SPECS`` / ``SAGEMAKER_DEPLOY_
-SPECS``) rather than derived from ``_aws.py`` itself -- the point of this
-suite is to catch the extraction silently drifting from what those two
-modules did before ``_aws.py`` existed, not merely to describe whatever
-``_aws.py`` happens to do today. No boto3 credentials or network access are
-used anywhere here: IAM calls go through small hand-rolled recording fakes,
-and real ``botocore.exceptions.ClientError``/dynamically-shaped exceptions
-are constructed directly (see ``_client_error`` and ``_FakeEntityAlreadyExists``
-below) so the error-code / exception-type branches under test see the same
-shapes a live IAM client would raise.
+SPECS``. The tests do not derive these literals from ``_aws.py`` itself. The
+point of this suite is to catch the extraction drifting silently from what
+those two modules did before ``_aws.py`` existed, not to describe whatever
+``_aws.py`` happens to do today.
+
+No boto3 credentials or network access are used anywhere here. IAM calls go
+through small hand-rolled recording fakes. Real
+``botocore.exceptions.ClientError`` and other dynamically-shaped exceptions
+are built directly (see ``_client_error`` and ``_FakeEntityAlreadyExists``
+below), so the error-code and exception-type branches under test see the
+same shapes a live IAM client would raise.
 """
 
 import inspect
@@ -41,9 +44,12 @@ def test_poll_until_immediate_success_returns_without_sleeping(monkeypatch):
 
 
 def test_poll_until_check_exception_propagates():
-    """`check` raising aborts the loop immediately -- used by every migrated
-    loop to fail fast on an unrecoverable condition (e.g. a terminated
-    instance) instead of exhausting the whole timeout."""
+    """`check` raising aborts the loop immediately.
+
+    Every migrated loop uses this to fail fast on an unrecoverable
+    condition, for example a terminated instance, instead of exhausting the
+    whole timeout.
+    """
 
     def check():
         raise ValueError("boom")
@@ -55,9 +61,12 @@ def test_poll_until_check_exception_propagates():
 
 
 def test_poll_until_timeout_raises_exactly_on_timeouts_exception(monkeypatch):
-    """The raised exception must be the EXACT instance `on_timeout()`
-    returned (not merely the same type) -- callers (e.g. _wait_model_ready)
-    build a message from state gathered during the loop, so identity matters."""
+    """Check that the raised exception is the exact instance `on_timeout()` returned.
+
+    The exception must be the same instance, not merely the same type.
+    Callers (for example _wait_model_ready) build a message from state
+    gathered during the loop, so identity matters.
+    """
     times = iter([0.0, 10.1])  # call 1: deadline = 0.0 + 10.0 = 10.0; call 2: past it
     monkeypatch.setattr(_aws.time, "time", lambda: next(times))
 
@@ -72,10 +81,12 @@ def test_poll_until_timeout_raises_exactly_on_timeouts_exception(monkeypatch):
 
 
 def test_poll_until_deadline_checked_after_check_not_before(monkeypatch):
-    """A check that succeeds exactly AT the deadline still returns normally:
-    poll_until must never consult the deadline after a successful check, and
-    the ``> deadline`` (not ``>=``) comparison means "equal to the deadline"
-    is not yet a timeout on the failing branch either."""
+    """A check that succeeds exactly at the deadline still returns normally.
+
+    ``poll_until`` must never consult the deadline after a successful check.
+    The ``> deadline`` comparison, not ``>=``, also means "equal to the
+    deadline" is not yet a timeout on the failing branch.
+    """
     calls = {"n": 0}
     times = iter([0.0, 5.0])  # call 1: deadline = 0.0 + 5.0 = 5.0; call 2: exactly the deadline
     monkeypatch.setattr(_aws.time, "time", lambda: next(times))
@@ -96,9 +107,9 @@ def test_poll_until_deadline_checked_after_check_not_before(monkeypatch):
 # ---------------------------------------------------------------------------
 # assume_role_trust_policy: pinned against the two pre-refactor inline dicts
 # ---------------------------------------------------------------------------
-# Transcribed literally from aws.py:294-303 (_ensure_exec_role) and
-# ec2.py:1259-1268 (_ensure_instance_profile) -- identical shape, differing
-# only in the Principal.Service value.
+# Copied literally from aws.py:294-303 (_ensure_exec_role) and
+# ec2.py:1259-1268 (_ensure_instance_profile). Both have the same shape,
+# and differ only in the Principal.Service value.
 
 _SAGEMAKER_TRUST_POLICY_PRE_REFACTOR = {
     "Version": "2012-10-17",
@@ -136,9 +147,9 @@ def test_assume_role_trust_policy_matches_ec2_pre_refactor_literal():
 # ---------------------------------------------------------------------------
 # ensure_sagemaker_execution_role: fake IAM client, both branches
 # ---------------------------------------------------------------------------
-# aws.py's original _ensure_exec_role catches the SPECIFIC
-# iam.exceptions.EntityAlreadyExistsException (not a ClientError-with-code
-# check, unlike the EC2 instance-profile helper below) -- so the fake client
+# aws.py's original _ensure_exec_role catches the specific
+# iam.exceptions.EntityAlreadyExistsException, not a ClientError-with-code
+# check (unlike the EC2 instance-profile helper below). So the fake client
 # must expose a real, catchable `.exceptions.EntityAlreadyExistsException`.
 
 
@@ -151,8 +162,11 @@ class _FakeIamExceptions:
 
 
 class FakeSagemakerIam:
-    """Records every call; `create_role` either succeeds or raises the fake
-    already-exists exception, per `role_exists`."""
+    """Record every call.
+
+    `create_role` either succeeds or raises the fake already-exists
+    exception, per `role_exists`.
+    """
 
     def __init__(self, *, role_exists: bool):
         self.calls: list = []
@@ -221,17 +235,22 @@ def test_ensure_sagemaker_execution_role_already_exists_no_sleep(monkeypatch):
 
 
 def _client_error(code: str) -> ClientError:
-    """A real botocore ClientError carrying `code`, matching what a live IAM
-    call raises -- `error_code()`'s parsing must work against the genuine
-    exception shape, not a hand-rolled stand-in."""
+    """Build a real botocore ClientError carrying `code`.
+
+    This matches what a live IAM call raises. `error_code()`'s parsing must
+    work against the genuine exception shape, not a hand-rolled stand-in.
+    """
     return ClientError({"Error": {"Code": code, "Message": code}}, "FakeIamOperation")
 
 
 class FakeEc2ProfileIam:
-    """Records every call; each already-exists/limit-exceeded branch is
-    independently toggleable so both the fresh-create and already-exists
-    paths (and the `created` flag's OR-across-two-resources semantics) are
-    covered without four near-duplicate fake classes."""
+    """Record every call.
+
+    Each already-exists and limit-exceeded branch is independently
+    toggleable, so both the fresh-create and already-exists paths, and the
+    `created` flag's OR-across-two-resources rule, are covered without four
+    near-duplicate fake classes.
+    """
 
     def __init__(self, *, role_exists: bool, profile_exists: bool, role_already_attached: bool):
         self.calls: list = []
@@ -322,9 +341,11 @@ def test_ensure_instance_profile_fresh_create_sleeps_and_pins_calls(monkeypatch)
 
 
 def test_ensure_instance_profile_already_exists_created_flag_false_no_sleep(monkeypatch):
-    """Role, profile, AND the role-to-profile attachment all already exist
-    (the three ClientError branches all fire) -> `created` stays False ->
-    no sleep at all, even though propagation_sleep_s is nonzero."""
+    """Check the all-already-exist case: role, profile, and the attachment.
+
+    All three ClientError branches fire, so `created` stays False, and
+    there is no sleep at all, even though propagation_sleep_s is nonzero.
+    """
     fake = FakeEc2ProfileIam(role_exists=True, profile_exists=True, role_already_attached=True)
     monkeypatch.setattr(_aws, "fresh_client", lambda service, region=None: fake)
     monkeypatch.setattr(
@@ -338,9 +359,11 @@ def test_ensure_instance_profile_already_exists_created_flag_false_no_sleep(monk
 
 
 def test_ensure_instance_profile_created_flag_true_when_only_profile_is_new(monkeypatch):
-    """The role already existed but the instance profile is new -> `created`
-    is set via the profile alone (an OR, not an AND, across the two
-    resources) -> the propagation sleep still fires."""
+    """The role already existed, but the instance profile is new.
+
+    `created` is set through the profile alone: an OR, not an AND, across
+    the two resources. So the propagation sleep still fires.
+    """
     fake = FakeEc2ProfileIam(role_exists=True, profile_exists=False, role_already_attached=False)
     monkeypatch.setattr(_aws, "fresh_client", lambda service, region=None: fake)
     sleeps = []
@@ -351,9 +374,12 @@ def test_ensure_instance_profile_created_flag_true_when_only_profile_is_new(monk
 
 
 def test_ensure_instance_profile_reraises_unexpected_client_error(monkeypatch):
-    """A ClientError code OTHER than the tolerated ones must propagate, not
-    be silently swallowed. (AccessDenied is no longer in this bucket -- it
-    gets the scoped-credentials early return, pinned by its own test below.)"""
+    """A ClientError code other than the tolerated ones must propagate.
+
+    It must not be silently swallowed. (AccessDenied is no longer in this
+    bucket: it gets the scoped-credentials early return, pinned by its own
+    test below.)
+    """
 
     class _ThrottledIam(FakeEc2ProfileIam):
         def create_role(self, **kwargs):
@@ -390,10 +416,10 @@ def test_ec2_deploy_specs_match_schema():
 
 # ---------------------------------------------------------------------------
 # list_models parity: aws.list_models and ec2.list_models both accept a
-# `model` parameter defaulting to "" -- part of the provider-dispatch
-# surface (smolbench.evals.provider treats every provider module the same
-# way), even though EC2's vLLM instance serves exactly one model and ignores
-# the argument entirely.
+# `model` parameter that defaults to "". This is part of the
+# provider-dispatch surface: smolbench.evals.provider treats every
+# provider module the same way, even though EC2's vLLM instance serves
+# exactly one model and ignores the argument entirely.
 # ---------------------------------------------------------------------------
 
 
@@ -407,10 +433,12 @@ def test_list_models_signature_parity():
 
 
 def test_ec2_list_models_ignores_the_model_argument(stub_server, monkeypatch):
-    """ec2.list_models(model=...) returns the same thing regardless of what
-    (if anything) is passed -- vLLM serves exactly one model, so the
-    parameter exists purely for call-site parity with aws.list_models, not
-    because the stub (or a real instance) routes on it."""
+    """``ec2.list_models(model=...)`` returns the same thing for any argument.
+
+    vLLM serves exactly one model, so the parameter exists only for
+    call-site parity with ``aws.list_models``. Neither the stub nor a real
+    instance routes on it.
+    """
     monkeypatch.setenv("EC2_INFERENCE_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("EC2_VLLM_API_KEY", "stub-key")
 
@@ -459,10 +487,14 @@ def test_best_effort_teardown_does_not_raise():
 
 
 def test_ensure_instance_profile_access_denied_returns_early_no_sleep(monkeypatch):
-    """Scoped credentials (EC2-only operator key) get AccessDenied on the
-    very first IAM call even when the role/profile already exist from prior
-    admin runs -> return the fixed name optimistically, touch nothing else,
-    never sleep (RunInstances is the arbiter of whether the profile exists)."""
+    """Scoped credentials get AccessDenied on the first IAM call.
+
+    These are EC2-only operator-key credentials, and this can happen
+    even when the role and profile already exist from prior admin runs.
+    The function returns the fixed name optimistically, touches nothing
+    else, and never sleeps. RunInstances is the real arbiter of whether
+    the profile exists.
+    """
 
     class AccessDeniedIam(FakeEc2ProfileIam):
         def create_role(self, **kwargs):

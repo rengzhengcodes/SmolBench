@@ -1,11 +1,14 @@
-"""Renders the tp=8 hinge JSONs into the same plain-text shape as
-notebooks/deduction/results/TP4HINGE_SUMMARY.txt, so the tp=1/tp=4/tp=8 arms
-of the determinism record read identically.
+"""Render the tp=8 hinge JSONs as plain text.
 
-Per arm: byte agreement k/n, the engine-config facts that prove the arm really
-ran at tp=8 with the custom all-reduce path live, the cache counters before and
-after, per-row SHA+length for ALL rows, and the SHA-level tp=4-vs-tp=8 cross
-comparison where an archived tp=4 arm exists.
+This matches the shape of notebooks/deduction/results/TP4HINGE_SUMMARY.txt,
+so the tp=1, tp=4, and tp=8 arms of the determinism record read
+identically.
+
+Per arm, this script prints byte agreement k/n; the engine-config facts
+that prove the arm really ran at tp=8, with the custom all-reduce path
+live; and the cache counters before and after. It also prints per-row
+SHA and length for ALL rows, and, where an archived tp=4 arm exists,
+the SHA-level tp=4-vs-tp=8 cross comparison.
 
 USAGE
     .venv/bin/python scripts/tp8_hinge_summary.py [model ...]

@@ -1,17 +1,19 @@
 """Build an EARLIEST-selected induction tree, per the 2026-08-16 user ruling.
 
-The published induction numbers were computed on NEWEST-per-cell. The ruling is
-earliest-per-cell everywhere, so the three lanes that own more than one object
-for some cells must be re-pointed at their FIRST logged attempt.
+The published induction numbers were computed on NEWEST-per-cell. The
+ruling instead requires earliest-per-cell everywhere. So the three
+lanes that own more than one object for some cells must be re-pointed
+at their FIRST logged attempt.
 
-Selection rule for this leg: per (model, seed, arm), the object with the
-lexicographically MINIMUM `--<ts>.yaml` timestamp. There is no survivorship
-filter here -- unlike deduction, every induction object is a complete graded
-mark file, so earliest = min timestamp, full stop.
+Selection rule for this leg: per (model, seed, arm), pick the object
+with the lexicographically MINIMUM `--<ts>.yaml` timestamp. There is no
+survivorship filter here. Unlike deduction, every induction object is a
+complete graded mark file, so earliest simply means min timestamp.
 
-Writes a hardlink clone of notebooks/induction so the repo tree is untouched,
-then REPLACES (rm, then download -- never write through a shared inode) only the
-cells whose earliest differs from their newest.
+This script writes a hardlink clone of notebooks/induction, so the repo
+tree stays untouched. Then it REPLACES (rm, then download -- never
+write through a shared inode) only the cells whose earliest attempt
+differs from their newest.
 """
 import re
 import subprocess

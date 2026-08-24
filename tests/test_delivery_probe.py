@@ -1,12 +1,13 @@
-"""Offline tests for scripts/delivery_probe.py's two parsers.
+"""Test scripts/delivery_probe.py's two parsers, offline.
 
-The probe exists to answer ONE question during a live run -- "did the server
-finish this request, and did the body reach us?" -- so the only things worth
-pinning are the two readings that question rests on: the finish-reason split
-(the 2026-08-14 loss hit ``length`` and spared ``stop``, and a parser that
-collapsed the labels would have hidden exactly that) and the receive-queue
-depth (an ESTABLISHED socket with an EMPTY queue is the fault's signature; a
-socket with bytes waiting is just a slow reader).
+The probe exists to answer one question during a live run: did the server
+finish this request, and did the body reach us? So the only things worth
+pinning are the two readings that question rests on. The first is the
+finish-reason split: the 2026-08-14 loss hit ``length`` and spared
+``stop``, and a parser that collapsed the labels would have hidden exactly
+that. The second is the receive-queue depth: an ESTABLISHED socket with an
+empty queue is the fault's signature, while a socket with bytes waiting is
+just a slow reader.
 """
 
 import importlib.util
@@ -37,7 +38,7 @@ vllm:some_other_metric{model_name="m"} 99.0
 
 
 def test_scrape_splits_finish_reasons(monkeypatch):
-    """The stop/length split must survive parsing -- it IS the diagnosis."""
+    """The stop/length split must survive parsing. It is the diagnosis."""
 
     class _Resp:
         def read(self):
@@ -62,7 +63,7 @@ def test_scrape_splits_finish_reasons(monkeypatch):
 def test_scrape_failure_is_a_measurement_not_an_exception(monkeypatch):
     """An unreachable box must be reported, never raised.
 
-    The probe's whole job is to keep sampling ACROSS a blip -- a scrape that
+    The probe's whole job is to keep sampling across a blip. A scrape that
     raised would end the watch at exactly the moment worth watching.
     """
 
@@ -76,7 +77,7 @@ def test_scrape_failure_is_a_measurement_not_an_exception(monkeypatch):
 
 
 def test_client_sockets_reports_recv_queue(monkeypatch):
-    """Depth, not just count: an EMPTY queue is what says nothing arrived."""
+    """Depth, not just count: an empty queue is what says nothing arrived."""
     out = (
         "State   Recv-Q Send-Q  Local Address:Port   Peer Address:Port\n"
         "ESTAB   0      0       10.0.0.2:51234       1.2.3.4:8000\n"

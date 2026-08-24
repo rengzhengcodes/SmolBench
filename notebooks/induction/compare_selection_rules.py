@@ -1,9 +1,10 @@
-"""Isolate the earliest-vs-newest ruling's effect on the induction conclusions.
+"""Isolate the EARLIEST-vs-NEWEST selection rule's effect on induction conclusions.
 
-Both trees carry the SAME seed set (including the 4 fresh ministral seeds that
-landed today), so the only difference between them is which logged attempt each
-of the 140 multi-attempt cells resolves to. Any change in the Holm rejection set
-is attributable to the selection rule and nothing else.
+Both trees carry the SAME seed set, including the 4 fresh ministral
+seeds that landed today. So the only difference between them is which
+logged attempt each of the 140 multi-attempt cells resolves to. Any
+change in the Holm rejection set is attributable to the selection rule,
+and nothing else.
 """
 import importlib
 import sys
@@ -15,6 +16,32 @@ S = Path("/tmp/claude-1001/-workspace-SmolBench/54dbdffb-0485-4ced-9231-fa52049d
 
 
 def run(tree: str) -> dict:
+    """Run the primary-contrast McNemar analysis against one scratch results tree.
+
+    Parameters
+    ----------
+    tree : str
+        Subdirectory name under `S` holding one full results tree, built
+        under one selection rule (for example, ``"ind_earliest"`` or
+        ``"ind_newest"``).
+
+    Returns
+    -------
+    dict of str -> dict
+        Maps each contrast label to a dict with keys ``p`` (exact
+        McNemar p-value), ``acc_a``, ``acc_b`` (per-arm accuracy),
+        ``n`` (paired sample size), and ``kind`` (the contrast's
+        classification from `significance_report.classify`).
+
+    Notes
+    -----
+    # Design: this function reloads `paired_analysis` and
+    # `significance_report` fresh from `tree`'s own copy of the modules
+    # on `sys.path`, and clears any cached `sys.modules` entries first.
+    # That lets it compare two on-disk result trees, each with its own
+    # analysis code snapshot, in the same process, without one import
+    # shadowing the other.
+    """
     for mod in list(sys.modules):
         if mod in ("power_analysis", "paired_analysis", "significance_report",
                    "_power_common", "run_study"):
@@ -36,6 +63,20 @@ def run(tree: str) -> dict:
 
 
 def holm(p, alpha=0.05):
+    """Apply the Holm step-down procedure to a p-value array.
+
+    Parameters
+    ----------
+    p : ndarray
+        p-values for the tests in one family.
+    alpha : float, default 0.05
+        Family-wise significance threshold.
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask, same shape as `p`.
+    """
     m = p.size
     order = np.argsort(p)
     rej = np.zeros(m, bool)

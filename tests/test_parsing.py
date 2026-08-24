@@ -1,13 +1,15 @@
-"""Answer extraction and output-contract compliance.
+"""Test answer extraction and output-contract compliance.
 
-The eval prompts demand a bare answer and nothing else. The original graders
-enforced that by parsing strictly, which made "the model was wrong" and "the
-model was right but ignored the format" the same event -- a distinction the
-induction ``noise_intens`` arm badly needs, because its whitespace padding
-degrades instruction following without touching the reasoning being measured.
+The eval prompts demand a bare answer and nothing else. The original
+graders enforced that by parsing strictly. That made "the model was
+wrong" and "the model was right but ignored the format" the same
+event, a distinction the induction ``noise_intens`` arm badly needs.
+Its whitespace padding degrades instruction following without touching
+the reasoning being measured.
 
-These tests pin both halves of the split: the answer that gets extracted, and
-the violation label that records how the response broke the contract.
+These tests pin both halves of the split: the answer that gets
+extracted, and the violation label that records how the response broke
+the contract.
 """
 
 import pytest
@@ -74,9 +76,9 @@ def test_numeric_compliant(text, expected):
 def test_tof_recoverable_violations(text, value, violation):
     """Right verdict, wrong shape: recovered AND flagged.
 
-    These are exactly the responses the whitespace-padded noise arm produces.
-    Scoring them as failures (the old behaviour) charged the model for
-    formatting when the question was answered correctly.
+    These are exactly the responses the whitespace-padded noise arm
+    produces. The old behavior scored them as failures, charging the
+    model for formatting when the question was answered correctly.
     """
     result = parse_tof(text)
     assert result.value is value
@@ -102,11 +104,12 @@ def test_tof_long_response_ending_in_verdict_is_recovered():
     ],
 )
 def test_numeric_recoverable_violations(text, value, violation):
-    """Integers behind prose/markup are recovered and flagged.
+    """Integers behind prose or markup are recovered and flagged.
 
-    ``"2520 // 8 = 315\\n\\n315"`` is the case that matters most: the original
-    rule took the FIRST integer and graded this as 2520 -- the operand, not
-    the result -- so the mark looked validly graded and was simply wrong.
+    ``"2520 // 8 = 315\\n\\n315"`` is the case that matters most. The
+    original rule took the FIRST integer and graded this as 2520, the
+    operand, not the result. So the mark looked validly graded and was
+    simply wrong.
     """
     result = parse_numeric(text)
     assert result.value == value
@@ -121,10 +124,11 @@ def test_numeric_recoverable_violations(text, value, violation):
 def test_numeric_evaluates_unevaluated_expressions(text, value):
     """A calculation is graded on what it computes, not on an operand.
 
-    Real responses from the periodic study: the model answered "2520/2" when
-    1260 was wanted. Picking the first integer scores the numerator (2520) and
-    picking the last scores the divisor (2) -- both wrong, while the model was
-    right. Only evaluating the expression grades what it actually said.
+    Real responses from the periodic study: the model answered "2520/2"
+    when 1260 was wanted. The first-integer rule scores the numerator
+    (2520), and the last-integer rule scores the divisor (2). Both are
+    wrong, while the model was right. Only expression evaluation grades
+    what it actually said.
     """
     result = parse_numeric(text)
     assert result.value == value
@@ -132,11 +136,12 @@ def test_numeric_evaluates_unevaluated_expressions(text, value):
 
 @pytest.mark.parametrize("text", ["9**9**9", "2520/0", "2520/7.5abc"])
 def test_numeric_refuses_unsafe_or_ill_formed_expressions(text):
-    """Exponentiation, division by zero and junk never evaluate.
+    """Exponentiation, division by zero, and junk never evaluate.
 
-    ``9**9**9`` is a denial-of-service rather than an answer, so Pow is not in
-    the allowlist and the expression is never computed -- the response falls
-    back to integer extraction instead of hanging the grader.
+    ``9**9**9`` is a denial-of-service rather than an answer, so Pow is
+    not in the allowlist, and the expression is never computed. The
+    response falls back to integer extraction instead of hanging the
+    grader.
     """
     result = parse_numeric(text)
     assert result.violation != "unevaluated-expression"
@@ -148,11 +153,11 @@ def test_numeric_refuses_unsafe_or_ill_formed_expressions(text):
 def test_absurdly_long_integers_do_not_raise(text):
     """A giant digit run yields no answer instead of crashing.
 
-    Python refuses int/str conversion past 4,300 digits, so an unguarded
-    ``int()`` in the grading path is a crash, not a bad grade. A degenerating
-    model really does emit these: one response carried a 20,379-digit run,
-    which propagated out of grade() and killed a live study mid-arm after
-    hours of GPU time.
+    Python refuses int/str conversion past 4,300 digits, so an
+    unguarded ``int()`` in the grading path is a crash, not a bad
+    grade. A degenerating model really does emit these. One response
+    carried a 20,379-digit run, which propagated out of grade() and
+    killed a live study mid-arm after hours of GPU time.
     """
     result = parse_numeric(text)
     assert result.value is None
@@ -162,9 +167,9 @@ def test_absurdly_long_integers_do_not_raise(text):
 def test_grade_survives_a_parser_exception():
     """A parser bug degrades one mark to invalid; it must not kill the run.
 
-    Grading runs after the expensive part, so an exception here throws away
-    work that retrying cannot recover -- and on a spot instance the box keeps
-    billing while nothing progresses.
+    The grading step runs after the expensive part. So an exception here
+    throws away work that retrying cannot recover. On a spot instance,
+    the box keeps billing while nothing progresses.
     """
     import smolbench.evals.openai_compat as oc
     import smolbench.evals.parsing as parsing_mod
@@ -204,9 +209,9 @@ def test_arithmetic_evaluation_cannot_execute_code():
 def test_degenerate_repetition_is_never_recovered():
     """Repetition collapse is not a parsing problem.
 
-    Observed live: Nemotron-Ultra-253B under the whitespace-padded noise arm
-    emitted 24,576 characters of "0" -- the whole completion budget -- on
-    every question. There is no answer in there to find.
+    Observed live: Nemotron-Ultra-253B, under the whitespace-padded
+    noise arm, emitted 24,576 characters of "0", the whole completion
+    budget, on every question. There is no answer in there to find.
     """
     collapse = "0" * 24576
     for result in (parse_numeric(collapse), parse_tof(collapse)):
@@ -217,12 +222,12 @@ def test_degenerate_repetition_is_never_recovered():
 def test_collapse_after_a_real_beginning_is_degenerate_not_truncated():
     """A response that starts fine and then devolves is a breakdown, not a cap.
 
-    Observed live: Olmo-3.1-32B-Think under the whitespace-padded noise arm
-    began reasoning and then emitted ~16,400 repeated U+2010 hyphens until the
-    16k completion budget ran out. Judging the whole string sees a wide
-    alphabet (the real prose at the front) and would call it TRUNCATED --
-    blaming the budget for the model breaking down, which is a materially
-    different finding.
+    Observed live: Olmo-3.1-32B-Think, under the whitespace-padded
+    noise arm, began reasoning, then emitted ~16,400 repeated U+2010
+    hyphens until the 16k completion budget ran out. If you judge the
+    whole string, you'd see a wide alphabet, the real prose at the
+    front, and call it TRUNCATED. That blames the budget for the model
+    breaking down, which is a materially different finding.
     """
     response = "Okay, let me work through the intervals carefully. " * 5 + "‐" * 16000
     result = parse_tof(response)
@@ -231,13 +236,13 @@ def test_collapse_after_a_real_beginning_is_degenerate_not_truncated():
 
 
 def test_phrase_level_collapse_is_degenerate():
-    """Looping a PHRASE is collapse even though the alphabet is wide.
+    """A looped PHRASE is collapse even though the alphabet is wide.
 
-    Llama-4-Maverick under the whitespace-padded noise arm looped
-    ``"## Step 1"`` for thousands of words. Every character-level test sees a
-    normal alphabet (letters, digits, punctuation), so without a word-level
-    check this got labelled ``multiple-values`` -- blaming the parser for what
-    is the model breaking down.
+    Llama-4-Maverick, under the whitespace-padded noise arm, looped
+    ``"## Step 1"`` for thousands of words. Every character-level test
+    sees a normal alphabet: letters, digits, punctuation. So without a
+    word-level check, this got labelled ``multiple-values``, blaming
+    the parser for what is the model breaking down.
     """
     result = parse_numeric("## Step 1\n\n" * 300)
     assert result.value is None
@@ -247,11 +252,11 @@ def test_phrase_level_collapse_is_degenerate():
 def test_vocabulary_collapse_over_a_whole_response_is_degenerate():
     """Loop-then-wander still counts, even when the tail looks varied.
 
-    Maverick's real responses looped a header for thousands of words and then
-    drifted into unrelated hallucinated text ending in a boxed number, so
-    neither the tail nor the alphabet looked wrong -- but the response used 67
-    distinct words across 4,746. A whole-response diversity ratio is what
-    catches that shape.
+    Maverick's real responses looped a header for thousands of words,
+    then drifted into unrelated hallucinated text ending in a boxed
+    number. So neither the tail nor the alphabet looked wrong, but the
+    response used 67 distinct words across 4,746. A whole-response
+    diversity ratio is what catches that shape.
     """
     looped = "## Step 1\n\n" * 400
     wandered = " ".join(f"unrelated token {i}" for i in range(20))
@@ -274,9 +279,10 @@ def test_ordinary_repetition_is_not_flagged_degenerate():
     """Formatting artefacts must not trip the detector.
 
     A horizontal rule, a run of trailing newlines, or varied prose that
-    happens to be long are all normal output. Only genuine looping counts --
-    a model that repeats one phrase for forty sentences has broken down, so
-    that case belongs in the degenerate tests above, not here.
+    happens to be long are all normal output. Only genuine looping
+    counts. A model that repeats one phrase for forty sentences has
+    broken down, so that case belongs in the degenerate tests above,
+    not here.
     """
     varied = " ".join(
         f"in year {i} the role passed to colour {i % 5}" for i in range(40)
@@ -289,10 +295,11 @@ def test_ordinary_repetition_is_not_flagged_degenerate():
 def test_truncated_reasoning_is_not_mined_for_a_verdict():
     """A chain cut off mid-thought stays invalid.
 
-    A permissive parser "recovered" 96% of invalids by matching a stray "no"
-    or the word "answer" inside reasoning that never concluded. Inventing
-    verdicts out of unfinished chains is worse than leaving them invalid, so
-    long responses are only trusted when they END in a verdict.
+    A permissive parser "recovered" 96% of invalids by matching a
+    stray "no" or the word "answer" inside reasoning that never
+    concluded. Invented verdicts from unfinished chains are worse than
+    leaving them invalid. So long responses are only trusted when
+    they END in a verdict.
     """
     chain = (
         "Okay, let's tackle this. Is 191 less than 1019? No, wait -- "
@@ -332,8 +339,9 @@ def test_conflicting_verdicts_take_the_last():
 def test_tof_agrees_with_strict_parser_where_strict_succeeds(text):
     """Where ``ToF.condition`` succeeded, the new parser must agree.
 
-    Guards the one thing that would silently rewrite already-collected
-    results: a recovery rule that changes a grade which previously parsed.
+    This guards the one thing that would silently rewrite
+    already-collected results: a recovery rule that changes a grade
+    which previously parsed.
     """
     assert parse_tof(text).value == ToF.condition(text)
 
@@ -358,9 +366,9 @@ def test_parse_for_dispatches_on_question_type():
 def test_grade_records_compliance_and_scores_recovered_answers():
     """A right answer in the wrong shape scores correct AND is flagged.
 
-    This is the whole point of the change: the noise arm's format breaks stop
-    being counted as reasoning failures, while remaining visible as format
-    failures.
+    This is the whole point of the change. The noise arm's format
+    breaks stop being counted as reasoning failures, while remaining
+    visible as format failures.
     """
     quiz = (
         ToF(prompt="q1", answer=False),
@@ -379,7 +387,7 @@ def test_grade_records_compliance_and_scores_recovered_answers():
 
 
 def test_grade_still_marks_genuinely_wrong_answers_wrong():
-    """Relaxing the format must not turn wrong answers into right ones."""
+    """Format leniency must not turn wrong answers into right ones."""
     quiz = (ToF(prompt="q", answer=True),)
     marks = grade(quiz, [("Answer: False", None)], "stub-model")
     assert marks.marks[0].score == 0
@@ -394,9 +402,10 @@ def test_grade_still_marks_genuinely_wrong_answers_wrong():
 def test_marks_without_compliance_field_still_load(tmp_path):
     """Replicate YAMLs written before this field existed must still load.
 
-    ``Marks.load`` builds each mark with ``Mark(**m)``, so the field has to
-    carry a default. None there means "not assessed", NOT "compliant" -- the
-    thousands of already-collected replicates predate the check.
+    ``Marks.load`` builds each mark with ``Mark(**m)``, so the field
+    has to carry a default. None there means "not assessed", NOT
+    "compliant": the thousands of already-collected replicates predate
+    the check.
     """
     path = tmp_path / "rep_1776.yaml"
     Marks(

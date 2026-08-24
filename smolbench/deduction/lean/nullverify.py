@@ -1,60 +1,63 @@
 """A verifier that verifies nothing -- for generation-only sweeps on the main venv.
 
-`smolbench.deduction.lean.runner.sweep` (and `run_cell`) never call into Lean
-directly: every Dojo interaction is reached through an injected `verifier`
-object (see `runner._default_verifier`), so the runner itself can import and
-run on the main Python 3.14 `.venv`, where `smolbench.deduction.lean.verify`
-is not importable at all (it requires `lean_dojo`, which pins
-``python<3.13`` -- see `verify.py`'s import guard). `NullVerifier` is a
-second concrete implementation of that same seam, alongside the real
-`smolbench.deduction.lean.verify` module and the offline test suite's fake
-verifiers: it duck-types every attribute `runner.py` calls on `verifier`, but
-every method returns an "unverified"/"skipped" placeholder instead of
-opening a Dojo session.
+`smolbench.deduction.lean.runner.sweep` (and `run_cell`) never call into
+Lean directly. Every Dojo interaction goes through an injected `verifier`
+object (see `runner._default_verifier`). This lets the runner itself
+import and run on the main Python 3.14 `.venv`, where
+`smolbench.deduction.lean.verify` is not importable at all (it requires
+`lean_dojo`, which pins ``python<3.13`` -- see `verify.py`'s import
+guard). `NullVerifier` is a second concrete implementation of that same
+seam, alongside the real `smolbench.deduction.lean.verify` module and the
+offline test suite's fake verifiers. It duck-types every attribute
+`runner.py` calls on `verifier`, but every method returns an
+"unverified"/"skipped" placeholder instead of opening a Dojo session.
 
 Two-phase workflow
 -------------------
 This exists to split a sweep into two independently-schedulable phases:
 
 1. **Generation**, on the main venv (no `lean_dojo`, no elan, no traced
-   mathlib4 checkout needed): run `sweep(config, run_dir, verifier=NullVerifier())`.
-   Every cell still calls the configured model and writes a row -- `verdict`
-   is just always `"unverified"` (or `"exception"`, for the same generation
-   failures a real verifier would also report as `"exception"`, since those
-   are constructed by `runner.py` itself, not by the verifier).
+   mathlib4 checkout needed): run
+   `sweep(config, run_dir, verifier=NullVerifier())`. Every cell still
+   calls the configured model and writes a row. `verdict` is just always
+   `"unverified"` (or `"exception"`, for the same generation failures a
+   real verifier would also report as `"exception"`, since `runner.py`
+   itself constructs those, not the verifier).
 2. **Verification**, on `.venv-lean`, as a separate later pass: replay the
-   candidate tails recorded by phase 1 against the real Dojo (not
-   implemented in this module -- this module's job stops at making phase 1
-   possible without `lean_dojo` installed).
+   candidate tails recorded by phase 1 against the real Dojo. This module
+   does not implement that replay -- its job stops at making phase 1
+   possible without `lean_dojo` installed.
 
 Why `smolbench.deduction.lean.verify` is never imported here
 --------------------------------------------------------------
 That is the entire point of this module. If `nullverify.py` imported
-`.verify` -- even lazily, even only inside a method nobody calls on the main
-venv -- Python would still need to resolve the `smolbench.deduction.lean.verify`
-module object to define the function/method that references it, which reruns
-`.verify`'s top-level `import lean_dojo` and raises `ImportError` on any
-interpreter without `lean_dojo` installed (see `verify.py`'s own import
-guard for why that import is unconditional there). A lazy *function-body*
-import only defers *executing* the import to call time; it does not change
-that importing `nullverify` itself must stay independent of it. So this
-module defines its own small result dataclasses (`NullReplayResult`,
+`.verify` -- even lazily, even only inside a method nobody calls on the
+main venv -- Python would still need to resolve the
+`smolbench.deduction.lean.verify` module object, to define the
+function/method that references it. That resolution reruns `.verify`'s
+top-level `import lean_dojo` and raises `ImportError` on any interpreter
+without `lean_dojo` installed (see `verify.py`'s own import guard for why
+that import is unconditional there). A lazy *function-body* import only
+defers *executing* the import to call time; it does not change that
+importing `nullverify` itself must stay independent of it. So this module
+defines its own small result dataclasses (`NullReplayResult`,
 `NullProofResult`) that mirror the field names of `verify.ReplayResult` /
-`verify.ProofResult` exactly, rather than importing or subclassing the real
-ones.
+`verify.ProofResult` exactly, rather than importing or subclassing the
+real ones.
 
 Why "unverified" / "skipped" are deliberately excluded from `runner.py`'s failure set
 ----------------------------------------------------------------------------------------
-`runner.SANITY_FAILURE_VERDICTS` -- the set of sanity-replay verdicts that
-suppress cell generation for a theorem -- intentionally does NOT contain
+`runner.SANITY_FAILURE_VERDICTS` is the set of sanity-replay verdicts that
+suppress cell generation for a theorem. It intentionally does NOT contain
 `"skipped"` (the only verdict `replay_ground_truth` below can produce). A
 verdict that is neither `"success"` nor a positive, explicit failure must
-pass *through* the sanity gate rather than exclude the theorem: this module
-never actually replays anything, so it has no basis to claim the ground
-truth failed, and excluding every theorem (because none of them are ever
-`"success"`) would make a generation-only sweep produce zero cells. The
-real verification pass, run later under `.venv-lean`, is what actually
-answers the sanity question.
+pass *through* the sanity gate rather than exclude the theorem. This
+module never actually replays anything, so it has no basis to claim the
+ground truth failed. If it excluded every theorem instead (because none
+of them are ever `"success"`), a generation-only sweep would produce zero
+cells.
+The real verification pass, run later under `.venv-lean`, is what
+actually answers the sanity question.
 """
 
 from __future__ import annotations
@@ -70,13 +73,13 @@ from .corpus import BenchmarkTheorem
 class NullReplayResult:
     """Placeholder outcome of a (never-attempted) ground-truth replay.
 
-    Field-for-field mirror of `smolbench.deduction.lean.verify.ReplayResult`
-    -- same names, same order -- so `runner.py` code that reads a real
-    `ReplayResult`'s attributes (``sanity.verdict``, ``sanity.tactics_applied``,
-    ``sanity.tactics_total``, ``sanity.error``, when building the sweep's
-    per-theorem sanity row) works unchanged against this class. Returned
-    exclusively by `NullVerifier.replay_ground_truth`, always with
-    ``verdict="skipped"``.
+    This is a field-for-field mirror of
+    `smolbench.deduction.lean.verify.ReplayResult` -- same names, same
+    order. `runner.py` code that reads a real `ReplayResult`'s attributes
+    (``sanity.verdict``, ``sanity.tactics_applied``, ``sanity.tactics_total``,
+    ``sanity.error``, when building the sweep's per-theorem sanity row)
+    works unchanged against this class. `NullVerifier.replay_ground_truth`
+    returns this exclusively, always with ``verdict="skipped"``.
     """
 
     #: The theorem's `full_name`.
@@ -100,18 +103,20 @@ class NullReplayResult:
 class NullProofResult:
     """Placeholder outcome of a (never-attempted) proof-tail verification.
 
-    Field-for-field mirror of `smolbench.deduction.lean.verify.ProofResult`
-    -- same three positional fields (`theorem`, `verdict`, `tail_tried`)
-    followed by the same two optional keyword fields (`error`,
-    `final_state_pp`) -- so `runner.py` can construct one exactly as it
-    constructs a real `ProofResult`:
+    This is a field-for-field mirror of
+    `smolbench.deduction.lean.verify.ProofResult` -- same three positional
+    fields (`theorem`, `verdict`, `tail_tried`), followed by the same two
+    optional keyword fields (`error`, `final_state_pp`). This lets
+    `runner.py` construct one exactly as it constructs a real
+    `ProofResult`:
     ``verifier.ProofResult(theorem_full_name, "exception", candidate_tail, error="...")``.
-    That call shape is not hypothetical: `runner.py`'s own generation-
+
+    That call shape is not hypothetical. `runner.py`'s own generation-
     exception handlers build a `ProofResult` (real or null) directly,
-    bypassing `try_tail`/`verify_proof_tail` entirely, so this class's
-    `verdict` is not restricted to ``"unverified"`` in practice -- a
+    bypassing `try_tail`/`verify_proof_tail` entirely. So this class's
+    `verdict` is not restricted to ``"unverified"`` in practice: a
     generation failure still reports whatever verdict `runner.py` chooses
-    (typically ``"exception"``), only the *actual proof-checking* verdicts
+    (typically ``"exception"``). Only the *actual proof-checking* verdicts
     (`NullVerifier.try_tail` / `NullVerifier.verify_proof_tail`) are always
     ``"unverified"``.
     """
@@ -142,31 +147,32 @@ class NullVerifier:
     `runner.py` constructs results directly via `verifier.ProofResult(...)`
     in its generation-exception handlers -- see `NullProofResult`),
     `replay_ground_truth`, `open_at_step`, `try_tail`, and
-    `verify_proof_tail`. Every method is a real instance method (unlike the
-    real `smolbench.deduction.lean.verify`, which is a plain module of
-    top-level functions) -- callers pass an *instance* of this class as
-    `sweep`'s/`run_cell`'s `verifier=` argument, e.g.
+    `verify_proof_tail`. Every method is a real instance method. This
+    differs from the real `smolbench.deduction.lean.verify`, which is a
+    plain module of top-level functions. Callers pass an *instance* of
+    this class as `sweep`'s/`run_cell`'s `verifier=` argument, e.g.
     ``sweep(config, run_dir, verifier=NullVerifier())``.
 
     Notes
     -----
-    Stateless: every method's output depends only on its own arguments, no
-    instance attributes are read or written, and no I/O of any kind is
-    performed (no Dojo session, no filesystem, no network). Constructing
-    and reusing a single `NullVerifier()` across an entire sweep is
-    therefore always safe, including across threads (the runner's
-    concurrent-generation path shares one `verifier` object across worker
-    threads regardless of which concrete verifier is in use).
+    This class is stateless. Every method's output depends only on its
+    own arguments; no instance attributes are read or written, and no I/O
+    of any kind happens (no Dojo session, no filesystem, no network).
+    A caller can therefore always construct a single `NullVerifier()` and
+    reuse it across an entire sweep safely, including across threads (the
+    runner's concurrent-generation path shares one `verifier` object
+    across worker threads regardless of which concrete verifier is in
+    use).
     """
 
-    #: See `NullProofResult`. Accessed as `verifier.ProofResult(...)` by
-    #: `runner.py`'s generation-exception handlers; a class attribute that
+    #: See `NullProofResult`. `runner.py`'s generation-exception handlers
+    #: access this as `verifier.ProofResult(...)`. A class attribute that
     #: is itself a class (not a function) is not subject to Python's
     #: descriptor/method-binding protocol, so `some_instance.ProofResult(...)`
-    #: calls `NullProofResult(...)` directly -- no implicit `self` argument
-    #: is injected, exactly matching how `verify.ProofResult(...)` is called
-    #: when `verifier` is the real `verify` module instead of an instance of
-    #: this class.
+    #: calls `NullProofResult(...)` directly. No implicit `self` argument
+    #: is injected, exactly matching how `verify.ProofResult(...)` is
+    #: called when `verifier` is the real `verify` module instead of an
+    #: instance of this class.
     ProofResult = NullProofResult
 
     def replay_ground_truth(self, bt: BenchmarkTheorem, timeout: int = 600) -> NullReplayResult:
@@ -213,8 +219,8 @@ class NullVerifier:
         k : int
             Accepted for interface parity; unused. Unlike the real
             `open_at_step`, this never raises `ValueError` for an
-            out-of-range `k` -- there is no prefix to replay against, so
-            there is nothing for an out-of-range `k` to break.
+            out-of-range `k`. There is no prefix to replay against, so an
+            out-of-range `k` has nothing to break.
         timeout : int, default 600
             Accepted for interface parity; unused.
 
@@ -229,10 +235,11 @@ class NullVerifier:
 
         Notes
         -----
-        Opens no resource, so there is nothing to clean up on exit; the
-        `contextmanager` wrapping exists only so this callable supports the
-        `with ... as (dojo, state):` protocol `runner.py` uses, matching the
-        real `open_at_step`'s calling convention exactly.
+        This opens no resource, so there is nothing to clean up on exit.
+        The `contextmanager` wrapping exists only so this callable
+        supports the `with ... as (dojo, state):` protocol `runner.py`
+        uses, matching the real `open_at_step`'s calling convention
+        exactly.
         """
         yield None, None
 

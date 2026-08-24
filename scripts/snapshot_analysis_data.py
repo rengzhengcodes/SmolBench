@@ -2,16 +2,16 @@
 
 WHY THIS EXISTS
 ---------------
-Every byte of this study already lives in S3 -- nothing is only on the operating
-host. But it lives in the layout the RUNNERS wanted, which is not the layout an
-analyst wants:
+Every byte of this study already lives in S3; nothing lives only on the
+operating host. But it lives in the layout the RUNNERS wanted, which is
+not the layout an analyst wants:
 
     induction/<model>/seed=<s>/<arm>--<ts>.yaml     # keyed by model already
     deduction/runs/scaling_<model>/...              # 'runs/', and a 'scaling_' prefix
 
-so the two legs of the same model do not sit under a common name, and the
-deduction leg is buried a level deeper. This publishes a snapshot keyed the way
-analysis reads it -- leg, then model:
+So the two legs of the same model do not sit under a common name, and the
+deduction leg sits one level deeper. This script publishes a snapshot
+keyed the way analysis reads it: leg, then model.
 
     <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
     <dest>/deduction/<model>/verified_rows.jsonl    # the analysis input
@@ -23,23 +23,27 @@ analysis reads it -- leg, then model:
 
 A SNAPSHOT, NOT A MOVE
 ----------------------
-Sources are never modified or deleted. The study bucket is an append-only
-experiment log and stays exactly as it is; this only ever writes under `--dest`.
-Re-running is safe: an object already present at the destination with a matching
-size is skipped, so an interrupted run resumes.
+This script never modifies or deletes a source object. The study bucket
+is an append-only experiment log, and it stays exactly as it is; this
+script only ever writes under `--dest`. You can safely re-run this
+script: it skips an object already present at the destination with a
+matching size, so an interrupted run resumes.
 
-Copies are SERVER-SIDE (`copy_object` with ``TaggingDirective="REPLACE"`` --
-the plain default needs ``s3:GetObjectTagging``, which the scoped operator key
-deliberately lacks), so ~4.5 GB across ~55k objects never transits the host.
-Every copy is size-verified against its source before being counted.
+Copies run SERVER-SIDE (`copy_object` with ``TaggingDirective="REPLACE"``;
+the plain default reads the source's tags, which needs
+``s3:GetObjectTagging``, a permission the scoped operator key deliberately
+lacks). So the ~4.5 GB across ~55k objects never transits the host. This
+script verifies every copy's size against its source before it counts
+the copy.
 
 SUPERSEDED FILES ARE INCLUDED ON PURPOSE
 ----------------------------------------
-Files named ``*_SUPERSEDED-*``, ``*_STALE-*`` and ``*_BROKEN-*`` are copied too.
-They are the audit trail for the 2026-08-15/16 repairs: the mixed-hardware rows
-that nemotron-3-nano-4b's re-run replaced, and the verification output that
-predates six lanes being regenerated. An analyst who wants to check what changed
-needs them; their names say plainly that they are not the current data.
+This script also copies files named ``*_SUPERSEDED-*``, ``*_STALE-*``,
+and ``*_BROKEN-*``. They are the audit trail for the 2026-08-15/16
+repairs: the mixed-hardware rows that nemotron-3-nano-4b's re-run
+replaced, and the verification output that predates six lanes being
+regenerated. An analyst who wants to check what changed needs these
+files; their names say plainly that they are not the current data.
 
 USAGE
     scripts/snapshot_analysis_data.py --dry-run
@@ -61,7 +65,8 @@ sys.path.insert(0, str(REPO_ROOT))
 BUCKET = "smolbench-results-414266451290"
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
-#: Provenance documents copied alongside the data so the snapshot explains itself.
+#: Provenance documents this script copies alongside the data, so the
+#: snapshot explains itself.
 PROVENANCE_DOCS = (
     "notebooks/CONTAMINATION_INVENTORY_2026-08-15.md",
     "notebooks/induction/CONFOUND_AUDIT_2026-08-13.md",
@@ -76,11 +81,22 @@ def _s3():
 
 
 def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
-    """Returns [(leg, model, source_key, size)] for every study object.
+    """Return (leg, model, source_key, size) for every study object.
 
-    The two legs are keyed differently at the source, so the model name is
-    recovered differently for each -- that asymmetry is the whole reason this
-    script exists.
+    The source keys the two legs differently, so this function recovers
+    the model name differently for each. This asymmetry is the whole
+    reason this script exists.
+
+    Parameters
+    ----------
+    client : Any
+        A boto3 S3 client.
+
+    Returns
+    -------
+    list[tuple[str, str, str, int]]
+        One ``(leg, model, source_key, size)`` tuple per study object,
+        excluding objects matched by `SKIP_SUBSTRINGS`.
     """
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -93,29 +109,55 @@ def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
                 rest = key[len(prefix):]
                 model = rest.split("/", 1)[0]
                 if leg == "deduction":
-                    # 'scaling_qwen3.5-27b' -> 'qwen3.5-27b', so both legs of one
-                    # model land under the same directory name.
+                    # 'scaling_qwen3.5-27b' -> 'qwen3.5-27b'. This puts both
+                    # legs of one model under the same directory name.
                     model = model[len("scaling_"):] if model.startswith("scaling_") else model
                 if "/" not in rest:
-                    continue  # a stray object directly under the prefix
+                    continue  # skip a stray object directly under the prefix
                 tail = rest.split("/", 1)[1]
                 out.append((leg, model, key, obj["Size"]))
     return out
 
 
 def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
-    """Server-side copy with size verification. Returns 'copied'|'skipped'."""
+    """Copy one object server-side, and verify its size.
+
+    Parameters
+    ----------
+    client : Any
+        A boto3 S3 client.
+    src_key : str
+        Source object key, within `BUCKET`.
+    dest_key : str
+        Destination object key, within `BUCKET`.
+    size : int
+        Expected object size in bytes, used both to decide whether to
+        skip an already-present destination object and to verify the
+        copy afterward.
+
+    Returns
+    -------
+    str
+        ``"skipped"`` if a destination object of the same size already
+        exists, otherwise ``"copied"``.
+
+    Raises
+    ------
+    RuntimeError
+        If the copied object's size does not match `size`.
+    """
     try:
         head = client.head_object(Bucket=BUCKET, Key=dest_key)
         if head["ContentLength"] == size:
             return "skipped"
-    except Exception:  # noqa: BLE001 -- absent destination is the normal case
+    except Exception:  # noqa: BLE001 -- an absent destination is the normal case
         pass
     client.copy_object(
         Bucket=BUCKET, Key=dest_key,
         CopySource={"Bucket": BUCKET, "Key": src_key},
-        # REPLACE, not the default COPY: the default reads the source's tags and
-        # so requires s3:GetObjectTagging, which the operator key does not have.
+        # Use REPLACE, not the default COPY: the default reads the
+        # source's tags, which needs s3:GetObjectTagging, a permission
+        # the operator key does not have.
         TaggingDirective="REPLACE",
     )
     got = client.head_object(Bucket=BUCKET, Key=dest_key)["ContentLength"]
@@ -156,10 +198,11 @@ def main() -> int:
         logging.info("--dry-run: nothing written.")
         return 0
 
-    # Copies run CONCURRENTLY. Each is two S3 round trips (copy, then verify),
-    # so serially 55k objects is ~5 hours of pure latency while moving no bytes
-    # through this host -- measured at 175 objects/min before this change.
-    # Threads are the right tool: the work is entirely network wait.
+    # Copies run CONCURRENTLY. Each copy is two S3 round trips (copy, then
+    # verify). Serially, 55k objects would take about 5 hours of pure
+    # latency, while moving no bytes through this host. A serial run
+    # measured 175 objects/min before this change. Threads are the right
+    # tool here: the work is entirely network wait.
     counts = collections.Counter()
     done = 0
 

@@ -1,61 +1,71 @@
-"""tp=4 extension of the 2026-08-16 hinge: does the determinism bundle survive
-multi-GPU tensor parallelism?
+"""Probe whether the determinism bundle survives multi-GPU tensor parallelism.
 
-WHY
+This is the tp=4 extension of the 2026-08-16 hinge probe.
+
+Why
 ---
 `notebooks/DETERMINISM_PLAN_2026-08-16.md` section 3 certified the bundle
 (`--no-enable-prefix-caching --max-num-seqs 1 --enforce-eager --seed 0`) at
-**tp=1** on a single L40S: 8/8 byte-identical within one process for both
-nemotron-3-nano-4b and ministral-3-3b. 18 of 22 deploy specs serve at tp=4 or
-tp=8, where multi-GPU all-reduce ordering is an untested nondeterminism source
-(the docs carry exactly that scope caveat). This probe measures it.
+**tp=1** on a single L40S: 8/8 byte-identical within one process, for both
+nemotron-3-nano-4b and ministral-3-3b. 18 of 22 deploy specs serve at tp=4
+or tp=8, where multi-GPU all-reduce ordering is an untested nondeterminism
+source (the docs carry exactly that scope caveat). This probe measures it.
 
-DESIGN (one g6e.12xlarge = 4x L40S, PCIe, no NVLink)
-  arm 1  det@tp4    ministral-3-3b under the bundle  -> THE VERDICT ARM
-  arm 2  stock@tp4  ministral-3-3b under the study-era stock config
-                    -> POSITIVE CONTROL: tp=1 stock was 0/8 (all eight
-                       prompts diverged). If stock@tp4 is also ~0/8 the probe
-                       demonstrably still DETECTS nondeterminism on this box,
-                       so an 8/8 det arm cannot be "the probe went blind".
-  arm 3  nemotron det@tp4 (optional, time/budget permitting)
+Design (one g6e.12xlarge = 4x L40S, PCIe, no NVLink)
+----------------------------------------------------
+  arm 1  det@tp4    ministral-3-3b under the bundle. THE VERDICT ARM.
+  arm 2  stock@tp4  ministral-3-3b under the study-era stock config.
+                     POSITIVE CONTROL: tp=1 stock was 0/8 (all eight
+                     prompts diverged). If stock@tp4 is also ~0/8, the
+                     probe demonstrably still DETECTS nondeterminism on
+                     this box, so an 8/8 det arm cannot be "the probe
+                     went blind".
 
-Protocol is the hinge's, unchanged: the same 8 deterministically-selected real
-deduction prompts, same seed/temperature/max_tokens, two back-to-back passes
-within ONE server process, byte-compared.
+A separate run against nemotron-3-nano-4b (pass ``--model
+nemotron-3-nano-4b``) repeats the det arm on that model, time and budget
+permitting.
 
-PRE-COMMITTED RULES (fixed before any data was seen)
-  * tp GATE. ministral-3-3b has 32 attention heads; g6e.12xlarge has 4 GPUs, so
-    ec2.derive_tp -> gcd(32,4)=4 and serve_model POSTs tp=4 to the agent, which
-    passes `--tensor-parallel-size 4`. As of 2026-08-23 this is ASSERTED from
-    the CONTAINER's own engine-config log line (`tp8_hinge_probe.tp_gate`,
-    fed the output of `capture_serve_log`), NOT from the recorded launch
-    payload -- the payload can only confirm the driver agrees with itself and
-    cannot detect a container that actually came up serving a different tp,
-    which is exactly the failure mode this guard exists for (D5.3). The
-    payload's own `tp` readback is still recorded and cross-checked against
-    the container's; the two disagreeing aborts the arm rather than banking
-    either. An unparseable or absent engine-config capture also aborts the
-    arm -- it never silently falls back to the payload. A mismatch (or an
-    unparseable log) aborts the arm before a single prompt is sent.
-    Certifying tp=4 from a tp=1 container is the failure mode this guard
-    exists for.
-  * EMPTY ROWS ARE EXCLUDED ONLY WHEN BOTH PASSES ARE EMPTY (D8.3 correction;
-    see `guarded_compare` below). Streaming transport is on and the hinge's
-    retry guard is reused; the retry trigger itself -- re-ask once on a
-    length <= 1 delivery -- is unchanged. But a row that is STILL length <= 1
-    after the retry is no longer automatically "unmeasured": a row where
-    exactly ONE pass came back empty and the other did not is the single most
-    DIVERGENT outcome the probe can observe, stays IN the identity
-    denominator, and is named under `one_sided_empty_rows`. Only a row where
-    BOTH passes are still <= 1 chars after the retry is excluded as a true
-    non-event, named under `excluded_empty_rows`.
-  * ARM-LEVEL CHECKPOINTS. A spot reclaim between P1 and P2 kills the server
-    process; resuming P2 against a new process would silently convert a
-    within-process test into a cross-process one (measured cross-process flip
-    rate 9.5%, plan section 6.2) and could manufacture a refutation. Completed
-    arms persist; an interrupted arm is re-run from P1.
+The protocol is the hinge's, unchanged: the same 8 deterministically-selected
+real deduction prompts, the same seed/temperature/max_tokens, two
+back-to-back passes within ONE server process, byte-compared.
 
-USAGE
+Pre-committed rules (fixed before any data was seen)
+----------------------------------------------------
+  * tp GATE. ministral-3-3b has 32 attention heads; g6e.12xlarge has 4
+    GPUs. So ec2.derive_tp -> gcd(32,4)=4, and serve_model POSTs tp=4 to
+    the agent, which passes `--tensor-parallel-size 4`. As of 2026-08-23
+    this is ASSERTED from the CONTAINER's own engine-config log line
+    (`tp8_hinge_probe.tp_gate`, fed the output of `capture_serve_log`),
+    NOT from the recorded launch payload. The payload can only confirm
+    the driver agrees with itself. It cannot detect a container that
+    actually came up serving a different tp: certifying tp=4 from a
+    tp=1 container is exactly the failure mode this guard exists for
+    (D5.3). The payload's own `tp` readback is still recorded and
+    cross-checked against the container's. The two disagreeing aborts
+    the arm, rather than banking either. An unparseable or absent
+    engine-config capture also aborts the arm; it never silently falls
+    back to the payload. A mismatch (or an unparseable log) aborts the
+    arm before a single prompt is sent.
+  * EMPTY ROWS ARE EXCLUDED ONLY WHEN BOTH PASSES ARE EMPTY (D8.3
+    correction; see `guarded_compare` below). Streaming transport is on,
+    and this probe reuses the hinge's retry guard. The retry trigger
+    itself, re-ask once on a length <= 1 delivery, is unchanged. But a
+    row that is STILL length <= 1 after the retry is no longer
+    automatically "unmeasured". A row where exactly ONE pass came back
+    empty and the other did not is the single most DIVERGENT outcome the
+    probe can observe. It stays IN the identity denominator, named under
+    `one_sided_empty_rows`. Only a row where BOTH passes are still <= 1
+    chars after the retry is excluded as a true non-event, named under
+    `excluded_empty_rows`.
+  * ARM-LEVEL CHECKPOINTS. A spot reclaim between P1 and P2 kills the
+    server process. If P2 resumed against a new process, that would
+    silently convert a within-process test into a cross-process one
+    (measured cross-process flip rate 9.5%, plan section 6.2), and could
+    manufacture a refutation. Completed arms persist. This script
+    re-runs an interrupted arm from P1.
+
+Usage
+-----
     set -a; . notebooks/ec2-operator.env; . notebooks/deduction/keys.env; set +a
     unset EC2_EXPERIMENT_TAG
     .venv/bin/python <this>/tp4_hinge_probe.py --arms det,stock
@@ -101,15 +111,15 @@ def _load_hinge():
 
 
 def _load_tp8():
-    """Loads `tp8_hinge_probe.py` by path, mirroring `_load_hwprobe`/`_load_hinge`.
+    """Load `tp8_hinge_probe.py` by path, mirroring `_load_hwprobe`/`_load_hinge`.
 
     Design (D5.3): the CONTAINER-reading tp gate (`tp_gate`) and the
-    authenticated serve-log capture (`capture_serve_log`) both already exist
-    in `tp8_hinge_probe.py`. Reusing them here rather than duplicating their
-    logic in this file is required by the directive that introduced this
-    function -- a second, independently-drifting copy of a safety gate is
-    exactly the kind of half-applied fix `test_guarded_compare_excludes_only_
-    both_empty_rows` exists to catch for `guarded_compare`.
+    authenticated serve-log capture (`capture_serve_log`) both already
+    exist in `tp8_hinge_probe.py`. The directive that introduced this
+    function requires reuse over duplication: a second,
+    independently-drifting copy of a safety gate is exactly the kind of
+    half-applied fix `test_guarded_compare_excludes_only_both_empty_rows`
+    exists to catch for `guarded_compare`.
     """
     spec = importlib.util.spec_from_file_location(
         "tp8_hinge_probe", REPO_ROOT / "scripts" / "tp8_hinge_probe.py")
@@ -120,30 +130,32 @@ def _load_tp8():
 
 
 def sha_table(passes: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
-    """SHA + length for EVERY row, identical ones included.
+    """Return SHA + length for EVERY row, identical ones included.
 
-    The tp=1 hinge JSON stores digests only for DIFFERING rows, which is why no
-    tp=1-vs-tp=4 byte comparison is possible from the archive. Recording all of
-    them here makes the next such comparison free.
+    The tp=1 hinge JSON stores digests only for DIFFERING rows, which is
+    why no tp=1-vs-tp=4 byte comparison is possible from the archive. This
+    function records all of them here, so the next such comparison is
+    free.
     """
     return {p: {"sha256_12": hashlib.sha256(t.encode()).hexdigest()[:12], "len": len(t)}
             for p, t in sorted(passes.items())}
 
 
 def guarded_compare(hw, a: Dict[str, str], b: Dict[str, str]) -> Dict[str, Any]:
-    """hw.compare() with the pre-committed empty-row exclusion applied.
+    """Apply the pre-committed empty-row exclusion to hw.compare().
 
     A row is "empty" (length <= 1) because the stored text is
-    ``reasoning + "\\x00" + content``: a row with neither channel populated is
-    exactly the one separator byte. A row is excluded from the identity
-    denominator ONLY when BOTH passes are empty -- that is the sole case where
-    "nothing was measured" is a true description. A row where exactly ONE
-    side is empty is not unmeasured, it is the single most DIVERGENT outcome
-    the probe can observe (one pass produced real text, the other produced
-    none) and MUST stay in the denominator, entering ``n``/``diffs`` through
-    ``hw.compare`` like any other disagreement; it is additionally surfaced in
-    ``one_sided_empty_rows`` so it can be inspected without re-deriving it
-    from the diff list.
+    ``reasoning + "\\x00" + content``. A row with neither channel
+    populated is exactly the one separator byte. A row is excluded from
+    the identity denominator ONLY when BOTH passes are empty: that is the
+    sole case where "nothing was measured" is a true description. A row
+    where exactly ONE side is empty is not unmeasured. It is the single
+    most DIVERGENT outcome the probe can observe (one pass produced real
+    text, the other produced none), and MUST stay in the denominator,
+    entering ``n``/``diffs`` through ``hw.compare`` like any other
+    disagreement. This function also surfaces it in
+    ``one_sided_empty_rows``, so it can be inspected without re-deriving
+    it from the diff list.
 
     Parameters
     ----------
@@ -178,14 +190,14 @@ def guarded_compare(hw, a: Dict[str, str], b: Dict[str, str]) -> Dict[str, Any]:
     instead of the both-sides ``and`` below). The incident that forced this
     fix: in the moe run-2 stock control, prompt
     ``CategoryTheory.Limits.Types.Pushout.condition/prompts/hint-2.md`` had
-    P1 = 83,661 characters (sha ``1e6e5acf9886``) and P2 = 1 character. That
-    P2 was NOT a non-event -- it was a 106,545-character reasoning-only
+    P1 = 83,661 characters (sha ``1e6e5acf9886``) and P2 = 1 character.
+    That P2 was NOT a non-event. It was a 106,545-character reasoning-only
     cap-hit that the client was, at the time, discarding on delivery (a
-    separate, since-fixed defect). One pass produced 83k characters and the
-    other produced nothing, the most divergent outcome available, and the old
-    rule scored it "excluded (empty)", turning a 0/4 control into a reported
-    0/3. The both-empty rule closes that hole: a one-sided empty row can never
-    be counted as agreement (see
+    separate, since-fixed defect). One pass produced 83k characters, and
+    the other produced nothing: the most divergent outcome available. The
+    old rule scored it "excluded (empty)", turning a 0/4 control into a
+    reported 0/3. The both-empty rule closes that hole. A one-sided empty
+    row can never be counted as agreement (see
     ``test_guarded_compare_one_sided_row_can_never_be_identical``), so
     admitting it to the denominator can only ever lower the measured rate.
     """
@@ -204,15 +216,16 @@ def guarded_compare(hw, a: Dict[str, str], b: Dict[str, str]) -> Dict[str, Any]:
 
 
 def _stock_control_str(report: Dict[str, Any]) -> Optional[str]:
-    """``"identical/n"`` for the sibling `stock` positive control, or `None`.
+    """Return ``"identical/n"`` for the sibling `stock` positive control, or `None`.
 
-    Design (D8): `hardware_equivalence_probe.verdict_line`'s `stock_control`
-    parameter wants a short summary of the STOCK arm's own within-process
-    byte comparison, so a HOLD verdict names the positive control it was
-    banked alongside -- the exact provenance that was missing when the tp=8
-    dense HOLD was reported next to a `stock` control that had collected zero
-    rows. Factored out here (rather than inlined at the `det` and `stock` arm
-    call sites) so the two cannot independently drift.
+    Design (D8): `hardware_equivalence_probe.verdict_line`'s
+    `stock_control` parameter wants a short summary of the STOCK arm's own
+    within-process byte comparison, so a HOLD verdict names the positive
+    control it was banked alongside. This is the exact provenance that
+    was missing when the tp=8 dense HOLD was reported next to a `stock`
+    control that had collected zero rows. This function is factored out
+    here, rather than inlined at the `det` and `stock` arm call sites, so
+    the two cannot independently drift.
 
     Parameters
     ----------
@@ -223,14 +236,15 @@ def _stock_control_str(report: Dict[str, Any]) -> Optional[str]:
     -------
     str or None
         ``f"{identical}/{n}"`` when the `stock` arm's own
-        ``within_process_baseline`` has already been recorded in `report`,
-        else `None` -- the stock arm has not run yet, is still in progress,
-        or failed before producing a comparison. `None` is the literal signal
-        `verdict_line` renders as ``"absent"``.
+        ``within_process_baseline`` has already been recorded in
+        `report`, else `None`. `None` covers: the stock arm has not run
+        yet, is still in progress, or failed before producing a
+        comparison. `None` is the literal signal `verdict_line` renders
+        as ``"absent"``.
 
     Notes
     -----
-    Pure and side-effect-free: reads `report`, mutates nothing.
+    Pure and side-effect-free. Reads `report`, mutates nothing.
     """
     c = (report.get("arms", {}).get("stock", {}) or {}).get("within_process_baseline")
     if not c:
@@ -239,13 +253,14 @@ def _stock_control_str(report: Dict[str, Any]) -> Optional[str]:
 
 
 def main() -> int:
-    # Design (D8.2): loaded before the argparse parser is built so
-    # --sensitivity-max-tokens can default to hw.MAX_TOKENS directly rather
-    # than duplicating its literal value here, which would silently drift if
-    # the study's own token budget ever changed. Safe to load this early:
-    # neither this module nor `smolbench.evals.ec2` reads any environment
-    # variable at import time (only inside functions, after the env vars this
-    # driver sets below are already in place).
+    # Design (D8.2): this loads before the argparse parser is built, so
+    # --sensitivity-max-tokens can default to hw.MAX_TOKENS directly,
+    # rather than duplicating its literal value here (which would
+    # silently drift if the study's own token budget ever changed). It is
+    # safe to load this early: neither this module nor
+    # `smolbench.evals.ec2` reads any environment variable at import
+    # time. They read env vars only inside functions, after the env vars
+    # this driver sets below are already in place.
     hw = _load_hwprobe()
 
     ap = argparse.ArgumentParser()
@@ -376,12 +391,13 @@ def main() -> int:
                     cfg = ec2.server_config(args.model) or {}
                     entry["server_config"] = cfg
                     entry["fingerprint"] = hinge.fingerprint(state, args.model)
-                    # Design (D5.3): capture the serve log UNCONDITIONALLY,
-                    # not only from the `except` branch below -- a
-                    # SUCCESSFUL arm previously recorded nothing about which
-                    # tp the container actually came up serving, leaving
-                    # `served_tp` (the driver's own readback) as the only
-                    # evidence on file even though the run went fine.
+                    # Design (D5.3): this captures the serve log
+                    # UNCONDITIONALLY, not only from the `except` branch
+                    # below. A SUCCESSFUL arm previously recorded nothing
+                    # about which tp the container actually came up
+                    # serving. That left `served_tp` (the driver's own
+                    # readback) as the only evidence on file, even though
+                    # the run went fine.
                     entry["serve_log"] = tp8.capture_serve_log(state)
                     entry["mechanism_evidence"] = hw.mechanism_evidence(entry["serve_log"])
                     if entry["mechanism_evidence"] == "UNMEASURED":
@@ -393,15 +409,15 @@ def main() -> int:
                             "remains fully reportable regardless.", arm)
                     save()
                     # Design (D5.3): the gate now reads the CONTAINER's own
-                    # engine-config line via tp8.tp_gate, not `served_tp` --
+                    # engine-config line via tp8.tp_gate, not `served_tp`.
                     # `served_tp` is only the value the driver itself
-                    # computed and POSTed, so it can only confirm the driver
-                    # agrees with itself and cannot detect a container that
-                    # actually came up at a different tp. tp_gate raises
-                    # RuntimeError on any mismatch or unparseable capture;
-                    # the surrounding `except` below records FAILED and
-                    # aborts this arm, which is the documented "a mismatch
-                    # aborts that arm" contract.
+                    # computed and POSTed. It can only confirm the driver
+                    # agrees with itself, and cannot detect a container
+                    # that actually came up at a different tp. tp_gate
+                    # raises RuntimeError on any mismatch or unparseable
+                    # capture. The surrounding `except` below records
+                    # FAILED and aborts this arm: the documented "a
+                    # mismatch aborts that arm" contract.
                     gate = tp8.tp_gate(entry["serve_log"], args.expect_tp, served_tp)
                     entry["gate_basis"] = gate["gate_basis"]
                     entry["engine_tp"] = gate["engine_tp"]
@@ -415,8 +431,9 @@ def main() -> int:
                     passes: Dict[str, Dict[str, str]] = {}
                     for i in (1, 2):
                         label = f"{arm}@tp{args.expect_tp}:P{i}"
-                        # D6.4: a fresh dict per pass -- guarded_pass mutates
-                        # it in place with per-row finish_reason/token counts.
+                        # D6.4: a fresh dict per pass. guarded_pass mutates
+                        # it in place with per-row finish_reason/token
+                        # counts.
                         row_meta: Dict[str, Dict[str, Any]] = {}
                         res = hinge.guarded_pass(hw, args.model, arm_prompts, label,
                                                  meta=row_meta)
@@ -432,19 +449,13 @@ def main() -> int:
                             json.dump(res, fh)
                     entry["fingerprint_after"] = hinge.fingerprint(state, args.model)
 
-                    # D8: the arm's own in-process control. Runs AFTER P2 so
-                    # it can never perturb prefix-cache state between the two
-                    # passes being compared. Design: nothing previously tied a
-                    # HOLD verdict to a control that had actually fired -- the
-                    # tp=8 dense HOLD was banked alongside a `stock` positive
-                    # control that recorded n=0 (deadline-cut before its
-                    # first prompt returned, notebooks/deduction/results/
-                    # tp8hinge_ministral-3-3b.json). A same-model stock
-                    # control cannot close this in general either:
-                    # nemotron-3-nano-4b's own tp=1 `stock` arm was itself
-                    # 8/8 byte-identical (prefix-cache replay), so "stock
-                    # must diverge" can never be satisfiable for that model.
-                    # Each arm therefore carries its own control.
+                    # D8: the arm's own in-process control, which runs
+                    # AFTER P2 so it can never perturb prefix-cache state
+                    # between the two passes being compared. See
+                    # scripts/moe_tp8_probe.py's D8 design note for why a
+                    # HOLD must be tied to a control that actually fired,
+                    # and why a same-model `stock` control cannot serve
+                    # as a universal substitute.
                     try:
                         _spid, _sptext = arm_prompts[0]
                         entry["sensitivity_row"] = hw.run_sensitivity_row(
@@ -457,12 +468,11 @@ def main() -> int:
                     entry["control_status"] = hw.control_status(entry["sensitivity_row"])
                     # Design (D8 follow-up): index by (model, instance_id,
                     # arm) via the shared helper, not a hand-rolled
-                    # (model, instance_id) f-string -- this driver alone
-                    # runs both `det` and `stock` arms against the same
-                    # model on the same box, and the two-part key let the
-                    # second arm's control silently overwrite the first's in
-                    # the report-level index. See hw.sensitivity_key's
-                    # docstring for the full incident.
+                    # (model, instance_id) key -- this driver runs both
+                    # `det` and `stock` arms against the same model on
+                    # the same box, so a two-part key is needed. See
+                    # scripts/moe_tp8_probe.py's D8 design note and
+                    # hw.sensitivity_key's docstring for the incident.
                     report.setdefault("sensitivity_rows", {})[
                         hw.sensitivity_key(args.model, state.get("instance_id"), arm)
                     ] = entry["sensitivity_row"]
@@ -503,11 +513,10 @@ def main() -> int:
         for arm, e in report["arms"].items():
             c = e.get("within_process_baseline")
             if c:
-                # Design (D8.2): print the scoped verdict line, not a bare
-                # "k/k identical" -- a HOLD must always name the control that
-                # earned it. `or` fallback covers a report saved by a
-                # pre-D8 run of this driver, whose entries have no
-                # `verdict_line` key.
+                # Design (D8.2): print the scoped verdict line (see
+                # scripts/moe_tp8_probe.py's D8 design note); the `or`
+                # fallback covers a report from a pre-D8 run of this
+                # driver, whose entries lack `verdict_line`.
                 line = e.get("verdict_line") or f"{c['identical']}/{c['n']} identical"
                 print(f"  {arm}@tp{args.expect_tp}: {line}"
                       f"  (excluded empty: {c['excluded_empty_rows']})")

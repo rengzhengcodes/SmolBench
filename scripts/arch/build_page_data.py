@@ -3,31 +3,32 @@
 ``fetch_arch_facts.py`` produces faithful-but-shapeless config records. This
 script turns them into the two things a block diagram needs:
 
-**A per-layer track pair.** Every checkpoint's stack is expanded into one entry
-per layer holding ``{"mix": ..., "ffn": ...}`` -- what mixes tokens in that
-layer, and what its feed-forward is. The distinction matters because the
-families disagree about what a "layer" is:
+**A per-layer track pair.** This script expands every checkpoint's stack
+into one entry per layer, holding ``{"mix": ..., "ffn": ...}``: what mixes
+tokens in that layer, and what its feed-forward is. The distinction
+matters, because the families disagree about what a "layer" is:
 
-- ``layer_types`` families (Qwen3.5, Gemma-4, EXAONE, and by convention the
-  families with no per-layer array at all) treat a layer as *mixer then FFN*, so
-  both slots are filled on every layer.
-- ``hybrid_override_pattern`` families (Nemotron-H) treat a layer as *mixer OR
-  FFN*, so exactly one slot is filled and the other is ``None``. Drawing this as
-  two tracks with gaps is the honest rendering: it shows at a glance that
-  Nemotron interleaves its Mamba-2 mixers and MLPs rather than stacking them.
+- ``layer_types`` families (Qwen3.5, Gemma-4, EXAONE, and, by convention,
+  the families with no per-layer array at all) treat a layer as *mixer then
+  FFN*. Both slots are filled on every layer.
+- ``hybrid_override_pattern`` families (Nemotron-H) treat a layer as *mixer
+  OR FFN*. Exactly one slot is filled; the other is ``None``. Two tracks
+  with gaps is the honest rendering: it shows at a glance that Nemotron
+  interleaves its Mamba-2 mixers and MLPs, rather than stacking them.
 
-**A repeating motif.** The shortest layer pattern that tiles the stack, which is
-what the schematic actually draws with an ``x N`` multiplier instead of 92
-individual layers.
+**A repeating motif.** The shortest layer pattern that tiles the stack.
+This is what the schematic actually draws, with an ``x N`` multiplier,
+instead of 92 individual layers.
 
 Annotations
 -----------
-Config fields cannot say *what a mechanism is called* or when a checkpoint was
-released. Those come from ``annotations.json`` (hand-written from the family
-research briefs in ``scripts/arch/research/``) and are merged in here, keyed by
-spec key. Merging happens in this one place so the page never mixes a measured
-field and a written claim without the reader being able to tell which is which:
-every annotation value carries its own provenance in the page.
+Config fields cannot say *what a mechanism is called*, or when a checkpoint
+was released. Those facts come from ``annotations.json`` (hand-written from
+the family research briefs in ``scripts/arch/research/``). This script
+merges them in here, keyed by spec key. This happens in this one place,
+so the page never mixes a measured field and a written claim without the
+reader being able to tell which is which. Every annotation value carries
+its own provenance in the page.
 
 Usage
 -----
@@ -94,12 +95,12 @@ def _get(model: Dict[str, Any], group: str, key: str, default: Any = None) -> An
 
 
 def _is_moe(model: Dict[str, Any]) -> bool:
-    """True when the checkpoint routes tokens to experts.
+    """Return True when the checkpoint routes tokens to experts.
 
-    Deliberately checks for a *positive* expert count rather than the presence
-    of the key: Gemma-4 ships ``num_experts: null`` alongside
-    ``enable_moe_block: false``, i.e. an MoE code path the checkpoint does not
-    use, and a key-presence test would mislabel all three Gemma rungs.
+    This deliberately checks for a *positive* expert count, not the
+    presence of the key. Gemma-4 ships ``num_experts: null`` alongside
+    ``enable_moe_block: false``: an MoE code path the checkpoint does not
+    use. A key-presence test would mislabel all three Gemma rungs.
     """
     moe = model.get("derived", {}).get("moe", {})
     for key in ("n_routed_experts", "num_experts", "num_local_experts"):
@@ -109,12 +110,14 @@ def _is_moe(model: Dict[str, Any]) -> bool:
 
 
 def _sliding_windows(model: Dict[str, Any], n_layers: int) -> List[Optional[int]]:
-    """Per-layer attention window, ``None`` where the layer attends globally.
+    """Return per-layer attention windows.
 
-    Two encodings exist. K-EXAONE ships an explicit ``sliding_windows`` array
-    with ``0`` marking the global layers; everyone else declares one scalar
-    ``sliding_window`` that applies to whichever layers ``layer_types`` marks
-    sliding. The explicit array wins when present.
+    Use ``None`` where the layer attends globally. Two encodings exist.
+    K-EXAONE ships an explicit ``sliding_windows``
+    array, with ``0`` marking the global layers. Every other family
+    declares one scalar ``sliding_window`` value, which applies to
+    whichever layers ``layer_types`` marks sliding. The explicit array wins
+    when present.
     """
     explicit = model.get("derived", {}).get("unclassified", {}).get("sliding_windows")
     if isinstance(explicit, list) and len(explicit) == n_layers:
@@ -124,11 +127,11 @@ def _sliding_windows(model: Dict[str, Any], n_layers: int) -> List[Optional[int]
 
 
 def _ffn_kinds(model: Dict[str, Any], n_layers: int) -> List[str]:
-    """Per-layer feed-forward kind for a mixer-then-FFN family.
+    """Return the per-layer feed-forward kind for a mixer-then-FFN family.
 
-    Three encodings, most-explicit first: an ``mlp_layer_types`` array
-    (K-EXAONE), a ``first_k_dense_replace`` dense prefix (DeepSeek, GLM,
-    Nemotron-style MoE configs), or a uniform kind.
+    Three encodings exist, most-explicit first: an ``mlp_layer_types``
+    array (K-EXAONE), a ``first_k_dense_replace`` dense prefix (DeepSeek,
+    GLM, Nemotron-style MoE configs), or a uniform kind.
     """
     explicit = model.get("derived", {}).get("unclassified", {}).get("mlp_layer_types")
     if isinstance(explicit, list) and len(explicit) == n_layers:
@@ -142,19 +145,20 @@ def _ffn_kinds(model: Dict[str, Any], n_layers: int) -> List[str]:
 def _layer(mix: Optional[str] = None, ffn: Optional[str] = None,
            window: Optional[int] = None, variant: Optional[str] = None,
            ffnVariant: Optional[str] = None) -> Dict[str, Any]:
-    """One layer record, with every key always present.
+    """Build one layer record. Every key is always present.
 
-    Uniform keys matter: run-length encoding and motif detection compare these
-    dicts for equality, so a record that omits a key would never compare equal
-    to one that carries it as ``None``.
+    Uniform keys matter. Run-length encoding and motif detection compare
+    these dicts for equality. A record that omits a key would never compare
+    equal to one that carries it as ``None``.
     """
     return {"mix": mix, "ffn": ffn, "window": window,
             "variant": variant, "ffnVariant": ffnVariant}
 
 
-#: DeepSeek-V4's per-layer ``compress_ratios`` alphabet. The array is one entry
-#: longer than the layer count -- the tail entry belongs to the MTP module --
-#: and its value is the compression ratio the layer's attention runs at.
+#: DeepSeek-V4's per-layer ``compress_ratios`` alphabet. The array is one
+#: entry longer than the layer count. The tail entry belongs to the MTP
+#: module. Its value is the compression ratio the layer's attention runs
+#: at.
 _DSV4_COMPRESS = {
     0: {"mix": "sliding", "variant": "local", "window": 128},
     4: {"mix": "full", "variant": "csa", "window": None},
@@ -163,18 +167,18 @@ _DSV4_COMPRESS = {
 
 
 def _deepseek_v4_tracks(model: Dict[str, Any], n_layers: int) -> List[Dict[str, Any]]:
-    """Per-layer records for DeepSeek-V4, whose layer types live in a ratio array.
+    """Build per-layer records for DeepSeek-V4, whose layer types live in a ratio array.
 
-    V4 declares no ``layer_types``; its attention schedule is
-    ``compress_ratios``, which alternates a 4:1 compressed-sparse layer with a
-    128:1 compressed layer, after a short prefix. Reading only the scalar
-    ``sliding_window: 128`` -- the uncompressed local window every layer also
-    keeps -- would flatten the whole stack into "windowed attention" and lose
-    the alternation entirely.
+    V4 declares no ``layer_types``. Its attention schedule is
+    ``compress_ratios``, which alternates a 4:1 compressed-sparse layer with
+    a 128:1 compressed layer, after a short prefix. The scalar
+    ``sliding_window: 128`` alone (the uncompressed local window every
+    layer also keeps) would flatten the whole stack into "windowed
+    attention" and lose the alternation entirely.
 
-    Routing also differs at the bottom of the stack: ``num_hash_layers`` layers
-    route through a frozen token-id-to-expert table rather than a learned
-    router, which is V4's replacement for V3's dense prefix.
+    The routing also differs at the bottom of the stack: ``num_hash_layers``
+    layers route through a frozen token-id-to-expert table, not a learned
+    router. This is V4's replacement for V3's dense prefix.
     """
     unclassified = model.get("derived", {}).get("unclassified", {})
     ratios = unclassified.get("compress_ratios") or []
@@ -212,8 +216,8 @@ def _tracks(model: Dict[str, Any]) -> List[Dict[str, Any]]:
         mixers = [_MIXER_KIND.get(t, "full") for t in sequence]
     else:
         # No per-layer array: every layer attends globally (GLM, DeepSeek,
-        # Ministral). A declared scalar sliding_window still applies -- DeepSeek
-        # V4 declares 128 with no layer_types at all.
+        # Ministral). A declared scalar sliding_window still applies.
+        # DeepSeek V4 declares 128 with no layer_types at all.
         scalar = _get(model, "attention", "sliding_window")
         kind = "sliding" if isinstance(scalar, int) and scalar > 0 else "full"
         mixers = [kind] * n_layers
@@ -226,7 +230,10 @@ def _tracks(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _motif(tracks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Shortest exact tiling of the track list, or ``None`` when it does not tile."""
+    """Return the shortest exact tiling of the track list.
+
+    Returns ``None`` when the track list does not tile.
+    """
     n = len(tracks)
     if not n:
         return None
@@ -254,11 +261,12 @@ def _fold_inner_repeat(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Collapse a repeated tail of a segment into one nested group.
 
     Nemotron-H's group between two attention layers is five alternating
-    Mamba-2 and MoE layers, which run-length encoding cannot compress at all --
-    no two *adjacent* layers are alike. Drawn literally that is eleven stacked
-    blocks saying one thing. Folding the repeat turns it into "one attention
-    layer, then (Mamba-2 -> MoE) x 5", which is both a fifth of the height and
-    a truer statement of the structure.
+    Mamba-2 and MoE layers. Run-length encoding cannot compress this at
+    all, because no two *adjacent* layers are alike. Drawn literally, that
+    is eleven stacked blocks saying one thing. This function folds the
+    repeat, and turns it into "one attention layer, then (Mamba-2 -> MoE)
+    x 5". That is both a fifth of the height and a truer statement of the
+    structure.
 
     Returns the list unchanged when no tail repeats at least twice.
     """
@@ -281,20 +289,22 @@ def _schematic(tracks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compress a stack into the few blocks a schematic can actually draw.
 
     A block diagram draws a repeating unit and a multiplier, never 92 boxes.
-    Three cases, in order of how faithfully they compress:
+    Four cases exist, in order of how faithfully they compress:
 
-    1. The stack tiles (Qwen3.5, Gemma-4, EXAONE-4.x, Ministral) -- draw the
-       motif once with its repeat count. ``exact`` is true.
-    2. The stack tiles *after* a short prefix (K-EXAONE: one dense layer, then
-       a clean 3-sliding + 1-global body) -- draw the prefix, then the motif.
-       Peeling matters: without it K-EXAONE's regular body reads as irregular.
-    3. The stack does not tile but has few distinct runs (GLM, DeepSeek V3.1:
-       a dense prefix then a uniform MoE body) -- draw the runs in order.
+    1. The stack tiles (Qwen3.5, Gemma-4, EXAONE-4.x, Ministral). Draw the
+       motif once, with its repeat count. ``exact`` is true.
+    2. The stack tiles *after* a short prefix (K-EXAONE: one dense layer,
+       then a clean 3-sliding + 1-global body). Draw the prefix, then the
+       motif. The peel matters: without it, K-EXAONE's regular body reads
+       as irregular.
+    3. The stack does not tile, but has few distinct runs (GLM, DeepSeek
+       V3.1: a dense prefix, then a uniform MoE body). Draw the runs in
+       order.
     4. None of the above (Nemotron-H, whose Mamba/MLP groups vary in length
-       between attention layers) -- split the stack *before* each occurrence of
-       its rarest mixer, draw the most common group, and record every group
-       length so the page can say out loud that the drawing is a dominant
-       pattern rather than a tiling. ``exact`` is false.
+       between attention layers). Split the stack *before* each occurrence
+       of its rarest mixer. Draw the most common group, and record every
+       group length, so the page can say out loud that the drawing is a
+       dominant pattern, not a tiling. ``exact`` is false.
     """
     if not tracks:
         return {"segments": [], "exact": True}
@@ -324,10 +334,10 @@ def _schematic(tracks: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"segments": [{"repeat": 1, "layers": _fold_inner_repeat(runs)}],
                 "exact": True}
 
-    # Quasi-periodic. Split BEFORE the rarest mixer so each group opens with
-    # that layer -- "one attention layer, then N Mamba/MoE pairs" is how the
-    # Nemotron stack actually reads, and grouping the other way round buries
-    # the attention layer at the end of the block.
+    # Quasi-periodic. Split BEFORE the rarest mixer, so each group opens
+    # with that layer. "One attention layer, then N Mamba/MoE pairs" is how
+    # the Nemotron stack actually reads. A split the other way round
+    # buries the attention layer at the end of the block.
     counts: Dict[Any, int] = {}
     for layer in tracks:
         counts[layer["mix"]] = counts.get(layer["mix"], 0) + 1
@@ -355,26 +365,28 @@ def _schematic(tracks: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _rotary_fraction(model: Dict[str, Any]) -> Dict[str, Optional[float]]:
-    """Fraction of each attention head's dimensions that RoPE actually rotates.
+    """Return the fraction of each attention head's dimensions RoPE rotates.
 
-    The roster's most striking shared trait is that hardly any of it rotates a
-    whole head any more, and the config states the fraction three different
-    ways, so it is normalised here rather than left to prose:
+    The roster's most striking shared trait is that hardly any checkpoint
+    rotates a whole head any more. The config states the fraction three
+    different ways, so this function normalises it here, rather than
+    leaving it to prose:
 
-    - **MLA** splits the head explicitly -- only ``qk_rope_head_dim`` of
-      ``qk_nope_head_dim + qk_rope_head_dim`` is rotated (DeepSeek-V3.1: 64 of
-      192; GLM-4.7-Flash: 64 of 256).
+    - **MLA** splits the head explicitly. Only ``qk_rope_head_dim`` of
+      ``qk_nope_head_dim + qk_rope_head_dim`` is rotated (DeepSeek-V3.1: 64
+      of 192; GLM-4.7-Flash: 64 of 256).
     - **``partial_rotary_factor``** states it directly (GLM's 0.5, Qwen3.5's
-      0.25), either at the top level or inside a per-layer-type
-      ``rope_parameters`` block (Gemma-4 rotates 25% of its *global* layers and
-      100% of its sliding ones).
+      0.25). It appears either at the top level, or inside a per-layer-type
+      ``rope_parameters`` block (Gemma-4 rotates 25% of its *global* layers
+      and 100% of its sliding ones).
     - **Absence of any RoPE field** means the layer is NoPE.
 
-    Returned per mixer kind, because two families treat their layer types
-    differently. Values here are config-derived only; where a config declares a
-    RoPE field that the reference implementation never reads -- Nemotron-3's
-    inert ``rope_theta`` is the case in this roster -- the model's annotation
-    overrides this with the implementation's real behaviour.
+    This function returns one value per mixer kind, because two families
+    treat their layer types differently. Values here are config-derived
+    only. Where a config declares a RoPE field that the reference
+    implementation never reads (Nemotron-3's inert ``rope_theta`` is the
+    case in this roster), the model's annotation overrides this value with
+    the implementation's real behaviour.
     """
     pos = model.get("derived", {}).get("positional", {})
     mla = model.get("derived", {}).get("mla", {})
@@ -410,8 +422,8 @@ def _rotary_fraction(model: Dict[str, Any]) -> Dict[str, Optional[float]]:
     elif isinstance(per_type, dict):
         base = scalar_fraction(per_type)
     elif pos.get("rope_theta") or scalar_fraction(pos.get("rope_scaling")):
-        # EXAONE-4.5 nests ``rope_theta`` inside ``rope_scaling`` where its
-        # 4.0 sibling declares it at the top level; reading only the top level
+        # EXAONE-4.5 nests ``rope_theta`` inside ``rope_scaling``, where its
+        # 4.0 sibling declares it at the top level. The top level alone
         # would report that checkpoint as having no rotary at all.
         base = 1.0
     else:
@@ -419,7 +431,7 @@ def _rotary_fraction(model: Dict[str, Any]) -> Dict[str, Optional[float]]:
 
     for kind in kinds:
         out[kind] = base
-    # Recurrent mixers hold no per-head rotary geometry at all; position is
+    # Recurrent mixers hold no per-head rotary geometry at all. Position is
     # implicit in the recurrence.
     for kind in ("linear", "ssm"):
         out[kind] = 0.0
@@ -427,15 +439,16 @@ def _rotary_fraction(model: Dict[str, Any]) -> Dict[str, Optional[float]]:
 
 
 def _head_dim(model: Dict[str, Any]) -> Optional[int]:
-    """Attention head dimension, falling back to the implied one.
+    """Return the attention head dimension, falling back to the implied one.
 
-    ``head_dim`` is optional in a HF config: when it is absent the loader
-    derives ``hidden_size // num_attention_heads``. EXAONE-4.5 omits it (and
-    the derived 128 matches EXAONE-4.0's explicit value), so reading only the
-    literal field would silently blank that rung's head dimension and KV figure.
-    MLA checkpoints are excluded -- their per-head geometry is the split
-    ``qk_nope_head_dim``/``qk_rope_head_dim`` pair, and the implied division
-    produces a meaningless number (56 on DeepSeek-V3.1).
+    ``head_dim`` is optional in a HF config. When it is absent, the loader
+    derives ``hidden_size // num_attention_heads``. EXAONE-4.5 omits it
+    (the derived 128 matches EXAONE-4.0's explicit value), so reading only
+    the literal field would silently blank that rung's head dimension and
+    KV figure. This function excludes MLA checkpoints: their per-head
+    geometry is the split ``qk_nope_head_dim``/``qk_rope_head_dim`` pair,
+    and the implied division produces a meaningless number (56 on
+    DeepSeek-V3.1).
     """
     explicit = _get(model, "attention", "head_dim")
     if explicit:
@@ -450,26 +463,28 @@ def _head_dim(model: Dict[str, Any]) -> Optional[int]:
 
 
 def _kv_bytes_per_token(model: Dict[str, Any]) -> Optional[int]:
-    """KV-cache bytes per token of context at BF16, for the fact strip.
+    """Return KV-cache bytes per token of context at BF16, for the fact strip.
 
-    Counts only the layers whose cache grows without bound -- the layers that
-    attend globally. Three kinds of layer are deliberately excluded, because
-    including them would report growth that does not happen:
+    This counts only the layers whose cache grows without bound: the
+    layers that attend globally. It deliberately excludes three kinds of
+    layer, because including them would report growth that does not
+    happen:
 
-    - SSM and gated-linear layers keep a fixed-size state, not a cache. That
-      asymmetry is the whole point of the hybrid designs.
-    - Windowed layers cap their cache at the window, so their cost is constant
-      in context length, not per-token. Counting EXAONE's 48 sliding layers
-      alongside its 16 global ones overstated its growth four-fold.
+    - SSM and gated-linear layers keep a fixed-size state, not a cache.
+      That asymmetry is the whole point of the hybrid designs.
+    - Windowed layers cap their cache at the window, so their cost stays
+      constant in context length, not per-token. A naive count of
+      EXAONE's 48 sliding layers alongside its 16 global ones overstates
+      its growth four-fold.
 
-    MLA checkpoints cache the compressed latent plus the decoupled RoPE slice
-    rather than full K and V.
+    MLA checkpoints cache the compressed latent plus the decoupled RoPE
+    slice, rather than full K and V.
 
-    Returns ``None`` when the config cannot support an honest figure --
-    including when the checkpoint uses a *different* head geometry on its
-    global layers than the flat fields describe (Gemma-4's global heads are
-    twice as wide and use fewer KV heads), in which case the model's annotation
-    supplies the exact figure instead.
+    Returns ``None`` when the config cannot support an honest figure. This
+    includes when the checkpoint uses a *different* head geometry on its
+    global layers than the flat fields describe (Gemma-4's global heads
+    are twice as wide and use fewer KV heads). In that case, the model's
+    annotation supplies the exact figure instead.
     """
     tracks = _tracks(model)
     attn_layers = sum(1 for t in tracks if t["mix"] == "full")
@@ -524,10 +539,10 @@ def build() -> Dict[str, Any]:
                 "architecture": model["architecture"],
                 "modelType": shape.get("model_type"),
                 "towers": model.get("wrapper_towers", []),
-                # Read live rather than from the fetch snapshot: the serving
-                # config changes on its own schedule (the DeepSeek-V4 lanes
-                # were re-pinned to an SM90 path hours after the configs were
-                # fetched), and a page that reports a stale serve is worse than
+                # Read live, not from the fetch snapshot. The serving config
+                # changes on its own schedule (the DeepSeek-V4 lanes were
+                # re-pinned to an SM90 path hours after the configs were
+                # fetched). A page that reports a stale serve is worse than
                 # one that reports none.
                 "served": {
                     "tp": EC2_DEPLOY_SPECS[key].get("tp"),
@@ -552,9 +567,10 @@ def build() -> Dict[str, Any]:
                 "moe": moe,
                 "ssm": model.get("derived", {}).get("ssm", {}),
                 "positional": model.get("derived", {}).get("positional", {}),
-                # Config-derived; a model annotation overrides it wherever the
-                # reference implementation ignores a declared RoPE field
-                # (Nemotron-3's inert rope_theta, EXAONE's NoPE global layers).
+                # Config-derived. A model annotation overrides it wherever
+                # the reference implementation ignores a declared RoPE
+                # field (Nemotron-3's inert rope_theta, EXAONE's NoPE
+                # global layers).
                 "rotaryByMixer": {**_rotary_fraction(model),
                                   **(annotations.get(key, {}).get("rotaryByMixer") or {})},
                 "quantization": model.get("derived", {}).get("quantization"),

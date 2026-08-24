@@ -1,53 +1,59 @@
-"""Focused test: extensional vs noise-padded intensional, per model (21 contrasts).
+"""Run a focused test: extensional vs noise-padded intensional, per model.
 
-Both arms are LONG. `extens` is the fully enumerated position -> label listing;
-`noise_intens` is the compact rule form padded with whitespace to exactly the
-same token count under the model's own tokenizer. So this contrast holds prompt
-LENGTH fixed and varies only whether the tokens carry information -- it is the
-cleanest available test of "is the extensional arm hard because it is long, or
-because enumerated evidence is harder to induce from than a stated rule?"
+This covers 21 contrasts. Both arms are LONG. `extens` is the fully
+enumerated position -> label listing. `noise_intens` is the compact
+rule form padded with whitespace to exactly the same token count under
+the model's own tokenizer. So this contrast holds prompt LENGTH fixed,
+and varies only whether the tokens carry information. It is the
+cleanest available test of "is the extensional arm hard because it is
+long, or because enumerated evidence is harder to induce from than a
+stated rule?"
 
 TWO MECHANISMS, not one
 -----------------------
-[Rewritten 2026-08-21 under the ruling that retired the quarantine.] The naive
-reading -- "extens < noise means length is not the explanation" -- only holds
-where the noise arm is a working control. It is not always a working control:
-whitespace padding to a matched token count DESTROYS the output contract in a
-substantial minority of models, and an arm that has stopped emitting parseable
-answers scores near zero for reasons that have nothing to do with induction. So
-this table carries two distinguishable results and states both:
+[Rewritten 2026-08-21 under the ruling that retired the quarantine.]
+The naive reading, "extens < noise means length is not the
+explanation," only holds where the noise arm is a working control. It
+is not always a working control: whitespace padding to a matched token
+count DESTROYS the output contract in a substantial minority of
+models, and an arm that has stopped emitting parseable answers scores
+near zero for reasons that have nothing to do with induction. So this
+table carries two distinguishable results, and states both:
 
-  * INFORMATION / LABEL-DENSITY effect -- the noise arm stays well-formed and
-    still outscores the enumeration. Enumerated evidence really is harder to
-    induce from than a stated rule at equal length.
-  * PADDING-ROBUSTNESS COLLAPSE -- the noise arm is largely non-compliant, so
-    extens > noise is mechanically forced. This is a finding about padding
-    robustness, reported as such, NOT excluded and NOT counted as evidence about
-    information.
+  * INFORMATION / LABEL-DENSITY effect -- the noise arm stays
+    well-formed and still outscores the enumeration. Enumerated
+    evidence really is harder to induce from than a stated rule at
+    equal length.
+  * PADDING-ROBUSTNESS COLLAPSE -- the noise arm is largely
+    non-compliant, so extens > noise is mechanically forced. This is a
+    finding about padding robustness, reported as such: NOT excluded,
+    and NOT counted as evidence about information.
 
-Every one of the 21 lanes appears below with its measured non-compliance on both
-arms, so which mechanism a row belongs to is visible rather than editorial. The
-previous version of this script fenced six lanes into a `QUARANTINED` bucket;
-that bucket is retired.
+Every one of the 21 lanes appears below with its measured
+non-compliance on both arms, so which mechanism a row belongs to is
+visible, rather than editorial. The previous version of this script
+fenced six lanes into a `QUARANTINED` bucket; that bucket is retired.
 
 Inference
 ---------
-[Corrected 2026-08-21.] The PRIMARY p-value is the exact seed-level sign-flip
-randomization test: 30 replicate seeds are the independent unit, the 9 harmonic
-items inside a seed share one answer vector, and item-level exact McNemar --
-which the previous headline used -- treats them as 270 independent pairs. The
-item-level p stays as a labelled DESCRIPTIVE column. On this particular subset
-the two agree on every rejection; the correction costs six rejections elsewhere
-in the 210 family, all of them ladder contrasts.
+[Corrected 2026-08-21.] The PRIMARY p-value is the exact seed-level
+sign-flip randomization test: 30 replicate seeds are the independent
+unit, the 9 harmonic items inside a seed share one answer vector, and
+item-level exact McNemar (which the previous headline used) treats
+them as 270 independent pairs. The item-level p stays as a labelled
+DESCRIPTIVE column. On this particular subset the two agree on every
+rejection. The correction costs six rejections elsewhere in the 210
+family, all of them ladder contrasts.
 
 Correction discipline
 ---------------------
-These 21 contrasts are a SUBSET of the 210 pre-registered PRIMARY family, and
-the primary inference stays at m = 210. Re-correcting at m = 21 after choosing
-this subset because it looked interesting is data-dependent family sizing --
-the same hazard flagged against `alpha_eq = ALPHA / len(near_ties)` in
-MULTIPLICITY_PLAN.md section 3. The m = 21 column is reported as a SENSITIVITY
-check only, to show how little the conclusion depends on the choice.
+These 21 contrasts are a SUBSET of the 210 pre-registered PRIMARY
+family, and the primary inference stays at m = 210. Re-correcting at
+m = 21 after choosing this subset because it looked interesting is
+data-dependent family sizing: the same hazard flagged against
+`alpha_eq = ALPHA / len(near_ties)` in MULTIPLICITY_PLAN.md section 3.
+The m = 21 column is reported only as a SENSITIVITY check, to show how
+little the conclusion depends on the choice.
 
 Run:
     uv run --no-project --with numpy --with scipy python notebooks/induction/extens_vs_noise.py
@@ -81,11 +87,24 @@ ALPHA = 0.05
 
 
 def mechanism(nc_e: float, nc_n: float) -> str:
-    """Which of the two mechanisms a lane's contrast can speak to.
+    """Classify which of the two mechanisms a lane's contrast can speak to.
 
-    Decided by the SAME symmetric criterion the significance report uses, on
-    measured non-compliance, applied to both arms alike -- never by a
-    hand-written lane list.
+    This function decides using the SAME symmetric criterion the
+    significance report uses, on measured non-compliance, applied to
+    both arms alike. It never uses a hand-written lane list.
+
+    Parameters
+    ----------
+    nc_e, nc_n : float
+        Measured non-compliance rate for the `extens` and `noise_intens`
+        arms.
+
+    Returns
+    -------
+    str
+        ``"COLLAPSE"`` if the noise arm is at or above
+        `COLLAPSE_THRESHOLD`, ``"extens degraded"`` if only the extens
+        arm is, or ``"information"`` if both arms are well-formed.
     """
     if nc_n >= COLLAPSE_THRESHOLD:
         return "COLLAPSE"          # noise arm broken: extens-higher is forced
@@ -95,6 +114,21 @@ def mechanism(nc_e: float, nc_n: float) -> str:
 
 
 def main() -> None:
+    """Run the extens-vs-noise focused test and print the report.
+
+    Report layout (see the module docstring for the methodology behind
+    each section):
+      1. The per-model table: accuracy, discordance, PRIMARY (seed-level)
+         and DESCRIPTIVE (item-level) p-values, and Holm/Hochberg
+         rejection flags at m=210 and the m=21 sensitivity size.
+      2. Agreement between the seed-level and item-level corrections.
+      3. Lanes significant under the primary (m=210, seed-level)
+         correction.
+      4. THE TWO MECHANISMS: findings split into information,
+         padding-robustness collapse, and extens-degraded buckets.
+      5. The raw direction across all 21 lanes, with no significance
+         filter, including which extens-higher lanes are collapse lanes.
+    """
     correct, valid = load_marks()
     census = compliance_census()
 
@@ -102,8 +136,9 @@ def main() -> None:
         cell = census.get(key)
         return float("nan") if cell is None else cell["rate"]
 
-    # p-values for the FULL pre-registered family, so the m=210 Holm decision
-    # for these 21 is the real one rather than a recomputation on a subset.
+    # p-values for the FULL pre-registered family, so the m=210 Holm
+    # decision for these 21 is the real one, not a recomputation on a
+    # subset.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
         a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)

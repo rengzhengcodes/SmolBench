@@ -1,36 +1,37 @@
-"""Offline tests for the deduction (Lean) family-ladder scaling study.
+"""Test the deduction (Lean) family-ladder scaling study, offline.
 
-Covers the two new pieces of the deduction lane and nothing else:
+This file covers the two new pieces of the deduction lane and nothing else:
 
 * ``notebooks/deduction/run_study.py`` -- the per-lane, generation-only driver.
 * ``scripts/lean_verify_rows.py`` -- the deferred, ``.venv-lean``-only
   verification pass.
 
-Everything here runs OFFLINE on BOTH interpreters (the main ``.venv``, Python
-3.14 without ``lean_dojo``, and ``.venv-lean``, Python 3.12 with it). No AWS
-call, no network, no Lean process. The end-to-end sweep talks to a local
-``StubServer`` (the same fixture ``tests/test_lean_runner.py`` uses) and a
-``NullVerifier``; the S3 paths are exercised against an injected fake client.
+Everything here runs offline on both interpreters: the main ``.venv``
+(Python 3.14, no ``lean_dojo``) and ``.venv-lean`` (Python 3.12, with it).
+There is no AWS call, no network access, and no Lean process. The
+end-to-end sweep talks to a local ``StubServer`` (the same fixture
+``tests/test_lean_runner.py`` uses) and a ``NullVerifier``. The S3 paths run
+against an injected fake client.
 
 Import hygiene
 --------------
-Both files under test are loaded BY PATH via ``importlib`` rather than as
-packages -- ``notebooks/`` and ``scripts/`` are not importable packages, and
+Both files under test are loaded by path through ``importlib``, not as
+packages. ``notebooks/`` and ``scripts/`` are not importable packages, and
 both studies ship a file literally named ``run_study.py``, so a bare
 ``import run_study`` would be ambiguous about which one it got.
 
-The driver additionally calls ``load_dotenv(keys.env)`` at import time (it
-must -- it has to populate the environment before ``smolbench.evals.ec2``
-freezes its ``EC2_*`` constants). That mutates this pytest process's
+The driver also calls ``load_dotenv(keys.env)`` at import time. It must:
+this has to populate the environment before ``smolbench.evals.ec2`` freezes
+its ``EC2_*`` constants. That call mutates this pytest process's
 ``os.environ`` for the whole session, including credential-shaped variables
 other test modules read. The ``driver`` fixture below therefore snapshots
-``os.environ`` and restores it IMMEDIATELY after ``exec_module`` returns,
-keeping the pollution inside a few microseconds of one fixture rather than
-leaking into the rest of the suite. It keeps the post-import snapshot around
-so the tests can still assert on what the import DID to the environment.
-(``tests/test_induction_study.py`` contains the same fixture for the same
-reason; this is a deliberate copy, not shared code, so neither study's test
-module can break the other's by editing a common helper.)
+``os.environ`` and restores it immediately after ``exec_module`` returns.
+This keeps the pollution inside a few microseconds of one fixture, instead
+of leaking into the rest of the suite. It keeps the post-import snapshot
+around so the tests can still check what the import did to the
+environment. (``tests/test_induction_study.py`` has the same fixture for
+the same reason. This is a deliberate copy, not shared code, so neither
+study's test module can break the other's by editing a common helper.)
 """
 
 from __future__ import annotations
@@ -55,9 +56,9 @@ VERIFY_PATH = REPO_ROOT / "scripts" / "lean_verify_rows.py"
 INDUCTION_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
 
-#: The spec key every single-model test drives. A real key (not a synthetic
-#: one) so `COT_ARGS[KEY]` is a real reasoning-toggle payload and the
-#: request-body assertions below have something to check.
+#: The spec key every single-model test drives. This is a real key, not a
+#: synthetic one, so `COT_ARGS[KEY]` is a real reasoning-toggle payload, and
+#: the request-body checks below have something to check.
 KEY = "glm-4.7"
 
 
@@ -83,11 +84,11 @@ def _load_by_path(path: Path, name: str):
 
     Notes
     -----
-    The ``sys.modules[name] = module`` line before ``exec_module`` is NOT
-    optional: on Python 3.14, a ``@dataclass`` declared inside a module that
-    is absent from ``sys.modules`` raises ``AttributeError: 'NoneType' object
-    has no attribute '__dict__'`` from ``dataclasses._is_type``, because the
-    decorator looks its own module up by ``cls.__module__``.
+    The ``sys.modules[name] = module`` line before ``exec_module`` is not
+    optional. On Python 3.14, a ``@dataclass`` declared inside a module that
+    is absent from ``sys.modules`` raises ``AttributeError: 'NoneType'
+    object has no attribute '__dict__'`` from ``dataclasses._is_type``,
+    because the decorator looks up its own module by ``cls.__module__``.
     """
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -98,12 +99,13 @@ def _load_by_path(path: Path, name: str):
 
 @pytest.fixture(scope="module")
 def driver():
-    """The deduction driver, imported with ``os.environ`` snapshotted+restored.
+    """Give the deduction driver, imported with ``os.environ`` snapshotted and restored.
 
-    Yields a ``SimpleNamespace``-like module object with an extra attribute
-    ``post_import_env`` (a ``dict`` copy of ``os.environ`` taken the instant
-    ``exec_module`` returned, before the restore). Tests assert against that
-    snapshot rather than the live environment, which by then is clean again.
+    This fixture yields a ``SimpleNamespace``-like module object with an
+    extra attribute ``post_import_env``: a ``dict`` copy of ``os.environ``
+    taken the instant ``exec_module`` returned, before the restore. Tests
+    check against that snapshot, not the live environment, which by then is
+    clean again.
     """
     saved = dict(os.environ)
     try:
@@ -121,11 +123,12 @@ def driver():
 
 @pytest.fixture(scope="module")
 def induction_tables():
-    """``MODELS``/``COT_ARGS`` read straight from the induction study.
+    """Read ``MODELS``/``COT_ARGS`` straight from the induction study.
 
-    Loaded independently of the driver so the "the driver reuses the induction
-    table" assertions compare against the real source of truth rather than
-    against the driver's own copy of it (which would make the test vacuous).
+    This fixture loads independently of the driver, so the "the driver
+    reuses the induction table" checks compare against the real source of
+    truth, not against the driver's own copy of it. If it compared
+    against the driver's own copy, the test would be vacuous.
     """
     saved = dict(os.environ)
     try:
@@ -139,7 +142,7 @@ def induction_tables():
 
 @pytest.fixture(scope="module")
 def lvr():
-    """``scripts/lean_verify_rows.py``. Pure helpers only -- no Lean, no AWS."""
+    """Load ``scripts/lean_verify_rows.py``. Pure helpers only: no Lean, no AWS."""
     module = _load_by_path(VERIFY_PATH, "lean_verify_rows_under_test")
     yield module
     sys.modules.pop("lean_verify_rows_under_test", None)
@@ -153,10 +156,11 @@ def lvr():
 def test_config_is_user_locked(driver):
     """Every user-locked sweep-config value, pinned exactly.
 
-    These are not style preferences: `seed` and `n_replicates` fix
-    reproducibility and the replication axis, and `theorems` fixes WHICH 300
-    theorems every one of the 21 lanes runs. A silent change to any of them
-    makes two lanes incomparable, which is the entire point of the study.
+    These are not style preferences. `seed` and `n_replicates` fix
+    reproducibility and the replication axis, and `theorems` fixes which
+    300 theorems every one of the 21 lanes runs. A silent change to any of
+    them makes two lanes incomparable, which defeats the entire point of
+    the study.
     """
     cfg = driver.build_config(KEY)
 
@@ -174,8 +178,8 @@ def test_config_is_user_locked(driver):
     assert cfg["theorem_workers"] == 4
     assert cfg["max_concurrency"] == 8
 
-    # Exact dict equality, not a subset check: an EXTRA key here (say a
-    # stray `max_tactics`) would silently change which theorems are drawn.
+    # Exact dict equality, not a subset check. An extra key here, say a
+    # stray `max_tactics`, would silently change which theorems are drawn.
     assert cfg["theorems"] == {
         "source": "replay_passing",
         "kind": "novel_premises",
@@ -184,7 +188,7 @@ def test_config_is_user_locked(driver):
         "seed": 0,
     }
 
-    # Order matters -- rungs are a difficulty ladder, and the analysis pairs
+    # Order matters: rungs are a difficulty ladder, and the analysis pairs
     # cells on rung identity.
     assert cfg["rungs"] == ["stepk:1", "hint:2", "noise:3", "hint:3"]
 
@@ -192,10 +196,10 @@ def test_config_is_user_locked(driver):
 def test_config_keys_are_all_accepted_by_the_harness(driver):
     """No config key is silently ignored by ``runner.sweep``.
 
-    A typo'd or renamed key would not raise -- `sweep` reads its config with
-    `.get()` and defaults -- so a wrong name degrades silently into the
-    harness default. This asserts the driver's key set is a subset of the
-    names `sweep` actually reads.
+    A typo'd or renamed key would not raise. `sweep` reads its config with
+    `.get()` and defaults, so a wrong name degrades silently into the
+    harness default. This test checks that the driver's key set is a
+    subset of the names `sweep` actually reads.
     """
     accepted = {
         "run_name", "seed", "temperature", "max_tokens", "request_timeout",
@@ -215,12 +219,15 @@ def test_run_name_honours_fleet_override(driver, monkeypatch):
 
 
 def test_lean_shard_threads_into_theorems_and_run_name(driver, monkeypatch):
-    """``LEAN_SHARD=i/n`` must (a) add ``theorems.shard`` verbatim and (b)
-    suffix the DEFAULT run_name so two live shards can never share a run
-    directory (concurrent appends from separate processes would interleave
-    large rows inside one ``all_rows.jsonl``). An explicit ``LEAN_RUN_NAME``
+    """``LEAN_SHARD=i/n`` must add ``theorems.shard`` and suffix the default run name.
+
+    It must (a) add ``theorems.shard`` verbatim, and (b) suffix the default
+    run_name, so two live shards can never share a run directory.
+    Concurrent appends from separate processes would otherwise interleave
+    large rows inside one ``all_rows.jsonl``. An explicit ``LEAN_RUN_NAME``
     still wins verbatim. With LEAN_SHARD unset, ``test_config_is_user_locked``
-    above already pins the theorems block to the exact shard-free dict."""
+    above already pins the theorems block to the exact shard-free dict.
+    """
     monkeypatch.setenv("LEAN_SHARD", "1/3")
     cfg = driver.build_config(KEY)
     assert cfg["theorems"]["shard"] == "1/3"
@@ -238,16 +245,20 @@ def test_lean_shard_threads_into_theorems_and_run_name(driver, monkeypatch):
 
 
 def test_lean_cell_whitelist_stamps_manifest_sidecar(driver, monkeypatch, tmp_path):
-    """``LEAN_CELL_WHITELIST=<path>`` must add a conditional ``cell_whitelist``
-    entry (the path + sha256 of the sorted key list) to the returned config --
-    mirroring how ``LEAN_SHARD`` stamps ``theorems.shard`` above. Purely
-    documentary: ``runner.sweep`` reads ``LEAN_CELL_WHITELIST`` directly from
-    the environment itself (see that function's own docstring), so this key
-    exists only so a run's ``manifest.json`` sidecar (``sweep`` stamps
-    ``{"config": config, ...}`` verbatim) records WHICH whitelist file was in
-    effect, without ``runner.sweep`` needing to consume this key at all. With
-    ``LEAN_CELL_WHITELIST`` unset, ``test_config_keys_are_all_accepted_by_the_harness``
-    above already pins that this key is absent from the returned config."""
+    """``LEAN_CELL_WHITELIST=<path>`` must add a conditional ``cell_whitelist`` entry.
+
+    The entry holds the path plus the sha256 of the sorted key list, added
+    to the returned config. This mirrors how ``LEAN_SHARD`` stamps
+    ``theorems.shard`` above. The key is purely documentary: ``runner.sweep``
+    reads ``LEAN_CELL_WHITELIST`` directly from the environment itself (see
+    that function's own docstring). This config key exists only so a run's
+    ``manifest.json`` sidecar (``sweep`` stamps ``{"config": config, ...}``
+    verbatim) records which whitelist file was in effect, without
+    ``runner.sweep`` needing to read this key at all. With
+    ``LEAN_CELL_WHITELIST`` unset,
+    ``test_config_keys_are_all_accepted_by_the_harness`` above already pins
+    that this key is absent from the returned config.
+    """
     whitelist_path = tmp_path / "whitelist.json"
     keys = [[KEY, "T", 1, "stepk:1", 0], [KEY, "U", 2, "hint:2", 1]]
     whitelist_path.write_text(json.dumps(keys))
@@ -269,23 +280,24 @@ def test_lean_cell_whitelist_stamps_manifest_sidecar(driver, monkeypatch, tmp_pa
 
 
 def test_lean_cell_whitelist_missing_file_raises_before_provisioning(driver, monkeypatch, tmp_path):
-    """A missing/malformed whitelist must raise `ValueError` out of
-    ``build_config`` itself -- BEFORE any AWS call, matching this driver's
-    "fail fast before billing" pattern (module docstring, LIFECYCLE step 3;
-    ``main`` calls ``build_config`` before ``select_verifier``/provisioning)."""
+    """A missing or malformed whitelist must raise `ValueError` from `build_config`.
+
+    This must happen before any AWS call, matching this driver's "fail
+    fast before billing" pattern (module docstring, lifecycle step 3;
+    ``main`` calls ``build_config`` before ``select_verifier``/provisioning).
+    """
     monkeypatch.setenv("LEAN_CELL_WHITELIST", str(tmp_path / "does_not_exist.json"))
     with pytest.raises(ValueError):
         driver.build_config(KEY)
 
 
 def test_build_config_does_not_mutate_shared_cot_table(driver):
-    """Mutating a returned config must not corrupt the shared ``COT_ARGS`` table.
+    """A returned config, if mutated, must not corrupt the shared ``COT_ARGS`` table.
 
-    `build_config` is called once per process today, but the table it draws
-    from is module-global and shared with the induction study's module object;
-    handing out a live reference would let one caller's edit leak into every
-    later config in the same kernel (notably a notebook kernel, where several
-    configs are built in one session).
+    `build_config` is called once per process today, but the table it draws from is
+    module-global, and shared with the induction study's module object. If it handed out
+    a live reference, one caller's edit could leak into every later config in the same
+    kernel, notably a notebook kernel, where several configs are built in one session.
     """
     before = json.dumps(driver.COT_ARGS[KEY], sort_keys=True)
     cfg = driver.build_config(KEY)
@@ -301,7 +313,7 @@ def test_build_config_does_not_mutate_shared_cot_table(driver):
 
 
 def test_models_table_is_the_induction_table(driver, induction_tables):
-    """The driver reuses the induction roster rather than duplicating it."""
+    """The driver reuses the induction roster, instead of duplicating it."""
     assert driver.MODELS == induction_tables.MODELS
     assert driver.COT_ARGS == induction_tables.COT_ARGS
     assert len(driver.MODELS) == 21
@@ -309,14 +321,15 @@ def test_models_table_is_the_induction_table(driver, induction_tables):
 
 
 def test_extra_params_is_the_induction_cot_entry_for_all_21_keys(driver, induction_tables):
-    """Per-model ``extra_params`` IS the induction table's entry, for every key.
+    """Per-model ``extra_params`` is the induction table's entry, for every key.
 
-    This is the cross-study coupling that matters: the deduction lane must
+    This is the cross-study coupling that matters. The deduction lane must
     switch reasoning on for exactly the same checkpoints, with exactly the
     same kwarg names, as the induction lane. DeepSeek uses `thinking` where
-    everyone else uses `enable_thinking`, and the three Ministral entries are
-    deliberately empty (their think protocol arrives via an injected system
-    prompt) -- all of which this catches if it ever drifts.
+    everyone else uses `enable_thinking`, and the three Ministral entries
+    are deliberately empty (their think protocol arrives through an
+    injected system prompt). This test catches all of that if it ever
+    drifts.
     """
     for key in induction_tables.MODELS:
         models = driver.build_config(key)["models"]
@@ -336,10 +349,10 @@ def test_extra_params_is_the_induction_cot_entry_for_all_21_keys(driver, inducti
 def test_repo_root_path_arithmetic(driver):
     """``REPO_ROOT`` resolves to the real repo root.
 
-    Path arithmetic (`parents[2]`) silently returns SOME directory no matter
-    how wrong the count is, so this compares against a root derived a
-    completely different way -- from the installed `smolbench` package -- and
-    checks a landmark file actually lives there.
+    Path arithmetic (`parents[2]`) silently returns some directory, no
+    matter how wrong the count is. So this test compares against a root
+    derived a completely different way, from the installed `smolbench`
+    package, and checks that a landmark file really lives there.
     """
     import smolbench
 
@@ -352,10 +365,11 @@ def test_repo_root_path_arithmetic(driver):
 def test_lane_env_defaults_values_and_purity(driver, tmp_path):
     """``lane_env_defaults`` is pure and derives the fleet-compatible names.
 
-    The tag and state-file names are a CONTRACT with ``scripts/run_fleet.py``
-    (which builds ``scaling-<key>`` / ``.ec2_state_scaling_<key>.json``
-    independently); if these drift, a deduction lane provisions a second box
-    instead of reattaching to the one the induction phase already paid for.
+    The tag and state-file names are a contract with
+    ``scripts/run_fleet.py``, which builds ``scaling-<key>`` /
+    ``.ec2_state_scaling_<key>.json`` independently. If these drift, a
+    deduction lane provisions a second box, instead of reattaching to the
+    one the induction phase already paid for.
     """
     before = dict(os.environ)
     got = driver.lane_env_defaults(KEY, repo_root=tmp_path)
@@ -363,8 +377,8 @@ def test_lane_env_defaults_values_and_purity(driver, tmp_path):
 
     assert got["EC2_EXPERIMENT_TAG"] == f"scaling-{KEY}"
     assert got["EC2_STATE_FILE"] == str(tmp_path / f".ec2_state_scaling_{KEY}.json")
-    # Digest-pinned since the 2026-08-18 determinism change (was the mutable
-    # "vllm/vllm-openai:nightly" tag before it) -- see ec2.py's own
+    # Digest-pinned since the 2026-08-18 determinism change. Before that it
+    # was the mutable "vllm/vllm-openai:nightly" tag. See ec2.py's own
     # EC2_VLLM_IMAGE comment for the full provenance.
     assert got["EC2_VLLM_IMAGE"] == (
         "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
@@ -378,11 +392,10 @@ def test_lane_env_defaults_values_and_purity(driver, tmp_path):
 def test_lane_env_defaults_resolves_bare_state_filename_against_repo_root(driver, tmp_path):
     """A bare ``LEAN_STATE_FILE`` resolves against the repo root, not the cwd.
 
-    The fleet exports ``LEAN_STATE_FILE=.ec2_state_scaling_<key>.json`` -- a
-    bare NAME. Resolving that relative to the subprocess's cwd would point at
-    a different (usually nonexistent) file, and the lane would provision a
-    fresh box instead of reattaching. An absolute override passes through
-    untouched.
+    The fleet exports ``LEAN_STATE_FILE=.ec2_state_scaling_<key>.json``, a bare name. If
+    that were resolved relative to the subprocess's cwd, it would point at a different,
+    usually nonexistent, file, and the lane would provision a fresh box instead of
+    reattaching. An absolute override passes through untouched.
     """
     bare = driver.lane_env_defaults(KEY, repo_root=tmp_path, state_file=".ec2_state_x.json")
     assert bare["EC2_STATE_FILE"] == str(tmp_path / ".ec2_state_x.json")
@@ -397,16 +410,15 @@ def test_import_sets_env_before_ec2_freezes_it():
     """The pre-import ``setdefault`` block beats ``ec2``'s import-time freeze.
 
     ``smolbench.evals.ec2`` binds ``EC2_EXPERIMENT_TAG`` (and
-    ``EC2_VLLM_IMAGE``) as MODULE CONSTANTS at import time, so a tag exported
-    after that import is silently ignored and the lane tags its instance
-    wrongly -- which in turn means it never finds the box again, and the
-    fleet's reattach/teardown both miss it.
+    ``EC2_VLLM_IMAGE``) as module constants at import time. So a tag
+    exported after that import is silently ignored, and the lane tags its
+    instance wrongly. That means the lane never finds the box again, and
+    the fleet's reattach and teardown both miss it.
 
-    This runs in a FRESH SUBPROCESS deliberately. Asserting on
-    ``ec2.EC2_EXPERIMENT_TAG`` inside the pytest process would prove nothing:
-    some earlier test may already have imported ``ec2``, freezing the constant
-    long before the driver ever ran. Only a clean interpreter can witness the
-    ordering.
+    This test runs in a fresh subprocess on purpose. If you checked
+    ``ec2.EC2_EXPERIMENT_TAG`` inside the pytest process, it would prove nothing: some
+    earlier test may already have imported ``ec2``, freezing the constant long before
+    the driver ever ran. Only a clean interpreter can witness the ordering.
     """
     code = (
         "import os, sys, importlib.util\n"
@@ -439,17 +451,18 @@ def test_import_sets_env_before_ec2_freezes_it():
 def test_fleet_exported_env_wins_over_driver_defaults():
     """Every driver default is a ``setdefault``, so the supervisor's value wins.
 
-    Under ``scripts/run_fleet.py`` the supervisor materialises a per-lane
-    environment before invoking this driver. If the driver used bare
-    assignment anywhere, it would clobber the supervisor's per-lane tag and
-    two lanes could converge on ONE box, each swapping the served checkpoint
-    out from under the other mid-run.
+    Under ``scripts/run_fleet.py``, the supervisor builds a per-lane
+    environment before it invokes this driver. If the driver used bare
+    assignment anywhere, it would clobber the supervisor's per-lane tag,
+    and two lanes could converge on one box, each swapping the served
+    checkpoint out from under the other mid-run.
     """
     code = (
         "import os, sys, importlib.util\n"
         "os.environ['LEAN_MODEL'] = 'glm-4.7'\n"
-        # Names the lane: the driver refuses a tag that does not, because a
-        # tag shared across lanes is exactly how two lanes converge on one box.
+        # Names the lane. The driver refuses a tag that does not name it,
+        # because a tag shared across lanes is exactly how two lanes
+        # converge on one box.
         "os.environ['EC2_EXPERIMENT_TAG'] = 'fleet-owned-glm-4.7'\n"
         "os.environ['EC2_VLLM_IMAGE'] = 'fleet/image:pinned'\n"
         "os.environ['SMOLBENCH_LEAN_RESULTS'] = '/tmp/fleet-owned-results'\n"
@@ -511,10 +524,10 @@ def stub():
 def sweep_env(stub, monkeypatch, tmp_path):
     """Point the ``ec2`` provider at `stub` and the corpus at the mini fixture.
 
-    ``EC2_INFERENCE_BASE_URL`` + ``EC2_VLLM_API_KEY`` are the provider's
-    documented test overrides (see ``ec2._connection``): with both set it
-    never reads the state file, so no AWS call and no provisioned instance is
-    involved anywhere in this test.
+    ``EC2_INFERENCE_BASE_URL`` and ``EC2_VLLM_API_KEY`` are the provider's
+    documented test overrides (see ``ec2._connection``). With both set, the
+    provider never reads the state file, so no AWS call and no provisioned
+    instance is involved anywhere in this test.
     """
     monkeypatch.setenv("EC2_INFERENCE_BASE_URL", stub.base_url)
     monkeypatch.setenv("EC2_VLLM_API_KEY", "stub-key")
@@ -527,12 +540,12 @@ def sweep_env(stub, monkeypatch, tmp_path):
 
 
 def _explicit_config(driver, key=KEY):
-    """The driver's real config, retargeted at the two-theorem mini fixture.
+    """Build the driver's real config, retargeted at the two-theorem mini fixture.
 
-    Only the `theorems` block is swapped (the fixture has no
-    `replay_passing`/`novel_premises` sidecar). Every other locked value --
-    seed, rungs, replicates, temperature -- is exercised exactly as the real
-    lane would run it; the `theorems` block itself is pinned separately by
+    Only the `theorems` block is swapped, because the fixture has no
+    `replay_passing`/`novel_premises` sidecar. Every other locked value --
+    seed, rungs, replicates, temperature -- runs exactly as the real lane
+    would run it. The `theorems` block itself is pinned separately by
     ``test_config_is_user_locked``.
     """
     cfg = driver.build_config(key)
@@ -592,7 +605,7 @@ def test_end_to_end_sweep_offline(driver, sweep_env, stub):
         # NullVerifier defers every judgement to the later real pass.
         assert row["verdict"] == "unverified"
 
-    # The sanity gate is deferred too, and must NOT suppress cell generation.
+    # The sanity gate is deferred too, and must not suppress cell generation.
     rows = [json.loads(x) for x in (run_dir / "all_rows.jsonl").read_text().splitlines()]
     sanity = [r for r in rows if r.get("kind") == "sanity"]
     assert sanity and all(s["verdict"] == "skipped" for s in sanity)
@@ -605,20 +618,28 @@ def test_end_to_end_sweep_offline(driver, sweep_env, stub):
 
 
 def test_noise_rung_is_token_matched_to_its_hint_counterpart():
-    """``noise:3`` matches ``hint:3``'s token count EXACTLY, on the real corpus.
+    """``noise:3`` matches ``hint:3``'s token count exactly, on the real corpus.
 
-    This is the whole basis of the noise arm: it is a pure LENGTH control, so
-    any difference between `hint:3` and `noise:3` scores must come from the
-    hint's content, not from prompt length.
+    This is the whole basis of the noise arm: it is a pure length control,
+    so any difference between `hint:3` and `noise:3` scores must come from
+    the hint's content, not from prompt length.
 
-    The theorem is chosen as the first one whose `hint:3` is strictly longer
-    than `hint:2`, and that strictness is ASSERTED. Without it the test would
-    pass vacuously on any theorem where `hint:3` adds nothing: the padding
-    path short-circuits, `noise:3` is returned as a byte-identical copy of the
-    baseline, and "the token counts match" would be true for a reason that has
-    nothing to do with the padding logic under test.
+    The theorem is chosen as the first one whose `hint:3` is strictly longer than
+    `hint:2`, and the test checks that strictness. Without that check, the test would
+    pass vacuously on any theorem where `hint:3` adds nothing. The padding path
+    short-circuits, and `noise:3` comes back as a byte-identical copy of the baseline.
+    Then "the token counts match" would be true for a reason that has nothing to do with
+    the padding logic under test.
+
+    The raw LeanDojo split is a large download and is gitignored (see
+    ``notebooks/deduction/README.md``, "Data bootstrap"). When it is not
+    on disk, this test skips instead of failing.
     """
     from smolbench.deduction.lean import context
+
+    split_file = corpus.data_root() / "novel_premises" / "val.json"
+    if not split_file.exists():
+        pytest.skip(f"LeanDojo corpus not on disk: {split_file}")
 
     corpus.reset_caches()
     chosen = None
@@ -653,7 +674,7 @@ def _cell(theorem, k, rung, verdict, candidate, replicate_idx=0):
 
 
 def test_group_unverified_groups_by_theorem_and_k(lvr):
-    """Only ``unverified`` CELL rows are grouped, keyed by (theorem, k)."""
+    """Only ``unverified`` cell rows are grouped, keyed by (theorem, k)."""
     rows = [
         _cell("T.a", 1, "stepk:1", "unverified", "simp"),
         _cell("T.a", 1, "hint:2", "unverified", "ring"),
@@ -680,7 +701,7 @@ def test_unique_candidates_dedups_and_fans_out(lvr):
     """Identical candidate strings replay once; the verdict reaches every row.
 
     Lean replay is deterministic, so two rows carrying byte-identical
-    candidate text cannot disagree -- collapsing them is what makes the pass
+    candidate text cannot disagree. That collapse is what makes the pass
     affordable. The fan-out is the other half of that bargain: skipping it
     would leave duplicate rows still marked `unverified`.
     """
@@ -721,11 +742,11 @@ def test_resume_done_groups(lvr):
 
 
 def test_available_ram_and_worker_cap(lvr):
-    """RAM parsing and the worker cap read a SUPPLIED meminfo, never the host's.
+    """RAM parsing and the worker cap read a supplied meminfo, never the host's.
 
-    Reading the real ``/proc/meminfo`` here would make the assertion depend on
-    whatever else is running on the machine -- green on a big box, red in CI,
-    for reasons that have nothing to do with the code.
+    If this test read the real ``/proc/meminfo`` here, the check would depend on
+    whatever else is running on the machine. It would come out green on a big box and
+    red in CI, for reasons that have nothing to do with the code.
     """
     meminfo = "MemTotal:       65788432 kB\nMemAvailable:   12582912 kB\nSwapFree: 0 kB\n"
     assert lvr.available_ram_gb(meminfo) == pytest.approx(12.0)
@@ -736,7 +757,7 @@ def test_available_ram_and_worker_cap(lvr):
 
 
 def test_check_workers_refuses_oversubscription(lvr):
-    """Oversubscribing gets the pass OOM-killed hours in -- refuse up front."""
+    """An oversubscribed run gets OOM-killed hours in. Refuse it up front."""
     meminfo = "MemAvailable:   12582912 kB\n"  # 12 GiB -> cap 2
     lvr.check_workers(1, meminfo)
     lvr.check_workers(2, meminfo)
@@ -750,7 +771,7 @@ def test_check_workers_refuses_oversubscription(lvr):
 
 
 def test_s3_path_mapping(lvr):
-    """URI parsing and key construction -- the run layout is a fleet contract."""
+    """URI parsing and key construction. The run layout is a fleet contract."""
     assert lvr.parse_s3_uri("s3://bucket/deduction/runs") == ("bucket", "deduction/runs")
     assert lvr.parse_s3_uri("s3://bucket/deduction/runs/") == ("bucket", "deduction/runs")
     assert lvr.parse_s3_uri("s3://bucket") == ("bucket", "")
@@ -836,9 +857,9 @@ def _populate(run_dir: Path):
 def test_spool_uploads_preserving_paths_then_prunes(driver, tmp_path):
     """Upload preserves relative paths; prune keeps only ``manifest.json``.
 
-    ``manifest.json`` stays behind on purpose: it is the run's config record,
-    and leaving it is what lets a later resume recognise the run exists
-    without re-downloading the whole spool from S3 just to check.
+    ``manifest.json`` stays behind on purpose: it is the run's config
+    record, and leaving it is what lets a later resume recognize the run
+    exists without re-downloading the whole spool from S3 just to check.
     """
     run_dir = tmp_path / "runs" / f"scaling_{KEY}"
     _populate(run_dir)
@@ -875,9 +896,9 @@ def test_spool_uses_the_model_key_not_the_directory_name(driver, tmp_path):
 def test_spool_does_not_prune_when_verification_fails(driver, tmp_path):
     """A size mismatch must raise and leave every local file intact.
 
-    Pruning is irreversible and the local tree is the only other copy. If the
-    head_object check disagrees with the local size, the upload did not land
-    and deleting would destroy the run.
+    A prune is irreversible, and the local tree is the only other copy. If
+    the head_object check disagrees with the local size, the upload did
+    not land, and deleting would destroy the run.
     """
     run_dir = tmp_path / "runs" / f"scaling_{KEY}"
     _populate(run_dir)
@@ -892,7 +913,7 @@ def test_spool_does_not_prune_when_verification_fails(driver, tmp_path):
 
 
 def test_spool_missing_run_dir_is_not_an_error(driver, tmp_path):
-    """A lane that produced nothing has nothing to spool -- not a failure."""
+    """A lane that produced nothing has nothing to spool. That is not a failure."""
     client = FakeS3()
     assert driver.spool_to_s3(tmp_path / "nope", KEY, client=client) == 0
     assert client.uploads == []
@@ -901,13 +922,14 @@ def test_spool_missing_run_dir_is_not_an_error(driver, tmp_path):
 def test_driver_refuses_a_tag_that_does_not_name_its_lane():
     """A tag shared across lanes must abort the run, not start a box.
 
-    ``setdefault`` means an exported EC2_EXPERIMENT_TAG wins -- correct for a
+    ``setdefault`` means an exported EC2_EXPERIMENT_TAG wins: correct for a
     supervisor, catastrophic when the value is shared. keys.env ships
-    ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a standalone default, and a
-    launcher sourcing it with ``set -a`` exports that into every lane; boxes
-    are then discovered by tag (``_recover_tagged_instance``) and the second
-    lane adopts the first lane's instance, serving its own model on top. Three
-    lanes converged on one g6e.12xlarge this way on 2026-08-14.
+    ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a standalone default, and
+    a launcher that sources it with ``set -a`` exports that into every
+    lane. Boxes are then discovered by tag (``_recover_tagged_instance``),
+    and the second lane adopts the first lane's instance, serving its own
+    model on top. Three lanes converged on one g6e.12xlarge this way on
+    2026-08-14.
     """
     code = (
         "import os, sys, importlib.util\n"
@@ -928,17 +950,18 @@ def test_driver_refuses_a_tag_that_does_not_name_its_lane():
 
 
 def test_force_rerun_archives_old_rows_and_disables_resume(tmp_path, monkeypatch):
-    """--force-rerun must move all_rows.jsonl aside AND pass resume=False.
+    """--force-rerun must move all_rows.jsonl aside and pass resume=False.
 
-    Both halves matter. resume=False alone regenerates every cell but still
-    APPENDS, leaving the superseded row and the fresh row for each key in one
-    file on different hardware, distinguishable only by line order -- which is
-    the very confound the flag exists to remove. Archiving alone would leave
-    resume skipping every cell that already has content, so nothing would be
-    regenerated at all.
+    Both halves matter. resume=False alone regenerates every cell but
+    still appends, leaving the superseded row and the fresh row for each
+    key in one file on different hardware, distinguishable only by line
+    order. That is the very confound the flag exists to remove. The archive
+    alone would leave resume skipping every cell that already has content,
+    so nothing would be regenerated at all.
 
-    The archive is written INSIDE run_dir so spool_to_s3 carries it to S3 under
-    its own key: superseded data is preserved and labelled, never dropped.
+    The archive is written inside run_dir, so spool_to_s3 carries it to S3
+    under its own key: superseded data is preserved and labelled, never
+    dropped.
     """
     import notebooks.deduction.run_study as rs
 

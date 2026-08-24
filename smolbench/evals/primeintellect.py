@@ -1,9 +1,9 @@
 """
-Interfacing directly with the Prime Intellect inference API.
+Interface directly with the Prime Intellect inference API.
 
 A thin configuration over :mod:`smolbench.evals.openai_compat`, which holds
 the retry loop, response parsing, and parallel evaluation shared by every
-provider; only Prime Intellect's endpoint, auth, and context-length lookup
+provider. Only Prime Intellect's endpoint, auth, and context-length lookup
 live here.
 
 Setup
@@ -28,22 +28,26 @@ _DEFAULT_BASE_URL: str = "https://api.pinference.ai/api/v1"
 
 
 def _base_url() -> str:
-    """API root, resolved at call time so env overrides need no re-import."""
+    """Return the API root, resolved at call time.
+
+    This resolves at call time, so an env override needs no re-import.
+    """
     return os.getenv("PRIME_INTELLECT_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
 def _connection(model: str) -> Tuple[str, str]:
-    """Returns the chat-completions URL and bearer token."""
+    """Return the chat-completions URL and bearer token."""
     return f"{_base_url()}/chat/completions", os.getenv("PRIME_INTELLECT_API_KEY", "")
 
 
 def _extra_headers(model: str) -> Dict[str, str]:
-    """Optional team-billing header, resolved at call time.
+    """Return the optional team-billing header, resolved at call time.
 
-    Team-billed Prime Intellect accounts route billing/quota through the
-    ``X-Prime-Team-ID`` header; personal accounts omit it entirely. Read from
-    ``PRIME_INTELLECT_TEAM_ID`` per request attempt so it can be set alongside
-    the API key in keys.env without re-importing anything.
+    A team-billed Prime Intellect account routes billing and quota
+    through the ``X-Prime-Team-ID`` header. A personal account omits it
+    entirely. This function reads ``PRIME_INTELLECT_TEAM_ID`` on every
+    request attempt, so an operator can set it alongside the API key in
+    keys.env with no re-import needed.
     """
     team_id = os.getenv("PRIME_INTELLECT_TEAM_ID", "")
     return {"X-Prime-Team-ID": team_id} if team_id else {}
@@ -51,10 +55,10 @@ def _extra_headers(model: str) -> Dict[str, str]:
 
 @functools.lru_cache(maxsize=None)
 def get_model_context_length(model: str) -> int:
-    """Fetches the model context window from Prime Intellect.
+    """Get `model`'s context window from Prime Intellect.
 
-    A model's window is constant, so the network lookup is cached (see the
-    OpenRouter twin of this function for the rationale).
+    A model's window is constant, so this function caches the network
+    lookup. See the OpenRouter twin of this function for the rationale.
     """
     response: Dict[str, Any] = metadata_get(
         f"{_base_url()}/models/{model}",

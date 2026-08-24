@@ -1,16 +1,17 @@
 """
-Shared AWS provisioning primitives for :mod:`smolbench.evals.aws` (SageMaker)
-and :mod:`smolbench.evals.ec2` (self-provisioned EC2 Spot).
+Share AWS provisioning primitives between the SageMaker and EC2 providers.
 
-Both provider modules need to talk to IAM/EC2/SageMaker/S3 to stand up an
-inference endpoint, and until this module existed they each carried their own
-copy of the same handful of primitives (a fresh-Session client constructor, an
-``Error.Code`` extractor, an assume-role trust-policy dict, a poll-until-ready
-loop, a best-effort teardown sweep). This module is the single copy; each
-provider wires its own model/endpoint-specific logic on top.
+Used by :mod:`smolbench.evals.aws` (SageMaker) and
+:mod:`smolbench.evals.ec2` (self-provisioned EC2 Spot). Both provider
+modules talk to IAM, EC2, SageMaker, and S3 to stand up an
+inference endpoint. Before this module existed, each provider carried its
+own copy of the same primitives: a fresh-Session client constructor, an
+``Error.Code`` extractor, an assume-role trust-policy dict, a poll-until-
+ready loop, and a best-effort teardown sweep. This module holds the single
+copy. Each provider wires its own model- or endpoint-specific logic on top.
 
-Lifecycle correspondence -- the two providers' endpoint lifecycles are
-DELIBERATELY different shapes, not accidentally divergent:
+The two providers' endpoint lifecycles use DELIBERATELY different shapes.
+They do not diverge by accident:
 
 =====================  =====================================================
 aws.py (SageMaker)     ec2.py (EC2 Spot)
@@ -27,21 +28,22 @@ endpoint bills per       instance (unlike a SageMaker endpoint) is meant to
 hour until deleted.      outlive any single archetype section.
 =====================  =====================================================
 
-Why there is no shared ``provision -> poll -> yield -> teardown`` framework
-here, only the smaller pieces (``poll_until``, ``best_effort_teardown``,
-etc.): each lifecycle shape above has exactly ONE consumer. A framework
-generalized over a single call site is pure indirection -- it would need
-enough hooks to reproduce both shapes anyway, at which point it is just this
-module's functions with extra ceremony. Sharing the small, genuinely-repeated
-pieces (client construction, error-code parsing, the poll loop, the trust
-policy, the teardown sweep) gets the deduplication benefit without inventing
-a lifecycle abstraction neither caller asked for.
+This module has no shared ``provision -> poll -> yield -> teardown``
+framework. It offers only the smaller pieces (``poll_until``,
+``best_effort_teardown``, and so on). Each lifecycle shape above has exactly
+ONE consumer. A framework built for a single call site is pure indirection:
+it would need enough hooks to reproduce both shapes anyway, and at that
+point it is just this module's functions with extra ceremony. This module
+shares only the small, genuinely-repeated pieces instead: client
+construction, error-code parsing, the poll loop, the trust policy, the
+teardown sweep. That gives the deduplication benefit without inventing a
+lifecycle abstraction that neither caller asked for.
 
-Convention preserved from both call sites: boto3/botocore are imported
-LAZILY, inside each function that needs them, never at module scope. Neither
+Both call sites share one convention: import boto3 and botocore LAZILY,
+inside each function that needs them, never at module scope. Neither
 provider's pure-inference path (querying an already-running endpoint) needs
-AWS credentials or the SDK installed, and this module must not force that
-dependency on them merely by being imported.
+AWS credentials or the SDK installed. This module must not force that
+dependency on a caller merely by being imported.
 """
 
 import logging
@@ -53,17 +55,18 @@ T = TypeVar("T")
 
 
 def fresh_client(service: str, region: Optional[str] = None):
-    """Builds a boto3 client from a brand-new :class:`boto3.session.Session`.
+    """Build a boto3 client from a brand-new :class:`boto3.session.Session`.
 
-    Deliberately NOT ``boto3.client(service, ...)`` (which resolves against
-    the process-wide DEFAULT session, caching credentials at first resolve)
-    and not a client reused across calls. A fresh ``Session`` per call means a
-    rotated ``~/.aws/credentials`` file (this repo's IdP-issued sessions last
-    on the order of 12h) is picked up on the very next call instead of
-    raising ``RequestExpired``/``ExpiredToken`` until the process (or kernel)
-    restarts -- both provider modules' original per-call ``boto3.session.
-    Session().client(...)`` constructions had already independently arrived
-    at this same fix; this function is that fix, shared.
+    This is deliberately NOT ``boto3.client(service, ...)``, which resolves
+    against the process-wide DEFAULT session and caches credentials at first
+    resolve. It also does not reuse a client across calls. A fresh
+    ``Session`` per call picks up a rotated ``~/.aws/credentials`` file (this
+    repo's IdP-issued sessions last around 12h) on the very next call. Without
+    this, calls raise ``RequestExpired``/``ExpiredToken`` until the process
+    (or kernel) restarts. Both provider modules' original per-call
+    ``boto3.session.Session().client(...)`` constructions had already
+    independently arrived at this same fix. This function is that fix,
+    shared.
 
     Parameters
     ----------
@@ -72,7 +75,7 @@ def fresh_client(service: str, region: Optional[str] = None):
     region : str, optional
         AWS region to bind the client to. ``None`` (the default) lets boto3
         fall back to its own resolution order (``AWS_REGION``/``AWS_DEFAULT_
-        REGION``/the shared config file) -- used for IAM, which is a global
+        REGION``/the shared config file). Callers use this for IAM, a global
         (non-regional) service.
 
     Returns
@@ -83,9 +86,10 @@ def fresh_client(service: str, region: Optional[str] = None):
 
     Notes
     -----
-    Imports ``boto3`` lazily (see the module docstring) -- calling this is
-    itself the opt-in that requires boto3 to be installed and credentials to
-    be resolvable; nothing at import time of this module requires either.
+    Imports ``boto3`` lazily (see the module docstring). A call to this
+    function is itself the opt-in that requires boto3 to be installed and
+    credentials to be resolvable. Nothing at import time of this module
+    requires either.
     """
     import boto3  # lazy: keep the inference paths boto3-free
 
@@ -93,16 +97,17 @@ def fresh_client(service: str, region: Optional[str] = None):
 
 
 def error_code(err: Exception) -> str:
-    """Extracts the ``Error.Code`` from a boto3/botocore exception.
+    """Extract the ``Error.Code`` from a boto3/botocore exception.
 
     Parameters
     ----------
     err : Exception
-        Typically a ``botocore.exceptions.ClientError``, but any exception is
-        accepted -- one that lacks a ``.response`` dict (e.g. a plain
-        ``Exception`` raised by test doubles, or a non-ClientError failure)
-        degrades to ``""`` rather than raising, since every call site uses
-        this purely as a string to compare against a known error code.
+        Typically a ``botocore.exceptions.ClientError``, but this function
+        accepts any exception. One that lacks a ``.response`` dict (e.g. a
+        plain ``Exception`` raised by test doubles, or a non-ClientError
+        failure) degrades to ``""`` rather than raising. Every call site
+        uses this return value purely as a string to compare against a
+        known error code.
 
     Returns
     -------
@@ -115,13 +120,14 @@ def error_code(err: Exception) -> str:
 
 
 def assume_role_trust_policy(service: str) -> Dict[str, Any]:
-    """Builds an EC2-style AssumeRole trust policy for one AWS service principal.
+    """Build an EC2-style AssumeRole trust policy for one AWS service principal.
 
-    Both provider modules independently built this exact document -- for
-    ``"sagemaker.amazonaws.com"`` (aws.py's SageMaker execution role) and for
-    ``"ec2.amazonaws.com"`` (ec2.py's instance-profile role) -- differing
-    only in the ``Principal.Service`` value, so it is parameterized here on
-    that value instead of duplicated.
+    Both provider modules independently built this exact document: one for
+    ``"sagemaker.amazonaws.com"`` (aws.py's SageMaker execution role), and
+    one for ``"ec2.amazonaws.com"`` (ec2.py's instance-profile role). The two
+    documents differ only in the ``Principal.Service`` value, so this
+    function takes that value as a parameter instead of duplicating the
+    document.
 
     Parameters
     ----------
@@ -135,9 +141,9 @@ def assume_role_trust_policy(service: str) -> Dict[str, Any]:
         An IAM trust-policy document permitting ``sts:AssumeRole`` for
         ``service``. The dict's key order (``Version`` -> ``Statement`` ->
         ``Effect``/``Principal``/``Action`` within each statement) matches
-        the inline dicts this was extracted from byte-for-byte under
-        ``json.dumps`` -- callers that pin the exact ``AssumeRolePolicyDocument``
-        JSON string sent to IAM rely on that ordering being stable.
+        the inline dicts this function replaced, byte-for-byte under
+        ``json.dumps``. Callers that pin the exact ``AssumeRolePolicyDocument``
+        JSON string sent to IAM rely on that stable ordering.
     """
     return {
         "Version": "2012-10-17",
@@ -152,18 +158,19 @@ def assume_role_trust_policy(service: str) -> Dict[str, Any]:
 
 
 def ensure_sagemaker_execution_role(role_name: str) -> str:
-    """Returns the SageMaker execution role ARN, creating it if absent.
+    """Return the SageMaker execution role ARN, creating it if absent.
 
-    Transcribed from ``aws.py``'s original ``_ensure_exec_role`` (pre-refactor),
-    parametrized on the role name so both a SageMaker deployment path and any
-    future caller can name their own role. The one intentional behavioral
-    delta from the original: the IAM client comes from ``fresh_client("iam")``
-    (a brand-new boto3 Session per call) rather than the original's
-    process-wide-default-session ``boto3.client("iam")``. This delta is
-    payload-invariant (identical IAM API calls, identical request bodies) --
-    it only changes which credentials snapshot signs the request, so a
-    rotated ``~/.aws/credentials`` file is actually picked up instead of
-    silently signing with stale, expired credentials (see ``fresh_client``'s
+    This function is transcribed from ``aws.py``'s original
+    ``_ensure_exec_role`` (pre-refactor), parametrized on the role name so
+    both a SageMaker deployment path and any future caller can name their
+    own role. One intentional behavioral delta remains from the original:
+    the IAM client comes from ``fresh_client("iam")`` (a brand-new boto3
+    Session per call) rather than the original's process-wide-default-session
+    ``boto3.client("iam")``. This delta is payload-invariant: it sends
+    identical IAM API calls and identical request bodies. It only changes
+    which credentials snapshot signs the request, so a rotated
+    ``~/.aws/credentials`` file is actually picked up instead of silently
+    signing with stale, expired credentials (see ``fresh_client``'s
     docstring for the full rationale).
 
     Parameters
@@ -174,7 +181,7 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
     Returns
     -------
     str
-        The role's ARN -- freshly created, or the existing role's ARN when
+        The role's ARN: freshly created, or the existing role's ARN when
         one by this name already exists.
 
     Raises
@@ -187,9 +194,9 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
     -----
     On the CREATE path this sleeps 10 seconds (``time.sleep(10)``, preserved
     exactly from the original) after ``attach_role_policy`` and before
-    returning, to let IAM's eventual consistency catch up before SageMaker
-    attempts to assume the role -- omitted entirely on the already-exists
-    path, since that role has presumably already propagated.
+    returning. The sleep lets IAM's eventual consistency catch up before
+    SageMaker tries to assume the role. The already-exists path skips the
+    sleep, since that role has presumably already propagated.
     """
     import json
 
@@ -211,15 +218,16 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
 
 
 def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: int) -> str:
-    """Returns the EC2 instance-profile name for the S3 model cache, creating it if absent.
+    """Return the EC2 instance-profile name for the S3 model cache.
 
-    Transcribed verbatim (behaviorally) from ``ec2.py``'s original
-    ``_ensure_instance_profile``, with the two things that were module
+    Creates the role and profile if they are absent. This function is
+    transcribed verbatim (in behavior) from ``ec2.py``'s
+    original ``_ensure_instance_profile``. The two values that were module
     constants there (``EC2_INSTANCE_ROLE_NAME``, ``_IAM_PROPAGATION_SLEEP_S``)
-    threaded through as parameters instead, so this function carries no
-    ec2.py-specific global state. The role grants (a) read/write scoped to
-    ``bucket`` and (b) SSM core, which doubles as the break-glass shell for a
-    box launched with no SSH key.
+    are threaded through as parameters instead, so this function carries no
+    ec2.py-specific global state. The role grants two things: (a) read/write
+    scoped to ``bucket``, and (b) SSM core, which doubles as the break-glass
+    shell for a box launched with no SSH key.
 
     Parameters
     ----------
@@ -232,16 +240,16 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
     propagation_sleep_s : int
         Seconds to sleep after creating the role/profile, to let IAM's
         eventual consistency settle before ``RunInstances`` references the
-        profile. Only slept when something was actually freshly created (see
-        the ``created`` flag below) -- an already-existing role/profile is
-        presumed already propagated.
+        profile. This function sleeps only when it actually freshly created
+        something (see the ``created`` flag below); an already-existing
+        role/profile is presumed already propagated.
 
     Returns
     -------
     str
-        ``role_name`` itself (returned for call-site convenience, mirroring
-        the original, which returns the same string it was passed in as
-        ``EC2_INSTANCE_ROLE_NAME``).
+        ``role_name`` itself, returned for call-site convenience. This
+        mirrors the original, which returns the same string it was passed
+        in as ``EC2_INSTANCE_ROLE_NAME``.
 
     Raises
     ------
@@ -252,9 +260,9 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
 
     Notes
     -----
-    Four ``ClientError`` codes are swallowed, each at the exact call that can
-    raise it, because each means "this resource already exists in the shape
-    we want" rather than a genuine failure:
+    This function swallows four ``ClientError`` codes, each at the exact
+    call that can raise it, because each means "this resource already
+    exists in the shape we want" rather than a genuine failure:
 
     - ``create_role`` -> ``EntityAlreadyExists`` (role already created by an
       earlier run).
@@ -266,14 +274,15 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
       a genuine limit).
 
     ``put_role_policy`` is NOT wrapped in a try/except: it overwrites
-    idempotently (no "already exists" failure mode), which is exactly why the
+    idempotently (no "already exists" failure mode). This is exactly why the
     grant tracks ``bucket`` even when the role predates this call with a
     different bucket.
 
-    The ``created`` flag is set to True by EITHER the role or the profile
-    being freshly made (not just one specific one) -- ``propagation_sleep_s``
-    is spent if anything at all was new, since either omission could leave an
-    IAM object RunInstances is about to reference not-yet-visible.
+    The ``created`` flag is set to True when EITHER the role or the profile
+    is freshly made, not just one specific one. This function spends
+    ``propagation_sleep_s`` if anything at all was new, since either
+    omission could leave an IAM object that ``RunInstances`` is about to
+    reference not yet visible.
     """
     import json as _json
 
@@ -289,11 +298,11 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
     except ClientError as err:
         if error_code(err) == "AccessDenied":
             # Scoped credentials (e.g. the EC2-only operator key) cannot
-            # manage IAM at all -- create_role is the first IAM call, so it
-            # fails here even when the role/profile already exist from prior
-            # admin-credentialed runs (the common case: the name is fixed).
-            # Proceed optimistically; if the profile genuinely doesn't
-            # exist, RunInstances fails cleanly when it references it.
+            # manage IAM at all. create_role is the first IAM call, so it
+            # fails here even when the role/profile already exist from a
+            # prior admin-credentialed run (the common case: the name is
+            # fixed). Proceed optimistically. If the profile genuinely does
+            # not exist, RunInstances fails cleanly when it references it.
             logging.info(
                 f"ensure_instance_profile: iam:CreateRole denied for scoped "
                 f"credentials; assuming role/profile {name!r} already exists"
@@ -350,26 +359,27 @@ def poll_until(
     interval_s: float,
     on_timeout: Callable[[], Exception],
 ) -> T:
-    """Generic poll loop, matching the exact ordering of every wait loop it replaces.
+    """Poll in a loop, matching the exact ordering of every wait loop it replaces.
 
     Both provider modules independently grew several structurally-identical
     ``while True: ... check ... if time.time() > deadline: raise ... time.
-    sleep(...)`` loops (waiting for a public IP, a control agent, a healthy
-    model, an ``InService`` SageMaker endpoint). This function is that shape,
-    generalized: ``check`` does one poll attempt and returns either a
-    non-None success value or ``None`` to keep waiting, and may itself raise
-    to abort the loop early for an unrecoverable condition (e.g. "the
-    instance is terminated, waiting further is pointless").
+    sleep(...)`` loops. They wait for a public IP, a control agent, a
+    healthy model, or an ``InService`` SageMaker endpoint. This function is
+    that shape, generalized: ``check`` does one poll attempt and returns
+    either a non-None success value or ``None`` to keep waiting. ``check``
+    may itself raise, to abort the loop early for an unrecoverable
+    condition (e.g. "the instance is terminated, waiting further is
+    pointless").
 
     Parameters
     ----------
     check : Callable[[], Optional[T]]
         Called with no arguments once per iteration. A non-``None`` return
-        ends the loop successfully with that value. May raise any exception
-        to abort the loop immediately -- the exception propagates to
-        ``poll_until``'s caller unchanged (used by every migrated loop to
+        ends the loop successfully with that value. ``check`` may raise any
+        exception to abort the loop immediately; the exception propagates to
+        ``poll_until``'s caller unchanged. Every migrated loop uses this to
         fail fast on a condition no amount of further waiting would fix,
-        e.g. a spot instance reclaimed mid-wait).
+        e.g. a spot instance reclaimed mid-wait.
     timeout_s : float
         Overall deadline, in seconds, measured from the first call to this
         function (NOT from the first ``check()`` call, though in practice
@@ -378,10 +388,10 @@ def poll_until(
         Seconds slept between poll attempts, via ``time.sleep``.
     on_timeout : Callable[[], Exception]
         Called with no arguments once the deadline has passed with no
-        successful ``check()``; must RETURN (not raise) an ``Exception``
-        instance, which ``poll_until`` then raises. Deferred like this
-        (rather than a fixed message) so the exception can incorporate state
-        gathered during the loop's last ``check()`` call -- e.g. ``ec2.py``'s
+        successful ``check()``. It must RETURN (not raise) an ``Exception``
+        instance, which ``poll_until`` then raises. This is deferred, rather
+        than a fixed message, so the exception can carry state gathered
+        during the loop's last ``check()`` call. For example, ``ec2.py``'s
         model-readiness wait closes over the last polled status to describe
         the container's state in its ``TimeoutError``.
 
@@ -398,11 +408,11 @@ def poll_until(
 
     Notes
     -----
-    Ordering contract (this is the load-bearing part -- it must match every
-    wait loop being migrated onto this function, byte-for-byte in behavior):
+    This function has a load-bearing ordering contract. It must match every
+    wait loop migrated onto this function, byte-for-byte in behavior:
 
     1. Call ``check()``.
-    2. If it returned non-``None``, return that value immediately -- the
+    2. If it returned non-``None``, return that value immediately. The
        deadline is NEVER consulted on a successful attempt, so a check that
        happens to succeed exactly when time.time() equals (or has just
        passed) the deadline still returns normally rather than raising.
@@ -413,7 +423,7 @@ def poll_until(
     5. Otherwise, ``time.sleep(interval_s)`` and loop back to step 1.
 
     This function performs no I/O of its own beyond ``time.time()``/``time.
-    sleep()`` -- all actual polling (HTTP requests, ``DescribeInstances``
+    sleep()``. All actual polling (HTTP requests, ``DescribeInstances``
     calls, etc.) lives in the caller-supplied ``check``.
     """
     deadline = time.time() + timeout_s
@@ -429,21 +439,22 @@ def poll_until(
 def best_effort_teardown(
     steps: Sequence[Tuple[str, Callable[[], Any]]], *, log_prefix: str
 ) -> None:
-    """Runs every teardown step, logging (never raising) each one's outcome.
+    """Run every teardown step, logging (never raising) each one's outcome.
 
-    Generalized from ``aws.py``'s original ``provision_endpoint`` ``finally``
-    block, which tore down a SageMaker endpoint/endpoint-config/model in a
-    fixed 3-tuple loop with the same try/log-success/except-log-failure
-    shape. Generalized here to an arbitrary sequence of (label, callable)
-    steps so other teardown sequences (e.g. a different resource ordering)
-    can reuse the same "never let cleanup mask the real error" behavior.
+    This function is generalized from ``aws.py``'s original
+    ``provision_endpoint`` ``finally`` block, which tore down a SageMaker
+    endpoint/endpoint-config/model in a fixed 3-tuple loop with the same
+    try/log-success/except-log-failure shape. Here it takes an arbitrary
+    sequence of (label, callable) steps, so other teardown sequences (e.g. a
+    different resource ordering) can reuse the same "never let cleanup mask
+    the real error" behavior.
 
     Parameters
     ----------
     steps : Sequence[Tuple[str, Callable[[], Any]]]
-        ``(label, call)`` pairs, in the order they should be attempted. Every
-        step runs regardless of whether an earlier one succeeded or failed --
-        this function never short-circuits.
+        ``(label, call)`` pairs, in the order to attempt them. Every step
+        runs regardless of whether an earlier one succeeded or failed; this
+        function never short-circuits.
     log_prefix : str
         Prefix for each log line, e.g. the caller's function name, so
         interleaved logs from multiple teardown sites stay attributable.
@@ -454,14 +465,15 @@ def best_effort_teardown(
 
     Notes
     -----
-    This function is typically called from a ``finally`` block guarding a
-    ``yield`` (a ``@contextlib.contextmanager`` body) -- teardown running
+    Callers typically call this function from a ``finally`` block guarding a
+    ``yield`` (a ``@contextlib.contextmanager`` body). Teardown running
     there must NEVER raise and mask whatever exception (or successful
-    completion) the ``with`` body produced. Accordingly, every step's
-    exception is caught with a bare ``except Exception`` and logged at INFO
-    level rather than re-raised or escalated; a step that fails leaves its
-    resource behind for manual/next-run cleanup rather than aborting the
-    remaining steps or the caller's own exception propagation.
+    completion) the ``with`` body produced. Accordingly, this function
+    catches every step's exception with a bare ``except Exception`` and logs
+    it at INFO level, rather than re-raising or escalating it. A step that
+    fails leaves its resource behind for manual/next-run cleanup, rather
+    than aborting the remaining steps or the caller's own exception
+    propagation.
     """
     for label, call in steps:
         try:
@@ -472,10 +484,10 @@ def best_effort_teardown(
 
 
 class _DeploySpecRequired(TypedDict):
-    """The one field every deploy spec must have; see `DeploySpec`."""
+    """Hold the one field every deploy spec must have; see `DeploySpec`."""
 
     #: HuggingFace repo id to deploy/serve, e.g.
-    #: ``"Qwen/Qwen2.5-1.5B-Instruct"``. Consumed by BOTH backends: SageMaker
+    #: ``"Qwen/Qwen2.5-1.5B-Instruct"``. Both backends consume it: SageMaker
     #: puts it in the container's ``HF_MODEL_ID`` env var
     #: (``aws.provision_endpoint``); EC2/vLLM passes it as the control
     #: agent's ``hf_model_id`` payload field, which becomes vLLM's
@@ -485,31 +497,31 @@ class _DeploySpecRequired(TypedDict):
 
 
 class DeploySpec(_DeploySpecRequired, total=False):
-    """One model's deployment parameters, shared shape for both backends.
+    """Hold one model's deployment parameters, in a shape shared by both backends.
 
     ``hf_model_id`` (see `_DeploySpecRequired`) is the only field every spec
-    must supply; everything else is backend-specific and optional --
+    must supply. Everything else is backend-specific and optional.
     `SAGEMAKER_SPEC_KEYS` / `EC2_SPEC_KEYS` enumerate which optional fields
     each backend actually reads via ``.get(...)``, with a documented default
-    for every one it does not require. Modeled as two classes (a
-    ``total=True`` base carrying the required field, subclassed
+    for every one it does not require. This class is modeled as two classes
+    (a ``total=True`` base carrying the required field, subclassed
     ``total=False`` for the rest) rather than a single class with
-    ``typing.Required``/``NotRequired`` annotations, since that is the
-    pattern already idiomatic for "one required field, many optional ones"
+    ``typing.Required``/``NotRequired`` annotations. That split is already
+    the idiomatic pattern for "one required field, many optional ones"
     TypedDicts.
     """
 
-    #: Tensor-parallel degree. SageMaker: ``SM_VLLM_TENSOR_PARALLEL_SIZE`` env
-    #: var (``spec.get("tp", 1)``). EC2/vLLM: the control agent's ``tp``
-    #: payload field -> vLLM's ``--tensor-parallel-size`` (``spec.get("tp",
-    #: 1)``).
+    #: Tensor-parallel degree. SageMaker reads it as the
+    #: ``SM_VLLM_TENSOR_PARALLEL_SIZE`` env var (``spec.get("tp", 1)``).
+    #: EC2/vLLM reads it as the control agent's ``tp`` payload field, which
+    #: becomes vLLM's ``--tensor-parallel-size`` (``spec.get("tp", 1)``).
     tp: int
     #: SageMaker ONLY: the ``InstanceType`` for the endpoint's production
-    #: variant (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``
-    #: (required by SageMaker specs specifically, though not globally
-    #: required across both backends -- EC2 specs have no use for it, since
-    #: the shared instance type is chosen once at ``provision_spot_instance``
-    #: time, not per model).
+    #: variant (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``.
+    #: SageMaker specs require this field, though it is not required across
+    #: both backends: EC2 specs have no use for it, since the shared
+    #: instance type is chosen once at ``provision_spot_instance`` time, not
+    #: per model.
     instance_type: str
     #: SageMaker ONLY: extra container environment variables merged into the
     #: DLC's base ``Environment`` dict (e.g. ``{"HF_TOKEN": "hf_..."}`` for a
@@ -518,7 +530,7 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: SageMaker ONLY: override for the default vLLM DLC image URI; read via
     #: ``spec.get("image", SAGEMAKER_VLLM_DLC)``.
     image: str
-    #: EC2/vLLM ONLY: context window vLLM is launched with (``--max-model-
+    #: EC2/vLLM ONLY: context window vLLM launches with (``--max-model-
     #: len``); also doubles as ``get_model_context_length``'s soft token
     #: guard. Read via ``spec.get("max_model_len", EC2_CONTEXT_LENGTH)``.
     max_model_len: int
@@ -529,45 +541,46 @@ class DeploySpec(_DeploySpecRequired, total=False):
     vllm_args: List[str]
     #: EC2/vLLM ONLY: a system prompt the provider layer injects ahead of
     #: every user prompt for this model (e.g. Nemotron-Ultra's "detailed
-    #: thinking on" CoT toggle); read via ``spec.get("system_prompt")`` (this
-    #: one, uniquely, has no non-None default -- absence means "no
-    #: provider-injected system prompt").
+    #: thinking on" CoT toggle); read via ``spec.get("system_prompt")``. This
+    #: field, uniquely, has no non-None default: absence means "no
+    #: provider-injected system prompt".
     system_prompt: str
     #: EC2/vLLM ONLY: repo id to load this model's TOKENIZER from, when that
-    #: differs from ``hf_model_id``. Read via ``spec.get("tokenizer_hf_id")``
-    #: in ``smolbench.evals.tokenization.for_model``, which falls back to
-    #: ``hf_model_id`` when absent (the normal case). Exists because a
-    #: quantized redistribution occasionally ships weights without a
-    #: ``tokenizer.json``, while its unquantized base repo has one; the
+    #: differs from ``hf_model_id``. ``smolbench.evals.tokenization.for_model``
+    #: reads it via ``spec.get("tokenizer_hf_id")`` and falls back to
+    #: ``hf_model_id`` when absent (the normal case). This field exists
+    #: because a quantized redistribution occasionally ships weights without
+    #: a ``tokenizer.json``, while its unquantized base repo has one. The
     #: tokenizer is identical either way, so pointing at the base repo costs
     #: nothing and keeps token-matched prompts (the induction noise arm)
     #: buildable for that checkpoint.
     tokenizer_hf_id: str
     #: EC2/vLLM ONLY: LoRA adapters to stage from S3 and register with vLLM,
     #: as ``[{"name": ..., "s3": "<prefix>/<base_key>[/<sub>]", "region": ...}]``.
-    #: Consumed by ``ec2.serve_model`` (which passes the staging plan to the
-    #: on-box agent) -- listed in ``EC2_SPEC_KEYS`` since the LoRA arms first
-    #: shipped, but previously missing from this TypedDict, so type checkers
-    #: flagged adapter-carrying spec literals. Base-only studies never set it.
+    #: ``ec2.serve_model`` consumes this field and passes the staging plan to
+    #: the on-box agent. ``EC2_SPEC_KEYS`` has listed it since the LoRA arms
+    #: first shipped, but it was previously missing from this TypedDict, so
+    #: type checkers flagged adapter-carrying spec literals. Base-only
+    #: studies never set it.
     adapters: list
 
 
-#: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use -- verified against the
+#: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use. Verified against the
 #: dict literal (aws.py's ``SAGEMAKER_DEPLOY_SPECS``) and every place a spec
-#: is read (``provision_endpoint``): ``hf_model_id``/``instance_type`` are
-#: read unconditionally (``spec["..."]``, i.e. effectively required by any
-#: entry actually deployed); ``tp``/``env``/``image`` are read via
+#: is read (``provision_endpoint``). ``hf_model_id``/``instance_type`` are
+#: read unconditionally (``spec["..."]``), so they are effectively required
+#: by any entry actually deployed. ``tp``/``env``/``image`` are read via
 #: ``.get(...)`` with documented defaults.
 SAGEMAKER_SPEC_KEYS: frozenset = frozenset(
     {"hf_model_id", "tp", "instance_type", "env", "image"}
 )
-#: Keys `ec2.EC2_DEPLOY_SPECS` entries may use -- verified against the dict
+#: Keys `ec2.EC2_DEPLOY_SPECS` entries may use. Verified against the dict
 #: literal (ec2.py's ``EC2_DEPLOY_SPECS``) and every place a spec is read
-#: (``get_model_context_length``, ``serve_model``, ``_system_prompt``):
-#: ``hf_model_id`` is read unconditionally (``spec["hf_model_id"]``);
+#: (``get_model_context_length``, ``serve_model``, ``_system_prompt``).
+#: ``hf_model_id`` is read unconditionally (``spec["hf_model_id"]``).
 #: ``tp``/``max_model_len``/``vllm_args``/``system_prompt`` are all read via
-#: ``.get(...)`` with documented defaults. ``tokenizer_hf_id`` is read the
-#: same way, one module over, by ``tokenization.for_model``.
+#: ``.get(...)`` with documented defaults. ``tokenization.for_model``, one
+#: module over, reads ``tokenizer_hf_id`` the same way.
 EC2_SPEC_KEYS: frozenset = frozenset(
     {
         "hf_model_id",

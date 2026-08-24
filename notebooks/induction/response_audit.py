@@ -1,42 +1,46 @@
-"""Response-level audit of the induction results tree.
+"""Run a response-level audit of the induction results tree.
 
-Measures, per condition, what the stored RAW responses actually contain: how
-many are empty, how many scored correct, how many contain their own correct
-answer anywhere in the text, and the longest response. Used to tell a genuine
-low-accuracy result apart from a broken lane -- see PAIRED_ANALYSIS_RESULTS.md.
+For each condition, this script measures what the stored RAW responses
+actually contain: how many are empty, how many scored correct, how many
+contain their own correct answer anywhere in the text, and the longest
+response. Use it to tell a genuine low-accuracy result apart from a
+broken lane -- see PAIRED_ANALYSIS_RESULTS.md.
 
 Two traps this script exists to avoid
 --------------------------------------
-1. ``response`` is a YAML BLOCK SCALAR. A line-oriented regex over the file
-   silently truncates it at the first line that looks like a new key, which
-   understated glm_air's empty count as 16 (true value 48) and overstated
-   exaone_33b's answer hits as 24 (true value 5). Any pass over ``response``
-   text must use a real parser.
+1. ``response`` is a YAML BLOCK SCALAR. A line-oriented regex over the
+   file silently truncates it at the first line that looks like a new
+   key. That bug understated glm_air's empty count as 16 (true value
+   48), and overstated exaone_33b's answer hits as 24 (true value 5).
+   Any pass over ``response`` text must use a real parser.
 
-   The results YAMLs carry ``!!python/object:`` tags, which ``yaml.safe_load``
-   refuses -- but ``yaml.unsafe_load`` CONSTRUCTS arbitrary objects from
-   repository-generated files, which the repo convention (see
-   ``notebooks/_power_common.py``) declines to do. The loader below takes the
-   third option: map every unknown tag to a plain dict/list/str. Safe, and
-   correct on block scalars.
+   The results YAMLs carry ``!!python/object:`` tags, which
+   ``yaml.safe_load`` refuses. But ``yaml.unsafe_load`` CONSTRUCTS
+   arbitrary objects from repository-generated files, which the repo
+   convention (see ``notebooks/_power_common.py``) declines to do. The
+   loader below takes the third option: it maps every unknown tag to a
+   plain dict/list/str. This is safe, and correct on block scalars.
 
-2. The per-harmonic correct answer is NOT ``lcm(1..k)``. The queries are COUNTS
-   over one full 2520-position sequence, so harmonic k's answer is 2520 // k =
-   (2520, 1260, 840, 630, 504, 420, 360, 315, 280) -- identical for every seed,
-   since only the label assignment varies with the seed. Assuming lcm produces
-   ``scored > answer_in_response``, which is arithmetically impossible; the
-   assertion below turns that mistake into an error instead of a plausible
-   table. ``EXPECTED_ANSWERS`` is verified against a lane at acc 1.000.
+2. The per-harmonic correct answer is NOT ``lcm(1..k)``. The queries are
+   COUNTS over one full 2520-position sequence, so harmonic k's answer
+   is 2520 // k = (2520, 1260, 840, 630, 504, 420, 360, 315, 280),
+   identical for every seed, since only the label assignment varies with
+   the seed. lcm would instead produce ``scored > answer_in_response``,
+   which is arithmetically impossible. The assertion below turns that
+   mistake into an error, instead of a plausible-looking table.
+   ``EXPECTED_ANSWERS`` is verified against a lane at acc 1.000.
 
 Interpreting ``ans_in_resp``
 -----------------------------
-The gap between ``scored`` and ``ans_in_resp`` is only informative when the
-condition's violation profile is NOT dominated by ``multiple-values``. A
-response that rambles through a long list of integers contains the correct one
-by construction, so for a multiple-values-dominated lane (min3_8b noise: 181 vs
-58) the metric is near-vacuous and does NOT indicate recoverable signal. Where
-the profile is empty- or collapse-dominated (glm_flash 39 vs 33, glm_air 176 vs
-164) the small gap genuinely does show the parser is recovering what is there.
+The gap between ``scored`` and ``ans_in_resp`` is only informative when
+the condition's violation profile is NOT dominated by
+``multiple-values``. A response that rambles through a long list of
+integers contains the correct one by construction. So for a
+multiple-values-dominated lane (min3_8b noise: 181 vs 58) the metric is
+near-vacuous, and does NOT indicate recoverable signal. Where the
+profile is empty- or collapse-dominated (glm_flash 39 vs 33, glm_air 176
+vs 164), the small gap genuinely does show the parser is recovering what
+is there.
 
 Run:
     uv run --no-project --with pyyaml python notebooks/induction/response_audit.py
@@ -88,7 +92,31 @@ TagIgnoringLoader.add_multi_constructor(
 
 
 def audit(condition: str) -> dict:
-    """Per-condition response-level counts. Raises on the two traps above."""
+    """Compute per-condition response-level counts.
+
+    Parameters
+    ----------
+    condition : str
+        Name of the results subdirectory to audit (for example,
+        ``"glm_air_noise_intens"``), under `RESULTS`.
+
+    Returns
+    -------
+    dict
+        Keys ``condition``, ``marks``, ``empty``, ``scored``,
+        ``ans_in_resp``, ``longest``. See `main`'s printed table header
+        for what each count means.
+
+    Raises
+    ------
+    SystemExit
+        If `condition`'s results directory does not exist.
+    AssertionError
+        If a mark's `answer` disagrees with `EXPECTED_ANSWERS` (trap 2 in
+        the module docstring), or if `scored` exceeds `ans_in_resp`
+        (which is arithmetically impossible and signals a wrong
+        `EXPECTED_ANSWERS`).
+    """
     cdir = RESULTS / condition
     if not cdir.is_dir():
         raise SystemExit(
@@ -131,6 +159,13 @@ def audit(condition: str) -> dict:
 
 
 def main(conditions=DEFAULT_CONDITIONS) -> None:
+    """Print a response-level audit table for `conditions`.
+
+    Parameters
+    ----------
+    conditions : tuple of str, default DEFAULT_CONDITIONS
+        Condition names to audit, in print order.
+    """
     print(
         f"{'condition':26s} {'marks':>6s} {'empty':>6s} {'scored':>7s} "
         f"{'ans_in_resp':>12s} {'longest':>9s}"

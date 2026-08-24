@@ -1,55 +1,60 @@
-"""PAIRED re-analysis of the family-ladder induction study.
+"""Run a PAIRED re-analysis of the family-ladder induction study.
 
-Implements the two corrections specified in ``MULTIPLICITY_PLAN.md`` sections
-2.1 and 2.2, against the marks already collected (no new data collection):
+This implements the two corrections specified in
+``MULTIPLICITY_PLAN.md`` sections 2.1 and 2.2, against the marks already
+collected. It collects no new data:
 
   1. PAIRED pairwise tests. Every model answers the SAME seeds with
-     byte-identical prompts, and the four info arms at a given seed reuse the
-     same queries and answers (``get_periodic_zero_info_numeric_quiz`` empties
-     only the context), so all 210 PRIMARY contrasts are matched item-for-item.
-     ``power_analysis.py::cmh_reject`` nevertheless treats the two arms as
-     independent binomials. This script computes, for every contrast, BOTH the
-     unpaired harmonic-stratified CMH p-value (what the current code would
-     give) and the exact McNemar p-value on the matched marks, and reports how
-     many contrasts change rejection status under Holm over the 210-test
-     PRIMARY family.
+     byte-identical prompts. The four info arms at a given seed reuse
+     the same queries and answers (``get_periodic_zero_info_numeric_quiz``
+     empties only the context). So all 210 PRIMARY contrasts are matched
+     item-for-item. ``power_analysis.py::cmh_reject`` nevertheless
+     treats the two arms as independent binomials. This script computes,
+     for every contrast, BOTH the unpaired harmonic-stratified CMH
+     p-value (what the current code would give) and the exact McNemar
+     p-value on the matched marks. It reports how many contrasts change
+     rejection status under Holm over the 210-test PRIMARY family.
 
-  2. The CLUSTERING SIGN. Each replicate seed contributes exactly one unit to
-     each of the 9 harmonic strata, and CMH sums those strata's variances as if
-     independent -- dropping the cross-stratum covariance. Whether that makes
-     the test anticonservative or conservative is an empirical question about
-     the sign of the seed x arm interaction, and it is measurable from these
-     data: compare the observed variance of the per-seed total arm difference
-     against the sum of the per-harmonic variances. The ratio IS the design
-     effect the CMH denominator is missing (>1 anticonservative, <1
+  2. The CLUSTERING SIGN. Each replicate seed contributes exactly one
+     unit to each of the 9 harmonic strata. CMH sums those strata's
+     variances as if independent, which drops the cross-stratum
+     covariance. Whether that makes the test anticonservative or
+     conservative is an empirical question about the sign of the seed x
+     arm interaction, and it is measurable from these data: compare the
+     observed variance of the per-seed total arm difference against the
+     sum of the per-harmonic variances. The ratio IS the design effect
+     the CMH denominator is missing (>1 anticonservative, <1
      conservative).
 
-  3. [Added 2026-08-21] The clustering FIX, not just its sign. Measuring the
-     design effect and then reporting an item-level p anyway leaves the
-     inference resting on the assumption the measurement rejects. The exact
-     seed-level sign-flip randomization test (`signflip_exact_p`) resamples the
-     unit the design actually randomizes -- the whole replicate -- and is what
-     `significance_report.py` and `extens_vs_noise.py` now correct over the 210
-     family. This is the repo's own standing recommendation
-     (MULTIPLICITY_PLAN.md section "resampling unit must be the whole seed";
+  3. [Added 2026-08-21] The clustering FIX, not just its sign. If this
+     analysis measured the design effect and then reported an
+     item-level p anyway, that would leave the inference resting on the
+     assumption the measurement rejects. The exact seed-level sign-flip
+     randomization test
+     (`signflip_exact_p`) resamples the unit the design actually
+     randomizes: the whole replicate. This is what `significance_report.py`
+     and `extens_vs_noise.py` now correct over the 210 family. It follows
+     the repo's own standing recommendation (MULTIPLICITY_PLAN.md
+     section "resampling unit must be the whole seed";
      MULTIPLICITY_CMH_VARIANTS.md "PERMUTE / BLOCK-BOOTSTRAP WHOLE
-     REPLICATES ... RECOMMENDED HERE"), finally applied to the primary family.
-     Exact McNemar stays in the tables as the DESCRIPTIVE item-level figure.
+     REPLICATES ... RECOMMENDED HERE"), finally applied to the primary
+     family. Exact McNemar stays in the tables as the DESCRIPTIVE
+     item-level figure.
 
-Marks are read from the local results tree that
+This script reads marks from the local results tree that
 ``InductionExperiment.harness.sync_down()`` produces
-(``{model}_{info}/rep_{seed}.yaml``). The YAMLs carry ``!!python/object`` tags,
-so -- following the same reasoning as ``power_analysis.py`` -- we regex the
-per-mark ``score:`` lines rather than unsafe-loading repository-generated
-files. Marks are serialized in the generator's ascending-period order, so
-position recovers the harmonic.
+(``{model}_{info}/rep_{seed}.yaml``). The YAMLs carry ``!!python/object``
+tags. So, following the same reasoning as ``power_analysis.py``, this
+script regexes the per-mark ``score:`` lines, instead of unsafe-loading
+repository-generated files. Marks are serialized in the generator's
+ascending-period order, so position recovers the harmonic.
 
-Scoring convention: ``score: 1`` is correct; ``0`` and ``null`` (an invalid /
-uncompliant completion) are both failures. That matches
-``power_analysis.py::load_outcomes`` exactly. Because ~4% of marks are ``null``
-and their treatment is a live methodological question in this project, a
-sensitivity pass that DROPS item-pairs where either arm is invalid is reported
-alongside every headline.
+Scoring convention: ``score: 1`` is correct; ``0`` and ``null`` (an
+invalid / uncompliant completion) are both failures. That matches
+``power_analysis.py::load_outcomes`` exactly. About 4% of marks are
+``null``, and their treatment is a live methodological question in this
+project. So a sensitivity pass that DROPS item-pairs where either arm is
+invalid is reported alongside every headline.
 
 Run (ephemeral env via --no-project, per repo convention):
     uv run --no-project --with numpy --with scipy python notebooks/induction/paired_analysis.py
@@ -89,9 +94,10 @@ def load_marks() -> tuple[dict, dict]:
     (correct, valid) : two dicts keyed ``(model, info)``
         ``correct[key][seed]`` is a length-9 bool array (True == score 1).
         ``valid[key][seed]`` is a length-9 bool array (False == score null).
-        Seeds are whatever ``rep_*.yaml`` files exist, so a lane that is still
-        collecting (min3_14b at the time of writing) simply contributes fewer
-        seeds and is handled by the per-contrast seed intersection below.
+        Seeds are whatever ``rep_*.yaml`` files exist. A lane that is
+        still collecting (min3_14b at the time of writing) simply
+        contributes fewer seeds. The per-contrast seed intersection
+        below handles that case.
     """
     correct: dict = {}
     valid: dict = {}
@@ -125,15 +131,29 @@ def load_marks() -> tuple[dict, dict]:
 
 
 def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
-    """Item-matched mark vectors for one contrast.
+    """Build item-matched mark vectors for one contrast.
 
-    Intersects the two conditions' seeds (so a still-collecting lane is
-    compared only on the seeds it has) and flattens seed x harmonic into a
-    single item axis, preserving the pairing.
+    This function intersects the two conditions' seeds, so a
+    still-collecting lane is compared only on the seeds it has. It then
+    flattens seed x harmonic into a single item axis, preserving the
+    pairing.
 
-    Returns ``(a, b, seed_index)`` as 1-D arrays over matched items, where
-    ``seed_index`` records which replicate each item came from -- needed by the
-    clustering measurement, which must resample whole replicates.
+    Parameters
+    ----------
+    correct, valid : dict
+        The two dicts `load_marks` returns.
+    key_a, key_b : (str, str)
+        The two ``(model, info)`` condition keys to compare.
+    drop_invalid : bool
+        If True, drop item-pairs where either arm's mark is invalid
+        (``score: null``).
+
+    Returns
+    -------
+    a, b, seed_index : ndarray
+        1-D arrays over matched items. `seed_index` records which
+        replicate each item came from; the clustering measurement needs
+        it, because that measurement must resample whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
@@ -148,16 +168,26 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
 
 
 def mcnemar_exact_p(b: int, c: int) -> float:
-    """Two-sided exact conditional (binomial) McNemar p-value.
+    """Compute the two-sided exact conditional (binomial) McNemar p-value.
 
-    ``b``/``c`` are the discordant counts. With no discordant pairs there is no
-    evidence of a difference, so p = 1.
+    Parameters
+    ----------
+    b, c : int
+        The discordant counts. With no discordant pairs there is no
+        evidence of a difference, so p = 1.
 
-    NOTE (2026-08-21): this treats the 270 marks as 270 independent pairs. They
-    are not -- see `seed_diffs` / `signflip_exact_p`, which are what the reports
-    now use for inference. This function survives as the DESCRIPTIVE item-level
-    figure and as the exact reference the cluster test collapses onto when every
-    cluster is a singleton.
+    Returns
+    -------
+    float
+        The two-sided exact McNemar p-value.
+
+    Notes
+    -----
+    NOTE (2026-08-21): this treats the 270 marks as 270 independent
+    pairs. They are not. See `seed_diffs` / `signflip_exact_p`, which
+    are what the reports now use for inference. This function survives
+    as the DESCRIPTIVE item-level figure, and as the exact reference the
+    cluster test collapses onto when every cluster is a singleton.
     """
     nd = b + c
     if nd == 0:
@@ -166,13 +196,26 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 
 
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
-    """Per-replicate arm difference, one integer per seed.
+    """Compute the per-replicate arm difference, one integer per seed.
 
-    ``d_s = (# correct in arm A at seed s) - (# correct in arm B at seed s)``,
-    over the items `aligned` kept for that seed. This is the per-cluster
-    summary the sign-flip test below permutes, and ``sum(d_s) == b - c`` exactly
-    (the McNemar discordance margin), so the two tests read the same signal and
-    differ only in what they treat as exchangeable.
+    ``d_s = (# correct in arm A at seed s) - (# correct in arm B at seed
+    s)``, over the items `aligned` kept for that seed. This is the
+    per-cluster summary the sign-flip test below permutes.
+    ``sum(d_s) == b - c`` exactly (the McNemar discordance margin), so
+    the two tests read the same signal. They differ only in what they
+    treat as exchangeable.
+
+    Parameters
+    ----------
+    a, b : ndarray
+        Item-matched boolean mark vectors, from `aligned`.
+    seed_idx : ndarray
+        Per-item replicate index, from `aligned`.
+
+    Returns
+    -------
+    list of int
+        One difference per unique seed in `seed_idx`.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -182,36 +225,50 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
 
 
 def signflip_exact_p(diffs) -> float:
-    """EXACT two-sided seed-level sign-flip randomization p-value.
+    """Compute the EXACT two-sided seed-level sign-flip randomization p-value.
 
-    The independent unit in this design is the REPLICATE SEED, not the mark: a
-    seed draws one label alphabet and one answer vector, and the 9 harmonic
-    items inside it share them. Under the null "the two arms are exchangeable
-    WITHIN a replicate", every seed's difference is equally likely to have come
-    out with the opposite sign, so the reference distribution of
-    ``T = sum_s d_s`` is the 2^S sign assignments, and
+    The independent unit in this design is the REPLICATE SEED, not the
+    mark. A seed draws one label alphabet and one answer vector, and the
+    9 harmonic items inside it share them. Under the null "the two arms
+    are exchangeable WITHIN a replicate", every seed's difference is
+    equally likely to have come out with the opposite sign. So the
+    reference distribution of ``T = sum_s d_s`` is the 2^S sign
+    assignments, and
 
         p = P(|T*| >= |T_obs|)
 
-    is exact. Enumerated by dynamic programming over the attainable totals --
-    2^30 assignments cost 30 dict passes, not 10^9 draws -- so the value is
-    deterministic and needs no seed.
+    is exact. This function enumerates it by dynamic programming over the
+    attainable totals: 2^30 assignments cost 30 dict passes, not 10^9
+    draws. So the value is deterministic and needs no seed.
 
-    Two properties worth stating, because they close the "why this statistic"
-    question rather than leaving it to taste:
+    Two properties are worth stating here, because they close the "why
+    this statistic" question, rather than leaving it to taste:
 
-      * With one item per cluster the test IS exact McNemar (a singleton's
-        d_s is +-1 and the sign-flip distribution becomes the binomial the
-        conditional test uses).
-      * Studentizing is a provable no-op: ``sum_s d_s^2`` is invariant under
-        sign flips, so a paired-t statistic is a monotone function of |T| and
-        yields an identical p. The unweighted seed sum is therefore the natural
-        member of the cluster-permutation family, not one choice among many.
+      * With one item per cluster the test IS exact McNemar (a
+        singleton's d_s is +-1, and the sign-flip distribution becomes
+        the binomial the conditional test uses).
+      * Studentizing is a provable no-op: ``sum_s d_s^2`` is invariant
+        under sign flips, so a paired-t statistic is a monotone function
+        of |T| and yields an identical p. The unweighted seed sum is
+        therefore the natural member of the cluster-permutation family,
+        not one choice among many.
 
-    The resolution floor is ``2 / 2^S`` (both the observed assignment and its
-    global negation always qualify), i.e. 1.86e-09 at S = 30; contrasts that
-    saturate it are reported at the floor rather than at a fabricated smaller
-    number.
+    Parameters
+    ----------
+    diffs : sequence of int
+        Per-seed differences, from `seed_diffs`.
+
+    Returns
+    -------
+    float
+        The exact two-sided p-value. Returns 1.0 for an empty `diffs`.
+
+    Notes
+    -----
+    The resolution floor is ``2 / 2^S`` (both the observed assignment
+    and its global negation always qualify), that is, 1.86e-09 at
+    S = 30. Contrasts that saturate it are reported at the floor,
+    rather than at a fabricated smaller number.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -229,19 +286,34 @@ def signflip_exact_p(diffs) -> float:
 
 
 def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
-    """p-value of the repo's continuity-corrected 2x2xK CMH, strata = harmonic.
+    """Compute the p-value of the repo's continuity-corrected 2x2xK CMH.
 
-    This deliberately mirrors ``power_analysis.py::cmh_reject`` (same
-    continuity correction, same hypergeometric variance) so the paired-vs-
-    unpaired comparison isolates the PAIRING, not incidental differences in
-    the statistic. Rebuilt from the flat item arrays: the harmonic index is
-    recovered as position-within-seed.
+    Strata = harmonic. This deliberately mirrors
+    ``power_analysis.py::cmh_reject`` (same continuity correction, same
+    hypergeometric variance), so the paired-vs-unpaired comparison
+    isolates the PAIRING, not incidental differences in the statistic.
+    This function rebuilds the statistic from the flat item arrays: it
+    recovers the harmonic index as position-within-seed.
+
+    Parameters
+    ----------
+    a, b : ndarray
+        Item-matched boolean mark vectors, from `aligned`.
+    seed_idx : ndarray
+        Per-item replicate index, from `aligned`.
+
+    Returns
+    -------
+    float
+        The chi-squared (df=1) survival-function p-value. Returns 1.0
+        if no stratum has enough items to contribute variance.
     """
-    # `seed_idx` groups items by replicate, and within a replicate items stay in
-    # ascending harmonic order, so an item's offset within its own seed block IS
-    # its harmonic. (Under drop_invalid a replicate can be short, which shifts
-    # later offsets; that only mislabels which stratum an item lands in, never
-    # breaks the pairing, and the pre-registered pass does not drop anything.)
+    # `seed_idx` groups items by replicate, and within a replicate items
+    # stay in ascending harmonic order, so an item's offset within its
+    # own seed block IS its harmonic. (Under drop_invalid a replicate
+    # can be short, which shifts later offsets. That only mislabels
+    # which stratum an item lands in; it never breaks the pairing, and
+    # the pre-registered pass does not drop anything.)
     num_terms, den_terms = [], []
     order = np.concatenate([np.arange((seed_idx == s).sum()) for s in np.unique(seed_idx)])
     for k in np.unique(order):
@@ -265,15 +337,28 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
 
 
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Holm (1979) step-down rejections at familywise level `alpha`.
+    """Compute Holm (1979) step-down rejections at familywise level `alpha`.
 
-    Controls FWER under ARBITRARY dependence and is uniformly more powerful
-    than single-step Bonferroni -- see MULTIPLICITY_PLAN.md section 1.
+    This controls FWER under ARBITRARY dependence, and is uniformly more
+    powerful than single-step Bonferroni. See MULTIPLICITY_PLAN.md
+    section 1.
 
-    Ties are pervasive in this family (the sign-flip test has a hard resolution
-    floor at 2/2^30, and three lanes sit exactly on it), so the sort is STABLE:
-    the rejection set must not depend on the order the contrasts happen to be
-    built in.
+    Ties are pervasive in this family: the sign-flip test has a hard
+    resolution floor at 2/2^30, and three lanes sit exactly on it. So
+    the sort is STABLE. The rejection set must not depend on the order
+    the contrasts happen to be built in.
+
+    Parameters
+    ----------
+    pvals : ndarray
+        p-values for the tests in one family.
+    alpha : float, default ALPHA
+        Family-wise significance threshold.
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask, same shape as `pvals`.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -287,16 +372,29 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
 
 def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float | None:
-    """Observed / independence-assumed variance of the per-seed arm difference.
+    """Compute observed / independence-assumed variance of the per-seed arm difference.
 
-    The quantity the CMH denominator omits. Let d_(s,k) = a - b be the per-item
-    arm difference and T_s = sum_k d_(s,k) the per-replicate total. Summing
-    per-stratum variances (what CMH does) assumes Var(T_s) = sum_k Var(d_(.,k));
-    the truth adds 2*sum_(k<k') Cov(d_(.,k), d_(.,k')). This returns the ratio
-    of the two, i.e. the design effect: >1 means the statistic's denominator is
-    too small (anticonservative), <1 means too large (conservative).
+    This is the quantity the CMH denominator omits. Let d_(s,k) = a - b
+    be the per-item arm difference, and T_s = sum_k d_(s,k) the
+    per-replicate total. CMH sums per-stratum variances, which assumes
+    Var(T_s) = sum_k Var(d_(.,k)). The truth adds
+    2*sum_(k<k') Cov(d_(.,k), d_(.,k')). This function returns the ratio
+    of the two: the design effect. A value >1 means the statistic's
+    denominator is too small (anticonservative); <1 means too large
+    (conservative).
 
-    Returns None when the contrast has no variance to measure (identical arms).
+    Parameters
+    ----------
+    a, b : ndarray
+        Item-matched boolean mark vectors, from `aligned`.
+    seed_idx : ndarray
+        Per-item replicate index, from `aligned`.
+
+    Returns
+    -------
+    float or None
+        The design effect ratio, or `None` when the contrast has no
+        variance to measure (identical arms, or fewer than 3 seeds).
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
@@ -312,6 +410,22 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
 
 
 def main() -> None:
+    """Run the paired re-analysis and print the report.
+
+    For both the pre-registered pass (null == incorrect) and a
+    DROP-INVALID sensitivity pass, this prints, over the 210-contrast
+    PRIMARY family:
+
+    - unpaired-CMH and paired McNemar rejection counts;
+    - (pre-registered pass only) seed sign-flip rejection counts;
+    - the contrasts that change rejection status under pairing;
+    - the standing intens-vs-noise question per model; and
+    - the clustering design-effect summary.
+
+    It also reports SECONDARY-family (Benjamini-Hochberg) discoveries
+    under both the unpaired and paired tests. See the module docstring
+    for what each of these corrections means.
+    """
     print("Loading marks ...", flush=True)
     correct, valid = load_marks()
     depths = {k: len(v) for k, v in correct.items()}
@@ -336,9 +450,10 @@ def main() -> None:
             nc = int((~a & b).sum())
             p_paired = mcnemar_exact_p(nb, nc)
             p_unpaired = cmh_unpaired_p(a, b, sidx)
-            # The cluster test is only meaningful on the pre-registered pass:
-            # dropping invalid pairs makes the per-seed sum a sum over a
-            # VARIABLE number of items, which is a different statistic.
+            # The cluster test is only meaningful on the pre-registered
+            # pass. If invalid pairs are dropped, the per-seed sum
+            # becomes a sum over a VARIABLE number of items, which is a
+            # different statistic.
             p_cluster = (
                 signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
             )

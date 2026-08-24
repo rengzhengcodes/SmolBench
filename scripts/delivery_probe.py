@@ -2,9 +2,9 @@
 
 WHY THIS EXISTS
 ---------------
-On 2026-08-14 the ``ministral-3-14b`` induction lane stopped landing results
-while its boxes were demonstrably still working. The signature, captured by
-hand on a live box:
+On 2026-08-14, the ``ministral-3-14b`` induction lane stopped landing
+results, while its boxes were demonstrably still working. This is the
+signature, captured by hand on a live box:
 
     vLLM      num_requests_running 0, generation_tokens_total FROZEN at
               360,874 (four requests had generated all the way to the cap),
@@ -12,32 +12,34 @@ hand on a live box:
     client    four sockets still ESTABLISHED, threads parked in poll(), no
               response bodies, eventually a 5400 s read timeout
 
-So the model produced the tokens and the response never crossed the wire.
-The loss was perfectly length-correlated -- ``finished_reason=stop`` landed
-13 of 13, ``finished_reason=length`` landed 0 of 28 -- which is what a
-transport that drops a flow after N minutes of silence looks like: a
-non-streaming completion sends NOTHING between the request and the finished
-body, so only generations longer than that idle threshold are lost.
+So the model produced the tokens, and the response never crossed the
+wire. The loss correlated perfectly with length: ``finished_reason=stop``
+landed 13 of 13, and ``finished_reason=length`` landed 0 of 28. This is
+what a transport that drops a flow after N minutes of silence looks
+like. A non-streaming completion sends NOTHING between the request and
+the finished body, so a transport like this loses only generations
+longer than its idle threshold.
 
-Diagnosing it after the fact is hopeless (the logs show only "Read timed
-out"), so this samples both sides at once, continuously, while a run is in
-flight:
+A post-hoc diagnosis is hopeless: the logs show only "Read timed out".
+So this script samples both sides at once, continuously, while a run is
+in flight:
 
-  SERVER  vLLM's own counters -- requests running/waiting, generation tokens,
-          and finished requests split by finish reason.
-  CLIENT  this host's socket table, filtered to the box: how many connections
-          to :8000 are ESTABLISHED, and how many bytes are sitting unread in
-          their receive queues.
+  SERVER  vLLM's own counters: requests running or waiting, generation
+          tokens, and finished requests split by finish reason.
+  CLIENT  this host's socket table, filtered to the box: how many
+          connections to :8000 are ESTABLISHED, and how many bytes sit
+          unread in their receive queues.
 
 The DISCRIMINATOR is the pair (server finished, client sockets). If the
-server's finished count climbs while the client keeps the same sockets open
-with empty receive queues, the bodies are being lost in transit -- that is
-the fault, live, with a timestamp. If the server's counters are frozen with
-requests still running, the box itself is wedged, which is a different
-problem with a different fix. Distinguishing those two by argument is what
-failed last time; this measures them.
+server's finished count climbs while the client keeps the same sockets
+open with empty receive queues, the bodies are being lost in transit.
+That is the fault, live, with a timestamp. If the server's counters are
+frozen with requests still running, the box itself is wedged, a
+different problem with a different fix. A dispute over which of these
+two happened is what failed last time; this script measures them instead.
 
-Reads only. It never touches the run, the box's serving process, or S3.
+This script only reads data. It never touches the run, the box's serving
+process, or S3.
 
 USAGE
     scripts/delivery_probe.py --state .ec2_state_induction-ministral-3-14b-s24of30.json
@@ -56,22 +58,41 @@ from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-#: vLLM metric names sampled every tick. Counters are cumulative since the
-#: server started, so the interesting quantity is always the DELTA between
-#: ticks -- a frozen counter is the whole point of the probe.
+#: vLLM metric names this script samples every tick. Counters are
+#: cumulative since the server started, so the interesting quantity is
+#: always the DELTA between ticks. A frozen counter is the whole point
+#: of this probe.
 COUNTERS = (
     "vllm:num_requests_running",
     "vllm:num_requests_waiting",
     "vllm:generation_tokens_total",
     "vllm:prompt_tokens_total",
 )
-#: Finished-request counter, split by ``finished_reason`` (stop / length /
-#: abort). The split matters: the 2026-08-14 loss hit ``length`` only.
+#: Finished-request counter, split by ``finished_reason`` (stop, length,
+#: or abort). The split matters: the 2026-08-14 loss hit ``length`` only.
 FINISH_METRIC = "vllm:request_success_total"
 
 
 def load_endpoint(state_path: pathlib.Path) -> Tuple[str, Optional[str]]:
-    """Returns ``(ip, api_key)`` from an EC2 provider state file."""
+    """Return ``(ip, api_key)`` from an EC2 provider state file.
+
+    Parameters
+    ----------
+    state_path : pathlib.Path
+        Path to an EC2 provider state file.
+
+    Returns
+    -------
+    tuple[str, str or None]
+        The box's public IP (or DNS name), and its vLLM API key if the
+        state file records one.
+
+    Raises
+    ------
+    SystemExit
+        If the state file has no ``public_ip``, ``ip``, or ``public_dns``
+        field.
+    """
     state = json.loads(state_path.read_text())
     ip = state.get("public_ip") or state.get("ip") or state.get("public_dns")
     if not ip:
@@ -80,13 +101,28 @@ def load_endpoint(state_path: pathlib.Path) -> Tuple[str, Optional[str]]:
 
 
 def scrape_metrics(ip: str, api_key: Optional[str], timeout: float = 10.0) -> Dict[str, float]:
-    """Scrapes vLLM's Prometheus endpoint into a flat {name: value} dict.
+    """Scrape vLLM's Prometheus endpoint into a flat {name: value} dict.
 
-    Finish-reason labels are folded into the key (``...request_success_total
-    [length]``) so a caller can print them without parsing labels again. A
-    scrape failure returns an empty dict rather than raising: the probe must
-    keep sampling across a transient blip, since a blip is itself a
-    measurement.
+    This function folds finish-reason labels into the key (for example
+    ``...request_success_total[length]``), so a caller can print them
+    without parsing labels again.
+
+    Parameters
+    ----------
+    ip : str
+        Box IP or DNS name to scrape.
+    api_key : str or None
+        Bearer token for the request, if the box requires one.
+    timeout : float, default 10.0
+        Request timeout in seconds.
+
+    Returns
+    -------
+    dict[str, float]
+        The scraped metric values. On a scrape failure, this function
+        returns ``{"_scrape_error": 1.0, "_scrape_error_msg": <str>}``
+        instead of raising: this probe must keep sampling across a
+        transient blip, because a blip is itself a measurement.
     """
     req = urllib.request.Request(f"http://{ip}:8000/metrics")
     if api_key:
@@ -113,13 +149,24 @@ def scrape_metrics(ip: str, api_key: Optional[str], timeout: float = 10.0) -> Di
 
 
 def client_sockets(ip: str) -> List[Tuple[str, int]]:
-    """Returns ``[(state, recv_queue_bytes)]`` for this host's sockets to the box.
+    """Return ``[(state, recv_queue_bytes)]`` for this host's sockets to the box.
 
-    A response body that never arrives leaves the socket ESTABLISHED with an
-    EMPTY receive queue -- the client is not slow to read, there is simply
-    nothing to read. That is the distinction this function exists to make
-    visible, and it is why the receive queue is reported rather than just a
+    A response body that never arrives leaves the socket ESTABLISHED with
+    an EMPTY receive queue. The client is not slow to read; there is
+    simply nothing to read. This function exists to make that distinction
+    visible, which is why it reports the receive queue, not just a
     connection count.
+
+    Parameters
+    ----------
+    ip : str
+        Box IP or DNS name to filter the socket table on.
+
+    Returns
+    -------
+    list[tuple[str, int]]
+        One ``(state, recv_queue_bytes)`` pair per matching socket. Empty
+        if the ``ss`` command is unavailable or fails.
     """
     try:
         proc = subprocess.run(
@@ -133,9 +180,10 @@ def client_sockets(ip: str) -> List[Tuple[str, int]]:
         parts = line.split()
         if len(parts) < 4:
             continue
-        # `ss -tn state all` prints: State Recv-Q Send-Q Local Peer
-        # but for a filtered 'state all' query the State column is present
-        # only sometimes; detect it by whether the first field is numeric.
+        # `ss -tn state all` prints: State Recv-Q Send-Q Local Peer. But
+        # for a filtered 'state all' query, the State column is present
+        # only sometimes. Detect it by checking whether the first field
+        # is numeric.
         if parts[0].isdigit():
             rows.append(("ESTAB", int(parts[0])))
         else:

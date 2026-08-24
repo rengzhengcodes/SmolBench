@@ -1,32 +1,35 @@
-"""Resume, second-pass row pairing, and the full-pass sentinel gate.
+"""Test resume, second-pass row pairing, and the full-pass sentinel gate.
 
-``scripts/lean_verify_rows.py`` is the deferred verification pass: it reads a
-run's immutable ``all_rows.jsonl`` (whose cell verdicts are all the
-generation-time placeholder ``"unverified"``), replays each candidate against
-real Lean, and writes the graded mirror ``verified_rows.jsonl``. Three
-properties of that pass are pinned here, all of which a silent edit could
-break while every run still reported success:
+``scripts/lean_verify_rows.py`` is the deferred verification pass. It
+reads a run's immutable ``all_rows.jsonl``, whose cell verdicts are all
+the generation-time placeholder ``"unverified"``. It replays each
+candidate against real Lean, and writes the graded mirror
+``verified_rows.jsonl``. This file pins three properties of that pass.
+A silent edit could break any of them while every run still reported
+success:
 
 1. **Resume is ALL-cells, not ANY-cell.** A ``(theorem_id, k)`` group is
-   atomic *within* one pass but not *across* passes: if phase 1 appends new
-   cells to a group that a prior pass already graded, an ANY-cell completion
-   test marks the group done and the new cells stay ungraded forever.
-2. **Prior verdicts pair to current rows by IDENTITY, not list position.**
-   The output must carry every ``all_rows`` row, in ``all_rows`` order --
-   seeding it from the prior (shorter, possibly differently ordered) output
-   and then indexing it with positions computed against ``all_rows`` is an
-   ``IndexError`` at best and a silent mis-pairing at worst. Identity is
-   ``(kind, model, theorem_id, k, rung, replicate_idx)`` plus an OCCURRENCE
-   ORDINAL, because repeated identities are real: regenerating a lane appends
-   a second (or third) row for the same cell, and 5 of the study's 21 lanes
-   carry hundreds of them.
+   atomic *within* one pass, but not *across* passes. If phase 1 appends
+   new cells to a group that a prior pass already graded, an ANY-cell
+   completion test marks the group done, and the new cells stay
+   ungraded forever.
+2. **Prior verdicts pair to current rows by IDENTITY, not list
+   position.** The output must carry every ``all_rows`` row, in ``all_rows`` order. If
+   the output is seeded from that prior, shorter and possibly differently ordered,
+   output, then indexed with positions computed against ``all_rows``, the result is an
+   ``IndexError`` at best and a silent mis-pairing at worst. Identity is ``(kind, model,
+   theorem_id, k, rung, replicate_idx)`` plus an OCCURRENCE ORDINAL. Repeated identities
+   are real: regenerating a lane appends a second, or third, row for the same cell, and
+   5 of the study's 21 lanes carry hundreds of them.
 3. **A full pass that leaves a sentinel behind must exit non-zero.** A
    verification pass that silently no-ops writes a whole file of
-   ``"unverified"`` rows, which every downstream loader scores as failures.
+   ``"unverified"`` rows, which every downstream loader scores as
+   failures.
 
-Everything here is offline: a fake S3 client holding objects in memory, a fake
-verifier, and a monkeypatched theorem lookup. No Lean, no ``lean_dojo``, no
-AWS, no network -- so this file runs on BOTH interpreters.
+Everything here is offline: a fake S3 client holding objects in memory,
+a fake verifier, and a monkeypatched theorem lookup. No Lean, no
+``lean_dojo``, no AWS, no network. So this file runs on BOTH
+interpreters.
 """
 
 from __future__ import annotations
@@ -41,10 +44,10 @@ from types import SimpleNamespace
 
 import pytest
 
-# ``scripts/`` is not an importable package, so the module is loaded by path
-# (mirrors tests/test_flip_probe.py's convention for a sibling script). The
-# module name is unique to this file so it never collides with the copy
-# tests/test_deduction_study.py loads and pops.
+# ``scripts/`` is not an importable package, so the module is loaded by
+# path. This mirrors tests/test_flip_probe.py's convention for a
+# sibling script. The module name is unique to this file, so it never
+# collides with the copy tests/test_deduction_study.py loads and pops.
 _SPEC = importlib.util.spec_from_file_location(
     "lean_verify_rows_resume_under_test",
     Path(__file__).resolve().parents[1] / "scripts" / "lean_verify_rows.py",
@@ -61,9 +64,9 @@ def _cell(theorem, k=1, *, rung="stepk:1", rep=0, model="m",
           verdict="unverified", proof="tac", **extra):
     """One ``kind: "cell"`` row carrying the full identity tuple.
 
-    `extra` lands on the row verbatim -- used to tag rows with a marker field
-    that `fan_out_verdict` does NOT write, so a test can tell WHICH row object
-    ended up in a given output slot.
+    `extra` lands on the row verbatim. Tests use it to tag rows with a
+    marker field that `fan_out_verdict` does NOT write, so a test can
+    tell WHICH row object ended up in a given output slot.
     """
     row = {
         "kind": "cell", "model": model, "theorem_id": theorem, "k": k,
@@ -85,9 +88,10 @@ def _sanity(theorem, *, verdict="skipped", applied=0, total=1, ms=0):
 def _cells(rows):
     """Just the cell rows, in order.
 
-    Needed because a pass legitimately APPENDS a sanity row for any theorem it
-    replays that had none in ``all_rows`` -- so the output is not always
-    ``all_rows`` row-for-row, and assertions about cell rows must say so.
+    A pass legitimately APPENDS a sanity row for any theorem it replays
+    that had none in ``all_rows``. So the output is not always
+    ``all_rows`` row-for-row, and assertions about cell rows must say
+    so.
     """
     return [r for r in rows if r.get("kind") == "cell"]
 
@@ -95,9 +99,9 @@ def _cells(rows):
 def _identity(row):
     """The test's own copy of the identity tuple, written independently.
 
-    Deliberately NOT imported from the module under test: a test that reuses
-    the implementation's key function would pass even if that function keyed on
-    something useless.
+    This is deliberately NOT imported from the module under test. A
+    test that reuses the implementation's key function would pass even
+    if that function keyed on something useless.
     """
     return (row.get("kind"), row.get("model"), row.get("theorem_id"),
             row.get("k"), row.get("rung"), row.get("replicate_idx"))
@@ -128,9 +132,9 @@ class _FakeS3:
 class _FakeVerifier:
     """Stands in for ``smolbench.deduction.lean.verify``.
 
-    `verdict` is what every ``try_tail`` returns -- settable to
-    ``"unverified"`` on purpose, to simulate the no-op verification fault the
-    full-pass gate exists to catch.
+    `verdict` is what every ``try_tail`` returns. Tests can set it to
+    ``"unverified"`` on purpose, to simulate the no-op verification
+    fault the full-pass gate exists to catch.
     """
 
     def __init__(self, verdict="lean_error", sanity_verdict="success"):
@@ -173,10 +177,10 @@ def _run(monkeypatch, tmp_path, all_rows, prior=None, *, verifier=None, **kw):
         workdir=tmp_path / "wd", verifier=verifier or _FakeVerifier(), **kw,
     )
     # Read back only what this run actually UPLOADED. The prior file is
-    # pre-seeded into the fake bucket above, so reading the key unconditionally
-    # would return that pre-seeded content on a run that uploaded nothing --
-    # making "the output looks right" vacuously true for a pass that did no
-    # work at all.
+    # pre-seeded into the fake bucket above. So reading the key
+    # unconditionally would return that pre-seeded content on a run that
+    # uploaded nothing, making "the output looks right" vacuously true
+    # for a pass that did no work at all.
     body = client.objects.get(verified_key) if client.n_uploads else None
     out = [json.loads(l) for l in body.decode().splitlines() if l.strip()] if body else None
     return rc, out
@@ -188,14 +192,15 @@ def _run(monkeypatch, tmp_path, all_rows, prior=None, *, verifier=None, **kw):
 def test_resume_marks_a_group_done_only_when_every_cell_is_graded():
     """A half-graded group must NOT count as resumed-done.
 
-    The ANY-cell rule this replaces was sound only under its stated premise --
-    "one worker task always finishes a whole group" -- which holds within a
-    pass and NOT across passes: a regenerated lane appends new cells to a group
-    a prior pass already completed. Under ANY, those new cells are skipped on
-    every subsequent pass and stay ``"unverified"`` forever.
+    The ANY-cell rule this replaces was sound only under its stated
+    premise, "one worker task always finishes a whole group". That
+    premise holds within a pass, but NOT across passes: a regenerated
+    lane appends new cells to a group a prior pass already completed.
+    Under ANY, those new cells are skipped on every subsequent pass and
+    stay ``"unverified"`` forever.
 
-    Single-cell groups cannot discriminate the two rules, which is why both
-    groups here carry two cells.
+    Single-cell groups cannot tell the two rules apart, which is why
+    both groups here carry two cells.
     """
     prior = [
         # Group ("t1", 1): one cell graded, one still a sentinel -- NOT done.
@@ -224,10 +229,10 @@ def test_resume_ignores_non_cell_rows_and_coerces_k():
 def test_second_pass_over_a_grown_all_rows_verifies_only_the_new_cells(monkeypatch, tmp_path):
     """Growth must not raise, must verify the new cells, and must keep the old.
 
-    Seeding the output from the prior pass's (shorter) row list while indexing
-    it with positions computed against the CURRENT ``all_rows`` walks off the
-    end of the list -- an ``IndexError`` raised inside the worker's own
-    last-resort handler, which re-raises it out of `verify_run`.
+    If the output is seeded from the prior pass's shorter row list, then indexed with
+    positions computed against the CURRENT ``all_rows``, the index walks off the end of
+    the list. That raises an ``IndexError`` inside the worker's own last-resort handler,
+    which re-raises it out of `verify_run`.
     """
     all_rows = [
         _cell("t1", 1, rung="stepk:1"), _cell("t1", 1, rung="hint:2"),
@@ -243,8 +248,8 @@ def test_second_pass_over_a_grown_all_rows_verifies_only_the_new_cells(monkeypat
     rc, out = _run(monkeypatch, tmp_path, all_rows, prior, verifier=verifier)
 
     assert rc == 0
-    # Every all_rows row is present, in all_rows order (no appends here: both
-    # theorems already have a sanity row).
+    # Every all_rows row is present, in all_rows order. There are no
+    # appends here: both theorems already have a sanity row.
     assert [_identity(r) for r in out] == [_identity(r) for r in all_rows]
     by_id = {_identity(r): r for r in out}
     # The already-graded cells keep BOTH their verdict and their verify_ms:
@@ -260,12 +265,13 @@ def test_second_pass_over_a_grown_all_rows_verifies_only_the_new_cells(monkeypat
 
 
 def test_output_row_order_is_all_rows_order_not_prior_output_order(monkeypatch, tmp_path):
-    """The output's row order is ``all_rows``' -- downstream consumers rely on it.
+    """The output's row order is ``all_rows``' order; downstream consumers rely on it.
 
-    The prior output here is a PERMUTATION of ``all_rows`` (same identities,
-    different order) and is the same LENGTH as the pending work needs, so a
-    positional implementation does not crash -- it just silently emits the
-    prior file's order. Only an order assertion catches that.
+    The prior output here is a PERMUTATION of ``all_rows``, same
+    identities, different order, and is the same LENGTH as the pending
+    work needs. So a positional implementation does not crash. It just
+    silently emits the prior file's order. Only an order assertion
+    catches that.
     """
     a, b, c = _cell("t1", 1), _cell("t2", 1), _cell("t3", 1)
     all_rows = [a, b, c]
@@ -290,11 +296,11 @@ def test_output_row_order_is_all_rows_order_not_prior_output_order(monkeypatch, 
 def test_prior_sanity_verdicts_survive_the_reseed(monkeypatch, tmp_path):
     """A prior pass's ground-truth REPLAY results must not be thrown away.
 
-    ``all_rows``' sanity rows are placeholders (``"skipped"``, zero tactics);
-    the real replay verdicts live only in the prior ``verified_rows.jsonl``.
-    Reseeding the output from ``all_rows`` and pairing only CELL rows silently
-    reverts every sanity row to its placeholder -- destroying the sanity gate's
-    record for every theorem this pass does not happen to touch.
+    ``all_rows``' sanity rows are placeholders (``"skipped"``, zero tactics). The real
+    replay verdicts live only in the prior ``verified_rows.jsonl``. If the output is
+    reseeded from ``all_rows`` and paired only on CELL rows, every sanity row silently
+    reverts to its placeholder. That destroys the sanity gate's record for every theorem
+    this pass does not happen to touch.
     """
     all_rows = [_sanity("t1"), _cell("t1", 1), _cell("t2", 1), _sanity("t2")]
     prior = [
@@ -319,15 +325,15 @@ def test_prior_sanity_verdicts_survive_the_reseed(monkeypatch, tmp_path):
 def test_repeated_identities_pair_by_occurrence_order(monkeypatch, tmp_path):
     """Duplicate cell identities pair 1st-to-1st, 2nd-to-2nd, and so on.
 
-    Repeated identities are the NORM, not an anomaly: regenerating a lane
-    appends a fresh row for a cell that already has one, and real lanes carry
-    up to 16 occurrences of a single identity. A plain
-    ``dict[identity] -> row`` drops all but one of them and then seeds the same
-    prior row into every duplicate slot.
+    Repeated identities are the NORM, not an anomaly. When a lane is regenerated, it
+    appends a fresh row for a cell that already has one, and real lanes carry up to 16
+    occurrences of a single identity. A plain ``dict[identity] -> row`` drops all but
+    one of them, then seeds the same prior row into every duplicate slot.
 
-    ``_seq`` is the discriminator: `fan_out_verdict` writes only
-    verdict/lean_error/final_state_pp/verify_ms, so whichever ROW OBJECT was
-    seeded into a slot still carries its own ``_seq`` after verification.
+    ``_seq`` is the discriminator. `fan_out_verdict` writes only
+    verdict, lean_error, final_state_pp, and verify_ms. So whichever ROW
+    OBJECT was seeded into a slot still carries its own ``_seq`` after
+    verification.
     """
     ident = dict(rung="stepk:1", rep=0, model="m")
     all_rows = [
@@ -348,13 +354,13 @@ def test_repeated_identities_pair_by_occurrence_order(monkeypatch, tmp_path):
 
 
 def test_prior_rows_absent_from_all_rows_are_appended_with_a_warning(monkeypatch, tmp_path, caplog):
-    """An orphaned prior row is kept (appended), never silently dropped.
+    """An orphaned prior row is kept, appended, never silently dropped.
 
-    This is a REAL shape, not a hypothetical: a pass that replays a theorem
-    with no sanity row in ``all_rows`` APPENDS one to its own output, so on the
-    next pass that row has no ``all_rows`` counterpart. Appending (rather than
-    inserting) is what keeps the shared prefix -- and therefore every index
-    computed against ``all_rows`` -- valid.
+    This is a REAL shape, not a hypothetical. A pass that replays a theorem with no
+    sanity row in ``all_rows`` APPENDS one to its own output. So on the next pass, that
+    row has no ``all_rows`` counterpart. That append, rather than an insert, is what
+    keeps the shared prefix, and therefore every index computed against ``all_rows``,
+    valid.
     """
     all_rows = [_cell("t1", 1), _cell("t2", 1)]
     prior = [
@@ -380,11 +386,10 @@ def test_prior_rows_absent_from_all_rows_are_appended_with_a_warning(monkeypatch
 def test_full_pass_leaving_a_sentinel_exits_non_zero(monkeypatch, tmp_path):
     """A pass that grades nothing must fail loudly, not report success.
 
-    A verifier that no-ops leaves every row on its generation-time
-    ``"unverified"`` placeholder. Every analysis loader scores that as a
-    FAILURE, so the run reads as "the model proved nothing" -- a complete,
-    plausible, wrong result. Exiting non-zero is the only way the operator
-    finds out.
+    A verifier that no-ops leaves every row on its generation-time ``"unverified"``
+    placeholder. Every analysis loader scores that as a FAILURE, so the run reads as
+    "the model proved nothing": a complete, plausible, wrong result. The only way the
+    operator finds out is a non-zero exit.
     """
     all_rows = [_cell("t1", 1), _cell("t2", 1)]
     verifier = _FakeVerifier(verdict="unverified")
@@ -415,14 +420,14 @@ def test_full_pass_gate_is_silent_when_every_cell_is_graded(monkeypatch, tmp_pat
 def test_full_pass_gate_does_not_fire_on_requested_partial_passes(monkeypatch, tmp_path, kwargs):
     """The three flags that ask for partial work must return 0.
 
-    ``--limit``, ``--theorem`` and ``--dry-run`` leave ungraded rows BY
-    DESIGN -- the operator asked for a subset -- so a gate that fired on them
-    would be noise, and noise gets ignored.
+    ``--limit``, ``--theorem``, and ``--dry-run`` leave ungraded rows BY
+    DESIGN, because the operator asked for a subset. So a gate that
+    fired on them would be noise, and noise gets ignored.
 
-    A RESUMED run is deliberately NOT in this list. Under the ALL-cells resume
-    rule a done group carries no sentinel by construction, so resume cannot
-    legitimately leave one behind on an otherwise-full pass -- see
-    `test_resumed_full_pass_leaving_a_sentinel_exits_non_zero`.
+    A RESUMED run is deliberately NOT in this list. Under the ALL-cells
+    resume rule, a done group carries no sentinel by construction. So
+    resume cannot legitimately leave one behind on an otherwise-full
+    pass (see `test_resumed_full_pass_leaving_a_sentinel_exits_non_zero`).
     """
     all_rows = [_cell("t1", 1), _cell("t2", 1)]
     rc, _ = _run(monkeypatch, tmp_path, all_rows,
@@ -434,24 +439,25 @@ def test_full_pass_gate_does_not_fire_on_requested_partial_passes(monkeypatch, t
 def test_resumed_full_pass_leaving_a_sentinel_exits_non_zero(monkeypatch, tmp_path, scenario):
     """Resume does NOT excuse a surviving sentinel on a limit-free pass.
 
-    This is the shape of the real incident the gate exists for: a resumed
-    completion pass over a partially-verified file. `done` is non-empty there,
-    so a gate that also required ``not done`` stays silent in exactly the
-    scenario that motivated it.
+    This is the shape of the real incident the gate exists for: a
+    resumed completion pass over a partially-verified file. `done` is
+    non-empty there, so a gate that also required ``not done`` stays
+    silent in exactly the scenario that motivated it.
 
-    Under the ALL-cells rule a done group has zero sentinel cells BY
-    CONSTRUCTION, and every pending group is graded this pass -- so on a pass
-    with no ``--limit`` and no ``--theorem`` there is no legitimate
-    sentinel-remaining state, resumed or not. Both ways one can still survive
-    are faults worth an alarm:
+    Under the ALL-cells rule, a done group has zero sentinel cells BY
+    CONSTRUCTION, and every pending group is graded this pass. So on a
+    pass with no ``--limit`` and no ``--theorem``, there is no
+    legitimate sentinel-remaining state, resumed or not. Both ways one
+    can still survive are faults worth an alarm:
 
-    * ``swallowed_failure`` -- a pending group was "verified" but the verdict
-      written back is still the sentinel (a no-op or swallowed per-cell
-      failure).
-    * ``sentinel_orphan`` -- an ungraded prior row with no counterpart in the
-      current ``all_rows.jsonl``. `group_unverified` reads ``all_rows``, so
-      an orphan is never pending and never gets graded: without this gate it
-      would sit in the output as a silent failure-scored cell forever.
+    * ``swallowed_failure``: a pending group was "verified", but the
+      verdict written back is still the sentinel (a no-op or swallowed
+      per-cell failure).
+    * ``sentinel_orphan``: an ungraded prior row with no counterpart in
+      the current ``all_rows.jsonl``. `group_unverified` reads
+      ``all_rows``, so an orphan is never pending and never gets graded.
+      Without this gate, it would sit in the output as a silent
+      failure-scored cell forever.
     """
     all_rows = [_cell("t1", 1), _cell("t2", 2)]
     prior = [_cell("t1", 1, verdict="success")]      # -> group ("t1", 1) is done
@@ -474,16 +480,16 @@ def test_resumed_full_pass_leaving_a_sentinel_exits_non_zero(monkeypatch, tmp_pa
 def test_cells_appended_to_an_already_graded_group_are_verified(monkeypatch, tmp_path):
     """The defect's own scenario: a group GROWS after a pass already graded it.
 
-    This is what the ANY-cell rule got wrong, and it is not the same shape as
-    a brand-new group appearing: here the group ``("t1", 1)`` already has a
-    graded cell in the prior output, so an ANY-cell completion test marks it
-    done and the freshly appended ``hint:2`` cell is skipped -- this pass and
-    every pass after it, because the group still looks done next time too.
+    This is what the ANY-cell rule got wrong, and it is not the same shape as a
+    brand-new group appearing. Here the group ``("t1", 1)`` already has a graded cell
+    in the prior output, so an ANY-cell completion test marks it done. The freshly
+    appended ``hint:2`` cell is skipped, this pass and every pass after it, because the
+    group still looks done next time too.
 
-    Under the ALL-cells rule the group is pending again, so both of its cells
-    are re-verified together (one Dojo session per group is the unit of work,
-    and ``all_rows``' own verdicts are all sentinels, so the whole group is
-    replayed rather than just the new row).
+    Under the ALL-cells rule, the group is pending again, so both of its
+    cells are re-verified together. One Dojo session per group is the
+    unit of work, and ``all_rows``' own verdicts are all sentinels, so
+    the whole group is replayed rather than just the new row.
     """
     all_rows = [
         _cell("t1", 1, rung="stepk:1", proof="NEW PROOF"),
@@ -501,13 +507,13 @@ def test_cells_appended_to_an_already_graded_group_are_verified(monkeypatch, tmp
         "the appended cell must not be left on the sentinel"
     )
 
-    # `unique_candidates` reads `candidate_proof` off the SEEDED rows, so this
-    # pins what the replay actually sends to Lean: a matched slot holds the
-    # PRIOR row object wholesale, so the old cell is replayed with the prior
-    # pass's candidate text and only the appended cell carries the current
-    # one. That is the deliberate carryover contract -- mixing a regenerated
-    # proof with an old verdict would be worse -- and `--no-resume` is the
-    # documented remedy for a lane phase 1 genuinely regenerated.
+    # `unique_candidates` reads `candidate_proof` off the SEEDED rows.
+    # This pins what the replay actually sends to Lean: a matched slot holds the PRIOR
+    # row object wholesale. So the old cell is replayed with the prior pass's candidate
+    # text, and only the appended cell carries the current one. That is the deliberate
+    # carryover contract, since mixing a regenerated proof with an old verdict would be
+    # worse. `--no-resume` is the documented remedy for a lane phase 1 genuinely
+    # regenerated.
     assert sorted(text for _theorem, text in verifier.tried) == ["NEW PROOF", "OLD PROOF"], (
         "each distinct candidate text is replayed exactly once"
     )

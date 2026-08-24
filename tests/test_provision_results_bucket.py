@@ -1,14 +1,15 @@
-"""Pure logic of ``scripts/provision_results_bucket.py`` (no AWS, no network).
+"""Test the pure logic of ``scripts/provision_results_bucket.py``.
 
-The script is a human-run runbook against ADMIN credentials; nothing here
-ever executes it against AWS. Every client is a fake. The real bucket now
-exists and must not be touched, which makes the fakes a safety property, not
-just a speed one.
+No AWS, no network. The script is a human-run runbook against ADMIN
+credentials, and nothing here ever executes it against AWS. Every
+client is a fake. The real bucket now exists and must not be touched,
+which makes the fakes a safety property, not just a speed one.
 
-Scope note: this script is PROVISION-ONLY. It used to also seed the bucket
-from local result trees, and those tests are gone with that feature -- the
-bucket is deliberately empty, and results reach it only by being written
-through ``smolbench.evals.results_store`` in the append-only log layout.
+Scope note: this script is PROVISION-ONLY. It used to also seed the
+bucket from local result trees, and those tests are gone with that
+feature. The bucket is deliberately empty, and results reach it only
+by being written through ``smolbench.evals.results_store`` in the
+append-only log layout.
 """
 
 import json
@@ -108,9 +109,9 @@ def fake_aws(monkeypatch):
 def test_seeding_machinery_is_removed(removed):
     """The bucket is deliberately empty and is never bulk-seeded.
 
-    Pinned by name because a leftover helper is an invitation to re-enable
-    the old repo-mirroring upload path, which would write objects in a
-    layout nothing reads any more.
+    This is pinned by name, because a leftover helper is an invitation
+    to re-enable the old repo-mirroring upload path, which would write
+    objects in a layout nothing reads any more.
     """
     assert not hasattr(p, removed), f"{removed} should have been removed with seeding"
 
@@ -168,8 +169,10 @@ def test_parse_args_takes_no_arguments():
 
 
 def test_ensure_bucket_passes_the_location_constraint(fake_aws):
-    """us-west-2 is not the grandfathered us-east-1 default, so the
-    constraint is required or the bucket lands in the wrong region."""
+    """us-west-2 is not the grandfathered us-east-1 default.
+
+    So the constraint is required, or the bucket lands in the wrong region.
+    """
     p.ensure_bucket(fake_aws)
     op, kwargs = next(c for c in fake_aws.calls if c[0] == "create_bucket")
     assert kwargs["Bucket"] == p.BUCKET
@@ -177,8 +180,10 @@ def test_ensure_bucket_passes_the_location_constraint(fake_aws):
 
 
 def test_ensure_bucket_tolerates_already_owned(fake_aws, monkeypatch):
-    """Idempotency: the bucket already exists live, so a re-run must not
-    fail on its own bucket."""
+    """This test checks idempotency.
+
+    The bucket already exists live, so a re-run must not fail on its own bucket.
+    """
     from botocore.exceptions import ClientError
 
     def _already(**kwargs):
@@ -219,9 +224,11 @@ def test_ensure_policy_creates_the_named_policy_and_returns_its_arn(fake_aws):
 def test_ensure_policy_reuses_an_existing_policy_without_new_versions(
     fake_aws, monkeypatch
 ):
-    """Create-or-reuse, never create-a-new-VERSION: a managed policy holds at
-    most 5 versions, and this policy already exists live, so every re-run
-    would burn one."""
+    """Create-or-reuse, never create-a-new-VERSION.
+
+    A managed policy holds at most 5 versions, and this policy already
+    exists live, so every re-run would burn one.
+    """
     from botocore.exceptions import ClientError
 
     existing = "arn:aws:iam::414266451290:policy/SmolbenchResultsBucketRW"
@@ -272,8 +279,10 @@ def test_main_runs_every_provisioning_step_and_returns_zero(fake_aws, capsys):
 def test_main_returns_nonzero_and_explains_on_access_denied(
     fake_aws, monkeypatch, capsys
 ):
-    """The scoped EC2-only operator key cannot manage S3; that must produce
-    the actionable message, not a raw traceback."""
+    """The scoped EC2-only operator key cannot manage S3.
+
+    That must produce the actionable message, not a raw traceback.
+    """
     from botocore.exceptions import ClientError
 
     def _denied(**kwargs):

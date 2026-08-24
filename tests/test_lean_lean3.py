@@ -1,25 +1,27 @@
-"""Offline tests for smolbench.deduction.lean.lean3 (detector + corrupter).
+"""Test smolbench.deduction.lean.lean3 (the detector and the corrupter).
 
-Structured in five parts, mirroring the module's own sections:
+This file has five parts, matching the module's own sections:
 
-1. Detection (`find_relics` / `has_relics`) -- CLEAN and FLAGGED cases lifted
-   verbatim from real pilot-eval outputs (see spec_a1_lean3_module.md), plus
-   a dedup check.
-2. Corruption (`corrupt_tail`) -- the shared-vocabulary post-condition
+1. Detection (`find_relics`, `has_relics`): CLEAN and FLAGGED cases taken
+   verbatim from real pilot-eval outputs (see spec_a1_lean3_module.md),
+   plus a dedup check.
+2. Corruption (`corrupt_tail`): the shared-vocabulary post-condition
    (everything injected is independently detectable), determinism given a
    fixed seed, the "no applicable transform" contract, and the `rename`
    truncation rule.
-3. `synth_error` -- one case per relic-kind message bucket, plus the
+3. `synth_error`: one case per relic-kind message bucket, plus the
    empty-input error.
-4. `build_repair_user` -- golden-string checks for the with-error and
+4. `build_repair_user`: golden-string checks for the with-error and
    no-error coordination template.
-5. `AlignMap.load` -- missing-asset -> None, and a round trip through a
-   temp gzip JSON asset via the default `SMOLBENCH_LEAN_DATA`-relative path.
+5. `AlignMap.load`: a missing asset returns None, and a round trip through
+   a temp gzip JSON asset uses the default `SMOLBENCH_LEAN_DATA`-relative
+   path.
 
-No LeanDojo dataset fixture is needed here (unlike test_lean_corpus.py /
-test_lean_sft.py / test_lean_decontam.py) -- this module only touches
-`corpus.data_root()` indirectly, inside `AlignMap.load`'s default-path
-branch, so `SMOLBENCH_LEAN_DATA` is only set where that branch is exercised.
+This file needs no LeanDojo dataset fixture, unlike test_lean_corpus.py,
+test_lean_sft.py, and test_lean_decontam.py. This module touches
+`corpus.data_root()` only indirectly, inside `AlignMap.load`'s
+default-path branch. So `SMOLBENCH_LEAN_DATA` is set only where that
+branch runs.
 """
 
 from __future__ import annotations
@@ -181,11 +183,10 @@ CORRUPTION_TAILS = [
 def test_corrupt_tail_shared_vocabulary_invariant(tail):
     """corrupt_tail's output must always be independently re-detectable.
 
-    Checks the three load-bearing properties in one pass: the corruption
-    actually changed the text, the detector catches something in the
-    result, and every kind `corrupt_tail` claims to have injected is a
-    subset of what an independent `find_relics` call finds -- the
-    "shared-vocabulary invariant" the module docstring is built around.
+    Checks three load-bearing properties in one pass. The corruption changed the text,
+    the detector catches something in the result, and every kind `corrupt_tail` claims
+    to have injected is a subset of what an independent `find_relics` call finds. This
+    is the "shared-vocabulary invariant" the module docstring is built around.
     """
     result = corrupt_tail(tail, random.Random(1776), FIXTURE_ALIGN)
     assert result is not None
@@ -208,8 +209,8 @@ def test_corrupt_tail_deterministic_given_seed(tail):
 
 
 def test_corrupt_tail_no_applicable_transform_returns_none():
-    # An empty tail has no rfl/fun-λ/use-prefix/renamable-token/eligible
-    # line -- genuinely zero applicable transforms under all five rules.
+    # An empty tail has no rfl, fun-λ, use-prefix, renamable-token, or
+    # eligible line. Zero transforms apply, under all five rules.
     assert corrupt_tail("", random.Random(1776), None) is None
     assert corrupt_tail("", random.Random(1776), FIXTURE_ALIGN) is None
 
@@ -219,22 +220,26 @@ def test_corrupt_tail_trailing_is_broadly_applicable_norm_num():
 
     NOTE (design decision / spec deviation): spec_a1_lean3_module.md's
     "no applicable transform" example names `tail="norm_num"` with
-    `align=None`. Under the `trailing` transform's literal definition
-    ("append `,` to a seeded non-empty subset of depth-0 line ends"),
-    `norm_num` is a single non-comma-ending depth-0 line and so IS
-    eligible: `trailing` corrupts it to `norm_num,`, which `find_relics`
-    correctly flags as `trailing-comma`. `trailing`'s applicability is
-    therefore intentionally NOT gated on any of the other four transforms
-    also being available -- gating it that way isn't stated anywhere in
-    the corruption-transform rules and would make `trailing` inconsistent
-    with the OTHER required property (`exact ⟨z, sq z⟩` above has no rfl,
-    no fun/λ, no `use ` line, and -- with the fixture align map -- no
-    renamable token either; `trailing` is its ONLY possible mechanism, and
-    it MUST succeed for that case per the spec's corruption-properties
-    test). `tail=""` (see the test above) is used as the genuinely
-    zero-applicable-transforms case instead; this test pins the resulting,
-    intentionally-broader `trailing` behavior so the deviation is explicit
-    and verified rather than silently diverging from the written example.
+    `align=None`. The `trailing` transform's literal definition is
+    "append `,` to a seeded non-empty subset of depth-0 line ends".
+    Under that definition, `norm_num` is a single non-comma-ending
+    depth-0 line, so it IS eligible: `trailing` corrupts it to
+    `norm_num,`, and `find_relics` correctly flags that as
+    `trailing-comma`.
+
+    So `trailing`'s applicability is intentionally NOT gated on any of the other four
+    transforms also being available. Nothing in the corruption-transform rules states
+    that gate, and adding it would make `trailing` inconsistent with another required
+    property. `exact ⟨z, sq z⟩` (above) has no rfl, no fun/λ, no `use ` line, and, with
+    the fixture align map, no renamable token either. `trailing` is its ONLY possible
+    mechanism, and it MUST succeed for that case, per the spec's corruption-properties
+    test.
+
+    `tail=""` (see the test above) is used as the genuinely
+    zero-applicable-transforms case instead. This test pins the
+    resulting, intentionally broader `trailing` behavior, so the
+    deviation is explicit and verified rather than a silent drift from
+    the written example.
     """
     result = corrupt_tail("norm_num", random.Random(1776), None)
     assert result is not None
@@ -249,7 +254,7 @@ def test_rename_truncates_to_token_component_count():
 
     `Iso.inv_comp_eq` (2 dotted components) resolves via
     `reverse_unique` to the FULL 3-component lean3 name
-    `category_theory.iso.inv_comp_eq`; the injected text must be truncated
+    `category_theory.iso.inv_comp_eq`. The injected text must truncate
     to the last 2 components (`iso.inv_comp_eq`), never the full name.
     """
     tail = "rw [Iso.inv_comp_eq]"
@@ -262,12 +267,12 @@ def test_rename_truncates_to_token_component_count():
 
 
 def test_rename_applicability_requires_align():
-    # `rename` needs `align.reverse_unique`; without an align map it can
-    # never be the chosen transform (`_rename_applicable` always False),
-    # regardless of how many potentially-renamable tokens are present.
-    # `trailing` remains applicable to this tail either way (see
+    # `rename` needs `align.reverse_unique`. Without an align map it can
+    # never be the chosen transform (`_rename_applicable` is always
+    # False), no matter how many potentially-renamable tokens exist.
+    # `trailing` stays applicable to this tail either way (see
     # test_corrupt_tail_trailing_is_broadly_applicable_norm_num), so
-    # corrupt_tail still succeeds -- but never via a `lean3-name` injection.
+    # corrupt_tail still succeeds, but never via a `lean3-name` injection.
     tail = "exact Iso.inv_comp_eq"
     for seed in range(1776, 1776 + 20):
         result = corrupt_tail(tail, random.Random(seed), None)
@@ -277,15 +282,17 @@ def test_rename_applicability_requires_align():
 def test_rfl_transform_never_targets_term_position_rfl():
     """Regression: 2026-07-12 review finding (adversarially confirmed 2-0).
 
-    `exact rfl` holds `rfl` in TERM position; rewriting it to `refl` would
-    produce `exact refl`, which `find_relics` rule 2 deliberately does NOT
-    flag (only tactic-head `refl` is a relic). The unrestricted rewrite
-    therefore injected a phantom `refl` relic the detector could never
-    corroborate -- mis-classing `synth_error` for the repair dataset. The
-    transform is now gated on the same head-position predicate as rule 2,
-    and `corrupt_tail`'s post-condition corroborates every claimed kind, so
-    across any seed and either align setting no result may claim `refl`
-    here, and the subset invariant must hold unconditionally.
+    `exact rfl` holds `rfl` in TERM position. A rewrite to `refl` would produce `exact
+    refl`, which `find_relics` rule 2 deliberately does NOT flag (only tactic-head
+    `refl` is a relic). So the unrestricted rewrite injected a phantom `refl` relic the
+    detector could never corroborate, which mis-classed `synth_error` for the repair
+    dataset.
+
+    The transform is now gated on the same head-position predicate as
+    rule 2, and `corrupt_tail`'s post-condition corroborates every
+    claimed kind. So across any seed and either align setting, no result
+    may claim `refl` here, and the subset invariant must hold
+    unconditionally.
     """
     for align in (None, FIXTURE_ALIGN):
         for seed in range(0, 20):
@@ -299,9 +306,11 @@ def test_rfl_transform_never_targets_term_position_rfl():
 
 
 def test_rfl_transform_still_targets_tactic_head_rfl():
-    """The head-position gate must not disable the transform where it IS
-    detectable: a bare `rfl` line is tactic-head, so some seeds corrupt it
-    to `refl` and the detector re-reports the injected relic."""
+    """The head-position gate must not disable the transform where it IS detectable.
+
+    A bare `rfl` line is tactic-head, so some seeds corrupt it to `refl` and the
+    detector re-reports the injected relic.
+    """
     saw_refl = False
     for seed in range(0, 20):
         result = corrupt_tail("rfl", random.Random(seed), None)
@@ -318,14 +327,16 @@ def test_rfl_transform_still_targets_tactic_head_rfl():
 def test_rename_skips_identity_align_pairs():
     """Regression: 2026-07-12 review finding (adversarially confirmed 2-0).
 
-    mathlib4 carries ~8k identity `#align` pairs (``#align inv_inv
-    inv_inv``) whose "rename" is a byte-level no-op; the transform used to
-    claim a `lean3-name` relic for them anyway, which downstream
-    `synth_error` turned into a false ``unknown identifier 'inv_inv'``
-    about a perfectly valid Lean 4 name (109/1600 rows of the first real
-    dataset build). `_rename_candidates` now drops identity pairs (and any
-    replacement rule 6 would not re-flag), so no seed may claim a
-    `lean3-name` injection for this tail.
+    mathlib4 carries about 8k identity `#align` pairs (``#align inv_inv
+    inv_inv``), whose "rename" is a byte-level no-op. The transform used
+    to claim a `lean3-name` relic for them anyway. Downstream,
+    `synth_error` turned that into a false ``unknown identifier
+    'inv_inv'`` about a perfectly valid Lean 4 name (109/1600 rows of
+    the first real dataset build).
+
+    `_rename_candidates` now drops identity pairs, and replacement rule
+    6 does not re-flag them. So no seed may claim a `lean3-name`
+    injection for this tail.
     """
     align = AlignMap.from_pairs({"inv_inv": "inv_inv", "supr_le": "iSup_le"})
     for seed in range(0, 20):
@@ -441,17 +452,18 @@ def test_build_repair_user_with_error_golden_string():
 
 
 def test_align_map_load_returns_none_when_asset_missing(tmp_path, monkeypatch):
-    # The default path is data_root().parent / ALIGN_ASSET_NAME (the
-    # committed-sidecar layout), so point the data root at a SUBDIR of the
-    # empty tmp dir -- load() then resolves to tmp_path itself, which holds
-    # no asset.
+    # The default path is data_root().parent / ALIGN_ASSET_NAME, the
+    # committed-sidecar layout. So point the data root at a SUBDIR of
+    # the empty tmp dir. load() then resolves to tmp_path itself, which
+    # holds no asset.
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "leandojo_benchmark_4"))
     assert AlignMap.load() is None
 
 
 def test_align_map_load_round_trips_and_resolves_lookups(tmp_path, monkeypatch):
-    # Mirror the real layout: SMOLBENCH_LEAN_DATA names the benchmark dir,
-    # the asset sits BESIDE it (data_root().parent -- see AlignMap.load).
+    # Mirror the real layout: SMOLBENCH_LEAN_DATA names the benchmark
+    # dir, and the asset sits BESIDE it (data_root().parent, see
+    # AlignMap.load).
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "leandojo_benchmark_4"))
     asset_path = tmp_path / ALIGN_ASSET_NAME
     with gzip.open(asset_path, "wt", encoding="utf-8") as f:
@@ -485,21 +497,25 @@ def test_align_map_from_pairs_is_independent_of_caller_dict():
 
 
 def test_candidate_tokens_keep_subscript_digits_whole():
-    """Regression: identifiers ending in subscript digits (`div_mul_cancel₀`)
-    must tokenize WHOLE. Before ₀-₉ (U+2080-2089) joined `_CANDIDATE_RE`,
-    the tokenizer cut at the subscript, so `rename` could rewrite the
-    alphabetic stem of a longer identifier and strand the subscript --
-    producing a token that was neither the Lean3 nor the Lean4 spelling of
-    anything (observed in the first real dataset build as
-    `div_mul_cancel'₀`). With the whole token visible, an align map that
-    has no entry for it yields no rename candidate at all."""
+    """Regression: identifiers ending in subscript digits must tokenize WHOLE.
+
+    For example, `div_mul_cancel₀`. Before ₀-₉ (U+2080-2089) joined `_CANDIDATE_RE`, the
+    tokenizer cut at the subscript. So `rename` could rewrite the alphabetic stem of a
+    longer identifier and strand the subscript, producing a token that was neither the
+    Lean3 nor the Lean4 spelling of anything. This was observed in the first real
+    dataset build as `div_mul_cancel'₀`.
+
+    With the whole token visible, an align map with no entry for it
+    yields no rename candidate at all.
+    """
     align = AlignMap.from_pairs({"div_mul_cancel'": "div_mul_cancel"})
     tail = "rw [div_mul_cancel₀ _ hd]"
     # Detection: the whole token `div_mul_cancel₀` has no align entry, and
     # its stem must NOT be matched piecewise.
     assert [r for r in find_relics(tail, align) if r.kind == "lean3-name"] == []
-    # Corruption: rename must find no candidate in this tail (any corruption
-    # that does occur must come from other transforms and stay corroborated).
+    # Corruption: rename must find no candidate in this tail. Any
+    # corruption that does occur must come from other transforms and
+    # stay corroborated.
     for seed in range(0, 10):
         result = corrupt_tail(tail, random.Random(seed), align)
         if result is None:

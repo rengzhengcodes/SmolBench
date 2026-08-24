@@ -1,25 +1,25 @@
 #!/usr/bin/env python
-"""DETERMINISM_PLAN §6.3 -- the free, biased lower bound on score flips.
+"""DETERMINISM_PLAN §6.3 -- compute the free, biased lower bound on score flips.
 
 The 2026-08-15 resampling bug left a handful of deduction cells with MORE
-THAN ONE surviving generation attempt (attempts that reached the model and
-returned; different serving processes drew them). Those are paired draws of
-the same cell across processes, already collected, at zero marginal cost --
-so they bound the §6.2 flip rate for free.
+THAN ONE surviving generation attempt (attempts that reached the model
+and returned; different serving processes drew them). These are paired
+draws of the same cell across processes, already collected, at zero
+marginal cost. So they bound the §6.2 flip rate for free.
 
 THE CAVEAT THAT MUST RIDE EVERY USE OF THIS NUMBER (§6.3): the sample is
-selected ON CELL OUTCOME -- a cell was re-drawn precisely because its first
-attempt looked empty/failed -- so the flip rate here is NOT an unbiased
-estimate. Conditioning on the first draw invites regression to the mean on
-the second, which argues this OVER-estimates the population flip rate; that
-direction is reasoned, not measured. Treat it as a sanity check on §6.2's
-design, never as the headline.
+selected ON CELL OUTCOME. A cell was re-drawn precisely because its first
+attempt looked empty or failed, so the flip rate here is NOT an unbiased
+estimate. Because the sample conditions on the first draw, regression to
+the mean on the second draw argues this bound OVER-estimates the
+population flip rate. That direction is reasoned, not measured. Treat
+this number as a sanity check on §6.2's design, never as the headline.
 
-Both attempts of every pair are graded by TODAY's verifier (same machinery
-as scripts/recover_dojoinit_std.py, i.e. lean_verify_rows' own code paths),
-so verifier identity cancels within a pair. Reads the study S3 prefixes
-READ-ONLY; writes one local JSON report. Run under .venv-lean with
-~/.elan/bin on PATH:
+This script grades both attempts of every pair with TODAY's verifier
+(the same machinery as scripts/recover_dojoinit_std.py, that is,
+lean_verify_rows' own code paths), so verifier identity cancels within a
+pair. It reads the study S3 prefixes READ-ONLY, and writes one local
+JSON report. Run it under .venv-lean, with ~/.elan/bin on PATH:
 
     .venv-lean/bin/python scripts/flip_free_bound.py
 """
@@ -35,9 +35,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-#: Lanes named by the inventory's §6.3 accounting, with its expected counts
-#: of >1-surviving-attempt cells (2026-08-15). Reported against, not gated
-#: on: the count derivation is re-done here from all_rows directly.
+#: Lanes named by the inventory's §6.3 accounting, with its expected
+#: counts of >1-surviving-attempt cells (2026-08-15). This script reports
+#: against these counts; it does not gate on them, because it re-derives
+#: the count here, directly from all_rows.
 LANES_EXPECTED = {"ministral-3-3b": 63, "qwen3.5-27b": 6, "gemma-4-31b": 5}
 OUT = REPO / "notebooks" / "deduction" / "results" / "flip_free_bound_2026-08-18.json"
 STD_PREFIX = ".lake/packages/std/"
@@ -53,11 +54,22 @@ def _rec():
 
 
 def surviving(row: dict) -> bool:
-    """An attempt that reached the model and returned (its output IS data).
+    """Report whether `row` is an attempt that reached the model and returned.
 
-    ``prompt_tokens > 0`` is the established discriminator (the server
-    counted a prompt, so the model was asked); an ``error`` marker means the
-    attempt was lost to infrastructure instead.
+    Its output IS data. ``prompt_tokens > 0`` is the established
+    discriminator: the server counted a prompt, so the model was asked.
+    An ``error`` marker means the attempt was lost to infrastructure
+    instead.
+
+    Parameters
+    ----------
+    row : dict
+        A cell row.
+
+    Returns
+    -------
+    bool
+        ``True`` if the attempt reached the model and returned.
     """
     return (row.get("prompt_tokens") or 0) > 0 and not row.get("error")
 
@@ -78,7 +90,26 @@ def stream_all_rows(rec, lane):
 
 
 def exact_binom_ci(k: int, n: int, alpha: float = 0.05):
-    """Clopper-Pearson via the beta quantile (scipy-free bisection)."""
+    """Compute a Clopper-Pearson exact binomial CI via the beta quantile.
+
+    This function computes the beta quantile with a scipy-free grid
+    search, instead of a library call.
+
+    Parameters
+    ----------
+    k : int
+        Number of successes.
+    n : int
+        Number of trials.
+    alpha : float, default 0.05
+        Significance level; this function returns the ``1 - alpha``
+        interval.
+
+    Returns
+    -------
+    tuple[float, float]
+        The ``(lo, hi)`` confidence interval bounds.
+    """
     if n == 0:
         return (0.0, 1.0)
 
@@ -89,7 +120,7 @@ def exact_binom_ci(k: int, n: int, alpha: float = 0.05):
             return (a - 1) * log(x) + (b - 1) * log(1 - x) - (
                 lgamma(a) + lgamma(b) - lgamma(a + b))
 
-        # numeric CDF by Simpson on a fine grid (adequate at n<=200)
+        # Compute the CDF numerically, by a fine-grid sum (adequate at n<=200).
         N = 200000
         acc, target = 0.0, q
         for i in range(1, N + 1):
@@ -106,7 +137,7 @@ def exact_binom_ci(k: int, n: int, alpha: float = 0.05):
 
 def main():
     rec = _rec()
-    lock = rec.take_lock()  # noqa: F841 -- exclusive vs other Dojo users
+    lock = rec.take_lock()  # noqa: F841 -- held exclusively against other Dojo users
     rec.require_lake()
     report = {"caveat": "SELECTED-ON-OUTCOME sample (see module docstring): "
                         "over-estimate direction argued, not measured. "
@@ -130,12 +161,14 @@ def main():
         for key, rows in sorted(multi.items()):
             for ai, row in enumerate(rows):
                 vrows.append({
-                    # kind:"cell" is LOAD-BEARING: lean_verify_rows'
+                    # kind:"cell" is LOAD-BEARING. lean_verify_rows'
                     # group_unverified() skips any row without it, which
-                    # silently no-ops the whole verification (2026-08-18: the
-                    # first run of this script omitted it and its published
-                    # "0/74 flips" was arithmetically forced from 'unverified'
-                    # sentinels -- caught by adversarial verification, RETRACTED).
+                    # silently no-ops the whole verification. On
+                    # 2026-08-18, the first run of this script omitted
+                    # it, and its published "0/74 flips" was
+                    # arithmetically forced from 'unverified' sentinels.
+                    # Adversarial verification caught this, and the
+                    # result was RETRACTED.
                     "kind": "cell",
                     "theorem_id": key[0], "k": key[1], "rung": key[2],
                     "replicate_idx": key[3], "model": lane,
@@ -151,7 +184,7 @@ def main():
         assert not stuck, (
             f"{lane}: {len(stuck)} rows still 'unverified' after the pass -- "
             "verification no-oped (the exact fault the first run of this "
-            "script shipped); refusing to compute a forced-zero flip table")
+            "script shipped). Refusing to compute a forced-zero flip table.")
         by_cell = defaultdict(list)
         for v in vrows:
             by_cell[v["_cell"]].append(v)

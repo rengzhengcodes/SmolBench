@@ -1,34 +1,34 @@
-"""Statistical contracts of the five family-ladder analysis scripts.
+"""Test the statistical contracts of the five family-ladder analysis scripts.
 
 The scripts under ``notebooks/induction`` and ``notebooks/deduction`` produce
-the study's headline numbers, and until now none of them had a single pytest.
-The four properties pinned here are the ones a silent edit could break while
-every report still LOOKS right:
+the study's headline numbers. Until now, none of them had a single pytest.
+This file pins four properties. A silent edit could break any of them while
+every report still looks right.
 
-1. **Tie-order invariance of Holm and Hochberg.** Both families are riddled
-   with exact ties -- the seed sign-flip test has a hard resolution floor at
-   ``2 / 2**30`` and several contrasts sit exactly on it -- so the rejection
-   set must be a function of the p-VALUES, never of the order the contrasts
-   happen to be built in. (This is the invariance the 2026-08-21 engineering
-   pass checked ad hoc; it is a permanent test now.)
-2. **Exactness of the seed-level sign-flip test.** Its p-values are checked
-   against hand-enumerated reference distributions on 2-3 clusters, written
-   out in the comments so the test is an independent calculation rather than a
-   transcription of the implementation.
-3. **The singleton reduction, twice.** Both cluster tests -- the induction
-   seed sign-flip and the deduction block sign-flip -- claim in their
-   docstrings to collapse onto exact McNemar when every cluster holds one
-   item. That claim is load-bearing (it is why the cluster test is a
-   correction rather than a different question) and it is checked here.
-4. **One row rule, one denominator rule.** ``grade_verdicts`` is now the only
-   implementation of earliest-surviving-row-per-cell + the unmeasurable-verdict
-   exclusion, and ``error_bars.build_pool``'s un-augmented pool must equal
-   ``load_joint_cells``'s blocks exactly. That equality used to be asserted at
-   RUNTIME on every report run (``_check_against_loader``); it lives here now.
-   The superseded-artifact refusal is pinned alongside it.
+1. Tie-order invariance of Holm and Hochberg. Both families have many exact
+   ties. The seed sign-flip test has a hard resolution floor at
+   ``2 / 2**30``, and several contrasts sit exactly on it. So the rejection
+   set must be a function of the p-values, never of the order the contrasts
+   are built in. (The 2026-08-21 engineering pass checked this invariance ad
+   hoc. It is a permanent test now.)
+2. Exactness of the seed-level sign-flip test. Its p-values are checked
+   against hand-enumerated reference distributions on 2-3 clusters. These are
+   written out in the comments, so the test is an independent calculation,
+   not a transcription of the implementation.
+3. The singleton reduction, twice. Both cluster tests -- the induction seed
+   sign-flip and the deduction block sign-flip -- claim in their docstrings
+   to collapse onto exact McNemar when every cluster holds one item. That
+   claim is load-bearing: it is why the cluster test is a correction, not a
+   different question. This file checks the claim.
+4. One row rule, one denominator rule. ``grade_verdicts`` is now the only
+   implementation of earliest-surviving-row-per-cell plus the
+   unmeasurable-verdict exclusion. ``error_bars.build_pool``'s un-augmented
+   pool must equal ``load_joint_cells``'s blocks exactly. This equality used
+   to be asserted at runtime on every report run (``_check_against_loader``);
+   it lives here now. The superseded-artifact refusal is pinned alongside it.
 
-Everything is fixture-based and offline: no results tree, no rows directory,
-no network. The whole file runs in well under a second.
+Everything here is fixture-based and offline: no results tree, no rows
+directory, no network. The whole file runs in well under a second.
 """
 
 import importlib.util
@@ -48,20 +48,20 @@ REPO = Path(__file__).resolve().parents[1]
 # --------------------------------------------------------------------------- #
 # Importing the scripts.
 #
-# Both legs have a file called ``power_analysis.py`` and each script imports it
-# by BARE NAME after putting its own directory on ``sys.path`` -- so whichever
-# leg is imported first would win ``sys.modules["power_analysis"]`` for the
-# rest of the session. Rather than depend on pytest's collection order, each
-# script is executed with the RIGHT ``power_analysis`` (and, where needed, its
+# Both legs have a file called ``power_analysis.py``, and each script imports
+# it by bare name after putting its own directory on ``sys.path``. So
+# whichever leg imports first would win ``sys.modules["power_analysis"]`` for
+# the rest of the session. Instead of relying on pytest's collection order,
+# each script runs with the right ``power_analysis`` (and, where needed, its
 # sibling modules) bound under the bare names for exactly the duration of its
-# exec, then unbound. Nothing about the scripts changes; this is purely how the
-# test harness reaches them.
+# exec, then unbound. Nothing about the scripts changes; this is purely how
+# the test harness reaches them.
 # --------------------------------------------------------------------------- #
 def _load(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    # Registered BEFORE exec: dataclass annotation resolution looks the module
-    # up in sys.modules while it is still half-imported.
+    # Register the module before exec. Dataclass annotation resolution looks
+    # up the module in sys.modules while it is still half-imported.
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
@@ -103,18 +103,18 @@ with _bound(power_analysis=ind_pa):
 # --------------------------------------------------------------------------- #
 # 1. Holm / Hochberg: the rejection set is a function of the p-VALUES.
 # --------------------------------------------------------------------------- #
-#: Every step-wise procedure under test. Holm is implemented independently in
-#: two places (the two legs never share code), and both copies must hold the
-#: property, so both are driven here.
+#: Every step-wise procedure under test. Holm has two independent
+#: implementations (the two legs never share code), and both copies must hold
+#: the property, so this file drives both.
 PROCEDURES = [
     pytest.param(paired.holm, id="induction-holm"),
     pytest.param(error_bars.holm, id="deduction-holm"),
     pytest.param(significance.hochberg, id="induction-hochberg"),
 ]
 
-#: The seed sign-flip test's hard resolution floor at S = 30 replicates: no
-#: contrast can report a smaller p, so several report exactly this one. Ties at
-#: a floor are the tie case that actually occurs in this study.
+#: The seed sign-flip test's hard resolution floor at S = 30 replicates. No
+#: contrast can report a smaller p, so several report exactly this value.
+#: Floor ties are the tie case that actually occurs in this study.
 FLOOR_P = 2 / 2 ** 30
 
 
@@ -134,17 +134,18 @@ FLOOR_P = 2 / 2 ** 30
     ids=["floor-ties", "threshold-ties", "all-tied", "all-null", "mixed"],
 )
 def test_tie_order_invariance_exhaustive(procedure, pvals):
-    """Permuting tied p-values permutes the rejection set and nothing else.
+    """A permutation of tied p-values permutes the rejection set, and nothing else.
 
-    Checked over ALL 720 permutations of a 6-element family, so no ordering
-    escapes. The property is not an accident of the implementation: Holm's and
-    Hochberg's critical values ``alpha / (m - i)`` are strictly increasing in
-    rank, so a group of equal p-values can never straddle the stopping rank --
-    either the first of them already fails its (smallest) threshold and the
-    step stops there for every ordering, or all of them clear thresholds at
-    least as large. A rejection that depended on WHICH tied contrast sorted
-    first would therefore be a bug, and this test is what makes the two
-    implementations' ``kind="stable"`` sorts a contract rather than a habit.
+    This test checks all 720 permutations of a 6-element family, so no
+    ordering escapes. The property is not an accident of the implementation.
+    Holm's and Hochberg's critical values ``alpha / (m - i)`` strictly
+    increase with rank, so a group of equal p-values can never straddle the
+    stopping rank. Either the first of them already fails its (smallest)
+    threshold, and the step stops there for every ordering, or all of them
+    clear thresholds at least as large. A rejection that depended on which
+    tied contrast sorted first would be a bug. This test turns the two
+    implementations' ``kind="stable"`` sorts into a contract, not just a
+    habit.
     """
     base = np.array(pvals, dtype=float)
     reject = procedure(base)
@@ -158,11 +159,12 @@ def test_tie_order_invariance_exhaustive(procedure, pvals):
 
 @pytest.mark.parametrize("procedure", PROCEDURES)
 def test_tie_order_invariance_large_family(procedure):
-    """Same property on a 210-sized family, the size actually reported.
+    """Same property on a 210-item family, the size the study actually reports.
 
-    Random permutations rather than exhaustive, with a fixed seed so a failure
-    is reproducible. The family mixes floor ties, a dense block of identical
-    mid-range values and a null tail -- the shape of the real PRIMARY family.
+    This test uses random permutations, not exhaustive ones, with a fixed
+    seed so a failure is reproducible. The family mixes floor ties, a dense
+    block of identical mid-range values, and a null tail -- the shape of the
+    real primary family.
     """
     rng = np.random.default_rng(20260821)
     base = np.concatenate([
@@ -180,13 +182,13 @@ def test_tie_order_invariance_large_family(procedure):
 
 
 def test_holm_and_hochberg_admit_a_boundary_tie():
-    """A p-value EXACTLY at its own threshold is rejected (``<=``, not ``<``).
+    """A p-value exactly at its own threshold is rejected (``<=``, not ``<``).
 
-    Hand-computed, m = 4, alpha = 0.05, thresholds 0.0125 / 0.0167 / 0.025 /
-    0.05. With p = (0.0125, 0.0125, 0.0125, 0.9) every one of the three tied
-    values sits at or under its own threshold and the fourth fails, so both
+    Hand-computed: m = 4, alpha = 0.05, thresholds 0.0125 / 0.0167 / 0.025 /
+    0.05. With p = (0.0125, 0.0125, 0.0125, 0.9), all three tied values sit
+    at or under their own threshold, and the fourth fails. So both
     procedures must reject exactly 3. A ``<`` comparison would stop at rank 1
-    and reject 0 -- the failure mode that a family full of floor ties would
+    and reject 0 -- the failure mode a family full of floor ties would
     otherwise hide.
     """
     pvals = np.array([0.0125, 0.0125, 0.0125, 0.9])
@@ -201,25 +203,27 @@ def test_hochberg_steps_up_and_holm_steps_down():
     m = 3, alpha = 0.05, thresholds by rank: 0.0167, 0.025, 0.05.
     p = (0.01, 0.04, 0.045).
 
-      Holm (step DOWN from the smallest): 0.01 <= 0.0167 rejects; 0.04 <= 0.025
-      fails, and Holm stops at the first failure -> 1 rejection.
+      Holm (steps down from the smallest): 0.01 <= 0.0167 rejects; 0.04 <=
+      0.025 fails, and Holm stops at the first failure -> 1 rejection.
 
-      Hochberg (step UP from the largest): 0.045 <= 0.05 at the loosest
-      threshold, so it rejects that rank and every smaller one -> 3 rejections.
+      Hochberg (steps up from the largest): 0.045 <= 0.05 at the loosest
+      threshold, so it rejects that rank and every smaller one -> 3
+      rejections.
 
     A Holm that stepped up, or a Hochberg that stepped down, would return the
-    other procedure's answer here. Both legs' Holm implementations are driven
-    so neither copy can drift into the wrong direction unnoticed.
+    other procedure's answer here. This test drives both legs' Holm
+    implementations, so neither copy can drift into the wrong direction
+    unnoticed.
     """
     pvals = np.array([0.01, 0.04, 0.045])
     for holm_impl in (paired.holm, error_bars.holm):
         assert holm_impl(pvals).tolist() == [True, False, False]
     assert significance.hochberg(pvals).tolist() == [True, True, True]
 
-    # Sanity only, NOT a second direction discriminator: on a family with no
-    # gap for the step-up to exploit both procedures give the same set, and a
-    # step-up Holm would give that same set too. The case above is what
-    # separates the directions.
+    # This check is a sanity check only, not a second direction test. On a
+    # family with no gap for step-up to exploit, both procedures give the
+    # same set, and a step-up Holm would give that same set too. The case
+    # above is what separates the directions.
     agree = np.array([0.001, 0.2, 0.9])
     assert paired.holm(agree).tolist() == significance.hochberg(agree).tolist()
 
@@ -228,10 +232,11 @@ def test_every_script_shares_one_holm_and_one_hochberg():
     """No script carries a private copy of a multiplicity procedure.
 
     ``extens_vs_noise`` and ``significance_report`` correct over the same
-    210-contrast family as ``paired_analysis``; if any of them grew its own
+    210-contrast family as ``paired_analysis``. If any of them grew its own
     Holm, the reports could disagree with each other while every individual
-    file still looked correct. There are exactly two Holm implementations in
-    the study -- one per leg, which never share code -- and one Hochberg.
+    file still looked correct. The study has exactly two Holm
+    implementations, one per leg (the legs never share code), and one
+    Hochberg.
     """
     assert extens_vs_noise.holm is paired.holm
     assert extens_vs_noise.hochberg is significance.hochberg
@@ -267,15 +272,17 @@ def test_signflip_exact_p_matches_hand_enumeration(diffs, expected, why):
     """Hand-enumerated reference distributions, 2-3 clusters (see the table).
 
     Each case's full sign-flip distribution is written out in the parameter
-    comment and the expected p is read off it, so this is an independent
-    calculation of the same quantity rather than a snapshot of the DP.
+    comment, and the expected p is read off it. So this is an independent
+    calculation of the same quantity, not a snapshot of the DP.
     """
     assert paired.signflip_exact_p(diffs) == pytest.approx(expected), why
 
 
 def test_signflip_is_symmetric_and_bounded():
-    """Two-sidedness, on the same tiny families: negating every cluster's
-    difference cannot change the p-value, and no p escapes (0, 1].
+    """Check two-sidedness on the same tiny families.
+
+    A negation of every cluster's difference cannot change the p-value,
+    and no p escapes the range (0, 1].
     """
     for diffs in ([2, 1], [3, 1, 1], [2, -1, 1], [5, -2, 3]):
         p = paired.signflip_exact_p(diffs)
@@ -287,23 +294,23 @@ def test_signflip_is_symmetric_and_bounded():
 
 
 def _one_item_per_seed(marks_a, marks_b):
-    """Build ``aligned``-shaped arrays with ONE item per replicate seed."""
+    """Build ``aligned``-shaped arrays with one item per replicate seed."""
     a = np.array(marks_a, dtype=bool)
     b = np.array(marks_b, dtype=bool)
     return a, b, np.arange(a.size)
 
 
 def test_signflip_reduces_to_exact_mcnemar_on_singleton_clusters():
-    """With one item per cluster the cluster test IS exact McNemar.
+    """With one item per cluster, the cluster test is exact McNemar.
 
     Hand-computed anchor: 3 items where arm A wins, 1 where B wins, and 6
     concordant items. ``seed_diffs`` turns that into d = (+1, +1, +1, -1) with
-    six zeros. Over the 2**10 sign assignments the zeros contribute a factor of
-    2**6 to the tail AND to the denominator, so they cancel exactly, leaving the
-    4 discordant clusters: |T| >= 2 happens for T in {+4, +2, -2, -4}, i.e.
-    1 + 4 + 4 + 1 = 10 of 16 assignments -> p = 0.625. Exact McNemar on
-    b = 3, c = 1 is 2 * P(X <= 1), X ~ Binomial(4, 1/2) = 2 * 5/16 = 0.625.
-    The two agree because they are the same test, which is the claim.
+    six zeros. Over the 2**10 sign assignments, the zeros contribute a factor
+    of 2**6 to the tail and to the denominator, so they cancel exactly. That
+    leaves the 4 discordant clusters: |T| >= 2 happens for T in {+4, +2, -2,
+    -4}, that is 1 + 4 + 4 + 1 = 10 of 16 assignments -> p = 0.625. Exact
+    McNemar on b = 3, c = 1 is 2 * P(X <= 1), X ~ Binomial(4, 1/2) = 2 * 5/16
+    = 0.625. The two agree because they are the same test. That is the claim.
     """
     a, b, sidx = _one_item_per_seed(
         [1, 1, 1, 0] + [1, 1, 0, 0, 0, 0],
@@ -323,9 +330,9 @@ def test_signflip_reduces_to_exact_mcnemar_on_singleton_clusters():
 def test_signflip_equals_mcnemar_for_every_singleton_split(nb, nc):
     """The reduction holds for any discordant split, not just the anchor case.
 
-    Built through ``seed_diffs`` so the composition ``aligned -> seed_diffs ->
-    signflip_exact_p`` is covered end to end, and padded with concordant items
-    (which must stay inert).
+    This test builds the data through ``seed_diffs``, so the composition
+    ``aligned -> seed_diffs -> signflip_exact_p`` is covered end to end. The
+    data is padded with concordant items, which must stay inert.
     """
     marks_a = [1] * nb + [0] * nc + [1, 0, 1, 0]
     marks_b = [0] * nb + [1] * nc + [1, 0, 1, 0]
@@ -336,11 +343,12 @@ def test_signflip_equals_mcnemar_for_every_singleton_split(nb, nc):
 
 
 def test_seed_diffs_sums_to_the_mcnemar_margin():
-    """``sum_s d_s == b - c`` exactly -- the two tests read the SAME signal.
+    """``sum_s d_s == b - c`` exactly -- the two tests read the same signal.
 
     Nine items spread over three seeds, so the clusters are genuinely
-    multi-item: this is the property that makes the cluster test a correction
-    to the item-level McNemar rather than a different question about the data.
+    multi-item. This is the property that makes the cluster test a
+    correction to the item-level McNemar, not a different question about the
+    data.
     """
     #        seed 0  |  seed 1  |  seed 2
     a = np.array([1, 1, 0,   1, 0, 0,   1, 1, 1], dtype=bool)
@@ -364,16 +372,16 @@ def test_block_signflip_reduces_to_exact_mcnemar_with_one_cell_per_block():
     concordant blocks (D_t = 0, inert under a sign flip). Exact McNemar on
     b = 5, c = 2 is 2 * P(X <= 2), X ~ Binomial(7, 1/2)
     = 2 * (1 + 7 + 21) / 128 = 58/128 = 0.453125. The sign-flip enumeration
-    agrees by the same arithmetic: over the 7 discordant blocks |T| >= 3 for
-    every assignment except the 2 * C(7, 3) = 70 with |T| = 1, i.e.
+    agrees by the same arithmetic. Over the 7 discordant blocks, |T| >= 3 for
+    every assignment except the 2 * C(7, 3) = 70 with |T| = 1, that is
     (128 - 70) / 128 = 58/128.
 
-    This test is Monte-Carlo (the implementation resamples and applies the
+    This test is Monte Carlo. The implementation resamples and applies the
     ``(count + 1) / (B + 1)`` finite-B correction, so it can never equal the
-    exact value), and the case is chosen well away from the 1/(B+1) floor. The
-    tolerance is ~5 standard errors of a B = 20,000 draw at p = 0.45,
-    5 * sqrt(0.45 * 0.55 / 20000) = 0.018; the literal 0.453125 comes from the
-    arithmetic above, NOT from running the code.
+    exact value. The case is chosen well away from the 1/(B+1) floor. The
+    tolerance is about 5 standard errors of a B = 20,000 draw at p = 0.45,
+    5 * sqrt(0.45 * 0.55 / 20000) = 0.018. The literal value 0.453125 comes
+    from the arithmetic above, not from running the code.
     """
     n_win_b, n_win_a, n_tied = 5, 2, 6
     rows = (
@@ -402,9 +410,9 @@ def test_block_signflip_reduces_to_exact_mcnemar_with_one_cell_per_block():
 def test_block_signflip_counts_the_observed_assignment():
     """A contrast with no difference at all reports p = 1, not 1/(B+1).
 
-    The observed sign assignment is always in its own reference distribution;
-    dropping it is the classic off-by-one that makes a permutation test
-    anticonservative.
+    The observed sign assignment is always in its own reference distribution.
+    If you drop it, you get the classic off-by-one that makes a permutation
+    test anticonservative.
     """
     succ = np.array([[1, 1], [0, 0], [1, 1], [0, 0]], dtype=np.int32)
     p = error_bars.block_signflip_p(
@@ -428,13 +436,13 @@ def rows_dir(tmp_path):
     """A two-lane rows tree exercising every branch of the row rule.
 
     * ``thm_a`` -- graded in both lanes, and in ``m1`` only after an
-      ``exception`` row, so earliest-SURVIVING (not earliest, not latest) is
-      the only rule that gets it right: the surviving order is success, then a
-      later retry that failed.
-    * ``thm_b`` -- every ``m1`` row is unmeasurable, so the cell has NO
-      survivor. ``m2`` grades it, which is what makes it MODEL-DEPENDENT and
+      ``exception`` row. So earliest-surviving (not earliest, not latest) is
+      the only rule that gets it right: the surviving order is success, then
+      a later retry that failed.
+    * ``thm_b`` -- every ``m1`` row is unmeasurable, so the cell has no
+      survivor. ``m2`` grades it, which makes it model-dependent and
       therefore the count-as-failure rule's business.
-    * ``thm_c`` -- unmeasurable in BOTH lanes: never measured anywhere, so no
+    * ``thm_c`` -- unmeasurable in both lanes: never measured anywhere, so no
       rule may resurrect it.
     * plus a non-cell row and a second replicate, both of which must be
       ignored.
@@ -482,7 +490,7 @@ def rows_dir(tmp_path):
 def test_grade_verdicts_is_the_row_rule(verdicts, expected):
     """The shared rule: earliest survivor wins, unmeasurable is not a result.
 
-    ``None`` means "no surviving attempt" and is deliberately NOT 0 -- the
+    ``None`` means "no surviving attempt" and is deliberately not 0. The
     difference between the drop rule and count-as-failure is what the caller
     then does with it.
     """
@@ -492,11 +500,11 @@ def test_grade_verdicts_is_the_row_rule(verdicts, expected):
 def test_all_loaders_share_the_one_row_rule(rows_dir, monkeypatch):
     """``lane_outcomes`` and ``load_joint_cells`` agree, cell for cell.
 
-    This is the assertion ``error_bars._check_against_loader`` used to make on
-    every report run. Since 2026-08-21 the two read rows through the SAME
-    ``grade_verdicts``, so a drift is no longer possible by construction -- but
-    the equality is the contract the count-as-failure and recovery layers are
-    built on, so it is pinned here rather than dropped.
+    This is the check ``error_bars._check_against_loader`` used to make on
+    every report run. Since 2026-08-21 the two read rows through the same
+    ``grade_verdicts``, so drift is no longer possible by construction. But
+    the equality is the contract the count-as-failure and recovery layers
+    are built on, so this test pins it here instead of dropping it.
     """
     monkeypatch.setattr(error_bars, "MODELS", ["m1", "m2"])
 
@@ -529,8 +537,8 @@ def test_count_as_failure_adds_only_model_dependent_cells(rows_dir, monkeypatch)
 
     ``thm_b`` has no surviving row in m1 but grades in m2, so the fault
     travelled with m1's own output: it is scored 0 and joins the pool.
-    ``thm_c`` is unmeasurable in EVERY lane, so it stays out -- scoring it
-    would invent a failure nobody observed.
+    ``thm_c`` is unmeasurable in every lane, so it stays out. If you
+    scored it, you would invent a failure nobody observed.
     """
     monkeypatch.setattr(error_bars, "MODELS", ["m1", "m2"])
     _models, blocks, _rungs, meta = error_bars.build_pool(
@@ -549,8 +557,8 @@ def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
     """``load_rungs`` grades its two rungs through ``grade_verdicts`` as well.
 
     The retry after an exception must be graded, and the second surviving row
-    for the same cell must be ignored -- last-wins here would report pass@2 as
-    pass@1 on exactly the cells a resume bug re-ran.
+    for the same cell must be ignored. A last-wins rule here would report
+    pass@2 as pass@1 on exactly the cells a resume bug re-ran.
     """
     path = tmp_path / "verified_rows.jsonl"
     rows = [
@@ -584,13 +592,13 @@ def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
 def test_extens_vs_noise_mechanism_labels(nc_extens, nc_noise, expected):
     """Which mechanism a lane's contrast can speak to, from measured rates.
 
-    The report's two-mechanism reading rests on this branch: where the NOISE
+    The report's two-mechanism reading rests on this branch. Where the noise
     arm has stopped obeying the output contract, an extens-higher result is
-    mechanically forced and cannot be read as an information effect; where the
-    EXTENS arm is the broken one the asymmetry runs the other way; only with
-    both arms well-formed is "information" available. The order matters -- the
-    noise arm is tested first -- so a lane with both arms collapsed is labelled
-    COLLAPSE, the conservative reading.
+    mechanically forced and cannot be read as an information effect. Where
+    the extens arm is the broken one, the asymmetry runs the other way. Only
+    with both arms well-formed is "information" available. The order
+    matters: the noise arm is tested first, so a lane with both arms
+    collapsed is labelled COLLAPSE, the conservative reading.
     """
     assert extens_vs_noise.mechanism(nc_extens, nc_noise) == expected
     assert extens_vs_noise.COLLAPSE_THRESHOLD == 0.25
@@ -607,11 +615,11 @@ def _write_rows(path: Path, rows):
 
 
 def test_reject_superseded_names_every_offender(tmp_path):
-    """The refusal is loud and names the file, and it is a REFUSAL.
+    """The refusal is loud, names the file, and is a hard refusal, not a warning.
 
     A byte-identical copy of the retired mixed-hardware ``all_rows`` artifact
-    sits inside the S3 analysis snapshot; it parses cleanly, so a loader that
-    merely warned would emit a complete, plausible, wrong report.
+    sits inside the S3 analysis snapshot. It parses cleanly, so a loader that
+    only warned would emit a complete, plausible, wrong report.
     """
     good = tmp_path / "verified_rows.jsonl"
     bad = tmp_path / SUPERSEDED_NAME
@@ -635,14 +643,15 @@ def test_load_joint_cells_refuses_a_superseded_file(tmp_path):
 
 
 def test_lane_outcomes_guards_both_of_its_sources(tmp_path):
-    """``lane_outcomes`` screens BOTH sources, and still loads a clean pair.
+    """``lane_outcomes`` screens both sources, and still loads a clean pair.
 
-    Its two paths are composed from fixed basenames
+    Its two paths are built from fixed basenames
     (``<dir>/<model>/verified_rows.jsonl`` and the recovery sibling), so a
-    superseded artifact cannot reach it through today's call sites -- the guard
-    is defence in depth against a future caller that builds the list some other
-    way, which is why the refusal itself is exercised on the shared function
-    and the loader is exercised on the path it really takes.
+    superseded artifact cannot reach it through today's call sites. The
+    guard is defence in depth against a future caller that builds the list
+    some other way. That is why this test exercises the refusal itself on
+    the shared function, and exercises the loader on the path it really
+    takes.
     """
     assert error_bars.reject_superseded is ded_pa.reject_superseded
     with pytest.raises(SystemExit, match="SUPERSEDED"):
@@ -668,18 +677,18 @@ def test_hint_vs_noise_refuses_a_superseded_file(tmp_path):
 
 # --------------------------------------------------------------------------- #
 # The ungraded sentinel. Cell rows are written with verdict "unverified" at
-# GENERATION time and graded by a later verification pass. `grade_verdicts`
-# scores that placeholder 0 -- a real failure -- because it is not in
-# UNMEASURABLE_VERDICTS, and it must not be added there either: that would
-# convert a loud condition into a silent drop. So the loaders refuse it at the
-# point rows enter, the same way they refuse a superseded artifact, and for the
-# same reason: the resulting report is complete, plausible, and wrong.
+# generation time, and a later verification pass grades them. `grade_verdicts`
+# scores that placeholder 0, a real failure, because it is not in
+# UNMEASURABLE_VERDICTS. It must not be added there either: that would turn a
+# loud condition into a silent drop. So the loaders refuse it at the point
+# rows enter, the same way they refuse a superseded artifact, and for the
+# same reason: the resulting report would be complete, plausible, and wrong.
 # --------------------------------------------------------------------------- #
 def test_lane_outcomes_refuses_ungraded_rows(tmp_path):
     """Both of ``lane_outcomes``' sources are screened, and clean rows load.
 
-    Each source is checked on the verdict field IT reads -- ``verdict`` for
-    the primary rows, ``recovered_verdict`` for the recovery sibling -- so a
+    Each source is checked on the verdict field it reads: ``verdict`` for the
+    primary rows, ``recovered_verdict`` for the recovery sibling. So a
     sentinel cannot enter through either one.
     """
     _write_rows(tmp_path / "rows" / "m1" / "verified_rows.jsonl",
@@ -711,10 +720,10 @@ def test_lane_outcomes_refuses_ungraded_rows(tmp_path):
 def test_hint_vs_noise_refuses_ungraded_rows(tmp_path):
     """``load_rungs`` refuses a sentinel row and still loads a graded file.
 
-    The refusal is on INGESTION, before the rung filter: an ungraded row in a
-    rung this comparison does not read is still evidence the verification pass
-    did not finish, and the paired hint-vs-noise b/c counts are exactly the
-    statistic a silently-failed row biases.
+    The refusal happens on ingestion, before the rung filter. An ungraded row
+    in a rung this comparison does not read is still evidence the
+    verification pass did not finish, and the paired hint-vs-noise b/c
+    counts are exactly the statistic a silently-failed row biases.
     """
     path = _write_rows(tmp_path / "verified_rows.jsonl",
                        [_cell("m1", "t1", "success", rung="hint:3"),
@@ -735,7 +744,7 @@ def test_hint_vs_noise_refuses_ungraded_rows(tmp_path):
 
 
 def _theorem_dir_with(tmp_path: Path, filename: str) -> Path:
-    """A ``theorems/<slug>/`` tree whose outputs hold exactly `filename`."""
+    """Build a ``theorems/<slug>/`` tree whose outputs hold exactly `filename`."""
     theorem_dir = tmp_path / "theorems" / "T"
     outputs = theorem_dir / "outputs"
     outputs.mkdir(parents=True)
@@ -751,12 +760,12 @@ def _theorem_dir_with(tmp_path: Path, filename: str) -> Path:
 def test_lean_runner_refuses_superseded_outputs(tmp_path, caplog):
     """``write_theorem_summary``'s ``outputs/*.jsonl`` glob refuses the artifact.
 
-    Today's archive is written one directory ABOVE this glob, so the guard is a
-    guarantee against a future layout rather than a live fix -- which is
-    exactly when it is cheapest to install. It both LOGS and raises: this
-    function runs inside the sweep's per-theorem worker, whose caller catches
-    ``Exception`` and prints a single line, so the file name has to survive
-    that path.
+    Today's archive is written one directory above this glob, so the guard
+    is a guarantee against a future layout, not a fix for a live bug. That is
+    exactly when the guard is cheapest to install. It both logs and raises:
+    this function runs inside the sweep's per-theorem worker, whose caller
+    catches ``Exception`` and prints a single line, so the file name has to
+    survive that path.
     """
     from smolbench.deduction.lean import runner
 
@@ -779,10 +788,11 @@ def test_lean_runner_refuses_superseded_outputs(tmp_path, caplog):
 
 
 def test_lean_cli_show_refuses_superseded_outputs(tmp_path, capsys):
-    """``cmd_show``'s listing mode re-scans ``outputs/*.jsonl`` -- guarded too.
+    """``cmd_show``'s listing mode re-scans ``outputs/*.jsonl``, guarded too.
 
     The listing tallies pass counts by reading those files directly, so an
-    ingested superseded artifact would print a plausible wrong coverage table.
+    ingested superseded artifact would print a plausible, wrong coverage
+    table.
     """
     import argparse
 
@@ -801,9 +811,12 @@ def test_lean_cli_show_refuses_superseded_outputs(tmp_path, capsys):
 
 
 def test_all_three_retirement_markers_are_refused(tmp_path):
-    """The snapshot writes three retirement markers for one audit-trail class
-    (scripts/snapshot_analysis_data.py: *_SUPERSEDED-*, *_STALE-*, *_BROKEN-*);
-    the guard must refuse them all, in both the notebook and package copies."""
+    """The snapshot writes three retirement markers for one audit-trail class.
+
+    (See scripts/snapshot_analysis_data.py: *_SUPERSEDED-*, *_STALE-*,
+    *_BROKEN-*.) The guard must refuse all three, in both the notebook and
+    package copies.
+    """
     from smolbench.deduction.lean import runner
 
     for name in ("all_rows_SUPERSEDED-20260815T000000Z.jsonl",
@@ -813,9 +826,9 @@ def test_all_three_retirement_markers_are_refused(tmp_path):
             ded_pa.reject_superseded([tmp_path / name])
         with pytest.raises(ValueError):
             runner.reject_superseded_rows([tmp_path / name])
-    # STALE/BROKEN are anchored ``_MARKER-``: ordinary words containing the
-    # letters must not trip the guard (SUPERSEDED stays bare, the historical
-    # form of the one real retired artifact).
+    # STALE/BROKEN are anchored on ``_MARKER-``. Ordinary words that contain
+    # those letters must not trip the guard. SUPERSEDED stays bare, the
+    # historical form of the one real retired artifact.
     for name in ("stale_check_rows.jsonl", "unBROKEN.jsonl",
                   "rows_STALEMATE.jsonl"):
         ded_pa.reject_superseded([tmp_path / name])

@@ -1,71 +1,74 @@
-"""Re-grades collected replicates with the compliance-aware parser.
+"""Re-grade collected replicates with the compliance-aware parser.
 
 Why this is needed
 ------------------
-Grading semantics changed: ``smolbench.evals.parsing`` now recovers an answer
-that is correct but wrongly formatted, and records HOW the response broke the
-prompt's output contract, instead of scoring it as a plain failure. Replicates
-collected before that change were graded strictly, so a results tree can hold
-two different grading conventions at once -- which would make an arm collected
-today incomparable with the arm it is supposed to be contrasted against.
+Grading semantics changed. ``smolbench.evals.parsing`` now recovers an
+answer that is correct but wrongly formatted, and records HOW the response
+broke the prompt's output contract, instead of scoring it as a plain
+failure. Replicates collected before that change were graded strictly. So
+a results tree can hold two different grading conventions at once, which
+would make an arm collected today incomparable with the arm it should be
+contrasted against.
 
-Every mark stores its raw ``response``, so the fix needs no model, no GPU and
-no re-run: re-parse what is already on disk and every arm ends up under one
-convention.
+Every mark stores its raw ``response``, so the fix needs no model, no GPU,
+and no re-run. This script re-parses what is already on disk, so every arm
+ends up under one convention.
 
 What it reports
 ---------------
 Per condition, before vs after:
 
 * accuracy, and how many marks change verdict;
-* invalid count -- how many unreadable marks the parser recovers;
+* invalid count: how many unreadable marks the parser recovers;
 * NONCOMPLIANCE, the new signal: how often the model disobeyed the output
-  contract regardless of whether it got the answer right. That is the number
-  that shows whether a condition degrades instruction following rather than
-  reasoning, which is precisely the question the induction ``noise_intens``
+  contract, regardless of whether it got the answer right. This number
+  shows whether a condition degrades instruction following rather than
+  reasoning. This is exactly the question the induction ``noise_intens``
   arm raised.
 
-Dry-run by default. ``--write`` rewrites the YAMLs in place. There is NO
-git safety net: ``.gitignore`` ignores ``notebooks/*/results/`` for every
-study, so no result YAML is tracked and ``git checkout`` recovers nothing
-(verified 2026-08-14: ``git ls-files 'notebooks/*/results/*'`` returns 0).
-A bad ``--write`` pass is recoverable ONLY by re-fetching the results --
-for S3-backed studies via ``InductionExperiment.harness.sync_down()``,
-which is also what silently DISCARDS a good pass (see the guard below).
+This script runs as a dry run by default. ``--write`` rewrites the YAMLs
+in place. There is NO git safety net: ``.gitignore`` ignores
+``notebooks/*/results/`` for every study, so git tracks no result YAML,
+and ``git checkout`` recovers nothing (verified 2026-08-14: ``git
+ls-files 'notebooks/*/results/*'`` returns 0). You can recover a bad
+``--write`` pass ONLY by re-fetching the results: for S3-backed studies,
+through ``InductionExperiment.harness.sync_down()``. That same sync_down
+call also silently DISCARDS a good pass; see the guard below.
 
 S3-backed results guard
 ------------------------
-This script edits ``rep_*.yaml`` files directly on the LOCAL filesystem --
-it has no idea ``smolbench.evals.results_store`` (S3-backed results) exists.
-That is fine as long as a study's results live only locally, but is
-actively dangerous once ``SMOLBENCH_RESULTS_S3`` is in play:
-``smolbench.evals.results_store.sync_down`` is a ONE-WAY mirror, S3 ->
-local only -- it never uploads, and it OVERWRITES whatever is already in
-the local tree. A local-only edit this script makes (``--write``) never
-reaches S3, so the very next ``sync_down`` silently clobbers it back to the
-stale, pre-regrade S3 copy. This is not a loud failure: a regrade's typical
-edit is a score flip (e.g. ``1 -> 0``), which is byte-length preserving --
-measured directly, 147 bytes before and after, only the content (and its
-MD5) differs -- so nothing about file size or presence would tip the
+This script edits ``rep_*.yaml`` files directly on the LOCAL filesystem.
+It does not know that ``smolbench.evals.results_store`` (S3-backed
+results) exists. That is fine as long as a study's results live only
+locally, but it becomes actively dangerous once ``SMOLBENCH_RESULTS_S3``
+is in play. ``smolbench.evals.results_store.sync_down`` is a ONE-WAY
+mirror, S3 to local only: it never uploads, and it OVERWRITES whatever is
+already in the local tree. A local-only edit this script makes
+(``--write``) never reaches S3, so the very next ``sync_down`` silently
+clobbers it back to the stale, pre-regrade S3 copy. This is not a loud
+failure: a regrade's typical edit is a score flip (for example ``1 ->
+0``), which preserves the file's byte length. A direct measurement
+confirmed this: 147 bytes before and after, with only the content (and
+its MD5) different. So nothing about file size or presence would tip the
 operator off that the regrade was ever lost.
 
-Before doing ANY work, this script therefore checks every study it would
-touch (respecting ``--study``) via
-``smolbench.evals.results_store.resolve_store``, and REFUSES outright --
-printing which studies are S3-backed and returning a nonzero exit, without
-reading or writing a single file -- if any of them resolves to an
-``S3ResultsStore``. This refusal fires regardless of ``--write``: a dry run
-is not safe either, since with an S3-backed store the local tree is not
-authoritative, and a dry run's before/after tallies computed from an
-absent or stale local tree would mislead the operator at exactly the
-moment they are deciding whether to write. See `_s3_backed_studies` and the
-guard block at the top of `main` for the implementation, and the printed
-message for the exact recovery sequence (sync down, unset the env var,
-re-run, re-seed).
+Before it does ANY work, this script checks every study it would touch
+(respecting ``--study``) through
+``smolbench.evals.results_store.resolve_store``. It REFUSES outright if
+any of them resolves to an ``S3ResultsStore``: it prints which studies are
+S3-backed and returns a nonzero exit code, without reading or writing a
+single file. This refusal fires regardless of ``--write``. A dry run is
+not safe either: with an S3-backed store, the local tree is not
+authoritative. A dry run's before/after tallies, computed from an
+absent or stale local tree, would mislead the operator at exactly the
+moment they decide whether to write. See `_s3_backed_studies` and the
+guard block at the top of `main` for the implementation, and see the
+printed message for the exact recovery sequence (sync down, unset the
+env var, re-run, re-seed).
 
-Run (repo root, main venv):
+Run this script from the repo root, in the main venv:
     .venv/bin/python scripts/regrade.py                     # report only
-    .venv/bin/python scripts/regrade.py --study chromatic
+    .venv/bin/python scripts/regrade.py --study induction
     .venv/bin/python scripts/regrade.py --write
 """
 
@@ -84,58 +87,76 @@ from smolbench.evals.parsing import parse_numeric, parse_tof  # noqa: E402
 
 STUDIES = {
     # The family-ladder scaling study (notebooks/induction) is S3-backed
-    # (SMOLBENCH_RESULTS_S3); the S3 guard below therefore refuses a local
-    # regrade until the operator deliberately syncs down, unsets the env, and
-    # re-seeds -- see the module docstring. Retired studies (periodic,
-    # chromatic, periodic_moe, ...) live in archive_2026-08-11.zip + git
-    # history and are no longer regradable in place.
+    # (SMOLBENCH_RESULTS_S3). So the S3 guard below refuses a local regrade
+    # until the operator deliberately syncs down, unsets the env var, and
+    # re-seeds; see the module docstring. Retired studies (periodic,
+    # chromatic, periodic_moe, and others) live in archive_2026-08-11.zip
+    # and in git history. This script can no longer regrade them in place.
     "induction": "notebooks/induction/results",
 }
 
 
 def parser_for(study: str):
-    """Every current study asks for an integer verdict."""
+    """Return the response parser for `study`.
+
+    Every study currently in `STUDIES` asks for an integer verdict. This
+    function keeps the ``"chromatic"`` branch (True/False verdicts) for a
+    retired study that once lived in `STUDIES`; see the module docstring.
+
+    Parameters
+    ----------
+    study : str
+        Study name, a key of `STUDIES`.
+
+    Returns
+    -------
+    callable
+        ``parse_tof`` for ``study == "chromatic"``, otherwise
+        ``parse_numeric``.
+    """
     return parse_tof if study == "chromatic" else parse_numeric
 
 
 def _s3_backed_studies(studies) -> List:
-    """Returns which of ``studies`` resolve to an S3-backed results store.
+    """Return which of ``studies`` resolve to an S3-backed results store.
 
     Parameters
     ----------
     studies : iterable of str
-        Study names (keys of `STUDIES`) that a run would touch -- the same
-        set `main` already computes from ``--study`` (or every study, when
-        ``--study`` is absent).
+        Study names (keys of `STUDIES`) that a run would touch. `main`
+        already computes this same set from ``--study`` (or from every
+        study, when ``--study`` is absent).
 
     Returns
     -------
     list of (str, pathlib.Path, str)
-        One ``(study, tree, description)`` tuple per offending study, where
-        ``tree`` is ``REPO / STUDIES[study]`` (the exact path `main` would
-        read/write) and ``description`` is that tree's resolved store's
-        ``describe()`` (e.g. ``"s3://smolbench-results-.../notebooks/..."``).
-        Empty when every study in ``studies`` resolves locally -- the
-        common case whenever ``SMOLBENCH_RESULTS_S3`` is unset.
+        One ``(study, tree, description)`` tuple per offending study.
+        ``tree`` is ``REPO / STUDIES[study]``, the exact path `main` would
+        read or write. ``description`` is that tree's resolved store's
+        ``describe()`` value (for example
+        ``"s3://smolbench-results-.../notebooks/..."``). This list is
+        empty when every study in ``studies`` resolves locally, which is
+        the common case whenever ``SMOLBENCH_RESULTS_S3`` is unset.
 
     Notes
     -----
-    Imports ``smolbench.evals.results_store`` lazily (inside this function),
-    matching this repo's house convention that a module is not required to
-    depend on the AWS SDK merely by being imported -- ``resolve_store``
-    itself only *might* need boto3 (to build a client), never at the point
-    this function calls it, since deciding WHICH store class a directory
-    maps to needs no network I/O at all.
+    This function imports ``smolbench.evals.results_store`` lazily, inside
+    the function body. This matches this repo's house convention: a
+    module does not need to depend on the AWS SDK merely by being
+    imported. ``resolve_store`` itself only *might* need boto3, to build
+    a client, but never at the point this function calls it, because
+    deciding WHICH store class a directory maps to needs no network I/O
+    at all.
 
-    ``REPO / STUDIES[study]`` is always repo-anchored (both ``REPO`` here
-    and ``results_store.repo_root()`` reduce to the same checkout root), so
-    in practice: whenever ``SMOLBENCH_RESULTS_S3`` is set at all, EVERY
-    study in ``studies`` resolves to ``S3ResultsStore`` -- there is no
-    "some local, some S3" split for this script's own trees, only "the env
-    var is set" vs. "it isn't". This function still checks each study
-    individually (rather than short-circuiting on the env var) so the
+    ``REPO / STUDIES[study]`` is always repo-anchored: both ``REPO`` here
+    and ``results_store.repo_root()`` reduce to the same checkout root.
+    So in practice, whenever ``SMOLBENCH_RESULTS_S3`` is set at all, EVERY
+    study in ``studies`` resolves to ``S3ResultsStore``. There is no
+    "some local, some S3" split for this script's own trees: only "the
+    env var is set" or "it isn't". This function still checks each study
+    individually, instead of short-circuiting on the env var, so the
     printed refusal names every offending tree by its own resolved
-    ``describe()``, not by a guess.
+    ``describe()`` value, not by a guess.
     """
     from smolbench.evals.results_store import S3ResultsStore, resolve_store
 
@@ -149,7 +170,27 @@ def _s3_backed_studies(studies) -> List:
 
 
 def regrade_file(path: Path, parse) -> Dict:
-    """Re-parses one replicate. Returns a summary and the new Marks."""
+    """Re-parse one replicate file with `parse`.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a ``rep_*.yaml`` replicate file.
+    parse : callable
+        Response parser to apply to each mark's raw ``response``, for
+        example ``parse_numeric`` or ``parse_tof``.
+
+    Returns
+    -------
+    dict
+        A summary with these keys: ``marks`` (the new `Marks` object,
+        with the re-parsed score and compliance recorded on each mark),
+        ``n`` (mark count), ``before_correct``, ``before_invalid``,
+        ``changed`` (marks whose verdict changed), ``recovered`` (marks
+        that changed from invalid to a real verdict), ``broke`` (marks
+        that changed from a real verdict to invalid), and ``violations``
+        (a `Counter` of output-contract violations).
+    """
     marks = Marks.load(path)
     new_marks = []
     changed = recovered = broke = 0
@@ -184,7 +225,15 @@ def regrade_file(path: Path, parse) -> Dict:
 
 
 def main() -> int:
-    """Re-grades every requested study; returns a process exit code."""
+    """Re-grade every requested study and return a process exit code.
+
+    Returns
+    -------
+    int
+        ``0`` on success. ``1`` if any requested study is S3-backed (see
+        the module docstring's S3-backed results guard), or if any mark
+        regressed from a real verdict to invalid during regrading.
+    """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")
     argp.add_argument("--arm", action="append", help="only conditions ending in this arm")
@@ -192,12 +241,13 @@ def main() -> int:
     args = argp.parse_args()
     studies = args.study or sorted(STUDIES)
 
-    # Guard (see the module docstring's "S3-backed results guard" section):
-    # refuse OUTRIGHT, before touching a single file, if any study this run
-    # would touch is S3-backed. This fires regardless of --write -- a dry
-    # run's tallies would themselves be computed from a local tree that is
-    # not authoritative once SMOLBENCH_RESULTS_S3 is set, which would
-    # mislead rather than inform the operator's --write decision.
+    # Guard (see the module docstring's "S3-backed results guard" section).
+    # Refuse OUTRIGHT, before this function touches a single file, if any
+    # study this run would touch is S3-backed. This guard fires regardless
+    # of --write: a dry run's tallies would themselves come from a local
+    # tree that is not authoritative once SMOLBENCH_RESULTS_S3 is set,
+    # which would mislead rather than inform the operator's --write
+    # decision.
     offending = _s3_backed_studies(studies)
     if offending:
         print("REFUSING to regrade: the following stud(y/ies) are S3-backed, not local:")

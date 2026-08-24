@@ -1,10 +1,11 @@
-"""Offline round trips through the shared client via each provider module.
+"""Test offline round trips through the shared client via each provider module.
 
-These are the "offline stub tests" the provider modules reference: they
-verify the unified query/complete/evaluate behavior -- reasoning channels,
-<think> splitting, the tolerant usage guard, per-model system prompts,
-per-call system prompts, token usage (ChatResult), the max_retries cap, and
-grading -- against a local stub server, with no credentials and no network.
+These are the "offline stub tests" the provider modules reference. They
+verify the unified query, complete, and evaluate behavior: reasoning
+channels, <think> splitting, the tolerant usage guard, per-model system
+prompts, per-call system prompts, token usage (ChatResult), the
+max_retries cap, and grading. All of it runs against a local stub
+server, with no credentials and no network.
 """
 
 import json
@@ -56,19 +57,23 @@ def test_ec2_query_missing_usage_tolerated(ec2_env):
 # ---------------------------------------------------------------------------
 # Opt-in streaming transport (EC2_STREAM_COMPLETIONS)
 # ---------------------------------------------------------------------------
-# A non-streaming completion is silent on the wire for the whole generation,
-# and on 2026-08-16 that silence was measured to be fatal for cap-length
-# ministral-3-14b responses: the server finished them, the client's sockets
-# stayed ESTABLISHED with empty receive queues for 57 minutes, and every one
-# hit its read timeout. An A/B on the same box in the same window -- identical
-# sampling parameters, differing only in `stream` -- delivered 19,856,415
-# bytes streamed against nothing at all non-streamed. These tests pin the
-# resulting transport: same parsed result, off unless asked for.
+# A non-streaming completion is silent on the wire for the whole
+# generation. On 2026-08-16 that silence was measured to be fatal for
+# cap-length ministral-3-14b responses. The server finished them, but
+# the client's sockets stayed ESTABLISHED with empty receive queues for
+# 57 minutes, and every one hit its read timeout. An A/B on the same
+# box in the same window, identical sampling parameters, differing only
+# in `stream`, delivered 19,856,415 bytes streamed against nothing at
+# all non-streamed. These tests pin the resulting transport: same
+# parsed result, off unless asked for.
 
 
 def test_ec2_stream_is_off_by_default(ec2_env):
-    """No opt-in, no `stream` key: every row already collected in this study
-    came over the non-streamed path, so the default must not move."""
+    """No opt-in, no `stream` key.
+
+    Every row already collected in this study came over the non-streamed
+    path, so the default must not move.
+    """
     from smolbench.evals import ec2
 
     ec2_env.queue_response(chat_completion("7"))
@@ -115,8 +120,11 @@ def test_ec2_stream_preserves_usage_and_finish_reason(ec2_env, monkeypatch):
 
 
 def test_ec2_stream_think_split_still_applies(ec2_env, monkeypatch):
-    """Reassembly happens BEFORE parsing, so a plain-text think block that
-    arrives split across deltas is still split into channels."""
+    """Reassembly happens BEFORE parsing.
+
+    So a plain-text think block that arrives split across deltas is
+    still split into channels.
+    """
     from smolbench.evals import ec2
 
     monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
@@ -128,20 +136,22 @@ def test_ec2_stream_think_split_still_applies(ec2_env, monkeypatch):
 def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypatch):
     """A reasoning-only generation must parse the same over both transports.
 
-    vLLM sends ``"content": null`` when the whole budget went to the reasoning
-    channel. Measured live on ministral-3-14b: content=None with 1,553
-    characters of reasoning. If the streamed path reassembled that as ``""``
-    it would skip the branch and record reasoning where the non-streamed path
-    records something else -- a difference in the DATA, from a change that is
-    only supposed to touch the transport. This is the cap-length case the lane
-    is missing, so it is the case most likely to occur.
+    vLLM sends ``"content": null`` when the whole budget went to the
+    reasoning channel. This was measured live on ministral-3-14b:
+    content=None with 1,553 characters of reasoning. If the streamed
+    path reassembled that as ``""``, it would skip the branch and
+    record reasoning where the non-streamed path records something
+    else. That would be a difference in the DATA from a change that is
+    only supposed to touch the transport. This is the cap-length case
+    the lane is missing, so it is the case most likely to occur.
 
-    2026-08-23 (defect D3): the pinned value moved from ``("", None)`` to
-    ``("", "long thought")``. The early-return used to hardcode
-    ``reasoning=None``, DISCARDING a reasoning-only cap-hit; it now returns
-    the reasoning channel faithfully. The INVARIANT this test exists for --
-    both transports parse the same body identically -- is unchanged, and the
-    assertion is now strictly stronger: it pins both parity AND retention.
+    2026-08-23 (defect D3): the pinned value moved from ``("", None)``
+    to ``("", "long thought")``. The early-return used to hardcode
+    ``reasoning=None``, DISCARDING a reasoning-only cap-hit. It now
+    returns the reasoning channel faithfully. The INVARIANT this test
+    exists for, that both transports parse the same body identically,
+    is unchanged. The assertion is now strictly stronger: it pins both
+    parity AND retention.
     """
     from smolbench.evals import ec2
 
@@ -163,23 +173,25 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
 # ---------------------------------------------------------------------------
 # D3 (2026-08-23): the null-content early return must not discard reasoning
 # ---------------------------------------------------------------------------
-# A reasoning-only cap-hit (content=None, finish_reason="length") used to
-# surface as a fully EMPTY row: the early-return hardcoded reasoning=None
-# while the normal branch read the reasoning key. In the determinism probes
-# that manufactured rows of length <= 1 -- an "empty" row that was really a
-# 106,545-character generation -- and one such row was mis-scored as
-# "excluded (empty)" in a published positive control. What must NOT move is
-# the study-side semantics: content stays "", so a reasoning-only cap-hit is
-# still an empty/failed candidate and can never be graded as a proof.
+# A reasoning-only cap-hit (content=None, finish_reason="length") used
+# to surface as a fully EMPTY row. The early-return hardcoded
+# reasoning=None, while the normal branch read the reasoning key. In
+# the determinism probes, that manufactured rows of length <= 1: an
+# "empty" row that was really a 106,545-character generation. One such
+# row was mis-scored as "excluded (empty)" in a published positive
+# control. What must NOT move is the study-side semantics: content
+# stays "", so a reasoning-only cap-hit is still an empty or failed
+# candidate, and can never be graded as a proof.
 
 
 def test_ec2_null_content_retains_reasoning_and_keeps_content_empty(ec2_env):
     """content=None + reasoning_content -> reasoning kept, content STILL "".
 
-    The ``content == ""`` assertion is the load-bearing one: every scorer in
-    the repo reads content only (``extract_tactic_block(rsp.content)``,
-    ``parse_for(q, raw)``), so it is what proves retaining the reasoning
-    channel cannot promote a cap-hit into a graded answer or a Lean proof.
+    The ``content == ""`` assertion is the load-bearing one. Every
+    scorer in the repo reads content only
+    (``extract_tactic_block(rsp.content)``, ``parse_for(q, raw)``). So
+    it is what proves retaining the reasoning channel cannot promote a
+    cap-hit into a graded answer or a Lean proof.
     """
     from smolbench.evals import ec2
 
@@ -200,11 +212,11 @@ def test_ec2_null_content_retains_legacy_reasoning_key(ec2_env):
     """The early return must use the NORMAL branch's key handling.
 
     Some servers spell the channel ``reasoning`` rather than
-    ``reasoning_content``; ``collect_stream`` already folds both spellings
-    into ``reasoning_content``. Reading only ``reasoning_content`` here would
-    therefore make the non-streamed path disagree with the streamed one on
-    exactly this body -- measured, not hypothesised. This test is the
-    discriminator between the two readings.
+    ``reasoning_content``. ``collect_stream`` already folds both
+    spellings into ``reasoning_content``. So reading only
+    ``reasoning_content`` here would make the non-streamed path disagree
+    with the streamed one on exactly this body. This was measured, not
+    guessed. This test is the discriminator between the two readings.
     """
     from smolbench.evals import ec2
 
@@ -221,8 +233,9 @@ def test_ec2_null_content_retains_legacy_reasoning_key(ec2_env):
 def test_ec2_null_content_and_no_reasoning_stays_none(ec2_env):
     """A genuinely empty response is still (content="", reasoning=None).
 
-    Without this, "retain the reasoning" could be implemented as `or ""` and
-    a truly empty row would become indistinguishable from a cap-hit.
+    Without this, "retain the reasoning" could be implemented as
+    `or ""`, and a truly empty row would become indistinguishable from
+    a cap-hit.
     """
     from smolbench.evals import ec2
 
@@ -236,8 +249,10 @@ def test_ec2_null_content_and_no_reasoning_stays_none(ec2_env):
 
 
 def test_collect_stream_survives_usage_only_chunk():
-    """The include_usage final chunk has an EMPTY choices list -- the shape a
-    naive choices[0] reader crashes on."""
+    """The include_usage final chunk has an EMPTY choices list.
+
+    This is the shape a naive choices[0] reader crashes on.
+    """
     from smolbench.evals.openai_compat import collect_stream
 
     frames = [
@@ -329,11 +344,14 @@ def test_openrouter_evaluate_via_provider_dispatch(stub_server, monkeypatch):
 
 
 def test_primeintellect_query_and_context_length(stub_server, monkeypatch):
-    """Mirrors the openrouter/aws round trips above, for the Prime Intellect
-    provider: PRIME_INTELLECT_BASE_URL points at the stub, and
-    get_model_context_length resolves via the stub's Prime-Intellect-style
-    GET /models/{model} shape (conftest's do_GET already serves
-    {"context_length": 100000} for any path containing "/models/")."""
+    """Mirrors the openrouter/aws round trips above, for the Prime Intellect provider.
+
+    PRIME_INTELLECT_BASE_URL points at the stub, and
+    get_model_context_length resolves via the stub's
+    Prime-Intellect-style GET /models/{model} shape. conftest's do_GET
+    already serves {"context_length": 100000} for any path containing
+    "/models/".
+    """
     from smolbench.evals import primeintellect
 
     monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
@@ -353,11 +371,14 @@ def test_primeintellect_query_and_context_length(stub_server, monkeypatch):
 
 
 def test_primeintellect_team_id_header(stub_server, monkeypatch):
-    """The optional X-Prime-Team-ID billing header rides on every request
-    when PRIME_INTELLECT_TEAM_ID is set, and is absent otherwise -- resolved
-    at call time via ChatClient.extra_headers, so no re-import is needed
-    between the two requests. Authorization must survive alongside it (the
-    extra-headers merge cannot clobber auth)."""
+    """The optional X-Prime-Team-ID billing header rides on every request.
+
+    It rides along when PRIME_INTELLECT_TEAM_ID is set, and is absent
+    otherwise. This resolves at call time via ChatClient.extra_headers,
+    so no re-import is needed between the two requests. Authorization
+    must survive alongside it: the extra-headers merge cannot clobber
+    auth.
+    """
     from smolbench.evals import primeintellect
 
     monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
@@ -377,9 +398,12 @@ def test_primeintellect_team_id_header(stub_server, monkeypatch):
 
 
 def test_primeintellect_evaluate_via_provider_dispatch(stub_server, monkeypatch):
-    """evaluate() tuning kwargs work under primeintellect too (the same
-    substitutability check test_openrouter_evaluate_via_provider_dispatch
-    performs for openrouter)."""
+    """evaluate() tuning kwargs work under primeintellect too.
+
+    This is the same substitutability check
+    test_openrouter_evaluate_via_provider_dispatch performs for
+    openrouter.
+    """
     from smolbench.evals import provider
 
     monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
@@ -405,8 +429,9 @@ def test_aws_body_model_and_key_resolution(stub_server, monkeypatch):
     assert content == "7"
     body = stub_server.requests[-1]["body"]
     assert body["model"] == "qwen.qwen3-32b"  # Bedrock: model id sent verbatim
-    # AWS_INFERENCE_API_KEY (call-time) outranks the Bedrock key without any
-    # module reload -- the provision_endpoint token-refresh contract.
+    # AWS_INFERENCE_API_KEY (call-time) outranks the Bedrock key without
+    # any module reload. This is the provision_endpoint token-refresh
+    # contract.
     monkeypatch.setenv("AWS_INFERENCE_API_KEY", "minted")
     assert aws._api_key() == "minted"
 
@@ -417,10 +442,12 @@ def test_aws_body_model_and_key_resolution(stub_server, monkeypatch):
 
 
 def test_complete_returns_chat_result_with_usage(ec2_env):
-    """usage.prompt_tokens_details.cached_tokens -- how OpenRouter/OpenAI
-    report Anthropic/OpenAI prompt-cache hits -- lands in
-    ChatResult.cached_prompt_tokens, alongside the other usage fields, the
-    server-reported model id, and finish_reason."""
+    """ChatResult.cached_prompt_tokens holds usage.prompt_tokens_details.cached_tokens.
+
+    This is how OpenRouter and OpenAI report Anthropic and OpenAI
+    prompt-cache hits. It lands alongside the other usage fields, the
+    server-reported model id, and finish_reason.
+    """
     from smolbench.evals import ec2
 
     ec2_env.queue_response(
@@ -447,9 +474,12 @@ def test_complete_returns_chat_result_with_usage(ec2_env):
 
 
 def test_complete_usage_absent_defaults_to_zero_and_none(ec2_env):
-    """No usage/model/finish_reason reported at all -> the documented
-    absent-value defaults (0 for counts, None for total_tokens/finish_reason,
-    the requested model id as a fallback), not a KeyError."""
+    """No usage, model, or finish_reason is reported at all.
+
+    The documented absent-value defaults apply: 0 for counts, None for
+    total_tokens and finish_reason, the requested model id as a
+    fallback. Never a KeyError.
+    """
     from smolbench.evals import ec2
 
     ec2_env.queue_response(chat_completion("7", usage=None))
@@ -468,10 +498,12 @@ def test_complete_usage_absent_defaults_to_zero_and_none(ec2_env):
 
 
 def test_complete_system_message_ordering_with_provider_prompt(ec2_env):
-    """[provider system, per-call system, user] in that order -- the
-    provider's deploy-spec toggle (ministral's [THINK]-protocol default
-    system message) must survive ahead of a caller-supplied system message,
-    per complete()'s ``system`` parameter doc."""
+    """[provider system, per-call system, user] in that order.
+
+    The provider's deploy-spec toggle, ministral's [THINK]-protocol
+    default system message, must survive ahead of a caller-supplied
+    system message, per complete()'s ``system`` parameter doc.
+    """
     from smolbench.evals import ec2
     from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
 
@@ -506,9 +538,11 @@ def test_complete_system_message_without_provider_prompt(ec2_env):
 
 
 def test_query_still_returns_tuple_and_forwards_system(ec2_env):
-    """query()'s positional signature and 2-tuple return are unchanged;
-    ``system`` (new keyword-only) passes through to the same message
-    ordering complete() produces."""
+    """query()'s positional signature and 2-tuple return are unchanged.
+
+    ``system``, a new keyword-only argument, passes through to the same
+    message ordering complete() produces.
+    """
     from smolbench.evals import ec2
 
     from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
@@ -621,8 +655,11 @@ def _flaky_client(flaky_server) -> ChatClient:
 
 
 def test_complete_max_retries_raises_on_nth_failure(flaky_server):
-    """Two queued 500s under max_retries=2: the 2nd failure is the Nth and
-    must raise HTTPError instead of sleeping/retrying again."""
+    """Two queued 500s under max_retries=2.
+
+    The 2nd failure is the Nth, and must raise HTTPError instead of
+    sleeping and retrying again.
+    """
     flaky_server.queue(500, {"error": "boom 1"})
     flaky_server.queue(500, {"error": "boom 2"})
     client = _flaky_client(flaky_server)
@@ -631,8 +668,11 @@ def test_complete_max_retries_raises_on_nth_failure(flaky_server):
 
 
 def test_complete_max_retries_succeeds_before_cap(flaky_server):
-    """One 500 followed by a 200, under max_retries=2: only 1 failure is
-    seen before the retry succeeds, so it must NOT raise."""
+    """One 500 followed by a 200, under max_retries=2.
+
+    Only 1 failure is seen before the retry succeeds, so it must NOT
+    raise.
+    """
     flaky_server.queue(500, {"error": "boom"})
     flaky_server.queue(200, chat_completion("7"))
     client = _flaky_client(flaky_server)
@@ -641,10 +681,12 @@ def test_complete_max_retries_succeeds_before_cap(flaky_server):
 
 
 def test_query_forwards_max_retries_to_complete(flaky_server):
-    """query()'s wrapper passes max_retries through to complete() -- a
-    single queued 500 under max_retries=1 must raise on that first (== Nth)
-    failure rather than retrying, exactly as calling complete() directly
-    would."""
+    """query()'s wrapper passes max_retries through to complete().
+
+    A single queued 500 under max_retries=1 must raise on that first
+    (== Nth) failure rather than retrying, exactly as calling
+    complete() directly would.
+    """
     flaky_server.queue(500, {"error": "boom"})
     client = _flaky_client(flaky_server)
     with pytest.raises(requests.exceptions.HTTPError):
@@ -657,14 +699,16 @@ def test_query_forwards_max_retries_to_complete(flaky_server):
 
 
 def test_complete_error_body_survives_in_httperror(flaky_server):
-    """The raised HTTPError must carry the API's error-BODY text, not just
-    the bare status line, and must keep `err.response` attached with the
-    right status code. Both matter downstream: `is_retryable_request_error`
-    classifies retryability by reading `err.response.status_code`, and
-    callers persist `str(err)` into durable artifacts (e.g. the Lean
-    sweep's exception rows) where the body's actionable detail --
-    context-too-long, invalid model id, billing -- is the whole point of
-    keeping it. Losing either would silently blind both consumers.
+    """The raised HTTPError must carry the API's error-BODY text.
+
+    It is not enough to keep just the bare status line: `err.response`
+    must stay attached too, with the right status code. Both matter
+    downstream. `is_retryable_request_error` classifies retryability by
+    reading `err.response.status_code`. Callers persist `str(err)` into
+    durable artifacts, for example the Lean sweep's exception rows,
+    where the body's actionable detail (context too long, invalid
+    model id, billing) is the whole point of keeping it. If either one
+    were lost, it would silently blind both consumers.
     """
     marker = "context_length_exceeded"
     flaky_server.queue(400, {"error": {"message": marker, "code": marker}})
@@ -686,18 +730,21 @@ def test_complete_error_body_survives_in_httperror(flaky_server):
 
 
 def test_on_unreachable_fires_before_max_retries_exhaustion():
-    """`max_connection_failures` (here 10) need NOT trip first for the
-    `on_unreachable` diagnosis hook to fire: a caller-supplied `max_retries`
-    SMALLER than `max_connection_failures` (the Lean sweep's pattern -- its
-    default 4 vs EC2's 10, per `ChatClient.complete`'s docstring) must
-    still route the terminal connection-level failure through the hook
-    before re-raising. Without this, a self-managed endpoint that vanished
+    """`max_connection_failures` (here 10) need not trip first.
+
+    The `on_unreachable` diagnosis hook can still fire without it. A
+    caller-supplied `max_retries` SMALLER than `max_connection_failures`
+    (the Lean sweep's pattern: its default 4 vs EC2's 10, per
+    `ChatClient.complete`'s docstring) must still route the terminal
+    connection-level failure through the hook before re-raising.
+    Without this, a self-managed endpoint that vanished
     (spot reclaim, caller-IP drift) would surface as a bare
     ConnectionError instead of the actionable diagnosis.
 
-    Uses a closed TCP port (bind then immediately close, so nothing listens
-    there) rather than an unroutable address, so every connection attempt
-    fails fast with ECONNREFUSED instead of hanging on a connect timeout.
+    This test uses a closed TCP port, bound then immediately closed so
+    nothing listens there, rather than an unroutable address. So every
+    connection attempt fails fast with ECONNREFUSED, instead of hanging
+    on a connect timeout.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
@@ -723,13 +770,14 @@ def test_on_unreachable_fires_before_max_retries_exhaustion():
 
 
 def test_on_unreachable_not_called_on_http_500_exhaustion(flaky_server):
-    """The `on_unreachable` hook is scoped to CONNECTION-level failures
-    only -- an HTTP 500 exhausting `max_retries` must raise the plain
-    HTTPError WITHOUT ever invoking the hook. `complete()`'s except block
-    only increments `connection_failures` (the counter the hook-firing
-    branch checks via `connection_failures > 0`) for non-HTTP
-    RequestExceptions, so a managed API returning sustained 5xx must never
-    be misdiagnosed as an unreachable self-managed endpoint.
+    """The `on_unreachable` hook is scoped to CONNECTION-level failures only.
+
+    An HTTP 500 exhausting `max_retries` must raise the plain HTTPError
+    WITHOUT ever invoking the hook. `complete()`'s except block only
+    increments `connection_failures`, the counter the hook-firing
+    branch checks via `connection_failures > 0`, for non-HTTP
+    RequestExceptions. So a managed API returning sustained 5xx must
+    never be misdiagnosed as an unreachable self-managed endpoint.
     """
     diagnosed: list = []
     client = ChatClient(
@@ -771,9 +819,12 @@ def test_metadata_get_check_status_true_raises_on_500(flaky_server):
 
 
 def test_metadata_get_check_status_false_passes_error_body_through(flaky_server):
-    """The context-length call sites (openrouter, primeintellect) parse the
-    body regardless of status -- an error-shaped JSON body must flow through
-    unraised (the FIDELITY contract in metadata_get's docstring)."""
+    """The context-length call sites (openrouter, primeintellect) parse the body.
+
+    They do this regardless of status. An error-shaped JSON body must
+    flow through unraised. This is the FIDELITY contract in
+    metadata_get's docstring.
+    """
     flaky_server.queue(500, {"error": {"message": "denied"}})
     body = metadata_get(f"{flaky_server.base_url}/models", "k", check_status=False)
     assert body == {"error": {"message": "denied"}}

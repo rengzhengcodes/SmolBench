@@ -1,43 +1,42 @@
-"""Score-level flip experiment: how much does a serving PROCESS change change
-a lane's headline?
+"""Measure how a serving-process change moves one lane's headline score.
 
 WHY THIS EXISTS
 ---------------
 ``notebooks/DETERMINISM_PLAN_2026-08-16.md`` section 6.2 specifies this
-measurement; read it first. In brief: the family-ladder deduction study's
+measurement. Read it first. In brief: the family-ladder deduction study's
 only "noise floor" so far is a BYTE-agreement number (0/8 or 8/8 on 8
-prompts, bimodal, see the plan's section 0) -- not a score-level term. The
+prompts, bimodal -- see the plan's section 0), not a score-level term. The
 paper needs the latter: *given the same cells, how much does the headline
 pass@1 metric move when the serving process changes?*
 
 Design (plan §6.2): take ``nemotron-3-nano-4b`` -- "the only lane in the
-study whose deduction cells all come from a single serving process" -- draw
-a random n=200-cell sample from its measurable population, regenerate
-EXACTLY those cells on one fresh box, grade both the rerun and a fresh
+study whose deduction cells all come from a single serving process". Draw a
+random n=200-cell sample from its measurable population. Regenerate EXACTLY
+those cells on one fresh box. Grade both the rerun and a fresh
 re-verification of the ORIGINAL candidates through the SAME (today's)
-verifier, and report the paired discordance rate (McNemar b+c over n) with
-an exact binomial (Clopper-Pearson) 95% CI, plus a verifier-drift sanity
-check (re-verified originals vs. the study's own stored verdicts).
+verifier. Report the paired discordance rate (McNemar b+c over n) with an
+exact binomial (Clopper-Pearson) 95% CI, plus a verifier-drift sanity check
+(re-verified originals vs. the study's own stored verdicts).
 
-THIS SCRIPT builds the driver + filter + analysis. It never provisions EC2,
-never calls a model, and never writes to S3 itself when this module is
-merely IMPORTED -- ``--stage generate``/``--stage verify`` are LIVE and are
-meant to be invoked by an operator (or an orchestrating agent) on real
-infrastructure, not run as a side effect of importing or testing this file.
+THIS SCRIPT builds the driver, the filter, and the analysis. It never
+provisions EC2, never calls a model, and never writes to S3 itself when this
+module is merely IMPORTED. ``--stage generate``/``--stage verify`` are LIVE.
+An operator (or an orchestrating agent) invokes them on real infrastructure.
+They never run as a side effect of importing or testing this file.
 
 STAGES (``--stage {sample,generate,verify,analyze}``)
 -------------------------------------------------------
 ``sample``   Offline except for one READ-ONLY S3 GET. Downloads the study
-             lane's ``verified_rows.jsonl``, restricts to the MATHLIB-ONLY
-             measurable population (see "Sample-stage population" below),
-             draws n=200 via ``random.Random(0)`` over the SORTED population,
-             and writes ``whitelist.json`` + ``sample_manifest.json``.
+             lane's ``verified_rows.jsonl``. Restricts to the MATHLIB-ONLY
+             measurable population (see "Sample-stage population" below).
+             Draws n=200 via ``random.Random(0)`` over the SORTED
+             population. Writes ``whitelist.json`` + ``sample_manifest.json``.
 
 ``generate`` LIVE EC2 spend. Sets this experiment's own env (tag, state
-             file, run name, ``LEAN_CELL_WHITELIST``), reconstructs the
-             STUDY-ERA ("stock") ``vllm_args`` for this model (undoing the
+             file, run name, ``LEAN_CELL_WHITELIST``). Reconstructs the
+             STUDY-ERA ("stock") ``vllm_args`` for this model, undoing the
              2026-08-18 determinism-bundle default -- see "Stock
-             reconstruction" below), and runs the SAME
+             reconstruction" below. Runs the SAME
              ``notebooks/deduction/run_study.py`` machinery the study itself
              uses for exactly this one model, restricted to the whitelisted
              200 cells. Tears its box down in a ``finally``, then spools the
@@ -45,65 +44,65 @@ STAGES (``--stage {sample,generate,verify,analyze}``)
 
 ``verify``   LIVE Lean/Dojo work; needs ``.venv-lean``. Two legs, both via
              ``scripts/lean_verify_rows.py``'s ``verify_run`` (imported, not
-             subprocessed -- see "Why import, not subprocess" below):
-             (a) verifies the flip run's own freshly generated rows (normal
-             S3 round-trip, permitted under its own prefix); (b) fetches the
-             study's ORIGINAL candidate rows for exactly the 200 whitelisted
-             cells READ-ONLY, and re-verifies them in a LOCAL-ONLY
-             ``originals_rerun/`` directory -- see the HARD RULE below for
-             why this leg never touches S3 at all.
+             subprocessed -- see "Why import, not subprocess" below).
+             Leg (a) verifies the flip run's own freshly generated rows: a
+             normal S3 round-trip, permitted under its own prefix. Leg (b)
+             fetches the study's ORIGINAL candidate rows for exactly the
+             200 whitelisted cells READ-ONLY, and re-verifies them in a
+             LOCAL-ONLY ``originals_rerun/`` directory -- see the HARD RULE
+             below for why this leg never touches S3 at all.
 
 ``analyze``  Offline. Pairs each of the 200 cells' re-verified-original
-             verdict against its rerun verdict (the primary, cross-PROCESS
-             comparison -- both sides graded by today's verifier, so
-             verifier-version drift cannot leak into it), computes McNemar
+             verdict against its rerun verdict: the primary, cross-PROCESS
+             comparison. Both sides are graded by today's verifier, so
+             verifier-version drift cannot leak into it. Computes McNemar
              b/c/discordance/Clopper-Pearson-CI/implied-SE, and separately
-             checks the re-verified originals against the study's OWN stored
-             verdicts (a verifier-drift sanity check, not the headline).
-             Writes ``flip_report.json``.  MUST run on the same machine (or
-             filesystem) that ``--stage verify`` ran on, for leg (b)'s data
-             -- see the HARD RULE below.
+             checks the re-verified originals against the study's OWN
+             stored verdicts (a verifier-drift sanity check, not the
+             headline). Writes ``flip_report.json``. MUST run on the same
+             machine (or filesystem) that ``--stage verify`` ran on, for
+             leg (b)'s data -- see the HARD RULE below.
 
 HARD RULE -- no write of any kind under the study's ``scaling_*`` S3
 prefixes, ever
 -------------------------------------------------------------------------
 The study's own results (``s3://<SPOOL_BUCKET>/<SPOOL_PREFIX>/scaling_*/``)
 are read-only from this script's point of view. This experiment's OWN data
-lives under a SEPARATE ``flip_*`` prefix, which spooling to S3 IS permitted
-for (that is "what run_study does anyway", per this task's brief). Two
-consequences that shaped this file's design:
+lives under a SEPARATE ``flip_*`` prefix. A spool to S3 IS permitted for
+that prefix -- that is "what run_study does anyway", per this task's brief.
+Two consequences shaped this file's design:
 
 1. ``notebooks/deduction/run_study.py``'s own ``spool_to_s3`` is
-   DELIBERATELY NOT reused for the ``generate`` stage's upload: that
-   function hardcodes its destination as ``f"{SPOOL_PREFIX}/scaling_{key}/"``
-   -- literally the study's own prefix, regardless of what run directory it
-   is pointed at. Calling it with ``key="nemotron-3-nano-4b"`` would spool
-   this experiment's freshly generated rows ON TOP OF the live study data.
-   ``_spool_flip_run`` below is a small, independent, correctly-prefixed
-   replacement (upload + ``head_object`` size verification, no pruning --
-   see that function's docstring for why not pruning is the right call
-   here).
-2. ``--stage verify``'s leg (b) (re-verifying the study's ORIGINAL
-   candidates) downloads from the study's S3 prefix via a plain, read-only
-   ``get_object`` and then drives ``lean_verify_rows.verify_run`` through
-   ``_LocalRunClient`` -- a fake S3 client backed by two local files, so it
-   is STRUCTURALLY IMPOSSIBLE for that leg to write anything to real S3 at
-   all (see ``_LocalRunClient``'s own docstring).
+   DELIBERATELY NOT reused for the ``generate`` stage's upload. That
+   function hardcodes its destination as
+   ``f"{SPOOL_PREFIX}/scaling_{key}/"`` -- literally the study's own
+   prefix, regardless of what run directory it is pointed at. A call to it
+   with ``key="nemotron-3-nano-4b"`` would spool this experiment's freshly
+   generated rows ON TOP OF the live study data. ``_spool_flip_run`` below
+   is a small, independent, correctly-prefixed replacement: it uploads,
+   then verifies size via ``head_object``, and does not prune -- see that
+   function's docstring for why not pruning is the right call here.
+2. ``--stage verify``'s leg (b) re-verifies the study's ORIGINAL
+   candidates. It downloads from the study's S3 prefix via a plain,
+   read-only ``get_object``, then drives ``lean_verify_rows.verify_run``
+   through ``_LocalRunClient`` -- a fake S3 client backed by two local
+   files. This makes it STRUCTURALLY IMPOSSIBLE for that leg to write
+   anything to real S3 at all (see ``_LocalRunClient``'s own docstring).
 
 Sample-stage population: Mathlib-only, exactly 711 cells (2026-08-18
 spec amendment)
 -------------------------------------------------------------------------
 The original brief said "identify measurable cells... expect ~711". A
 concurrent workstream is recovering Std-theorem (not Mathlib) cell verdicts
-into this SAME lane's ``verified_rows.jsonl``, which would silently GROW the
-measurable population -- and change its membership -- depending on exactly
-when ``--stage sample`` runs relative to that recovery landing. The §6.2
-estimand is the STUDY-ERA MATHLIB-measurable population specifically, so
+into this SAME lane's ``verified_rows.jsonl``. That recovery would silently
+GROW the measurable population, and change its membership, depending on
+exactly when ``--stage sample`` runs relative to it. The §6.2 estimand is
+the STUDY-ERA MATHLIB-measurable population specifically. So
 ``measurable_cell_keys`` excludes any cell whose theorem ``file_path`` is
-under ``.lake/packages/std/`` (see ``is_mathlib_cell``), and
-``assert_population_size`` is a HARD gate: the sample stage raises loudly
-(never silently samples a shifted population) if the count is not exactly
-711.
+under ``.lake/packages/std/`` (see ``is_mathlib_cell``). And
+``assert_population_size`` is a HARD gate: the sample stage raises loudly,
+and never silently samples a shifted population, if the count is not
+exactly 711.
 
 Stock reconstruction
 ---------------------
@@ -111,54 +110,59 @@ Every ``EC2_DEPLOY_SPECS`` entry now ends with ``ec2.DETERMINISM_ARGS`` (the
 2026-08-18 hinge-certified determinism bundle -- see
 ``notebooks/DETERMINISM_PLAN_2026-08-16.md`` §3-4 and
 ``smolbench/evals/ec2.py``'s own module-level assembly loop). The study
-lane this experiment reruns predates that default and was generated under
-the STOCK configuration (``--enable-prefix-caching``, no determinism
-bundle). ``stock_vllm_args`` reconstructs that stock argv, byte-identical to
-``scripts/hinge_probe.py``'s own inline reconstruction (~lines 201-215 as of
-the determinism-default commit) -- copied here as a standalone, unit-tested
-pure function rather than re-derived. Getting this wrong would confound the
-measurement: cross-CONFIG agreement (stock vs. determinism-bundle) is
-independently ALREADY measured at 0/8 (plan §3, "Cross-config is 0/8 on BOTH
-models") -- generating the rerun under the wrong config would measure that
-known effect instead of cross-process variation.
+lane this experiment reruns predates that default. It was generated under
+the STOCK configuration: ``--enable-prefix-caching``, no determinism
+bundle. ``stock_vllm_args`` reconstructs that stock argv, byte-identical to
+``scripts/hinge_probe.py``'s own inline reconstruction (see the
+"2026-08-18: EC2_DEPLOY_SPECS now ships DETERMINISM_ARGS" comment in that
+file). It is copied here as a standalone, unit-tested pure function rather
+than re-derived.
+
+A wrong reconstruction would confound the measurement. Cross-CONFIG
+agreement (stock vs. determinism-bundle) is independently ALREADY
+measured at 0/8 (plan §3, "Cross-config is 0/8 on BOTH models"). A rerun
+generated under the wrong config would measure that known effect, instead
+of cross-process variation.
 
 Why import, not subprocess, for ``--stage verify``
 -----------------------------------------------------
 ``lean_verify_rows._dojo_cache_lock`` is an EXCLUSIVE, non-blocking
-``flock`` that raises ``SystemExit`` on contention (concurrent passes race
-on the shared traced-repo build cache). Spawning
-``scripts/lean_verify_rows.py`` as a subprocess while this process ALSO
-needs to drive Dojo (for leg (b)) would contend for that same lock across
-two processes. Importing ``lean_verify_rows`` and calling ``verify_run``
-directly for BOTH legs, inside ONE shared ``_dojo_cache_lock()`` context,
-removes the hazard entirely and makes "both sides graded by the SAME
-verifier" literally true (the same module object, in the same process).
+``flock``. It raises ``SystemExit`` on contention, since concurrent passes
+race on the shared traced-repo build cache. A subprocess spawn of
+``scripts/lean_verify_rows.py``, while this process ALSO needs to drive
+Dojo for leg (b), would contend for that same lock across two processes.
+This module instead imports ``lean_verify_rows`` and calls
+``verify_run`` directly for BOTH legs, inside ONE shared
+``_dojo_cache_lock()`` context. This removes the hazard entirely, and makes
+"both sides graded by the SAME verifier" literally true: the same module
+object, in the same process.
 
 Duplicate cell keys: EARLIEST-wins
 ------------------------------------
-``scaling_nemotron-3-nano-4b`` is known to carry more than one surviving row
-for some cell keys (a resampling-bug artifact -- see
-``smolbench/deduction/lean/runner.py``'s ``_existing_keys`` docstring, and
-independently, ``scripts/lean_verify_rows.py``'s own ``--no-resume`` comment
-noting this exact lane "had had all 944 of its cells regenerated").
-``dedupe_rows_earliest_wins`` resolves any duplicate by keeping the FIRST
-occurrence in file order -- the study's own live ruling for this class of
-duplicate ("EARLIEST-wins both legs"), applied here for consistency with
-how the rest of this study's data was resolved.
+``scaling_nemotron-3-nano-4b`` is known to carry more than one surviving
+row for some cell keys: a resampling-bug artifact. See
+``smolbench/deduction/lean/runner.py``'s ``_existing_keys`` docstring, and,
+independently, ``scripts/lean_verify_rows.py``'s own ``--no-resume``
+comment, which notes this exact lane "had had all 944 of its cells
+regenerated". ``dedupe_rows_earliest_wins`` resolves any duplicate by
+keeping the FIRST occurrence in file order. This is the study's own live
+ruling for this class of duplicate ("EARLIEST-wins both legs"), applied
+here for consistency with how the rest of this study's data was resolved.
 
 Streaming transport: left OFF, a flagged (not resolved) decision
 ---------------------------------------------------------------------
-``scripts/hinge_probe.py`` enables ``EC2_STREAM_COMPLETIONS=1`` because a
+``scripts/hinge_probe.py`` enables ``EC2_STREAM_COMPLETIONS=1``, because a
 capped-length response can otherwise vanish on the wire (plan §1.3's
-delivery fault). This experiment's cells run at ``max_tokens=32768`` --
-squarely in that fault's regime -- but the STUDY's own original generation
-did NOT use streaming, and this task's brief is explicit: "Generation params
-are whatever run_study already does -- change nothing." So streaming is left
-UNSET here too, and ``--stage analyze`` instead REPORTS the count of rerun
-cells with an empty ``candidate_proof`` (split by whether ``prompt_tokens``
-was nonzero, the fault's own signature) so a contaminated flip rate is
-VISIBLE in the report rather than silently baked into the headline. This is
-a decision worth an operator's attention, not a silent one.
+delivery fault). This experiment's cells run at ``max_tokens=32768``,
+squarely in that fault's regime. But the STUDY's own original generation
+did NOT use streaming, and this task's brief is explicit: "Generation
+params are whatever run_study already does -- change nothing." So
+streaming is left UNSET here too. ``--stage analyze`` instead REPORTS the
+count of rerun cells with an empty ``candidate_proof``, split by whether
+``prompt_tokens`` was nonzero (the fault's own signature). A contaminated
+flip rate is therefore VISIBLE in the report, rather than silently baked
+into the headline. This is a decision that needs an operator's attention,
+not a silent one.
 
 USAGE
 -----
@@ -201,7 +205,7 @@ from smolbench.deduction.lean import runner
 # ---------------------------------------------------------------------------
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 
-#: The one lane this whole script is hardcoded to -- see the module
+#: The one lane this whole script is hardcoded to. See the module
 #: docstring's "WHY THIS EXISTS" section for why this model specifically.
 MODEL: str = "nemotron-3-nano-4b"
 STUDY_RUN_NAME: str = f"scaling_{MODEL}"
@@ -211,27 +215,27 @@ EC2_TAG: str = f"flip-{MODEL}"
 EC2_STATE_FILE_NAME: str = f".ec2_state_flip_{MODEL}.json"
 EC2_REQUIRE_GPU: str = "L40S:1"
 # Widened 2026-08-18 after an 11-AZ g6e.4xlarge spot drought on the first
-# launch: all three types carry exactly ONE L40S (the 8xl/2xl differ only in
-# CPU/RAM), and EC2_REQUIRE_GPU=L40S:1 enforces that invariant at serve time
-# -- the same benign-substitution rule the study itself accepted on
+# launch. All three types carry exactly ONE L40S; the 8xl/2xl differ only in
+# CPU/RAM. EC2_REQUIRE_GPU=L40S:1 enforces that invariant at serve time. This
+# is the same benign-substitution rule the study itself accepted on
 # 2026-08-14 (g6e.4xlarge <-> g6e.2xlarge repair lanes, both 1x L40S).
 EC2_INSTANCE_TYPE: str = "g6e.4xlarge,g6e.8xlarge,g6e.2xlarge"
 
 #: Same bucket/region/prefix as `notebooks/deduction/run_study.py`'s own
-#: SPOOL_BUCKET/SPOOL_REGION/SPOOL_PREFIX -- this study's whole S3 footprint
-#: lives in one bucket. Kept as plain literals (not imported), mirroring
+#: SPOOL_BUCKET/SPOOL_REGION/SPOOL_PREFIX. This study's whole S3 footprint
+#: lives in one bucket. Kept as plain literals, not imported, mirroring
 #: that file's own precedent for SPOOL_PREFIX (see its docstring): this
-#: script owns its own spool contract end to end rather than depending on
+#: script owns its own spool contract end to end, rather than depending on
 #: another module's "off-limits" internals for a value this stable.
 SPOOL_BUCKET: str = "smolbench-results-414266451290"
 SPOOL_REGION: str = "us-west-2"
 SPOOL_PREFIX: str = "deduction/runs"
 
 #: Matches `scripts/lean_verify_rows.py`'s own `VERIFIED_FILENAME` constant
-#: value. Duplicated here (rather than importing that module at this file's
-#: TOP level) so `sample`/`analyze` -- which need only this one literal, not
-#: any of that module's Lean/Dojo-adjacent machinery -- stay light to import
-#: (see the module docstring's design note on `--stage verify`).
+#: value. Duplicated here, rather than importing that module at this file's
+#: TOP level, so `sample`/`analyze` stay light to import. Those two stages
+#: need only this one literal, not any of that module's Lean/Dojo-adjacent
+#: machinery -- see the module docstring's design note on `--stage verify`.
 VERIFIED_FILENAME: str = "verified_rows.jsonl"
 
 #: Sample design (locked; see notebooks/DETERMINISM_PLAN_2026-08-16.md §6.2
@@ -240,8 +244,8 @@ N_SAMPLE: int = 200
 SAMPLE_SEED: int = 0
 #: Exact Mathlib-only measurable population size this experiment's estimand
 #: is fixed to -- see the module docstring's "Sample-stage population"
-#: section. A HARD gate, not an expectation: `assert_population_size` raises
-#: on any other count.
+#: section. This is a HARD gate, not an expectation. `assert_population_size`
+#: raises on any other count.
 EXPECTED_MATHLIB_POPULATION: int = 711
 
 #: Theorem `file_path` marker for a Std (not Mathlib) theorem -- see
@@ -250,13 +254,14 @@ _STD_PACKAGE_MARKER: str = ".lake/packages/std/"
 
 
 def _flip_run_dir() -> Path:
-    """This experiment's local run directory, resolved at CALL time.
+    """Resolve this experiment's local run directory, at CALL time.
 
-    Built from `runner.results_root()` (which itself honors
-    `SMOLBENCH_LEAN_RESULTS` at call time, never import time) rather than a
-    frozen module-level constant, so a caller (or a test) that overrides
-    that environment variable before calling any stage function gets a
-    consistent answer everywhere in this file.
+    Built from `runner.results_root()`, not a frozen module-level
+    constant. `runner.results_root()` itself honors
+    `SMOLBENCH_LEAN_RESULTS` at call time, never import time. A caller (or
+    a test) that overrides that environment variable before calling any
+    stage function therefore gets a consistent answer everywhere in this
+    file.
     """
     return runner.results_root() / "runs" / FLIP_RUN_NAME
 
@@ -283,19 +288,20 @@ def _flip_report_path() -> Path:
 
 
 def stock_vllm_args(spec_args: Sequence[str], determinism_args: Sequence[str]) -> list[str]:
-    """Reconstructs a spec's pre-determinism-bundle ("stock") ``vllm_args``.
+    """Reconstruct a spec's pre-determinism-bundle ("stock") ``vllm_args``.
 
     See the module docstring's "Stock reconstruction" section for WHY this
-    experiment needs the study-era config rather than today's default.
-    Byte-identical to ``scripts/hinge_probe.py``'s own inline reconstruction
-    (as of the 2026-08-18 determinism-default commit), factored into a
-    standalone pure function here so it is unit-testable with plain lists --
-    calling it must not require importing ``smolbench.evals.ec2`` (which
-    freezes its ``EC2_*`` module constants from the process environment the
-    moment it is FIRST imported; a test that triggers that import merely to
-    check a list-slicing operation would risk polluting later tests in this
-    same interpreter with whatever ``EC2_*`` values happened to be set at
-    that moment).
+    experiment needs the study-era config, rather than today's default.
+    Byte-identical to ``scripts/hinge_probe.py``'s own inline
+    reconstruction (as of the 2026-08-18 determinism-default commit), but
+    factored into a standalone pure function here so it is unit-testable
+    with plain lists. A call to it must not require importing
+    ``smolbench.evals.ec2``: that module freezes its ``EC2_*`` module
+    constants from the process environment the moment it is FIRST
+    imported. A test that triggers that import merely to check a
+    list-slicing operation would risk polluting later tests in this same
+    interpreter, with whatever ``EC2_*`` values happened to be set at that
+    moment.
 
     Parameters
     ----------
@@ -309,25 +315,28 @@ def stock_vllm_args(spec_args: Sequence[str], determinism_args: Sequence[str]) -
     Returns
     -------
     list[str]
-        A NEW list (never `spec_args` itself, never a view into it):
-        `spec_args` with the trailing `determinism_args` suffix removed (if
-        present) -- or, for a pre-determinism-bundle spec shape, with any
-        bare ``--enable-prefix-caching`` flag removed instead -- followed by
-        exactly one ``--enable-prefix-caching`` flag.
+        A NEW list: never `spec_args` itself, never a view into it. Holds
+        `spec_args` with the trailing `determinism_args` suffix removed,
+        if present. For a pre-determinism-bundle spec shape, it instead
+        holds `spec_args` with any bare ``--enable-prefix-caching`` flag
+        removed. Either way, exactly one ``--enable-prefix-caching`` flag
+        follows.
 
     Notes
     -----
     Detects the suffix by direct list comparison (``spec_args[-n:] ==
-    list(determinism_args)``), not by scanning for individual flags: the
+    list(determinism_args)``), not by scanning for individual flags. The
     determinism bundle's flags could, in principle, appear elsewhere in a
-    spec for an unrelated reason, and a suffix match is the same test
+    spec for an unrelated reason. A suffix match is the same test
     ``smolbench/evals/ec2.py``'s own module-level assembly loop uses to
-    prove every spec carries the bundle at all. Guards ``n == 0`` explicitly
-    (unlike a literal negative-slice reading, ``spec_args[-0:]`` is the
-    WHOLE list, which would otherwise compare it against an empty
-    `determinism_args` and almost always fail to match) -- purely a
-    defensive edge case for testability; `determinism_args` is always the
-    fixed 6-element ``ec2.DETERMINISM_ARGS`` bundle in production use.
+    prove every spec carries the bundle at all.
+
+    Guards ``n == 0`` explicitly. A literal negative-slice reading,
+    ``spec_args[-0:]``, is the WHOLE list. Without the guard, this would
+    compare the whole list against an empty `determinism_args` and almost
+    always fail to match. This is purely a defensive edge case for
+    testability: `determinism_args` is always the fixed 6-element
+    ``ec2.DETERMINISM_ARGS`` bundle in production use.
     """
     spec_args = list(spec_args)
     determinism_args = list(determinism_args)
@@ -340,7 +349,7 @@ def stock_vllm_args(spec_args: Sequence[str], determinism_args: Sequence[str]) -
 
 
 def dedupe_rows_earliest_wins(rows: Iterable[dict]) -> dict[tuple, dict]:
-    """Collapses `rows` to one row per cell key, keeping the FIRST occurrence.
+    """Collapse `rows` to one row per cell key, keeping the FIRST occurrence.
 
     See the module docstring's "Duplicate cell keys" section for why this is
     load-bearing, not a theoretical edge case, for the exact lane this
@@ -373,63 +382,66 @@ def dedupe_rows_earliest_wins(rows: Iterable[dict]) -> dict[tuple, dict]:
 
 
 def is_mathlib_cell(row: dict) -> bool:
-    """True iff a cell row's theorem is vendored from Mathlib, not Std.
+    """Check that a cell row's theorem is vendored from Mathlib, not Std.
 
-    See the module docstring's "Sample-stage population" section (2026-08-18
-    spec amendment) for why this exclusion exists and why it is a hard
-    requirement, not a refinement.
+    See the module docstring's "Sample-stage population" section
+    (2026-08-18 spec amendment) for why this exclusion exists, and why it
+    is a hard requirement, not a refinement.
 
     Parameters
     ----------
     row : dict
-        A cell row carrying a ``file_path`` field (every cell row does --
-        see ``smolbench/deduction/lean/runner.py``'s ``_execute_one_cell``).
+        A cell row carrying a ``file_path`` field. Every cell row does --
+        see ``smolbench/deduction/lean/runner.py``'s ``_execute_one_cell``.
 
     Returns
     -------
     bool
-        `False` iff ``file_path`` contains ``.lake/packages/std/`` anywhere
-        (covers both a bare ``".lake/packages/std/Foo.lean"`` path and one
-        rooted under some other prefix); `True` otherwise, INCLUDING when
-        ``file_path`` is missing or empty (a row this permissive about is
-        not what this check is for -- a missing path is not evidence of
-        being a Std theorem).
+        Returns `False` when ``file_path`` contains
+        ``.lake/packages/std/`` anywhere. This covers both a bare
+        ``".lake/packages/std/Foo.lean"`` path and one rooted under some
+        other prefix. Returns `True` otherwise, INCLUDING when
+        ``file_path`` is missing or empty: a missing path is not evidence
+        of being a Std theorem, so this check does not treat it as one.
     """
     file_path = str(row.get("file_path") or "")
     return _STD_PACKAGE_MARKER not in file_path
 
 
 def measurable_cell_keys(rows: Iterable[dict]) -> list[tuple]:
-    """Sorted Mathlib-only cell keys with a surviving, non-exception verdict.
+    """Find sorted Mathlib-only cell keys with a surviving, non-exception verdict.
 
-    "Measurable" mirrors ``smolbench/deduction/lean/runner.py``'s own resume
-    logic (``_existing_keys``): a verdict of ``"exception"`` means the
-    VERIFIER failed, not the candidate proof, so there is nothing to compare
-    against a rerun; ``"unverified"`` means phase-2 verification never
-    actually ran for that row (should not occur in a fully-verified lane's
-    ``verified_rows.jsonl``, excluded defensively rather than asserted
-    against). Restricted to Mathlib cells only -- see `is_mathlib_cell` and
-    the module docstring's "Sample-stage population" section.
+    "Measurable" mirrors ``smolbench/deduction/lean/runner.py``'s own
+    resume logic (``_existing_keys``). A verdict of ``"exception"`` means
+    the VERIFIER failed, not the candidate proof, so there is nothing to
+    compare against a rerun. ``"unverified"`` means phase-2 verification
+    never actually ran for that row. This should not occur in a
+    fully-verified lane's ``verified_rows.jsonl``; it is excluded
+    defensively here, rather than asserted against. This function
+    restricts to Mathlib cells only -- see `is_mathlib_cell` and the
+    module docstring's "Sample-stage population" section.
 
-    Duplicate cell keys are resolved via `dedupe_rows_earliest_wins` BEFORE
-    the verdict/Mathlib filters are applied, so a cell with several
+    Duplicate cell keys are resolved via `dedupe_rows_earliest_wins`
+    BEFORE the verdict/Mathlib filters are applied, so a cell with several
     surviving rows contributes at most once.
 
     RESOLVED 2026-08-18, by the exact-711 gate doing its job on the first
-    live run: the original "surviving non-exception" phrasing (excluding
-    only ``"exception"``/``"unverified"``) found 792 cells -- 793 Mathlib
-    cells minus the lane's single DojoTacticTimeout exception -- and the
-    +81 over the expected 711 is exactly the Mathlib prefix-failure class
+    live run. The original "surviving non-exception" phrasing (excluding
+    only ``"exception"``/``"unverified"``) found 792 cells: 793 Mathlib
+    cells minus the lane's single DojoTacticTimeout exception. The +81
+    over the expected 711 is exactly the Mathlib prefix-failure class
     (``"replay_failed"``: the ground-truth prefix fails to replay, a
     verifier-INFRASTRUCTURE outcome, not a judgment on the candidate
-    proof). Measurable is therefore a POSITIVE verdict whitelist: a cell
-    counts only when its surviving verdict is one of ``success`` /
-    ``lean_error`` / ``incomplete`` / ``given_up`` (the last measured live:
-    4 cells in this lane where the candidate tactic drove Lean to a
-    given-up proof state -- a judgment on the CANDIDATE, like
-    ``lean_error``) -- the same denominator the coverage diagnosis derives
-    (712 measurable minus this lane's one timeout cell = 711; verified
-    live: 707 + 4 given_up = 711 exactly).
+    proof).
+
+    Measurable is therefore a POSITIVE verdict whitelist. A cell counts
+    only when its surviving verdict is one of ``success`` / ``lean_error``
+    / ``incomplete`` / ``given_up``. The last was measured live: 4 cells
+    in this lane, where the candidate tactic drove Lean to a given-up
+    proof state -- a judgment on the CANDIDATE, like ``lean_error``. This
+    is the same denominator the coverage diagnosis derives (712 measurable
+    minus this lane's one timeout cell = 711; verified live: 707 + 4
+    given_up = 711 exactly).
 
     Parameters
     ----------
@@ -439,9 +451,9 @@ def measurable_cell_keys(rows: Iterable[dict]) -> list[tuple]:
     Returns
     -------
     list[tuple]
-        `runner._row_key`-shaped tuples, ascending-sorted -- sorting is what
-        makes `select_sample_keys`'s draw reproducible independent of
-        `rows`' on-disk order.
+        `runner._row_key`-shaped tuples, ascending-sorted. This sort order
+        is what makes `select_sample_keys`'s draw reproducible,
+        independent of `rows`' on-disk order.
     """
     by_key = dedupe_rows_earliest_wins(rows)
     return sorted(
@@ -452,12 +464,12 @@ def measurable_cell_keys(rows: Iterable[dict]) -> list[tuple]:
 
 
 def assert_population_size(measurable: Sequence[tuple], expected: int) -> None:
-    """Raises loudly if the measurable population is not EXACTLY `expected`.
+    """Raise loudly if the measurable population is not EXACTLY `expected`.
 
-    A hard gate, not a warning -- see the module docstring's "Sample-stage
+    A hard gate, not a warning. See the module docstring's "Sample-stage
     population" section (2026-08-18 spec amendment) for why silently
-    sampling a shifted population would be a real, not theoretical, mistake
-    for this specific lane right now.
+    sampling a shifted population would be a real, not theoretical,
+    mistake for this specific lane right now.
 
     Parameters
     ----------
@@ -488,15 +500,15 @@ def assert_population_size(measurable: Sequence[tuple], expected: int) -> None:
 
 
 def select_sample_keys(measurable: Sequence[tuple], n: int, seed: int) -> list[tuple]:
-    """Draws a reproducible n-cell sample from an already-SORTED population.
+    """Draw a reproducible n-cell sample from an already-SORTED population.
 
     Parameters
     ----------
     measurable : Sequence[tuple]
-        Population to draw from -- MUST already be sorted (see
-        `measurable_cell_keys`); this function does not re-sort, since a
-        caller sorting a DIFFERENT way (e.g. by first-seen file order)
-        would silently change the draw for a fixed seed.
+        Population to draw from. MUST already be sorted (see
+        `measurable_cell_keys`); this function does not re-sort. A caller
+        that sorts a DIFFERENT way (e.g. by first-seen file order) would
+        otherwise silently change the draw for a fixed seed.
     n : int
         Sample size.
     seed : int
@@ -521,9 +533,9 @@ def select_sample_keys(measurable: Sequence[tuple], n: int, seed: int) -> list[t
 
 
 def _binom_cdf(k: int, n: int, p: float) -> float:
-    """``P(X <= k)`` for ``X ~ Binomial(n, p)``.
+    """Compute ``P(X <= k)`` for ``X ~ Binomial(n, p)``.
 
-    Pure stdlib (``math.comb`` + floats) -- see `clopper_pearson_interval`'s
+    Pure stdlib (``math.comb`` + floats). See `clopper_pearson_interval`'s
     Notes for why this avoids a ``scipy`` dependency.
     """
     if p <= 0.0:
@@ -534,12 +546,14 @@ def _binom_cdf(k: int, n: int, p: float) -> float:
 
 
 def _bisect_decreasing(f, lo: float, hi: float, iters: int = 100) -> float:
-    """Bisection root-finder for `f`, assumed MONOTONE DECREASING on
-    ``[lo, hi]`` with ``f(lo) >= 0 >= f(hi)`` (the caller,
-    `clopper_pearson_interval`, guarantees this from the binomial CDF's own
-    monotonicity in `p` -- see that function's Notes). 100 iterations on
-    ``[0, 1]`` gives roughly ``2**-100`` precision, far beyond what a
-    3-significant-figure report needs.
+    """Find a root of `f` by bisection.
+
+    Assumes `f` is MONOTONE DECREASING on ``[lo, hi]``, with
+    ``f(lo) >= 0 >= f(hi)``. The caller, `clopper_pearson_interval`,
+    guarantees this from the binomial CDF's own monotonicity in `p` -- see
+    that function's Notes. 100 iterations on ``[0, 1]`` gives roughly
+    ``2**-100`` precision, far beyond what a 3-significant-figure report
+    needs.
     """
     for _ in range(iters):
         mid = (lo + hi) / 2
@@ -551,7 +565,7 @@ def _bisect_decreasing(f, lo: float, hi: float, iters: int = 100) -> float:
 
 
 def clopper_pearson_interval(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
-    """Exact binomial confidence interval for a proportion (Clopper-Pearson).
+    """Compute an exact binomial confidence interval (Clopper-Pearson).
 
     Parameters
     ----------
@@ -560,40 +574,42 @@ def clopper_pearson_interval(k: int, n: int, alpha: float = 0.05) -> tuple[float
     n : int
         Number of trials (here: sample size, 200).
     alpha : float, default 0.05
-        Two-sided miscoverage rate; the returned interval has ``1 - alpha``
-        nominal coverage (95% for the default).
+        Two-sided miscoverage rate. The returned interval has
+        ``1 - alpha`` nominal coverage (95% for the default).
 
     Returns
     -------
     tuple[float, float]
         ``(lower, upper)`` bounds, each in ``[0, 1]``. ``lower == 0.0`` iff
-        ``k == 0``; ``upper == 1.0`` iff ``k == n`` (the standard
-        Clopper-Pearson boundary convention -- there is no informative
-        bound to solve for at either extreme).
+        ``k == 0``. ``upper == 1.0`` iff ``k == n``. This is the standard
+        Clopper-Pearson boundary convention: there is no informative bound
+        to solve for at either extreme.
 
     Raises
     ------
     ValueError
-        ``not 0 <= k <= n``, or ``n <= 0``.
+        Raised when ``not 0 <= k <= n``, or when ``n <= 0``.
 
     Notes
     -----
-    Implemented by bisection on the exact binomial CDF rather than via
-    ``scipy.stats.beta.ppf`` (the usual closed-form route -- the CP interval
-    is exactly a pair of beta quantiles): this avoids a ``scipy`` dependency
-    this module does not otherwise need, and keeps the implementation
-    IDENTICAL on ``.venv`` and ``.venv-lean`` (``--stage verify`` runs on
-    the latter; ``--stage analyze`` can run on either, and must produce the
-    same numbers regardless of which one a caller uses).
+    Implemented by bisection on the exact binomial CDF, rather than via
+    ``scipy.stats.beta.ppf`` (the usual closed-form route: the CP interval
+    is exactly a pair of beta quantiles). This avoids a ``scipy``
+    dependency this module does not otherwise need. It also keeps the
+    implementation IDENTICAL on ``.venv`` and ``.venv-lean``:
+    ``--stage verify`` runs on the latter, ``--stage analyze`` can run on
+    either, and both must produce the same numbers regardless of which one
+    a caller uses.
 
     ``_binom_cdf(k, n, p)`` is monotonically DECREASING in `p` for fixed
-    `k < n` (a higher per-trial success probability makes "``k`` or fewer
-    successes" less likely), which is what makes the bisection well-posed:
-    solving ``_binom_cdf(k - 1, n, p) = 1 - alpha/2`` for `p` gives the
-    lower bound (the value of `p` at which "at least `k` successes" has
-    exactly ``alpha/2`` probability); solving ``_binom_cdf(k, n, p) =
-    alpha/2`` gives the upper bound (`p` at which "at most `k` successes"
-    has exactly ``alpha/2`` probability).
+    `k < n`: a higher per-trial success probability makes "``k`` or fewer
+    successes" less likely. This is what makes the bisection well-posed. A
+    solution to ``_binom_cdf(k - 1, n, p) = 1 - alpha/2`` for `p` gives
+    the lower bound: the value of `p` at which "at least `k` successes"
+    has exactly ``alpha/2`` probability. A solution to
+    ``_binom_cdf(k, n, p) = alpha/2`` gives the upper bound: the value of
+    `p` at which "at most `k` successes" has exactly ``alpha/2``
+    probability.
     """
     if n <= 0:
         raise ValueError(f"clopper_pearson_interval: n must be positive, got {n}")
@@ -614,47 +630,48 @@ def clopper_pearson_interval(k: int, n: int, alpha: float = 0.05) -> tuple[float
 def reject_unverified_rows(rows: Iterable[dict], source: Path | str) -> None:
     """Refuse a re-verified rows file that still carries the ungraded sentinel.
 
-    `_stage_analyze` calls this on BOTH legs it pairs -- the study-originals
-    re-verification and the flip run's own rerun -- immediately after reading
-    each ``verified_rows.jsonl``, before either leg is dedupe'd or paired.
-    Both are supposed to be files a verification pass has already run over in
-    full; one that still contains the generation-time placeholder means that
-    pass silently no-oped for some rows rather than grading them.
+    `_stage_analyze` calls this on BOTH legs it pairs: the study-originals
+    re-verification and the flip run's own rerun. It calls this
+    immediately after reading each ``verified_rows.jsonl``, before either
+    leg is dedupe'd or paired. Both are supposed to be files a
+    verification pass has already run over in full. One that still
+    contains the generation-time placeholder means that pass silently
+    no-oped for some rows, rather than grading them.
 
     Parameters
     ----------
     rows : Iterable[dict]
         Rows exactly as parsed from one of the two ``verified_rows.jsonl``
-        files this experiment pairs. Consumed by iteration, so a generator is
-        fine here, but this function does not re-use it -- do not pass one
-        you still need afterward.
+        files this experiment pairs. Consumed by iteration, so a
+        generator is fine here. This function does not re-use it: do not
+        pass one you still need afterward.
     source : Path or str
         Where `rows` came from, embedded verbatim in the raised message.
         A local `Path` for a file read off disk, or an ``s3://...`` URI
-        string when `_read_flip_run_verified_rows` fell back to a download
-        (see that function's `Returns`) -- so the message tells a reader the
-        TRUE origin of the bad rows rather than always naming a local path
-        that may not even have existed when the bug happened.
+        string when `_read_flip_run_verified_rows` fell back to a
+        download (see that function's `Returns`). This tells a reader the
+        TRUE origin of the bad rows, rather than always naming a local
+        path that may not even have existed when the bug happened.
 
     Raises
     ------
     SystemExit
-        One or more rows have ``row["kind"] == "cell"`` and
-        ``row["verdict"] == "unverified"``. The message states the offending
-        count and `source`, modeled on
+        Raised when one or more rows have ``row["kind"] == "cell"`` and
+        ``row["verdict"] == "unverified"``. The message states the
+        offending count and `source`, modeled on
         ``notebooks/deduction/power_analysis.py``'s `reject_superseded`
-        banner: a loud bar, a shouted headline, the offending detail, and an
-        explanation of what to do -- not a warning, because a warning here
-        would be silently ignored by exactly the caller (an unattended
-        `--stage analyze` invocation) most likely to hit this.
+        banner: a loud bar, a shouted headline, the offending detail, and
+        an explanation of what to do. This is a raise, not a warning: a
+        warning here would be silently ignored by exactly the caller (an
+        unattended `--stage analyze` invocation) most likely to hit this.
 
     Notes
     -----
     Checks ONLY the ``verdict`` field, never ``_study_verdict``.
-    ``_study_verdict`` legitimately carries the STUDY's own original verdict
-    (stashed by `_prepare_originals_rows` before re-verification overwrites
-    ``verdict`` with a fresh one) -- a different thing entirely, and this
-    guard has no business flagging it.
+    ``_study_verdict`` legitimately carries the STUDY's own original
+    verdict, stashed by `_prepare_originals_rows` before re-verification
+    overwrites ``verdict`` with a fresh one. That is a different thing
+    entirely, and this guard has no business flagging it.
     """
     count = sum(
         1 for row in rows
@@ -689,40 +706,44 @@ def reject_unverified_rows(rows: Iterable[dict], source: Path | str) -> None:
 
 
 def is_pass(verdict: str) -> bool:
-    """True iff a verdict string counts as a pass@1 success.
+    """Check whether a verdict string counts as a pass@1 success.
 
     Parameters
     ----------
     verdict : str
         A cell row's ``verdict`` field, expected to be one of the real
         outcomes `scripts/lean_verify_rows.py` writes (e.g. ``"success"``,
-        ``"lean_error"``, ``"incomplete"``, ``"given_up"``, ``"replay_failed"``,
-        ``"exception"``).
+        ``"lean_error"``, ``"incomplete"``, ``"given_up"``,
+        ``"replay_failed"``, ``"exception"``).
 
     Returns
     -------
     bool
-        ``True`` iff `verdict` is exactly ``"success"``. Every other REAL
-        outcome (``"lean_error"``, ``"incomplete"``, ``"given_up"``,
-        ``"replay_failed"``, ``"exception"``, or anything else) is a failure.
+        Returns ``True`` iff `verdict` is exactly ``"success"``. Every
+        other REAL outcome -- ``"lean_error"``, ``"incomplete"``,
+        ``"given_up"``, ``"replay_failed"``, ``"exception"``, or anything
+        else -- is a failure.
 
     Raises
     ------
     ValueError
-        `verdict` is the generation-time placeholder ``"unverified"``. This
-        is a raise, deliberately not a ``return False``: ``"unverified"``
-        is not a graded outcome, it is the ABSENCE of one -- the sentinel
-        every cell row is written with at generation time, before a later,
-        separate verification pass replays it against real Lean and
-        overwrites the field with a real verdict. Scoring the sentinel as a
-        failure would treat "never measured" identically to "measured and
-        lost", biasing every paired b/c statistic this function feeds
-        (`flip_stats`) downward -- and doing so INVISIBLY, since the
-        resulting report is complete and plausible, never obviously wrong.
-        Callers that can legitimately hold ungraded rows must filter them
-        out BEFORE calling this function; `measurable_cell_keys` (above)
-        already does exactly that, restricting to a positive-verdict
-        whitelist before anything reaches here.
+        Raised when `verdict` is the generation-time placeholder
+        ``"unverified"``. This is a raise, deliberately not a
+        ``return False``. ``"unverified"`` is not a graded outcome; it is
+        the ABSENCE of one. It is the sentinel every cell row is written
+        with at generation time, before a later, separate verification
+        pass replays it against real Lean and overwrites the field with a
+        real verdict.
+
+        A score of the sentinel as a failure would treat "never measured"
+        identically to "measured and lost". This biases every paired b/c
+        statistic this function feeds (`flip_stats`) downward, and does so
+        INVISIBLY: the resulting report is complete and plausible, never
+        obviously wrong. Callers that can legitimately hold ungraded rows
+        must filter them out BEFORE calling this function.
+        `measurable_cell_keys` (above) already does exactly that,
+        restricting to a positive-verdict whitelist before anything
+        reaches here.
     """
     if verdict == "unverified":
         raise ValueError(
@@ -736,12 +757,13 @@ def is_pass(verdict: str) -> bool:
 
 
 def flip_stats(pairs: Mapping[tuple, tuple[str, str]]) -> dict:
-    """McNemar-style flip statistics: re-verified-original vs. rerun verdict.
+    """Compute McNemar-style flip statistics: re-verified-original vs. rerun verdict.
 
     This is the PRIMARY, cross-PROCESS comparison this whole experiment
-    exists to make -- both sides graded by the SAME (today's) verifier, so
-    verifier-version drift cannot leak into it (see `verifier_drift_stats`
-    for the separate check that isolates drift instead).
+    exists to make. Both sides are graded by the SAME (today's) verifier,
+    so verifier-version drift cannot leak into it -- see
+    `verifier_drift_stats` for the separate check that isolates drift
+    instead.
 
     Parameters
     ----------
@@ -756,32 +778,32 @@ def flip_stats(pairs: Mapping[tuple, tuple[str, str]]) -> dict:
     -------
     dict
         ``n``: sample size. ``a_both_pass``/``b_orig_pass_rerun_fail``/
-        ``c_orig_fail_rerun_pass``/``d_both_fail``: the 2x2 contingency-table
-        cells. ``discordant``: ``b + c``. ``flip_rate``: ``discordant / n``.
-        ``flip_rate_ci95``: exact Clopper-Pearson ``[lower, upper]`` on
-        ``discordant`` out of ``n`` at the 95% level. ``pass_at_1_se``: the
-        normal-approximation standard error of `flip_rate` as a proportion
-        (``sqrt(p(1-p)/n)`` at ``p = flip_rate``) -- see Notes for what this
-        does and does not account for. ``pass_at_1_se_caveat``: a string
-        explaining that caveat, carried in the JSON report itself so a
-        reader does not need this docstring to see it.
-        ``flipped_keys``: the ``b + c`` cell keys, each as a JSON-friendly
-        ``list`` (not a ``tuple``).
+        ``c_orig_fail_rerun_pass``/``d_both_fail``: the 2x2
+        contingency-table cells. ``discordant``: ``b + c``. ``flip_rate``:
+        ``discordant / n``. ``flip_rate_ci95``: exact Clopper-Pearson
+        ``[lower, upper]`` on ``discordant`` out of ``n`` at the 95%
+        level. ``pass_at_1_se``: the normal-approximation standard error
+        of `flip_rate` as a proportion (``sqrt(p(1-p)/n)`` at
+        ``p = flip_rate``) -- see Notes for what this does and does not
+        account for. ``pass_at_1_se_caveat``: a string explaining that
+        caveat, carried in the JSON report itself so a reader does not
+        need this docstring to see it. ``flipped_keys``: the ``b + c``
+        cell keys, each as a JSON-friendly ``list`` (not a ``tuple``).
 
     Notes
     -----
     **Independence caveat, stated explicitly rather than left implicit**:
-    `pass_at_1_se` (and the Clopper-Pearson interval, which is exact only
-    for i.i.d. Bernoulli trials) treats the `n` cells as independent. They
-    are not, strictly: several cells in a 200-cell sample can share a
-    theorem (different rungs/replicates of the same theorem), and a
-    theorem-level effect could correlate their flips.
-    ``notebooks/lean/power_analysis.py``'s block bootstrap over theorem
-    blocks is this study's answer to that same problem elsewhere; THIS
-    function does not implement it (block-bootstrapping this specific
-    estimator is out of this task's scope -- the brief asks for the exact
-    binomial CI specifically). Read `pass_at_1_se` and the CP interval as a
-    likely-too-narrow bound, not a fully rigorous one.
+    `pass_at_1_se` treats the `n` cells as independent. So does the
+    Clopper-Pearson interval, which is exact only for i.i.d. Bernoulli
+    trials. Strictly, they are not independent: several cells in a
+    200-cell sample can share a theorem (different rungs/replicates of the
+    same theorem), and a theorem-level effect could correlate their
+    flips. ``notebooks/deduction/power_analysis.py``'s block bootstrap
+    over theorem blocks is this study's answer to that same problem
+    elsewhere. THIS function does not implement it: block-bootstrapping
+    this specific estimator is out of this task's scope, since the brief asks
+    for the exact binomial CI specifically. Read `pass_at_1_se` and the CP
+    interval as a likely-too-narrow bound, not a fully rigorous one.
     """
     n = len(pairs)
     a = b = c = d = 0
@@ -824,20 +846,20 @@ def flip_stats(pairs: Mapping[tuple, tuple[str, str]]) -> dict:
 
 
 def verifier_drift_stats(pairs: Mapping[tuple, tuple[str, str]]) -> dict:
-    """Agreement of a fresh reverification against the study's own verdict.
+    """Measure agreement of a fresh reverification against the study's own verdict.
 
-    A SEPARATE, secondary check from `flip_stats`: this isolates VERIFIER
+    A SEPARATE, secondary check from `flip_stats`. This isolates VERIFIER
     drift (Lean/mathlib toolchain changes since the study ran) from
     generation-process nondeterminism, by comparing two gradings of the
-    SAME original candidate text rather than two different candidates.
+    SAME original candidate text, rather than two different candidates.
 
     Parameters
     ----------
     pairs : Mapping[tuple, tuple[str, str]]
-        Cell key -> ``(study_original_verdict, study_reverified_verdict)``
-        -- EXACT verdict strings, compared for equality rather than
+        Cell key -> ``(study_original_verdict, study_reverified_verdict)``.
+        These are EXACT verdict strings, compared for equality rather than
         collapsed to pass/fail, since drift between e.g. ``"lean_error"``
-        and ``"incomplete"`` is itself informative even though both are
+        and ``"incomplete"`` is itself informative, even though both are
         "not success".
 
     Returns
@@ -869,16 +891,16 @@ def verifier_drift_stats(pairs: Mapping[tuple, tuple[str, str]]) -> dict:
 
 
 def _prepare_originals_rows(study_rows: Iterable[dict], whitelist: Iterable[tuple]) -> list[dict]:
-    """Filters+resets the study's rows to phase-1 shape for the 200 whitelisted cells.
+    """Filter and reset the study's rows to phase-1 shape for the 200 whitelisted cells.
 
-    Deduplicates via `dedupe_rows_earliest_wins`, then for each whitelisted
-    key stashes the study's own verdict under ``"_study_verdict"``/
-    ``"_study_lean_error"`` (surviving the reverification pass untouched --
-    ``lean_verify_rows.fan_out_verdict`` only writes ``verdict``/
-    ``lean_error``/``final_state_pp``/``verify_ms``, so these extra keys are
-    never read or clobbered by it) and resets ``verdict`` to
-    ``"unverified"`` (with ``lean_error``/``final_state_pp`` cleared) so
-    ``lean_verify_rows.group_unverified`` picks the row up for
+    Deduplicates via `dedupe_rows_earliest_wins`. For each whitelisted
+    key, this stashes the study's own verdict under ``"_study_verdict"``/
+    ``"_study_lean_error"``. Those two keys survive the reverification
+    pass untouched: ``lean_verify_rows.fan_out_verdict`` only writes
+    ``verdict``/``lean_error``/``final_state_pp``/``verify_ms``, so it
+    never reads or clobbers them. This function then resets ``verdict``
+    to ``"unverified"``, with ``lean_error``/``final_state_pp`` cleared,
+    so ``lean_verify_rows.group_unverified`` picks the row up for
     reverification.
 
     Parameters
@@ -897,8 +919,9 @@ def _prepare_originals_rows(study_rows: Iterable[dict], whitelist: Iterable[tupl
     Raises
     ------
     ValueError
-        Any whitelisted key is absent from `study_rows` after
-        deduplication -- named in the message (first few, if many).
+        Raised when any whitelisted key is absent from `study_rows` after
+        deduplication. The message names the missing keys (first few, if
+        many).
     """
     by_key = dedupe_rows_earliest_wins(study_rows)
     out: list[dict] = []
@@ -926,25 +949,25 @@ def _prepare_originals_rows(study_rows: Iterable[dict], whitelist: Iterable[tupl
 
 
 # ---------------------------------------------------------------------------
-# Dynamic module loading -- notebooks/ and scripts/ are not importable
-# packages, and both `run_study.py` files in this repo share a basename, so
-# a bare `import run_study` would be ambiguous. Mirrors
+# Dynamic module loading. notebooks/ and scripts/ are not importable
+# packages, and both `run_study.py` files in this repo share a basename. A
+# bare `import run_study` would therefore be ambiguous. This mirrors
 # `notebooks/deduction/run_study.py`'s own loader for
 # `notebooks/induction/run_study.py`, and `tests/test_deduction_study.py`'s
-# `_load_by_path` (same pattern, independently re-derived here rather than
-# imported, since neither of those is a shared library module).
+# `_load_by_path`. It is the same pattern, independently re-derived here
+# rather than imported, since neither of those is a shared library module.
 # ---------------------------------------------------------------------------
 
 
 def _load_module_by_path(path: Path, name: str) -> Any:
-    """Executes `path` as a module registered under `name` in `sys.modules`.
+    """Execute `path` as a module registered under `name` in `sys.modules`.
 
     The `sys.modules[name] = module` line before `exec_module` is NOT
-    optional -- on Python 3.14, a `@dataclass` declared inside a module
+    optional. On Python 3.14, a `@dataclass` declared inside a module
     absent from `sys.modules` raises `AttributeError` from
     `dataclasses._is_type`, which looks its own module up by
-    `cls.__module__` (see `notebooks/deduction/run_study.py`'s own loader
-    comment for the same note).
+    `cls.__module__` -- see `notebooks/deduction/run_study.py`'s own
+    loader comment for the same note.
     """
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -954,15 +977,15 @@ def _load_module_by_path(path: Path, name: str) -> Any:
 
 
 def _load_run_study() -> Any:
-    """Loads ``notebooks/deduction/run_study.py``.
+    """Load ``notebooks/deduction/run_study.py``.
 
     ONLY call this after every ``LEAN_*``/``EC2_*`` environment variable
     ``--stage generate`` needs has already been set via PLAIN assignment
-    (see `_stage_generate`): loading this module transitively imports
+    (see `_stage_generate`). This module load transitively imports
     ``smolbench.evals.ec2``, which freezes its ``EC2_*`` module constants
-    from the process environment at that exact moment (see
+    from the process environment at that exact moment -- see
     ``notebooks/deduction/run_study.py``'s own "MODULE IMPORT ORDER"
-    section, which this call mirrors exactly).
+    section, which this call mirrors exactly.
     """
     return _load_module_by_path(
         REPO_ROOT / "notebooks" / "deduction" / "run_study.py",
@@ -971,9 +994,12 @@ def _load_run_study() -> Any:
 
 
 def _load_lean_verify_rows() -> Any:
-    """Loads ``scripts/lean_verify_rows.py`` (safe to import on either venv
-    at module scope -- its Lean/Dojo-only parts are behind
-    ``require_py312``/lazy imports; see that module's own docstring)."""
+    """Load ``scripts/lean_verify_rows.py``.
+
+    Safe to import on either venv at module scope: its Lean/Dojo-only
+    parts are behind ``require_py312``/lazy imports -- see that module's
+    own docstring.
+    """
     return _load_module_by_path(
         REPO_ROOT / "scripts" / "lean_verify_rows.py", "flip_probe_lean_verify_rows"
     )
@@ -1003,13 +1029,13 @@ def _stage_sample(args: argparse.Namespace) -> None:
     rows = [json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip()]
     cell_rows = [r for r in rows if r.get("kind") == "cell"]
 
-    # Sanity check on the row-key identity assumption: `runner.sweep`'s cell
+    # Sanity check on the row-key identity assumption. `runner.sweep`'s cell
     # filter is keyed on the row's "model" field (== `display_name`, see
-    # `runner._execute_one_cell`); if this lane's stored rows ever carried a
+    # `runner._execute_one_cell`). If this lane's stored rows ever carried a
     # DIFFERENT string there (e.g. the served HF id instead of the display
     # name), every whitelist key built from these rows would silently miss
-    # every cell in a live sweep. Cheap to check here, expensive to discover
-    # live.
+    # every cell in a live sweep. This check is cheap here, and expensive to
+    # discover live.
     models_seen = {r.get("model") for r in cell_rows}
     if models_seen != {MODEL}:
         raise ValueError(
@@ -1065,7 +1091,7 @@ def _stage_sample(args: argparse.Namespace) -> None:
 
 
 def _spool_flip_run(run_dir: Path, client: Any = None) -> int:
-    """Uploads `run_dir` to S3 under THIS experiment's own ``flip_*`` prefix.
+    """Upload `run_dir` to S3 under THIS experiment's own ``flip_*`` prefix.
 
     See the module docstring's HARD RULE section for why
     ``notebooks/deduction/run_study.py``'s own ``spool_to_s3`` is
@@ -1074,8 +1100,8 @@ def _spool_flip_run(run_dir: Path, client: Any = None) -> int:
     Parameters
     ----------
     run_dir : Path
-        Local run directory to upload (everything under it, recursively,
-        EXCEPT the ``originals_rerun/`` subtree -- see Notes).
+        Local run directory to upload: everything under it, recursively,
+        EXCEPT the ``originals_rerun/`` subtree -- see Notes.
     client : Any, optional
         Injected S3 client (real, or a test fake exposing ``upload_file``/
         ``head_object``). ``None`` (the default) builds a real one via
@@ -1084,33 +1110,35 @@ def _spool_flip_run(run_dir: Path, client: Any = None) -> int:
     Returns
     -------
     int
-        Number of files uploaded and size-verified. ``0`` if `run_dir` is
-        not a directory.
+        Number of files uploaded and size-verified. Returns ``0`` if
+        `run_dir` is not a directory.
 
     Raises
     ------
     RuntimeError
-        Any uploaded file's remote size does not match its local size.
+        Raised when any uploaded file's remote size does not match its
+        local size.
 
     Notes
     -----
-    Deliberately does NOT prune local files after a verified upload, unlike
-    ``spool_to_s3``: this is a small, one-off n=200-cell diagnostic run, not
-    a 21-lane production study, so the disk cost of keeping the local copy
-    is trivial -- and keeping it means ``--stage verify``'s leg (a) can read
-    it locally too, with S3 only as a robustness fallback (see
+    Deliberately does NOT prune local files after a verified upload,
+    unlike ``spool_to_s3``. This is a small, one-off n=200-cell diagnostic
+    run, not a 21-lane production study, so the disk cost of keeping the
+    local copy is trivial. It also means ``--stage verify``'s leg (a) can
+    read it locally, with S3 only as a robustness fallback (see
     `_read_flip_run_verified_rows`).
 
-    The ``originals_rerun/`` subtree (leg (b)'s local-only reverification of
-    the STUDY's originals -- see `_stage_verify`) is excluded from the
-    upload even though this function is otherwise happy to spool under the
-    experiment's own permitted prefix: those files are derived from the
-    study's candidate proofs, and this call can run AFTER ``--stage
-    verify`` if an operator re-runs ``--stage generate`` to recover cells
-    lost to a transient failure. Spooling them would not violate the HARD
-    RULE (this is still the flip prefix, not the study's), but it would
-    duplicate study-derived data into a second S3 location for no reason
-    this experiment needs.
+    The ``originals_rerun/`` subtree -- leg (b)'s local-only
+    reverification of the STUDY's originals, see `_stage_verify` -- is
+    excluded from the upload, even though this function is otherwise
+    happy to spool under the experiment's own permitted prefix. Those
+    files are derived from the study's candidate proofs, and this call
+    can run AFTER ``--stage verify`` if an operator re-runs
+    ``--stage generate`` to recover cells lost to a transient failure. A
+    spool of them would not violate the HARD RULE, since this is still
+    the flip prefix, not the study's. But it would duplicate
+    study-derived data into a second S3 location, for no reason this
+    experiment needs.
     """
     if not run_dir.is_dir():
         logging.info("flip_probe spool: no run directory at %s; nothing to sync.", run_dir)
@@ -1154,8 +1182,8 @@ def _stage_generate(args: argparse.Namespace) -> None:
         )
     whitelist_size = len(json.loads(whitelist_path.read_text()))
 
-    # Env MUST be set via PLAIN assignment before `_load_run_study()` is
-    # ever called in this process -- see `_load_run_study`'s docstring and
+    # Env MUST be set via PLAIN assignment before `_load_run_study()` is ever
+    # called in this process. See `_load_run_study`'s docstring and
     # `notebooks/deduction/run_study.py`'s own "MODULE IMPORT ORDER" note,
     # which this mirrors exactly.
     os.environ["LEAN_MODEL"] = MODEL
@@ -1170,8 +1198,8 @@ def _stage_generate(args: argparse.Namespace) -> None:
     run_study = _load_run_study()
     ec2 = run_study.ec2
 
-    # In-process override ONLY -- the spec on disk is never edited (mirrors
-    # scripts/hinge_probe.py's own comment on this exact line).
+    # In-process override ONLY. The spec on disk is never edited. This mirrors
+    # scripts/hinge_probe.py's own comment on this exact line.
     spec = ec2.EC2_DEPLOY_SPECS[MODEL]
     determinism_args = getattr(ec2, "DETERMINISM_ARGS", [])
     stock_args = stock_vllm_args(spec.get("vllm_args", []), determinism_args)
@@ -1194,8 +1222,8 @@ def _stage_generate(args: argparse.Namespace) -> None:
     n_written = 0
     try:
         with ec2.serve_model(MODEL):
-            # Provenance sidecar -- copied verbatim from
-            # notebooks/deduction/run_study.py's own main(): this
+            # Provenance sidecar, copied verbatim from
+            # notebooks/deduction/run_study.py's own main(). This
             # experiment's entire point is measuring cross-PROCESS
             # variation, so not recording which process generated the
             # rerun would be self-defeating.
@@ -1239,17 +1267,17 @@ def _stage_generate(args: argparse.Namespace) -> None:
             n_written,
         )
 
-    # If `runner.sweep` above raised, control never reaches this line at
-    # all (the `finally` block only tears the box down) -- so a mid-sweep
-    # failure means NOTHING gets spooled this call, matching
-    # `notebooks/deduction/run_study.py`'s own `main()` (`spool_to_s3` is
-    # likewise only reached after a successful sweep). The correct recovery
-    # is to re-run `--stage generate`: `runner.sweep`'s own on-disk resume
-    # (keyed by cell, restricted to the whitelist) picks up exactly the
-    # missing cells, never a full re-run. Proceeding straight to `--stage
-    # verify` after a failed `generate` would fail loudly anyway (no
-    # all_rows.jsonl object at the expected S3 key), but re-running
-    # `generate` first is the intended path, not a fallback.
+    # If `runner.sweep` above raised, control never reaches this line at all
+    # -- the `finally` block only tears the box down. A mid-sweep failure
+    # therefore means NOTHING gets spooled this call. This matches
+    # `notebooks/deduction/run_study.py`'s own `main()`: `spool_to_s3` is
+    # likewise only reached after a successful sweep. The correct recovery is
+    # to re-run `--stage generate`. `runner.sweep`'s own on-disk resume,
+    # keyed by cell and restricted to the whitelist, picks up exactly the
+    # missing cells, never a full re-run. A direct move to `--stage verify`
+    # after a failed `generate` would fail loudly anyway (no all_rows.jsonl
+    # object at the expected S3 key). But re-running `generate` first is the
+    # intended path, not a fallback.
     _spool_flip_run(run_dir)
 
 
@@ -1259,8 +1287,10 @@ def _stage_generate(args: argparse.Namespace) -> None:
 
 
 class _LocalBody:
-    """Stand-in for botocore's ``StreamingBody`` -- only ``.read()`` is used
-    by ``lean_verify_rows.download_rows``."""
+    """Stand-in for botocore's ``StreamingBody``.
+
+    Only ``.read()`` is used, by ``lean_verify_rows.download_rows``.
+    """
 
     def __init__(self, data: bytes) -> None:
         self._data = data
@@ -1270,41 +1300,42 @@ class _LocalBody:
 
 
 class _LocalRunClient:
-    """S3-client stand-in redirecting reads/writes to two local files.
+    """S3-client stand-in that redirects reads/writes to two local files.
 
     ``lean_verify_rows.verify_run`` is written against an INJECTED S3
-    client purely so its own test suite can pass a fake (see that module's
-    "Impure: S3 I/O" section) -- this class reuses that same seam in
-    PRODUCTION, specifically because this module's HARD RULE ("no write of
-    any kind under the study's ``scaling_*`` S3 prefixes") makes routing
-    the study-originals reverification through a REAL S3 client
-    unacceptable, while hand-rolling ``verify_run``'s group/sanity/resume/
-    Dojo-failure-handling logic a second time here would duplicate ~150
-    already-tested lines for no benefit. There is no real boto3 client
-    anywhere in this class's call graph, so it is STRUCTURALLY IMPOSSIBLE
-    for a ``verify_run`` call driven by this client to write a single byte
-    to real S3.
+    client, purely so its own test suite can pass a fake (see that
+    module's "Impure: S3 I/O" section). This class reuses that same seam
+    in PRODUCTION. It does so specifically because this module's HARD
+    RULE ("no write of any kind under the study's ``scaling_*`` S3
+    prefixes") makes routing the study-originals reverification through a
+    REAL S3 client unacceptable. A hand-rolled second copy of
+    ``verify_run``'s group/sanity/resume/Dojo-failure-handling logic
+    here would also duplicate ~150 already-tested lines for no benefit.
+    There is no real boto3 client anywhere in this class's call graph, so it is
+    STRUCTURALLY IMPOSSIBLE for a ``verify_run`` call driven by this
+    client to write a single byte to real S3.
 
     Parameters
     ----------
     rows_path : Path
-        Local file serving ``get_object`` for the rows key -- the prepared,
+        Local file serving ``get_object`` for the rows key: the prepared,
         verdict-reset-to-``"unverified"`` original candidate rows (see
         `_prepare_originals_rows`).
     verified_path : Path
-        Local file this client OWNS for the verified key: ``upload_file``
-        copies its argument here; ``get_object`` reads back from here on a
-        resumed call (mirroring a real S3 round trip). Deliberately a path
-        this class owns outright -- never ``verify_run``'s own internal
-        scratch path -- so a resumed call can never race a copy against
-        itself (``shutil.copyfile`` truncates its destination before
-        reading its source; copying a file onto itself would corrupt it).
+        Local file this client OWNS for the verified key. ``upload_file``
+        copies its argument here. ``get_object`` reads back from here on
+        a resumed call, mirroring a real S3 round trip. This is
+        deliberately a path this class owns outright, never
+        ``verify_run``'s own internal scratch path, so a resumed call can
+        never race a copy against itself. ``shutil.copyfile`` truncates
+        its destination before reading its source, so copying a file onto
+        itself would corrupt it.
     rows_filename, verified_filename : str
         The exact basenames ``lean_verify_rows.ROWS_FILENAME``/
-        ``VERIFIED_FILENAME`` currently use -- passed in by the caller
-        (which already has that module loaded) rather than imported here,
-        so this class carries zero import-time coupling to
-        ``lean_verify_rows``.
+        ``VERIFIED_FILENAME`` currently use. The caller passes these in,
+        rather than this class importing them, since the caller already
+        has that module loaded. This class therefore carries zero
+        import-time coupling to ``lean_verify_rows``.
     """
 
     def __init__(
@@ -1363,8 +1394,8 @@ def _stage_verify(args: argparse.Namespace) -> None:
 
         real_client = _aws.fresh_client("s3", lvr.S3_REGION)
 
-        # ---- Leg (a): the flip run's OWN rows -- normal S3 round-trip,
-        # writes permitted under its own flip_* prefix. ----
+        # ---- Leg (a): the flip run's OWN rows. A normal S3 round-trip;
+        # writes are permitted under its own flip_* prefix. ----
         logging.info(
             "flip_probe[verify]: verifying %s's own rows (S3, read+write "
             "under its own prefix)", FLIP_RUN_NAME,
@@ -1381,7 +1412,7 @@ def _stage_verify(args: argparse.Namespace) -> None:
             )
 
         # ---- Leg (b): READ-ONLY fetch of the study's ORIGINAL candidate
-        # rows for exactly the whitelisted cells; reverify LOCALLY ONLY --
+        # rows for exactly the whitelisted cells. Reverify LOCALLY ONLY --
         # see this module's HARD RULE. ----
         whitelist = runner.load_cell_whitelist(str(whitelist_path))
         study_key = f"{SPOOL_PREFIX}/{STUDY_RUN_NAME}/{lvr.VERIFIED_FILENAME}"
@@ -1404,23 +1435,23 @@ def _stage_verify(args: argparse.Namespace) -> None:
             json.dumps(row, ensure_ascii=False) + "\n" for row in originals
         ).encode("utf-8")
 
-        # Resume-trap guard: `_LocalRunClient` serves `verified_path` once it
-        # exists, so a SECOND `--stage verify` invocation would otherwise
-        # make `verify_run` compute `pending = {}` from a STALE
-        # verified_rows.jsonl while `rows_path` above has just been
-        # rewritten from a fresh S3 download -- exactly the trap
+        # Resume-trap guard. `_LocalRunClient` serves `verified_path` once it
+        # exists. A SECOND `--stage verify` invocation would otherwise make
+        # `verify_run` compute `pending = {}` from a STALE
+        # verified_rows.jsonl, while `rows_path` above has just been
+        # rewritten from a fresh S3 download. This is exactly the trap
         # `lean_verify_rows.verify_run`'s own `no_resume` flag exists for
         # (its docstring: "six lanes were in exactly that state on
         # 2026-08-16... nemotron-3-nano-4b had had all 944 of its cells
         # regenerated"). `originals_dir`'s own local cache copy of the ROWS
-        # key (written by `verify_run`'s `download_rows` call on the LAST
-        # invocation, at `originals_dir/_scratch/<ROWS_FILENAME>`) is the
-        # one artifact that lets this call detect
-        # "did the candidate content actually change" without re-deriving
-        # verify_run's own resume bookkeeping: if it differs from what we
-        # are about to serve this time, the prior verified_rows.jsonl
-        # describes content that no longer exists, and resuming from it
-        # would silently report success while verifying nothing.
+        # key -- written by `verify_run`'s `download_rows` call on the LAST
+        # invocation, at `originals_dir/_scratch/<ROWS_FILENAME>` -- is the
+        # one artifact that lets this call detect "did the candidate content
+        # actually change" without re-deriving verify_run's own resume
+        # bookkeeping. If it differs from what we are about to serve this
+        # time, the prior verified_rows.jsonl describes content that no
+        # longer exists. A resume from it would then silently report
+        # success while verifying nothing.
         scratch_rows_path = originals_dir / "_scratch" / lvr.ROWS_FILENAME
         no_resume_originals = (
             scratch_rows_path.exists() and scratch_rows_path.read_bytes() != new_rows_bytes
@@ -1446,11 +1477,11 @@ def _stage_verify(args: argparse.Namespace) -> None:
             "LOCALLY ONLY under %s (no S3 write in this leg)",
             len(originals), originals_dir,
         )
-        # Leg (a) above deliberately keeps resume=True (the default) -- the
+        # Leg (a) above deliberately keeps resume=True (the default). The
         # flip run's own all_rows.jsonl is immutable after `--stage
         # generate` (see lean_verify_rows.py's own "original all_rows.jsonl
         # object is NEVER modified" invariant), so resuming it is always
-        # safe and saves real Dojo work on a re-invocation. Leg (b) is the
+        # safe, and saves real Dojo work on a re-invocation. Leg (b) is the
         # one that can go stale, per the guard just above.
         rc2 = lvr.verify_run(
             client=local_client, bucket="local-originals-rerun", key_prefix="",
@@ -1477,23 +1508,24 @@ def _stage_verify(args: argparse.Namespace) -> None:
 
 
 def _read_flip_run_verified_rows() -> tuple[list[dict], Path | str]:
-    """Reads the flip run's own re-verified rows.
+    """Read the flip run's own re-verified rows.
 
-    Local copy if present (``--stage verify`` ran on this same machine),
-    else downloaded from S3 (the ``flip_*`` prefix, read-only, permitted --
-    see the module docstring's HARD RULE).
+    Reads the local copy if present, i.e. when ``--stage verify`` ran on
+    this same machine. Otherwise downloads from S3 (the ``flip_*`` prefix,
+    read-only, permitted -- see the module docstring's HARD RULE).
 
     Returns
     -------
     tuple[list[dict], Path | str]
-        ``(rows, source)``. `rows` is parsed from whichever copy was read.
-        `source` names WHERE they actually came from -- the local `Path`
-        when the on-disk copy was used, or the ``f"s3://{SPOOL_BUCKET}/..."``
-        URI string when this function fell back to a download. The sole
-        caller, `_stage_analyze`, feeds `source` straight into
-        `reject_unverified_rows`'s refusal message: without this, that
-        message would always name the local path even on a run where the
-        rows in fact came from S3, misleading whoever has to go investigate.
+        ``(rows, source)``. `rows` is parsed from whichever copy was
+        read. `source` names WHERE they actually came from: the local
+        `Path` when the on-disk copy was used, or the
+        ``f"s3://{SPOOL_BUCKET}/..."`` URI string when this function fell
+        back to a download. The sole caller, `_stage_analyze`, feeds
+        `source` straight into `reject_unverified_rows`'s refusal
+        message. Without this, that message would always name the local
+        path, even on a run where the rows in fact came from S3 --
+        misleading whoever has to go investigate.
     """
     local_path = _flip_run_dir() / VERIFIED_FILENAME
     if local_path.exists():
@@ -1527,12 +1559,12 @@ def _stage_analyze(args: argparse.Namespace) -> None:
         )
     whitelist = sorted(runner.load_cell_whitelist(str(whitelist_path)))
 
-    # Provenance self-check: confirm the whitelist on disk right now is
+    # Provenance self-check. Confirm the whitelist on disk right now is
     # still the SAME set `--stage sample` recorded, before pairing anything
     # against it. Without this, a whitelist regenerated between stages
     # (e.g. --stage sample re-run with a different --n/--seed, or the file
     # hand-edited) would silently pair a DIFFERENT cell set than the one
-    # sample_manifest.json (and any downstream write-up) describes.
+    # sample_manifest.json, and any downstream write-up, describes.
     sample_manifest_path = _sample_manifest_path()
     sample_manifest: dict = {}
     if sample_manifest_path.exists():
@@ -1571,7 +1603,7 @@ def _stage_analyze(args: argparse.Namespace) -> None:
         for line in originals_verified_path.read_text().splitlines()
         if line.strip()
     ]
-    # Refuse either leg BEFORE dedupe/pairing: is_pass would otherwise score
+    # Refuse either leg BEFORE dedupe/pairing. Otherwise is_pass would score
     # a still-"unverified" row as a failure, biasing flip_stats' b/c counts
     # invisibly -- see reject_unverified_rows.
     reject_unverified_rows(originals_rows, originals_verified_path)
@@ -1629,10 +1661,10 @@ def _stage_analyze(args: argparse.Namespace) -> None:
         "flip_stats": stats,
         "verifier_drift": drift,
         "generated_at_utc": _utc_now_iso(),
-        # Provenance: which sample this report describes, so it self-
-        # identifies rather than requiring a reader to hold
-        # sample_manifest.json alongside it (see the whitelist provenance
-        # self-check above).
+        # Provenance: which sample this report describes. This lets the
+        # report self-identify, rather than requiring a reader to hold
+        # sample_manifest.json alongside it -- see the whitelist provenance
+        # self-check above.
         "sample_whitelist_sha256": runner.hash_cell_keys(whitelist),
         "sample_n_measurable_mathlib_population": sample_manifest.get(
             "n_measurable_mathlib_population"

@@ -1,10 +1,10 @@
-"""The lean_dojo import guard on smolbench.deduction.lean.verify.
+"""Test the lean_dojo import guard on smolbench.deduction.lean.verify.
 
-Must PASS (not error) on both interpreters:
-  - Python >= 3.13 (the main .venv, no lean_dojo): importing the module must
-    raise an actionable ImportError naming the .venv-lean remedy.
-  - Python 3.12 (the .venv-lean, lean_dojo installed): the module imports and
-    exposes its public verifier surface.
+This must PASS, not error, on both interpreters:
+  - Python >= 3.13 (the main .venv, no lean_dojo): importing the module
+    must raise an actionable ImportError naming the .venv-lean remedy.
+  - Python 3.12 (the .venv-lean, lean_dojo installed): the module
+    imports and exposes its public verifier surface.
 """
 
 import sys
@@ -13,8 +13,9 @@ import pytest
 
 
 def test_verify_import_guard():
-    # A prior test in the session may have imported (or failed to import) the
-    # module; drop any cached entry so the guard runs fresh here.
+    # A prior test in the session may have imported, or failed to
+    # import, the module. Drop any cached entry so the guard runs
+    # fresh here.
     sys.modules.pop("smolbench.deduction.lean.verify", None)
 
     if sys.version_info >= (3, 13):
@@ -39,16 +40,17 @@ def test_verify_import_guard():
 def test_no_resume_discards_prior_verdicts_and_reverifies_every_group(tmp_path, monkeypatch):
     """--no-resume must re-verify a lane whose proofs were regenerated.
 
-    Resume is keyed on (theorem_id, k) GROUPS, not on the candidate proofs
-    inside them. If phase 1 regenerates a lane after it was verified, every
-    group still looks "done" while the proofs beneath are completely different
-    -- so the pass reports success, verifies nothing, and leaves
-    verified_rows.jsonl describing text that no longer exists.
+    Resume is keyed on (theorem_id, k) GROUPS, not on the candidate
+    proofs inside them. If phase 1 regenerates a lane after it was
+    verified, every group still looks "done", while the proofs beneath
+    are completely different. So the pass reports success, verifies
+    nothing, and leaves verified_rows.jsonl describing text that no
+    longer exists.
 
-    That is not hypothetical: on 2026-08-16 six lanes were in exactly that
-    state after the day's repairs, and the dry run cheerfully reported
-    "0 to process" for all 21. nemotron-3-nano-4b had had all 944 of its cells
-    regenerated on new hardware.
+    That is not hypothetical. On 2026-08-16, six lanes were in exactly
+    that state after the day's repairs, and the dry run cheerfully
+    reported "0 to process" for all 21. nemotron-3-nano-4b had had all
+    944 of its cells regenerated on new hardware.
     """
     import importlib.util, sys
     from pathlib import Path

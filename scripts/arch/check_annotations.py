@@ -1,20 +1,20 @@
 """Validate the model annotations against the atlas's drawing constraints.
 
 Most annotation fields are drawn inside fixed-width SVG boxes or single table
-cells, so an over-long string does not wrap -- it runs out of its box and over
-whatever is beside it. Eyeballing 21 models x ~10 fields does not catch that
-reliably, so the limits are checked here instead.
+cells. An over-long string does not wrap. It runs out of its box and over
+whatever sits beside it. A human eye over 21 models x ~10 fields does not
+catch this reliably, so this script checks the limits instead.
 
-The second job is coverage: reporting which models are missing which fields, so
-a silently-empty section is visible before the page is published rather than
-after.
+The second job is coverage. This script reports which models are missing
+which fields, so a silently-empty section is visible before the page is
+published, not after.
 
 Usage
 -----
 ``.venv/bin/python scripts/arch/check_annotations.py``
 
 Exit status is non-zero when any hard limit is exceeded or a model key is
-unknown; missing optional fields are reported but do not fail the run.
+unknown. Missing optional fields are reported but do not fail the run.
 """
 
 from __future__ import annotations
@@ -27,9 +27,10 @@ _HERE = Path(__file__).resolve().parent
 _MODELS = _HERE / "annotations_models.json"
 _PAGE_DATA = _HERE / "page_data.json"
 
-#: field -> max characters. Derived from the drawn geometry: the schematic's
-#: sub-block is 424 user units wide and its detail lines are set at 9.5px in a
-#: 0.6-advance monospace, which fits ~66 characters after the 13-unit inset.
+#: field -> max characters. Derived from the drawn geometry. The schematic's
+#: sub-block is 424 user units wide. Its detail lines are set at 9.5px in a
+#: 0.6-advance monospace font, which fits ~66 characters after the 13-unit
+#: inset.
 _LIMITS = {
     "params": 22,
     "peShort": 42,
@@ -93,11 +94,12 @@ def main() -> int:
             if flag.get("kind") not in ("contradiction", "unverified", "serving"):
                 problems.append(f"{key}.flags: unexpected kind {flag.get('kind')!r}")
 
-        # A mixer name must exist for every mixer kind the model actually uses,
-        # or the schematic falls back to a generic label on a real mechanism.
-        # A kind may be named per VARIANT instead (DeepSeek-V4 runs three
-        # attention variants under one kind), so a compound "kind:variant" key
-        # satisfies the requirement for that kind.
+        # A mixer name must exist for every mixer kind the model actually
+        # uses. Without one, the schematic falls back to a generic label on
+        # a real mechanism. A kind may instead be named per VARIANT
+        # (DeepSeek-V4 runs three attention variants under one kind), so a
+        # compound "kind:variant" key also satisfies the requirement for
+        # that kind.
         names = note.get("mixerNames") or {}
         for kind in ("full", "sliding", "linear", "ssm"):
             if not page["models"][key]["counts"].get(kind):

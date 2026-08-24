@@ -1,28 +1,29 @@
-"""Offline tests for scripts/evidence_manifest.py -- the EVIDENCE.json mechanism.
+"""Test scripts/evidence_manifest.py, offline: the EVIDENCE.json mechanism.
 
-WHY THIS EXISTS. ``notebooks/*/results/`` is gitignored wholesale
+Why this exists: ``notebooks/*/results/`` is gitignored wholesale
 (.gitignore:235), so every tracked file under it is a hand-picked ``git add
 -f``. Nothing forced a writeup's cited artifacts into git, and the audited
-consequence was real: the regime-mean package committed an INTERIM raw under a
-``_final_`` name while its preregistration, its estimator and its true raw
-stayed only in /tmp. An EVIDENCE.json per results directory closes that hole --
-but only if the checks have teeth, so this file is written in two layers:
+consequence was real. The regime-mean package committed an interim raw
+under a ``_final_`` name, while its preregistration, its estimator, and its
+true raw stayed only in /tmp. An EVIDENCE.json per results directory closes
+that hole, but only if the checks have teeth. So this file is written in
+two layers:
 
-1. **Synthetic fixtures in ``tmp_path``** that prove each failure mode fires on
+1. Synthetic fixtures in ``tmp_path`` that prove each failure mode fires on
    its own: sha drift, a vanished file, a vanished tarball member, a cited
-   artifact covered by nothing, and -- the subtle one -- a citation that a
-   STRING-suffix match would wrongly accept (``all_rows.jsonl`` must not be
-   satisfied by ``originals_all_rows.jsonl``). A verify() that always returns
-   ok would pass a test suite that only checked the happy path; each of these
-   is a test whose whole point is that the tool says NO.
-2. **The repo gate**, which walks git's own index rather than a hardcoded list
-   of directories, so a writeup committed tomorrow into a new results dir is
-   gated too. It asserts the discovered writeup set is NON-EMPTY first: a
-   ``git ls-files`` that silently returned nothing would otherwise turn the
-   whole gate into a vacuous pass.
+   artifact covered by nothing, and, the subtle one, a citation that a
+   string-suffix match would wrongly accept (``all_rows.jsonl`` must not be
+   satisfied by ``originals_all_rows.jsonl``). A verify() that always
+   returns ok would pass a test suite that only checked the happy path.
+   Each of these tests exists to make the tool say no.
+2. The repo gate, which walks git's own index instead of a hardcoded list
+   of directories, so a writeup committed tomorrow into a new results dir
+   is gated too. It checks that the discovered writeup set is non-empty
+   first: a ``git ls-files`` that silently returned nothing would
+   otherwise turn the whole gate into a vacuous pass.
 
-``scripts/`` is not an importable package, so the module is loaded by path
-(mirrors tests/test_recover_dojoinit.py / tests/test_determinism_probes.py).
+``scripts/`` is not an importable package, so the module loads by path
+(mirroring tests/test_recover_dojoinit.py and tests/test_determinism_probes.py).
 """
 
 from __future__ import annotations
@@ -44,17 +45,18 @@ REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def em():
-    """Loads scripts/evidence_manifest.py by path.
+    """Load scripts/evidence_manifest.py by path.
 
-    The module is registered in ``sys.modules`` BEFORE ``exec_module`` and
-    removed after. That is importlib's own documented recipe, and here it is
-    load-bearing rather than cosmetic: under ``from __future__ import
-    annotations`` every annotation is a string, and ``@dataclass`` resolves
-    ``dataclasses.KW_ONLY`` by looking its own module up in ``sys.modules`` --
-    which returns None for a module executed by path, so the decorator dies
-    with ``AttributeError: 'NoneType' object has no attribute '__dict__'``
-    before any test runs. Reproduced in 6 lines against a stub module, so it
-    is a property of the loader, not of the module under test.
+    The module is registered in ``sys.modules`` before ``exec_module`` and
+    removed after. That is importlib's own documented recipe, and here it
+    is load-bearing, not cosmetic. Under ``from __future__ import
+    annotations``, every annotation is a string, and ``@dataclass``
+    resolves ``dataclasses.KW_ONLY`` by looking its own module up in
+    ``sys.modules``, which returns None for a module executed by path. So
+    the decorator dies with ``AttributeError: 'NoneType' object has no
+    attribute '__dict__'`` before any test runs. This was reproduced in 6
+    lines against a stub module, so it is a property of the loader, not of
+    the module under test.
     """
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(
@@ -66,8 +68,9 @@ def em():
         spec.loader.exec_module(mod)
         yield mod
     finally:
-        # Leave no global state behind (mirrors tests/test_determinism_probes.py,
-        # which is equally careful about the import-time state its loads touch).
+        # Leave no global state behind (mirrors
+        # tests/test_determinism_probes.py, which is equally careful about
+        # the import-time state its loads touch).
         sys.modules.pop(name, None)
 
 
@@ -80,7 +83,7 @@ def _sha(b: bytes) -> str:
 
 
 def _make_tarball(path: Path, members: dict[str, bytes]) -> None:
-    """Writes a .tar.gz holding ``members`` (member path -> bytes)."""
+    """Write a .tar.gz holding ``members`` (member path -> bytes)."""
     with tarfile.open(path, "w:gz") as tf:
         for name, blob in members.items():
             info = tarfile.TarInfo(name)
@@ -90,11 +93,14 @@ def _make_tarball(path: Path, members: dict[str, bytes]) -> None:
 
 @pytest.fixture
 def good(tmp_path, em):
-    """A minimal but REPRESENTATIVE package: a writeup that cites a plain
-    artifact, a tarball member and an allowlisted name, plus a tarball that
-    lives OUTSIDE the manifest dir so the '..' traversal path is exercised
-    (the real regime-mean manifest reaches up two levels to the preserved
-    tarballs -- a stay-inside-the-directory guard would break it)."""
+    """A minimal but representative package.
+
+    It has a writeup that cites a plain artifact, a tarball member, and an
+    allowlisted name, plus a tarball that lives outside the manifest dir,
+    so the '..' traversal path is exercised. (The real regime-mean
+    manifest reaches up two levels to the preserved tarballs; a
+    stay-inside-the-directory guard would break it.)
+    """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     store = tmp_path / "store"
@@ -133,8 +139,10 @@ def good(tmp_path, em):
 # --------------------------------------------------------------------------
 
 def test_build_round_trips(good, em, tmp_path):
-    """build() writes EVIDENCE.json, and what it wrote equals what it returned
-    -- with shas that are the real hashes, not placeholders."""
+    """build() writes EVIDENCE.json, and what it wrote equals what it returned.
+
+    The shas are the real hashes, not placeholders.
+    """
     pkg, manifest = good
     on_disk = json.loads((pkg / em.MANIFEST_NAME).read_text())
     assert on_disk == manifest
@@ -149,9 +157,11 @@ def test_build_round_trips(good, em, tmp_path):
 
 
 def test_build_is_deterministic(good, em):
-    """Rebuilding unchanged inputs must be byte-identical: a timestamp or a
-    set-ordered dump would make every rebuild a spurious diff, and 'the
-    manifest changed' has to mean 'the evidence changed'."""
+    """If unchanged inputs are rebuilt, the result must be byte-identical.
+
+    A timestamp or a set-ordered dump would make every rebuild a spurious
+    diff, and "the manifest changed" has to mean "the evidence changed."
+    """
     pkg, manifest = good
     first = (pkg / em.MANIFEST_NAME).read_bytes()
     em.build(pkg,
@@ -180,8 +190,10 @@ def test_build_refuses_bad_role(tmp_path, em):
 
 
 def test_build_refuses_contradicting_precomputed_sha(tmp_path, em):
-    """If the caller supplies a sha, build() must not silently bless a wrong
-    one -- copy-pasting a stale hash is exactly how a manifest starts lying."""
+    """If the caller supplies a sha, build() must not silently bless a wrong one.
+
+    Copy-pasting a stale hash is exactly how a manifest starts lying.
+    """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "x.json").write_text("{}")
@@ -218,9 +230,11 @@ def test_verify_passes_good_manifest(good, em):
 
 
 def test_verify_does_not_extract_into_the_tree(good, em, tmp_path):
-    """Streaming, not extraction: verify() must leave the tree exactly as it
-    found it (an extracted 91 MiB scratch dir inside a gitignored results
-    directory is how untracked evidence gets born in the first place)."""
+    """Streaming, not extraction: verify() must leave the tree exactly as it found it.
+
+    (An extracted 91 MiB scratch dir inside a gitignored results directory
+    is how untracked evidence gets born in the first place.)
+    """
     pkg, _ = good
     before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
     assert em.verify(pkg).ok
@@ -229,7 +243,7 @@ def test_verify_does_not_extract_into_the_tree(good, em, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# layer 1c -- the failure modes, one test each (THE TEETH)
+# layer 1c -- the failure modes, one test each (the teeth)
 # --------------------------------------------------------------------------
 
 def test_verify_fails_on_sha_mismatch(good, em):
@@ -251,8 +265,11 @@ def test_verify_fails_on_missing_file(good, em):
 
 
 def test_verify_fails_on_missing_tarball_member(good, em, tmp_path):
-    """(c) the tarball is present but no longer holds the member -- the
-    failure a plain 'does the tarball exist?' check would sail past."""
+    """(c) the tarball is present but no longer holds the member.
+
+    This is the failure a plain "does the tarball exist?" check would
+    sail past.
+    """
     pkg, manifest = good
     _make_tarball(tmp_path / "store" / "r6.tar.gz",
                   {"r6/backup/all_rows.jsonl": b'{"row": 1}\n'})
@@ -272,8 +289,11 @@ def test_verify_fails_on_missing_tarball(good, em, tmp_path):
 
 
 def test_verify_fails_on_uncovered_citation(good, em):
-    """(d) the defect this whole mechanism exists for: a writeup cites an
-    artifact that is in neither the entries nor the allowlist."""
+    """(d) the defect this whole mechanism exists for.
+
+    A writeup cites an artifact that is in neither the entries nor the
+    allowlist.
+    """
     pkg, _ = good
     (pkg / "REPORT.md").write_text(
         (pkg / "REPORT.md").read_text() + "\nAlso see `pool_analyze.py`.\n")
@@ -281,12 +301,12 @@ def test_verify_fails_on_uncovered_citation(good, em):
     assert not r.ok
     assert any("cited artifact not covered" in f and "pool_analyze.py" in f
                for f in r.failures), r.failures
-    # ... and the stale sha of the writeup itself is caught too, independently.
+    # The stale sha of the writeup itself is caught too, independently.
     assert any("sha256 mismatch" in f and "REPORT.md" in f for f in r.failures)
 
 
 def test_allowlisted_citation_is_covered(tmp_path, em):
-    """The escape hatch works -- and only for the name it names."""
+    """The escape hatch works, and only for the name it names."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "W.md").write_text("see `ghost.json` and `other.json`\n")
@@ -299,10 +319,13 @@ def test_allowlisted_citation_is_covered(tmp_path, em):
 
 
 def test_coverage_matches_path_components_not_string_suffix(tmp_path, em):
-    """(e) THE SUBTLE ONE. 'a suffix of some entry's path' must mean whole
-    path COMPONENTS: `all_rows.jsonl` is covered by `sub/all_rows.jsonl` but
-    NOT by `originals_all_rows.jsonl`, which merely ends with those bytes.
-    A str.endswith() implementation passes every other test in this file."""
+    """(e) the subtle one.
+
+    "a suffix of some entry's path" must mean whole path components: `all_rows.jsonl` is
+    covered by `sub/all_rows.jsonl` but not by `originals_all_rows.jsonl`, which merely
+    ends with those bytes. A str.endswith() implementation passes every other test in
+    this file.
+    """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "W.md").write_text("the raw is `all_rows.jsonl`\n")
@@ -333,8 +356,11 @@ def test_covers_helper_is_component_wise(em):
 
 
 def test_tarball_member_covers_by_member_path(tmp_path, em):
-    """A citation is covered by the MEMBER path inside the tarball, not only
-    by files on disk -- that is the whole point of preserving the scratchpad."""
+    """A citation is covered by the member path inside the tarball.
+
+    Coverage is not limited to files on disk; that is the whole point of
+    preserving the scratchpad.
+    """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     _make_tarball(pkg / "r5.tar.gz", {"r5/env.sh": b"export X=1\n"})
@@ -390,7 +416,7 @@ def test_verify_missing_manifest_raises(tmp_path, em):
 
 
 # --------------------------------------------------------------------------
-# layer 2 -- THE REPO GATE
+# layer 2 -- the repo gate
 # --------------------------------------------------------------------------
 
 def _git(*args: str) -> str:
@@ -400,13 +426,13 @@ def _git(*args: str) -> str:
 
 @pytest.fixture(scope="module")
 def tracked() -> set[str]:
-    """Every path in git's index (tracked OR staged) under a results dir.
+    """Every path in git's index (tracked or staged) under a results dir.
 
-    The index, not the worktree: a results directory is gitignored wholesale,
-    so 'the file is on disk' proves nothing about whether the caller would
-    ever receive it. Skips only when git itself is unavailable -- never when
-    the query merely comes back empty, which the non-empty assertion below
-    turns into a failure.
+    This reads the index, not the worktree: a results directory is
+    gitignored wholesale, so "the file is on disk" proves nothing about
+    whether the caller would ever receive it. This skips only when git
+    itself is unavailable, never when the query merely comes back empty,
+    which the non-empty check below turns into a failure.
     """
     if shutil.which("git") is None:
         pytest.skip("git binary not available")
@@ -418,15 +444,17 @@ def tracked() -> set[str]:
 
 
 def test_tracked_results_files_were_found(tracked):
-    """Guards every gate below against a vacuous pass."""
+    """Guard every gate below against a vacuous pass."""
     assert len(tracked) >= 30, sorted(tracked)
 
 
 def test_every_tracked_writeup_has_a_verified_manifest(tracked, em):
-    """THE GATE. Every tracked .md/.txt under notebooks/*/results/ must sit in
-    a directory that carries a tracked-or-staged EVIDENCE.json; must itself be
-    listed in that manifest; every .md must be declared role 'writeup' (so its
-    citations are actually scanned); and the manifest must verify.
+    """The gate. Every tracked .md/.txt under notebooks/*/results/ is checked.
+
+    It must sit in a directory that carries a tracked-or-staged
+    EVIDENCE.json. It must itself be listed in that manifest. Every .md
+    must be declared role 'writeup', so its citations are actually
+    scanned. And the manifest must verify.
     """
     writeups = sorted(p for p in tracked
                       if Path(p).suffix in em.WRITEUP_SUFFIXES
@@ -461,10 +489,10 @@ def test_every_tracked_manifest_verifies(tracked, em):
 def test_regime_mean_interim_raw_is_marked_superseded(tracked, em):
     """The audited defect, pinned as a regression test.
 
-    ``all_rows_leg2_final_raw.jsonl.gz`` is committed under a ``_final_`` name
-    but is the INTERIM 243-row raw; the true 331-row raw of the n=399 draw
-    lives only inside the preserved tarball. Whatever else the manifest says,
-    it must say that.
+    ``all_rows_leg2_final_raw.jsonl.gz`` is committed under a ``_final_``
+    name, but is the interim 243-row raw. The true 331-row raw of the
+    n=399 draw lives only inside the preserved tarball. Whatever else the
+    manifest says, it must say that.
     """
     rel = "notebooks/deduction/results/runs/regime_mean_2026-08-21"
     assert f"{rel}/{em.MANIFEST_NAME}" in tracked

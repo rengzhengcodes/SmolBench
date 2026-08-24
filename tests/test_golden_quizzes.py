@@ -1,24 +1,25 @@
-"""Seed-fixed golden regression for the induction generation pipelines.
+"""Run a seed-fixed golden regression for the induction generation pipelines.
 
 The hashes in tests/fixtures/golden_quizzes.json were captured from the
-pre-refactor code (2026-07-01, branch periodic-induction) at the notebooks'
-production configs. Any change to label sampling, interval assignment, noise
-padding, prompt rendering, or the query generators shows up here as a hash
-mismatch -- which matters because committed results are only attributable to
-their recorded seeds while generation stays byte-stable.
+pre-refactor code (2026-07-01, branch periodic-induction) at the
+notebooks' production configs. Any change to label sampling, interval
+assignment, noise padding, prompt rendering, or the query generators shows
+up here as a hash mismatch. This matters because committed results are
+only attributable to their recorded seeds while generation stays
+byte-stable.
 
 The ``noise_intens`` hashes were re-recorded on 2026-08-02, when that arm
-switched from random characters matched on CHARACTER count to whitespace
-matched on TOKEN count (see ``smolbench.induction._common``). The
+switched from random characters matched on character count to whitespace
+matched on token count (see ``smolbench.induction._common``). The
 ``intens``/``extens`` hashes are unchanged from the 2026-07-01 capture and
 must stay that way: they are the check that the change is confined to the
 noise arm.
 
 The noise arm now depends on a tokenizer, and these hashes are recorded
-against ``conftest.StubTokenizer`` rather than a real model's tokenizer.
-That keeps the fixture offline and byte-stable (a downloaded tokenizer would
+against ``conftest.StubTokenizer``, not a real model's tokenizer. That
+keeps the fixture offline and byte-stable. (A downloaded tokenizer would
 make the golden depend on a network fetch and on an upstream repo nobody
-here controls); what it pins is the GENERATION pipeline, while
+here controls.) What it pins is the generation pipeline, while
 tests/test_noise_token_match.py is what checks the pad behaves correctly
 under real tokenizers.
 """
@@ -87,8 +88,8 @@ def assert_matches(key: str, quizzes) -> None:
     assert got == GOLDEN[key], f"generation drifted from pre-refactor golden {key}"
 
 
-# The tokenizer the noise arm is sized against. Fixed and offline; see the
-# module docstring for why it is a stub rather than a served model's.
+# The tokenizer the noise arm is sized against. It is fixed and offline;
+# see the module docstring for why it is a stub, not a served model's.
 TOKENIZER = StubTokenizer()
 
 

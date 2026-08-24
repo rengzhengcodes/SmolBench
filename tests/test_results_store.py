@@ -1,27 +1,29 @@
-"""The replicate results store: local tree, S3 append-only log, env resolution.
+"""Test the replicate results store: local tree, S3 append-only log, env resolution.
 
-Everything here is OFFLINE. No boto3 ``Session`` is ever constructed: the S3
-tests monkeypatch ``smolbench.evals._aws.fresh_client`` with a fake client, so
-a test that accidentally reached the network would fail on the missing patch
-rather than silently spending credentials or touching the real bucket (which
-now exists, and is deliberately empty).
+Everything here is OFFLINE. No boto3 ``Session`` is ever constructed.
+The S3 tests monkeypatch ``smolbench.evals._aws.fresh_client`` with a
+fake client. So a test that accidentally reached the network would
+fail on the missing patch, rather than silently spending credentials
+or touching the real bucket, which now exists and is deliberately
+empty.
 
-Two layouts are under test and they are deliberately different:
+Two layouts are under test, and they are deliberately different:
 
-* LOCAL is the analysis layout, unchanged and byte-identical to what every
-  notebook and ``power_analysis.py`` already reads:
-  ``{prefix}{tag}_{info}/rep_{seed}.yaml``. One file per replicate; a re-run
-  overwrites it.
-* S3 is an append-only experiment LOG keyed by model, seed and run time:
-  ``<base>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``. A re-run
-  ADDS an object; reads resolve the EARLIEST ``run_ts`` (user ruling
-  2026-08-16 -- the first logged run is the pass@1 measurement; a re-run is
-  log history, invisible to every reader).
+* LOCAL is the analysis layout, unchanged and byte-identical to what
+  every notebook and ``power_analysis.py`` already reads:
+  ``{prefix}{tag}_{info}/rep_{seed}.yaml``. One file per replicate; a
+  re-run overwrites it.
+* S3 is an append-only experiment LOG keyed by model, seed, and run
+  time: ``<base>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.
+  yaml``. A re-run ADDS an object. Reads resolve the EARLIEST
+  ``run_ts`` (user ruling 2026-08-16: the first logged run is the
+  pass@1 measurement, and a re-run is log history, invisible to every
+  reader).
 
-The fake client raises REAL ``botocore.exceptions.ClientError`` objects,
-because the store reads ``Error.Code`` through ``smolbench.evals._aws.
-error_code`` -- a hand-rolled exception with the wrong shape would let a
-broken error branch pass.
+The fake client raises REAL ``botocore.exceptions.ClientError``
+objects, because the store reads ``Error.Code`` through
+``smolbench.evals._aws.error_code``. A hand-rolled exception with the
+wrong shape would let a broken error branch pass.
 """
 
 import hashlib
@@ -77,9 +79,10 @@ def sample_marks(model: str = "stub-model", n: int = 2, score: int = 1) -> Marks
 class FakeS3Client:
     """In-memory stand-in for a boto3 S3 client.
 
-    Implements the four calls the store makes -- ``put_object``,
-    ``get_object``, ``list_objects_v2`` (used directly for the ``MaxKeys=1``
-    existence probe) and ``get_paginator("list_objects_v2")`` -- over one
+    It implements the four calls the store makes: ``put_object``,
+    ``get_object``, ``list_objects_v2`` (used directly for the
+    ``MaxKeys=1`` existence probe), and
+    ``get_paginator("list_objects_v2")``. All four work over one
     ``{key: bytes}`` dict, so a listing and a fetch can never disagree.
     """
 
@@ -143,11 +146,12 @@ class _Body:
 class _FakePaginator:
     """Pages an in-memory key space ONE KEY PER PAGE.
 
-    One key per page forces the pagination loop to be exercised for real on
-    every listing, so a page-boundary bug shows up on a two-object fixture
-    instead of needing a 1000-object one. A trailing page with no
-    ``Contents`` is always emitted -- what S3 returns for an empty prefix,
-    and what a loop indexing ``page["Contents"]`` directly would crash on.
+    One key per page forces the pagination loop to be exercised for
+    real on every listing. So a page-boundary bug shows up on a
+    two-object fixture, instead of needing a 1000-object one. A
+    trailing page with no ``Contents`` is always emitted. This is what
+    S3 returns for an empty prefix, and it is what a loop indexing
+    ``page["Contents"]`` directly would crash on.
     """
 
     def __init__(self, client: FakeS3Client):
@@ -183,19 +187,18 @@ def s3_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_ambient_store_env(monkeypatch):
-    """Autouse: a developer shell exporting the store env vars must not change
-    what these tests measure."""
+    """Autouse: a shell's exported env vars must not change what these tests measure."""
     for var in ("SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION", "AWS_REGION"):
         monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
 def fake_repo(monkeypatch, tmp_path):
-    """Makes ``tmp_path/repo`` the repo root as far as the store is concerned.
+    """Make ``tmp_path/repo`` the repo root for the store.
 
-    Lets the S3-path tests use a genuinely repo-anchored results directory
-    without ever touching the real checkout: a bug that wrote locally
-    instead of to S3 litters /tmp, not ``notebooks/``.
+    This lets the S3-path tests use a genuinely repo-anchored results
+    directory, without ever touching the real checkout. A bug that
+    wrote locally instead of to S3 litters /tmp, not ``notebooks/``.
     """
     root = tmp_path / "repo"
     root.mkdir()
@@ -207,11 +210,11 @@ def fake_repo(monkeypatch, tmp_path):
 def freeze_ts(monkeypatch):
     """Freezes the ``utcnow`` seam, wherever the caller bound it.
 
-    ``replicates.py`` may reference ``results_store.utcnow`` through the
-    module or have imported the name directly; patching both spellings keeps
-    this fixture correct either way rather than silently freezing nothing
-    (which would leave a real wall-clock timestamp in the assertions and
-    make them flaky instead of failing honestly).
+    ``replicates.py`` may reference ``results_store.utcnow`` through the module, or have
+    imported the name directly. This patches both spellings, which keeps the fixture
+    correct either way instead of silently freezing nothing. If nothing were frozen, a
+    real wall-clock timestamp would leak into the assertions, making them flaky instead
+    of failing honestly.
     """
 
     def _set(when):
@@ -267,26 +270,33 @@ def test_experiment_name_from_a_notebook_results_dir(fake_repo):
 
 
 def test_experiment_name_makes_the_harness_prefix_a_sub_level(fake_repo):
-    """``prefix="one_hop_"`` is a sub-level with the trailing underscore
-    stripped, so the one-hop experiment logs alongside its sibling rather
-    than colliding with it -- the same role the prefix plays in the local
-    directory name."""
+    """``prefix="one_hop_"`` is a sub-level with the trailing underscore stripped.
+
+    So the one-hop experiment logs alongside its sibling, rather than
+    colliding with it. This is the same role the prefix plays in the
+    local directory name.
+    """
     assert experiment_name(
         fake_repo / "notebooks" / "chromatic" / "results", "one_hop_"
     ) == "chromatic/one_hop"
 
 
 def test_experiment_name_falls_back_to_the_repo_relative_path(fake_repo):
-    """A results dir that is not ``notebooks/<nb>/results`` still gets a
-    deterministic, collision-free experiment name."""
+    """A results dir need not be ``notebooks/<nb>/results``.
+
+    It still gets a deterministic, collision-free experiment name.
+    """
     assert experiment_name(fake_repo / "somewhere" / "else") == "somewhere/else"
 
 
 def test_format_run_ts_is_fixed_width_utc():
-    """Fixed-width UTC is load-bearing: every "earliest" lookup is a plain
-    string max over listed keys, so lexicographic order MUST equal
-    chronological order. A non-padded format (e.g. month 8 as "8") would
-    sort 20261110 before 2026810 and silently return the wrong run."""
+    """Fixed-width UTC is load-bearing.
+
+    Every "earliest" lookup is a plain string max over listed keys, so
+    lexicographic order MUST equal chronological order. A non-padded
+    format, for example month 8 as "8", would sort 20261110 before
+    2026810 and silently return the wrong run.
+    """
     assert format_run_ts(TS1) == "20260810T193000Z"
     assert format_run_ts(TS2) == "20260811T040506Z"
     assert len(format_run_ts(TS1)) == len(format_run_ts(TS2))
@@ -326,9 +336,12 @@ def test_local_layout_honours_the_prefix(tmp_path):
 
 
 def test_local_ignores_model_and_run_ts(tmp_path):
-    """The local layout is keyed by tag/info/seed ONLY. Two runs of the same
-    replicate overwrite one file -- the append-only log is an S3 property,
-    and the analysis scripts require exactly one file per replicate."""
+    """The local layout is keyed by tag/info/seed ONLY.
+
+    Two runs of the same replicate overwrite one file. The
+    append-only log is an S3 property, and the analysis scripts require
+    exactly one file per replicate.
+    """
     store = LocalResultsStore(tmp_path)
     store.dump_marks(sample_marks(score=1), addr(model="model-a"), TS1)
     store.dump_marks(sample_marks(score=0), addr(model="model-b"), TS2)
@@ -398,9 +411,12 @@ def test_s3_key_nests_under_the_uri_base_prefix(fake_s3):
 
 
 def test_s3_dump_is_append_only(fake_s3):
-    """THE LOG PROPERTY. A second run of the same (model, seed, info) ADDS an
-    object; it must never overwrite the first. Losing the earlier run would
-    make the bucket a mirror again rather than a log."""
+    """THE LOG PROPERTY.
+
+    A second run of the same (model, seed, info) ADDS an object; it must never overwrite
+    the first. If the earlier run were lost, the bucket would become a mirror again,
+    rather than a log.
+    """
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     store.dump_marks(sample_marks(score=0), addr(), TS2)
@@ -412,9 +428,12 @@ def test_s3_dump_is_append_only(fake_s3):
 
 
 def test_s3_load_marks_returns_the_earliest_run(fake_s3):
-    """User ruling 2026-08-16: the FIRST logged run is the measurement; a
-    re-collection is log history. A flip of this assertion is a change to
-    which data every analysis consumes -- never make it casually."""
+    """User ruling 2026-08-16: the FIRST logged run is the measurement.
+
+    A re-collection is log history. A flip of this assertion is a
+    change to which data every analysis consumes; never make it
+    casually.
+    """
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     store.dump_marks(sample_marks(score=0), addr(), TS2)
@@ -422,8 +441,11 @@ def test_s3_load_marks_returns_the_earliest_run(fake_s3):
 
 
 def test_s3_load_marks_earliest_is_independent_of_write_order(fake_s3):
-    """Earliest means earliest TIMESTAMP, not first written. A late-arriving
-    backfill stamped OLDER than an existing run resolves ahead of it."""
+    """Earliest means earliest TIMESTAMP, not first written.
+
+    A late-arriving backfill stamped OLDER than an existing run
+    resolves ahead of it.
+    """
     store = s3_store()
     store.dump_marks(sample_marks(score=0), addr(), TS2)  # newer, written first
     store.dump_marks(sample_marks(score=1), addr(), TS1)  # older, written second
@@ -436,9 +458,12 @@ def test_s3_load_marks_raises_when_nothing_is_logged(fake_s3):
 
 
 def test_s3_exists_uses_a_bounded_prefix_probe(fake_s3):
-    """Resume-skip asks "has ANY run been logged", so it must be a prefix
-    listing capped at one key -- not a fetch, and not an unbounded listing
-    that pages through an experiment's whole history."""
+    """Resume-skip asks "has ANY run been logged".
+
+    So it must be a prefix listing capped at one key: not a fetch, and
+    not an unbounded listing that pages through an experiment's whole
+    history.
+    """
     store = s3_store()
     assert not store.exists(addr())
     store.dump_marks(sample_marks(), addr(), TS1)
@@ -452,8 +477,10 @@ def test_s3_exists_uses_a_bounded_prefix_probe(fake_s3):
 
 
 def test_s3_exists_does_not_confuse_sibling_info_types(fake_s3):
-    """The ``--`` separator is what stops ``intens`` from matching
-    ``intens_extra``; a prefix of ``intens`` alone would."""
+    """The ``--`` separator is what stops ``intens`` from matching ``intens_extra``.
+
+    A prefix of ``intens`` alone would.
+    """
     store = s3_store()
     store.dump_marks(sample_marks(), addr(info="noise_intens"), TS1)
     assert store.exists(addr(info="noise_intens"))
@@ -461,15 +488,15 @@ def test_s3_exists_does_not_confuse_sibling_info_types(fake_s3):
 
 
 def test_s3_dump_refuses_a_model_less_address(fake_s3):
-    """A model-less address is a READ shape; writing one must not silently
-    create a literal ``None/`` model directory.
+    """A model-less address is a READ shape.
 
-    Measured against the first implementation, it wrote
-    ``periodic_moe/None/seed=1776/intens--<ts>.yaml``. In an APPEND-ONLY log
-    that object is permanent -- no later correct write can supersede it, and
-    only a manual delete removes it -- in a bucket whose whole point is to
-    be a clean, browsable experiment log. Every other mistake in this design
-    self-heals on the next run; this one does not.
+    If you write one, it must not silently create a literal ``None/`` model directory.
+    Measured against the first implementation: it wrote
+    ``periodic_moe/None/seed=1776/intens--<ts>.yaml``. In an APPEND-ONLY log, that
+    object is permanent. No later correct write can supersede it, and only a manual
+    delete removes it, in a bucket whose whole point is to be a clean, browsable
+    experiment log. Every other mistake in this design self-heals on the next run. This
+    one does not.
     """
     with pytest.raises(ValueError):
         s3_store().dump_marks(sample_marks(), addr(model=None), TS1)
@@ -477,8 +504,11 @@ def test_s3_dump_refuses_a_model_less_address(fake_s3):
 
 
 def test_s3_exists_without_a_model_is_false(fake_s3):
-    """A tag-keyed read (cot_chain_lengths) with no model behind the tag
-    cannot address the log at all -- see ReplicateAddress.model."""
+    """A tag-keyed read (cot_chain_lengths) has no model behind the tag.
+
+    With no model, it cannot address the log at all -- see
+    ``ReplicateAddress.model``.
+    """
     assert not s3_store().exists(addr(model=None))
 
 
@@ -525,9 +555,12 @@ def test_resolve_store_passes_the_prefix_to_the_local_store(tmp_path):
 
 
 def test_resolve_store_non_repo_anchored_falls_back_to_local(s3_env, tmp_path):
-    """THE HERMETICITY PROPERTY: tmp_path fixtures are outside the repo, so
-    the offline suite keeps using the local store even when a developer's
-    shell exports SMOLBENCH_RESULTS_S3."""
+    """THE HERMETICITY PROPERTY.
+
+    tmp_path fixtures are outside the repo, so the offline suite keeps
+    using the local store, even when a developer's shell exports
+    SMOLBENCH_RESULTS_S3.
+    """
     assert isinstance(resolve_store(tmp_path / "results"), LocalResultsStore)
 
 
@@ -552,8 +585,10 @@ def test_resolve_store_honours_a_base_prefix_in_the_uri(monkeypatch, fake_repo):
 
 
 def test_resolve_store_maps_a_directory_that_does_not_exist_locally(s3_env, fake_repo):
-    """An S3-first run never creates the local tree, so the mapping must not
-    depend on the directory existing."""
+    """An S3-first run never creates the local tree.
+
+    So the mapping must not depend on the directory existing.
+    """
     store = resolve_store(fake_repo / "notebooks" / "brand_new" / "results")
     assert store.experiment == "brand_new"
 
@@ -594,9 +629,12 @@ def test_resolve_store_malformed_uri_raises_value_error(monkeypatch, fake_repo, 
 def test_resolve_store_malformed_uri_raises_even_for_a_non_repo_path(
     monkeypatch, tmp_path
 ):
-    """Validation happens BEFORE the repo-anchor check: a typo'd env var must
-    always fail loudly rather than resolving local for every non-repo
-    directory while the operator believes results are going to S3."""
+    """Validation happens BEFORE the repo-anchor check.
+
+    A typo'd env var must always fail loudly, rather than resolving
+    local for every non-repo directory while the operator believes
+    results are going to S3.
+    """
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://")
     with pytest.raises(ValueError):
         resolve_store(tmp_path / "somewhere-else")
@@ -623,9 +661,11 @@ def log_key(model, seed, info, ts, experiment="periodic", base=""):
 def test_sync_down_translates_the_log_into_the_analysis_layout(
     s3_env, fake_repo, fake_s3
 ):
-    """The whole point of sync_down now: model -> TAG, timestamped log object
-    -> ``{tag}_{info}/rep_{seed}.yaml``. The log cannot supply the tag, which
-    is why the mapping is passed in."""
+    """This is the whole point of sync_down now: model -> TAG.
+
+    It maps the timestamped log object to ``{tag}_{info}/rep_{seed}.yaml``. The log
+    cannot supply the tag, which is why the mapping is passed in.
+    """
     results = fake_repo / "notebooks" / "periodic" / "results"
     body = sample_marks().dumps().encode()
     fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1)] = body
@@ -637,9 +677,12 @@ def test_sync_down_translates_the_log_into_the_analysis_layout(
 
 
 def test_sync_down_writes_only_the_earliest_run_per_replicate(s3_env, fake_repo, fake_s3):
-    """Two logged runs, one local file, carrying the EARLIER run -- and the
-    same run ``load_marks`` resolves, since a synced tree and a direct load
-    disagreeing would silently fork the analysis (user ruling 2026-08-16)."""
+    """Two logged runs, one local file, carrying the EARLIER run.
+
+    This is the same run ``load_marks`` resolves. A synced tree and a
+    direct load disagreeing would silently fork the analysis (user
+    ruling 2026-08-16).
+    """
     results = fake_repo / "notebooks" / "periodic" / "results"
     first = sample_marks(score=1).dumps().encode()
     rerun = sample_marks(score=0).dumps().encode()
@@ -651,8 +694,10 @@ def test_sync_down_writes_only_the_earliest_run_per_replicate(s3_env, fake_repo,
 
 
 def test_sync_down_honours_the_prefix_in_both_directions(monkeypatch, fake_repo, fake_s3):
-    """A prefixed experiment reads from ``<nb>/one_hop`` and writes to
-    ``one_hop_{tag}_{info}``."""
+    """A prefixed experiment reads from ``<nb>/one_hop``.
+
+    It writes to ``one_hop_{tag}_{info}``.
+    """
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     results = fake_repo / "notebooks" / "chromatic" / "results"
     body = sample_marks().dumps().encode()
@@ -847,10 +892,11 @@ def test_harness_pooled_infos_of_one_seed_share_a_timestamp(
 ):
     """One collection event, one timestamp.
 
-    Both info types of a seed come from a SINGLE pooled evaluate() call, so
-    they are one event and must be attributable as such. A timestamp taken
-    per-dump would split them by however long serialization happened to
-    take, and could even straddle a second boundary.
+    Both info types of a seed come from a SINGLE pooled evaluate()
+    call, so they are one event and must be attributable as such. A
+    timestamp taken per-dump would split them by however long
+    serialization happened to take, and could even straddle a second
+    boundary.
     """
     stamps = iter([TS1, TS2, TS1, TS2])  # one per call, so a per-dump call would differ
     monkeypatch.setattr(rs, "utcnow", lambda: next(stamps))
@@ -913,9 +959,11 @@ def test_harness_has_outstanding_reads_the_log(s3_harness, fake_s3, freeze_ts):
 
 
 def test_harness_summarize_uses_the_earliest_run(s3_harness, fake_s3, capsys):
-    """Printed format is byte-identical, the count is distinct seeds, and the
-    tallies come from the EARLIEST logged run of each replicate (user ruling
-    2026-08-16)."""
+    """Printed format is byte-identical and the count is distinct seeds.
+
+    The tallies come from the EARLIEST logged run of each replicate (user ruling
+    2026-08-16).
+    """
     for seed in (1, 2):
         fake_s3.objects[
             log_key("stub-model", seed, "intens", TS1, experiment="periodic_moe")
@@ -934,8 +982,10 @@ def test_harness_summarize_uses_the_earliest_run(s3_harness, fake_s3, capsys):
 def test_harness_sync_down_translates_without_being_told_the_tags(
     s3_harness, fake_s3, freeze_ts
 ):
-    """``ReplicateHarness.sync_down()`` is the primary entry point precisely
-    because it already knows archetype_tags and prefix."""
+    """``ReplicateHarness.sync_down()`` is the primary entry point.
+
+    It already knows archetype_tags and prefix.
+    """
     body = sample_marks().dumps().encode()
     fake_s3.objects[
         log_key("stub-model", 1776, "extens", TS1, experiment="periodic_moe")

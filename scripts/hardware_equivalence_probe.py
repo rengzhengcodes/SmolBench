@@ -1,42 +1,44 @@
 """Does the g6e.4xlarge -> g6e.2xlarge substitution change what a model generates?
 
-WHY
+Why
 ---
 Two 2026-08-14 repair lanes (nemotron-3-nano-4b, ministral-3-3b) regenerate
-cells on g6e.2xlarge although their original cells came from g6e.4xlarge. Both
-sizes carry exactly ONE L40S 48GB and run tp=1 with the same image and vLLM
-args, so the substitution *should* be generation-neutral -- host vCPU/RAM
-affect throughput, not sampling. "Should" is an argument, not evidence.
+cells on g6e.2xlarge. Their original cells came from g6e.4xlarge. Both sizes
+carry exactly ONE L40S 48GB, and both run tp=1 with the same image and vLLM
+args. The substitution *should* be generation-neutral: host vCPU/RAM affect
+throughput, not sampling. But "should" is an argument, not evidence.
 
-THE DESIGN, AND WHY THE BASELINE IS THE WHOLE POINT
---------------------------------------------------
-Comparing one 4xlarge pass against one 2xlarge pass cannot answer the
-question. vLLM is not guaranteed bitwise-reproducible even on ONE box: with
-continuous batching, what else is in flight changes reduction order and hence
-numerics, and this repo has already recorded a model that was
-non-deterministic despite a fixed seed. A naive cross-size comparison would
-therefore attribute vLLM's own jitter to the hardware.
+Design, and why the baseline matters
+------------------------------------
+One 4xlarge pass against one 2xlarge pass cannot answer the question on
+its own. vLLM is not guaranteed bitwise-reproducible even on ONE box. With
+continuous batching, whatever else is in flight changes reduction order,
+and so changes the numerics. This repo has already recorded a model that
+was non-deterministic despite a fixed seed. A naive cross-size comparison
+would therefore attribute vLLM's own jitter to the hardware.
 
-So we measure both:
+So this probe measures both:
 
-  BASELINE   pass A1 vs A2 -- same box, same seed, same prompts, back to back.
-             This is the noise floor: how reproducible this model is at all.
+  BASELINE   pass A1 vs A2 -- same box, same seed, same prompts, back to
+             back. This is the noise floor: how reproducible this model is
+             at all.
   CROSS-SIZE pass A1 vs B  -- original size vs substituted size.
 
 The verdict compares the two. If CROSS-SIZE agreement is no worse than
-BASELINE, the substitution is indistinguishable from re-running on the very
-same machine, which is exactly the claim being audited. If BASELINE is perfect
-(A1 == A2 byte-for-byte) and CROSS-SIZE is not, the hardware IS the variable
-and the affected lanes need re-running on g6e.4xlarge.
+BASELINE, the substitution is indistinguishable from re-running on the same
+machine. That is exactly the claim under audit. If BASELINE is perfect
+(A1 == A2 byte-for-byte) and CROSS-SIZE is not, the hardware IS the
+variable, and the affected lanes need a re-run on g6e.4xlarge.
 
-Prompts are the lane's REAL deduction prompts pulled from its S3 run dir, at
-the study's own temperature/seed/max_tokens, so the test exercises the regime
-the data was generated in rather than a synthetic proxy.
+Prompts are the lane's REAL deduction prompts, pulled from its S3 run dir,
+at the study's own temperature/seed/max_tokens. This makes the test
+exercise the regime the data was generated in, not a synthetic proxy.
 
-Each box is pinned with EC2_REQUIRE_GPU, which also exercises the guard this
+Each box is pinned with EC2_REQUIRE_GPU. This also exercises the guard this
 probe exists to justify.
 
-USAGE
+Usage
+-----
     scripts/hardware_equivalence_probe.py --model nemotron-3-nano-4b
 """
 
@@ -61,10 +63,10 @@ SEED = 0
 
 
 def load_prompts(model: str, n: int) -> List[Tuple[str, str]]:
-    """Returns [(prompt_id, text)] of real prompts from the lane's S3 run dir.
+    """Return [(prompt_id, text)] of real prompts from the lane's S3 run dir.
 
-    Sorted by key so the selection is deterministic across invocations -- a
-    probe whose inputs drift between runs cannot support a claim about
+    Sorts by key, so the selection stays deterministic across invocations.
+    A probe whose inputs drift between runs cannot support a claim about
     reproducibility.
     """
     import boto3
@@ -87,7 +89,7 @@ def load_prompts(model: str, n: int) -> List[Tuple[str, str]]:
 
 def run_pass(model: str, prompts: List[Tuple[str, str]], label: str,
             meta: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, str]:
-    """Sends every prompt at the study's settings; returns {prompt_id: output}.
+    """Send every prompt at the study's settings. Return {prompt_id: output}.
 
     Parameters
     ----------
@@ -98,49 +100,51 @@ def run_pass(model: str, prompts: List[Tuple[str, str]], label: str,
     label : str
         Log-line prefix identifying this pass (e.g. ``"det@tp4:P1"``).
     meta : dict of str to dict, optional
-        When given, populated IN PLACE with one entry per prompt id:
-        ``{"finish_reason": ..., "completion_tokens": ..., "prompt_tokens":
-        ..., "chars": ...}`` (see Notes). Omit (the default, ``None``) to skip
-        metadata collection entirely -- the historical call shape.
+        When given, this function populates it IN PLACE with one entry per
+        prompt id: ``{"finish_reason": ..., "completion_tokens": ...,
+        "prompt_tokens": ..., "chars": ...}`` (see Notes). Omit it (the
+        default, ``None``) to skip metadata collection. This is the
+        historical call shape.
 
     Returns
     -------
     dict of str to str
         ``{prompt_id: reasoning + "\\x00" + content}`` for every prompt, in
-        the SAME layout every committed ``sha_table_P1``/``sha_table_P2`` and
-        every ``cross_tp``/``_vs_head``/``_vs_run1`` comparison is recorded
-        against. This return shape is unchanged regardless of whether `meta`
-        is supplied.
+        the SAME layout every committed ``sha_table_P1``/``sha_table_P2``
+        uses, and every ``cross_tp``/``_vs_head``/``_vs_run1`` comparison is
+        recorded against. This return shape stays the same whether or not
+        `meta` is supplied.
 
     Raises
     ------
     RuntimeError
-        If the server reports a non-positive context length -- the token
-        budget for the comparison would otherwise be unknown.
+        The server reported a non-positive context length. Without this
+        check, the token budget for the comparison would stay unknown.
 
     Notes
     -----
-    Design: uses ``ec2.complete()`` rather than ``ec2.query()``.
+    Design: this function uses ``ec2.complete()``, not ``ec2.query()``.
     ``query()`` narrows the response to the ``(content, reasoning)`` 2-tuple
-    and DISCARDS the token counters and finish reason; ``complete()`` is the
-    identical call (same retry loop, same request shape) returning the full
-    ``ChatResult``, which is what makes per-row metadata possible at all.
-    That metadata is what distinguishes "the model stopped" (``finish_reason
-    == "stop"``) from "the model exhausted its completion-token budget inside
-    the reasoning channel" (``finish_reason == "length"`` with a large
-    ``completion_tokens``) -- exactly the population the D6.1 empty-row bug
-    was silently collapsing into "excluded (empty)".
+    and DISCARDS the token counters and finish reason. ``complete()`` is
+    the identical call (same retry loop, same request shape), but it
+    returns the full ``ChatResult``. That is what makes per-row metadata
+    possible at all. That metadata distinguishes "the model stopped"
+    (``finish_reason == "stop"``) from "the model exhausted its
+    completion-token budget inside the reasoning channel"
+    (``finish_reason == "length"`` with a large ``completion_tokens``).
+    This is exactly the population the D6.1 empty-row bug was silently
+    collapsing into "excluded (empty)".
 
-    ``meta``, when given, is MUTATED (a new key per prompt id is inserted);
-    nothing is ever read from it.
+    ``meta``, when given, is MUTATED: this function inserts a new key per
+    prompt id. Nothing is ever read from it.
     """
     from smolbench.evals import ec2
 
-    # `query`'s FOURTH POSITIONAL parameter is context_length, and it defaults
-    # to 0 -- omitting it makes complete() reject every response as
-    # "total_tokens > 0". Resolve it from the running server the same way
-    # run_quiz does, rather than hardcoding the spec's max_model_len, so the
-    # probe measures the box that actually landed.
+    # `query`'s FOURTH POSITIONAL parameter is context_length, and it
+    # defaults to 0. If it is omitted, complete() rejects every response
+    # as "total_tokens > 0". Resolve it from the running server, the same way
+    # run_quiz does, rather than hardcoding the spec's max_model_len. This
+    # way the probe measures the box that actually landed.
     ctx_len: int = ec2._CLIENT.context_length(model)
     logging.info("%s: server reports context_length=%d", label, ctx_len)
     if ctx_len <= 0:
@@ -152,8 +156,8 @@ def run_pass(model: str, prompts: List[Tuple[str, str]], label: str,
     results: Dict[str, str] = {}
     for i, (pid, text) in enumerate(prompts, 1):
         # `ChatClient.complete` takes `context_length` KEYWORD-ONLY (unlike
-        # `query`'s positional-or-keyword parameter of the same name) -- pass
-        # it by keyword rather than positionally.
+        # `query`'s positional-or-keyword parameter of the same name). Pass
+        # it by keyword, not positionally.
         rsp = ec2.complete(
             text, model, SEED,
             context_length=ctx_len,
@@ -174,7 +178,7 @@ def run_pass(model: str, prompts: List[Tuple[str, str]], label: str,
 
 
 def compare(a: Dict[str, str], b: Dict[str, str]) -> Dict[str, Any]:
-    """Exact-match rate plus a per-prompt digest diff."""
+    """Compute the exact-match rate, plus a per-prompt digest diff."""
     shared = sorted(set(a) & set(b))
     same = [p for p in shared if a[p] == b[p]]
     diffs = []
@@ -192,19 +196,20 @@ def compare(a: Dict[str, str], b: Dict[str, str]) -> Dict[str, Any]:
 
 
 def mechanism_evidence(serve_log: Optional[Dict[str, Any]]) -> str:
-    """Says whether a CONFIG claim (not a byte-comparison claim) has evidence.
+    """Report whether a CONFIG claim (not a byte-comparison claim) has evidence.
 
     Design (D5.1): `capture_serve_log` is the sole producer of the evidence
-    behind claims like "custom all-reduce was active/off", "enforce-eager was
-    honored", or "prefix-caching was on". Before it was fixed, its `/status`
-    call was unauthenticated and returned HTTP 401, so `engine_config_parsed`
-    came back empty BY CONSTRUCTION -- not because the box was quiet -- and a
-    tp=8 dense arm nonetheless banked a "custom all-reduce ACTIVE" claim in a
-    commit title on exactly such an empty capture. This function is the single
-    choke point every probe now routes a config claim through, so that defect
-    cannot recur silently: a byte-comparison result (e.g. `within_process_
-    baseline`) stays fully reportable regardless of this function's answer --
-    only the MECHANISM claim is gated on it.
+    behind claims like "custom all-reduce was active/off", "enforce-eager
+    was honored", or "prefix-caching was on". Before it was fixed, its
+    `/status` call was unauthenticated and returned HTTP 401. So
+    `engine_config_parsed` came back empty BY CONSTRUCTION, not because the
+    box was quiet. A tp=8 dense arm nonetheless banked a "custom
+    all-reduce ACTIVE" claim in a commit title on exactly such an empty
+    capture. This function is now the single choke point every probe
+    routes a config claim through, so that defect cannot recur silently. A
+    byte-comparison result (e.g. `within_process_baseline`) stays fully
+    reportable regardless of this function's answer. Only the MECHANISM
+    claim is gated on it.
 
     Parameters
     ----------
@@ -217,18 +222,18 @@ def mechanism_evidence(serve_log: Optional[Dict[str, Any]]) -> str:
     -------
     str
         ``"engine_config"`` when `serve_log` is a mapping whose
-        ``engine_config_parsed`` sub-dict is present AND non-empty (i.e. at
-        least one config key -- `tensor_parallel_size`,
-        `disable_custom_all_reduce`, `enforce_eager`, ... -- was actually
-        parsed out of the vLLM startup banner). ``"UNMEASURED"`` in every
-        other case: `serve_log` is `None`/`{}`, `engine_config_parsed` is
-        absent, `engine_config_parsed` is present but empty (log text was
-        captured but nothing matched the parser), or `serve_log` carries an
+        ``engine_config_parsed`` sub-dict is present AND non-empty. That
+        means at least one config key (`tensor_parallel_size`,
+        `disable_custom_all_reduce`, `enforce_eager`, ...) was actually
+        parsed out of the vLLM startup banner. ``"UNMEASURED"`` in every
+        other case: `serve_log` is `None`/`{}`; `engine_config_parsed` is
+        absent; `engine_config_parsed` is present but empty (log text was
+        captured but nothing matched the parser); or `serve_log` carries an
         `error` key from a failed capture.
 
     Notes
     -----
-    Pure and side-effect-free; safe to call on an already-persisted report
+    Pure and side-effect-free. Safe to call on an already-persisted report
     dict without re-fetching anything.
     """
     if not isinstance(serve_log, dict):
@@ -239,30 +244,31 @@ def mechanism_evidence(serve_log: Optional[Dict[str, Any]]) -> str:
     return "UNMEASURED"
 
 
-#: Fixed control-stimulus prefix for the D8 per-arm sensitivity control (see
-#: ``run_sensitivity_row``). A module-level constant -- no randomness, no
-#: timestamp, no interpolation of any kind -- so the SAME perturbation is
-#: applied on every arm, every run, every box. A control whose own stimulus
-#: drifted between invocations could not support a claim about whether the
-#: *server* changed behavior between two arms; it would only show that two
-#: different random prefixes produced two different outputs, which is true of
-#: any two distinct prompts and proves nothing about determinism.
+#: Fixed control-stimulus prefix for the D8 per-arm sensitivity control
+#: (see ``run_sensitivity_row``). This is a module-level constant: no
+#: randomness, no timestamp, no interpolation of any kind. The SAME
+#: perturbation applies on every arm, every run, every box. A control whose
+#: own stimulus drifted between invocations could not support a claim about
+#: whether the *server* changed behavior between two arms. It would only
+#: show that two different random prefixes produced two different outputs.
+#: That is true of any two distinct prompts, and proves nothing about
+#: determinism.
 SENSITIVITY_PREFIX = "[[SENSITIVITY-CONTROL-A7F3]]\n"
 
 
 def evaluate_sensitivity(perturbed: str, base: str) -> Dict[str, Any]:
-    """Decides whether a perturbed generation genuinely diverged from its base.
+    """Decide whether a perturbed generation genuinely diverged from its base.
 
-    Design (D8) -- why this must be PREFIX-aware and not a plain ``!=``: a
-    naive ``perturbed != base`` test calls a row "SENSITIVE" merely because it
-    stopped at a different length, which makes the whole control vacuous
-    whenever the sensitivity row is generated under a smaller token cap than
-    the passes it is meant to control for (``--sensitivity-max-tokens`` exists
-    precisely so a budget-constrained arm can do this). A control that says
-    SENSITIVE unconditionally is not a control -- it can never report BLIND,
-    so it can never catch a model that is actually ignoring the perturbation.
-    Sensitivity means the BYTES diverged before either row stopped, not that
-    one generation happened to be shorter than the other.
+    Design (D8): this must be PREFIX-aware, not a plain ``!=``. A naive
+    ``perturbed != base`` test calls a row "SENSITIVE" merely because it
+    stopped at a different length. That makes the whole control vacuous
+    whenever the sensitivity row is generated under a smaller token cap
+    than the passes it controls for (``--sensitivity-max-tokens`` exists
+    precisely so a budget-constrained arm can do this). A control that
+    always says SENSITIVE is not a control: it can never report BLIND, so
+    it can never catch a model that is actually ignoring the perturbation.
+    Sensitivity means the BYTES diverged before either row stopped, not
+    that one generation happened to be shorter than the other.
 
     Parameters
     ----------
@@ -286,18 +292,18 @@ def evaluate_sensitivity(perturbed: str, base: str) -> Dict[str, Any]:
         ``base_sha12`` : str
             First 12 hex characters of ``sha256(base)``.
         ``common_prefix_chars`` : int
-            Length of the longest common prefix of ``perturbed`` and ``base``,
-            computed unconditionally -- including when one side is empty
-            (``<= 1`` char), in which case it is ``1`` exactly when the OTHER
-            side also starts with the ``"\\x00"`` separator (an empty
-            ``reasoning`` channel), else ``0``. This field is diagnostic and
-            is NOT what `differs` is decided from in the empty-row cases --
-            see Notes.
+            Length of the longest common prefix of ``perturbed`` and
+            ``base``. Computed unconditionally, including when one side is
+            empty (``<= 1`` char). In that case, it is ``1`` exactly when
+            the OTHER side also starts with the ``"\\x00"`` separator (an
+            empty ``reasoning`` channel), else ``0``. This field is
+            diagnostic. It is NOT what `differs` is decided from in the
+            empty-row cases; see Notes.
         ``comparable_chars`` : int
-            ``min(chars, base_chars)``, computed unconditionally -- the span
+            ``min(chars, base_chars)``, computed unconditionally: the span
             over which divergence COULD be observed if both rows were
-            non-empty. When either row is empty this is ``<= 1`` (bounded by
-            whichever side is empty), not necessarily ``0``.
+            non-empty. When either row is empty, this is ``<= 1`` (bounded
+            by whichever side is empty), not necessarily ``0``.
         ``differs`` : bool
             ``True`` iff the perturbed row diverged from ``base`` within the
             comparable span. See Notes for the exact three-way rule.
@@ -308,21 +314,23 @@ def evaluate_sensitivity(perturbed: str, base: str) -> Dict[str, Any]:
     -----
     The rule, exactly, in priority order:
 
-    1. ``len(perturbed) <= 1`` -> ``differs = False``. An empty perturbed row
-       is a delivery fault (the same transport signature ``hinge_probe``
-       retries on), not evidence the model is insensitive to the
-       perturbation -- it did not respond to ANYTHING, perturbed or not.
-    2. ``len(base) <= 1`` -> ``differs = False``. There is nothing to compare
-       the perturbation's effect against, so no verdict can be reached.
+    1. ``len(perturbed) <= 1`` -> ``differs = False``. An empty perturbed
+       row is a delivery fault (the same transport signature
+       ``hinge_probe`` retries on). It is not evidence the model is
+       insensitive to the perturbation: it did not respond to ANYTHING,
+       perturbed or not.
+    2. ``len(base) <= 1`` -> ``differs = False``. There is nothing to
+       compare the perturbation's effect against, so no verdict can be
+       reached.
     3. Otherwise: ``m = min(len(perturbed), len(base))``,
        ``cp = len(os.path.commonprefix([perturbed, base]))``, and
        ``differs = cp < m``. Three sub-cases fall out of this:
 
-       * ``cp < m`` -- the two rows disagree at byte ``cp``, strictly inside
+       * ``cp < m``: the two rows disagree at byte ``cp``, strictly inside
          the span both rows actually cover. SENSITIVE, regardless of which
          row is longer.
-       * ``cp == m`` and equal lengths -- byte-identical to ``base``. BLIND.
-       * ``cp == m`` and unequal lengths -- the shorter row is a strict
+       * ``cp == m`` and equal lengths: byte-identical to ``base``. BLIND.
+       * ``cp == m`` and unequal lengths: the shorter row is a strict
          PREFIX of the longer one. This is truncation (a token-budget or
          stop-condition difference), not divergence. BLIND.
 
@@ -330,16 +338,17 @@ def evaluate_sensitivity(perturbed: str, base: str) -> Dict[str, Any]:
     """
     chars = len(perturbed)
     base_chars = len(base)
-    # Computed unconditionally -- including in the empty-row branches below,
-    # where `differs` is decided WITHOUT consulting these two fields (an
-    # empty row's length says nothing about sensitivity by itself). They are
-    # NOT necessarily 0 here: `comparable_chars` is bounded by whichever side
-    # is empty (<= 1, not 0), and `common_prefix_chars` is 1 whenever both
-    # rows happen to share the "\x00" separator byte at position 0 (e.g. an
-    # empty perturbed row against a base row whose reasoning channel is also
-    # empty) -- a real, unremarkable case given every row is
-    # `reasoning + "\x00" + content`. Kept in the return value regardless, as
-    # diagnostic context, never as the basis for `differs` in these branches.
+    # Computed unconditionally, including in the empty-row branches below.
+    # `differs` is decided WITHOUT consulting these two fields there (an
+    # empty row's length says nothing about sensitivity by itself). They
+    # are NOT necessarily 0 here. `comparable_chars` is bounded by
+    # whichever side is empty (<= 1, not 0). `common_prefix_chars` is 1
+    # whenever both rows happen to share the "\x00" separator byte at
+    # position 0 (for example, an empty perturbed row against a base row
+    # whose reasoning channel is also empty). This is a real, unremarkable
+    # case, since every row is `reasoning + "\x00" + content`. Both fields
+    # stay in the return value regardless, as diagnostic context, never as
+    # the basis for `differs` in these branches.
     comparable_chars = min(chars, base_chars)
     common_prefix_chars = len(os.path.commonprefix([perturbed, base]))
     sha12 = hashlib.sha256(perturbed.encode()).hexdigest()[:12]
@@ -371,7 +380,7 @@ def evaluate_sensitivity(perturbed: str, base: str) -> Dict[str, Any]:
 
 
 def control_status(sensitivity_row: Optional[Dict[str, Any]]) -> str:
-    """Reads a sensitivity row's verdict off as a two-state control status.
+    """Read a sensitivity row's verdict off as a two-state control status.
 
     Parameters
     ----------
@@ -385,18 +394,19 @@ def control_status(sensitivity_row: Optional[Dict[str, Any]]) -> str:
     -------
     str
         ``"SENSITIVE"`` when `sensitivity_row` is a mapping and
-        ``sensitivity_row["differs"]`` is truthy. ``"BLIND"`` in every other
-        case -- missing row, empty dict, error dict, or a row whose own
-        ``differs`` came back ``False``.
+        ``sensitivity_row["differs"]`` is truthy. ``"BLIND"`` in every
+        other case: a missing row, an empty dict, an error dict, or a row
+        whose own ``differs`` came back ``False``.
 
     Notes
     -----
     Design: absence of evidence defaults to BLIND, never to SENSITIVE. A
-    control that could not be evaluated (a failed generation, a row that was
-    simply never run) has not demonstrated anything, and treating "no data"
-    as "the probe is working" would silently re-introduce the exact defect
-    this control exists to close -- a HOLD banked without ever confirming the
-    control that was supposed to gate it actually fired.
+    control that could not be evaluated (a failed generation, or a row
+    that was simply never run) has not demonstrated anything. This
+    function must never treat "no data" as "the probe is working". That
+    would silently re-introduce the exact defect this control exists to
+    close: a HOLD banked without ever confirming that the control meant
+    to gate it actually fired.
 
     Pure and side-effect-free.
     """
@@ -406,7 +416,7 @@ def control_status(sensitivity_row: Optional[Dict[str, Any]]) -> str:
 
 
 def sensitivity_key(model: str, instance_id: Any, arm: str) -> str:
-    """Builds the report-level index key for a per-arm sensitivity control row.
+    """Build the report-level index key for a per-arm sensitivity control row.
 
     Parameters
     ----------
@@ -414,11 +424,12 @@ def sensitivity_key(model: str, instance_id: Any, arm: str) -> str:
         The model identifier the arm was run against (e.g.
         ``"nemotron-3-super-120b-a12b"``).
     instance_id : Any
-        The EC2 instance id the arm ran on (e.g. ``"i-047406b"``). Accepted
-        as ``Any`` and stringified unconditionally rather than typed ``str``,
-        because the drivers pass ``state.get("instance_id")``, which can be
-        ``None`` before provisioning finishes recording it -- the key must
-        degrade to the literal substring ``"None"`` rather than raising.
+        The EC2 instance id the arm ran on (e.g. ``"i-047406b"``). This
+        function accepts it as ``Any`` and stringifies it unconditionally,
+        not as typed ``str``. The drivers pass ``state.get("instance_id")``,
+        which can be ``None`` before provisioning finishes recording it.
+        The key must degrade to the literal substring ``"None"``, rather
+        than raising.
     arm : str
         The arm identifier distinguishing this control row from every other
         arm run against the same model on the same box (e.g. ``"det"``,
@@ -431,21 +442,22 @@ def sensitivity_key(model: str, instance_id: Any, arm: str) -> str:
 
     Notes
     -----
-    Design (D8 follow-up): the report-level index ``report["sensitivity_rows"]``
-    was keyed ``f"{model}@{instance_id}"``, taken literally from the original
-    spec's "keyed by (model, instance_id)". But every driver runs SEVERAL arms
-    against the same model on the same box -- tp4/tp8 each run ``det`` and
-    ``stock``; ``moe`` runs arms B and C on the dense model and A/A2 on the
-    MoE model -- so each arm's control row overwrote the previous one under
-    that two-part key, and the top-level index retained only the LAST arm's
-    row. Per-arm ``entry["sensitivity_row"]`` was always written in full and
+    Design (D8 follow-up): the report-level index
+    ``report["sensitivity_rows"]`` was keyed ``f"{model}@{instance_id}"``,
+    taken literally from the original spec's "keyed by (model,
+    instance_id)". But every driver runs SEVERAL arms against the same
+    model on the same box. tp4/tp8 each run ``det`` and ``stock``; ``moe``
+    runs arms B and C on the dense model and A/A2 on the MoE model. So
+    each arm's control row overwrote the previous one under that two-part
+    key, and the top-level index retained only the LAST arm's row.
+    Per-arm ``entry["sensitivity_row"]`` was always written in full and
     independently of this index, so no verdict was ever computed from the
-    wrong control; only the report-level AUDIT TRAIL lost the earlier arms'
-    rows. Centralising the key-building logic in one helper, called from all
-    three drivers, also prevents the three hand-rolled f-strings from
-    drifting apart again -- which is how this defect arose in the first
-    place: one file's key expression changed, or none did, with nothing to
-    keep the copies in sync.
+    wrong control. Only the report-level AUDIT TRAIL lost the earlier
+    arms' rows. This one helper centralizes the key-building logic. All
+    three drivers call it, which also stops the three hand-rolled
+    f-strings from drifting apart again. That drift is how this defect
+    arose in the first place: one file's key expression changed, or none
+    did, with nothing to keep the copies in sync.
 
     Pure and side-effect-free.
 
@@ -466,22 +478,22 @@ def run_sensitivity_row(ec2, model: str, base_prompt_id: str, base_prompt_text: 
                         temperature: float = TEMPERATURE, max_tokens: int = MAX_TOKENS,
                         request_timeout: int = 1800,
                         prefix: str = SENSITIVITY_PREFIX) -> Dict[str, Any]:
-    """Generates and scores the D8 in-process sensitivity-control row.
+    """Generate and score the D8 in-process sensitivity-control row.
 
-    Design (D8) -- why every arm needs its OWN control: the verdict rule is
+    Design (D8): why every arm needs its OWN control. The verdict rule is
     "k/k byte-identical => the bundle HOLDS", and nothing tied a HOLD to a
-    control that had actually fired -- the tp=8 dense HOLD was banked
+    control that had actually fired. The tp=8 dense HOLD was banked
     alongside a `stock` positive control that recorded ``n = 0``
-    (``notebooks/deduction/results/tp8hinge_ministral-3-3b.json``, deadline-cut
-    before its first prompt returned). A same-model stock control cannot fix
-    this in general either: nemotron-3-nano-4b's own tp=1 `stock` arm was
-    itself 8/8 byte-identical (prefix-cache replay -- 15,258 prefix-cache
-    queries, 3,904 hits), so "stock must diverge" can never be satisfiable for
-    that model. This function generates ONE extra row -- from a
-    deterministically perturbed copy of the arm's own first prompt -- inside
-    the SAME server process the arm's two comparison passes ran in, giving
-    every arm an independent, self-contained proof that the probe is capable
-    of detecting a difference at all.
+    (``notebooks/deduction/results/tp8hinge_ministral-3-3b.json``,
+    deadline-cut before its first prompt returned). A same-model stock
+    control cannot fix this in general either. nemotron-3-nano-4b's own
+    tp=1 `stock` arm was itself 8/8 byte-identical (prefix-cache replay:
+    15,258 prefix-cache queries, 3,904 hits), so "stock must diverge" can
+    never be satisfiable for that model. This function generates ONE extra
+    row, from a deterministically perturbed copy of the arm's own first
+    prompt, inside the SAME server process the arm's two comparison passes
+    ran in. This gives every arm an independent, self-contained proof that
+    the probe can detect a difference at all.
 
     Parameters
     ----------
@@ -491,10 +503,10 @@ def run_sensitivity_row(ec2, model: str, base_prompt_id: str, base_prompt_text: 
     model : str
         Deploy-spec model id currently being served.
     base_prompt_id : str
-        The prompt id this control row is controlling for (normally the
-        arm's first prompt, ``arm_prompts[0][0]``). Carried through into the
-        returned dict as ``prompt_id`` purely for provenance -- not used in
-        the comparison itself.
+        The prompt id this control row controls for (normally the arm's
+        first prompt, ``arm_prompts[0][0]``). This function carries it
+        through into the returned dict as ``prompt_id``, purely for
+        provenance. It is not used in the comparison itself.
     base_prompt_text : str
         The UNPERTURBED prompt text for `base_prompt_id`. `prefix` is
         prepended to this text to form the actual request.
@@ -508,19 +520,20 @@ def run_sensitivity_row(ec2, model: str, base_prompt_id: str, base_prompt_text: 
     temperature : float, optional
         Sampling temperature. Defaults to `TEMPERATURE`.
     max_tokens : int, optional
-        Completion-token budget for the control row. Defaults to `MAX_TOKENS`
-        (the study's own cap), but callers may lower it -- see the
-        ``--sensitivity-max-tokens`` CLI flag on each driver -- to bound the
-        control's added cost on slow arms; this is sound because
-        `evaluate_sensitivity` is prefix-aware (a shorter row that still
-        diverges before it hits the smaller cap is still SENSITIVE).
+        Completion-token budget for the control row. Defaults to
+        `MAX_TOKENS` (the study's own cap). Callers may lower it (see the
+        ``--sensitivity-max-tokens`` CLI flag on each driver) to bound the
+        control's added cost on slow arms. This is sound, because
+        `evaluate_sensitivity` is prefix-aware: a shorter row that still
+        diverges before it hits the smaller cap is still SENSITIVE.
     request_timeout : int, optional
         Seconds to wait for the completion. Default ``1800``, matching every
         other pass in this module.
     prefix : str, optional
         The perturbation prepended to `base_prompt_text`. Defaults to
-        `SENSITIVITY_PREFIX`. Exposed as a parameter (rather than hardcoded)
-        purely for testability; production callers should not override it.
+        `SENSITIVITY_PREFIX`. This is exposed as a parameter, rather than
+        hardcoded, purely for testability. Production callers should not
+        override it.
 
     Returns
     -------
@@ -543,22 +556,23 @@ def run_sensitivity_row(ec2, model: str, base_prompt_id: str, base_prompt_text: 
     Raises
     ------
     RuntimeError
-        Propagated from ``ec2._CLIENT.context_length`` or ``ec2.complete`` on
-        a request failure. Callers (the three drivers) catch this and record
-        ``{"error": ...}`` instead -- a failed control is BLIND, not fatal to
-        the arm.
+        Propagated from ``ec2._CLIENT.context_length`` or ``ec2.complete``
+        on a request failure. Callers (the three drivers) catch this and
+        record ``{"error": ...}`` instead. A failed control is BLIND, not
+        fatal to the arm.
 
     Notes
     -----
-    Fully deterministic given identical inputs: no timestamp or elapsed-time
-    field is recorded anywhere in the return value, so two calls with the
-    same arguments against a model that itself samples deterministically
-    return equal dicts. Design: uses ``ec2.complete()`` (never ``ec2.query()``)
-    for the same reason ``run_pass`` does -- ``query()`` discards
-    ``finish_reason``/``completion_tokens``, which this function needs to
-    report alongside the byte verdict. ``context_length`` is KEYWORD-ONLY on
+    Fully deterministic given identical inputs. No timestamp or
+    elapsed-time field is recorded anywhere in the return value, so two
+    calls with the same arguments against a model that itself samples
+    deterministically return equal dicts. Design: this function uses
+    ``ec2.complete()``, never ``ec2.query()``, for the same reason
+    ``run_pass`` does. ``query()`` discards ``finish_reason``/
+    ``completion_tokens``, which this function needs to report alongside
+    the byte verdict. ``context_length`` is KEYWORD-ONLY on
     ``ChatClient.complete`` (unlike ``query``'s positional-or-keyword
-    parameter of the same name); it is passed by keyword here for that
+    parameter of the same name). It is passed by keyword here for that
     reason.
     """
     ctx_len: int = ec2._CLIENT.context_length(model)
@@ -583,14 +597,15 @@ def run_sensitivity_row(ec2, model: str, base_prompt_id: str, base_prompt_text: 
 def verdict_line(*, arm: str, identical: int, n: int, control_status: str,
                  model: str, instance_id: Any, stock_control: Optional[str] = None,
                  mechanism_evidence: Optional[str] = None) -> str:
-    """The single constructor for every HOLD/UNMEASURED string a probe emits.
+    """Build the single HOLD/UNMEASURED string every probe emits.
 
-    Design (D8) -- this is the sole choke point a byte-comparison result must
-    route through to become a verdict sentence, so that "k/k identical" can
-    never again turn into a printed HOLD without the reader being told, in the
-    same sentence, whether the control that was supposed to license that HOLD
-    actually fired. Every driver's per-arm log line and end-of-run summary
-    print this string rather than constructing their own.
+    Design (D8): this is the sole choke point a byte-comparison result
+    must route through to become a verdict sentence. This way, "k/k
+    identical" can never again turn into a printed HOLD without the reader
+    being told, in the same sentence, whether the control that was
+    supposed to license that HOLD actually fired. Every driver's per-arm
+    log line and end-of-run summary print this string, rather than
+    constructing their own.
 
     Parameters
     ----------
@@ -604,51 +619,52 @@ def verdict_line(*, arm: str, identical: int, n: int, control_status: str,
         Rows compared, empty-both-sides rows already excluded
         (``within_process_baseline["n"]``).
     control_status : str
-        ``control_status(entry["sensitivity_row"])``'s return value for this
-        arm -- ``"SENSITIVE"`` or ``"BLIND"``.
+        ``control_status(entry["sensitivity_row"])``'s return value for
+        this arm: ``"SENSITIVE"`` or ``"BLIND"``.
     model : str
         Deploy-spec model id, named in the verdict so the control's scope
         (which model, which box) is legible from the string alone.
     instance_id : Any
         The EC2 instance id this arm ran on, named for the same reason.
     stock_control : str or None, optional
-        ``f"{identical}/{n}"`` for the sibling stock positive control, if it
-        has completed; ``None`` if the stock arm has not run (or this arm IS
-        the only arm run standalone). An unrun stock control is named as
-        ``"absent"`` in the string rather than silently omitted -- the tp=8
-        stock control that recorded n=0 was the exact incident that motivated
-        this function.
+        ``f"{identical}/{n}"`` for the sibling stock positive control, if
+        it has completed. ``None`` if the stock arm has not run (or this
+        arm IS the only arm run standalone). An unrun stock control is
+        named as ``"absent"`` in the string, rather than silently omitted.
+        The tp=8 stock control that recorded n=0 was the exact incident
+        that motivated this function.
     mechanism_evidence : str or None, optional
-        ``entry.get("mechanism_evidence")`` for this arm, i.e.
+        ``entry.get("mechanism_evidence")`` for this arm: that is,
         ``hardware_equivalence_probe.mechanism_evidence(entry["serve_log"])``
-        if it was computed. When this is the literal string ``"UNMEASURED"``,
-        an additional clause is appended stating that no CONFIG claim (custom
-        all-reduce state, enforce-eager, prefix-caching) may be made for this
-        arm while the byte result stands -- the byte-comparison verdict
-        itself is unaffected. Any other value (including ``None``, meaning
-        the driver never computed it) appends nothing.
+        if it was computed. When this is the literal string
+        ``"UNMEASURED"``, this function appends an additional clause,
+        stating that no CONFIG claim (custom all-reduce state,
+        enforce-eager, prefix-caching) may be made for this arm while the
+        byte result stands. The byte-comparison verdict itself is
+        unaffected. Any other value (including ``None``, meaning the
+        driver never computed it) appends nothing.
 
     Returns
     -------
     str
-        Always contains ``f"{identical}/{n}"`` and always names the control's
-        scope (``control_status``, `model`, `instance_id`, and the stock
-        control string or ``"absent"``). The verdict word is chosen as
-        follows, in priority order:
+        Always contains ``f"{identical}/{n}"``, and always names the
+        control's scope (``control_status``, `model`, `instance_id`, and
+        the stock control string or ``"absent"``). This function chooses
+        the verdict word as follows, in priority order:
 
         1. ``control_status != "SENSITIVE"`` or ``n <= 0`` -> ``"UNMEASURED"``.
-           A BLIND control means the probe has not demonstrated it can detect
-           anything on this box; ``n <= 0`` means the arm compared no rows at
-           all (the tp=8 stock-control incident: a k/k-shaped claim can never
-           be reported from an empty denominator, never a vacuous "0/0
-           HOLDS").
+           A BLIND control means the probe has not demonstrated it can
+           detect anything on this box. ``n <= 0`` means the arm compared
+           no rows at all (the tp=8 stock-control incident: a k/k-shaped
+           claim can never be reported from an empty denominator, never a
+           vacuous "0/0 HOLDS").
         2. ``identical == n`` -> ``"HOLDS"``.
         3. otherwise -> ``"DOES NOT HOLD"``.
 
-        On the BLIND/UNMEASURED path the string never contains the substring
-        ``"HOLD"`` at all (so a caller cannot mistake it for a hedged HOLD by
-        substring-matching); on a clean SENSITIVE HOLD it never contains
-        ``"UNMEASURED"``.
+        On the BLIND/UNMEASURED path, the string never contains the
+        substring ``"HOLD"`` at all. A caller therefore cannot mistake it
+        for a hedged HOLD by substring-matching. On a clean SENSITIVE
+        HOLD, it never contains ``"UNMEASURED"``.
 
     Notes
     -----
@@ -677,7 +693,7 @@ def verdict_line(*, arm: str, identical: int, n: int, control_status: str,
 
 def serve_and_run(model: str, itype: str, regions: str, gpu_pin: str,
                   prompts: List[Tuple[str, str]], labels: List[str]) -> List[Dict[str, str]]:
-    """Provisions ONE box of `itype`, runs one pass per label, tears it down."""
+    """Provision ONE box of `itype`, run one pass per label, tear it down."""
     from smolbench.evals import ec2
 
     os.environ["EC2_INSTANCE_TYPES"] = itype

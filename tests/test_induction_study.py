@@ -1,26 +1,28 @@
-"""Static contract tests for the family-ladder induction driver.
+"""Run static contract tests for the family-ladder induction driver.
 
-``notebooks/induction/run_study.py`` is the SINGLE SOURCE OF TRUTH for the
-scaling study's configuration -- the notebook imports it rather than
-re-declaring anything -- so every constant in it is a study invariant, not an
-implementation detail. Each check below guards a failure that would otherwise
-only surface after a 21-instance spot fleet has already billed:
+``notebooks/induction/run_study.py`` is the single source of truth for the
+scaling study's configuration; the notebook imports it, instead of
+re-declaring anything. So every constant in it is a study invariant, not
+an implementation detail. Each check below guards a failure that would
+otherwise only surface after a 21-instance spot fleet has already billed:
 
-* the roster must stay total over ``EC2_DEPLOY_SPECS``'s 21 study keys (a
-  model added to the specs but missing from ``MODELS`` silently never runs);
-* every model must carry a CoT toggle (a missing/incorrect
+* The roster must stay total over ``EC2_DEPLOY_SPECS``'s 21 study keys. A
+  model added to the specs but missing from ``MODELS`` silently never runs.
+* Every model must carry a CoT toggle. A missing or incorrect
   ``chat_template_kwargs`` collects silently non-thinking data, which is
-  worse than no data);
-* the prompt template must stay BYTE-identical to the ``periodic_moe``
-  study's, or the new results cannot be compared against the archived ones;
-* ``BASE_SEED``/``n_replicates`` are user-locked at 0/30 (every prior study
-  used 1776 -- a copy-paste from a sibling driver would be invisible);
-* the S3 experiment name must derive to exactly ``"induction"``, since that
-  string is the top-level key component of every result object written;
-* the completion-budget arithmetic must be derivable offline, from the
-  tokenizer alone, BEFORE anything is provisioned.
+  worse than no data.
+* The prompt template must stay byte-identical to the ``periodic_moe``
+  study's, or the new results cannot be compared against the archived ones.
+* ``BASE_SEED``/``n_replicates`` are user-locked at 0/30. Every prior
+  study used 1776, so a copy-paste from a sibling driver would be
+  invisible.
+* The S3 experiment name must derive to exactly ``"induction"``, since
+  that string is the top-level key component of every result object
+  written.
+* The completion-budget arithmetic must be derivable offline, from the
+  tokenizer alone, before anything is provisioned.
 
-OFFLINE: every test here monkeypatches ``run_study.for_model`` to a
+Offline: every test here monkeypatches ``run_study.for_model`` to a
 ``StubTokenizer``. Nothing downloads a tokenizer, and nothing touches AWS.
 """
 
@@ -42,14 +44,15 @@ from conftest import StubTokenizer
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 
-# The smoke entry predates the study and is not a counted rung; every other
-# spec key is one of the 21 study models (same split tests/test_deploy_specs.py
-# makes).
+# The smoke entry predates the study and is not a counted rung. Every
+# other spec key is one of the 21 study models (the same split
+# tests/test_deploy_specs.py makes).
 STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
 
-# The study's spec-key -> analysis-tag map, transcribed from the study
-# directive. Vendored here rather than imported so this test can FAIL when
-# run_study's copy drifts -- importing it would make the assertion vacuous.
+# The study's spec-key to analysis-tag map, copied from the study
+# directive. This is vendored here, not imported, so this test can fail
+# when run_study's copy drifts. If it were imported instead, the check would be
+# vacuous.
 EXPECTED_TAGS = {
     "qwen3.5-27b": "qwen35_27b",
     "qwen3.5-122b-a10b": "qwen35_122b",
@@ -74,13 +77,13 @@ EXPECTED_TAGS = {
     "deepseek-v4-pro": "ds_pro",
 }
 
-# The periodic_moe prompt template, VERBATIM. Provenance:
+# The periodic_moe prompt template, verbatim. Provenance:
 #   git show f13b60d0~1:notebooks/periodic_moe/run_pilot.py  (the `template`
 #   assignment's string.Template argument)
 # 518 characters, sha256
 #   e4a66d32c357cac4e898a8bf66d84b6ea3717f174ad7e5a88907bb5afb7a6279
-# Byte-equality here is what makes the family-ladder results comparable to the
-# archived all-MoE study: same task, same wording, only the roster changed.
+# Byte equality here is what makes the family-ladder results comparable to
+# the archived all-MoE study: same task, same wording, only the roster changed.
 PERIODIC_MOE_TEMPLATE = (
     "You are a precise integer counter.\n"
     "\n"
@@ -102,22 +105,22 @@ PERIODIC_MOE_TEMPLATE = (
 
 @pytest.fixture(scope="module")
 def run_study():
-    """Imports ``notebooks/induction/run_study.py`` without leaking its env.
+    """Import ``notebooks/induction/run_study.py`` without leaking its env.
 
     Two hazards this fixture exists to contain:
 
-    1. The driver calls ``load_dotenv(keys.env)`` at import time (it MUST --
-       ``smolbench.evals.ec2`` freezes its ``EC2_*`` constants at import).
-       That mutates the pytest process's ``os.environ`` -- including
-       ``SMOLBENCH_RESULTS_S3`` -- which would leak into every later test in
-       the session. The snapshot/restore pair around the import undoes it;
-       nothing the module captured at import time is re-read afterwards, so
-       restoring is safe.
-    2. It is loaded from an explicit FILE PATH under a unique module name
-       rather than by putting ``notebooks/induction`` on ``sys.path``. The
+    1. The driver calls ``load_dotenv(keys.env)`` at import time. It
+       must: ``smolbench.evals.ec2`` freezes its ``EC2_*`` constants at
+       import. That mutates the pytest process's ``os.environ``,
+       including ``SMOLBENCH_RESULTS_S3``, which would leak into every
+       later test in the session. The snapshot/restore pair around the
+       import undoes it. Nothing the module captured at import time is
+       re-read afterwards, so restoring is safe.
+    2. It loads from an explicit file path under a unique module name,
+       instead of putting ``notebooks/induction`` on ``sys.path``. The
        deduction study ships its own ``run_study.py``, so a bare
-       ``import run_study`` would be ambiguous the moment both directories
-       are importable.
+       ``import run_study`` would be ambiguous the moment both
+       directories are importable.
     """
     saved = dict(os.environ)
     try:
@@ -152,10 +155,11 @@ def test_analysis_tags_are_unique(run_study):
 
 
 def test_cot_args_is_total_over_models(run_study):
-    """Every model carries an entry -- including the empty Ministral ones.
+    """Every model carries an entry, including the empty Ministral ones.
 
     Totality is the point: a missing key would raise ``KeyError`` at
-    ``EXPERIMENT.run`` time, i.e. after the box is already up and billing.
+    ``EXPERIMENT.run`` time, that is, after the box is already up and
+    billing.
     """
     assert sorted(run_study.COT_ARGS) == sorted(run_study.MODELS)
 
@@ -164,9 +168,9 @@ def test_cot_args_is_total_over_models(run_study):
 def test_ministral_entries_are_present_but_empty(run_study, key):
     """Ministral's think protocol rides the deploy-spec ``system_prompt``.
 
-    A ``chat_template_kwargs`` toggle would do nothing for these three (their
-    shipped template has no thinking kwarg at all), so the entry must be
-    present-but-empty rather than absent -- see the spec table's Ministral
+    A ``chat_template_kwargs`` toggle would do nothing for these three
+    (their shipped template has no thinking kwarg at all), so the entry
+    must be present but empty, not absent. See the spec table's Ministral
     note in ``smolbench/evals/ec2.py``.
     """
     assert run_study.COT_ARGS[key] == {}
@@ -184,16 +188,21 @@ def test_ministral_entries_are_present_but_empty(run_study, key):
     ],
 )
 def test_enable_thinking_families(run_study, key):
-    """Gemma-4 and EXAONE-4.0-32B default enable_thinking FALSE, so the driver
-    is the only thing that can turn CoT on for them; the rest are asserted the
-    same way so the table stays uniform."""
+    """Gemma-4 and EXAONE-4.0-32B default enable_thinking to False.
+
+    So the driver is the only thing that can turn CoT on for them. The rest are
+    checked the same way, so the table stays uniform.
+    """
     assert run_study.COT_ARGS[key] == {"chat_template_kwargs": {"enable_thinking": True}}
 
 
 @pytest.mark.parametrize("key", ["deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro"])
 def test_deepseek_uses_the_thinking_kwarg(run_study, key):
-    """DeepSeek's toggle is named ``thinking``, not ``enable_thinking`` -- it
-    drives both the V4 inline template branch and vLLM's deepseek_v4 parser."""
+    """DeepSeek's toggle is named ``thinking``, not ``enable_thinking``.
+
+    It drives both the V4 inline template branch and vLLM's deepseek_v4
+    parser.
+    """
     assert run_study.COT_ARGS[key] == {"chat_template_kwargs": {"thinking": True}}
 
 
@@ -211,8 +220,11 @@ def test_template_is_byte_identical_to_periodic_moe(run_study):
 
 
 def test_base_seed_is_zero(run_study):
-    """User-locked at 0. Every PRIOR study used 1776, so a copy-pasted driver
-    would look completely normal while collecting under the wrong seeds."""
+    """User-locked at 0.
+
+    Every prior study used 1776, so a copy-pasted driver would look
+    completely normal while collecting under the wrong seeds.
+    """
     assert run_study.BASE_SEED == 0
 
 
@@ -233,8 +245,10 @@ def test_experiment_is_wired_to_the_models_table(run_study):
 
 
 def test_s3_experiment_name_is_induction(run_study):
-    """The S3 log key is ``induction/<spec-key>/seed=<s>/<info>--<ts>.yaml``;
-    this pins its first component."""
+    """The S3 log key is ``induction/<spec-key>/seed=<s>/<info>--<ts>.yaml``.
+
+    This pins its first component.
+    """
     assert experiment_name(run_study.EXPERIMENT.results_dir) == "induction"
     assert run_study.EXPERIMENT.results_dir == REPO_ROOT / "notebooks" / "induction" / "results"
 
@@ -257,10 +271,10 @@ def test_make_quizzes_yields_the_four_arms(run_study, monkeypatch):
 def test_completion_budget_is_context_minus_worst_prompt_minus_reserve(
     run_study, monkeypatch
 ):
-    """budget == 131072 - worst - 8000, over the worst prompt in ANY arm.
+    """budget == 131072 - worst - 8000, over the worst prompt in any arm.
 
-    ``seeds`` is a 2-element range so the probe's bracketing subsample is
-    unambiguously "both seeds" -- the expected worst is then computable here
+    ``seeds`` is a 2-element range, so the probe's bracketing subsample is
+    unambiguously "both seeds." The expected worst is then computable here
     without restating the driver's subsampling rule.
     """
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
@@ -278,14 +292,19 @@ def test_completion_budget_is_context_minus_worst_prompt_minus_reserve(
 
 
 def test_budget_cap_is_the_full_context_for_every_model(run_study):
-    """No per-model caps: a scaling study cannot let the completion budget
-    vary by vendor, or 'the big one truncated' becomes unfalsifiable."""
+    """No per-model caps.
+
+    A scaling study cannot let the completion budget vary by vendor, or
+    "the big one truncated" becomes unfalsifiable.
+    """
     assert run_study.BUDGET_CAP == run_study.CONTEXT_LIMIT == 131_072
 
 
 def test_completion_budget_exits_below_the_viability_floor(run_study, monkeypatch):
-    """A prompt so long that <48k completion tokens remain must abort BEFORE
-    provisioning, not collect empties on a billing box."""
+    """A prompt so long that <48k completion tokens remain must abort.
+
+    It must abort before provisioning, not collect empties on a billing box.
+    """
 
     class _Question:
         def __init__(self, prompt: str) -> None:
@@ -313,8 +332,10 @@ def test_selected_models_defaults_to_the_whole_roster(run_study, monkeypatch):
 
 
 def test_selected_models_filters_by_spec_key(run_study, monkeypatch):
-    """The fleet supervisor sets ``INDUCTION_MODELS=<spec key>`` per lane, so
-    the filter is keyed on the SPEC KEY, not the analysis tag."""
+    """The fleet supervisor sets ``INDUCTION_MODELS=<spec key>`` per lane.
+
+    So the filter is keyed on the spec key, not the analysis tag.
+    """
     monkeypatch.setenv("INDUCTION_MODELS", "glm-4.7-flash,gemma-4-e2b")
     assert set(run_study.selected_models()) == {"glm-4.7-flash", "gemma-4-e2b"}
 

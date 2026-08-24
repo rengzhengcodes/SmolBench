@@ -1,18 +1,23 @@
-"""Command-line entry points. Run as `python -m smolbench.deduction.lean.cli <subcommand>`.
+"""Provide command-line entry points.
+
+Run as `python -m smolbench.deduction.lean.cli <subcommand>`.
 
 Environment split: `replay`, `filter`, `run-cell`, and `run-sweep` verify
-candidate/ground-truth proofs against Lean and therefore import
-`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package — these four
-subcommands only work from the dedicated `.venv-lean` environment (see
-`verify.py`'s import guard for how to build it). Every other subcommand
-(`metadata`, `list`, `analyze`, `report`, `show`, `compare`, `prompt-stats`)
-touches only the generation/analysis modules (`corpus`, `context`, `prompt`,
-`runner`'s dispatch) and runs on this project's regular `.venv`. To keep that
-split real, `smolbench.deduction.lean.verify` is imported lazily (inside `cmd_replay`
-and `cmd_filter`, the two commands here that call it directly) rather than
-at module top — `run-cell`/`run-sweep` don't import it directly at all; they
-reach it indirectly through `runner.run_cell`/`runner.sweep`, which resolve
-the real verifier lazily via `runner._default_verifier()`.
+candidate and ground-truth proofs against Lean. They therefore import
+`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package.
+These four subcommands work only from the dedicated `.venv-lean`
+environment (see `verify.py`'s import guard for how to build it). Every
+other subcommand (`metadata`, `list`, `analyze`, `report`, `show`,
+`compare`, `prompt-stats`) touches only the generation/analysis modules
+(`corpus`, `context`, `prompt`, `runner`'s dispatch), and runs on this
+project's regular `.venv`.
+
+To keep that split real, this module imports `smolbench.deduction.lean.verify`
+lazily -- inside `cmd_replay` and `cmd_filter`, the two commands here that
+call it directly -- rather than at module top. `run-cell` and `run-sweep`
+do not import it directly at all; they reach it indirectly through
+`runner.run_cell`/`runner.sweep`, which resolve the real verifier lazily
+via `runner._default_verifier()`.
 """
 
 from __future__ import annotations
@@ -46,9 +51,9 @@ def cmd_metadata(_: argparse.Namespace) -> int:
 
     Notes
     -----
-    Runs on either venv (main `.venv` or `.venv-lean`; see the module
-    docstring's environment split). Propagates `corpus.metadata`'s
-    `FileNotFoundError` if the dataset has not been bootstrapped.
+    This runs on either venv (main `.venv` or `.venv-lean`; see the module
+    docstring's environment split). It propagates `corpus.metadata`'s
+    `FileNotFoundError` when the dataset has not been bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -62,7 +67,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     args : argparse.Namespace
         Consumes ``--kind``, ``--split`` (both forwarded to
         `corpus.iter_with_proof`), and ``--limit`` (caps how many theorems
-        are individually printed; the reported total count is unaffected).
+        this prints individually; the reported total count is unaffected).
 
     Returns
     -------
@@ -71,8 +76,9 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Runs on either venv. Prints the total matching-theorem count, then up
-    to `args.limit` lines of ``full_name``, tactic count, and ``file_path``.
+    This runs on either venv. It prints the total matching-theorem count,
+    then up to `args.limit` lines of ``full_name``, tactic count, and
+    ``file_path``.
     """
     items = list(iter_with_proof(args.kind, args.split))
     print(f"# {len(items)} theorems with traced tactics in {args.kind}/{args.split}")
@@ -97,21 +103,22 @@ def cmd_replay(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        2 if ``--full-name`` was given but no matching theorem exists in
-        the pool; 0 if every replayed theorem's verdict is ``"success"``;
+        2 when ``--full-name`` was given but no matching theorem exists in
+        the pool; 0 when every replayed theorem's verdict is ``"success"``;
         1 otherwise.
 
     Notes
     -----
-    Requires `.venv-lean`: imports `smolbench.deduction.lean.verify` (see the module
-    docstring's environment split) to open real Dojo sessions. Prints one
-    line per theorem (verdict, tactics applied/total, wall time) plus the
-    first line of any error, then a final pass/total summary.
+    This requires `.venv-lean`: it imports `smolbench.deduction.lean.verify`
+    (see the module docstring's environment split) to open real Dojo
+    sessions. It prints one line per theorem (verdict, tactics
+    applied/total, wall time) plus the first line of any error, then a
+    final pass/total summary.
     """
-    # Local import: `.verify` requires `lean_dojo`, only installable in the
-    # dedicated `.venv-lean` environment (see that module's import guard).
-    # Deferring the import to this function body — rather than the module
-    # top — keeps every OTHER subcommand importable on the main venv.
+    # Local import: `.verify` requires `lean_dojo`, which installs only in
+    # the dedicated `.venv-lean` environment (see that module's import
+    # guard). Deferring the import to this function body, rather than the
+    # module top, keeps every OTHER subcommand importable on the main venv.
     from .verify import replay_ground_truth
 
     pool = list(iter_with_proof(args.kind, args.split))
@@ -123,7 +130,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
             print(f"theorem not found: {args.full_name}", file=sys.stderr)
             return 2
     else:
-        # Bias toward short proofs for the smoke (faster + likelier to succeed).
+        # This biases toward short proofs for the smoke: they run faster
+        # and are more likely to succeed.
         max_len = args.max_tactics
         candidates = [t for t in pool if 1 <= len(t.traced_tactics) <= max_len]
         targets = rng.sample(candidates, min(args.n, len(candidates)))
@@ -169,14 +177,14 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    Requires `.venv-lean`: imports `smolbench.deduction.lean.verify` (see the module
-    docstring's environment split). Resumable: without ``--fresh``,
-    theorems already recorded in the output JSONL
-    (``corpus.replay_passing_path(args.kind, args.split)``) are skipped,
-    and each new result is flushed to disk immediately after being
-    replayed -- an interrupted run loses at most the in-flight theorem.
-    Prints one progress line per theorem plus a final pass/fail/total
-    summary and the output path.
+    This requires `.venv-lean`: it imports `smolbench.deduction.lean.verify`
+    (see the module docstring's environment split). It is resumable:
+    without ``--fresh``, it skips theorems already recorded in the output
+    JSONL (``corpus.replay_passing_path(args.kind, args.split)``), and it
+    flushes each new result to disk immediately after replaying it -- an
+    interrupted run loses at most the in-flight theorem. It prints one
+    progress line per theorem, plus a final pass/fail/total summary and
+    the output path.
     """
     # Local import: see `cmd_replay`'s comment above `.verify`'s import.
     from .verify import replay_ground_truth
@@ -258,19 +266,19 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        2 if ``--full-name`` doesn't match any theorem in the pool, or if
-        ``--rung`` is malformed or fails `context.validate`; 0 if every
+        2 when ``--full-name`` matches no theorem in the pool, or when
+        ``--rung`` is malformed or fails `context.validate`; 0 when every
         replicate's verdict is ``"success"``; 1 otherwise.
 
     Notes
     -----
-    Requires `.venv-lean`: reaches `smolbench.deduction.lean.verify` indirectly
-    through `runner.run_cell`'s lazily-resolved default verifier (see the
-    module docstring's environment split), rather than importing it
-    directly here. Writes one JSONL row per replicate to
-    ``<results_root()>/runs/<new_run_id()>.jsonl`` (via `runner.write_jsonl`)
-    and prints a per-replicate summary (verdict, token counts, timings, and a
-    short candidate-proof preview).
+    This requires `.venv-lean`: it reaches `smolbench.deduction.lean.verify`
+    indirectly through `runner.run_cell`'s lazily-resolved default
+    verifier (see the module docstring's environment split), rather than
+    importing it directly here. It writes one JSONL row per replicate to
+    ``<results_root()>/runs/<new_run_id()>.jsonl`` (via
+    `runner.write_jsonl`), and prints a per-replicate summary (verdict,
+    token counts, timings, and a short candidate-proof preview).
     """
     pool = list(iter_with_proof(args.kind, args.split))
     matches = [t for t in pool if t.full_name == args.full_name]
@@ -346,18 +354,19 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        1 if the theorem pool is empty after filtering/sampling; 0
+        1 when the theorem pool is empty after filtering/sampling; 0
         otherwise.
 
     Notes
     -----
-    Runs on either venv -- uses `context.render` only, no Dojo session.
-    Counts tokens with `tiktoken`'s ``cl100k_base`` encoding directly (no
-    char-based fallback here, unlike `context._count_tokens` -- a missing
-    `tiktoken` install surfaces as an ordinary `ImportError`). A `render`
-    call that raises any exception is counted as a render error and
-    skipped, rather than aborting the whole report. Prints a per-rung table
-    of min/median/mean/p95/max token counts.
+    This runs on either venv -- it uses `context.render` only, with no
+    Dojo session. It counts tokens with `tiktoken`'s ``cl100k_base``
+    encoding directly. It has no char-based fallback here, unlike
+    `context._count_tokens`: a missing `tiktoken` install surfaces as an
+    ordinary `ImportError`. A `render` call that raises any exception
+    counts as a render error and gets skipped, instead of aborting the
+    whole report. It prints a per-rung table of min/median/mean/p95/max
+    token counts.
     """
     import statistics as stats
     import tiktoken
@@ -423,27 +432,30 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        1 if `path` contains no cell rows (only sanity rows, or the file is
-        empty); 0 otherwise.
+        1 when `path` contains no cell rows (only sanity rows, or the file
+        is empty); 0 otherwise.
 
     Notes
     -----
-    Runs on either venv -- pure JSONL aggregation, no Dojo session and no
-    file writes. Prints, in order: sanity-gate pass/fail counts, an ASCII
-    bar chart of success rate per (model, rung), a detailed per-(rung,
-    model) verdict-breakdown table (with a ``trunc`` column -- rows whose
-    ``raw_response``/``content`` opened a ``<think>`` block it never closed;
-    always 0 for models that never emit one), and per-model token/success
-    totals.
+    This runs on either venv -- it does pure JSONL aggregation, with no
+    Dojo session and no file writes. It prints, in order:
+
+    - sanity-gate pass/fail counts;
+    - an ASCII bar chart of success rate per (model, rung);
+    - a detailed per-(rung, model) verdict-breakdown table (with a
+      ``trunc`` column -- rows whose ``raw_response``/``content``
+      opened a ``<think>`` block it never closed; always 0 for models
+      that never emit one); and
+    - per-model token/success totals.
 
     When the sweep recorded more than one replicate for at least one
     (model, rung, theorem_id, k) cell, two more tables follow: a pass@N
-    table (a cell counts as a pass if ANY of its replicates verified; N is
-    the max replicate count seen across all cells) broken down per (rung,
-    model), and its per-model rollup. Sweeps with exactly one replicate per
-    cell everywhere (the common, non-replicated case) omit both -- their
-    output is byte-identical to the pre-pass@N/trunc format aside from the
-    added ``trunc`` column in the detail table.
+    table, broken down per (rung, model), and its per-model rollup. A cell
+    counts as a pass@N pass if ANY of its replicates verified; N is the
+    max replicate count seen across all cells. Sweeps with exactly one
+    replicate per cell everywhere (the common, non-replicated case) omit
+    both tables -- their output is byte-identical to the pre-pass@N/trunc
+    format, aside from the added ``trunc`` column in the detail table.
     """
     from collections import defaultdict
 
@@ -455,25 +467,27 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
-    # Design: keyed on the full cell identity (model, rung, theorem_id, k) --
-    # one entry per group, holding every replicate's verdict for that group --
-    # rather than folding straight into `cells`, because pass@N needs to ask
-    # "did ANY replicate of *this exact* (theorem, k) succeed", a question the
-    # (rung, model)-only `cells` aggregation has already lost the answer to.
+    # Design: this dict keys on the full cell identity (model, rung,
+    # theorem_id, k) -- one entry per group, holding every replicate's
+    # verdict for that group -- instead of folding straight into `cells`.
+    # pass@N needs to ask "did ANY replicate of *this exact* (theorem, k)
+    # succeed", a question the (rung, model)-only `cells` aggregation has
+    # already lost the answer to.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    # `path` is arbitrary and user-supplied -- unlike the run-directory globs
-    # elsewhere in this file, nothing upstream has already filtered it. That
-    # makes this the likeliest place a retired `all_rows_SUPERSEDED-<stamp>.jsonl`
-    # (see runner.RETIRED_MARKERS) gets pointed at by accident. Reject before
-    # the file is opened: its rows parse cleanly and are well-formed, so an
-    # admitted SUPERSEDED file wouldn't crash here, it would aggregate into a
-    # complete, plausible, and wrong summary -- a warning can't substitute for
-    # the raise when the bad output is indistinguishable from good output.
+    # `path` is arbitrary and user-supplied. Unlike the run-directory globs
+    # elsewhere in this file, nothing upstream has already filtered it.
+    # That makes this the likeliest place someone accidentally points at a
+    # retired `all_rows_SUPERSEDED-<stamp>.jsonl` (see
+    # runner.RETIRED_MARKERS). This code rejects it before opening the
+    # file: its rows parse cleanly and are well-formed, so an admitted
+    # SUPERSEDED file would not crash here -- it would aggregate into a
+    # complete, plausible, and wrong summary. A warning cannot substitute
+    # for the raise when the bad output looks just like good output.
     reject_superseded_rows([args.path])
     with open(args.path) as f:
         for line in f:
@@ -501,27 +515,28 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             c["tok_out"] += r.get("completion_tokens", 0)
             c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
 
-            # Truncation smell: a reasoning model that got cut off mid-<think>
-            # never emits a tactic block at all, which otherwise just looks
-            # like an ordinary `incomplete`/`given_up` verdict -- surface it
-            # separately so a wave of these isn't misread as the model
-            # reasoning itself into a dead end. `raw_response` is the field
-            # the runner actually writes (see runner.py); `content` is a
-            # defensive fallback for any row schema variant that used the
-            # provider SDK's own key name instead.
+            # Truncation smell: a reasoning model cut off mid-<think> never
+            # emits a tactic block at all. Without this check, that case
+            # just looks like an ordinary `incomplete`/`given_up` verdict.
+            # This surfaces it separately, so a wave of these cases is not
+            # misread as the model reasoning itself into a dead end.
+            # `raw_response` is the field the runner actually writes (see
+            # runner.py); `content` is a defensive fallback for any row
+            # schema variant that used the provider SDK's own key name
+            # instead.
             raw_text = r.get("raw_response", "") or r.get("content", "")
             unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-            # Fix (parser-path blind spot): when the box is served WITH a
-            # vLLM --reasoning-parser, the model's <think> block is split out
-            # server-side into `reasoning_content` and never lands in
-            # `raw_response` at all -- so a generation that died inside the
-            # think channel leaves `raw_response` EMPTY (not "<think>...
-            # unclosed"), and the check above silently reads 0. Catch that
-            # shape too: reasoning was produced, but no answer content
-            # whatsoever made it out. Deliberately checks `raw_response`
-            # alone here (not the `content`-fallback `raw_text` above) per
-            # the row schema `runner.py` actually writes under a
-            # --reasoning-parser server.
+            # Fix (parser-path blind spot): when the box serves WITH a vLLM
+            # --reasoning-parser, the server splits the model's <think>
+            # block out into `reasoning_content` server-side, and it never
+            # lands in `raw_response` at all. So a generation that died
+            # inside the think channel leaves `raw_response` EMPTY (not
+            # "<think>... unclosed"), and the check above silently reads 0.
+            # This catches that shape too: reasoning was produced, but no
+            # answer content made it out at all. This deliberately checks
+            # `raw_response` alone here, not the `content`-fallback
+            # `raw_text` above, matching the row schema `runner.py`
+            # actually writes under a --reasoning-parser server.
             died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
             if unclosed_think_in_raw or died_in_reasoning_channel:
                 c["trunc"] += 1
@@ -609,12 +624,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
 
     # ---- pass@N (only meaningful once a sweep actually ran multiple
-    # replicates; with n_replicates==1 everywhere, "pass@N" and the plain
-    # success rate above are identical, so we skip it rather than print a
-    # redundant, visually-noisy duplicate table). N is derived from the data
-    # itself (max replicates seen in any single cell) rather than threaded
-    # through from the sweep config, so this stays correct even for sweeps
-    # that mix replicate counts across models/rungs.
+    # replicates). With n_replicates==1 everywhere, "pass@N" and the plain
+    # success rate above are identical, so this code skips it instead of
+    # printing a redundant, visually-noisy duplicate table. N comes from
+    # the data itself (max replicates seen in any single cell), not from
+    # the sweep config, so this stays correct even for sweeps that mix
+    # replicate counts across models/rungs.
     n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
     if n_max_replicates > 1:
         passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
@@ -665,17 +680,17 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        0 if `runner.sweep` returns a non-negative row count -- in
+        0 when `runner.sweep` returns a non-negative row count -- in
         practice always, since `sweep` has no path that returns a negative
         count; 1 otherwise.
 
     Notes
     -----
-    Requires `.venv-lean`: reaches `smolbench.deduction.lean.verify` indirectly
-    through `runner.sweep`'s lazily-resolved default verifier (see the
-    module docstring's environment split). All other side effects (output
-    directory layout, resumability, manifest/analysis writing) belong to
-    `runner.sweep` -- see that function's docstring.
+    This requires `.venv-lean`: it reaches `smolbench.deduction.lean.verify`
+    indirectly through `runner.sweep`'s lazily-resolved default verifier
+    (see the module docstring's environment split). All other side effects
+    (output directory layout, resumability, manifest/analysis writing)
+    belong to `runner.sweep` -- see that function's docstring.
     """
     import yaml
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -702,12 +717,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        2 if ``<run_dir>/all_rows.jsonl`` doesn't exist; 0 otherwise.
+        2 when ``<run_dir>/all_rows.jsonl`` does not exist; 0 otherwise.
 
     Notes
     -----
-    Runs on either venv -- pure JSONL comparison, no Dojo session, no file
-    writes. See `_dump` for the shared regressions/improvements printer.
+    This runs on either venv -- it does pure JSONL comparison, with no
+    Dojo session and no file writes. See `_dump` for the shared
+    regressions/improvements printer.
     """
     run_dir = Path(args.run_dir)
     all_rows = run_dir / "all_rows.jsonl"
@@ -727,7 +743,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
             continue
         if r.get("rung") not in (args.rung_a, args.rung_b):
             continue
-        # If multiple replicates, prefer the first; user can pass --replicate to pick.
+        # With multiple replicates, this prefers the first.
+        # Pass --replicate to pick another.
         if r.get("replicate_idx", 0) != args.replicate:
             continue
         by_thm.setdefault(r["theorem_id"], {})[r["rung"]] = r
@@ -780,15 +797,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
         Returns
         -------
         None
-            Prints directly to stdout; a no-op (no output, not even the
-            heading) when `items` is empty.
+            This prints directly to stdout. It is a no-op (no output, not
+            even the heading) when `items` is empty.
 
         Notes
         -----
-        For each item, prints the theorem id, step `k`, the prompt-token
-        delta between the two rungs, the (truncated) ground-truth tail, and
-        each rung's verdict plus a truncated candidate proof / first
-        `lean_error` line.
+        For each item, this prints the theorem id, step `k`, the
+        prompt-token delta between the two rungs, the (truncated)
+        ground-truth tail, and each rung's verdict plus a truncated
+        candidate proof and first `lean_error` line.
         """
         if not items:
             return
@@ -826,16 +843,17 @@ def cmd_show(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        2 if ``<run_dir>/theorems`` doesn't exist; 1 if `args.theorem` was
-        given but no matching ``summary.md`` exists; 0 otherwise.
+        2 when ``<run_dir>/theorems`` does not exist; 1 when
+        `args.theorem` was given but no matching ``summary.md`` exists; 0
+        otherwise.
 
     Notes
     -----
-    Runs on either venv -- reads ``summary.md``/``outputs/*.jsonl`` files
-    only, no Dojo session. In listing mode (no `args.theorem`), each
-    theorem's success rate is tallied by re-scanning its
-    ``outputs/*.jsonl`` files directly, rather than reading its (possibly
-    stale) `summary.md`.
+    This runs on either venv -- it reads only ``summary.md``/
+    ``outputs/*.jsonl`` files, with no Dojo session. In listing mode (no
+    `args.theorem`), it tallies each theorem's success rate by
+    re-scanning its ``outputs/*.jsonl`` files directly, instead of
+    reading its (possibly stale) `summary.md`.
     """
     from .runner import slug_theorem
     run_dir = Path(args.run_dir)
@@ -893,14 +911,15 @@ def cmd_report(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        2 if ``<run_dir>/all_rows.jsonl`` doesn't exist; 0 otherwise.
+        2 when ``<run_dir>/all_rows.jsonl`` does not exist; 0 otherwise.
 
     Notes
     -----
-    Runs on either venv -- delegates to `runner.regenerate_run_artifacts`,
-    which reads only `all_rows.jsonl` and each theorem's `meta.json`/
-    `outputs/*.jsonl` (no Dojo session). Overwrites `run_dir`'s
-    `analysis.txt` and every `theorems/*/summary.md` in place.
+    This runs on either venv -- it delegates to
+    `runner.regenerate_run_artifacts`, which reads only `all_rows.jsonl`
+    and each theorem's `meta.json`/`outputs/*.jsonl`, with no Dojo
+    session. It overwrites `run_dir`'s `analysis.txt` and every
+    `theorems/*/summary.md` in place.
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "all_rows.jsonl").exists():
@@ -923,9 +942,9 @@ def build_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
         Parser with one required subcommand (``dest="cmd"``): `metadata`,
         `list`, `replay`, `filter`, `run-cell`, `run-sweep`, `analyze`,
-        `report`, `show`, `compare`, `prompt-stats`. Each subparser sets its
-        own `func` default to the matching `cmd_*` handler, so `main`
-        dispatches via ``args.func(args)`` without a separate
+        `report`, `show`, `compare`, `prompt-stats`. Each subparser sets
+        its own `func` default to the matching `cmd_*` handler, so `main`
+        dispatches via ``args.func(args)``, with no separate
         subcommand-name switch.
     """
     p = argparse.ArgumentParser(prog="python -m smolbench.deduction.lean.cli")
@@ -1041,9 +1060,10 @@ def main(argv: list[str] | None = None) -> int:
 
     Notes
     -----
-    Calls `sys.exit` (via `argparse`) on a missing/unknown subcommand,
-    ``-h``/``--help``, or malformed arguments -- standard `argparse` CLI
-    behavior, triggered before this function's own body ever runs.
+    `argparse` calls `sys.exit` on a missing or unknown subcommand,
+    ``-h``/``--help``, or malformed arguments. This is standard `argparse`
+    CLI behavior, and it triggers before this function's own body ever
+    runs.
     """
     args = build_parser().parse_args(argv)
     return args.func(args)

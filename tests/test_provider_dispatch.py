@@ -1,4 +1,4 @@
-"""Call-time provider dispatch: env read per call, no import-order trap."""
+"""Test call-time provider dispatch: env read per call, no import-order trap."""
 
 import pytest
 
@@ -6,9 +6,11 @@ from smolbench.evals import provider
 
 
 def test_dispatch_follows_env_after_import(monkeypatch):
-    """Setting INFERENCE_PROVIDER after import must take effect -- the old
-    import-time dispatch silently ignored it, forcing notebooks to mutate
-    os.environ before the import."""
+    """If you set INFERENCE_PROVIDER after import, it must take effect.
+
+    The old import-time dispatch silently ignored it, forcing
+    notebooks to mutate os.environ before the import.
+    """
     from smolbench.evals import ec2, openrouter
 
     monkeypatch.setenv("INFERENCE_PROVIDER", "ec2")
@@ -41,9 +43,12 @@ def test_sagemaker_requires_base_url(monkeypatch):
 
 
 def test_provider_module_explicit_name_bypasses_env(monkeypatch):
-    """provider_module(name) resolves that provider directly, ignoring
-    whatever INFERENCE_PROVIDER happens to be set to -- the mixed-provider
-    sweep use case described in the module docstring."""
+    """provider_module(name) resolves that provider directly.
+
+    It ignores whatever INFERENCE_PROVIDER happens to be set to. This
+    is the mixed-provider sweep use case described in the module
+    docstring.
+    """
     from smolbench.evals import ec2, openrouter
 
     monkeypatch.setenv("INFERENCE_PROVIDER", "ec2")
@@ -58,8 +63,10 @@ def test_provider_module_explicit_unknown_is_actionable():
 
 
 def test_provider_module_explicit_sagemaker_requires_base_url(monkeypatch):
-    """The sagemaker/no-base-URL guard applies to an explicitly passed name
-    too, not just the env-dispatch path."""
+    """The sagemaker/no-base-URL guard applies to an explicitly passed name too.
+
+    It is not limited to the env-dispatch path.
+    """
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     monkeypatch.delenv("AWS_INFERENCE_BASE_URL", raising=False)
     with pytest.raises(ValueError, match="AWS_INFERENCE_BASE_URL"):

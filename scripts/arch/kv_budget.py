@@ -1,19 +1,20 @@
 """Correct KV-cache sizing for the family-ladder roster.
 
 The original tier/tp assignments assumed every layer holds full-context KV.
-The 2026-08-13 fleet audit showed that is false for a third of the roster --
-four attention families shrink KV by 4-25x versus the naive figure:
+The 2026-08-13 fleet audit showed that assumption is false for a third of
+the roster. Three attention mechanisms shrink KV by 4-25x versus the naive
+figure. A fourth mechanism, tp replication, grows it instead:
 
 * **sliding/local layers** cache only ``min(ctx, sliding_window)`` tokens
   (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` pattern at
-  window 4096);
+  window 4096).
 * **linear-attention layers** hold constant state, not ctx-proportional KV
-  (Qwen3.5-27B: 48 of 64 layers);
+  (Qwen3.5-27B: 48 of 64 layers).
 * **MLA** caches one ``kv_lora_rank + qk_rope_head_dim`` latent per token,
-  NOT ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1);
-* and vLLM **replicates KV heads when tp > num_key_value_heads**, so
-  ``x max(1, tp / n_kv)`` for non-MLA models -- DeepSeek-V4's single KV head
-  at tp=8 really is 8x its tp=1 figure.
+  not ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
+* vLLM **replicates KV heads when tp > num_key_value_heads**, multiplying
+  KV by ``max(1, tp / n_kv)`` for non-MLA models. DeepSeek-V4's single KV
+  head at tp=8 is 8x its tp=1 figure.
 
 Per layer, BF16 (2 bytes), per token of effective context::
 
@@ -22,17 +23,18 @@ Per layer, BF16 (2 bytes), per token of effective context::
     linear_attention:  ~0
     MLA:               (kv_lora_rank + qk_rope_head_dim) * 2
 
-The layer mix comes from config ``layer_types`` (a list) when present, else
-``sliding_window_pattern`` (a cycling string like ``"LLLG"``; ``L`` = local/
-sliding, ``G`` = global/full), else every layer counts as full attention. A
-bare ``sliding_window`` value WITHOUT either mix field is deliberately NOT
-applied (DeepSeek-V4 carries ``sliding_window=128`` for its CSA/HCA sparse
-scheme yet keeps full-length KV).
+The layer mix comes from the config. It uses ``layer_types`` (a list) when
+present. Otherwise it uses ``sliding_window_pattern`` (a cycling string like
+``"LLLG"``, where ``L`` means local/sliding and ``G`` means global/full). If
+neither field is present, every layer counts as full attention. A bare
+``sliding_window`` value without either mix field is deliberately NOT
+applied. DeepSeek-V4 carries ``sliding_window=128`` for its CSA/HCA sparse
+scheme yet keeps full-length KV.
 
 For replication-study box sizing, budget ``weights + 2.0 x KV@131k`` against
-``0.90 x total VRAM`` (about 8 concurrent requests) -- sizing for a single
-sequence produces boxes that go negative at real concurrency. Weight sizes
-come from checkpoint shard totals, not this tool.
+``0.90 x total VRAM`` (about 8 concurrent requests). A box sized for a
+single sequence goes negative at real concurrency. Weight sizes come from
+checkpoint shard totals, not this tool.
 
 Usage
 -----
@@ -58,7 +60,7 @@ DEFAULT_CTX = 131072
 
 
 def _text_config(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """The attention-relevant config block (multimodal wrappers nest it)."""
+    """Return the attention-relevant config block (multimodal wrappers nest it)."""
     config = raw["config"]
     inner = config.get("text_config")
     if isinstance(inner, dict):
@@ -70,7 +72,7 @@ def _text_config(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _layer_mix(cfg: Dict[str, Any]) -> list:
-    """Per-layer attention kinds: 'full' | 'sliding' | 'linear'."""
+    """Return per-layer attention kinds: 'full' | 'sliding' | 'linear'."""
     n_layers = cfg["num_hidden_layers"]
     layer_types = cfg.get("layer_types")
     if isinstance(layer_types, list) and layer_types:
@@ -89,15 +91,16 @@ def _layer_mix(cfg: Dict[str, Any]) -> list:
             "sliding" if pattern[i % len(pattern)] == "L" else "full"
             for i in range(n_layers)
         ]
-    # NOT a bug: a bare ``sliding_window`` value with neither mix field is
-    # deliberately ignored. DeepSeek-V4 carries ``sliding_window=128`` as
-    # CSA/HCA scaffolding while keeping full-length KV -- windowing it here
-    # would shrink its KV ~1000x and size boxes that OOM at serve.
+    # NOT a bug: this deliberately ignores a bare ``sliding_window`` value
+    # with neither mix field set. DeepSeek-V4 carries ``sliding_window=128``
+    # as CSA/HCA scaffolding while it keeps full-length KV. A window
+    # applied here would shrink its KV ~1000x and size boxes that OOM at
+    # serve.
     return ["full"] * n_layers
 
 
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
-    """Total KV-cache bytes for one sequence of `ctx` tokens.
+    """Compute total KV-cache bytes for one sequence of `ctx` tokens.
 
     Parameters
     ----------
@@ -106,17 +109,17 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     ctx : int
         Sequence length in tokens.
     tp : int
-        Tensor-parallel degree; KV heads replicate when ``tp > n_kv`` for
-        non-MLA models, multiplying total KV by ``tp / n_kv``.
+        Tensor-parallel degree. KV heads replicate when ``tp > n_kv`` for
+        non-MLA models, which multiplies total KV by ``tp / n_kv``.
     naive : bool
         When True, reproduce the WRONG pre-audit assumption (every layer
-        full-context GQA KV) for comparison columns.
+        holds full-context GQA KV), for comparison columns.
 
     Returns
     -------
     int
-        KV bytes across all layers (and all tp shards -- replication makes
-        the total exceed the tp=1 figure, it never shrinks it).
+        KV bytes across all layers and all tp shards. Replication makes the
+        total exceed the tp=1 figure; it never shrinks the total.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

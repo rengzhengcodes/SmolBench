@@ -2,35 +2,40 @@
 
 WHY THIS EXISTS
 ---------------
-A deduction lane launched unsharded can be resharded MID-FLIGHT to finish
-faster: kill the driver, split what it already banked into n theorem-stride
-shard run dirs (``runs/scaling_<key>_shard<i>of<n>``), then relaunch n shard
-drivers (``LEAN_SHARD=i/n``) whose resume mechanism skips every pre-seeded
-cell and generates only what is missing. ``scripts/merge_lean_shards.py``
-later folds the completed shards back into the canonical run. The shard
-assignment is computed by calling ``runner._select_theorems`` with the run's
-own theorems spec plus ``shard: "i/n"`` -- the EXACT code path the relaunched
-shards execute -- so the split can never disagree with the shards about
-which theorem belongs where.
+You can reshard a deduction lane launched unsharded MID-FLIGHT, to finish
+it faster. Kill the driver, then split what it already banked into n
+theorem-stride shard run directories
+(``runs/scaling_<key>_shard<i>of<n>``). Then relaunch n shard drivers
+(``LEAN_SHARD=i/n``); each driver's resume mechanism skips every
+pre-seeded cell and generates only what is missing.
+``scripts/merge_lean_shards.py`` later folds the completed shards back
+into the canonical run. This script computes the shard assignment by
+calling ``runner._select_theorems`` with the run's own theorems spec plus
+``shard: "i/n"``. This is the EXACT code path the relaunched shards
+execute, so the split can never disagree with the shards about which
+theorem belongs where.
 
 SAFETY PROPERTIES
 -----------------
-- The source run dir is READ, never mutated or deleted: rows are copied into
-  shard files and ``theorems/`` subtrees are copied (not moved). The caller
-  renames the source out of the canonical path first (see the runbook in the
-  epilogue of this docstring) and deletes it only after the eventual merge's
-  verified S3 spool -- same never-prune-before-verify rule as the spool.
-- Every row must partition: a cell/sanity row whose theorem_id maps to no
-  shard, an unknown ``kind``, or a duplicate cell key aborts BEFORE any
-  shard dir is written. A torn FINAL line (SIGKILL mid-write) is tolerated
-  and reported -- its cell simply regenerates on resume; a torn middle line
-  aborts (that is corruption, not a torn tail).
-- ``server_config.yaml`` and ``manifest.json`` go to shard 0 as
-  ``server_config.yaml`` (shard 0 is relaunched against the ORIGINAL box via
-  the original state file, so the sidecar chain stays one box's history) and
-  ``manifest_prelude.json`` (provenance of the unsharded phase; the shard's
-  own sweep writes a fresh ``manifest.json``). At merge time, copy the
-  prelude into the canonical dir before spooling.
+- This script READS the source run directory; it never mutates or deletes
+  it. It copies rows into shard files, and copies (not moves)
+  ``theorems/`` subtrees. The caller must rename the source out of the
+  canonical path first (see the runbook below), and must delete it only
+  after the eventual merge's verified S3 spool. This follows the same
+  never-prune-before-verify rule as the spool.
+- Every row must partition into exactly one shard. This script aborts
+  BEFORE it writes any shard directory if it finds a cell or sanity row
+  whose theorem_id maps to no shard, an unknown ``kind``, or a duplicate
+  cell key. It tolerates and reports a torn FINAL line (from a SIGKILL
+  mid-write): that cell simply regenerates on resume. It aborts on a torn
+  middle line, because that is corruption, not a torn tail.
+- ``server_config.yaml`` and ``manifest.json`` both go to shard 0, as
+  ``server_config.yaml`` and ``manifest_prelude.json``. Shard 0 relaunches
+  against the ORIGINAL box, through the original state file, so this
+  keeps the sidecar chain as one box's history. ``manifest_prelude.json``
+  holds the provenance of the unsharded phase; the shard's own sweep
+  writes a fresh ``manifest.json``. At merge time, copy the prelude into
+  the canonical directory before you spool.
 
 Runbook (gemma-4-12b mid-flight reshard, 2026-08-14)::
 
@@ -74,11 +79,40 @@ def split_run(
     runs_root: Path,
     theorems_spec: dict,
 ) -> list[Path]:
-    """Partitions `source`'s rows and theorem artifacts into n shard dirs.
+    """Partition `source`'s rows and theorem artifacts into n shard directories.
 
-    Returns the shard dir paths. Pure filesystem writer past its gates: all
-    validation happens on in-memory structures before the first shard dir is
-    created, so a failed gate leaves the tree untouched.
+    This function validates everything on in-memory structures before it
+    creates the first shard directory, so a failed gate leaves the tree
+    untouched. Past its gates, this function only writes files; it applies
+    no further logic.
+
+    Parameters
+    ----------
+    key : str
+        Spec key of the lane, for example ``"gemma-4-12b"``.
+    n : int
+        Number of shards to split into.
+    source : Path
+        The unsharded source run directory to read from.
+    runs_root : Path
+        Directory under which this function creates the shard run
+        directories.
+    theorems_spec : dict
+        The run's theorems spec, without a ``shard`` key. This function
+        adds ``shard: "i/n"`` itself, for each shard i, before it calls
+        ``runner._select_theorems``.
+
+    Returns
+    -------
+    list[Path]
+        The shard directory paths, in shard order.
+
+    Raises
+    ------
+    SystemExit
+        On any failed gate (see the module docstring's SAFETY PROPERTIES
+        section), or if `source` has no ``all_rows.jsonl``, or if a target
+        shard directory already exists.
     """
     from smolbench.deduction.lean import runner  # heavy import chain; local
 
@@ -89,7 +123,7 @@ def split_run(
         if d.exists():
             raise SystemExit(f"{d} already exists -- refusing to re-split over it.")
 
-    # Shard assignment via the shards' own selection code path.
+    # Assign shards through the shards' own selection code path.
     owner: dict[str, int] = {}
     slug_owner: dict[str, int] = {}
     for i in range(n):
@@ -103,7 +137,7 @@ def split_run(
             owner[name] = i
             slug_owner[runner.slug_theorem(name)] = i
 
-    # Partition rows (gates before any write).
+    # Partition rows. This function gates every row before it writes anything.
     lines = (source / "all_rows.jsonl").read_text().splitlines()
     per_shard: list[list[str]] = [[] for _ in range(n)]
     seen_cells: set[tuple] = set()
@@ -130,7 +164,7 @@ def split_run(
             raise SystemExit(f"row theorem {theorem!r} maps to no shard -- wrong spec?")
         per_shard[owner[theorem]].append(line)
 
-    # Theorem artifact dirs partition by slug.
+    # Partition theorem artifact directories by slug.
     theorem_subdirs = []
     tdir = source / "theorems"
     if tdir.is_dir():
@@ -139,7 +173,7 @@ def split_run(
                 raise SystemExit(f"theorems/{sub.name} maps to no shard -- wrong spec?")
             theorem_subdirs.append((sub, slug_owner[sub.name]))
 
-    # All gates passed -- write.
+    # All gates passed. Write the shard directories.
     for i, d in enumerate(shard_dirs):
         d.mkdir(parents=True)
         with (d / "all_rows.jsonl").open("w") as sink:
@@ -170,9 +204,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    # The study's user-locked theorems spec -- must match the shards' config
-    # (notebooks/deduction/run_study.py build_config) or the split disagrees
-    # with the relaunched shards about theorem ownership.
+    # The study's user-locked theorems spec. It must match the shards'
+    # config (notebooks/deduction/run_study.py build_config), or the split
+    # disagrees with the relaunched shards about theorem ownership.
     theorems_spec = {
         "source": "replay_passing",
         "kind": "novel_premises",

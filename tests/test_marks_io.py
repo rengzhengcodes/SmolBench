@@ -1,4 +1,4 @@
-"""Result-file round trips: the safe plain-dict format and legacy tagged files."""
+"""Test result-file round trips: the safe plain-dict format and legacy tagged files."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,10 +44,11 @@ def test_load_legacy_tagged_format(tmp_path):
 def test_dumps_is_exactly_what_dump_writes(tmp_path):
     """``dumps`` is the in-memory twin of ``dump``.
 
-    The S3 store PUTs ``dumps().encode()`` rather than writing a file, so any
-    formatting drift between the two would make an S3-stored replicate differ
-    byte-for-byte from the local one for the same marks -- invisible until
-    something diffed a synced-down tree against its local original.
+    The S3 store PUTs ``dumps().encode()`` rather than writing a file.
+    So any formatting drift between the two would make an S3-stored
+    replicate differ byte-for-byte from the local one for the same
+    marks. That would stay invisible until something diffed a
+    synced-down tree against its local original.
     """
     marks = _sample_marks()
     out = tmp_path / "rep_1.yaml"
@@ -61,8 +62,10 @@ def test_dumps_loads_round_trip():
 
 
 def test_loads_reads_the_legacy_tagged_format():
-    """Legacy files are read back out of S3 after seeding, so the
-    ``!!python/object`` branch stays live on the string path too."""
+    """Legacy files are read back out of S3 after seeding.
+
+    So the ``!!python/object`` branch stays live on the string path too.
+    """
     marks = _sample_marks()
     legacy = yaml.dump(marks, default_flow_style=False, indent=4)
     assert legacy.startswith("!!python/object")
@@ -72,11 +75,10 @@ def test_loads_reads_the_legacy_tagged_format():
 def test_loads_does_not_take_the_unsafe_path_for_a_mention_in_a_response():
     """The legacy check tests the FIRST BYTES, not a substring.
 
-    A model response that happens to contain ``!!python/object`` is ordinary
-    data; routing that file through ``yaml.unsafe_load`` would be both a
-    misparse and an arbitrary-construction hazard on attacker-influenced
-    text. A substring-based check fails this and passes every other test
-    here.
+    A model response that happens to contain ``!!python/object`` is ordinary data. If
+    that file were routed through ``yaml.unsafe_load``, it would be both a misparse and
+    an arbitrary-construction hazard on attacker-influenced text. A substring-based
+    check fails this and passes every other test here.
     """
     marks = Marks(
         model="stub-model",
@@ -95,14 +97,15 @@ def test_loads_does_not_take_the_unsafe_path_for_a_mention_in_a_response():
     assert Marks.loads(text) == marks
 
 
-#: A REAL legacy-format artifact, committed so this pin can never go vacuous
-#: again. Derived from ``notebooks/chromatic/result2/moe_intens.yaml`` (md5
-#: 94484d8aac7c, 342,032 bytes, 120 marks) in the 2026-08-10 results archive,
+#: A REAL legacy-format artifact, committed so this pin can never go
+#: vacuous again. It comes from
+#: ``notebooks/chromatic/result2/moe_intens.yaml`` (md5 94484d8aac7c,
+#: 342,032 bytes, 120 marks) in the 2026-08-10 results archive. It is
 #: cut to its first 2 marks and re-dumped with the SAME legacy writer
-#: (``yaml.dump``). That subsetting is byte-faithful, not approximate: the
-#: archived file satisfies ``yaml.dump(yaml.unsafe_load(raw)) == raw``
-#: exactly, so this fixture is precisely what the historical writer would
-#: have emitted for those two marks.
+#: (``yaml.dump``). That subsetting is byte-faithful, not approximate.
+#: The archived file satisfies ``yaml.dump(yaml.unsafe_load(raw)) ==
+#: raw`` exactly, so this fixture is precisely what the historical
+#: writer would have emitted for those two marks.
 LEGACY_FIXTURE = Path(__file__).resolve().parent / "fixtures" / (
     "legacy_marks_chromatic_moe_intens.yaml"
 )
@@ -111,21 +114,21 @@ LEGACY_FIXTURE = Path(__file__).resolve().parent / "fixtures" / (
 def test_load_real_legacy_result_file():
     """A genuine pre-safe-dump artifact must stay loadable forever.
 
-    This replaces a pin that had gone permanently vacuous: it globbed
-    ``notebooks/periodic/results/*/rep_*.yaml`` and returned early when the
-    glob was empty, and those trees have since been archived out of the
-    working tree -- so its body asserted nothing at all, in every run, with
-    no failure to signal it. A committed fixture cannot rot that way.
+    This replaces a pin that had gone permanently vacuous. It globbed
+    ``notebooks/periodic/results/*/rep_*.yaml`` and returned early when
+    the glob was empty. Those trees have since been archived out of the
+    working tree, so its body asserted nothing at all, in every run,
+    with no failure to signal it. A committed fixture cannot rot that
+    way.
 
-    What this actually protects, beyond "the unsafe_load branch runs": every
-    mark in this artifact predates BOTH the ``reasoning`` and ``compliance``
-    fields, so ``yaml.unsafe_load`` reconstructs ``Mark`` instances whose
-    ``__dict__`` holds only ``answer``/``query``/``response``/``score``.
-    Those two attributes resolve only because the dataclass gives them
-    class-level defaults. Adding ``__slots__`` to ``Mark``, or making either
-    field non-defaulted, would turn every historical result file into an
-    ``AttributeError`` the moment anything counted ``noncompliant`` -- and
-    nothing else in this suite would notice.
+    What this actually protects, beyond "the unsafe_load branch runs": every mark in
+    this artifact predates BOTH the ``reasoning`` and ``compliance`` fields. So
+    ``yaml.unsafe_load`` reconstructs ``Mark`` instances whose ``__dict__`` holds only
+    ``answer``, ``query``, ``response``, and ``score``. Those two missing attributes
+    resolve only because the dataclass gives them class-level defaults. If ``__slots__``
+    were added to ``Mark``, or either field made non-defaulted, every historical result
+    file would turn into an ``AttributeError`` the moment anything counted
+    ``noncompliant``. Nothing else in this suite would notice.
     """
     assert LEGACY_FIXTURE.is_file(), f"missing fixture {LEGACY_FIXTURE}"
     raw = LEGACY_FIXTURE.read_text()
