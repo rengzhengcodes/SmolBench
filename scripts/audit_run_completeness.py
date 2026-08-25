@@ -53,6 +53,11 @@ USAGE
     scripts/audit_run_completeness.py --lane gemma-4-31b
     scripts/audit_run_completeness.py --local          # audit local run dirs
     scripts/audit_run_completeness.py --induction      # seed coverage too
+
+    # Programmatic, per lane (how the archived repair launcher gated a
+    # restored run dir before relaunching it):
+    #   sys.path.insert(0, "scripts"); from audit_run_completeness import audit_lane
+    #   audit_lane(open(f"{run_dir}/all_rows.jsonl").read())["infra"]  # dead cells
 """
 
 import argparse

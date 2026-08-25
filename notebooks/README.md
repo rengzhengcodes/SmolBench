@@ -114,4 +114,49 @@ Security: the 19 files were scanned before archiving -- no keys, tokens,
 emails, or personal data; only terminated EC2 instance IDs, four ephemeral
 public IPs, and the account ID already present in this README.
 
+## Fourth archive: concluded probes, incident launchers, and the statistics they carried
+
+Also on 2026-08-25, 17 files under `scripts/` and the 4 test modules that
+only loaded them left the tree for `pr4_scripts_2026-08-25.zip`
+(sha256 `c75e6e013e49cd583e465914006e9bbb2713e2aa64f76924792db03e469fd677`;
+on the PR #4 release and at the S3 prefix root, each file also stored
+individually under `scripts/` and `tests/` at the prefix):
+
+- Concluded determinism / delivery probes: `hinge_probe.py`, `tp4_hinge_probe.py`,
+  `tp8_hinge_probe.py`, `moe_tp8_probe.py`, `hardware_equivalence_probe.py`,
+  `delivery_probe.py`, `streaming_ab_probe.py`, `keepalive_ab_probe.py`,
+  `tp8_hinge_summary.py`. Their findings are the determinism bundle that is
+  now `smolbench.evals.ec2.DETERMINISM_ARGS` (the default config) and the
+  streaming transport; their reports are in the evidence archive above.
+- 2026-08-14/16 incident-response launchers: `launch_gemma12b_deduction_shards.sh`,
+  `relaunch_damaged_deduction.sh`, `resume_all_runs.sh`,
+  `supervise_deduction_lane.sh`; and the 2026-08-18 `recover_dojoinit_std.py`
+  recovery (all 21 lanes done; its report is in the evidence archive).
+- The three statistical scripts: `posterior_power.py`, `flip_probe.py`,
+  `flip_free_bound.py`. Their statistics now live in
+  **`notebooks/statistical_analyses.ipynb`**, the single notebook of this
+  study's analyses: it imports the live analysis modules
+  (`notebooks/{induction,deduction}/*.py`, `_power_common.py`) for the
+  sizing, paired, significance, error-bar and hint-vs-noise sections (gated
+  behind `RUN_HEAVY`, since they need the results store), ports the
+  posterior DECIDED/EQUIVALENT/UNDECIDED classifier (§7, with an ungated
+  self-test), and re-renders the §6.2 flip rate (0.0950, CP95 [0.058, 0.144])
+  and §6.3 free bound (3/74) from the archived JSON streamed off S3 (§8-9),
+  asserting equality with the stored numbers. The notebook never writes
+  archived data to a local path; the only local materialisation is the
+  gated `aws s3 sync` of the analysis snapshot that `error_bars.build_pool`
+  needs as a directory. Outputs are committed cleared.
+- Tests archived with them: `tests/test_delivery_probe.py`,
+  `test_determinism_probes.py`, `test_flip_probe.py`, `test_recover_dojoinit.py`
+  (116 tests; the offline suite is 1104 passed / 7 skipped after the move).
+
+Kept in `scripts/` (live tooling): the `arch/` atlas pipeline, `run_fleet.py`,
+`fleet_status.py`, `fleet_teardown.py`, `run_shards.py`, `merge_lean_shards.py`,
+`split_lean_run_into_shards.py`, `lean_verify_rows.py`, `audit_run_completeness.py`,
+`regrade.py`, `snapshot_analysis_data.py`, `provision_results_bucket.py`,
+`evidence_manifest.py`, `bedrock_smoke.py`, `ec2_lifecycle_smoke.py`.
+`smolbench/evals/ec2.py`'s provenance notes that named `hinge_probe.py` now
+point here. Security: all 21 files scanned -- no secrets or PII (cloud IDs
+only).
+
 Nothing under `notebooks/` or `scripts/` is now regenerable-and-tracked.

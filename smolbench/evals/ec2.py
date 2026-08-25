@@ -570,10 +570,13 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
 #: (8/8 byte-identical within one process, for both probe models).
 #: Cross-config agreement with the study's stock config is 0/8, so results
 #: generated under this bundle are NOT comparable with the family-ladder
-#: study data. This list is byte-identical to scripts/hinge_probe.py
-#: DET_ARGS, the certified argv. The experiment did not separate
-#: attribution across the four flags on purpose: relax any one of them
-#: only after you re-certify with a hinge-style probe.
+#: study data. This list IS the certified argv (it was byte-identical to
+#: the hinge probe's DET_ARGS; scripts/hinge_probe.py and its tp=4/tp=8/
+#: MoE extensions are archived in pr4_scripts_2026-08-25.zip on the PR #4
+#: release and under s3://smolbench-results-414266451290/archives/
+#: 2026-08-25/scripts/ -- see notebooks/README.md). The experiment did
+#: not separate attribution across the four flags on purpose: relax any
+#: one of them only after you re-certify with a hinge-style probe.
 DETERMINISM_ARGS: List[str] = [
     "--no-enable-prefix-caching", "--max-num-seqs", "1",
     "--enforce-eager", "--seed", "0",
@@ -781,11 +784,11 @@ _SERVER_CONFIG_PROBE_TIMEOUT_S: int = 5
 def _fetch_vllm_version(ip: str, vllm_api_key: str) -> Optional[str]:
     """Return the ``version`` string from vLLM's ``GET /version``, or None.
 
-    This mirrors ``scripts/hinge_probe.py``'s ``fingerprint()`` request
+    This mirrors the archived hinge probe's ``fingerprint()`` request
     shape (Bearer the vLLM api key, short timeout) instead of inventing a
     new pattern -- that function is the one place this study already
     proved a ``/version`` probe works against a live box (DETERMINISM_PLAN
-    section 3).
+    section 3; both are archived, see notebooks/README.md).
     """
     try:
         r = requests.get(
