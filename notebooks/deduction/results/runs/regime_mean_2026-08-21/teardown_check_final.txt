@@ -1,4 +1,0 @@
-=== us-west-2 (ALL non-terminated instances) ===
-i-0e52cb0bb33999a94	m7i.16xlarge	stopped	None	2026-08-16T04:54:04+00:00
-=== us-east-2 (ALL non-terminated instances) ===
-=== us-east-1 (ALL non-terminated instances) ===

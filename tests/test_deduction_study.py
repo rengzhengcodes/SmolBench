@@ -617,47 +617,6 @@ def test_end_to_end_sweep_offline(driver, sweep_env, stub):
     assert len(_cells(run_dir)) == 4
 
 
-def test_noise_rung_is_token_matched_to_its_hint_counterpart():
-    """``noise:3`` matches ``hint:3``'s token count exactly, on the real corpus.
-
-    This is the whole basis of the noise arm: it is a pure length control,
-    so any difference between `hint:3` and `noise:3` scores must come from
-    the hint's content, not from prompt length.
-
-    The theorem is chosen as the first one whose `hint:3` is strictly longer than
-    `hint:2`, and the test checks that strictness. Without that check, the test would
-    pass vacuously on any theorem where `hint:3` adds nothing. The padding path
-    short-circuits, and `noise:3` comes back as a byte-identical copy of the baseline.
-    Then "the token counts match" would be true for a reason that has nothing to do with
-    the padding logic under test.
-
-    The raw LeanDojo split is a large download and is gitignored (see
-    ``notebooks/deduction/README.md``, "Data bootstrap"). When it is not
-    on disk, this test skips instead of failing.
-    """
-    from smolbench.deduction.lean import context
-
-    split_file = corpus.data_root() / "novel_premises" / "val.json"
-    if not split_file.exists():
-        pytest.skip(f"LeanDojo corpus not on disk: {split_file}")
-
-    corpus.reset_caches()
-    chosen = None
-    for theorem in list(corpus.iter_replay_passing("novel_premises", "val"))[:60]:
-        k = len(theorem.traced_tactics) - 1
-        hint2 = context._count_tokens(context.render(theorem, k, "hint", 2).text)
-        hint3 = context._count_tokens(context.render(theorem, k, "hint", 3).text)
-        if hint3 > hint2:
-            chosen = (theorem, k, hint3)
-            break
-
-    assert chosen is not None, "no theorem exercised the noise padding path"
-    theorem, k, hint3_tokens = chosen
-    noise3_tokens = context._count_tokens(context.render(theorem, k, "noise", 3).text)
-    assert noise3_tokens == hint3_tokens, (
-        f"{theorem.full_name} k={k}: noise:3 is {noise3_tokens} tokens but "
-        f"hint:3 is {hint3_tokens}"
-    )
 
 
 # ---------------------------------------------------------------------------

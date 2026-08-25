@@ -244,3 +244,9 @@ exclusively.
   `lean_eval.ipynb`'s cells) runs on the main `.venv` and therefore never
   imports `smolbench.deduction.lean.verify` or opens a real Dojo session --
   see "Generation -> verification split" above.
+
+## Results and data archived (2026-08-25)
+
+`results/` and `data/` were removed from the tree and attached to PR #4 as
+`pr4_evidence_and_data_2026-08-25.zip`; see `notebooks/README.md` for the
+contents, hashes, and how to restore or regenerate each file.

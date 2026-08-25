@@ -32,7 +32,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -424,85 +423,11 @@ def _git(*args: str) -> str:
                           capture_output=True, text=True).stdout
 
 
-@pytest.fixture(scope="module")
-def tracked() -> set[str]:
-    """Every path in git's index (tracked or staged) under a results dir.
-
-    This reads the index, not the worktree: a results directory is
-    gitignored wholesale, so "the file is on disk" proves nothing about
-    whether the caller would ever receive it. This skips only when git
-    itself is unavailable, never when the query merely comes back empty,
-    which the non-empty check below turns into a failure.
-    """
-    if shutil.which("git") is None:
-        pytest.skip("git binary not available")
-    try:
-        _git("rev-parse", "--git-dir")
-    except subprocess.CalledProcessError:
-        pytest.skip("not a git repository")
-    return set(_git("ls-files", "--cached", "--", "notebooks/*/results/*").split())
 
 
-def test_tracked_results_files_were_found(tracked):
-    """Guard every gate below against a vacuous pass."""
-    assert len(tracked) >= 30, sorted(tracked)
 
 
-def test_every_tracked_writeup_has_a_verified_manifest(tracked, em):
-    """The gate. Every tracked .md/.txt under notebooks/*/results/ is checked.
-
-    It must sit in a directory that carries a tracked-or-staged
-    EVIDENCE.json. It must itself be listed in that manifest. Every .md
-    must be declared role 'writeup', so its citations are actually
-    scanned. And the manifest must verify.
-    """
-    writeups = sorted(p for p in tracked
-                      if Path(p).suffix in em.WRITEUP_SUFFIXES
-                      and Path(p).name != em.MANIFEST_NAME)
-    assert len(writeups) >= 4, writeups
-
-    for rel in writeups:
-        d = Path(rel).parent
-        mf = (d / em.MANIFEST_NAME).as_posix()
-        assert mf in tracked, f"{rel}: no tracked-or-staged {em.MANIFEST_NAME} in {d}"
-
-        manifest = json.loads((REPO / mf).read_text())
-        target = (REPO / rel).resolve()
-        listed = [e for e in manifest["entries"]
-                  if not e["relpath"].startswith("tarball:")
-                  and (REPO / d / e["relpath"]).resolve() == target]
-        assert listed, f"{rel}: not listed in {mf}"
-        if Path(rel).suffix == ".md":
-            assert listed[0]["role"] == "writeup", \
-                f"{rel}: listed as {listed[0]['role']!r}, must be 'writeup' to be scanned"
 
 
-def test_every_tracked_manifest_verifies(tracked, em):
-    manifests = sorted(p for p in tracked if Path(p).name == em.MANIFEST_NAME)
-    assert manifests, "no EVIDENCE.json is tracked or staged"
-    for mf in manifests:
-        r = em.verify(REPO / Path(mf).parent)
-        assert r.ok, f"{mf}:\n  " + "\n  ".join(r.failures)
-        assert r.n_entries > 0
 
 
-def test_regime_mean_interim_raw_is_marked_superseded(tracked, em):
-    """The audited defect, pinned as a regression test.
-
-    ``all_rows_leg2_final_raw.jsonl.gz`` is committed under a ``_final_``
-    name, but is the interim 243-row raw. The true 331-row raw of the
-    n=399 draw lives only inside the preserved tarball. Whatever else the
-    manifest says, it must say that.
-    """
-    rel = "notebooks/deduction/results/runs/regime_mean_2026-08-21"
-    assert f"{rel}/{em.MANIFEST_NAME}" in tracked
-    manifest = json.loads((REPO / rel / em.MANIFEST_NAME).read_text())
-    interim = [e for e in manifest["entries"]
-               if e["relpath"].endswith("all_rows_leg2_final_raw.jsonl.gz")
-               and not e["relpath"].startswith("tarball:")]
-    assert len(interim) == 1, manifest["entries"]
-    note = interim[0].get("note", "")
-    assert "SUPERSEDED" in note.upper()
-    assert "all_rows_leg2_full_raw.jsonl.gz" in note
-    assert any(e["relpath"].endswith("!r6-regime/all_rows_leg2_full_raw.jsonl.gz")
-               for e in manifest["entries"]), "the true raw is not pinned"

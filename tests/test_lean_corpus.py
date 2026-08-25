@@ -96,32 +96,5 @@ def test_data_root_default_anchoring(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_replay_passing_sidecars_resolve_to_committed_files(monkeypatch):
-    """The replay-passing sidecars follow data_root() to notebooks/deduction/data."""
-    monkeypatch.delenv("SMOLBENCH_LEAN_DATA", raising=False)
-    corpus.reset_caches()
-    for split in ("val", "test"):
-        p = corpus.replay_passing_path("novel_premises", split)
-        assert p.parent.parts[-3:] == ("notebooks", "deduction", "data"), p
-        assert p.exists(), f"committed sidecar missing at resolved path: {p}"
 
 
-def test_align_asset_loads_from_relocated_data_dir(monkeypatch):
-    """`lean3.AlignMap.load()` resolves its asset off `data_root().parent`.
-
-    `load()` returns None, not an error, when the asset is absent. So a
-    non-None result proves the default resolution lands on the committed
-    `lean3_align.json.gz` file in its new home.
-    """
-    import smolbench.deduction.lean.lean3 as lean3
-
-    monkeypatch.delenv("SMOLBENCH_LEAN_DATA", raising=False)
-    corpus.reset_caches()
-
-    expected = corpus.data_root().parent / lean3.ALIGN_ASSET_NAME
-    assert expected.parent.parts[-3:] == ("notebooks", "deduction", "data"), expected
-    assert expected.exists(), f"committed align asset missing at: {expected}"
-
-    amap = lean3.AlignMap.load()
-    assert amap is not None, "align asset did not load from its default path"
-    assert amap.lean3_to_lean4, "align map loaded but is empty"
