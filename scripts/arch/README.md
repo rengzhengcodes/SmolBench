@@ -84,3 +84,10 @@ linear attention, Mamba-2, mixture-of-experts). They were validated with the
 `dataviz` skill's palette validator for colour-vision separation and surface
 contrast against both the light and dark page surfaces. Every coloured cell
 also carries its meaning in text, so nothing on the page depends on hue alone.
+
+## Built outputs are not tracked (since 2026-08-25)
+
+`page_data.json` and `model_architectures.html` were removed from the tree and
+archived on PR #4 (see `notebooks/README.md`). Run
+`.venv/bin/python scripts/arch/build_page.py` before `check_annotations.py` or
+`render_check.mjs`; both read the built files.
