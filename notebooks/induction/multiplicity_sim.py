@@ -669,7 +669,6 @@ def part4(rng, n_sims=4000):
     lad_pair_ladder = np.array(ladder_of_pair)
 
     def flag_full(rej):
-        out = np.zeros(rej.shape[0])
         nf = np.where(ladder_nonflat)[0]
         got = np.zeros((rej.shape[0], 28), dtype=bool)
         for t_ in range(84):

@@ -82,7 +82,7 @@ from typing import Dict, List
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from smolbench.evals import Marks, Numeric, ToF  # noqa: E402
+from smolbench.evals import Marks  # noqa: E402
 from smolbench.evals.parsing import parse_numeric, parse_tof  # noqa: E402
 
 STUDIES = {

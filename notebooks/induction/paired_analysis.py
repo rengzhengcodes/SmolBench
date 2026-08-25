@@ -63,7 +63,6 @@ Run (ephemeral env via --no-project, per repo convention):
 import re
 import sys
 from collections import defaultdict
-from itertools import combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -73,7 +72,6 @@ from scipy.stats import binom, chi2
 
 from power_analysis import (  # noqa: E402  (path shim must precede the import)
     ALPHA,
-    FAMILIES,
     INFOS,
     MODELS,
     N_HARMONICS,

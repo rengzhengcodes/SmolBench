@@ -77,16 +77,6 @@ WATCHDOG_PY: str = _asset("watchdog.py.txt")
 # render_user_data easy to reason about.
 USER_DATA_TEMPLATE: str = _asset("user_data.sh")
 
-# Cloud-init for the TRAINING box (scripts/lean_train_ec2.py): mount NVMe ->
-# /opt/train (HF cache + checkpoints), schedule ONLY the max-lifetime
-# backstop. No watchdog, no vLLM, no secrets (HF_TOKEN arrives later over
-# SSH). ``@@MAX_LIFETIME_MIN@@`` is the sole placeholder. Its NVMe-mount block
-# is a near-twin of user_data.sh's -- kept as two independent files on
-# purpose (the divergences: mount point, bind subdir, log wording -- are
-# semantic and were live-debugged separately; do not factor them together).
-TRAIN_USER_DATA_TEMPLATE: str = _asset("train_user_data.sh")
-
-
 def render_user_data(
     control_token: str,
     vllm_api_key: str,

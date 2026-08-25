@@ -48,7 +48,7 @@ unwanted; it is never selected implicitly.
 
 import functools
 import logging
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import requests
 
@@ -329,20 +329,3 @@ def for_model(model: str) -> Tokenizer:
     logging.info(f"tokenization.for_model: {model!r} -> {repo_id}")
     return HFTokenizer.from_repo(repo_id)
 
-
-def token_counts(tokenizer: Tokenizer, texts: Sequence[str]) -> list:
-    """Count tokens for several texts with one tokenizer (a readability shim).
-
-    Parameters
-    ----------
-    tokenizer : Tokenizer
-        The tokenizer to measure with.
-    texts : Sequence[str]
-        Texts to measure.
-
-    Returns
-    -------
-    list of int
-        ``tokenizer.count(t)`` for each `t`, in order.
-    """
-    return [tokenizer.count(text) for text in texts]

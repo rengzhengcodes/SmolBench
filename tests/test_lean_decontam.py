@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
-from smolbench.deduction.lean import decontam
 from smolbench.deduction.lean.decontam import HoldoutIndex, normalize_text, state_variants
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"

@@ -556,9 +556,8 @@ def build_config(key: str) -> dict:
 
     ``LEAN_RUN_NAME``, when unset or empty, falls back to
     ``f"scaling_{key}"`` (plus the shard suffix above, when present) --
-    matching both ``scripts/run_fleet.py``'s ``Lane`` naming convention and
-    ``smolbench.deduction.lean.figures``'s documented ``scaling_<model>``
-    run-directory convention.
+    matching ``scripts/run_fleet.py``'s ``Lane`` naming convention for
+    ``scaling_<model>`` run directories.
 
     Also reads ``LEAN_CELL_WHITELIST`` at CALL time and, when set,
     additionally performs FILE I/O (``runner.load_cell_whitelist`` reads

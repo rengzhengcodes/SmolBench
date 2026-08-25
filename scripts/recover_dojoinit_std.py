@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
 import importlib.util
 import json
 import logging
@@ -490,7 +489,6 @@ def stage_recover(args) -> None:
 
 
 def stage_report(args) -> None:
-    std45 = load_std45()
     report: Dict[str, Any] = {"lanes": {}, "recovery": RECOVERY_SOURCE}
     ref_keys: Optional[set] = None
     ref_unrecovered: Optional[set] = None

@@ -1854,7 +1854,6 @@ def _agent(
     and the best-effort graceful shutdown pass 0, to keep their own
     cadence and fail-fast semantics.
     """
-    last_exc: Optional[Exception] = None
     for attempt in range(connect_retries + 1):
         try:
             response = requests.request(
@@ -1865,8 +1864,7 @@ def _agent(
                 timeout=timeout,
             )
             break
-        except requests.exceptions.ConnectionError as exc:
-            last_exc = exc
+        except requests.exceptions.ConnectionError:
             if attempt == connect_retries:
                 raise
             time.sleep(15)
@@ -2847,14 +2845,6 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
 def agent_status() -> Dict[str, Any]:
     """Return the control agent's view: container state, health, recent docker logs."""
     return _agent(_require_state(), "GET", "/status")
-
-
-def stop_model() -> None:
-    """Remove the serving container, without touching the instance."""
-    state = _require_state()
-    _agent(state, "POST", "/stop")
-    if state.pop("serving", None) is not None:
-        _save_state(state)
 
 
 def shutdown_instance(wait: bool = True) -> None:

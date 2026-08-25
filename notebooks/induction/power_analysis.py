@@ -435,7 +435,7 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     # the mathematically correct "no evidence against the null" answer
     # for that simulation, not an artifact of the fallback.
     """
-    n_sims, n_rungs, k_strata = succ.shape
+    _, n_rungs, _ = succ.shape
     if n_rungs != 3:
         raise ValueError(
             f"gcmh_reject assumes 3 rungs (ladder-of-3 families); got axis-1 "

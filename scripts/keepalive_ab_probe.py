@@ -65,7 +65,6 @@ import concurrent.futures
 import logging
 import os
 import pathlib
-import re
 import sys
 import time
 from typing import Any, Dict, Tuple

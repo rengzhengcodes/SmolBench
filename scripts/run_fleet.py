@@ -113,7 +113,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -504,9 +504,8 @@ def lane_env(
     function passes. ``LEAN_RUN_NAME`` is CONFIRMED LOAD-BEARING: it is
     what lets :func:`sync_deduction_spool` (below) find the run
     directory at ``notebooks/deduction/results/runs/scaling_<key>/``,
-    matching ``smolbench.deduction.lean.figures``'s own convention that
-    run directories are named ``scaling_<model>`` under
-    ``<results_root>/runs/``.
+    the ``scaling_<model>`` run-directory convention that
+    ``notebooks/deduction/run_study.py`` also defaults to.
     """
     if base_env is None:
         import os

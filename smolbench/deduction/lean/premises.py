@@ -11,10 +11,6 @@ This module exposes three layers of premise data:
 - `body_with_proof(p)` — slices the source file from the premise's `start`
   to the next top-level declaration. This captures the proof body for
   theorems too.
-
-`transitive_files(seeds, depth)` does a BFS over file-level imports, for
-the `hint:3`/`hint:4` rungs. `premises_in_files(paths)` yields the
-premises declared in those files, for token-budget-bounded inclusion.
 """
 
 from __future__ import annotations
@@ -174,17 +170,6 @@ def body(p: Premise) -> str:
     return p.code
 
 
-def index_size() -> int:
-    """Count the unique premises indexed.
-
-    Returns
-    -------
-    int
-        Total number of unique premises in `_index()`.
-    """
-    return len(_index())
-
-
 # ---------------------------------------------------------------------------
 # Source-file slicing — captures real proof bodies (theorems too)
 # ---------------------------------------------------------------------------
@@ -295,92 +280,6 @@ def body_with_proof(p: Premise) -> str:
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
-
-
-# ---------------------------------------------------------------------------
-# File-level transitive closure (hint:3 / hint:4)
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _file_records() -> dict[str, dict]:
-    """Map `file_path -> {imports: [...], premises: [...]}`. Loaded once (~5s)."""
-    out: dict[str, dict] = {}
-    with (data_root() / "corpus.jsonl").open() as f:
-        for line in f:
-            r = json.loads(line)
-            out[r["path"]] = {"imports": r["imports"], "premises": r["premises"]}
-    return out
-
-
-def transitive_files(seed_files: set[str], depth: int) -> list[str]:
-    """Run a BFS over file imports, starting from `seed_files`.
-
-    Parameters
-    ----------
-    seed_files : set of str
-        Starting file paths.
-    depth : int
-        Number of BFS hops to expand.
-
-    Returns
-    -------
-    list of str
-        File paths discovered at hops 1..depth, excluding the seeds, in
-        BFS order. This order keeps the closest dependencies first, so
-        token-budget truncation drops the farthest ones.
-    """
-    if depth <= 0:
-        return []
-    records = _file_records()
-    visited: set[str] = set(seed_files)
-    frontier = list(seed_files)
-    out: list[str] = []
-    for _ in range(depth):
-        next_frontier: list[str] = []
-        for f in frontier:
-            rec = records.get(f)
-            if not rec:
-                continue
-            for imp in rec["imports"]:
-                if imp not in visited:
-                    visited.add(imp)
-                    next_frontier.append(imp)
-                    out.append(imp)
-        frontier = next_frontier
-    return out
-
-
-def premises_in_files(file_paths: list[str]) -> list[Premise]:
-    """Build Premise records for every premise declared in the given files.
-
-    Parameters
-    ----------
-    file_paths : list of str
-        File paths to collect premises from.
-
-    Returns
-    -------
-    list of Premise
-        One `Premise` per premise declared across `file_paths`, in file
-        order. Files not found in `_file_records()` contribute nothing.
-    """
-    records = _file_records()
-    out: list[Premise] = []
-    for fp in file_paths:
-        rec = records.get(fp)
-        if not rec:
-            continue
-        for p in rec["premises"]:
-            out.append(Premise(
-                full_name=p["full_name"],
-                code=p["code"],
-                start=tuple(p["start"]),  # type: ignore[arg-type]
-                end=tuple(p["end"]),      # type: ignore[arg-type]
-                kind=p["kind"],
-                file_path=fp,
-            ))
-    return out
 
 
 # ---------------------------------------------------------------------------

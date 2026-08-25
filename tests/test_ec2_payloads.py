@@ -225,7 +225,7 @@ def test_payload_assets_are_byte_clean():
     is real byte drift against the 16 KB cap.
     """
     asset_dir = Path(payloads.__file__).resolve().parent
-    for name in ("agent.py.txt", "watchdog.py.txt", "user_data.sh", "train_user_data.sh"):
+    for name in ("agent.py.txt", "watchdog.py.txt", "user_data.sh"):
         raw = (asset_dir / name).read_bytes()
         assert b"\r" not in raw, f"{name}: CR byte (CRLF checkout?)"
         assert raw.endswith(b"\n"), f"{name}: missing trailing newline"

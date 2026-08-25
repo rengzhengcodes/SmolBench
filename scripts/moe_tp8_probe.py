@@ -102,7 +102,6 @@ Pre-committed verdict rule (fixed before any data was seen)
 
 import argparse
 import datetime as _dt
-import hashlib
 import importlib.util
 import json
 import logging
@@ -365,7 +364,7 @@ def main() -> int:
             raise RuntimeError(f"{model}: determinism flags survived the strip: {base!r}")
         return base, spec_args
 
-    moe_base, moe_det = spec_split(args.moe_model)
+    _, moe_det = spec_split(args.moe_model)
     dense_base, dense_det = spec_split(args.dense_model)
 
     ARMS = {

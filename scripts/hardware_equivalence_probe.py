@@ -48,7 +48,6 @@ import json
 import logging
 import os
 import pathlib
-import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 

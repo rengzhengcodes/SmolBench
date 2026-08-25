@@ -225,12 +225,6 @@ class MergeEverythingTokenizer:
 
 
 @pytest.fixture
-def stub_tokenizer():
-    """A `StubTokenizer` instance (see that class for what it models)."""
-    return StubTokenizer()
-
-
-@pytest.fixture
 def stub_server():
     server = StubServer()
     thread = threading.Thread(target=server.serve_forever, daemon=True)

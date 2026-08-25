@@ -20,7 +20,7 @@ readme = "README.md"
 # claimed solely so the Lean theorem-proving verification path can share this
 # package: lean-dojo (the `lean` extra) pins Requires-Python <3.13 upstream,
 # so smolbench.deduction.lean.verify runs from a dedicated 3.12 venv (.venv-lean; see
-# notebooks/lean/README.md). All smolbench code is validated on both 3.12 and
+# notebooks/deduction/README.md). All smolbench code is validated on both 3.12 and
 # 3.14 by the offline test suite.
 requires-python = ">=3.12"
 
@@ -103,13 +103,13 @@ notebook = [
     "python-dotenv>=1.0.1",
     # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
     "smolbench[aws]",
-    # The analysis notebooks (e.g. notebooks/chromatic/induction_eval_analysis)
-    # plot results with matplotlib; pinned to a cp314-wheel release.
+    # smolbench.induction.figures plots results with matplotlib; pinned to a
+    # cp314-wheel release.
     "matplotlib>=3.10.0",
-    # The three power-analysis scripts (notebooks/*/power_analysis.py) import
-    # scipy.stats for the CMH chi-square / Welch t reference distributions,
-    # and periodic/periodic_moe additionally import statsmodels for the
-    # omnibus interaction test. Both were previously undeclared, so `uv sync`
+    # The two power-analysis scripts (notebooks/{induction,deduction}/
+    # power_analysis.py) import scipy.stats for the CMH chi-square / Welch t
+    # reference distributions, and notebooks/induction additionally imports
+    # statsmodels for the omnibus interaction test. Both were previously undeclared, so `uv sync`
     # would silently strip them and leave those scripts failing on
     # ModuleNotFoundError partway through a run.
     "scipy>=1.15",

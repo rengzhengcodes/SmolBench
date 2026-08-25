@@ -118,16 +118,12 @@ Real-model `run-cell`/`run-sweep` need a provider key
 user-opt-in only; `filter` (~70 min/split) produces the
 `replay_passing_*.jsonl` sidecar that non-explicit sweep configs need —
 none is checked in yet (`--e2e` sidesteps it with `theorems.source:
-explicit`). Figure scripts live in `notebooks/deduction/figures/` and read
-results under `notebooks/deduction/results/runs/` (committed once sweeps are
-run; currently empty — scripts warn and skip missing runs, and write PNGs
-next to themselves, so point `SMOLBENCH_LEAN_RESULTS` at scratch data with
-care: a pilot run's PNG overwrites the committed figure).
+explicit`). Sweep results land under `notebooks/deduction/results/runs/`.
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 
 `scripts/bedrock_smoke.py`, `scripts/ec2_lifecycle_smoke.py <step>`, and the
-`notebooks/{periodic,chromatic}/` notebooks provision/bill real AWS infra
+`notebooks/{induction,deduction}/` notebooks provision/bill real AWS infra
 (Bedrock, EC2 spot vLLM, SageMaker) and need `keys.env` credentials (never
 print those files). Runbook: `REFACTOR.md` §2.8 "Live-verification runbook";
 last live-verified 2026-07-02. Everything in this skill runs without them.

@@ -51,7 +51,6 @@ import json
 import pathlib
 import re
 import subprocess
-import sys
 import time
 import urllib.request
 from typing import Dict, List, Optional, Tuple

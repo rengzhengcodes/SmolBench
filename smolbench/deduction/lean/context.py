@@ -695,9 +695,3 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
         target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
         return _count_tokens(target_text) - _count_tokens(base_text) <= 0
     return False
-
-# Full rung universe per the README.
-ALL_RUNGS: tuple[tuple[Chain, int], ...] = (
-    ("stepk", 0), ("stepk", 1), ("stepk", 2),
-    ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3), ("hint", 4),
-)

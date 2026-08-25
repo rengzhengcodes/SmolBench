@@ -381,7 +381,7 @@ def reset_caches() -> None:
     `data_root()` re-reads `SMOLBENCH_LEAN_DATA` on every call. But the
     lru_cache-memoized loaders in this module (`load_split`), and in
     `smolbench.deduction.lean.premises` (`_index`, `_traced_root`,
-    `slice_full_decl`, `_file_records`, `_short_name_index`,
+    `slice_full_decl`, `_short_name_index`,
     `referenced_premises`), key their results only on their own
     arguments, not on the current `data_root()` value. A test that
     repoints `SMOLBENCH_LEAN_DATA` to a fixture directory mid-run would
@@ -409,6 +409,5 @@ def reset_caches() -> None:
     premises._index.cache_clear()
     premises._traced_root.cache_clear()
     premises.slice_full_decl.cache_clear()
-    premises._file_records.cache_clear()
     premises._short_name_index.cache_clear()
     premises.referenced_premises.cache_clear()

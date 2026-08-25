@@ -82,7 +82,7 @@ import os
 import pathlib
 import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = pathlib.Path("/workspace/SmolBench")
 OUT_DIR = pathlib.Path(__file__).resolve().parent

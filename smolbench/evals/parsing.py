@@ -86,13 +86,6 @@ UNPARSEABLE = "unparseable"
 #: correctly.
 EXPRESSION = "unevaluated-expression"
 
-#: Violations whose answer was still recovered -- the model obeyed the
-#: question, just not the formatting. Useful for "how much does relaxing the
-#: format contract change the score?"
-RECOVERABLE_VIOLATIONS = frozenset(
-    {PREFIXED, WRONG_LEXICON, VERBOSE, MARKUP, MULTIPLE_VALUES, EXPRESSION}
-)
-
 # Beyond this length, treat a response as prose/reasoning rather than an
 # answer. Only a terminal verdict is trusted past this length. See the
 # module docstring.
@@ -133,7 +126,6 @@ _DEGENERATE_WORD_RATIO = 0.05
 _MAX_ANSWER_DIGITS = 40
 
 _TOF_TOKEN = re.compile(r"\b(true|false)\b", re.IGNORECASE)
-_YES_NO = re.compile(r"\b(yes|no)\b", re.IGNORECASE)
 _INT = re.compile(r"-?\d+")
 _ANSWER_LEAD = re.compile(r"answer\s*[:\-=]*\s*\**\s*", re.IGNORECASE)
 _TERMINAL_TOF = re.compile(

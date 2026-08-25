@@ -222,8 +222,8 @@ exclusively.
   `iter_replay_passing`, which is already a subset of traced theorems, so
   this exclusion is inherited rather than applied again.
 - **Levels beyond this study's four rungs.** The full rung universe this
-  README documents (`smolbench.deduction.lean.context.ALL_RUNGS`) is
-  `stepk:0..2` / `hint:0..4`; `run_study.build_config` runs exactly four of
+  README documents is `stepk:0..2` / `hint:0..4` (`context.render` accepts
+  any of them); `run_study.build_config` runs exactly four of
   those rungs (`stepk:1`, `hint:2`, `noise:3`, `hint:3` -- see
   `lean_eval.ipynb`'s framing cell for what each is for and why). The
   renderer's own range check (`context.validate`) additionally accepts

@@ -97,22 +97,6 @@ class SFTExample:
     #: Number of tactics in the tail (``len(traced_tactics) - k``).
     n_tail: int
 
-    def to_json(self) -> dict:
-        """Serialize to the JSONL row shape consumed by the trainer.
-
-        Returns
-        -------
-        dict
-            ``{"system", "user", "assistant", "meta": {"full_name", "k",
-            "n_tail"}}`` -- the chat triple at top level (so a trainer can
-            read it directly) with provenance under ``meta``.
-        """
-        return {
-            "system": self.system,
-            "user": self.user,
-            "assistant": self.assistant,
-            "meta": {"full_name": self.full_name, "k": self.k, "n_tail": self.n_tail},
-        }
 
 
 def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str]:

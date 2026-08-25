@@ -216,7 +216,7 @@ The module is also runnable as a CLI, for use outside a notebook, where that
 mapping has to be supplied explicitly:
 
 ```
-python -m smolbench.evals.results_store notebooks/periodic_moe/results --tag gpt-oss-120b=moe
+python -m smolbench.evals.results_store notebooks/induction/results --tag gpt-oss-120b=moe
 ```
 
 `--tag model=tag` is repeatable (one per model in the study); `--prefix

@@ -114,7 +114,6 @@ def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
                     model = model[len("scaling_"):] if model.startswith("scaling_") else model
                 if "/" not in rest:
                     continue  # skip a stray object directly under the prefix
-                tail = rest.split("/", 1)[1]
                 out.append((leg, model, key, obj["Size"]))
     return out
 
