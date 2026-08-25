@@ -19,10 +19,11 @@ and attached to PR #4 as the release asset
 The four reports render from the 2026-08-16 S3 analysis snapshot
 (`scripts/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
 audit round reproduced `EXTENS_VS_NOISE_REPORT.txt` byte-identically.
-Writeups in this directory (`FAMILY_LADDER_ANALYSIS_2026-08-16.md`,
-`DOJOINIT_RECOVERY_2026-08-18.md`, `corrections_2026-08-21/*.json`) cite
-these reports by file and line number; those citations refer to the archived
-copies.
+The writeups that cite these reports by file and line number
+(`FAMILY_LADDER_ANALYSIS_2026-08-16.md`, `DOJOINIT_RECOVERY_2026-08-18.md`,
+`corrections_2026-08-21/*.json`) were themselves archived later the same day
+(third archive, below); every citation between them resolves inside the
+archive.
 
 The arch atlas outputs rebuild from the tracked inputs (`arch_configs_raw.json`,
 `arch_facts.json`, `annotations*.json`, `page_template.html`) with no network,
@@ -76,5 +77,41 @@ SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \
 
 Last live run 2026-08-25: 7 passed (all four `EVIDENCE.json` manifests
 verify byte-for-byte over S3, including tarball members).
+
+## Third archive: analysis writeups, audit records, and correction verdicts
+
+Also on 2026-08-25, the 19 non-code record files under `notebooks/` left the
+tree for `pr4_notebook_records_2026-08-25.zip`
+(sha256 `e05eff9840c167cdad0387190768ae1bc4c1d4b1432cf0ff0370236c9bbaf889`;
+on the PR #4 release and at the S3 prefix root, with each file also stored
+individually under `notebooks/` at the prefix):
+
+- `notebooks/CONTAMINATION_INVENTORY_2026-08-15.md`, `DEDUCTION_COVERAGE_DIAGNOSIS_2026-08-16.md`,
+  `DETERMINISM_PLAN_2026-08-16.md`, `DOJOINIT_RECOVERY_2026-08-18.md`,
+  `FAMILY_LADDER_ANALYSIS_2026-08-16.md` (the study's final analysis
+  writeup; its published form is the "Corrected Ladders" artifact from
+  `3bcc1519`), `PASS_AT_1_REVIEW_PLAN_2026-08-16.md`;
+- `notebooks/corrections_2026-08-21/*.json` (8 files): the 2026-08-21
+  adversarial-verification rounds, the applied-edits log, S3 re-gates, token-
+  matching re-verification, the gemma-4-e2b probe verdict, and two EC2
+  provisioning stubs. Every accepted correction in them was applied at
+  `3bcc1519`; nothing in them is pending;
+- `notebooks/induction/CONFOUND_AUDIT_2026-08-13.md`, `MULTIPLICITY_CMH_VARIANTS.md`,
+  `MULTIPLICITY_PLAN.md`, `PAIRED_ANALYSIS_RESULTS.md`, `POWER_ANALYSIS_2026-08-14.md`.
+
+Before archiving, each finding those records establish that the driver
+notebooks did not yet state was written into the notebooks themselves
+(`induction_eval.ipynb`: as-designed-vs-as-served roster note, the noise-arm
+collapse census, the 2026-08-18 config epoch, the earliest-wins selection
+rule and the Holm 119/210 headline, the prospective-only status of
+`power_analysis.py`; `lean_eval.ipynb`: the config epoch, the 944-cell lane
+and 111-unmeasurable-cell denominator, and that `error_bars.py` -- not
+`power_analysis.py` -- produces the published 14/21). Docstrings across
+`smolbench/`, `scripts/`, `notebooks/*/*.py` and `tests/` still cite these
+records by name as provenance; those citations point here.
+
+Security: the 19 files were scanned before archiving -- no keys, tokens,
+emails, or personal data; only terminated EC2 instance IDs, four ephemeral
+public IPs, and the account ID already present in this README.
 
 Nothing under `notebooks/` or `scripts/` is now regenerable-and-tracked.

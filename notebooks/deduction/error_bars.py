@@ -799,7 +799,7 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
         if meta["recovery"]:
             print("  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
                   "configuration. The headline\n  figures are Mathlib-only; see "
-                  "DOJOINIT_RECOVERY_2026-08-18.md caveat 3.")
+                  "DOJOINIT_RECOVERY_2026-08-18.md caveat 3 (archived 2026-08-25; see notebooks/README.md).")
     print()
 
     print(f"{'model':30s} {'pass@1':>7s} {'95% BCa':>17s} {'width':>7s} "

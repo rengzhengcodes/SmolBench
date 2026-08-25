@@ -68,8 +68,9 @@ SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents this script copies alongside the data, so the
 #: snapshot explains itself.
 PROVENANCE_DOCS = (
-    "notebooks/CONTAMINATION_INVENTORY_2026-08-15.md",
-    "notebooks/induction/CONFOUND_AUDIT_2026-08-13.md",
+    # CONTAMINATION_INVENTORY_2026-08-15.md and CONFOUND_AUDIT_2026-08-13.md
+    # were archived to S3 on 2026-08-25; notebooks/README.md records where.
+    "notebooks/README.md",
     "notebooks/deduction/README.md",
 )
 
