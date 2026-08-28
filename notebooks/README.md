@@ -11,7 +11,7 @@ elsewhere in this file -- the "Kept under `scripts/`" list, the
 archived-tests list, and the S3-archive test instructions -- already cites
 the current grouped paths):
 
-| Was (pre-2026-08-28, cited by the archive) | Now |
+| Was (pre-2026-08-28 flat path) | Now |
 | --- | --- |
 | `scripts/fleet_status.py`, `run_fleet.py`, `fleet_teardown.py`, `run_shards.py` | `scripts/fleet/` |
 | `scripts/lean_verify_rows.py`, `merge_lean_shards.py`, `split_lean_run_into_shards.py` | `scripts/deduction/` |
@@ -175,7 +175,7 @@ individually under `scripts/` and `tests/` at the prefix):
   needs as a directory. Outputs are committed cleared.
 - Tests archived with them: `tests/test_delivery_probe.py`,
   `test_determinism_probes.py`, `test_flip_probe.py`, `test_recover_dojoinit.py`
-  (116 tests; the offline suite is 1104 passed / 7 skipped after the move).
+  (116 tests; the offline suite was 1104 passed / 7 skipped immediately after the move; 1105 since the ec2 state-file pin).
 
 Kept under `scripts/` (live tooling), now grouped by job (see `scripts/README.md`):
 the `arch/` atlas pipeline, `fleet/run_fleet.py`, `fleet/fleet_status.py`,

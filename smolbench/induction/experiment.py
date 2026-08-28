@@ -115,7 +115,7 @@ warning, that these two calls cannot trigger GPU billing, still holds
 either way.
 
 CRITICAL: no ``smolbench.evals.providers.ec2`` import at module scope
---------------------------------------------------------------
+---------------------------------------------------------------------
 This module must NOT ``import smolbench.evals.providers.ec2`` at the top level, and
 none of its lazy imports may be hoisted there either. ``ec2.py``'s own
 module docstring documents that its ``EC2_*`` module-level constants
