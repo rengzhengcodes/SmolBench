@@ -150,11 +150,13 @@ individually under `scripts/` and `tests/` at the prefix):
   `test_determinism_probes.py`, `test_flip_probe.py`, `test_recover_dojoinit.py`
   (116 tests; the offline suite is 1104 passed / 7 skipped after the move).
 
-Kept in `scripts/` (live tooling): the `arch/` atlas pipeline, `run_fleet.py`,
-`fleet_status.py`, `fleet_teardown.py`, `run_shards.py`, `merge_lean_shards.py`,
-`split_lean_run_into_shards.py`, `lean_verify_rows.py`, `audit_run_completeness.py`,
-`regrade.py`, `snapshot_analysis_data.py`, `provision_results_bucket.py`,
-`evidence_manifest.py`, `bedrock_smoke.py`, `ec2_lifecycle_smoke.py`.
+Kept under `scripts/` (live tooling), now grouped by job (see `scripts/README.md`):
+the `arch/` atlas pipeline, `fleet/run_fleet.py`, `fleet/fleet_status.py`,
+`fleet/fleet_teardown.py`, `fleet/run_shards.py`, `deduction/merge_lean_shards.py`,
+`deduction/split_lean_run_into_shards.py`, `deduction/lean_verify_rows.py`,
+`results/audit_run_completeness.py`, `results/regrade.py`,
+`results/snapshot_analysis_data.py`, `results/provision_results_bucket.py`,
+`results/evidence_manifest.py`, `smoke/bedrock_smoke.py`, `smoke/ec2_lifecycle_smoke.py`.
 `smolbench/evals/ec2.py`'s provenance notes that named `hinge_probe.py` now
 point here. Security: all 21 files scanned -- no secrets or PII (cloud IDs
 only).

@@ -56,7 +56,7 @@ USAGE
 
     # Programmatic, per lane (how the archived repair launcher gated a
     # restored run dir before relaunching it):
-    #   sys.path.insert(0, "scripts"); from audit_run_completeness import audit_lane
+    #   sys.path.insert(0, "scripts/results"); from audit_run_completeness import audit_lane
     #   audit_lane(open(f"{run_dir}/all_rows.jsonl").read())["infra"]  # dead cells
 """
 
