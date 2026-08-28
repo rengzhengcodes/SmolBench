@@ -42,7 +42,7 @@ import numpy as np
 import pytest
 from scipy.stats import binom
 
-REPO = Path(__file__).resolve().parents[1]
+from tests._paths import REPO_ROOT as REPO
 
 
 # --------------------------------------------------------------------------- #

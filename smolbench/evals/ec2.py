@@ -268,7 +268,7 @@ EC2_S3_CACHE_REGION: str = os.getenv("EC2_S3_CACHE_REGION", AWS_REGION)
 EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2-role")
 # EC2_INFERENCE_BASE_URL / EC2_VLLM_API_KEY env overrides bypass the state
 # file and point the inference path at any OpenAI-compatible server (used
-# by tests/test_openai_compat.py's local stub server). The module reads
+# by tests/evals/test_openai_compat.py's local stub server). The module reads
 # them at call time, in _base_url/_api_key/_connection, not here. EC2_INFO
 # and EC2_INFO_RESPONSE (verbose logging) are likewise read at call time,
 # by the shared ChatClient.
@@ -374,7 +374,7 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 #     string via --chat-template, so DSV4_CHAT_TEMPLATE below reproduces
 #     the shipped encoding for the [system?, user] + generation-prompt
 #     shapes this repo sends (byte-equality pinned by
-#     tests/test_dsv4_chat_template.py against the vendored encoding
+#     tests/evals/test_dsv4_chat_template.py against the vendored encoding
 #     module). chat_template_kwargs {"thinking": true} drives both the
 #     template branch and vLLM's deepseek_v4 parser, whose initial state
 #     accepts the prompt-final <think>. DeepSeek-V3.1 DOES ship its own
@@ -1366,7 +1366,7 @@ evaluate = _CLIENT.evaluate
 # payloads.pack_user_data (both imported at the top of this module) before
 # it rides into RunInstances' UserData kwarg. See that package's docstring
 # for the payload contract (py3.10/stdlib-only, 16 KB user-data budget --
-# now measured post-compression) and tests/test_ec2_payloads.py for their
+# now measured post-compression) and tests/evals/test_ec2_payloads.py for their
 # pre-launch validation.
 
 
@@ -1403,7 +1403,7 @@ def _ec2_client(region: str):
 
     This stays a locally-named one-liner, instead of calling
     ``_aws.fresh_client`` directly at every call site, so
-    ``tests/test_ec2_provision.py`` and friends can keep doing
+    ``tests/evals/test_ec2_provision.py`` and friends can keep doing
     ``monkeypatch.setattr(ec2, "_ec2_client", ...)`` exactly as before the
     ``_aws.py`` extraction. Every call site in this module goes through
     this name, never ``_aws.fresh_client`` directly, so patching this one

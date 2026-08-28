@@ -15,9 +15,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._paths import SCRIPTS
+
 _SPEC = importlib.util.spec_from_file_location(
     "merge_lean_shards",
-    Path(__file__).resolve().parents[1] / "scripts" / "merge_lean_shards.py",
+    SCRIPTS / "merge_lean_shards.py",
 )
 merge_mod = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = merge_mod

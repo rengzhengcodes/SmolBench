@@ -54,7 +54,7 @@ dev = [
     # Offline test suite under tests/ (stub-server provider round trips,
     # golden quiz regressions, ec2 payload checks) -- no AWS creds needed.
     "pytest>=8.0",
-    # tests/test_dsv4_chat_template.py renders the inline DeepSeek-V4 serving
+    # tests/evals/test_dsv4_chat_template.py renders the inline DeepSeek-V4 serving
     # template and byte-compares it against the vendored shipped encoding; the
     # pin must RUN (not importorskip away) in both venvs.
     "jinja2>=3.1",
@@ -134,3 +134,11 @@ include-package-data = false
 # Pick up the top-level package and any subpackages below it.
 where = ["."]
 include = ["smolbench*"]
+
+[tool.pytest.ini_options]
+# A bare `pytest` invoked from the repo root previously failed: tests import
+# `tests._paths` and `tests.conftest`, which need the repo root on
+# sys.path, and pytest's default rootdir-insertion doesn't guarantee that
+# without a tests/__init__.py (deliberately not added -- see tests/README.md).
+testpaths = ["tests"]
+pythonpath = ["."]

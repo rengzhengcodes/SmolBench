@@ -20,14 +20,13 @@ against ``conftest.StubTokenizer``, not a real model's tokenizer. That
 keeps the fixture offline and byte-stable. (A downloaded tokenizer would
 make the golden depend on a network fetch and on an upstream repo nobody
 here controls.) What it pins is the generation pipeline, while
-tests/test_noise_token_match.py is what checks the pad behaves correctly
+tests/induction/test_noise_token_match.py is what checks the pad behaves correctly
 under real tokenizers.
 """
 
 import hashlib
 import json
 import string
-from pathlib import Path
 
 import pytest
 
@@ -48,10 +47,9 @@ from smolbench.induction.chromatic import (
     succession_query_gen,
     one_hop_year_query_gen,
 )
+from tests._paths import FIXTURES
 
-GOLDEN = json.loads(
-    (Path(__file__).parent / "fixtures" / "golden_quizzes.json").read_text()
-)
+GOLDEN = json.loads((FIXTURES / "golden_quizzes.json").read_text())
 
 # Minimal templates exercising every placeholder each generator produces.
 PERIODIC_TMPL = string.Template(

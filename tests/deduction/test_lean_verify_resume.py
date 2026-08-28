@@ -44,13 +44,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests._paths import SCRIPTS
+
 # ``scripts/`` is not an importable package, so the module is loaded by
 # path. This mirrors tests/test_flip_probe.py's convention for a
 # sibling script. The module name is unique to this file, so it never
-# collides with the copy tests/test_deduction_study.py loads and pops.
+# collides with the copy tests/deduction/test_deduction_study.py loads and pops.
 _SPEC = importlib.util.spec_from_file_location(
     "lean_verify_rows_resume_under_test",
-    Path(__file__).resolve().parents[1] / "scripts" / "lean_verify_rows.py",
+    SCRIPTS / "lean_verify_rows.py",
 )
 lvr = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = lvr

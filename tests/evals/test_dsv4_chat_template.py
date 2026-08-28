@@ -24,15 +24,15 @@ pin.
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 
 import pytest
 
 jinja2 = pytest.importorskip("jinja2")
 
 from smolbench.evals.ec2 import DSV4_CHAT_TEMPLATE
+from tests._paths import FIXTURES
 
-_VENDORED = Path(__file__).parent / "fixtures" / "dsv4" / "encoding_dsv4_vendored.py"
+_VENDORED = FIXTURES / "dsv4" / "encoding_dsv4_vendored.py"
 
 
 def _load_vendored():

@@ -1,6 +1,6 @@
 """Test ``InductionExperiment``, offline: no AWS, no network.
 
-This mirrors ``tests/test_replicates.py``'s style: a stub quiz factory,
+This mirrors ``tests/evals/test_replicates.py``'s style: a stub quiz factory,
 with no fake ``provider.evaluate`` needed here since
 ``InductionExperiment`` never calls the provider directly. It delegates to
 ``ReplicateHarness`` (already covered by ``test_replicates.py``) and to

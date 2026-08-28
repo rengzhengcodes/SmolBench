@@ -1126,7 +1126,7 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     Absence is detected via a ``ClientError`` whose ``Error.Code`` is
     ``"NoSuchKey"`` or ``"404"``. These are the two shapes a missing-key
     ``get_object`` is documented to raise, across boto3/test-fake
-    implementations in this repo -- see ``tests/test_results_store.py``'s
+    implementations in this repo -- see ``tests/evals/test_results_store.py``'s
     ``FakeS3Client``, which raises a real ``ClientError`` with code
     ``"NoSuchKey"``.
     """

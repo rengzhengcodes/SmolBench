@@ -10,7 +10,7 @@ Everything here runs offline on both interpreters: the main ``.venv``
 (Python 3.14, no ``lean_dojo``) and ``.venv-lean`` (Python 3.12, with it).
 There is no AWS call, no network access, and no Lean process. The
 end-to-end sweep talks to a local ``StubServer`` (the same fixture
-``tests/test_lean_runner.py`` uses) and a ``NullVerifier``. The S3 paths run
+``tests/deduction/test_lean_runner.py`` uses) and a ``NullVerifier``. The S3 paths run
 against an injected fake client.
 
 Import hygiene
@@ -29,7 +29,7 @@ other test modules read. The ``driver`` fixture below therefore snapshots
 This keeps the pollution inside a few microseconds of one fixture, instead
 of leaking into the rest of the suite. It keeps the post-import snapshot
 around so the tests can still check what the import did to the
-environment. (``tests/test_induction_study.py`` has the same fixture for
+environment. (``tests/induction/test_induction_study.py`` has the same fixture for
 the same reason. This is a deliberate copy, not shared code, so neither
 study's test module can break the other's by editing a common helper.)
 """
@@ -49,12 +49,12 @@ import pytest
 from smolbench.deduction.lean import corpus, runner
 from smolbench.deduction.lean.nullverify import NullVerifier
 from tests.conftest import StubServer, chat_completion
+from tests._paths import LEAN_MINI as FIXTURE
+from tests._paths import REPO_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER_PATH = REPO_ROOT / "notebooks" / "deduction" / "run_study.py"
 VERIFY_PATH = REPO_ROOT / "scripts" / "lean_verify_rows.py"
 INDUCTION_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
 
 #: The spec key every single-model test drives. This is a real key, not a
 #: synthetic one, so `COT_ARGS[KEY]` is a real reasoning-toggle payload, and

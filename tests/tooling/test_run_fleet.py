@@ -34,14 +34,13 @@ import importlib.util
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
 from smolbench.evals import Mark, Marks
 from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
+from tests._paths import REPO_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_FLEET_PATH = REPO_ROOT / "scripts" / "run_fleet.py"
 FLEET_STATUS_PATH = REPO_ROOT / "scripts" / "fleet_status.py"
 

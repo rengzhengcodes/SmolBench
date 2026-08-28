@@ -4,8 +4,8 @@
 own: no boto3 client construction, no network. ``_run_instances_kwargs``
 is a plain dict builder, and ``_instance_state`` runs here with
 ``_describe_instance`` monkeypatched out, so neither test needs
-credentials or a live instance. Compare tests/test_ec2_state.py (state-file
-round trips) and tests/test_ec2_payloads.py (on-instance payload scripts).
+credentials or a live instance. Compare tests/evals/test_ec2_state.py (state-file
+round trips) and tests/evals/test_ec2_payloads.py (on-instance payload scripts).
 Together the three files cover ec2.py's offline-testable surface. The live
 AWS lifecycle (actually calling provision_spot_instance/RunInstances) is
 exercised outside this offline suite.
@@ -154,7 +154,7 @@ def test_decode_user_data_gunzips_pack_user_data_output():
     """The normal, post-2026-08-18 case: gzip round-trips to the exact script.
 
     gzip-compressed bytes decode back to the exact rendered script, matching
-    pack_user_data's own round-trip contract. (tests/test_ec2_payloads.py
+    pack_user_data's own round-trip contract. (tests/evals/test_ec2_payloads.py
     exercises that contract from the write side; this is the read side.)
     """
     from smolbench.evals.payloads import pack_user_data
@@ -440,7 +440,7 @@ def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
     # This records the argument, not just the call. shutdown must clear
     # state as the owner of a specific instance, so a concurrent run's
     # freshly-written state for a different box is not deleted out from
-    # under it (see tests/test_ec2_state.py's ownership tests).
+    # under it (see tests/evals/test_ec2_state.py's ownership tests).
     monkeypatch.setattr(ec2, "_clear_state", lambda instance_id=None: cleared.append(instance_id))
 
     ec2.shutdown_instance(wait=True)  # must not raise

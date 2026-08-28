@@ -508,7 +508,7 @@ def find_relics(text: str, align: AlignMap | None = None) -> list[Relic]:
     This function applies six detection rules (see the inline comments
     below for each). Every rule is precision-guarded against real Lean 4
     constructs that superficially resemble a Lean 3 relic, and validated
-    against pilot model outputs (see ``tests/test_lean_lean3.py`` for the
+    against pilot model outputs (see ``tests/deduction/test_lean_lean3.py`` for the
     exact CLEAN/FLAGGED cases this was built against).
 
     Parameters
@@ -1068,7 +1068,7 @@ def synth_error(relics: list[Relic]) -> str:
     at, and reports, the first error it hits, so a multi-relic corrupted
     tail would, in reality, only ever surface one message to a repair
     loop at a time. The message shapes mimic what pilot runs actually
-    observed (see `tests/test_lean_lean3.py`), not the full fidelity of
+    observed (see `tests/deduction/test_lean_lean3.py`), not the full fidelity of
     Lean's real diagnostics.
 
     Parameters

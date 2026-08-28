@@ -89,7 +89,7 @@ different on top of it: the count-as-failure denominator rule, and the
 recovery rows' second schema. [Changed 2026-08-21: this file used to carry
 its own copy of the rules, plus a ``_check_against_loader`` runtime
 assertion that the two agreed. One rule cannot drift from itself.
-``tests/test_analysis_stats.py`` now pins the equivalence of this pool
+``tests/tooling/test_analysis_stats.py`` now pins the equivalence of this pool
 with ``load_joint_cells``'s, instead of re-deriving it on every run.] See
 ``load_joint_cells``'s docstring and
 ``notebooks/CONTAMINATION_INVENTORY_2026-08-15.md``.

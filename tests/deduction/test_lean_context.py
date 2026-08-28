@@ -4,14 +4,11 @@ The golden values below come from running render() on the fixture and
 checking the output by hand. They do not copy what the code emits now.
 """
 
-from pathlib import Path
-
 import pytest
 
 import smolbench.deduction.lean.context as context
 import smolbench.deduction.lean.corpus as corpus
-
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
+from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture

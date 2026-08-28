@@ -65,7 +65,7 @@ node scripts/arch/render_check.mjs                          # runs the page's re
 ```
 
 `--check` compares the fetched configs against
-`tests/fixtures/roster_configs.json`, the fixture `tests/test_deploy_specs.py`
+`tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
 pins against, on the four fields both hold; a mismatch means an upstream
 checkpoint moved under the study.
 

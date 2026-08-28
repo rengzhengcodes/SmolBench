@@ -61,7 +61,7 @@ def _fleet_status():
     This function loads the module by path, not by ``sys.path`` plus a
     bare ``import fleet_status``, for the same reason as
     ``run_fleet.py``'s identical helper. This avoids any risk of colliding
-    with how ``tests/test_run_fleet.py`` loads these files under private
+    with how ``tests/tooling/test_run_fleet.py`` loads these files under private
     module names. It also keeps this module's own import-time footprint
     to nothing but name and constant definitions: `fleet_status.py` loads
     only once this script's `main` (or a direct call to

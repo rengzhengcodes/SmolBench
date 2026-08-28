@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
-from pathlib import Path
 
+from tests._paths import REPO_ROOT as REPO
 
-REPO = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("run_shards", REPO / "scripts" / "run_shards.py")
 run_shards = importlib.util.module_from_spec(_spec)
 sys.modules["run_shards"] = run_shards

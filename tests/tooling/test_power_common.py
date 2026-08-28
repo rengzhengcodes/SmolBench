@@ -17,7 +17,8 @@ works no matter the invocation directory.
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._paths import REPO_ROOT
+
 sys.path.insert(0, str(REPO_ROOT / "notebooks"))
 
 import _power_common as pc
@@ -155,8 +156,11 @@ def test_results_dir_anchored_on_file_not_cwd():
     )
     # A relative path string must resolve the same way as its absolute form
     # (exercises the `.resolve()` call), confirming cwd is not silently used
-    # as long as the resolved parent matches.
-    assert pc.results_dir(__file__) == REPO_ROOT / "tests" / "results"
+    # as long as the resolved parent matches. Written move-invariantly (this
+    # test file's own directory, not a hand-counted REPO_ROOT-relative path)
+    # so it keeps passing regardless of which tests/ subdirectory this file
+    # lives in.
+    assert pc.results_dir(__file__) == Path(__file__).resolve().parent / "results"
 
 
 def test_alpha_corrected_is_bonferroni_over_18_tests():

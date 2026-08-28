@@ -5,7 +5,7 @@ state file" section) is the only thing that survives a kernel restart
 between ``provision_spot_instance()`` and later notebook cells. These
 tests exercise its save/load/clear/require contract in isolation from any
 AWS call. No boto3 client is ever constructed here; that is
-tests/test_ec2_provision.py's job, owned by a different suite. This file
+tests/evals/test_ec2_provision.py's job, owned by a different suite. This file
 only touches ``_state_path`` / ``_load_state`` / ``_save_state`` /
 ``_clear_state`` / ``_require_state``, which are pure functions of the
 filesystem and the ``EC2_STATE_FILE`` env var.

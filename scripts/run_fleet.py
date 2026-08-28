@@ -154,7 +154,7 @@ _run_study_spec.loader.exec_module(run_study)
 from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Constants (exact names/values -- pinned by tests/test_run_fleet.py)
+# Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
 # ---------------------------------------------------------------------------
 DEFAULT_REGIONS = "us-east-1,us-east-2,us-west-2"
 # Post-study determinism pin (2026-08-18, user directive): the fleet used
@@ -1117,7 +1117,7 @@ def _fleet_status_module():
     This function loads the file by path, the same convention `run_study`
     above uses, rather than `sys.path` plus a bare `import
     fleet_status`. That avoids any risk of colliding with how
-    ``tests/test_run_fleet.py`` loads the very same file under its own
+    ``tests/tooling/test_run_fleet.py`` loads the very same file under its own
     private module name. This load is deferred, not a module-scope
     import, so importing `run_fleet` itself does nothing beyond
     building `LANES` and running its drift guard. This helper runs
@@ -1135,7 +1135,7 @@ class _LaneRun:
     """Mutable per-lane runtime state, tracked across monitor-loop ticks.
 
     This class is not part of this file's tested contract; nothing in
-    ``tests/test_run_fleet.py`` touches it. It exists purely to give
+    ``tests/tooling/test_run_fleet.py`` touches it. It exists purely to give
     the monitor-loop helpers below a single place to carry a lane's
     subprocess handle, its position in its phase sequence, and its
     restart/halt bookkeeping between ticks.

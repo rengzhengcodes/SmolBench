@@ -51,9 +51,9 @@ were removed from the tree and attached to the same PR #4 release as
   `data_root().parent`; restore them there before running the deduction study.
 - Seven tests that pinned those files (`tests/archived_tests_2026-08-25.py`
   inside the zip): the four tracked-manifest tests and `tracked` fixture from
-  `tests/test_evidence_manifest.py`, two sidecar-resolution tests from
-  `tests/test_lean_corpus.py`, and `test_noise_rung_is_token_matched_to_its_hint_counterpart`
-  from `tests/test_deduction_study.py`. The manifest *mechanism* tests remain.
+  `tests/tooling/test_evidence_manifest.py`, two sidecar-resolution tests from
+  `tests/deduction/test_lean_corpus.py`, and `test_noise_rung_is_token_matched_to_its_hint_counterpart`
+  from `tests/deduction/test_deduction_study.py`. The manifest *mechanism* tests remain.
 
 ### Where the archive lives, and how the gates run now
 
@@ -65,14 +65,14 @@ prefix root, the tree under `notebooks/deduction/`). The same two zips are
 attached to PR #4 as release assets.
 
 The seven tests moved out of the offline suite are re-homed in
-`tests/test_s3_archive.py` against that prefix. They stream each object
+`tests/deduction/test_s3_archive.py` against that prefix. They stream each object
 into memory through `tests/conftest.py::S3Archive` and never write to a
 local tree (user ruling 2026-08-25: archived data is accessed on AWS, not
 pulled locally). They skip unless opted in:
 
 ```bash
 SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \
-    .venv/bin/python -m pytest tests/test_s3_archive.py -q
+    .venv/bin/python -m pytest tests/deduction/test_s3_archive.py -q
 ```
 
 Last live run 2026-08-25: 7 passed (all four `EVIDENCE.json` manifests

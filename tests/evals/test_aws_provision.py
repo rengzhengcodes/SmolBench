@@ -11,7 +11,7 @@ inline code that ``provision_endpoint`` used to contain (the
 ``create_model``/``create_endpoint_config``/``create_endpoint`` calls and the
 teardown loop, formerly inline at roughly aws.py:350-412). The tests do not
 derive the literals from the builders themselves. Like
-``tests/test_aws_shared.py`` and ``tests/test_ec2_provision.py``, the point
+``tests/evals/test_aws_shared.py`` and ``tests/evals/test_ec2_provision.py``, the point
 is to catch the extraction drifting silently from what the inline code did,
 not to describe whatever the builders happen to return today.
 
@@ -21,7 +21,7 @@ stand in for the SageMaker client (see ``_FakeSagemakerClient`` below).
 ``aws._ensure_exec_role`` and ``aws.mint_sagemaker_token`` are monkeypatched
 out entirely, not exercised here. Their own behavior is covered elsewhere:
 ``_ensure_exec_role``'s underlying primitive is covered by
-``tests/test_aws_shared.py``'s ``ensure_sagemaker_execution_role`` tests.
+``tests/evals/test_aws_shared.py``'s ``ensure_sagemaker_execution_role`` tests.
 """
 
 import os
@@ -303,7 +303,7 @@ def _sagemaker_env(monkeypatch):
     ``os.environ`` directly inside the `with` body. A
     ``delenv(raising=False)`` on an already-absent var registers no undo,
     and would leak the minted token into later tests (for example
-    tests/test_openai_compat.py and tests/test_provider_dispatch.py, which
+    tests/evals/test_openai_compat.py and tests/evals/test_provider_dispatch.py, which
     also read ``AWS_INFERENCE_API_KEY`` through ``aws._api_key()``).
     """
     monkeypatch.setenv("INFERENCE_PROVIDER", "sagemaker")

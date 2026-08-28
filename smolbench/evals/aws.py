@@ -362,7 +362,7 @@ def _sagemaker_client():
 
     This function stays a locally-named one-liner, rather than calling
     ``_aws.fresh_client`` directly at every call site, so
-    ``tests/test_aws_provision.py`` can monkeypatch this one name to
+    ``tests/evals/test_aws_provision.py`` can monkeypatch this one name to
     substitute a recording fake. This exactly mirrors ec2.py's own
     ``_ec2_client`` wrapper.
 
@@ -460,7 +460,7 @@ def _ensure_exec_role() -> str:
 # ---------------------------------------------------------------------------
 # Design: `provision_endpoint`'s three CreateX calls and its teardown loop
 # used to build their request dicts inline. This module extracts them to
-# standalone functions, so `tests/test_aws_provision.py` can pin the exact
+# standalone functions, so `tests/evals/test_aws_provision.py` can pin the exact
 # payload each one produces (a dict-equality assertion) without
 # constructing a SageMaker client or a `provision_endpoint` context at all.
 # Every literal below (`SAGEMAKER_ENABLE_LOAD_AWARE`, the `1800`s
@@ -693,7 +693,7 @@ def provision_endpoint(model: str, timeout_min: int = 40):
     This function builds its three ``CreateX`` request payloads via
     ``_create_model_kwargs``/``_create_endpoint_config_kwargs``/
     ``_create_endpoint_kwargs`` (pure, offline-pinnable; see
-    ``tests/test_aws_provision.py``), and its teardown steps via
+    ``tests/evals/test_aws_provision.py``), and its teardown steps via
     ``_teardown_steps``. It does NOT delegate the actual polling to
     ``_aws.poll_until``'s caller-facing `on_timeout`/`check` machinery
     blindly. See the ``check``/``on_timeout`` closures below for how the
@@ -776,7 +776,7 @@ def provision_endpoint(model: str, timeout_min: int = 40):
         # endpoint {model}") while the skip/failure line does not ("teardown
         # skip endpoint: ..."). If the step label embedded `model` (e.g.
         # "endpoint {model}"), that would fix the success line but then
-        # wrongly leak into the skip line too, and `tests/test_aws_provision.py`'s
+        # wrongly leak into the skip line too, and `tests/evals/test_aws_provision.py`'s
         # `test_teardown_steps_order_and_calls` pins bare labels
         # (``"endpoint"``, not ``f"endpoint {model}"``) for exactly this
         # reason. So the loop stays here, hand-rolled with the original

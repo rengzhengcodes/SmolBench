@@ -12,7 +12,8 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+from tests._paths import REPO_ROOT as REPO
+
 _SPEC = importlib.util.spec_from_file_location(
     "deduction_power_analysis", REPO / "notebooks" / "deduction" / "power_analysis.py"
 )

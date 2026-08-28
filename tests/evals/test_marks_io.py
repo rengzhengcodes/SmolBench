@@ -1,11 +1,11 @@
 """Test result-file round trips: the safe plain-dict format and legacy tagged files."""
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 import yaml
 
 from smolbench.evals import Mark, Marks
+from tests._paths import FIXTURES
 
 
 
@@ -106,9 +106,7 @@ def test_loads_does_not_take_the_unsafe_path_for_a_mention_in_a_response():
 #: The archived file satisfies ``yaml.dump(yaml.unsafe_load(raw)) ==
 #: raw`` exactly, so this fixture is precisely what the historical
 #: writer would have emitted for those two marks.
-LEGACY_FIXTURE = Path(__file__).resolve().parent / "fixtures" / (
-    "legacy_marks_chromatic_moe_intens.yaml"
-)
+LEGACY_FIXTURE = FIXTURES / "legacy_marks_chromatic_moe_intens.yaml"
 
 
 def test_load_real_legacy_result_file():

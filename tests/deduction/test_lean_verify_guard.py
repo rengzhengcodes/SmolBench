@@ -53,11 +53,12 @@ def test_no_resume_discards_prior_verdicts_and_reverifies_every_group(tmp_path, 
     944 of its cells regenerated on new hardware.
     """
     import importlib.util, sys
-    from pathlib import Path
+
+    from tests._paths import SCRIPTS
 
     spec = importlib.util.spec_from_file_location(
         "lean_verify_rows_mod",
-        Path(__file__).resolve().parents[1] / "scripts" / "lean_verify_rows.py",
+        SCRIPTS / "lean_verify_rows.py",
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

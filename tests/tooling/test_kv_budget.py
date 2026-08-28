@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
+from tests._paths import REPO_ROOT as REPO
+
 sys.path.insert(0, str(REPO / "scripts" / "arch"))
 
 from kv_budget import kv_bytes, _layer_mix, _text_config  # noqa: E402

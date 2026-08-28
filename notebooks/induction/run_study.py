@@ -505,7 +505,7 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     This function calls the MODULE-LEVEL ``for_model`` by plain global
     lookup, not a captured default argument or local alias. That lets
     tests monkeypatch ``run_study.for_model`` to stay off the network.
-    See ``tests/test_induction_study.py``, which does exactly that (and
+    See ``tests/induction/test_induction_study.py``, which does exactly that (and
     also monkeypatches ``run_study.make_quizzes`` for the same reason) to
     keep the offline suite from downloading a tokenizer.
     """

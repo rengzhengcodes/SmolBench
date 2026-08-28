@@ -35,11 +35,10 @@ import json
 import subprocess
 import sys
 import tarfile
-from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+from tests._paths import REPO_ROOT as REPO
 
 
 @pytest.fixture(scope="module")

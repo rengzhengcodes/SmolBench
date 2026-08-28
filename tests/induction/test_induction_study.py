@@ -32,7 +32,6 @@ import hashlib
 import importlib.util
 import os
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -40,13 +39,13 @@ from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
 from smolbench.evals.results_store import experiment_name
 
 from conftest import StubTokenizer
+from tests._paths import REPO_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 
 # The smoke entry predates the study and is not a counted rung. Every
 # other spec key is one of the 21 study models (the same split
-# tests/test_deploy_specs.py makes).
+# tests/evals/test_deploy_specs.py makes).
 STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
 
 # The study's spec-key to analysis-tag map, copied from the study

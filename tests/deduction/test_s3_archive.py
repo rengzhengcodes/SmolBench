@@ -34,8 +34,8 @@ from pathlib import Path
 import pytest
 
 from smolbench.deduction.lean import corpus
+from tests._paths import REPO_ROOT as REPO
 
-REPO = Path(__file__).resolve().parents[1]
 RESULTS = "notebooks/deduction/results"
 DATA = "notebooks/deduction/data"
 CORPUS = f"{DATA}/leandojo_benchmark_4"
@@ -56,7 +56,7 @@ def em():
 
 
 # ---------------------------------------------------------------------------
-# Evidence manifests (from tests/test_evidence_manifest.py)
+# Evidence manifests (from tests/tooling/test_evidence_manifest.py)
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
 
 
 # ---------------------------------------------------------------------------
-# Data sidecars (from tests/test_lean_corpus.py)
+# Data sidecars (from tests/deduction/test_lean_corpus.py)
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +193,7 @@ def test_align_asset_loads_from_archive(s3_archive):
 
 
 # ---------------------------------------------------------------------------
-# Token matching on the real corpus (from tests/test_deduction_study.py)
+# Token matching on the real corpus (from tests/deduction/test_deduction_study.py)
 # ---------------------------------------------------------------------------
 
 

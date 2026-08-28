@@ -28,8 +28,7 @@ import smolbench.deduction.lean.lean3 as lean3
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
 from tests.conftest import StubServer, chat_completion
-
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
+from tests._paths import LEAN_MINI as FIXTURE
 
 # Session-unique model ids so provider get_model_context_length lru_caches
 # don't bleed a stale ctx-length in from another test module.
@@ -1313,7 +1312,7 @@ def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
 # could not control `candidate_proof` content precisely enough to target specific relic
 # kinds. So instead, these tests hand-write a small `all_rows.jsonl` straight into a tmp
 # run dir and call `write_run_analysis` directly. This mirrors
-# `tests/test_lean_analyze_passn.py`'s approach for the separate `cli.cmd_analyze`
+# `tests/deduction/test_lean_analyze_passn.py`'s approach for the separate `cli.cmd_analyze`
 # table. That is NOT this function: the two share a near-identical column layout by
 # convention, but are independent implementations, and this WP only touches
 # `write_run_analysis`.

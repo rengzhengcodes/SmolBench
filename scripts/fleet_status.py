@@ -81,7 +81,7 @@ def fleet_rows(
         The default, ``None``, uses `_default_client_factory`, which
         builds a real boto3 client lazily. This injection seam makes this
         function testable with zero AWS SDK dependency; see
-        ``tests/test_run_fleet.py``'s ``_FakeEc2Client``.
+        ``tests/tooling/test_run_fleet.py``'s ``_FakeEc2Client``.
 
     Returns
     -------

@@ -6,13 +6,10 @@ corpus/premises lru_caches, so the loaders re-read from the fixture and
 not from any real dataset root.
 """
 
-from pathlib import Path
-
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
-
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
+from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture

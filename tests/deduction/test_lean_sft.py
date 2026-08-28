@@ -8,14 +8,11 @@ SMOLBENCH_LEAN_DATA at the committed 2-theorem fixture, the same
 fixture test_lean_corpus.py uses.
 """
 
-from pathlib import Path
-
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
 from smolbench.deduction.lean import context, prompt, sft
-
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
+from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture

@@ -26,11 +26,12 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
 from smolbench.evals.ec2 import DETERMINISM_ARGS, DSV4_CHAT_TEMPLATE, EC2_DEPLOY_SPECS
+
+from tests._paths import FIXTURES, REPO_ROOT
 
 #: All 22 deploy-spec keys (21 study rungs plus the qwen2.5-1.5b canary). The
 #: determinism-bundle tests below cover every entry, unlike STUDY_KEYS
@@ -46,9 +47,7 @@ ALL_KEYS = sorted(EC2_DEPLOY_SPECS)
 #: transcription into EC2_DEPLOY_SPECS.
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 
-ROSTER = json.loads(
-    (Path(__file__).parent / "fixtures" / "roster_configs.json").read_text()
-)
+ROSTER = json.loads((FIXTURES / "roster_configs.json").read_text())
 
 # The smoke entry predates the study and serves at 16k on a single small
 # GPU. Every other spec is a counted study rung and must obey the study
@@ -242,7 +241,7 @@ def test_ec2_vllm_image_default_is_digest_pinned():
     cwd-relative path, so it passes regardless of the directory pytest runs
     from.
     """
-    ec2_py = Path(__file__).resolve().parents[1] / "smolbench" / "evals" / "ec2.py"
+    ec2_py = REPO_ROOT / "smolbench" / "evals" / "ec2.py"
     source = ec2_py.read_text()
     match = re.search(r'os\.getenv\("EC2_VLLM_IMAGE",\s*"([^"]+)"', source)
     assert match, 'no os.getenv("EC2_VLLM_IMAGE", "...") default found in ec2.py'

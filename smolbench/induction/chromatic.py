@@ -59,8 +59,8 @@ quiz wrappers and the ``__main__`` demo build on. This module only supplies
 the generation machinery and its built-in query generators; it does not
 hold canonical configs for a live eval driver. No current notebook or
 script drives real eval runs through ``ChromaticIntervalsConfig`` -- the
-module is exercised by ``tests/test_golden_quizzes.py``,
-``tests/test_noise_token_match.py``, and ``tests/test_induction_semantics.py``.
+module is exercised by ``tests/induction/test_golden_quizzes.py``,
+``tests/induction/test_noise_token_match.py``, and ``tests/induction/test_induction_semantics.py``.
 The earlier ``notebooks/chromatic/`` notebooks that once drove it are
 archived (see ``smolbench/induction/README.md``).
 
@@ -82,7 +82,7 @@ plausible-but-wrong default would be worse than no default.
 
 Golden-hash contract
 ---------------------
-Generation is byte-pinned by ``tests/test_golden_quizzes.py``. A change
+Generation is byte-pinned by ``tests/induction/test_golden_quizzes.py``. A change
 to RNG call order or call count here (color/label sampling,
 marker/interval sampling, query sampling), or to the noise-padding
 scheme, breaks that pin. The fix belongs in the change, never in a
@@ -537,8 +537,8 @@ def get_random_exclusive_numeric_quiz(
 # Built-in query generators
 # ---------------------------------------------------------------------------
 # These are the importable task definitions (mirroring periodic.py's built-in
-# generators). The offline test suite (tests/test_golden_quizzes.py,
-# tests/test_noise_token_match.py, tests/test_induction_semantics.py) and
+# generators). The offline test suite (tests/induction/test_golden_quizzes.py,
+# tests/induction/test_noise_token_match.py, tests/induction/test_induction_semantics.py) and
 # the __main__ demo consume these SAME functions, so the statistically
 # load-bearing query sampling exists in exactly one place.
 

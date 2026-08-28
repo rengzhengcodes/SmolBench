@@ -15,14 +15,11 @@ Fixture cheat-sheet (tests/fixtures/lean_mini/random/val.json):
   chain or 3-gram keys, only pair keys.
 """
 
-from pathlib import Path
-
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
 from smolbench.deduction.lean.decontam import HoldoutIndex, normalize_text, state_variants
-
-FIXTURE = Path(__file__).parent / "fixtures" / "lean_mini"
+from tests._paths import LEAN_MINI as FIXTURE
 
 THEOREM_A_STMT = "n : ℕ\nhn : n > 0\n⊢ P n → Q n"
 THEOREM_A_STEP2_STATE = "n : ℕ\nh : P n\n⊢ R n"
