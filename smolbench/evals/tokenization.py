@@ -309,7 +309,7 @@ def for_model(model: str) -> Tokenizer:
 
     Notes
     -----
-    This function imports ``smolbench.evals.ec2`` INSIDE itself, never at
+    This function imports ``smolbench.evals.providers.ec2`` INSIDE itself, never at
     module scope. ``ec2.py``'s ``EC2_*`` module constants are captured
     from ``os.environ`` at IMPORT time, so an eager import here would
     freeze them for any notebook that imports the induction stack before
@@ -317,7 +317,7 @@ def for_model(model: str) -> Tokenizer:
     documented at length in ``smolbench.induction.experiment``. Deferring
     the import keeps this module safe to import from anywhere.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     spec = ec2.EC2_DEPLOY_SPECS.get(model)
     if spec is None:

@@ -49,7 +49,7 @@ def test_for_model_prefers_the_tokenizer_hf_id_override(record_repo, monkeypatch
     a spec can point at a repo that actually ships ``tokenizer.json``,
     without changing what gets served.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     monkeypatch.setitem(
         ec2.EC2_DEPLOY_SPECS,

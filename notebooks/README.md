@@ -126,7 +126,7 @@ individually under `scripts/` and `tests/` at the prefix):
   `tp8_hinge_probe.py`, `moe_tp8_probe.py`, `hardware_equivalence_probe.py`,
   `delivery_probe.py`, `streaming_ab_probe.py`, `keepalive_ab_probe.py`,
   `tp8_hinge_summary.py`. Their findings are the determinism bundle that is
-  now `smolbench.evals.ec2.DETERMINISM_ARGS` (the default config) and the
+  now `smolbench.evals.providers.ec2.DETERMINISM_ARGS` (the default config) and the
   streaming transport; their reports are in the evidence archive above.
 - 2026-08-14/16 incident-response launchers: `launch_gemma12b_deduction_shards.sh`,
   `relaunch_damaged_deduction.sh`, `resume_all_runs.sh`,
@@ -157,7 +157,7 @@ the `arch/` atlas pipeline, `fleet/run_fleet.py`, `fleet/fleet_status.py`,
 `results/audit_run_completeness.py`, `results/regrade.py`,
 `results/snapshot_analysis_data.py`, `results/provision_results_bucket.py`,
 `results/evidence_manifest.py`, `smoke/bedrock_smoke.py`, `smoke/ec2_lifecycle_smoke.py`.
-`smolbench/evals/ec2.py`'s provenance notes that named `hinge_probe.py` now
+`smolbench/evals/providers/ec2.py`'s provenance notes that named `hinge_probe.py` now
 point here. Security: all 21 files scanned -- no secrets or PII (cloud IDs
 only).
 

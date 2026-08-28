@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent))
 
-from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
+from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 _FACTS_PATH = _HERE / "arch_facts.json"
 #: Page-level copy (masthead, legend, method) -- written by hand.
 _ANNOTATIONS_PATH = _HERE / "annotations.json"

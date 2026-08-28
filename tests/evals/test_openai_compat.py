@@ -30,7 +30,7 @@ def ec2_env(stub_server, monkeypatch):
 
 
 def test_ec2_query_reasoning_content(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("7", reasoning_content="thought"))
     content, reasoning = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
@@ -38,7 +38,7 @@ def test_ec2_query_reasoning_content(ec2_env):
 
 
 def test_ec2_query_think_split(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("<think>step by step</think>\n7"))
     content, reasoning = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
@@ -47,7 +47,7 @@ def test_ec2_query_think_split(ec2_env):
 
 
 def test_ec2_query_missing_usage_tolerated(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("7", usage=None))
     content, _ = ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
@@ -74,7 +74,7 @@ def test_ec2_stream_is_off_by_default(ec2_env):
     Every row already collected in this study came over the non-streamed
     path, so the default must not move.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("7"))
     ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
@@ -87,7 +87,7 @@ def test_ec2_stream_round_trip_matches_non_streamed(ec2_env, monkeypatch):
     This is the property that makes a streamed lane comparable with a
     non-streamed one: transport changes, data does not.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     response = chat_completion("7", reasoning_content="thought")
     ec2_env.queue_response(response)
@@ -106,7 +106,7 @@ def test_ec2_stream_round_trip_matches_non_streamed(ec2_env, monkeypatch):
 
 
 def test_ec2_stream_preserves_usage_and_finish_reason(ec2_env, monkeypatch):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
     ec2_env.queue_response({
@@ -125,7 +125,7 @@ def test_ec2_stream_think_split_still_applies(ec2_env, monkeypatch):
     So a plain-text think block that arrives split across deltas is
     still split into channels.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
     ec2_env.queue_response(chat_completion("<think>step by step</think>\n7"))
@@ -153,7 +153,7 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
     is unchanged. The assertion is now strictly stronger: it pins both
     parity AND retention.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     reasoning_only = {
         "choices": [{"message": {"content": None, "reasoning": "long thought"},
@@ -193,7 +193,7 @@ def test_ec2_null_content_retains_reasoning_and_keeps_content_empty(ec2_env):
     it is what proves retaining the reasoning channel cannot promote a
     cap-hit into a graded answer or a Lean proof.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response({
         "choices": [{"message": {"content": None,
@@ -218,7 +218,7 @@ def test_ec2_null_content_retains_legacy_reasoning_key(ec2_env):
     with the streamed one on exactly this body. This was measured, not
     guessed. This test is the discriminator between the two readings.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response({
         "choices": [{"message": {"content": None, "reasoning": "legacy key"},
@@ -237,7 +237,7 @@ def test_ec2_null_content_and_no_reasoning_stays_none(ec2_env):
     `or ""`, and a truly empty row would become indistinguishable from
     a cap-hit.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response({
         "choices": [{"message": {"content": None}, "finish_reason": "stop"}],
@@ -280,7 +280,7 @@ def test_collect_stream_survives_usage_only_chunk():
 
 
 def test_ec2_query_context_guard(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("7", usage={"total_tokens": 999}))
     with pytest.raises(ValueError):
@@ -288,10 +288,10 @@ def test_ec2_query_context_guard(ec2_env):
 
 
 def test_ec2_system_prompt_injected_from_deploy_spec(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     # ministral's spec carries the [THINK]-protocol default system message.
-    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+    from smolbench.evals.providers.ec2 import MINISTRAL_THINK_SYSTEM
     ec2.query("user prompt", "ministral-3-14b", seed=1, context_length=200000)
     body = ec2_env.requests[-1]["body"]
     assert body["messages"][0] == {"role": "system", "content": MINISTRAL_THINK_SYSTEM}
@@ -300,7 +300,7 @@ def test_ec2_system_prompt_injected_from_deploy_spec(ec2_env):
 
 
 def test_ec2_evaluate_grades_and_orders(ec2_env):
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     quiz = (
         Numeric(prompt="q1", answer=7),
@@ -319,7 +319,7 @@ def test_ec2_evaluate_grades_and_orders(ec2_env):
 
 
 def test_openrouter_reasoning_fallback(stub_server, monkeypatch):
-    from smolbench.evals import openrouter
+    from smolbench.evals.providers import openrouter
 
     monkeypatch.setenv("OPENROUTER_BASE_URL", stub_server.base_url)
     stub_server.queue_response(chat_completion("True", reasoning="hmm"))
@@ -352,7 +352,7 @@ def test_primeintellect_query_and_context_length(stub_server, monkeypatch):
     already serves {"context_length": 100000} for any path containing
     "/models/".
     """
-    from smolbench.evals import primeintellect
+    from smolbench.evals.providers import primeintellect
 
     monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("PRIME_INTELLECT_API_KEY", "stub-key")
@@ -379,7 +379,7 @@ def test_primeintellect_team_id_header(stub_server, monkeypatch):
     must survive alongside it: the extra-headers merge cannot clobber
     auth.
     """
-    from smolbench.evals import primeintellect
+    from smolbench.evals.providers import primeintellect
 
     monkeypatch.setenv("PRIME_INTELLECT_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("PRIME_INTELLECT_API_KEY", "stub-key")
@@ -420,7 +420,7 @@ def test_primeintellect_evaluate_via_provider_dispatch(stub_server, monkeypatch)
 
 
 def test_aws_body_model_and_key_resolution(stub_server, monkeypatch):
-    from smolbench.evals import aws
+    from smolbench.evals.providers import aws
 
     monkeypatch.setenv("AWS_INFERENCE_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-key")
@@ -448,7 +448,7 @@ def test_complete_returns_chat_result_with_usage(ec2_env):
     prompt-cache hits. It lands alongside the other usage fields, the
     server-reported model id, and finish_reason.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(
         {
@@ -480,7 +480,7 @@ def test_complete_usage_absent_defaults_to_zero_and_none(ec2_env):
     total_tokens and finish_reason, the requested model id as a
     fallback. Never a KeyError.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2_env.queue_response(chat_completion("7", usage=None))
     result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
@@ -504,8 +504,8 @@ def test_complete_system_message_ordering_with_provider_prompt(ec2_env):
     default system message, must survive ahead of a caller-supplied
     system message, per complete()'s ``system`` parameter doc.
     """
-    from smolbench.evals import ec2
-    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+    from smolbench.evals.providers import ec2
+    from smolbench.evals.providers.ec2 import MINISTRAL_THINK_SYSTEM
 
     ec2.complete(
         "user prompt", "ministral-3-14b", seed=1, context_length=200000,
@@ -522,7 +522,7 @@ def test_complete_system_message_ordering_with_provider_prompt(ec2_env):
 
 def test_complete_system_message_without_provider_prompt(ec2_env):
     """No provider-level system_prompt for this model -> [system, user]."""
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     ec2.complete("user prompt", "qwen2.5-1.5b", seed=1, context_length=100, system="extra context")
     body = ec2_env.requests[-1]["body"]
@@ -543,9 +543,9 @@ def test_query_still_returns_tuple_and_forwards_system(ec2_env):
     ``system``, a new keyword-only argument, passes through to the same
     message ordering complete() produces.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
-    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+    from smolbench.evals.providers.ec2 import MINISTRAL_THINK_SYSTEM
 
     ec2_env.queue_response(chat_completion("7"))
     content, reasoning = ec2.query(

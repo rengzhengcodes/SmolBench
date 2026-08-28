@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import smolbench.evals.ec2 as ec2
+import smolbench.evals.providers.ec2 as ec2
 from smolbench.evals import payloads
 from smolbench.evals.payloads import AGENT_PY, WATCHDOG_PY, pack_user_data, render_user_data
 

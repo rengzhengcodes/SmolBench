@@ -50,7 +50,7 @@ Env-read timing: the module captures the PROVISIONING constants above this
 docstring (AWS_REGION, EC2_INSTANCE_TYPES, EC2_VLLM_IMAGE,
 EC2_EXPERIMENT_TAG, EC2_S3_MODEL_CACHE / EC2_S3_CACHE_REGION, and the other
 EC2_* module attributes near the top of this file) at IMPORT time. Set them
-before the first ``import smolbench.evals.ec2`` (e.g. in keys.env, loaded
+before the first ``import smolbench.evals.providers.ec2`` (e.g. in keys.env, loaded
 before the notebook's imports run), not right before calling
 provision_spot_instance(). This is deliberate: notebooks bind these as
 ordinary module attributes (``ec2.EC2_EXPERIMENT_TAG`` etc.), and a
@@ -95,6 +95,7 @@ from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 import requests
 
+import smolbench
 from smolbench.evals import _aws
 from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
@@ -159,10 +160,16 @@ EC2_AGENT_PORT: int = 9000
 # "periodic-induction" default is specific to THIS experiment. Other
 # experiments that share this module (e.g. chromatic) set
 # EC2_EXPERIMENT_TAG in their own env BEFORE the first `import
-# smolbench.evals.ec2`. This is an import-time capture (see "Env-read
+# smolbench.evals.providers.ec2`. This is an import-time capture (see "Env-read
 # timing" in the module docstring), so setting it later has no effect.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
-# Anchored to the repo root via this module's own location, NOT the cwd.
+# Anchored to the repo root via the installed package's own location, NOT
+# the cwd and NOT a depth count off this file. A depth count shifts
+# silently whenever the module changes directories -- this one already
+# did, from smolbench/evals/ into smolbench/evals/providers/, which turned
+# the old parents[2] into <root>/smolbench, one directory too deep. This
+# is the same `Path(smolbench.__file__).resolve().parents[1]` idiom that
+# results_store.py's `repo_root()` and deduction/lean/corpus.py use.
 # Notebook kernels and scripts run with arbitrary cwds (temp dirs
 # included), and a cwd-relative default once stranded a live instance's
 # state where no later session could find it. The file holds the control
@@ -170,7 +177,7 @@ EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
 # override is read at CALL time (in _state_path), so notebooks may set it
 # any time before the first provision/query call -- there is no
 # import-order trap.
-_DEFAULT_STATE_FILE: Path = Path(__file__).resolve().parents[2] / ".ec2_state.json"
+_DEFAULT_STATE_FILE: Path = Path(smolbench.__file__).resolve().parents[1] / ".ec2_state.json"
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # The serve timeout and the watchdog's loading-counts-as-active grace must
 # cover a COLD checkpoint pull from HF. A ~410 GB download proved that 90
@@ -1225,7 +1232,7 @@ def list_models(model: str = "") -> List[str]:
         instance serves exactly one model at a time (whichever
         ``serve_model`` last swapped in), so there is nothing to select by
         name. The parameter exists purely for signature parity with
-        ``smolbench.evals.aws.list_models(model="")``, whose SageMaker path
+        ``smolbench.evals.providers.aws.list_models(model="")``, whose SageMaker path
         DOES use it (to fill a templated per-endpoint base URL). A shared
         signature across providers lets ``smolbench.evals.provider``'s
         dispatch surface call ``list_models(model)`` uniformly, without

@@ -130,7 +130,7 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
 
     This function imports boto3 lazily, inside the default client
     factory. This matches this repo's house convention (see
-    ``smolbench.evals.ec2``): nothing reachable at import time requires
+    ``smolbench.evals.providers.ec2``): nothing reachable at import time requires
     the AWS SDK.
     """
     fleet_status = _fleet_status()

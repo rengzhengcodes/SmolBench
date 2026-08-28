@@ -26,7 +26,7 @@ for every lab". They never held more than three checkpoints still long
 enough to plot a ladder.
 
 Full deployment facts (hf_model_id, tensor parallelism, instance tier,
-reasoning-parser wiring) live in ``smolbench.evals.ec2.EC2_DEPLOY_SPECS``.
+reasoning-parser wiring) live in ``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``.
 See its "Family-ladder scaling study roster" comment block. THIS file is
 the single source of truth for the STUDY's config (seeds, info arms,
 per-model CoT toggles, budget derivation). The notebook
@@ -176,9 +176,9 @@ from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 # Anchored via __file__, never cwd. This MUST land before
-# smolbench.evals.ec2 is imported anywhere: ec2.py freezes its EC2_*
+# smolbench.evals.providers.ec2 is imported anywhere: ec2.py freezes its EC2_*
 # constants at import time (see InductionExperiment's module docstring,
-# "CRITICAL: no smolbench.evals.ec2 import at module scope"). NOT
+# "CRITICAL: no smolbench.evals.providers.ec2 import at module scope"). NOT
 # override=True: under the fleet, the supervisor sets up a per-lane
 # environment (INDUCTION_MODELS, INDUCTION_STATE_FILE, EC2_EXPERIMENT_TAG,
 # ...) before this file runs. keys.env populating already-set variables
@@ -282,7 +282,7 @@ SHARD = _parse_shard("INDUCTION_SHARD")
 # caller to remember two more environment variables, which removes that
 # footgun.
 #
-# This MUST execute before smolbench.evals.ec2 is imported below: ec2.py
+# This MUST execute before smolbench.evals.providers.ec2 is imported below: ec2.py
 # freezes its EC2_* constants from os.environ at import time, so a tag set
 # afterwards is silently ignored. Unsharded runs get an empty suffix.
 _LANE = ""
@@ -381,7 +381,7 @@ template = string.Template(
     "How many of the positions 1 through $seq_len include '$label'?"
 )
 
-# Spec key (smolbench.evals.ec2.EC2_DEPLOY_SPECS key, also vLLM's
+# Spec key (smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS key, also vLLM's
 # --served-model-name) -> short analysis tag used in result directory
 # names and figure legends. This is exactly EC2_DEPLOY_SPECS's 21
 # family-ladder entries: every key except the "qwen2.5-1.5b" single-GPU

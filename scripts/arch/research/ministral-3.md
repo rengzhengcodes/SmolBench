@@ -399,7 +399,7 @@ stacks disagree.**
 `with_hf_config` resolves `model_type: "ministral3"` via `MODEL_FOR_CAUSAL_LM_MAPPING_NAMES` →
 `Ministral3ForCausalLM` → registry entry `"Ministral3ForCausalLM": ("mistral", "MistralForCausalLM")` →
 `MistralAttention`, which finds no top-level `llama_4_scaling` → **`do_llama_4_scaling = False`**.
-And `smolbench/evals/ec2.py` explicitly forbids `--tokenizer-mode mistral` for these entries, so the
+And `smolbench/evals/providers/ec2.py` explicitly forbids `--tokenizer-mode mistral` for these entries, so the
 `params.json` adapter never runs.
 
 **INFERRED conclusion**: under vLLM loading the HF config, the Llama-4 query-temperature term is **not
@@ -486,7 +486,7 @@ mistral-common's `SpecialTokens` enum entries `begin_think = "[THINK]"` / `end_t
 VERIFIED ([mistral-common `base.py`](https://raw.githubusercontent.com/mistralai/mistral-common/main/src/mistral_common/tokens/tokenizers/base.py)).
 
 **Study-relevant**: because the protocol is template-defaulted rather than kwarg-gated, supplying any
-system message silently disables thinking. `smolbench/evals/ec2.py` handles this by injecting the exact
+system message silently disables thinking. `smolbench/evals/providers/ec2.py` handles this by injecting the exact
 default text as `system_prompt` (`MINISTRAL_THINK_SYSTEM`, md5 of the shipped template
 `f9ce03df8c692f42b2aeb78024e29f4f`, identical across all three rungs). Served with
 `--reasoning-parser mistral`. VERIFIED (repo source read).
@@ -516,7 +516,7 @@ Best statement: **Tekken, 131,072 vocab, ≥v13, not v15** — exact version UNV
 All three: `--reasoning-parser mistral --language-model-only --enable-prefix-caching`,
 `max_model_len: 131072` (**half** the 262144 the config allows), `system_prompt =
 MINISTRAL_THINK_SYSTEM`. TP: 3B = 1, 8B = 4, 14B = 4. Image `vllm/vllm-openai:nightly`.
-VERIFIED (`arch_facts.json` `served` block + `smolbench/evals/ec2.py`).
+VERIFIED (`arch_facts.json` `served` block + `smolbench/evals/providers/ec2.py`).
 
 ---
 
@@ -559,4 +559,4 @@ Configs (ground truth): `/workspace/SmolBench/scripts/arch/arch_configs_raw.json
 9. `mistralai/Ministral-8B-Instruct-2410` `config.json` (sliding_window 32768, layer_types, rope_theta 1e8)
 10. mistral-common `SpecialTokens` / `TokenizerVersion` — https://github.com/mistralai/mistral-common/blob/main/src/mistral_common/tokens/tokenizers/base.py
 11. NVIDIA Megatron-Bridge — Ministral 3. https://docs.nvidia.com/nemo/megatron-bridge/latest/models/mistral/ministral3.html
-12. Study serving config: `/workspace/SmolBench/smolbench/evals/ec2.py`, `/workspace/SmolBench/scripts/fleet/run_fleet.py`
+12. Study serving config: `/workspace/SmolBench/smolbench/evals/providers/ec2.py`, `/workspace/SmolBench/scripts/fleet/run_fleet.py`

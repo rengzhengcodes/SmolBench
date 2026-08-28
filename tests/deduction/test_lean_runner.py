@@ -624,8 +624,8 @@ def test_complete_receives_max_retries_request_timeout_system_seed(
     the response-shape assertions in `test_sweep_schema_and_dispatch`
     above, which only inspect what came BACK, never what was sent.
     """
-    import smolbench.evals.openrouter as orr
-    import smolbench.evals.primeintellect as pi
+    import smolbench.evals.providers.openrouter as orr
+    import smolbench.evals.providers.primeintellect as pi
 
     calls: list[dict] = []
 

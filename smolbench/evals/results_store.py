@@ -34,7 +34,7 @@ chain (profile config, instance metadata, etc. -- see
 
 This module reads both variables INSIDE :func:`resolve_store`, at call
 time, and never captures them as module-level constants. This mirrors
-``smolbench.evals.ec2``'s own documented hazard for its ``EC2_*``
+``smolbench.evals.providers.ec2``'s own documented hazard for its ``EC2_*``
 constants (see that module's docstring, "Env-read timing" section), for
 a structurally identical reason: every notebook's first cell calls
 ``load_dotenv(keys.env)`` AFTER ``import smolbench...``-style statements

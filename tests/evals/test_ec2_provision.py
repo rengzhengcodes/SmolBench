@@ -13,7 +13,7 @@ exercised outside this offline suite.
 
 import pytest
 
-from smolbench.evals import ec2
+from smolbench.evals.providers import ec2
 
 
 # ---------------------------------------------------------------------------

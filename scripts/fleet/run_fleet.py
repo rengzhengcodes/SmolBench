@@ -147,11 +147,11 @@ sys.modules[_run_study_spec.name] = run_study
 _run_study_spec.loader.exec_module(run_study)
 
 # `run_study`'s own import of `smolbench.induction.experiment` already
-# pulled in `smolbench.evals.ec2` (AFTER `load_dotenv` ran -- see the
+# pulled in `smolbench.evals.providers.ec2` (AFTER `load_dotenv` ran -- see the
 # import-order note in `run_study`'s docstring). This import is
 # therefore a `sys.modules` cache hit, not a second, differently-timed
 # import of `ec2.py`.
-from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
+from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
@@ -422,7 +422,7 @@ LANES: dict[str, Lane] = {
 # ---------------------------------------------------------------------------
 # This is an explicit ALLOWLIST, not `dict(os.environ)` plus overrides.
 # `run_study`'s own import (above) already froze THIS process's
-# `smolbench.evals.ec2` constants from `keys.env`. That means
+# `smolbench.evals.providers.ec2` constants from `keys.env`. That means
 # `os.environ` here can carry this study's OWN
 # `EC2_EXPERIMENT_TAG`/`EC2_INSTANCE_TYPES`/... -- a sibling study's
 # values, or leftovers from a previous manual run in this shell.
@@ -556,7 +556,7 @@ _SHUTDOWN_SNIPPET = (
     "import os; "
     "from smolbench.evals.results_store import repo_root; "
     "os.environ['EC2_STATE_FILE'] = str(repo_root() / os.environ['INDUCTION_STATE_FILE']); "
-    "from smolbench.evals.ec2 import shutdown_instance; "
+    "from smolbench.evals.providers.ec2 import shutdown_instance; "
     "shutdown_instance()"
 )
 
@@ -577,7 +577,7 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
         - ``"induction"``: ``[VENV_PYTHON, notebooks/induction/run_study.py]``.
         - ``"deduction"``: ``[VENV_PYTHON, notebooks/deduction/run_study.py]``.
         - ``"shutdown"``: ``[VENV_PYTHON, "-c", <snippet>]``, where the
-          snippet imports ``smolbench.evals.ec2`` and calls
+          snippet imports ``smolbench.evals.providers.ec2`` and calls
           ``shutdown_instance()`` -- run under ``lane_env(lane, "shutdown")``
           so ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS
           lane's box (see `_SHUTDOWN_SNIPPET`'s comment).
@@ -601,7 +601,7 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # `ec2.serve_model` logs exactly `serve_model: '<model>' is up at
 # http://<ip>:8000/v1` once it confirms the swapped-in checkpoint is
-# healthy (smolbench/evals/ec2.py, the `logging.info(f"serve_model:
+# healthy (smolbench/evals/providers/ec2.py, the `logging.info(f"serve_model:
 # {model!r} is up at {_base_url()}")` call in `serve_model`). The
 # in-flight line (`serve_model: requesting '<model>' ...`) must NOT
 # match. That in-flight line is the thing the family gate is waiting
@@ -1050,7 +1050,7 @@ def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
     This function uses boto3's ``upload_file`` directly, rather than
     shelling out to the ``aws`` CLI. The CLI is not a declared
     dependency of this repo, while boto3 already is (see
-    ``smolbench.evals.ec2``'s own lazy-import convention, which this
+    ``smolbench.evals.providers.ec2``'s own lazy-import convention, which this
     function follows: it imports boto3 INSIDE this function, not at
     module scope, so importing ``run_fleet`` needs no AWS SDK at all).
 

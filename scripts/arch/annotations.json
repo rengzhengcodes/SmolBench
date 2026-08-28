@@ -46,7 +46,7 @@
    "The KV figure is *growth* per token of context, and counts only the layers that attend globally. Windowed layers cap their cache at the window and recurrent mixers keep a fixed-size state, so neither grows with the sequence — folding them in would erase exactly the property the hybrid designs are built for. Where a checkpoint runs a different head geometry on its global layers than its flat config fields describe, the figure comes from that model's own annotation instead."
   ],
   "footer": [
-   "Built for the SmolBench family-ladder scaling study. Structural data fetched 2026-08-12 from Hugging Face; served-context and tensor-parallel figures from `smolbench/evals/ec2.py`.",
+   "Built for the SmolBench family-ladder scaling study. Structural data fetched 2026-08-12 from Hugging Face; served-context and tensor-parallel figures from `smolbench/evals/providers/ec2.py`.",
    "Colour categories were validated for colour-vision separation and surface contrast in both light and dark themes. Every coloured cell also carries its meaning in text, so nothing on this page depends on hue alone."
   ],
   "families": {}

@@ -539,7 +539,7 @@ tokenizer, 54/55 in the 4.5 / K-EXAONE tokenizer. Splitting client-side on the s
 `</think>` is exactly what the templates themselves do when re-serialising an assistant
 turn. `VERIFIED` [11].
 
-**One correction to `smolbench/evals/ec2.py`'s comment** ("no vLLM reasoning parser exists
+**One correction to `smolbench/evals/providers/ec2.py`'s comment** ("no vLLM reasoning parser exists
 for it"): no *EXAONE-named* parser exists — I checked `vllm/reasoning/` and there is none
 [9] — but all three vendor cards recommend reusing a generic one: `--reasoning-parser
 deepseek_r1` for 4.0, `qwen3` for 4.5, `deepseek_v3` for K-EXAONE (SGLang: `qwen3`) [7].

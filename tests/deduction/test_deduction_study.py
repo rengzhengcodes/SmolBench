@@ -21,7 +21,7 @@ both studies ship a file literally named ``run_study.py``, so a bare
 ``import run_study`` would be ambiguous about which one it got.
 
 The driver also calls ``load_dotenv(keys.env)`` at import time. It must:
-this has to populate the environment before ``smolbench.evals.ec2`` freezes
+this has to populate the environment before ``smolbench.evals.providers.ec2`` freezes
 its ``EC2_*`` constants. That call mutates this pytest process's
 ``os.environ`` for the whole session, including credential-shaped variables
 other test modules read. The ``driver`` fixture below therefore snapshots
@@ -409,7 +409,7 @@ def test_lane_env_defaults_resolves_bare_state_filename_against_repo_root(driver
 def test_import_sets_env_before_ec2_freezes_it():
     """The pre-import ``setdefault`` block beats ``ec2``'s import-time freeze.
 
-    ``smolbench.evals.ec2`` binds ``EC2_EXPERIMENT_TAG`` (and
+    ``smolbench.evals.providers.ec2`` binds ``EC2_EXPERIMENT_TAG`` (and
     ``EC2_VLLM_IMAGE``) as module constants at import time. So a tag
     exported after that import is silently ignored, and the lane tags its
     instance wrongly. That means the lane never finds the box again, and
@@ -425,12 +425,12 @@ def test_import_sets_env_before_ec2_freezes_it():
         "os.environ['LEAN_MODEL'] = 'glm-4.7'\n"
         "for junk in ('EC2_EXPERIMENT_TAG', 'EC2_STATE_FILE', 'LEAN_STATE_FILE'):\n"
         "    os.environ.pop(junk, None)\n"
-        "assert 'smolbench.evals.ec2' not in sys.modules\n"
+        "assert 'smolbench.evals.providers.ec2' not in sys.modules\n"
         f"spec = importlib.util.spec_from_file_location('d', r'{DRIVER_PATH}')\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "sys.modules['d'] = m\n"
         "spec.loader.exec_module(m)\n"
-        "from smolbench.evals import ec2\n"
+        "from smolbench.evals.providers import ec2\n"
         "assert ec2.EC2_EXPERIMENT_TAG == 'scaling-glm-4.7', ec2.EC2_EXPERIMENT_TAG\n"
         "assert ec2.EC2_VLLM_IMAGE == ("
         "'vllm/vllm-openai@sha256:"

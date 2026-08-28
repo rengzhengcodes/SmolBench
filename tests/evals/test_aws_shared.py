@@ -25,7 +25,8 @@ import json
 import pytest
 from botocore.exceptions import ClientError
 
-from smolbench.evals import _aws, aws, ec2
+from smolbench.evals import _aws
+from smolbench.evals.providers import aws, ec2
 
 # ---------------------------------------------------------------------------
 # poll_until: the generic wait-loop primitive every migrated ec2.py loop

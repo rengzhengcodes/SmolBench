@@ -28,7 +28,7 @@ order is the single most important property of this file. If you get it
 wrong, the file raises no exception. Instead, this lane's EC2 tag, state
 file, and vLLM image silently drift onto whatever value a
 fleet-supervisor export, an unrelated ``keys.env``, or
-``smolbench.evals.ec2``'s own hardcoded defaults happen to set. You
+``smolbench.evals.providers.ec2``'s own hardcoded defaults happen to set. You
 discover this drift only later, on a live billing box, when you notice two
 lanes swapped their served checkpoints.
 
@@ -46,14 +46,14 @@ lanes swapped their served checkpoints.
      NEVER a bare assignment, for all four variables. This way, a value
      the fleet supervisor already exported into this subprocess's
      environment always wins over this file's own default.
-  5. THEN, and only then, import ``smolbench.evals.ec2`` (transitively, via
+  5. THEN, and only then, import ``smolbench.evals.providers.ec2`` (transitively, via
      loading ``notebooks/induction/run_study.py`` in step 6 below) and
      anything else that reads ``EC2_*`` environment variables at MODULE
      SCOPE.
   6. Load ``notebooks/induction/run_study.py`` by file path (never a bare
      ``import run_study`` -- see the docstring of the loader block below for
      why), and bind ``MODELS`` / ``COT_ARGS`` from it.
-  7. Import ``smolbench.evals.ec2``, ``smolbench.deduction.lean.runner``,
+  7. Import ``smolbench.evals.providers.ec2``, ``smolbench.deduction.lean.runner``,
      and ``smolbench.deduction.lean.nullverify`` (``# noqa: E402`` on all
      three, matching ``notebooks/induction/run_study.py``'s own late-import
      style for the same reason).
@@ -62,7 +62,7 @@ WHY THIS ORDER IS CORRECT (verified against the current tree, not assumed
 from memory of some other file's contents -- see the note at the end of
 this section):
 
-  * ``smolbench/evals/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
+  * ``smolbench/evals/providers/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
     ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES``, and ``EC2_REGIONS`` via
     ``os.getenv(...)`` at MODULE SCOPE, and freezes each into a plain
     module constant. Python caches module imports in ``sys.modules``, so
@@ -70,13 +70,13 @@ this section):
     fixed for the rest of the process. An ``os.environ`` write after that
     import has NO effect on them, however you spell it. So our own
     ``setdefault`` calls (step 4) matter only if they land before the
-    FIRST import of ``smolbench.evals.ec2`` anywhere in this process
+    FIRST import of ``smolbench.evals.providers.ec2`` anywhere in this process
     (step 7, and transitively step 6 -- see below).
   * Step 6 loads ``notebooks/induction/run_study.py``. That module's own
     top-level code calls ``load_dotenv(.../induction/keys.env)`` as a side
     effect (see that file's own module docstring). This call pulls in
     ``smolbench.induction.experiment``, which imports
-    ``smolbench.evals.ec2``. So step 6 is ALSO the first point that
+    ``smolbench.evals.providers.ec2``. So step 6 is ALSO the first point that
     imports ``ec2.py``. Steps 4 and 6 must stay in this order.
   * That ``load_dotenv`` call does NOT pass ``override=True`` (confirmed by
     reading that file directly, not assumed). So it can only fill in
@@ -313,7 +313,7 @@ def lane_env_defaults(
           above.
         - ``"EC2_VLLM_IMAGE"``: digest-pinned to the build the 2026-08-16
           determinism hinge experiment certified (see
-          ``smolbench.evals.ec2.EC2_VLLM_IMAGE``'s own comment for the full
+          ``smolbench.evals.providers.ec2.EC2_VLLM_IMAGE``'s own comment for the full
           provenance). This driver reattaches to a box already serving
           under that same image during the induction phase, so using any
           other image here would risk a mid-study image swap.
@@ -332,7 +332,7 @@ def lane_env_defaults(
     See the module docstring's "MODULE IMPORT ORDER" section for why it
     uses ``setdefault`` specifically, and why the four resulting
     ``os.environ`` writes must land before the first import of
-    ``smolbench.evals.ec2``.
+    ``smolbench.evals.providers.ec2``.
 
     Examples
     --------
@@ -356,13 +356,13 @@ def lane_env_defaults(
 
 
 # ---------------------------------------------------------------------------
-# Env setdefaults -- MUST run before smolbench.evals.ec2 is imported by
+# Env setdefaults -- MUST run before smolbench.evals.providers.ec2 is imported by
 # anything (directly or transitively). See the module docstring's "MODULE
 # IMPORT ORDER" section for the full mechanical justification.
 # ---------------------------------------------------------------------------
 # Read RAW, unvalidated. The table that would let us validate LEAN_MODEL
 # (MODELS, loaded below) is not available yet. Validating it here would
-# require loading that table first, which would import smolbench.evals.ec2
+# require loading that table first, which would import smolbench.evals.providers.ec2
 # too early. Validation waits for selected_model(), called later from
 # main().
 _RAW_LEAN_MODEL: str = os.environ.get("LEAN_MODEL", "").strip()
@@ -457,7 +457,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # same reason: these imports are intentionally not at the top of the
 # file.
 # ---------------------------------------------------------------------------
-from smolbench.evals import ec2  # noqa: E402
+from smolbench.evals.providers import ec2 # noqa: E402
 from smolbench.deduction.lean import runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
@@ -766,7 +766,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         ``None`` (the default) makes this function lazily import ``boto3``
         INSIDE itself, and build a real client against `SPOOL_REGION`.
         boto3 is never imported at module scope, so importing this file
-        needs no AWS SDK at all (this mirrors ``smolbench.evals.ec2``'s
+        needs no AWS SDK at all (this mirrors ``smolbench.evals.providers.ec2``'s
         own lazy-import convention, and ``scripts/fleet/run_fleet.py``'s
         ``sync_deduction_spool``, which follows the same pattern). This
         parameter exists so tests can inject a fake client with no network

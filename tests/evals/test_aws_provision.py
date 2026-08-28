@@ -1,4 +1,4 @@
-"""Test smolbench/evals/aws.py's SageMaker provisioning, offline.
+"""Test smolbench/evals/providers/aws.py's SageMaker provisioning, offline.
 
 This file covers the pure kwargs builders (``_create_model_kwargs``,
 ``_create_endpoint_config_kwargs``, ``_create_endpoint_kwargs``,
@@ -28,7 +28,7 @@ import os
 
 import pytest
 
-from smolbench.evals import aws
+from smolbench.evals.providers import aws
 
 # ---------------------------------------------------------------------------
 # _create_model_kwargs: pinned against the pre-refactor create_model() call

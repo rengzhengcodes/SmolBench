@@ -5,7 +5,7 @@ The V4 repos ship no chat template (``chat_template.jinja`` 404s and
 2026-08-11). The shipped encoding lives in the repo's
 ``encoding/encoding_dsv4.py``. The family-ladder study serves V4 through
 vLLM's literal ``--chat-template`` string
-(``smolbench.evals.ec2.DSV4_CHAT_TEMPLATE``), so that hand-written Jinja
+(``smolbench.evals.providers.ec2.DSV4_CHAT_TEMPLATE``), so that hand-written Jinja
 must reproduce the shipped Python encoding byte-for-byte for every message
 shape this repo actually sends:
 
@@ -29,7 +29,7 @@ import pytest
 
 jinja2 = pytest.importorskip("jinja2")
 
-from smolbench.evals.ec2 import DSV4_CHAT_TEMPLATE
+from smolbench.evals.providers.ec2 import DSV4_CHAT_TEMPLATE
 from tests._paths import FIXTURES
 
 _VENDORED = FIXTURES / "dsv4" / "encoding_dsv4_vendored.py"

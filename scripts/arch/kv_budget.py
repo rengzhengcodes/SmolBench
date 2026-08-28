@@ -153,7 +153,7 @@ def main() -> None:
     args = parser.parse_args()
 
     sys.path.insert(0, str(_HERE.parent.parent))
-    from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
+    from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 
     raw = json.loads(_CONFIGS.read_text())
     gib = 1e9  # decimal GB, matching the 2026-08-13 audit tables

@@ -38,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from smolbench.evals import Mark, Marks
-from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
+from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 from tests._paths import REPO_ROOT
 
 RUN_FLEET_PATH = REPO_ROOT / "scripts" / "fleet" / "run_fleet.py"

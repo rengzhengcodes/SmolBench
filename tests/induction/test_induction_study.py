@@ -35,7 +35,7 @@ import sys
 
 import pytest
 
-from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
+from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 from smolbench.evals.results_store import experiment_name
 
 from conftest import StubTokenizer
@@ -109,7 +109,7 @@ def run_study():
     Two hazards this fixture exists to contain:
 
     1. The driver calls ``load_dotenv(keys.env)`` at import time. It
-       must: ``smolbench.evals.ec2`` freezes its ``EC2_*`` constants at
+       must: ``smolbench.evals.providers.ec2`` freezes its ``EC2_*`` constants at
        import. That mutates the pytest process's ``os.environ``,
        including ``SMOLBENCH_RESULTS_S3``, which would leak into every
        later test in the session. The snapshot/restore pair around the
@@ -170,7 +170,7 @@ def test_ministral_entries_are_present_but_empty(run_study, key):
     A ``chat_template_kwargs`` toggle would do nothing for these three
     (their shipped template has no thinking kwarg at all), so the entry
     must be present but empty, not absent. See the spec table's Ministral
-    note in ``smolbench/evals/ec2.py``.
+    note in ``smolbench/evals/providers/ec2.py``.
     """
     assert run_study.COT_ARGS[key] == {}
     assert EC2_DEPLOY_SPECS[key].get("system_prompt")

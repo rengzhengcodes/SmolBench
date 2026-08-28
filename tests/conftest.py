@@ -258,12 +258,12 @@ def _clear_provider_context_length_caches():
     """
     def _clear() -> None:
         try:
-            from smolbench.evals import openrouter
+            from smolbench.evals.providers import openrouter
             openrouter.get_model_context_length.cache_clear()
         except ImportError:
             pass
         try:
-            from smolbench.evals import primeintellect
+            from smolbench.evals.providers import primeintellect
             primeintellect.get_model_context_length.cache_clear()
         except ImportError:
             pass

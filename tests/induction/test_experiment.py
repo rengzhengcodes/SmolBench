@@ -4,7 +4,7 @@ This mirrors ``tests/evals/test_replicates.py``'s style: a stub quiz factory,
 with no fake ``provider.evaluate`` needed here since
 ``InductionExperiment`` never calls the provider directly. It delegates to
 ``ReplicateHarness`` (already covered by ``test_replicates.py``) and to
-``smolbench.evals.ec2``'s public lifecycle functions, both of which are
+``smolbench.evals.providers.ec2``'s public lifecycle functions, both of which are
 monkeypatched instead of hit for real. See
 ``smolbench/induction/experiment.py``'s module docstring for the
 lazy-import contract this file's
@@ -19,7 +19,7 @@ import sys
 import pytest
 
 from smolbench.evals import Mark, Marks, Numeric
-from smolbench.evals import ec2
+from smolbench.evals.providers import ec2
 from smolbench.evals.replicates import ReplicateHarness
 from smolbench.induction.experiment import InductionExperiment, repo_root
 
@@ -344,7 +344,7 @@ def test_importing_experiment_does_not_import_ec2():
             sys.executable,
             "-c",
             "import sys, smolbench.induction.experiment; "
-            "sys.exit(1 if 'smolbench.evals.ec2' in sys.modules else 0)",
+            "sys.exit(1 if 'smolbench.evals.providers.ec2' in sys.modules else 0)",
         ],
         cwd=str(repo_root()),
     )

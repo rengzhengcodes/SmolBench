@@ -1,6 +1,6 @@
 """Test the EC2 state-file lifecycle: offline, pure JSON and file logic.
 
-The state file (see smolbench/evals/ec2.py's module docstring, "Local
+The state file (see smolbench/evals/providers/ec2.py's module docstring, "Local
 state file" section) is the only thing that survives a kernel restart
 between ``provision_spot_instance()`` and later notebook cells. These
 tests exercise its save/load/clear/require contract in isolation from any
@@ -13,7 +13,8 @@ filesystem and the ``EC2_STATE_FILE`` env var.
 
 import pytest
 
-from smolbench.evals import ec2
+from smolbench.evals.providers import ec2
+from tests._paths import REPO_ROOT
 
 # A representative, but fake, state dict, shaped like what provisioning
 # actually writes (instance_id/public_ip/region plus the two secrets). See
@@ -40,7 +41,7 @@ def state_file(tmp_path, monkeypatch):
     ``.ec2_state.json``. (If a live experiment is running, that file would hold a real
     instance's secrets.) ``ec2._state_path()`` reads this env var at call time, not at
     import time (see test_state_file_env_read_at_call_time), so setting it through
-    monkeypatch here is sufficient even though ``smolbench.evals.ec2`` was already
+    monkeypatch here is sufficient even though ``smolbench.evals.providers.ec2`` was already
     imported when this test module was collected.
     """
     path = tmp_path / "state.json"
@@ -132,9 +133,9 @@ def test_require_state_returns_state_when_present(state_file):
 def test_state_file_env_read_at_call_time(tmp_path, monkeypatch):
     """EC2_STATE_FILE must be honored even though ec2 was already imported.
 
-    smolbench.evals.ec2 was already imported at collection time, by this very module,
+    smolbench.evals.providers.ec2 was already imported at collection time, by this very module,
     before this test's monkeypatch.setenv call runs. This is the load-bearing property
-    the notebooks depend on: they import smolbench.evals.ec2 once, then later load
+    the notebooks depend on: they import smolbench.evals.providers.ec2 once, then later load
     keys.env (which may set EC2_STATE_FILE) in a subsequent cell. An import-time-cached
     path would silently keep pointing at the default location, and two notebook runs
     could clobber each other's state.
@@ -189,3 +190,21 @@ def test_clear_state_without_an_id_stays_unconditional(state_file):
     ec2._save_state(SAMPLE_STATE)
     ec2._clear_state()
     assert ec2._load_state() is None
+
+
+def test_default_state_file_anchors_to_the_repo_root():
+    """Pin ``_DEFAULT_STATE_FILE`` to ``<repo root>/.ec2_state.json``.
+
+    The default is derived from the installed package's location
+    (``Path(smolbench.__file__).resolve().parents[1]``) rather than from a
+    depth count off this provider module's own ``__file__``. A depth count
+    is silent under a move: relocating ec2.py from ``smolbench/evals/`` into
+    ``smolbench/evals/providers/`` pushed the old ``parents[2]`` one
+    directory too deep, to ``<repo root>/smolbench/.ec2_state.json``. That
+    path is still gitignored, so no secret leaks, but it is not where any
+    session, script or runbook looks -- a live instance's state would be
+    written somewhere the next session cannot find it, stranding a billing
+    box with no error anywhere. Nothing else in the suite would notice,
+    because every other state test overrides ``EC2_STATE_FILE``.
+    """
+    assert ec2._DEFAULT_STATE_FILE.resolve() == (REPO_ROOT / ".ec2_state.json").resolve()

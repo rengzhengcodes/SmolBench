@@ -1,6 +1,6 @@
 """Run a Bedrock-mantle live smoke test: list_models plus one seeded evaluate.
 
-This script checks the cleanup-pass changes in smolbench/evals/aws.py:
+This script checks the cleanup-pass changes in smolbench/evals/providers/aws.py:
 METADATA_TIMEOUT_S on list_models, call-time formatting of
 AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE, the get_model_context_length
 env-or-default path after the _CONTEXT_LENGTHS removal, and the unchanged
@@ -19,7 +19,8 @@ os.environ["AWS_BEARER_TOKEN_BEDROCK"] = token
 os.environ["AWS_REGION"] = "us-east-1"
 os.environ["INFERENCE_PROVIDER"] = "aws"
 
-from smolbench.evals import ToF, aws, provider
+from smolbench.evals import ToF, provider
+from smolbench.evals.providers import aws
 
 models = aws.list_models()
 print(f"list_models: {len(models)} models; sample: {models[:5]}", flush=True)

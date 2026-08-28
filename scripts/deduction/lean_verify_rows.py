@@ -295,7 +295,7 @@ from smolbench.evals import _aws
 
 logging.basicConfig(level=logging.INFO)
 
-# Design: `_error_code = _aws.error_code` matches `smolbench/evals/ec2.py`'s own
+# Design: `_error_code = _aws.error_code` matches `smolbench/evals/providers/ec2.py`'s own
 # `_error_code = _aws.error_code` alias. Both reuse one shared implementation for
 # pulling `Error.Code` off a boto3/botocore exception, instead of re-deriving it here.
 _error_code = _aws.error_code

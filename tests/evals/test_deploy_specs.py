@@ -29,9 +29,9 @@ from collections import Counter
 
 import pytest
 
-from smolbench.evals.ec2 import DETERMINISM_ARGS, DSV4_CHAT_TEMPLATE, EC2_DEPLOY_SPECS
+from smolbench.evals.providers.ec2 import DETERMINISM_ARGS, DSV4_CHAT_TEMPLATE, EC2_DEPLOY_SPECS
 
-from tests._paths import FIXTURES, REPO_ROOT
+from tests._paths import FIXTURES
 
 #: All 22 deploy-spec keys (21 study rungs plus the qwen2.5-1.5b canary). The
 #: determinism-bundle tests below cover every entry, unlike STUDY_KEYS
@@ -239,9 +239,16 @@ def test_ec2_vllm_image_default_is_digest_pinned():
     ``__file__`` (this repo's convention, see for example
     ``smolbench/evals/payloads/__init__.py``'s ``_HERE``) instead of a
     cwd-relative path, so it passes regardless of the directory pytest runs
-    from.
+    from. It is derived from the module object's own ``__file__`` rather
+    than spelled out from the repo root, so relocating the provider module
+    (as the providers/ split just did) cannot leave this pin reading a
+    path that no longer exists.
     """
-    ec2_py = REPO_ROOT / "smolbench" / "evals" / "ec2.py"
+    from pathlib import Path
+
+    from smolbench.evals.providers import ec2 as ec2_mod
+
+    ec2_py = Path(ec2_mod.__file__)
     source = ec2_py.read_text()
     match = re.search(r'os\.getenv\("EC2_VLLM_IMAGE",\s*"([^"]+)"', source)
     assert match, 'no os.getenv("EC2_VLLM_IMAGE", "...") default found in ec2.py'
@@ -275,7 +282,7 @@ def test_deepseek_v4_rows_carry_the_inline_template_and_parser():
 
 
 def test_ministral_rows_carry_the_think_protocol_system_prompt():
-    from smolbench.evals.ec2 import MINISTRAL_THINK_SYSTEM
+    from smolbench.evals.providers.ec2 import MINISTRAL_THINK_SYSTEM
 
     for key in ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b"):
         assert EC2_DEPLOY_SPECS[key].get("system_prompt") == MINISTRAL_THINK_SYSTEM, key
@@ -301,7 +308,7 @@ def test_hf_model_ids_match_the_vendored_roster():
 
 
 def test_model_attention_heads_match_the_vendored_roster():
-    from smolbench.evals.ec2 import MODEL_ATTENTION_HEADS
+    from smolbench.evals.providers.ec2 import MODEL_ATTENTION_HEADS
 
     assert set(MODEL_ATTENTION_HEADS) == set(STUDY_KEYS)
     for key in STUDY_KEYS:
@@ -328,13 +335,13 @@ def test_model_attention_heads_match_the_vendored_roster():
     ],
 )
 def test_derive_tp_uses_the_landed_gpu_count(model, instance_type, expected):
-    from smolbench.evals.ec2 import derive_tp
+    from smolbench.evals.providers.ec2 import derive_tp
 
     assert derive_tp(model, instance_type, EC2_DEPLOY_SPECS[model]) == expected
 
 
 def test_derive_tp_falls_back_to_the_spec_pin():
-    from smolbench.evals.ec2 import derive_tp
+    from smolbench.evals.providers.ec2 import derive_tp
 
     # Unknown model (the canary is deliberately absent from the heads map).
     assert derive_tp("qwen2.5-1.5b", "g6e.12xlarge", {"tp": 1}) == 1
@@ -345,7 +352,7 @@ def test_derive_tp_falls_back_to_the_spec_pin():
 
 
 def test_derive_tp_on_sm120_g7_boxes():
-    from smolbench.evals.ec2 import derive_tp
+    from smolbench.evals.providers.ec2 import derive_tp
 
     # g7.12xlarge carries two GPUs, not four like g6e.12xlarge.
     assert derive_tp("gemma-4-12b", "g7.12xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 2
@@ -364,7 +371,7 @@ def test_derive_tp_on_sm120_g7_boxes():
 def test_derive_tp_unknown_type_fallback_warns_for_known_model(caplog):
     import logging
 
-    from smolbench.evals.ec2 import derive_tp
+    from smolbench.evals.providers.ec2 import derive_tp
 
     with caplog.at_level(logging.WARNING):
         assert derive_tp("gemma-4-12b", "g9.99xlarge", {"tp": 4}) == 4
@@ -386,7 +393,7 @@ def test_hardware_pin_blocks_a_gpu_swap_but_allows_a_size_swap(monkeypatch):
     taken a 4-GPU g6e.12xlarge and changed derived tp mid-lane. The pin must permit the
     first case and refuse the second.
     """
-    from smolbench.evals import ec2
+    from smolbench.evals.providers import ec2
 
     monkeypatch.setattr(ec2, "EC2_REQUIRE_GPU", "L40S:1")
 

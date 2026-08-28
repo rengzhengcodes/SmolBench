@@ -61,7 +61,7 @@ dev = [
 ]
 
 # AWS lifecycle paths: SageMaker endpoint provisioning + token minting in
-# smolbench/evals/aws.py and EC2 spot provisioning in smolbench/evals/ec2.py.
+# smolbench/evals/providers/aws.py and EC2 spot provisioning in smolbench/evals/providers/ec2.py.
 # Both modules import these lazily, so plain inference through either
 # provider needs neither package; only provision/teardown/minting does. A
 # named extra keeps that dependency import-testable without dragging in
