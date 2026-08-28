@@ -13,17 +13,11 @@ append-only log layout.
 """
 
 import json
-import sys
 
 import pytest
 
-from tests._paths import REPO_ROOT
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from scripts.results import provision_results_bucket as p  # noqa: E402  (needs the path insert)
-from smolbench.evals import _aws  # noqa: E402
+from scripts.results import provision_results_bucket as p
+from smolbench.evals import _aws
 
 
 # ---------------------------------------------------------------------------

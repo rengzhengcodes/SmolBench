@@ -27,7 +27,7 @@ import smolbench.deduction.lean.corpus as corpus
 import smolbench.deduction.lean.lean3 as lean3
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
-from tests.conftest import StubServer, chat_completion
+from conftest import StubServer, chat_completion
 from tests._paths import LEAN_MINI as FIXTURE
 
 # Session-unique model ids so provider get_model_context_length lru_caches

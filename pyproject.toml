@@ -137,8 +137,11 @@ include = ["smolbench*"]
 
 [tool.pytest.ini_options]
 # A bare `pytest` invoked from the repo root previously failed: tests import
-# `tests._paths` and `tests.conftest`, which need the repo root on
-# sys.path, and pytest's default rootdir-insertion doesn't guarantee that
-# without a tests/__init__.py (deliberately not added -- see tests/README.md).
+# `tests._paths` and, in some scripts tests, `scripts.*` namespace packages,
+# both of which need the repo root on sys.path, and pytest's default
+# rootdir-insertion doesn't guarantee that without a tests/__init__.py
+# (deliberately not added -- see tests/README.md). `pythonpath` fixes the
+# sys.path gap; `testpaths` is what lets a bare `pytest` from the repo root
+# collect the suite at all.
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -42,7 +42,7 @@ import numpy as np
 import pytest
 from scipy.stats import binom
 
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import NOTEBOOKS
 
 
 # --------------------------------------------------------------------------- #
@@ -82,8 +82,8 @@ def _bound(**modules):
                 sys.modules[n] = old
 
 
-_DED = REPO / "notebooks" / "deduction"
-_IND = REPO / "notebooks" / "induction"
+_DED = NOTEBOOKS / "deduction"
+_IND = NOTEBOOKS / "induction"
 
 ded_pa = _load("ded_power_analysis", _DED / "power_analysis.py")
 with _bound(power_analysis=ded_pa):

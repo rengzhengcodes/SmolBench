@@ -125,7 +125,7 @@ explicit`). Sweep results land under `notebooks/deduction/results/runs/`.
 `scripts/smoke/bedrock_smoke.py`, `scripts/smoke/ec2_lifecycle_smoke.py <step>`, and the
 `notebooks/{induction,deduction}/` notebooks provision/bill real AWS infra
 (Bedrock, EC2 spot vLLM, SageMaker) and need `keys.env` credentials (never
-print those files). Runbook: `REFACTOR.md` §2.8 "Live-verification runbook";
+print those files). Runbook: `scripts/README.md`'s "Live smoke runbook";
 last live-verified 2026-07-02. Everything in this skill runs without them.
 
 ## Gotchas

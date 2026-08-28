@@ -6,9 +6,9 @@ import argparse
 import importlib.util
 import sys
 
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import SCRIPTS
 
-_spec = importlib.util.spec_from_file_location("run_shards", REPO / "scripts" / "fleet" / "run_shards.py")
+_spec = importlib.util.spec_from_file_location("run_shards", SCRIPTS / "fleet" / "run_shards.py")
 run_shards = importlib.util.module_from_spec(_spec)
 sys.modules["run_shards"] = run_shards
 _spec.loader.exec_module(run_shards)

@@ -22,7 +22,7 @@ def log(msg: str) -> None:
     print(f"[{time.time() - T0:7.1f}s] {msg}", flush=True)
 
 
-from smolbench.evals.providers import ec2 # noqa: E402  (the shell already set env vars)
+from smolbench.evals.providers import ec2  # noqa: E402  (the shell already set env vars)
 
 log(f"tag={ec2.EC2_EXPERIMENT_TAG} types={ec2.EC2_INSTANCE_TYPES} "
     f"regions={ec2.EC2_REGIONS} state_file={ec2._state_path()}")

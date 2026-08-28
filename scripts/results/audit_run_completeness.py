@@ -65,11 +65,9 @@ import collections
 import json
 import pathlib
 import re
-import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
 BUCKET = "smolbench-results-414266451290"
 DEDUCTION_PREFIX = "deduction/runs/"

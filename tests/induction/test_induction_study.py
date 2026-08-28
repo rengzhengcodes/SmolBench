@@ -39,9 +39,9 @@ from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 from smolbench.evals.results_store import experiment_name
 
 from conftest import StubTokenizer
-from tests._paths import REPO_ROOT
+from tests._paths import NOTEBOOKS
 
-RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
+RUN_STUDY_PATH = NOTEBOOKS / "induction" / "run_study.py"
 
 # The smoke entry predates the study and is not a counted rung. Every
 # other spec key is one of the 21 study models (the same split
@@ -249,7 +249,7 @@ def test_s3_experiment_name_is_induction(run_study):
     This pins its first component.
     """
     assert experiment_name(run_study.EXPERIMENT.results_dir) == "induction"
-    assert run_study.EXPERIMENT.results_dir == REPO_ROOT / "notebooks" / "induction" / "results"
+    assert run_study.EXPERIMENT.results_dir == NOTEBOOKS / "induction" / "results"
 
 
 # ---------------------------------------------------------------------------

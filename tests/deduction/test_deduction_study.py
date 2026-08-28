@@ -48,13 +48,13 @@ import pytest
 
 from smolbench.deduction.lean import corpus, runner
 from smolbench.deduction.lean.nullverify import NullVerifier
-from tests.conftest import StubServer, chat_completion
+from conftest import StubServer, chat_completion
 from tests._paths import LEAN_MINI as FIXTURE
-from tests._paths import REPO_ROOT
+from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS
 
-DRIVER_PATH = REPO_ROOT / "notebooks" / "deduction" / "run_study.py"
-VERIFY_PATH = REPO_ROOT / "scripts" / "deduction" / "lean_verify_rows.py"
-INDUCTION_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
+DRIVER_PATH = NOTEBOOKS / "deduction" / "run_study.py"
+VERIFY_PATH = SCRIPTS / "deduction" / "lean_verify_rows.py"
+INDUCTION_STUDY_PATH = NOTEBOOKS / "induction" / "run_study.py"
 
 #: The spec key every single-model test drives. This is a real key, not a
 #: synthetic one, so `COT_ARGS[KEY]` is a real reasoning-toggle payload, and

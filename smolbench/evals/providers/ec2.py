@@ -95,11 +95,11 @@ from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 import requests
 
-import smolbench
 from smolbench.evals import _aws
 from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
 from smolbench.evals.payloads import pack_user_data, render_user_data
+from smolbench.evals.results_store import repo_root
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order. The hunt tries types type-major: it tries each
@@ -163,21 +163,11 @@ EC2_AGENT_PORT: int = 9000
 # smolbench.evals.providers.ec2`. This is an import-time capture (see "Env-read
 # timing" in the module docstring), so setting it later has no effect.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
-# Anchored to the repo root via the installed package's own location, NOT
-# the cwd and NOT a depth count off this file. A depth count shifts
-# silently whenever the module changes directories -- this one already
-# did, from smolbench/evals/ into smolbench/evals/providers/, which turned
-# the old parents[2] into <root>/smolbench, one directory too deep. This
-# is the same `Path(smolbench.__file__).resolve().parents[1]` idiom that
-# results_store.py's `repo_root()` and deduction/lean/corpus.py use.
-# Notebook kernels and scripts run with arbitrary cwds (temp dirs
-# included), and a cwd-relative default once stranded a live instance's
-# state where no later session could find it. The file holds the control
-# token and the vLLM key, so it is gitignored. The EC2_STATE_FILE env
-# override is read at CALL time (in _state_path), so notebooks may set it
-# any time before the first provision/query call -- there is no
-# import-order trap.
-_DEFAULT_STATE_FILE: Path = Path(smolbench.__file__).resolve().parents[1] / ".ec2_state.json"
+# Anchored to the repo root via the package's own accessor (`repo_root()`),
+# not the cwd and not a hand-counted depth off this file. The file holds
+# the control token and the vLLM key, so it is gitignored. The
+# EC2_STATE_FILE env override is read at call time (in `_state_path`).
+_DEFAULT_STATE_FILE: Path = repo_root() / ".ec2_state.json"
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # The serve timeout and the watchdog's loading-counts-as-active grace must
 # cover a COLD checkpoint pull from HF. A ~410 GB download proved that 90

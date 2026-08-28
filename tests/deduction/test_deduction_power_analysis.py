@@ -12,10 +12,10 @@ import json
 import sys
 from pathlib import Path
 
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import NOTEBOOKS
 
 _SPEC = importlib.util.spec_from_file_location(
-    "deduction_power_analysis", REPO / "notebooks" / "deduction" / "power_analysis.py"
+    "deduction_power_analysis", NOTEBOOKS / "deduction" / "power_analysis.py"
 )
 pa = importlib.util.module_from_spec(_SPEC)
 # Register the module before exec. The module defines dataclasses, and

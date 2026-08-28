@@ -6,14 +6,14 @@ Why this exists: on 2026-08-25 the evidence tree
 for ``<SMOLBENCH_ARCHIVE_S3>/notebooks/deduction/`` (see
 ``notebooks/README.md``). The seven tests that pinned those files as local
 paths are re-homed here against the bucket. Each object is read into
-memory through :class:`tests.conftest.S3Archive`; nothing is written to a
+memory through :class:`conftest.S3Archive`; nothing is written to a
 local tree, per the user's ruling that archived data is accessed on AWS.
 
 Every test skips unless ``SMOLBENCH_ARCHIVE_S3`` is set and reachable, so
 the default suite stays offline. Run them with live credentials::
 
     SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \\
-        .venv/bin/python -m pytest tests/test_s3_archive.py -q
+        .venv/bin/python -m pytest tests/deduction/test_s3_archive.py -q
 
 ``scripts/results/evidence_manifest.verify`` walks a local directory, so the
 manifest gates below re-implement its loop over S3 objects with the same
@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 from smolbench.deduction.lean import corpus
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import SCRIPTS
 
 RESULTS = "notebooks/deduction/results"
 DATA = "notebooks/deduction/data"
@@ -44,7 +44,7 @@ CORPUS = f"{DATA}/leandojo_benchmark_4"
 @pytest.fixture(scope="module")
 def em():
     """Load ``scripts/results/evidence_manifest.py`` by path (same recipe as its own tests)."""
-    path = REPO / "scripts" / "results" / "evidence_manifest.py"
+    path = SCRIPTS / "results" / "evidence_manifest.py"
     spec = importlib.util.spec_from_file_location("evidence_manifest_s3", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

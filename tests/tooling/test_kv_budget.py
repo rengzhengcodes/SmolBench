@@ -14,13 +14,13 @@ import sys
 
 import pytest
 
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import SCRIPTS
 
-sys.path.insert(0, str(REPO / "scripts" / "arch"))
+sys.path.insert(0, str(SCRIPTS / "arch"))
 
 from kv_budget import kv_bytes, _layer_mix, _text_config  # noqa: E402
 
-RAW = json.loads((REPO / "scripts" / "arch" / "arch_configs_raw.json").read_text())
+RAW = json.loads((SCRIPTS / "arch" / "arch_configs_raw.json").read_text())
 CTX = 131072
 GB = 1e9
 

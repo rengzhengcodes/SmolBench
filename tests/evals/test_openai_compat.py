@@ -18,7 +18,7 @@ import requests
 
 from smolbench.evals import Numeric, ToF
 from smolbench.evals.openai_compat import ChatClient, metadata_get
-from tests.conftest import chat_completion
+from conftest import chat_completion
 
 
 @pytest.fixture

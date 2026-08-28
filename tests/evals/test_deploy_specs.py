@@ -23,6 +23,7 @@ context windows, and architecture strings vendored from each repo's shipped
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from collections import Counter
@@ -235,21 +236,14 @@ def test_ec2_vllm_image_default_is_digest_pinned():
     ``ec2.EC2_VLLM_IMAGE`` module attribute, so a developer's
     ``EC2_VLLM_IMAGE`` environment override in the test process cannot mask
     a regression back to a mutable tag. The whole point of digest-pinning
-    is defeated if the default itself drifts. The path is anchored through
-    ``__file__`` (this repo's convention, see for example
-    ``smolbench/evals/payloads/__init__.py``'s ``_HERE``) instead of a
-    cwd-relative path, so it passes regardless of the directory pytest runs
-    from. It is derived from the module object's own ``__file__`` rather
-    than spelled out from the repo root, so relocating the provider module
-    (as the providers/ split just did) cannot leave this pin reading a
-    path that no longer exists.
+    is defeated if the default itself drifts. ``inspect.getsource`` reads
+    the source through the module object's own ``__file__``, so this stays
+    correct regardless of the directory pytest runs from or of the provider
+    module's location within the tree.
     """
-    from pathlib import Path
-
     from smolbench.evals.providers import ec2 as ec2_mod
 
-    ec2_py = Path(ec2_mod.__file__)
-    source = ec2_py.read_text()
+    source = inspect.getsource(ec2_mod)
     match = re.search(r'os\.getenv\("EC2_VLLM_IMAGE",\s*"([^"]+)"', source)
     assert match, 'no os.getenv("EC2_VLLM_IMAGE", "...") default found in ec2.py'
     assert re.fullmatch(r"vllm/vllm-openai@sha256:[0-9a-f]{64}", match.group(1)), (

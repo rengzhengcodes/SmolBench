@@ -17,9 +17,9 @@ works no matter the invocation directory.
 import sys
 from pathlib import Path
 
-from tests._paths import REPO_ROOT
+from tests._paths import NOTEBOOKS
 
-sys.path.insert(0, str(REPO_ROOT / "notebooks"))
+sys.path.insert(0, str(NOTEBOOKS))
 
 import _power_common as pc
 
@@ -150,9 +150,9 @@ def test_results_dir_anchored_on_file_not_cwd():
     ... notebooks/x/power_analysis.py` would break when invoked from outside the repo
     root. Repo convention: __file__-anchored paths only.
     """
-    fake_script = REPO_ROOT / "notebooks" / "periodic" / "power_analysis.py"
+    fake_script = NOTEBOOKS / "periodic" / "power_analysis.py"
     assert pc.results_dir(str(fake_script)) == (
-        REPO_ROOT / "notebooks" / "periodic" / "results"
+        NOTEBOOKS / "periodic" / "results"
     )
     # A relative path string must resolve the same way as its absolute form
     # (exercises the `.resolve()` call), confirming cwd is not silently used

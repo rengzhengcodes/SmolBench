@@ -56,11 +56,9 @@ import concurrent.futures
 import json
 import logging
 import pathlib
-import sys
 from typing import Dict, List, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
 BUCKET = "smolbench-results-414266451290"
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.

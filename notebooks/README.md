@@ -177,15 +177,9 @@ individually under `scripts/` and `tests/` at the prefix):
   `test_determinism_probes.py`, `test_flip_probe.py`, `test_recover_dojoinit.py`
   (116 tests; the offline suite was 1104 passed / 7 skipped immediately after the move; 1105 since the ec2 state-file pin).
 
-Kept under `scripts/` (live tooling), now grouped by job (see `scripts/README.md`):
-the `arch/` atlas pipeline, `fleet/run_fleet.py`, `fleet/fleet_status.py`,
-`fleet/fleet_teardown.py`, `fleet/run_shards.py`, `deduction/merge_lean_shards.py`,
-`deduction/split_lean_run_into_shards.py`, `deduction/lean_verify_rows.py`,
-`results/audit_run_completeness.py`, `results/regrade.py`,
-`results/snapshot_analysis_data.py`, `results/provision_results_bucket.py`,
-`results/evidence_manifest.py`, `smoke/bedrock_smoke.py`, `smoke/ec2_lifecycle_smoke.py`.
-`smolbench/evals/providers/ec2.py`'s provenance notes that named `hinge_probe.py` now
-point here. Security: all 21 files scanned -- no secrets or PII (cloud IDs
-only).
+Kept under `scripts/` (live tooling), now grouped by job: see
+`scripts/README.md` for the current inventory. `smolbench/evals/providers/ec2.py`'s
+provenance notes that named `hinge_probe.py` now point here. Security: all
+21 files scanned -- no secrets or PII (cloud IDs only).
 
 Nothing under `notebooks/` or `scripts/` is now regenerable-and-tracked.

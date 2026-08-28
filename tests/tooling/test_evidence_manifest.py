@@ -35,10 +35,11 @@ import json
 import subprocess
 import sys
 import tarfile
+from pathlib import Path
 
 import pytest
 
-from tests._paths import REPO_ROOT as REPO
+from tests._paths import REPO_ROOT as REPO, SCRIPTS
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +59,7 @@ def em():
     """
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(
-        name, REPO / "scripts" / "results" / "evidence_manifest.py")
+        name, SCRIPTS / "results" / "evidence_manifest.py")
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[name] = mod

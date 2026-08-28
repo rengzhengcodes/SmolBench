@@ -6,12 +6,12 @@ Both interpreters must stay green (the repo ships two venvs because
 `lean_dojo` only installs on Python 3.12):
 
 ```
-/workspace/SmolBench/.venv/bin/python -m pytest tests/ -q
-/workspace/SmolBench/.venv-lean/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
+.venv-lean/bin/python -m pytest tests/ -q
 ```
 
 A bare `pytest` from the repo root also works: `pyproject.toml` sets
-`pythonpath = ["."]` so `tests._paths` and `tests.conftest` import cleanly
+`pythonpath = ["."]` so `tests._paths` and `conftest` import cleanly
 without a `tests/__init__.py`.
 
 ## Grouping
@@ -33,10 +33,8 @@ Tests are grouped by subsystem under test, not by file age:
 - `tests/conftest.py` and `tests/fixtures/` (including `fixtures/lean_mini`)
   stay at the `tests/` root -- they are shared across every group, and
   pytest resolves `conftest.py` by directory ancestry.
-- Import repo-relative anchors (`REPO_ROOT`, `FIXTURES`, `LEAN_MINI`,
-  `SCRIPTS`, `NOTEBOOKS`) from `tests._paths` instead of hand-counting
-  `Path(__file__).resolve().parents[N]`. A future move only has to update
-  `tests/_paths.py`.
+- Import repo anchors from `tests/_paths.py` instead of hand-counting
+  `parents[N]`; see that file for why.
 
 ## No `__init__.py` in subdirectories
 

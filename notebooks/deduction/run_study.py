@@ -457,7 +457,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # same reason: these imports are intentionally not at the top of the
 # file.
 # ---------------------------------------------------------------------------
-from smolbench.evals.providers import ec2 # noqa: E402
+from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.deduction.lean import runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 

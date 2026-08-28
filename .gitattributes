@@ -1,9 +1,8 @@
 # Byte-exact cloud-init / on-instance payload assets: LF only. The heredoc
-# landing and the 16 KB user-data cap (tests/test_ec2_payloads.py) depend on
+# landing and the 16 KB user-data cap (tests/evals/test_ec2_payloads.py) depend on
 # exact bytes, so a CRLF-normalizing checkout must never touch them.
 smolbench/evals/payloads/*.sh text eol=lf
 smolbench/evals/payloads/*.py.txt text eol=lf
-scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
 # Let GitHub render the python payload assets with highlighting.
 smolbench/evals/payloads/*.py.txt linguist-language=Python

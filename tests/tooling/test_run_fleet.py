@@ -34,15 +34,16 @@ import importlib.util
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from smolbench.evals import Mark, Marks
 from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
-from tests._paths import REPO_ROOT
+from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS
 
-RUN_FLEET_PATH = REPO_ROOT / "scripts" / "fleet" / "run_fleet.py"
-FLEET_STATUS_PATH = REPO_ROOT / "scripts" / "fleet" / "fleet_status.py"
+RUN_FLEET_PATH = SCRIPTS / "fleet" / "run_fleet.py"
+FLEET_STATUS_PATH = SCRIPTS / "fleet" / "fleet_status.py"
 
 STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
 
@@ -245,7 +246,7 @@ def test_lane_command_induction(fleet):
     cmd = fleet.lane_command(fleet.LANES["gemma-4-12b"], "induction")
     assert cmd == [
         str(REPO_ROOT / ".venv" / "bin" / "python"),
-        str(REPO_ROOT / "notebooks" / "induction" / "run_study.py"),
+        str(NOTEBOOKS / "induction" / "run_study.py"),
     ]
 
 
@@ -253,7 +254,7 @@ def test_lane_command_deduction(fleet):
     cmd = fleet.lane_command(fleet.LANES["gemma-4-12b"], "deduction")
     assert cmd == [
         str(REPO_ROOT / ".venv" / "bin" / "python"),
-        str(REPO_ROOT / "notebooks" / "deduction" / "run_study.py"),
+        str(NOTEBOOKS / "deduction" / "run_study.py"),
     ]
 
 
