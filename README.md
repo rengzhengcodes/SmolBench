@@ -21,27 +21,59 @@ in this repository:
 
 ## Package layout
 
-- `smolbench/induction/` -- the periodic and chromatic benchmarks, their
-  shared generation machinery (`_common.py`), the replicated-evaluation and
-  EC2-lifecycle facade (`experiment.py`), and analysis plotting helpers
-  (`figures.py`).
-- `smolbench/deduction/lean/` -- the Lean 4 theorem-proving benchmark:
-  corpus loading, prompt rendering, the sweep runner, and verification
-  against `lean-dojo`.
-- `smolbench/evals/` -- shared evaluation infrastructure: inference
-  providers (OpenRouter, Prime Intellect, AWS Bedrock/SageMaker, a
-  self-provisioned EC2 spot instance running vLLM), response parsing,
-  replicated-quiz orchestration, and the results store. See
-  `smolbench/evals/README.md` for details.
-- `notebooks/` -- experiment drivers and analysis notebooks/scripts for
-  each study, plus their `results/` trees and `keys.env` provider
-  credentials.
-- `scripts/` -- standalone operational scripts: fleet provisioning and
-  teardown, run-completeness audits, and other one-off tooling that does
-  not belong inside the `smolbench` package.
-- `tests/` -- the offline pytest suite: provider round trips against a
-  local stub server, golden quiz regressions, EC2 payload checks, and more.
-  None of it needs AWS credentials.
+An annotated tree of the whole repository. Each subsystem has its own
+README with the full detail; this section is the map.
+
+```
+smolbench/                 the installable library
+  evals/                   shared eval infrastructure (see smolbench/evals/README.md)
+    providers/               one module per inference backend: openrouter, primeintellect, aws, ec2
+    payloads/                byte-frozen on-instance assets for providers/ec2.py
+    quiz.py                  the QnA/ToF/Numeric/Quiz/Mark/Marks datamodel
+    provider.py              name -> provider module registry, call-time dispatch
+    openai_compat.py         the shared HTTP + response-parsing engine
+    _aws.py                  AWS primitives shared by providers/aws.py, providers/ec2.py, results_store.py
+    parsing.py, tokenization.py, replicates.py, results_store.py
+  induction/                the periodic/chromatic benchmarks (see smolbench/induction/README.md)
+    _common.py                shared generation machinery
+    periodic.py, chromatic.py the two benchmark families
+    experiment.py              replicated-evaluation + EC2-lifecycle facade
+    figures.py                 analysis plotting helpers
+  deduction/lean/           the Lean 4 theorem-proving benchmark
+    corpus.py, premises.py, context.py, prompt.py   corpus loading + prompt rendering
+    runner.py, verify.py                            the sweep runner and lean-dojo verification
+    decontam.py, lean3.py, sft.py, nullverify.py, cli.py
+
+notebooks/                 experiment drivers and analysis, one directory per study
+  induction/                family-ladder induction study (see notebooks/induction/README.md)
+  deduction/                family-ladder Lean deduction study (see notebooks/deduction/README.md)
+  README.md                 archive index: what was removed from the tree, and how to get it back
+  statistical_analyses.ipynb  the single notebook holding this study's cross-cutting statistics
+
+scripts/                   operational scripts, grouped by job (see scripts/README.md)
+  fleet/                     launch and babysit the 21-lane EC2 fleet
+  deduction/                 Lean run sharding, merging, and the deferred lean-dojo verify pass
+  results/                   results-store admin: bucket provisioning, regrading, completeness audits, evidence manifests
+  smoke/                     live-AWS smoke tests (spend real money -- opt-in only)
+  arch/                      the model-architecture atlas pipeline (see scripts/arch/README.md)
+
+tests/                     the offline pytest suite (see tests/README.md), zero AWS credentials needed
+  evals/                     provider round trips against a local stub server, EC2 payload checks
+  induction/                 golden quiz regressions, figures, token-matching
+  deduction/                 Lean corpus/context/prompt/runner/verify, S3 archive pins
+  tooling/                   fleet/evidence/bucket/arch cross-study contracts
+  fixtures/                  shared fixtures (golden quizzes, lean_mini corpus, roster configs)
+```
+
+### Where do I go?
+
+| I want to... | Go to |
+| --- | --- |
+| Run a study | `notebooks/<study>/run_study.py` |
+| Operate the EC2 fleet | `scripts/fleet/` |
+| Verify, merge, or audit results | `scripts/deduction/` (Lean verify/shard/merge), `scripts/results/` (bucket admin, regrade, completeness, evidence manifest) |
+| Add or change an inference provider | `smolbench/evals/providers/` |
+| Find or add a test | `tests/<group>/` (`evals`, `induction`, `deduction`, `tooling`) |
 
 ## Install
 

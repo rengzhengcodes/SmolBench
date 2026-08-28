@@ -1,5 +1,31 @@
 # Archived regenerable artifacts (2026-08-25)
 
+The S3 archive keys and zip contents cited throughout this file were
+written on 2026-08-25, three days before the 2026-08-28 `scripts/`/`tests/`
+regroup (`scripts/*.py` flat, `tests/test_*.py` flat). They are immutable
+snapshots and are NOT updated for the regroup -- a key like
+`tests/test_delivery_probe.py` inside a zip or at the S3 prefix root means
+exactly that flat path as it existed on 2026-08-25, never the grouped path
+below. Live tooling that survived the regroup moved as follows (the
+manifest's own "Kept under `scripts/`" list, further down this file,
+already cites the current grouped paths):
+
+| Was (pre-2026-08-28, cited by the archive) | Now |
+| --- | --- |
+| `scripts/fleet_status.py`, `run_fleet.py`, `fleet_teardown.py`, `run_shards.py` | `scripts/fleet/` |
+| `scripts/lean_verify_rows.py`, `merge_lean_shards.py`, `split_lean_run_into_shards.py` | `scripts/deduction/` |
+| `scripts/audit_run_completeness.py`, `evidence_manifest.py`, `provision_results_bucket.py`, `regrade.py`, `snapshot_analysis_data.py` | `scripts/results/` |
+| `scripts/bedrock_smoke.py`, `ec2_lifecycle_smoke.py` | `scripts/smoke/` |
+| `tests/test_lean_*.py`, `test_deduction_study.py`, `test_merge_lean_shards.py`, `test_s3_archive.py` | `tests/deduction/` |
+| `tests/test_aws_*.py`, `test_ec2_*.py`, `test_deploy_specs.py`, `test_dsv4_chat_template.py`, `test_marks_io.py`, `test_openai_compat.py`, `test_parsing.py`, `test_provider_dispatch.py`, `test_replicates.py`, `test_results_store.py`, `test_tokenization.py` | `tests/evals/` |
+| `tests/test_experiment.py`, `test_golden_quizzes.py`, `test_induction_*.py`, `test_noise_token_match.py` | `tests/induction/` |
+| `tests/test_analysis_stats.py`, `test_evidence_manifest.py`, `test_kv_budget.py`, `test_power_common.py`, `test_provision_results_bucket.py`, `test_run_fleet.py`, `test_run_shards.py` | `tests/tooling/` |
+
+`tests/test_delivery_probe.py`, `test_determinism_probes.py`,
+`test_flip_probe.py`, and `test_recover_dojoinit.py` (the fourth archive,
+below) have no "now": they were deleted from the tree in the same
+2026-08-25 archive, not moved, so the regroup never touched them.
+
 On 2026-08-25 a security review of every tracked file under `notebooks/` and
 `scripts/` (150 files, archive members and notebook cell outputs included)
 found no API keys, tokens, private keys, or personal data. Following that
