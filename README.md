@@ -49,6 +49,7 @@ notebooks/                 experiment drivers and analysis, one directory per st
   deduction/                family-ladder Lean deduction study (see notebooks/deduction/README.md)
   README.md                 archive index: what was removed from the tree, and how to get it back
   statistical_analyses.ipynb  the single notebook holding this study's cross-cutting statistics
+  _power_common.py           shared results_dir()/stats helpers both studies' analysis scripts import
 
 scripts/                   operational scripts, grouped by job (see scripts/README.md)
   fleet/                     launch and babysit the 21-lane EC2 fleet

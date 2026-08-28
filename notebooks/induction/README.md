@@ -2,7 +2,8 @@
 
 This is the INDUCTION side of the family-ladder scaling study (periodic and
 chromatic quizzes). Files stay flat in this directory on purpose:
-`results_dir(__file__)` anchors `results/` as this directory's sibling, and
+`results_dir(__file__)` anchors `results/` as a sibling of these scripts
+(`notebooks/induction/results/`), and
 this study's S3 experiment keys derive from `notebooks/<study>/results` --
 so `<study>` has to stay `induction`, not some deeper subpath. See
 `smolbench/induction/README.md` for the task design and the shared
@@ -10,9 +11,12 @@ experiment API these scripts drive.
 
 ## Study driver
 
-- `run_study.py` -- headless driver for the family-ladder scaling study:
-  the roster (`MODELS`, `COT_ARGS`) and sweep config every other file in
-  this directory (and `notebooks/deduction/run_study.py`) imports from.
+- `run_study.py` -- headless driver for the family-ladder scaling study.
+  Defines the roster (`MODELS`, `COT_ARGS`) and sweep config.
+  `notebooks/deduction/run_study.py` loads it by file path for both;
+  `check_currency.py` and `build_selected_tree.py` import `MODELS` from it
+  as the model -> local-tag map. The analysis scripts do NOT -- they take
+  their own `MODELS` from `power_analysis.py`.
 - `induction_eval.ipynb` -- the fleet-aware notebook for exploring and
   validating the study; framing cells document the as-served roster,
   config epochs, and the earliest-wins selection rule.
