@@ -3,7 +3,7 @@
 This file covers the two new pieces of the deduction lane and nothing else:
 
 * ``notebooks/deduction/run_study.py`` -- the per-lane, generation-only driver.
-* ``scripts/lean_verify_rows.py`` -- the deferred, ``.venv-lean``-only
+* ``scripts/deduction/lean_verify_rows.py`` -- the deferred, ``.venv-lean``-only
   verification pass.
 
 Everything here runs offline on both interpreters: the main ``.venv``
@@ -53,7 +53,7 @@ from tests._paths import LEAN_MINI as FIXTURE
 from tests._paths import REPO_ROOT
 
 DRIVER_PATH = REPO_ROOT / "notebooks" / "deduction" / "run_study.py"
-VERIFY_PATH = REPO_ROOT / "scripts" / "lean_verify_rows.py"
+VERIFY_PATH = REPO_ROOT / "scripts" / "deduction" / "lean_verify_rows.py"
 INDUCTION_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 
 #: The spec key every single-model test drives. This is a real key, not a
@@ -142,7 +142,7 @@ def induction_tables():
 
 @pytest.fixture(scope="module")
 def lvr():
-    """Load ``scripts/lean_verify_rows.py``. Pure helpers only: no Lean, no AWS."""
+    """Load ``scripts/deduction/lean_verify_rows.py``. Pure helpers only: no Lean, no AWS."""
     module = _load_by_path(VERIFY_PATH, "lean_verify_rows_under_test")
     yield module
     sys.modules.pop("lean_verify_rows_under_test", None)
@@ -366,7 +366,7 @@ def test_lane_env_defaults_values_and_purity(driver, tmp_path):
     """``lane_env_defaults`` is pure and derives the fleet-compatible names.
 
     The tag and state-file names are a contract with
-    ``scripts/run_fleet.py``, which builds ``scaling-<key>`` /
+    ``scripts/fleet/run_fleet.py``, which builds ``scaling-<key>`` /
     ``.ec2_state_scaling_<key>.json`` independently. If these drift, a
     deduction lane provisions a second box, instead of reattaching to the
     one the induction phase already paid for.
@@ -451,7 +451,7 @@ def test_import_sets_env_before_ec2_freezes_it():
 def test_fleet_exported_env_wins_over_driver_defaults():
     """Every driver default is a ``setdefault``, so the supervisor's value wins.
 
-    Under ``scripts/run_fleet.py``, the supervisor builds a per-lane
+    Under ``scripts/fleet/run_fleet.py``, the supervisor builds a per-lane
     environment before it invokes this driver. If the driver used bare
     assignment anywhere, it would clobber the supervisor's per-lane tag,
     and two lanes could converge on one box, each swapping the served

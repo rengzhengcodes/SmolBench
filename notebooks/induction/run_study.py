@@ -39,7 +39,7 @@ ONE MODEL PER BOX, driven by a fleet
 Unlike the three-checkpoint studies, which serve their whole trio in
 sequence on one instance, this study provisions ONE EC2 spot instance PER
 MODEL: 21 boxes, potentially all live at once. A fleet supervisor
-(``scripts/run_fleet.py``, written separately, not by this file) owns
+(``scripts/fleet/run_fleet.py``, written separately, not by this file) owns
 that fan-out. It sets ``INDUCTION_MODELS=<single spec key>`` in each
 lane's environment before it invokes this driver. So a standalone run of
 this file (no ``INDUCTION_MODELS`` set) still does the obvious thing: it

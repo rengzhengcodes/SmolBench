@@ -161,7 +161,7 @@ direction. The next ``sync_down`` silently DESTROYS any local-only
 modification, unless it was deliberately re-appended to the S3 log
 first. Note that under earliest-wins, a re-append CANNOT restore a local
 edit either: the new object postdates the original, so it stays
-invisible to readers. Concretely, ``scripts/regrade.py --write``
+invisible to readers. Concretely, ``scripts/results/regrade.py --write``
 rewrites replicate YAMLs IN PLACE on the local tree, and a later
 ``sync_down`` of the same experiment overwrites that regrade back to
 the log's earliest verdict, with no warning. The safe operator sequence
@@ -1386,7 +1386,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     writes S3 -> local only, overwriting whatever is on disk with the
     log's earliest run. It never appends to (or otherwise touches) the
     S3 log. The next call silently destroys a local-only edit (e.g. a
-    local ``scripts/regrade.py --write`` regrade), and under
+    local ``scripts/results/regrade.py --write`` regrade), and under
     earliest-wins, no re-append to S3 can protect it either (the module
     docstring's regrade sequence).
 
@@ -1471,7 +1471,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     treats two objects as identical without positive evidence.
 
     A size-only comparison would be UNSOUND for this workload:
-    ``scripts/regrade.py --write`` rewrites a replicate YAML's
+    ``scripts/results/regrade.py --write`` rewrites a replicate YAML's
     ``score`` field in place, and a ``1 -> 0`` flip is
     byte-length-preserving (same total character count, different
     content). So a size-only check would skip the re-download, and let

@@ -1,7 +1,7 @@
 """List, and optionally terminate, the family-ladder scaling study's fleet.
 
-This script is a companion to ``scripts/run_fleet.py`` (launches and
-monitors the fleet) and ``scripts/fleet_status.py`` (the read-only listing
+This script is a companion to ``scripts/fleet/run_fleet.py`` (launches and
+monitors the fleet) and ``scripts/fleet/fleet_status.py`` (the read-only listing
 this script builds on, by import, not by reimplementation). This script is
 the "reclaim the boxes" half of the lifecycle. ``run_fleet.py --phase
 induction`` never performs that half on its own, on purpose (see that
@@ -36,9 +36,9 @@ convention
 
 Run this script from the repo root, in the main venv::
 
-    .venv/bin/python scripts/fleet_teardown.py                 # read-only listing
-    .venv/bin/python scripts/fleet_teardown.py --terminate      # prompts, then kills
-    .venv/bin/python scripts/fleet_teardown.py --terminate --yes  # no prompt
+    .venv/bin/python scripts/fleet/fleet_teardown.py                 # read-only listing
+    .venv/bin/python scripts/fleet/fleet_teardown.py --terminate      # prompts, then kills
+    .venv/bin/python scripts/fleet/fleet_teardown.py --terminate --yes  # no prompt
 """
 
 from __future__ import annotations
@@ -50,13 +50,13 @@ import importlib.util
 from pathlib import Path
 from typing import Any, Optional
 
-REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 STATE_FILE_GLOB = ".ec2_state_scaling_*.json"
 
 
 @functools.lru_cache(maxsize=1)
 def _fleet_status():
-    """Load ``scripts/fleet_status.py`` by file path, lazily, and cache the result.
+    """Load ``scripts/fleet/fleet_status.py`` by file path, lazily, and cache the result.
 
     This function loads the module by path, not by ``sys.path`` plus a
     bare ``import fleet_status``, for the same reason as

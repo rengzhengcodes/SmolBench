@@ -1,4 +1,4 @@
-"""Test scripts/run_shards.py, the direct-shard babysitter."""
+"""Test scripts/fleet/run_shards.py, the direct-shard babysitter."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 
 from tests._paths import REPO_ROOT as REPO
 
-_spec = importlib.util.spec_from_file_location("run_shards", REPO / "scripts" / "run_shards.py")
+_spec = importlib.util.spec_from_file_location("run_shards", REPO / "scripts" / "fleet" / "run_shards.py")
 run_shards = importlib.util.module_from_spec(_spec)
 sys.modules["run_shards"] = run_shards
 _spec.loader.exec_module(run_shards)

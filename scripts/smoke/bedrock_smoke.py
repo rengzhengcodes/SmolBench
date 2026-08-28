@@ -8,8 +8,9 @@ inference round trip.
 """
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/workspace/SmolBench")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from aws_bedrock_token_generator import provide_token
 

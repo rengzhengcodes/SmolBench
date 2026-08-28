@@ -97,7 +97,7 @@ it only changes which credentials snapshot signs the request, so a rotated
 `~/.aws/credentials` file is picked up on the very next call instead of
 raising `RequestExpired`/`ExpiredToken` until the process restarts. Because
 this touches every live AWS call this module makes, a live re-verification
-(`scripts/bedrock_smoke.py` for aws.py, `scripts/ec2_lifecycle_smoke.py` for
+(`scripts/smoke/bedrock_smoke.py` for aws.py, `scripts/smoke/ec2_lifecycle_smoke.py` for
 ec2.py) is recommended before the next real provisioning run, even though
 the offline suite already pins every request payload byte-for-byte.
 
@@ -230,7 +230,7 @@ landed in S3 are invisible to them until `sync_down` has pulled them down.
 
 `sync_down` goes S3 → local only: it never uploads, and it OVERWRITES
 whatever is already at the matching local path. This matters for anything
-that edits a results tree locally — concretely, `scripts/regrade.py
+that edits a results tree locally — concretely, `scripts/results/regrade.py
 --write`, which rewrites `rep_*.yaml` in place. A local regrade is silently
 clobbered back to the stale synced copy by the very next `sync_down`,
 because a score flip (e.g. `1` → `0`) is byte-length preserving and so
@@ -244,7 +244,7 @@ log layout, not bulk-uploaded).
 
 ### Provisioning the bucket
 
-`scripts/provision_results_bucket.py` is the one-time (idempotent, safe to
+`scripts/results/provision_results_bucket.py` is the one-time (idempotent, safe to
 re-run) runbook that provisions the bucket itself:
 `smolbench-results-414266451290` in `us-west-2`, with public access blocked
 (all four block-public-access flags on) and versioning enabled. It also

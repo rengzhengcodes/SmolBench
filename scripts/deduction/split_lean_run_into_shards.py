@@ -8,7 +8,7 @@ theorem-stride shard run directories
 (``runs/scaling_<key>_shard<i>of<n>``). Then relaunch n shard drivers
 (``LEAN_SHARD=i/n``); each driver's resume mechanism skips every
 pre-seeded cell and generates only what is missing.
-``scripts/merge_lean_shards.py`` later folds the completed shards back
+``scripts/deduction/merge_lean_shards.py`` later folds the completed shards back
 into the canonical run. This script computes the shard assignment by
 calling ``runner._select_theorems`` with the run's own theorems spec plus
 ``shard: "i/n"``. This is the EXACT code path the relaunched shards
@@ -43,7 +43,7 @@ Runbook (gemma-4-12b mid-flight reshard, 2026-08-14)::
                                                # --teardown finally block must
                                                # never run against the live box
     mv results/runs/scaling_<key> results/runs/scaling_<key>_presplit
-    .venv/bin/python scripts/split_lean_run_into_shards.py <key> --n 4 \
+    .venv/bin/python scripts/deduction/split_lean_run_into_shards.py <key> --n 4 \
         --source results/runs/scaling_<key>_presplit
     bash scripts/launch_gemma12b_deduction_shards.sh   # within 30 min of the
                                                # kill (idle watchdog) for shard 0
@@ -57,7 +57,7 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
-REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 

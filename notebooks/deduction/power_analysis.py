@@ -137,7 +137,7 @@ Generation (``smolbench.deduction.lean.runner``, main ``.venv``) writes
 ``all_rows.jsonl`` with every cell's ``verdict`` set to the placeholder
 ``"unverified"``. It never talks to real Lean (``lean_dojo`` cannot live
 on that venv; see ``smolbench/deduction/lean/verify.py``). A separate
-deferred verification pass, ``scripts/lean_verify_rows.py`` (``.venv-lean``,
+deferred verification pass, ``scripts/deduction/lean_verify_rows.py`` (``.venv-lean``,
 where ``lean_dojo`` IS installed), replays every candidate proof against
 real Lean and writes the sibling ``verified_rows.jsonl`` with the real
 verdicts. This script is meant to read ONLY ``verified_rows.jsonl``.
@@ -509,7 +509,7 @@ def _warn_unverified(reasons: list[str]) -> None:
         "!!  'every model failed everything' finding unless you know to expect",
         "!!  this.",
         "!!",
-        "!!  Run scripts/lean_verify_rows.py (the deferred verification pass",
+        "!!  Run scripts/deduction/lean_verify_rows.py (the deferred verification pass",
         '!!  that replays candidates against real Lean and writes the sibling',
         "!!  verified_rows.jsonl) before trusting ANY number below.",
         bar,
@@ -534,7 +534,7 @@ UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 #: remove.
 SUPERSEDED_MARKER = "SUPERSEDED"
 #: The snapshot writes three retirement markers for the same audit-trail
-#: class (scripts/snapshot_analysis_data.py: ``*_SUPERSEDED-*``,
+#: class (scripts/results/snapshot_analysis_data.py: ``*_SUPERSEDED-*``,
 #: ``*_STALE-*``, ``*_BROKEN-*``). STALE/BROKEN are anchored ``_MARKER-`` to
 #: avoid matching ordinary words in basenames; SUPERSEDED stays bare (the
 #: historical form).

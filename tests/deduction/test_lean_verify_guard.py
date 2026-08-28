@@ -58,7 +58,7 @@ def test_no_resume_discards_prior_verdicts_and_reverifies_every_group(tmp_path, 
 
     spec = importlib.util.spec_from_file_location(
         "lean_verify_rows_mod",
-        SCRIPTS / "lean_verify_rows.py",
+        SCRIPTS / "deduction" / "lean_verify_rows.py",
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

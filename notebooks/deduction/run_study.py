@@ -4,7 +4,7 @@ WHAT THIS IS
 ------------
 ``notebooks/induction/run_study.py`` documents a 21-checkpoint family-ladder
 scaling study (``MODELS``: 7 vendor families x 3 rungs each). It runs ONE
-MODEL PER BOX under a fleet supervisor (``scripts/run_fleet.py``). That file
+MODEL PER BOX under a fleet supervisor (``scripts/fleet/run_fleet.py``). That file
 covers the INDUCTION phase. THIS file is the matching DEDUCTION-phase
 driver. One invocation serves exactly ONE checkpoint on one EC2 box. It
 runs one ``smolbench.deduction.lean.runner.sweep`` (a Lean4 theorem-proving
@@ -12,7 +12,7 @@ sweep) against that checkpoint. The fleet supervisor launches up to 21 of
 these as subprocesses, one per lane. Each lane normally REATTACHES to the
 same box its induction phase already provisioned. It reuses the same
 ``EC2_EXPERIMENT_TAG`` and the same EC2 state file (see
-``scripts/run_fleet.py``'s ``lane_env``). This avoids provisioning a second
+``scripts/fleet/run_fleet.py``'s ``lane_env``). This avoids provisioning a second
 instance per model.
 
 This file does not redeclare ``MODELS`` (spec key -> short analysis tag) or
@@ -133,7 +133,7 @@ LIFECYCLE (``main``)
    so a bad ``LEAN_VERIFY`` value aborts before any EC2 spend. This matches
    the "fail fast before billing" pattern used throughout this study's
    tooling (see e.g. ``notebooks/induction/run_study.py``'s
-   ``completion_budget`` and ``scripts/run_fleet.py``'s ``preflight``, both
+   ``completion_budget`` and ``scripts/fleet/run_fleet.py``'s ``preflight``, both
    of which run entirely before ``provision_spot_instance``).
 4. Call ``ec2.provision_spot_instance()`` with NO arguments. Its behavior
    depends entirely on the ``EC2_INSTANCE_TYPES``/``EC2_REGIONS`` frozen
@@ -154,7 +154,7 @@ LIFECYCLE (``main``)
    WITHOUT the flag (the default), nothing is torn down: under the fleet,
    the supervisor owns instance lifecycle end-to-end, and shuts the box
    down itself once it has finished with this lane (see
-   ``scripts/run_fleet.py``'s module docstring, "Phases and the
+   ``scripts/fleet/run_fleet.py``'s module docstring, "Phases and the
    reuse-then-shutdown lifecycle"). ``--teardown`` exists purely for
    STANDALONE use: a solo smoke test of this file with nothing else
    depending on the box.
@@ -200,7 +200,7 @@ Environment
     Optional. A bare filename or absolute path for this lane's EC2 state
     file. When unset (the default), this driver derives
     ``.ec2_state_scaling_<LEAN_MODEL>.json`` under ``REPO_ROOT``. The fleet
-    supervisor passes a bare filename here (see ``scripts/run_fleet.py``'s
+    supervisor passes a bare filename here (see ``scripts/fleet/run_fleet.py``'s
     ``Lane.state_file``), specifically so this driver reattaches to the box
     its own induction phase already provisioned: both phases resolve the
     SAME bare filename against the SAME repo root.
@@ -254,7 +254,7 @@ logging.basicConfig(level=logging.INFO)
 # working directory.
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
-#: Same bucket and region ``scripts/run_fleet.py``'s own
+#: Same bucket and region ``scripts/fleet/run_fleet.py``'s own
 #: ``sync_deduction_spool`` uses for the induction-phase results store.
 #: This study's whole S3 footprint lives in one bucket. This value is a
 #: plain literal (not imported from ``run_fleet``), so this file has no
@@ -426,7 +426,7 @@ if _RAW_LEAN_MODEL:
 # this repo's own deduction and induction trees each ship a same-named
 # run_study.py, so a bare module-name import would be ambiguous the
 # moment both are ever on sys.path in the same process. That is exactly
-# the situation scripts/run_fleet.py is already in, and it uses this same
+# the situation scripts/fleet/run_fleet.py is already in, and it uses this same
 # by-path pattern for the same reason.
 # ---------------------------------------------------------------------------
 _INDUCTION_RUN_STUDY_PATH: Path = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
@@ -556,7 +556,7 @@ def build_config(key: str) -> dict:
 
     ``LEAN_RUN_NAME``, when unset or empty, falls back to
     ``f"scaling_{key}"`` (plus the shard suffix above, when present) --
-    matching ``scripts/run_fleet.py``'s ``Lane`` naming convention for
+    matching ``scripts/fleet/run_fleet.py``'s ``Lane`` naming convention for
     ``scaling_<model>`` run directories.
 
     Also reads ``LEAN_CELL_WHITELIST`` at CALL time and, when set,
@@ -697,7 +697,7 @@ def select_verifier() -> Any:
           propagate, so the message can name this driver's actual normal
           path: run with ``LEAN_VERIFY=defer`` (generation only), then
           verify separately, later, under ``.venv-lean`` via
-          ``scripts/lean_verify_rows.py``.
+          ``scripts/deduction/lean_verify_rows.py``.
         - Any other value: the message names the two valid values
           (``"defer"``, ``"real"``).
 
@@ -724,7 +724,7 @@ def select_verifier() -> Any:
                 f"{sys.version_info.major}.{sys.version_info.minor}. The normal "
                 "path for this driver is LEAN_VERIFY=defer (generation only, "
                 "the default) followed by a separate verification pass under "
-                ".venv-lean via scripts/lean_verify_rows.py."
+                ".venv-lean via scripts/deduction/lean_verify_rows.py."
             )
         from smolbench.deduction.lean import verify  # local: only reachable under .venv-lean
 
@@ -767,7 +767,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         INSIDE itself, and build a real client against `SPOOL_REGION`.
         boto3 is never imported at module scope, so importing this file
         needs no AWS SDK at all (this mirrors ``smolbench.evals.ec2``'s
-        own lazy-import convention, and ``scripts/run_fleet.py``'s
+        own lazy-import convention, and ``scripts/fleet/run_fleet.py``'s
         ``sync_deduction_spool``, which follows the same pattern). This
         parameter exists so tests can inject a fake client with no network
         access.

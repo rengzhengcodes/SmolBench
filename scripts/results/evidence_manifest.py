@@ -52,8 +52,8 @@ Usage
 -----
 ::
 
-    .venv/bin/python scripts/evidence_manifest.py verify [dir ...]
-    .venv/bin/python scripts/evidence_manifest.py build <dir> --spec <spec.json>
+    .venv/bin/python scripts/results/evidence_manifest.py verify [dir ...]
+    .venv/bin/python scripts/results/evidence_manifest.py build <dir> --spec <spec.json>
 
 With no directories given, ``verify`` walks every ``EVIDENCE.json`` under
 ``notebooks/*/results/`` and exits non-zero if any manifest fails.
@@ -109,7 +109,7 @@ CITED_SUFFIXES = (".json", ".jsonl", ".gz", ".yaml", ".yml", ".txt", ".md",
 #: Suffixes the repo gate treats as writeups (tests import this).
 WRITEUP_SUFFIXES = (".md", ".txt")
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 #: Marker prefix for a reference into a preserved tarball.
 TARBALL_PREFIX = "tarball:"

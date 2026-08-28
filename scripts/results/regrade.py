@@ -67,9 +67,9 @@ printed message for the exact recovery sequence (sync down, unset the
 env var, re-run, re-seed).
 
 Run this script from the repo root, in the main venv:
-    .venv/bin/python scripts/regrade.py                     # report only
-    .venv/bin/python scripts/regrade.py --study induction
-    .venv/bin/python scripts/regrade.py --write
+    .venv/bin/python scripts/results/regrade.py                     # report only
+    .venv/bin/python scripts/results/regrade.py --study induction
+    .venv/bin/python scripts/results/regrade.py --write
 """
 
 import argparse
@@ -79,7 +79,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from smolbench.evals import Marks  # noqa: E402

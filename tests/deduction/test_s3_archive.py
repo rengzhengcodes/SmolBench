@@ -15,7 +15,7 @@ the default suite stays offline. Run them with live credentials::
     SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \\
         .venv/bin/python -m pytest tests/test_s3_archive.py -q
 
-``scripts/evidence_manifest.verify`` walks a local directory, so the
+``scripts/results/evidence_manifest.verify`` walks a local directory, so the
 manifest gates below re-implement its loop over S3 objects with the same
 public helpers (schema checks, reference splitting, citation coverage).
 """
@@ -43,8 +43,8 @@ CORPUS = f"{DATA}/leandojo_benchmark_4"
 
 @pytest.fixture(scope="module")
 def em():
-    """Load ``scripts/evidence_manifest.py`` by path (same recipe as its own tests)."""
-    path = REPO / "scripts" / "evidence_manifest.py"
+    """Load ``scripts/results/evidence_manifest.py`` by path (same recipe as its own tests)."""
+    path = REPO / "scripts" / "results" / "evidence_manifest.py"
     spec = importlib.util.spec_from_file_location("evidence_manifest_s3", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

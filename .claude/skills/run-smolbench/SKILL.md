@@ -122,7 +122,7 @@ explicit`). Sweep results land under `notebooks/deduction/results/runs/`.
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 
-`scripts/bedrock_smoke.py`, `scripts/ec2_lifecycle_smoke.py <step>`, and the
+`scripts/smoke/bedrock_smoke.py`, `scripts/smoke/ec2_lifecycle_smoke.py <step>`, and the
 `notebooks/{induction,deduction}/` notebooks provision/bill real AWS infra
 (Bedrock, EC2 spot vLLM, SageMaker) and need `keys.env` credentials (never
 print those files). Runbook: `REFACTOR.md` §2.8 "Live-verification runbook";
@@ -137,7 +137,7 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
   `run-sweep`, `run-cell`, `replay`, and `filter` need `.venv-lean`; every
   other subcommand runs on either venv.
 - `uv sync` prunes packages not in the lockfile: it uninstalls the ad-hoc
-  `aws-bedrock-token-generator` that `scripts/bedrock_smoke.py` needs
+  `aws-bedrock-token-generator` that `scripts/smoke/bedrock_smoke.py` needs
   (observed). Restore with `uv pip install aws-bedrock-token-generator`.
   Plain `uv run` / `uv run --no-sync` likewise strips extras — resync with
   `uv sync --all-extras`; use `uv run --no-project` for ephemeral scripts.

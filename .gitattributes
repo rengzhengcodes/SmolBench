@@ -4,5 +4,6 @@
 smolbench/evals/payloads/*.sh text eol=lf
 smolbench/evals/payloads/*.py.txt text eol=lf
 scripts/*.sh text eol=lf
+scripts/**/*.sh text eol=lf
 # Let GitHub render the python payload assets with highlighting.
 smolbench/evals/payloads/*.py.txt linguist-language=Python

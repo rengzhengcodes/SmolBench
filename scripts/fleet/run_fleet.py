@@ -75,7 +75,7 @@ successful exit spools its results to S3
 (:func:`sync_deduction_spool`) and shuts the instance down. ``--phase
 both`` chains induction then deduction on one lane and shuts down after
 deduction's spool sync. Under ``--phase induction`` alone, this script
-prints an explicit reminder that ``scripts/fleet_teardown.py
+prints an explicit reminder that ``scripts/fleet/fleet_teardown.py
 --terminate`` is how the boxes get reclaimed -- nothing tears them down
 automatically.
 
@@ -96,9 +96,9 @@ operator).
 
 Run (repo root, main venv)::
 
-    .venv/bin/python scripts/run_fleet.py --dry-run
-    .venv/bin/python scripts/run_fleet.py --phase induction
-    .venv/bin/python scripts/run_fleet.py --phase deduction --lanes glm-4.7
+    .venv/bin/python scripts/fleet/run_fleet.py --dry-run
+    .venv/bin/python scripts/fleet/run_fleet.py --phase induction
+    .venv/bin/python scripts/fleet/run_fleet.py --phase deduction --lanes glm-4.7
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ logging.basicConfig(level=logging.INFO)
 # ---------------------------------------------------------------------------
 # Anchoring + the induction driver import
 # ---------------------------------------------------------------------------
-REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 VENV_PYTHON: Path = REPO_ROOT / ".venv" / "bin" / "python"
 
 # This code loads run_study by FILE PATH, never through `sys.path` plus a
@@ -1112,7 +1112,7 @@ def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
 
 @functools.lru_cache(maxsize=1)
 def _fleet_status_module():
-    """Lazily load ``scripts/fleet_status.py`` by file path; cache after the first call.
+    """Lazily load ``scripts/fleet/fleet_status.py`` by file path; cache after the first call.
 
     This function loads the file by path, the same convention `run_study`
     above uses, rather than `sys.path` plus a bare `import
@@ -1472,7 +1472,7 @@ def _run_fleet(
         print(
             "\nrun_fleet: induction-only run complete. Boxes are left RUNNING on purpose "
             "(the deduction phase may reuse them) -- run "
-            "`scripts/fleet_teardown.py --terminate` when you are done with them."
+            "`scripts/fleet/fleet_teardown.py --terminate` when you are done with them."
         )
 
 

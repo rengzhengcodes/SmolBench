@@ -10,8 +10,9 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/workspace/SmolBench")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 STEP = sys.argv[1]
 T0 = time.time()

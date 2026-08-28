@@ -38,7 +38,7 @@ Runbook
 -------
 ::
 
-    .venv/bin/python scripts/provision_results_bucket.py
+    .venv/bin/python scripts/results/provision_results_bucket.py
 
 This script is never imported for its side effects. Nothing above runs at
 import time.

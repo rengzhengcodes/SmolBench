@@ -1,6 +1,6 @@
 """Test the 21-lane scaling-study fleet supervisor's offline contract.
 
-``scripts/run_fleet.py`` launches one subprocess per study model, each
+``scripts/fleet/run_fleet.py`` launches one subprocess per study model, each
 of which provisions its own EC2 spot instance. Nothing here touches
 AWS: every boto3 seam is either injected (``client_factory``) or
 unreached. The lane-environment builder is a PURE function, precisely
@@ -41,8 +41,8 @@ from smolbench.evals import Mark, Marks
 from smolbench.evals.ec2 import EC2_DEPLOY_SPECS
 from tests._paths import REPO_ROOT
 
-RUN_FLEET_PATH = REPO_ROOT / "scripts" / "run_fleet.py"
-FLEET_STATUS_PATH = REPO_ROOT / "scripts" / "fleet_status.py"
+RUN_FLEET_PATH = REPO_ROOT / "scripts" / "fleet" / "run_fleet.py"
+FLEET_STATUS_PATH = REPO_ROOT / "scripts" / "fleet" / "fleet_status.py"
 
 STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
 

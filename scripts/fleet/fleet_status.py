@@ -1,7 +1,7 @@
 """List the family-ladder scaling study's live EC2 fleet, read-only.
 
-This module is a companion to ``scripts/run_fleet.py`` (the supervisor
-that launches and monitors the fleet) and ``scripts/fleet_teardown.py``
+This module is a companion to ``scripts/fleet/run_fleet.py`` (the supervisor
+that launches and monitors the fleet) and ``scripts/fleet/fleet_teardown.py``
 (which can terminate it). This module does exactly one thing: it lists
 every EC2 instance tagged for this study, across every region the study
 might use it. You can call it safely from anywhere: a notebook cell (an
@@ -17,7 +17,7 @@ real (non-injected) client.
 
 Run this script from the repo root, in the main venv::
 
-    .venv/bin/python scripts/fleet_status.py
+    .venv/bin/python scripts/fleet/fleet_status.py
 """
 
 from __future__ import annotations

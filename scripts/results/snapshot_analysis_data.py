@@ -46,8 +46,8 @@ regenerated. An analyst who wants to check what changed needs these
 files; their names say plainly that they are not the current data.
 
 USAGE
-    scripts/snapshot_analysis_data.py --dry-run
-    scripts/snapshot_analysis_data.py --dest analysis/2026-08-16
+    scripts/results/snapshot_analysis_data.py --dry-run
+    scripts/results/snapshot_analysis_data.py --dest analysis/2026-08-16
 """
 
 import argparse
@@ -59,7 +59,7 @@ import pathlib
 import sys
 from typing import Dict, List, Tuple
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 BUCKET = "smolbench-results-414266451290"

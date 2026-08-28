@@ -723,7 +723,7 @@ def test_sync_down_redownloads_a_same_size_but_different_file(
 ):
     """THE REGRADE BUG, retained across the rework.
 
-    ``scripts/regrade.py --write`` rewrites replicate YAMLs in place, and a
+    ``scripts/results/regrade.py --write`` rewrites replicate YAMLs in place, and a
     score 1 -> 0 flip is byte-length preserving (147 bytes either way,
     different MD5). A size-only skip therefore left a stale local verdict in
     place. These two bodies are byte-length-equal by construction, so this

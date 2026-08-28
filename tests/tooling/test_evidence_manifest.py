@@ -1,4 +1,4 @@
-"""Test scripts/evidence_manifest.py, offline: the EVIDENCE.json mechanism.
+"""Test scripts/results/evidence_manifest.py, offline: the EVIDENCE.json mechanism.
 
 Why this exists: ``notebooks/*/results/`` is gitignored wholesale
 (.gitignore:235), so every tracked file under it is a hand-picked ``git add
@@ -43,7 +43,7 @@ from tests._paths import REPO_ROOT as REPO
 
 @pytest.fixture(scope="module")
 def em():
-    """Load scripts/evidence_manifest.py by path.
+    """Load scripts/results/evidence_manifest.py by path.
 
     The module is registered in ``sys.modules`` before ``exec_module`` and
     removed after. That is importlib's own documented recipe, and here it
@@ -58,7 +58,7 @@ def em():
     """
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(
-        name, REPO / "scripts" / "evidence_manifest.py")
+        name, REPO / "scripts" / "results" / "evidence_manifest.py")
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[name] = mod

@@ -15,7 +15,7 @@ The current family-ladder scaling study drives this same lifecycle from a
 plain script instead of notebook cells: ``notebooks/induction/run_study.py``
 builds one module-level ``EXPERIMENT = InductionExperiment(...)`` and calls
 ``provision()`` / ``run()`` / ``summarize()`` from its ``main()``, launched
-per lane by ``scripts/run_fleet.py`` (see that script's docstring). This
+per lane by ``scripts/fleet/run_fleet.py`` (see that script's docstring). This
 class's contract does not change between the two calling styles.
 
 Seed convention
@@ -571,8 +571,8 @@ class InductionExperiment:
         falls back to the ``smolbench:experiment`` instance tag. The
         current family-ladder study calls this method itself only behind
         an explicit ``--teardown`` flag: the fleet supervisor
-        (``scripts/run_fleet.py``) owns instance teardown end-to-end for
-        that study, with ``scripts/fleet_teardown.py`` as a safety net (see
+        (``scripts/fleet/run_fleet.py``) owns instance teardown end-to-end for
+        that study, with ``scripts/fleet/fleet_teardown.py`` as a safety net (see
         ``notebooks/induction/run_study.py``'s module docstring).
 
         Notes

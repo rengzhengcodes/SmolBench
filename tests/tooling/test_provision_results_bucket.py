@@ -1,4 +1,4 @@
-"""Test the pure logic of ``scripts/provision_results_bucket.py``.
+"""Test the pure logic of ``scripts/results/provision_results_bucket.py``.
 
 No AWS, no network. The script is a human-run runbook against ADMIN
 credentials, and nothing here ever executes it against AWS. Every
@@ -22,7 +22,7 @@ from tests._paths import REPO_ROOT
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import provision_results_bucket as p  # noqa: E402  (needs the path insert)
+from scripts.results import provision_results_bucket as p  # noqa: E402  (needs the path insert)
 from smolbench.evals import _aws  # noqa: E402
 
 

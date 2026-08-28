@@ -632,7 +632,7 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
 
     A retry cap (K clean attempts) would also work, but it is a tuned
     constant. ``prompt_tokens`` states the actual distinction, needs no
-    tuning, and is the same signal `scripts/audit_run_completeness.py`
+    tuning, and is the same signal `scripts/results/audit_run_completeness.py`
     uses to separate infrastructure loss from genuine empty output.
 
     NOTE: this rule is NOT a superset of any earlier version. Relative to

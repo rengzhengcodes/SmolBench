@@ -1,6 +1,6 @@
 """Babysit direct (supervisor-less) ``run_study.py`` shard fleets.
 
-``scripts/run_fleet.py`` supervises one-model-per-box lanes. But the
+``scripts/fleet/run_fleet.py`` supervises one-model-per-box lanes. But the
 homogeneity re-runs of 2026-08-13 launch
 ``notebooks/induction/run_study.py`` DIRECTLY, one process per
 ``INDUCTION_SHARD``. A direct process that dies (spot reclaim, a
@@ -35,7 +35,7 @@ script adds per-shard variables to each child process on top of that.
 
 Usage (one invocation per shard group, detached)::
 
-    setsid nohup .venv/bin/python -u scripts/run_shards.py \\
+    setsid nohup .venv/bin/python -u scripts/fleet/run_shards.py \\
         --model gemma-4-12b --count 3 --force-rerun 1 \\
         --types g7.12xlarge --regions us-east-2,us-west-2,us-east-1 \\
         --request-timeout 10800 \\
@@ -59,7 +59,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 DRIVER = REPO / "notebooks" / "induction" / "run_study.py"
 PYTHON = REPO / ".venv" / "bin" / "python"
 LOG_DIR = REPO / "notebooks" / "induction" / "results" / "fleet_logs"

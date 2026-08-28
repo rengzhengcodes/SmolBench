@@ -129,7 +129,7 @@ two halves need incompatible Python environments:
   import the real verifier at all: `smolbench.deduction.lean.verify`
   requires `lean_dojo`, which pins `python<3.13`.
 - **Phase 2 (verification)** runs on the dedicated `.venv-lean` (Python
-  3.12, which has `lean_dojo` installed) via `scripts/lean_verify_rows.py`.
+  3.12, which has `lean_dojo` installed) via `scripts/deduction/lean_verify_rows.py`.
   It downloads a run's `all_rows.jsonl` from S3, replays every recorded
   candidate proof against a real Dojo session, and uploads
   `verified_rows.jsonl` beside it -- **the original `all_rows.jsonl` is
@@ -140,8 +140,8 @@ two halves need incompatible Python environments:
   `--help` for the full flag set):
 
   ```
-  .venv-lean/bin/python scripts/lean_verify_rows.py --dry-run
-  .venv-lean/bin/python scripts/lean_verify_rows.py --runs 'scaling_glm-4.7*'
+  .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --dry-run
+  .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
   ```
 
 ### Two traps in phase 2, both of which fail SILENTLY
@@ -189,7 +189,7 @@ unset or unknown key lists every valid key). Useful flags:
   replicate rows on local disk only.
 - `--teardown` -- terminate this lane's EC2 instance after the sweep (or
   after a failure) and exit. **STANDALONE USE ONLY.** Under the fleet
-  supervisor (`scripts/run_fleet.py`), a lane's box is reused across the
+  supervisor (`scripts/fleet/run_fleet.py`), a lane's box is reused across the
   induction and deduction phases (same `EC2_EXPERIMENT_TAG`, same state
   file) and the supervisor owns that box's lifecycle end-to-end,
   terminating it itself once every phase scheduled for the lane has

@@ -3,7 +3,7 @@
 Ground truth: `scripts/arch/arch_facts.json` and `scripts/arch/arch_configs_raw.json`, fetched 2026-08-12 at the pinned commit SHAs below. Every claim is tagged **VERIFIED** (a config field I read, or a source line I actually read), **INFERRED** (my derivation from verified facts), or **UNVERIFIED**.
 
 **Reference implementation used.** vLLM 0.27.1 source tree, files
-`vllm/transformers_utils/configs/nemotron_h.py` and `vllm/model_executor/models/nemotron_h.py` / `nemotron_h_mtp.py`. Caveat: `scripts/run_fleet.py:151` sets `NIGHTLY_IMAGE = "vllm/vllm-openai:nightly"` for every lane except the two DeepSeek-V4 lanes, so the served engine was a 2026 nightly, not 0.27.1 exactly. The 0.27.1 tree is a close proxy, and the HF in-repo `modeling_nemotron_h.py` was cross-checked on the points that matter. **UNVERIFIED**: byte-level equivalence between 0.27.1 and the nightly that ran.
+`vllm/transformers_utils/configs/nemotron_h.py` and `vllm/model_executor/models/nemotron_h.py` / `nemotron_h_mtp.py`. Caveat: `scripts/fleet/run_fleet.py:151` sets `NIGHTLY_IMAGE = "vllm/vllm-openai:nightly"` for every lane except the two DeepSeek-V4 lanes, so the served engine was a 2026 nightly, not 0.27.1 exactly. The 0.27.1 tree is a close proxy, and the HF in-repo `modeling_nemotron_h.py` was cross-checked on the points that matter. **UNVERIFIED**: byte-level equivalence between 0.27.1 and the nightly that ran.
 
 ---
 

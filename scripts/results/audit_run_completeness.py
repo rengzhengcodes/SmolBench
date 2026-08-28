@@ -49,10 +49,10 @@ This script exits with status 1 when INFRA loss exists, so a pipeline can
 gate on it. It reports genuine empties, but never fails the run over them.
 
 USAGE
-    scripts/audit_run_completeness.py                  # all lanes, from S3
-    scripts/audit_run_completeness.py --lane gemma-4-31b
-    scripts/audit_run_completeness.py --local          # audit local run dirs
-    scripts/audit_run_completeness.py --induction      # seed coverage too
+    scripts/results/audit_run_completeness.py                  # all lanes, from S3
+    scripts/results/audit_run_completeness.py --lane gemma-4-31b
+    scripts/results/audit_run_completeness.py --local          # audit local run dirs
+    scripts/results/audit_run_completeness.py --induction      # seed coverage too
 
     # Programmatic, per lane (how the archived repair launcher gated a
     # restored run dir before relaunching it):
@@ -68,7 +68,7 @@ import re
 import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 BUCKET = "smolbench-results-414266451290"

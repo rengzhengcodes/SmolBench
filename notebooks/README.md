@@ -17,7 +17,7 @@ and attached to PR #4 as the release asset
 | `scripts/arch/page_data.json`, `scripts/arch/model_architectures.html` | `.venv/bin/python scripts/arch/build_page.py` |
 
 The four reports render from the 2026-08-16 S3 analysis snapshot
-(`scripts/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
+(`scripts/results/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
 audit round reproduced `EXTENS_VS_NOISE_REPORT.txt` byte-identically.
 The writeups that cite these reports by file and line number
 (`FAMILY_LADDER_ANALYSIS_2026-08-16.md`, `DOJOINIT_RECOVERY_2026-08-18.md`,

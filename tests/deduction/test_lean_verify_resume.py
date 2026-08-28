@@ -1,6 +1,6 @@
 """Test resume, second-pass row pairing, and the full-pass sentinel gate.
 
-``scripts/lean_verify_rows.py`` is the deferred verification pass. It
+``scripts/deduction/lean_verify_rows.py`` is the deferred verification pass. It
 reads a run's immutable ``all_rows.jsonl``, whose cell verdicts are all
 the generation-time placeholder ``"unverified"``. It replays each
 candidate against real Lean, and writes the graded mirror
@@ -52,7 +52,7 @@ from tests._paths import SCRIPTS
 # collides with the copy tests/deduction/test_deduction_study.py loads and pops.
 _SPEC = importlib.util.spec_from_file_location(
     "lean_verify_rows_resume_under_test",
-    SCRIPTS / "lean_verify_rows.py",
+    SCRIPTS / "deduction" / "lean_verify_rows.py",
 )
 lvr = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = lvr

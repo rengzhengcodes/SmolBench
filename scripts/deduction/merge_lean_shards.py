@@ -9,7 +9,7 @@ Each shard writes its own NON-canonical run directory
 (``runs/scaling_<key>_shard<i>of<n>``) and launches with ``--no-s3``. Shard
 directories must never reach the canonical S3 prefix, because its sole
 ``all_rows.jsonl`` is the exact object the verification pass
-(``scripts/lean_verify_rows.py``) and the analysis read. This script folds
+(``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script folds
 the completed shards back into ONE canonical run directory
 (``runs/scaling_<key>``). It gates the fold on row uniqueness and expected
 totals, regenerates ``analysis.txt``, and, if you pass ``--spool``, spools
@@ -37,7 +37,7 @@ MERGE GATES (all hard failures -- nothing is written past a failed gate)
 Run this script from the repo root, in the main venv, after the shard
 drivers have exited::
 
-    .venv/bin/python scripts/merge_lean_shards.py ministral-3-14b --n 3 --spool
+    .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 --spool
 """
 
 import argparse
@@ -50,7 +50,7 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
-REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 #: Model-independent full-lane row counts (300 fixed theorems, 4 rungs;

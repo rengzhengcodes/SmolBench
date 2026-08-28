@@ -813,7 +813,7 @@ def test_lean_cli_show_refuses_superseded_outputs(tmp_path, capsys):
 def test_all_three_retirement_markers_are_refused(tmp_path):
     """The snapshot writes three retirement markers for one audit-trail class.
 
-    (See scripts/snapshot_analysis_data.py: *_SUPERSEDED-*, *_STALE-*,
+    (See scripts/results/snapshot_analysis_data.py: *_SUPERSEDED-*, *_STALE-*,
     *_BROKEN-*.) The guard must refuse all three, in both the notebook and
     package copies.
     """

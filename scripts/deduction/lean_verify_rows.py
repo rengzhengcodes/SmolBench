@@ -260,14 +260,14 @@ py3.14-safe imports (``lean3``, ``.context``, ``.corpus``, ``.prompt``).
 
 Run (repo root, ``.venv-lean``)::
 
-    .venv-lean/bin/python scripts/lean_verify_rows.py --dry-run
-    .venv-lean/bin/python scripts/lean_verify_rows.py --runs 'scaling_qwen*'
-    .venv-lean/bin/python scripts/lean_verify_rows.py --theorem Nat.add_comm --workers 4
+    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --dry-run
+    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_qwen*'
+    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --theorem Nat.add_comm --workers 4
 
 The plan can also be previewed from the main venv, since ``--dry-run`` is
 exempt from the ``.venv-lean``/RAM/lock requirements above::
 
-    .venv/bin/python scripts/lean_verify_rows.py --dry-run
+    .venv/bin/python scripts/deduction/lean_verify_rows.py --dry-run
 """
 
 from __future__ import annotations
@@ -866,7 +866,7 @@ def require_py312() -> None:
             "lean_verify_rows: this is the deferred VERIFICATION pass and needs "
             "'lean_dojo', which only installs under the dedicated '.venv-lean' "
             "environment (the upstream package pins python<3.13). Re-run with "
-            "'.venv-lean/bin/python scripts/lean_verify_rows.py ...' instead of the "
+            "'.venv-lean/bin/python scripts/deduction/lean_verify_rows.py ...' instead of the "
             "main venv's python. Build it once with:\n"
             "    UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 "
             "--extra lean --extra notebook --extra dev\n"

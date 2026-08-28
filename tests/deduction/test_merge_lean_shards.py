@@ -1,4 +1,4 @@
-"""Test scripts/merge_lean_shards.py's merge gates.
+"""Test scripts/deduction/merge_lean_shards.py's merge gates.
 
 The merge is the single point where three shard boxes' outputs become
 the canonical lane object the verify pass and analysis read. So its
@@ -19,7 +19,7 @@ from tests._paths import SCRIPTS
 
 _SPEC = importlib.util.spec_from_file_location(
     "merge_lean_shards",
-    SCRIPTS / "merge_lean_shards.py",
+    SCRIPTS / "deduction" / "merge_lean_shards.py",
 )
 merge_mod = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = merge_mod

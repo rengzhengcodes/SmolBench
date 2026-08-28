@@ -407,7 +407,7 @@ applied**, whereas HF transformers **does** apply it. The divergence is exactly 
 16384 and grows to **1.2079 at position 131071** (this study's window ceiling) — so it is a genuine
 no-op for prompts under 16k tokens and a real ~21% query-magnitude difference at the long end.
 
-**Caveat, stated plainly**: the study served `vllm/vllm-openai:nightly` (`scripts/run_fleet.py:151`), a
+**Caveat, stated plainly**: the study served `vllm/vllm-openai:nightly` (`scripts/fleet/run_fleet.py:151`), a
 build I cannot pin. I verified vLLM **main** as of 2026-08-12 still uses the top-level form; I did not
 verify the specific nightly digest used at run time. Treat the conclusion as VERIFIED-for-main,
 **UNVERIFIED for the exact nightly**. GitHub code search is login-walled, so I could not exhaustively
@@ -559,4 +559,4 @@ Configs (ground truth): `/workspace/SmolBench/scripts/arch/arch_configs_raw.json
 9. `mistralai/Ministral-8B-Instruct-2410` `config.json` (sliding_window 32768, layer_types, rope_theta 1e8)
 10. mistral-common `SpecialTokens` / `TokenizerVersion` — https://github.com/mistralai/mistral-common/blob/main/src/mistral_common/tokens/tokenizers/base.py
 11. NVIDIA Megatron-Bridge — Ministral 3. https://docs.nvidia.com/nemo/megatron-bridge/latest/models/mistral/ministral3.html
-12. Study serving config: `/workspace/SmolBench/smolbench/evals/ec2.py`, `/workspace/SmolBench/scripts/run_fleet.py`
+12. Study serving config: `/workspace/SmolBench/smolbench/evals/ec2.py`, `/workspace/SmolBench/scripts/fleet/run_fleet.py`
