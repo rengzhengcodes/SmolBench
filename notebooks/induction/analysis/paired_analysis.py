@@ -1,8 +1,7 @@
 """Run a PAIRED re-analysis of the family-ladder induction study.
 
-This implements the two corrections specified in
-``MULTIPLICITY_PLAN.md`` sections 2.1 and 2.2, against the marks already
-collected. It collects no new data:
+This applies three corrections to the marks already collected. It collects
+no new data:
 
   1. PAIRED pairwise tests. Every model answers the SAME seeds with
      byte-identical prompts. The four info arms at a given seed reuse
@@ -26,20 +25,15 @@ collected. It collects no new data:
      the CMH denominator is missing (>1 anticonservative, <1
      conservative).
 
-  3. [Added 2026-08-21] The clustering FIX, not just its sign. If this
+  3. The clustering FIX, not just its sign. If this
      analysis measured the design effect and then reported an
      item-level p anyway, that would leave the inference resting on the
      assumption the measurement rejects. The exact seed-level sign-flip
      randomization test
      (`signflip_exact_p`) resamples the unit the design actually
      randomizes: the whole replicate. This is what `significance_report.py`
-     and `extens_vs_noise.py` now correct over the 210 family. It follows
-     the repo's own standing recommendation (MULTIPLICITY_PLAN.md
-     section "resampling unit must be the whole seed";
-     MULTIPLICITY_CMH_VARIANTS.md "PERMUTE / BLOCK-BOOTSTRAP WHOLE
-     REPLICATES ... RECOMMENDED HERE"), finally applied to the primary
-     family. Exact McNemar stays in the tables as the DESCRIPTIVE
-     item-level figure.
+     and `extens_vs_noise.py` now correct over the 210 family. Exact
+     McNemar stays in the tables as the DESCRIPTIVE item-level figure.
 
 This script reads marks from the local results tree that
 ``InductionExperiment.harness.sync_down()`` produces
@@ -57,7 +51,7 @@ project. So a sensitivity pass that DROPS item-pairs where either arm is
 invalid is reported alongside every headline.
 
 Run (ephemeral env via --no-project, per repo convention):
-    uv run --no-project --with numpy --with scipy python notebooks/induction/paired_analysis.py
+    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/paired_analysis.py
 """
 
 import re
@@ -65,7 +59,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 from scipy.stats import binom, chi2
@@ -181,11 +175,11 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 
     Notes
     -----
-    NOTE (2026-08-21): this treats the 270 marks as 270 independent
-    pairs. They are not. See `seed_diffs` / `signflip_exact_p`, which
-    are what the reports now use for inference. This function survives
-    as the DESCRIPTIVE item-level figure, and as the exact reference the
-    cluster test collapses onto when every cluster is a singleton.
+    This treats the 270 marks as 270 independent pairs. They are not. See
+    `seed_diffs` / `signflip_exact_p`, which are what the reports use for
+    inference. This function is the DESCRIPTIVE item-level figure, and the
+    exact reference the cluster test collapses onto when every cluster is a
+    singleton.
     """
     nd = b + c
     if nd == 0:
@@ -338,8 +332,7 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Compute Holm (1979) step-down rejections at familywise level `alpha`.
 
     This controls FWER under ARBITRARY dependence, and is uniformly more
-    powerful than single-step Bonferroni. See MULTIPLICITY_PLAN.md
-    section 1.
+    powerful than single-step Bonferroni.
 
     Ties are pervasive in this family: the sign-flip test has a hard
     resolution floor at 2/2^30, and three lanes sit exactly on it. So
@@ -484,7 +477,7 @@ def main() -> None:
                 f"  seed sign-flip+ Bonferroni : "
                 f"{int((p_cl <= ALPHA / N_PRIMARY).sum()):3d}\n"
                 f"  seed sign-flip+ Holm       : {int(rej_cl.sum()):3d}   "
-                f"<== PRIMARY since 2026-08-21 (correction 3)\n"
+                f"<== PRIMARY\n"
                 f"  => vs item-level McNemar: "
                 f"{int((rej_pair & ~rej_cl).sum())} lost, "
                 f"{int((rej_cl & ~rej_pair).sum())} gained "
@@ -534,7 +527,7 @@ def main() -> None:
                     f"{r['p_paired']:10.2e} {r['p_unpaired']:11.2e}{flag}"
                 )
 
-            # --- clustering sign (MULTIPLICITY_PLAN.md 2.2) -------------------
+            # --- clustering sign ---
             des = np.array([r["de"] for r in rows if r["de"] is not None])
             print(
                 f"\nClustering / cross-stratum covariance, over {des.size} measurable "

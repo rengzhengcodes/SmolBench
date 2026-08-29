@@ -1,17 +1,14 @@
 """Test ``notebooks/_power_common.py``: shared power-analysis scaffolding.
 
-This covers the pieces the periodic and chromatic power-analysis
-scripts both import: the experiment-design constants, the
-18-contrast family builder, the replicate-count formatter, and the
-``__file__``-anchored results-dir helper. The scripts' own statistics
-(CMH, Welch) are intentionally NOT shared code, and so are out of
-scope here. See ``_power_common``'s module docstring for why.
+This covers what both live power-analysis scripts import: the
+replicate-count formatter and the ``__file__``-anchored results-dir helper.
+The scripts' own statistics are intentionally NOT shared code, and so are
+out of scope here.
 
-This file imports ``_power_common`` the same way the two scripts do:
-by inserting ``notebooks/``, where the module lives, one level above
-either script's own directory, onto ``sys.path``. This is anchored off
-this test file's own resolved path, not the process cwd, so ``pytest``
-works no matter the invocation directory.
+This file imports ``_power_common`` the same way those scripts do: by
+inserting ``notebooks/``, where the module lives, onto ``sys.path``,
+anchored off this test file's own resolved path rather than the process
+cwd, so ``pytest`` works no matter the invocation directory.
 """
 
 import sys
@@ -23,101 +20,6 @@ sys.path.insert(0, str(NOTEBOOKS))
 
 import _power_common as pc
 
-# The 18 contrasts, transcribed verbatim from the current
-# ``_power_common.build_contrasts()`` output. This was originally
-# chromatic's pre-move implementation, verified structurally identical
-# to periodic's former inline loop (see the commit that introduced this
-# module). Order matters: this pins both the *set* of contrasts and
-# their print order, since both scripts render tables in this exact
-# sequence.
-EXPECTED_CONTRASTS = [
-    ("[intens] decode vs cot", ("decode", "intens"), ("cot", "intens")),
-    ("[intens] decode vs moe", ("decode", "intens"), ("moe", "intens")),
-    ("[intens] cot vs moe", ("cot", "intens"), ("moe", "intens")),
-    ("[extens] decode vs cot", ("decode", "extens"), ("cot", "extens")),
-    ("[extens] decode vs moe", ("decode", "extens"), ("moe", "extens")),
-    ("[extens] cot vs moe", ("cot", "extens"), ("moe", "extens")),
-    (
-        "[noise_intens] decode vs cot",
-        ("decode", "noise_intens"),
-        ("cot", "noise_intens"),
-    ),
-    (
-        "[noise_intens] decode vs moe",
-        ("decode", "noise_intens"),
-        ("moe", "noise_intens"),
-    ),
-    (
-        "[noise_intens] cot vs moe",
-        ("cot", "noise_intens"),
-        ("moe", "noise_intens"),
-    ),
-    ("[decode] intens vs extens", ("decode", "intens"), ("decode", "extens")),
-    (
-        "[decode] intens vs noise_intens",
-        ("decode", "intens"),
-        ("decode", "noise_intens"),
-    ),
-    (
-        "[decode] extens vs noise_intens",
-        ("decode", "extens"),
-        ("decode", "noise_intens"),
-    ),
-    ("[cot] intens vs extens", ("cot", "intens"), ("cot", "extens")),
-    (
-        "[cot] intens vs noise_intens",
-        ("cot", "intens"),
-        ("cot", "noise_intens"),
-    ),
-    (
-        "[cot] extens vs noise_intens",
-        ("cot", "extens"),
-        ("cot", "noise_intens"),
-    ),
-    ("[moe] intens vs extens", ("moe", "intens"), ("moe", "extens")),
-    (
-        "[moe] intens vs noise_intens",
-        ("moe", "intens"),
-        ("moe", "noise_intens"),
-    ),
-    (
-        "[moe] extens vs noise_intens",
-        ("moe", "extens"),
-        ("moe", "noise_intens"),
-    ),
-]
-
-
-def test_build_contrasts_returns_exactly_18():
-    contrasts = pc.build_contrasts()
-    assert len(contrasts) == 18
-    # 9 archetype-within-info + 9 info-within-model, per the docstring.
-    assert len(contrasts) == pc.N_TESTS
-
-
-def test_build_contrasts_matches_pinned_literal():
-    """Pins the full (name, key_a, key_b) sequence, not just the count.
-
-    A change to MODELS/INFOS order, the label format, or the two
-    nested-loop order (archetype contrasts first, then info-type
-    contrasts) would slip past a bare length check, but changes every
-    downstream script's printed table. This test catches that.
-    """
-    assert pc.build_contrasts() == EXPECTED_CONTRASTS
-
-
-def test_build_contrasts_is_a_fresh_list_each_call():
-    """Callers, both scripts, mutate or iterate the result.
-
-    A shared mutable default would leak state between periodic's and
-    chromatic's imports of the same process. That does not apply across
-    separate `uv run` invocations, but it does apply within a single
-    pytest session that imports the module once.
-    """
-    a = pc.build_contrasts()
-    b = pc.build_contrasts()
-    assert a == b
-    assert a is not b
 
 
 def test_fmt_r_none_prints_censored_form():
@@ -163,10 +65,34 @@ def test_results_dir_anchored_on_file_not_cwd():
     assert pc.results_dir(__file__) == Path(__file__).resolve().parent / "results"
 
 
-def test_alpha_corrected_is_bonferroni_over_18_tests():
-    assert pc.N_TESTS == 18
-    assert pc.ALPHA == 0.05
-    assert pc.ALPHA_CORRECTED == 0.05 / 18
+def test_results_dir_up_anchors_above_the_callers_own_directory():
+    """`up=N` must climb N levels before appending ``results``.
+
+    Both live power-analysis scripts sit one level below their study root
+    (``notebooks/<study>/analysis/power_analysis.py``) but must resolve the
+    study's own ``notebooks/<study>/results``, not a sibling ``analysis/results``
+    that no experiment ever writes. That distinction is load-bearing: only the
+    exactly-three-component ``notebooks/<study>/results`` shape maps onto the
+    short S3 experiment name (`results_store.experiment_name`); a deeper path
+    silently takes the full-path fallback and mints a different prefix.
+    """
+    script = NOTEBOOKS / "periodic" / "analysis" / "power_analysis.py"
+    assert pc.results_dir(str(script), up=1) == NOTEBOOKS / "periodic" / "results"
+    # up=0 is the default and must stay a pure no-op change of behaviour.
+    assert pc.results_dir(str(script), up=0) == pc.results_dir(str(script))
+
+
+def test_the_up_callers_are_where_this_helper_expects_them():
+    """Tripwire: both `up=1` callers must still be one level below their study.
+
+    This pins only the LAYOUT the `up=1` call sites assume. Whether each
+    script actually passes `up=1` is pinned by reading its resolved
+    ``RESULTS_DIR`` in ``tests/tooling/test_analysis_stats.py``, which
+    already has both modules loaded under unique names.
+    """
+    for study in ("induction", "deduction"):
+        script = NOTEBOOKS / study / "analysis" / "power_analysis.py"
+        assert script.is_file(), f"{script} moved; update `up=` at its call site"
 
 
 def test_module_is_stdlib_only():

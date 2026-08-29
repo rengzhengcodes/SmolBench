@@ -4,8 +4,7 @@ Every check here guards a failure mode that would otherwise surface only on
 a live multi-GPU box at $20-25/hour:
 
 * ``tp`` must shard the checkpoint's real head counts. GLM-4.7-Flash has 20
-  attention heads, so tp=8 crashes vLLM at startup -- the trap that
-  motivated this file.
+  attention heads, so tp=8 crashes vLLM at startup.
 * ``max_model_len`` must not exceed the shipped config's context window. A
   card claim is not a config value.
 * Every ``--reasoning-parser`` must exist in vLLM's parser registry. A
@@ -36,10 +35,8 @@ from tests._paths import FIXTURES
 
 #: All 22 deploy-spec keys (21 study rungs plus the qwen2.5-1.5b canary). The
 #: determinism-bundle tests below cover every entry, unlike STUDY_KEYS
-#: (which excludes the canary). The 2026-08-18 user ruling ("all model
-#: configurations deterministic") drew no such distinction, and the loop in
-#: ec2.py that appends DETERMINISM_ARGS runs over EC2_DEPLOY_SPECS.items()
-#: unconditionally.
+#: (which excludes the canary): the loop in ec2.py that appends
+#: DETERMINISM_ARGS runs over EC2_DEPLOY_SPECS.items() unconditionally.
 ALL_KEYS = sorted(EC2_DEPLOY_SPECS)
 
 #: A flag that appears exactly once, followed by a 40-char lowercase hex
@@ -124,22 +121,18 @@ def test_language_model_only_iff_multimodal_wrapper(key):
 
 
 # ---------------------------------------------------------------------------
-# Post-study determinism default (2026-08-18)
+# Determinism default
 #
-# User ruling 2026-08-18: all model configurations must be deterministic,
-# using the certified bundle from the 2026-08-16 hinge experiment. Every
-# test below covers all 22 EC2_DEPLOY_SPECS entries (ALL_KEYS), including
-# qwen2.5-1.5b. The ruling drew no exception for the smoke-test canary, and
-# neither does the ec2.py loop that appends DETERMINISM_ARGS.
+# Every model configuration must be deterministic. Every test below covers
+# all 22 EC2_DEPLOY_SPECS entries (ALL_KEYS), including the qwen2.5-1.5b
+# canary: the ec2.py loop that appends DETERMINISM_ARGS makes no exception
+# for it either.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_determinism_args_are_a_contiguous_suffix(key):
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment.
-    DETERMINISM_ARGS must land as a contiguous suffix of vllm_args, not
+    """DETERMINISM_ARGS must land as a contiguous suffix of vllm_args, not
     merely "present somewhere," because ec2.py builds it by appending
     (``_args + DETERMINISM_ARGS``). A spec whose bundle is scattered or
     truncated would mean the append logic broke for that entry specifically.
@@ -151,10 +144,7 @@ def test_determinism_args_are_a_contiguous_suffix(key):
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_prefix_caching_is_off_every_spec(key):
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment.
-    ``--enable-prefix-caching`` was load-bearing for study throughput, but
+    """``--enable-prefix-caching`` was load-bearing for study throughput, but
     the hinge experiment certified it as a nondeterminism source (thousands
     of cache hits under stock, zero under the determinism config). It must
     be absent everywhere, including the qwen2.5-1.5b canary.
@@ -166,10 +156,7 @@ def test_prefix_caching_is_off_every_spec(key):
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_revision_and_tokenizer_revision_pinned(key):
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment. As a
-    belt-and-braces check: at the pinned build, ``--tokenizer-revision`` inherits
+    """Belt-and-braces check: at the pinned build, ``--tokenizer-revision`` inherits
     ``--revision`` when unset (vllm/config/model.py:542), so the second flag is
     redundant today. Both are pinned, each exactly once, each with the same 40-char
     lowercase-hex commit SHA, so the checkpoint and tokenizer stay pinned together
@@ -191,10 +178,7 @@ def test_revision_and_tokenizer_revision_pinned(key):
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_gpu_memory_utilization_pinned(key):
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment.
-    DETERMINISM_PLAN section 4 row 4: the KV budget must be an explicit
+    """The KV budget must be an explicit
     function of the spec, not of free VRAM at profiling time. 0.92 is
     vLLM's default at the pinned build (vllm/config/cache.py:69 at
     8efa13b70) made explicit, and the value the hinge det arms actually
@@ -211,10 +195,7 @@ def test_gpu_memory_utilization_pinned(key):
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_no_flag_repeats(key):
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment.
-    No ``--flag`` token may appear twice in a spec's vllm_args. This is a
+    """No ``--flag`` token may appear twice in a spec's vllm_args. This is a
     general well-formedness check, not determinism-specific, but it is
     exactly the failure mode a careless DETERMINISM_ARGS append could
     cause, for example double-adding ``--gpu-memory-utilization`` to a
@@ -229,10 +210,7 @@ def test_no_flag_repeats(key):
 
 
 def test_ec2_vllm_image_default_is_digest_pinned():
-    """User ruling 2026-08-18: all model configurations must be deterministic.
-
-    This uses the certified bundle from the 2026-08-16 hinge experiment.
-    This test reads ec2.py's source text off disk, not the live
+    """This test reads ec2.py's source text off disk, not the live
     ``ec2.EC2_VLLM_IMAGE`` module attribute, so a developer's
     ``EC2_VLLM_IMAGE`` environment override in the test process cannot mask
     a regression back to a mutable tag. The whole point of digest-pinning
@@ -296,8 +274,7 @@ def test_hf_model_ids_match_the_vendored_roster():
 
 
 # ---------------------------------------------------------------------------
-# derive_tp (2026-08-13 fleet audit): tp comes from the landed box, not from
-# a pin.
+# derive_tp: tp comes from the landed box, not from a pin.
 # ---------------------------------------------------------------------------
 
 
@@ -321,7 +298,6 @@ def test_model_attention_heads_match_the_vendored_roster():
         ("glm-4.7-flash", "p5.48xlarge", 4),
         ("glm-4.7-flash", "g6e.12xlarge", 4),
         # The in-flight lanes' derived tp equals their previous static pin.
-        # This was verified before this change landed mid-drain.
         ("gemma-4-12b", "g6e.12xlarge", 4),
         ("ministral-3-14b", "g6e.12xlarge", 4),
         ("deepseek-v4-pro", "p6-b200.48xlarge", 8),
@@ -352,9 +328,7 @@ def test_derive_tp_on_sm120_g7_boxes():
     assert derive_tp("gemma-4-12b", "g7.12xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 2
     assert derive_tp("exaone-4.5-33b", "g7e.2xlarge", EC2_DEPLOY_SPECS["exaone-4.5-33b"]) == 1
     # The larger g7 sizes must be mapped too. A lane whose hunt spans a
-    # mapped and an unmapped size would silently change tp mid-lane
-    # (2026-08-14 peer audit: the ministral g7.24xlarge fleet was on the
-    # spec-fallback path, correct only by coincidence).
+    # mapped and an unmapped size would silently change tp mid-lane.
     assert derive_tp("ministral-3-14b", "g7.24xlarge", EC2_DEPLOY_SPECS["ministral-3-14b"]) == 4
     assert derive_tp("ministral-3-14b", "g7.48xlarge", EC2_DEPLOY_SPECS["ministral-3-14b"]) == 8
     assert derive_tp("gemma-4-12b", "g7.24xlarge", EC2_DEPLOY_SPECS["gemma-4-12b"]) == 4
@@ -380,11 +354,10 @@ def test_derive_tp_unknown_type_fallback_warns_for_known_model(caplog):
 def test_hardware_pin_blocks_a_gpu_swap_but_allows_a_size_swap(monkeypatch):
     """EC2_REQUIRE_GPU pins the silicon, not the instance size.
 
-    If you widen EC2_INSTANCE_TYPES to escape a capacity wall, that is the obvious move,
-    and a silent confound. On 2026-08-14, two repair lanes completing cells generated on
-    g6e.4xlarge landed on g6e.2xlarge. That was benign (both carry one L40S, so GPU and
-    tp were unchanged) and was accepted. But the same widened list would equally have
-    taken a 4-GPU g6e.12xlarge and changed derived tp mid-lane. The pin must permit the
+    Widening EC2_INSTANCE_TYPES to escape a capacity wall is the obvious move, and a
+    silent confound. Substituting a same-silicon size (both g6e.4xlarge and
+    g6e.2xlarge carry one L40S, so GPU and tp are unchanged) is benign; taking a
+    4-GPU g6e.12xlarge would change derived tp mid-lane. The pin must permit the
     first case and refuse the second.
     """
     from smolbench.evals.providers import ec2

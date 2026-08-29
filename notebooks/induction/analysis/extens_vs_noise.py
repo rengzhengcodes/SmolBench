@@ -11,7 +11,6 @@ stated rule?"
 
 TWO MECHANISMS, not one
 -----------------------
-[Rewritten 2026-08-21 under the ruling that retired the quarantine.]
 The naive reading, "extens < noise means length is not the
 explanation," only holds where the noise arm is a working control. It
 is not always a working control: whitespace padding to a matched token
@@ -31,32 +30,27 @@ table carries two distinguishable results, and states both:
 
 Every one of the 21 lanes appears below with its measured
 non-compliance on both arms, so which mechanism a row belongs to is
-visible, rather than editorial. The previous version of this script
-fenced six lanes into a `QUARANTINED` bucket; that bucket is retired.
+visible, rather than editorial.
 
 Inference
 ---------
-[Corrected 2026-08-21.] The PRIMARY p-value is the exact seed-level
-sign-flip randomization test: 30 replicate seeds are the independent
-unit, the 9 harmonic items inside a seed share one answer vector, and
-item-level exact McNemar (which the previous headline used) treats
-them as 270 independent pairs. The item-level p stays as a labelled
-DESCRIPTIVE column. On this particular subset the two agree on every
-rejection. The correction costs six rejections elsewhere in the 210
-family, all of them ladder contrasts.
+The PRIMARY p-value is the exact seed-level sign-flip randomization test:
+30 replicate seeds are the independent unit, the 9 harmonic items inside a
+seed share one answer vector, and item-level exact McNemar treats them as
+270 independent pairs. The item-level p stays as a labelled DESCRIPTIVE
+column. On this particular subset the two agree on every rejection.
 
 Correction discipline
 ---------------------
 These 21 contrasts are a SUBSET of the 210 pre-registered PRIMARY
 family, and the primary inference stays at m = 210. Re-correcting at
 m = 21 after choosing this subset because it looked interesting is
-data-dependent family sizing: the same hazard flagged against
-`alpha_eq = ALPHA / len(near_ties)` in MULTIPLICITY_PLAN.md section 3.
+data-dependent family sizing.
 The m = 21 column is reported only as a SENSITIVITY check, to show how
 little the conclusion depends on the choice.
 
 Run:
-    uv run --no-project --with numpy --with scipy python notebooks/induction/extens_vs_noise.py
+    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/extens_vs_noise.py
 """
 
 import sys
@@ -214,8 +208,7 @@ def main() -> None:
           f"{int(hochberg(p21_item, ALPHA).sum())} -- the clustering\n  "
           f"correction changes "
           f"{sum(1 for r in rows if r['holm210'] != r['holm210_item'])} of these "
-          f"21 primary decisions (it costs six rejections\n  elsewhere in the "
-          f"210 family, all ladder contrasts -- see SIGNIFICANCE_REPORT.txt).")
+          f"21 primary decisions.")
 
     sig = [r for r in rows if r["holm210"]]
     print(f"\nSIGNIFICANT under the primary (m=210, seed-level) correction: "
@@ -234,14 +227,9 @@ def main() -> None:
          "about whether\n  the model could answer at all. CAVEAT: the "
          "compliance criterion is a FORMAT gate --\n  `parse_numeric` accepts "
          "any bare integer, so an answer that is well-formed and\n  "
-         "systematically wrong is invisible to it. Verified instance (external "
-         "audit,\n  2026-08-20, not recomputed here): gemma4_e2b's extens arm "
-         "fails by a uniform ~10x\n  UNDERCOUNT -- median response/answer ratio "
-         "0.101, 86.2% of its 268 numeric extens\n  responses inside "
-         "[0.08,0.13]x truth, against a median of 1.000 in its own intens\n  "
-         "and noise arms. Its direction and clean status are unaffected, but "
-         "its effect is\n  one saturated failure mode repeated, not graded "
-         "induction difficulty"),
+         "systematically wrong is invisible to it. A lane can therefore be "
+         "clean and directionally\n  correct while its effect is one "
+         "saturated failure mode repeated, not graded induction difficulty"),
         ("COLLAPSE",
          "PADDING-ROBUSTNESS COLLAPSE (noise arm >= "
          f"{COLLAPSE_THRESHOLD:.0%} non-compliant)",

@@ -153,8 +153,7 @@ def test_state_file_env_read_at_call_time(tmp_path, monkeypatch):
 def test_clear_state_leaves_a_different_instances_state_alone(state_file):
     """A teardown must not delete state belonging to another instance.
 
-    The race this guards, observed live 2026-08-09: run A finishes and
-    starts tearing down its box. Run B for the same experiment tag
+    The race this guards: run A finishes and starts tearing down its box. Run B for the same experiment tag
     provisions a fresh box and writes its state. Then A's teardown reaches
     _clear_state, and if it deletes unconditionally, it removes B's state.
     B's next call raises "No EC2 instance state found," and the driver
@@ -198,12 +197,8 @@ def test_default_state_file_anchors_to_the_repo_root():
     The default is derived from the installed package's location
     (``Path(smolbench.__file__).resolve().parents[1]``) rather than from a
     depth count off this provider module's own ``__file__``. A depth count
-    is silent under a move: relocating ec2.py from ``smolbench/evals/`` into
-    ``smolbench/evals/providers/`` pushed the old ``parents[2]`` one
-    directory too deep, to ``<repo root>/smolbench/.ec2_state.json``. That
-    path is still gitignored, so no secret leaks, but it is not where any
-    session, script or runbook looks -- a live instance's state would be
-    written somewhere the next session cannot find it, stranding a billing
+    is silent under a move: it would write a live instance's state
+    somewhere no session, script or runbook looks, stranding a billing
     box with no error anywhere. Nothing else in the suite would notice,
     because every other state test overrides ``EC2_STATE_FILE``.
     """

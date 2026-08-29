@@ -1,10 +1,7 @@
-"""Pin ``scripts/arch/kv_budget.py`` to the 2026-08-13 fleet audit's table.
+"""Pin ``scripts/arch/kv_budget.py``'s corrected KV@131k figures for the roster.
 
-Each expected value below was independently derived in the audit (and the
-sliding/MLA rows hand-checked again when this tool was written). They are
-the corrected KV@131k figures whose divergence from the naive all-full
-assumption motivated re-deriving tier assignments for the replication
-study. A formula regression here silently re-poisons that sizing.
+Each expected value below was derived independently of the tool. A formula
+regression here silently re-poisons box sizing for the replication study.
 """
 
 from __future__ import annotations

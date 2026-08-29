@@ -1,11 +1,10 @@
-"""Gates over the 2026-08-25 S3 archive, streamed -- never pulled to disk.
+"""Gates over the S3 archive, streamed -- never pulled to disk.
 
-Why this exists: on 2026-08-25 the evidence tree
+Why this exists: the evidence tree
 (``notebooks/deduction/results/**``), the data sidecars
 (``notebooks/deduction/data/*``) and the LeanDojo corpus left the git tree
 for ``<SMOLBENCH_ARCHIVE_S3>/notebooks/deduction/`` (see
-``notebooks/README.md``). The seven tests that pinned those files as local
-paths are re-homed here against the bucket. Each object is read into
+``notebooks/ARCHIVE.md``). Each object is read into
 memory through :class:`conftest.S3Archive`; nothing is written to a
 local tree, per the user's ruling that archived data is accessed on AWS.
 
@@ -62,7 +61,7 @@ def em():
 
 @pytest.fixture(scope="module")
 def tracked(s3_archive) -> set[str]:
-    """Every archive-relative path under the results tree (the old git index set)."""
+    """Every archive-relative path under the results tree."""
     return set(s3_archive.keys(RESULTS))
 
 
@@ -153,7 +152,7 @@ def test_every_tracked_manifest_verifies(tracked, s3_archive, em):
 
 
 def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
-    """The audited defect, pinned as a regression test (see the archived original)."""
+    """The interim raw under a ``_final_`` name must be marked SUPERSEDED."""
     rel = f"{RESULTS}/runs/regime_mean_2026-08-21"
     assert f"{rel}/{em.MANIFEST_NAME}" in tracked
     manifest = json.loads(s3_archive.text(f"{rel}/{em.MANIFEST_NAME}"))

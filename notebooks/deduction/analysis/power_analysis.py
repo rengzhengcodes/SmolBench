@@ -1,15 +1,9 @@
 """Run the power analysis for the Lean-4 deduction FAMILY-LADDER SCALING study.
 
-This file PORTS the archived Lean deduction model-comparison power analysis
-(``git show f13b60d0~1:notebooks/lean/power_analysis.py``) onto the new
-21-checkpoint scaling design: 7 vendor families x 3 parameter-count rungs
-each = 21 models (see ``FAMILIES`` / ``MODELS`` below). This is the
-deduction-side sibling of ``notebooks/induction/power_analysis.py``'s
-family-ladder roster. The port re-targets that script's McNemar/
-Beta-mixture machinery (itself borrowed from the retired Lean CoT-recipe
-gate's sizer, ``git show f13b60d0:archive/scripts/lean_gate_power.py``)
-onto the new roster and a new two-tier contrast structure. The statistics
-are unchanged.
+This sizes the 21-checkpoint scaling design: 7 vendor families x 3
+parameter-count rungs each (see ``FAMILIES`` / ``MODELS`` below). It is the
+deduction-side sibling of
+``notebooks/induction/analysis/power_analysis.py``.
 
 Two meanings of "rung" -- READ THIS FIRST
 -------------------------------------------------------------------------
@@ -54,11 +48,6 @@ Statistical design (unchanged from the archived script's shape)
   REPLICATES verifies: ``P(pass@N) = 1 - (1 - p)**N`` for per-replicate
   success probability ``p`` (``pass_at_n`` below). ``N == 1`` is the
   per-replicate regime this study's R=1 pilot measures directly.
-  # NOTE ON TERMINOLOGY: the archived script and its statistics dependency
-  # used a different, now-retired term for this quantity throughout
-  # (``n_<that term>``, ``<that term>_idx``). This study, and this file,
-  # call it "replicate" end to end (``n_replicates``, ``replicate_idx``).
-  # See "Data source" below for the schema fact this reflects.
 
 Where the numbers come from
 -------------------------------------------------------------------------
@@ -75,7 +64,7 @@ contrast (see "Headline deliverable" below):
    simulation and reports the rejection rate. It uses the effect sizes
    actually observed in the pilot, with no parametric effect assumption,
    and is the PRIMARY sizing estimator.
-2. **n_replicates advisory = the retired gate script's Beta-mixture**
+2. **n_replicates advisory = a Beta-mixture projection**
    (``passn_power`` / ``needed_replicates``). A single R=1 draw per cell
    cannot reveal that cell's per-replicate probability. So this projects
    the effect of ADDING replicates with a theorem-level solvable-fraction
@@ -95,9 +84,7 @@ output itself, not only here: prior sizing work on this benchmark found
 ``n_theorems``, not replicates, to be the effective statistical lever.
 More replicates re-sample the SAME theorem's difficulty, so the
 Beta-mixture projection saturates. More theorems add genuinely
-independent blocks. This script reports the replicate projection because
-someone asked for it. Read it against that finding, not as an endorsement
-that more replicates is the efficient way to spend eval budget.
+independent blocks.
 
 Contrast tiers
 -------------------------------------------------------------------------
@@ -163,24 +150,22 @@ Shared scaffolding
 -------------------------------------------------------------------------
 This file imports ``ALPHA``, ``POWER_TARGETS``, ``SEED``, ``fmt_r``, and
 ``results_dir`` from ``notebooks/_power_common.py`` (the same shared
-module ``notebooks/induction/power_analysis.py`` uses). It does NOT import
-that module's ``MODELS`` / ``INFOS`` / ``build_contrasts``, which pin the
-older periodic-quiz 3-archetype design and do not apply here.
+module ``notebooks/induction/analysis/power_analysis.py`` uses).
 
 Run this script in an ephemeral env via ``--no-project`` so plain ``uv
 run`` does not resync and strip the notebook/dev extras (numpy/scipy
 only):
 
     uv run --no-project --with numpy --with scipy \\
-        python notebooks/deduction/power_analysis.py --s3
+        python notebooks/deduction/analysis/power_analysis.py --s3
 
     # or against an already-staged local results tree:
-    python notebooks/deduction/power_analysis.py \\
+    python notebooks/deduction/analysis/power_analysis.py \\
         --results-dir notebooks/deduction/results
 
     # restrict to a subset of models (e.g. one family) and fewer sims for
     # a quick smoke:
-    python notebooks/deduction/power_analysis.py --results-dir DIR \\
+    python notebooks/deduction/analysis/power_analysis.py --results-dir DIR \\
         --models qwen3.5-27b,qwen3.5-122b-a10b,qwen3.5-397b-a17b --sims 200
 """
 
@@ -211,7 +196,7 @@ import numpy as np
 # notebooks/ (where _power_common.py lives) is this file's parent directory.
 # This anchors the import to __file__, so it works regardless of the
 # caller's cwd (repo convention -- see _power_common.py itself).
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from _power_common import (
     ALPHA,
@@ -223,8 +208,7 @@ from _power_common import (
 
 # --------------------------------------------------------------------------- #
 # Roster: 7 vendor families x 3 parameter-count rungs (ladder positions) =
-# 21 models. The study spec gives this roster verbatim. It does NOT derive
-# from _power_common, which pins the older 3-archetype induction design.
+# 21 models. The study spec gives this roster verbatim.
 # Keys are the EC2 spec keys this study's runs use as ``model`` (==
 # ``display_name``) on every JSONL row -- see the module docstring's "Data
 # source" section -- NOT the short analysis tags the induction sibling
@@ -247,7 +231,7 @@ MODELS = tuple(m for rungs in FAMILIES.values() for m in rungs)  # 21
 
 # This drift guard runs at MODULE scope, not just inside main(), so
 # importing this module for its constants elsewhere also gets it for free.
-# This mirrors notebooks/induction/power_analysis.py's analogous
+# This mirrors notebooks/induction/analysis/power_analysis.py's analogous
 # module-scope assert. MODELS is DEFINED as a comprehension over FAMILIES
 # (never hand-duplicated), so a length/uniqueness check is the only drift
 # this design can suffer. Unlike the induction sibling, there is no
@@ -266,7 +250,7 @@ SIMS = 4000  # Monte-Carlo sims per grid point (matches the archived script's de
 #: rather than left as an unresolved difference test.
 EQUIV_BAND = 0.10
 #: Beta concentration (a + b) for the pass@N solvable-cell probability
-#: mixture (matches the retired gate script's default).
+#: mixture.
 BETA_CONC = 5.0
 
 N_THEOREMS_GRID = (30, 60, 100, 150, 200, 300)
@@ -282,7 +266,7 @@ ALPHA_PRIMARY = ALPHA / N_PRIMARY
 # Sizing simulations use the conservative rank-1 BH threshold
 # ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY as an UPPER BOUND on the
 # per-test alpha BH will actually apply at analysis time. This mirrors
-# notebooks/induction/power_analysis.py's ALPHA_SECONDARY exactly (see that
+# notebooks/induction/analysis/power_analysis.py's ALPHA_SECONDARY exactly (see that
 # file's module docstring for the full "why an upper bound" argument). The
 # OBSERVED-data significance decision reported per contrast uses the real
 # `benjamini_hochberg` procedure below, not this constant -- see
@@ -296,7 +280,7 @@ S3_BUCKET = "smolbench-results-414266451290"
 S3_REGION = "us-west-2"
 S3_PREFIX = "deduction/runs/"
 
-RESULTS_DIR = results_dir(__file__)
+RESULTS_DIR = results_dir(__file__, up=1)
 
 _Contrast = tuple[str, str, str]  # (label, model_a, model_b)
 
@@ -315,12 +299,8 @@ def _seed_of(name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Core statistics. This file inlines these from the retired Lean CoT-recipe
-# gate's sizer (``scripts/lean_gate_power.py``, no longer present in the
-# tree) rather than importing them, per this port's brief: this file must
-# stay self-contained. This file renames that source's retired terminology
-# to "replicate" throughout (see the module docstring's terminology note).
-# The math is otherwise unchanged.
+# Core statistics. Inlined rather than imported: this file must stay
+# self-contained under ``uv run --no-project``.
 # --------------------------------------------------------------------------- #
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Compute the probability that at least one of ``n`` replicates succeeds.
@@ -774,14 +754,10 @@ def load_joint_cells(
     #
     # This file applies two rules. Both directions were wrong before:
     #
-    #  * Plain assignment per row was LAST-wins. 74 cells hold more than one
-    #    surviving attempt: a 2026-08-15 resume bug re-ran cells the model
-    #    had already answered emptily, and generation is not deterministic
-    #    across server processes, so each retry is a fresh draw. Last-wins
-    #    takes the RESAMPLED attempt, which reports pass@N as pass@1. This
-    #    would move ministral-3-3b by +5.9 points. One of its cells has
-    #    surviving proof lengths [0, 0, 0, 65] -- three empty answers, then
-    #    a proof on the fourth draw.
+    #  * Plain assignment per row is LAST-wins. Some cells hold more than
+    #    one surviving attempt, and generation is not deterministic across
+    #    server processes, so each retry is a fresh draw. Last-wins takes
+    #    the RESAMPLED attempt, which reports pass@N as pass@1.
     #
     #  This file implements both rules ONCE, in `grade_verdicts`. Every
     #  loader in this study reads rows through it (error_bars.lane_outcomes,
@@ -994,7 +970,7 @@ def build_cross_family_contrasts() -> list:
     pairs, this compares ``FAMILIES[fam_a][pos]`` vs
     ``FAMILIES[fam_b][pos]``: 3 ladder positions x 21 family-pairs = 63
     contrasts. This mirrors
-    ``notebooks/induction/power_analysis.py::build_secondary_contrasts``'s
+    ``notebooks/induction/analysis/power_analysis.py::build_secondary_contrasts``'s
     structure (grouped by size class, then by family pair).
 
     Returns
@@ -1069,8 +1045,7 @@ def bootstrap_power(
     Notes
     -----
     Design: this caches `mcnemar_exact_p` on the discrete key
-    ``(b + c, min(b, c))`` -- the same technique the retired gate script's
-    ``power_point`` used. The discordant-pair total takes only a small
+    ``(b + c, min(b, c))``. The discordant-pair total takes only a small
     number of distinct values across `sims` resamples, so this is far
     cheaper than one fresh `math.lgamma` sweep per simulation.
     """
@@ -1166,10 +1141,9 @@ def passn_power(
     Notes
     -----
     Design: this caches `mcnemar_exact_p` on ``(b + c, min(b, c))`` per
-    simulation, the same technique as `bootstrap_power` (see its Notes) and
-    the retired gate script's ``power_point``. This is a pure performance
-    optimization. The projected power is identical to the un-cached
-    computation.
+    simulation, the same technique as `bootstrap_power` (see its Notes).
+    This is a pure performance optimization. The projected power is
+    identical to the un-cached computation.
     """
     ma = rate_a / frac_solvable
     mb = rate_b / frac_solvable
@@ -1217,7 +1191,7 @@ def needed_replicates(
 
     This scans `grid` in ascending order via `passn_power`, and stops at
     the first grid point that reaches `target`. This mirrors
-    ``notebooks/induction/power_analysis.py``'s ``replicates_needed``
+    ``notebooks/induction/analysis/power_analysis.py``'s ``replicates_needed``
     early-stop discipline: it is cheaper than always computing the full
     grid, and the natural reading of "how many replicates would be needed"
     is the smallest sufficient count.

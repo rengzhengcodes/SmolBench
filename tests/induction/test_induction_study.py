@@ -13,9 +13,8 @@ otherwise only surface after a 21-instance spot fleet has already billed:
   worse than no data.
 * The prompt template must stay byte-identical to the ``periodic_moe``
   study's, or the new results cannot be compared against the archived ones.
-* ``BASE_SEED``/``n_replicates`` are user-locked at 0/30. Every prior
-  study used 1776, so a copy-paste from a sibling driver would be
-  invisible.
+* ``BASE_SEED``/``n_replicates`` are user-locked at 0/30, so a copy-paste
+  from a sibling driver would be invisible.
 * The S3 experiment name must derive to exactly ``"induction"``, since
   that string is the top-level key component of every result object
   written.
@@ -76,10 +75,7 @@ EXPECTED_TAGS = {
     "deepseek-v4-pro": "ds_pro",
 }
 
-# The periodic_moe prompt template, verbatim. Provenance:
-#   git show f13b60d0~1:notebooks/periodic_moe/run_pilot.py  (the `template`
-#   assignment's string.Template argument)
-# 518 characters, sha256
+# The periodic_moe prompt template, verbatim: 518 characters, sha256
 #   e4a66d32c357cac4e898a8bf66d84b6ea3717f174ad7e5a88907bb5afb7a6279
 # Byte equality here is what makes the family-ladder results comparable to
 # the archived all-MoE study: same task, same wording, only the roster changed.

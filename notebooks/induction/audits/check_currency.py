@@ -1,25 +1,27 @@
-"""Re-gate the local induction tree on CONTENT, under the EARLIEST-wins ruling.
+"""Re-gate the local induction tree on CONTENT, under earliest-wins.
 
-The gate itself has to flip with the rule. The 2026-08-16 ruling
-selects, per (model, seed, arm), the object with the MINIMUM run
-timestamp. So a tree that matched the newest version, as the
-pre-ruling gate certified, is now WRONG for the 140 multi-attempt
-cells. Size discriminates them: the gemma-4-12b seed=8 extens pair is
-922,083 vs 1,319,921 bytes.
+Selects, per (model, seed, arm), the object with the MINIMUM run
+timestamp and compares the local file's SIZE against it -- content, not
+row counts.
 
-Expected after the R=30 closure: 2,520 cells (21 models x 4 arms x 30
-seeds), from 2,660 snapshot objects (2,520 + 140 duplicates).
+Usage: pass an ``aws s3 ls --recursive`` key listing ("<size> <key>" per
+line) as ``argv[1]``.
 """
 import re
 import sys
 from pathlib import Path
 
-REPO = Path("/workspace/SmolBench")
+# This file is <repo>/notebooks/induction/audits/<name>.py, so parents[1] is
+# the study root (.../notebooks/induction), where `run_study.py` and
+# `results/` live. Anchored on __file__ rather than an absolute checkout
+# path, so this probe reads the tree it actually ships in (a git worktree
+# has its own).
+STUDY = Path(__file__).resolve().parents[1]
 KEYS = Path(sys.argv[1])
-sys.path.insert(0, str(REPO / "notebooks" / "induction"))
+sys.path.insert(0, str(STUDY))
 from run_study import MODELS as TAGS
 
-RESULTS = REPO / "notebooks" / "induction" / "results"
+RESULTS = STUDY / "results"
 RX = re.compile(r"induction/([^/]+)/seed=(\d+)/([a-z_]+)--(\d{8}T\d{6})Z\.yaml$")
 
 attempts: dict[tuple, list] = {}

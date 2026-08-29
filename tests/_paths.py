@@ -3,11 +3,9 @@
 tests/ is grouped into subject subdirectories (evals/, induction/, deduction/,
 tooling/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
 (fixtures like lean_mini are shared across groups, and pytest resolves
-conftest.py by directory ancestry). Individual test modules used to compute
-these anchors by hand-counting `Path(__file__).resolve().parents[N]`, which
-silently breaks whenever a test file moves to a different directory depth.
-Importing the constants below instead means a future move only has to update
-this one file.
+conftest.py by directory ancestry). Import these constants instead of hand-counting
+``Path(__file__).resolve().parents[N]``, which silently breaks whenever a
+test file moves to a different directory depth.
 """
 
 from pathlib import Path

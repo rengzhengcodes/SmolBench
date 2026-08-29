@@ -628,15 +628,13 @@ EXPERIMENT = InductionExperiment(
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
     shard=SHARD,
-    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip
-    # (newest run_ts supersedes on read). "1" forces the full seed range.
-    # "a-b" forces the inclusive seed subrange a..b (for example, "0-11"
-    # re-collects only a lane's early seeds after a hardware migration,
-    # and leaves the already-homogeneous tail untouched). This is for
-    # deliberate re-collection ONLY -- for example, the 2026-08-13
-    # gemma-4-12b / deepseek-v4-flash re-runs that keep each lane
-    # serving-stack-homogeneous. It combines with INDUCTION_SHARD (a
-    # shard forces only the forced seeds it owns).
+    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip.
+    # NOTE: reads are EARLIEST-wins (see smolbench/evals/results_store.py),
+    # so a forced re-run appends to the S3 log but does NOT supersede the
+    # original on read -- voiding data requires explicit exclusion.
+    # "1" forces the full seed range. "a-b" forces the inclusive seed
+    # subrange a..b. Combines with INDUCTION_SHARD (a shard forces only the
+    # forced seeds it owns).
     force_seeds=_parse_force_seeds(
         os.environ.get("INDUCTION_FORCE_RERUN", ""),
         range(BASE_SEED, BASE_SEED + N_REPLICATES),

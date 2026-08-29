@@ -4,15 +4,14 @@ For each condition, this script measures what the stored RAW responses
 actually contain: how many are empty, how many scored correct, how many
 contain their own correct answer anywhere in the text, and the longest
 response. Use it to tell a genuine low-accuracy result apart from a
-broken lane -- see PAIRED_ANALYSIS_RESULTS.md.
+broken lane.
 
 Two traps this script exists to avoid
 --------------------------------------
 1. ``response`` is a YAML BLOCK SCALAR. A line-oriented regex over the
    file silently truncates it at the first line that looks like a new
-   key. That bug understated glm_air's empty count as 16 (true value
-   48), and overstated exaone_33b's answer hits as 24 (true value 5).
-   Any pass over ``response`` text must use a real parser.
+   key, which understates empty counts and overstates answer hits. Any
+   pass over ``response`` text must use a real parser.
 
    The results YAMLs carry ``!!python/object:`` tags, which
    ``yaml.safe_load`` refuses. But ``yaml.unsafe_load`` CONSTRUCTS
@@ -43,7 +42,7 @@ vs 164), the small gap genuinely does show the parser is recovering what
 is there.
 
 Run:
-    uv run --no-project --with pyyaml python notebooks/induction/response_audit.py
+    uv run --no-project --with pyyaml python notebooks/induction/audits/response_audit.py
 """
 
 import sys
@@ -51,13 +50,13 @@ from pathlib import Path
 
 import yaml
 
-RESULTS = Path(__file__).resolve().parent / "results"
+RESULTS = Path(__file__).resolve().parents[1] / "results"
 
 #: Harmonic k (1-indexed) -> correct count over the 2520-position sequence.
 EXPECTED_ANSWERS = tuple(2520 // k for k in range(1, 10))
 
-#: Conditions worth auditing by default: the lanes flagged as collapsed or
-#: degraded in PAIRED_ANALYSIS_RESULTS.md, plus a clean control.
+#: Conditions worth auditing by default: the lanes that measure as collapsed
+#: or degraded, plus a clean control.
 DEFAULT_CONDITIONS = (
     "qwen35_397b_intens",  # control: acc 1.000, used to verify EXPECTED_ANSWERS
     "glm_air_noise_intens",

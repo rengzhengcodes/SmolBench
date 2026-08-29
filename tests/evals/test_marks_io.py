@@ -97,27 +97,20 @@ def test_loads_does_not_take_the_unsafe_path_for_a_mention_in_a_response():
     assert Marks.loads(text) == marks
 
 
-#: A REAL legacy-format artifact, committed so this pin can never go
-#: vacuous again. It comes from
-#: ``notebooks/chromatic/result2/moe_intens.yaml`` (md5 94484d8aac7c,
-#: 342,032 bytes, 120 marks) in the 2026-08-10 results archive. It is
-#: cut to its first 2 marks and re-dumped with the SAME legacy writer
-#: (``yaml.dump``). That subsetting is byte-faithful, not approximate.
-#: The archived file satisfies ``yaml.dump(yaml.unsafe_load(raw)) ==
-#: raw`` exactly, so this fixture is precisely what the historical
-#: writer would have emitted for those two marks.
+#: A REAL legacy-format artifact. It is a genuine chromatic ``moe_intens``
+#: result file cut to its first 2 marks and re-dumped with the SAME legacy
+#: writer (``yaml.dump``). That subsetting is byte-faithful: the original
+#: satisfies ``yaml.dump(yaml.unsafe_load(raw)) == raw`` exactly, so this
+#: fixture is precisely what the historical writer would have emitted for
+#: those two marks.
 LEGACY_FIXTURE = FIXTURES / "legacy_marks_chromatic_moe_intens.yaml"
 
 
 def test_load_real_legacy_result_file():
     """A genuine pre-safe-dump artifact must stay loadable forever.
 
-    This replaces a pin that had gone permanently vacuous. It globbed
-    ``notebooks/periodic/results/*/rep_*.yaml`` and returned early when
-    the glob was empty. Those trees have since been archived out of the
-    working tree, so its body asserted nothing at all, in every run,
-    with no failure to signal it. A committed fixture cannot rot that
-    way.
+    The fixture is committed rather than globbed out of a results tree, so
+    this pin cannot go vacuous when those trees move.
 
     What this actually protects, beyond "the unsafe_load branch runs": every mark in
     this artifact predates BOTH the ``reasoning`` and ``compliance`` fields. So

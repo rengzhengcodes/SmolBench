@@ -58,7 +58,7 @@ def test_ec2_query_missing_usage_tolerated(ec2_env):
 # Opt-in streaming transport (EC2_STREAM_COMPLETIONS)
 # ---------------------------------------------------------------------------
 # A non-streaming completion is silent on the wire for the whole
-# generation. On 2026-08-16 that silence was measured to be fatal for
+# generation. That silence is fatal for
 # cap-length ministral-3-14b responses. The server finished them, but
 # the client's sockets stayed ESTABLISHED with empty receive queues for
 # 57 minutes, and every one hit its read timeout. An A/B on the same
@@ -144,14 +144,6 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
     else. That would be a difference in the DATA from a change that is
     only supposed to touch the transport. This is the cap-length case
     the lane is missing, so it is the case most likely to occur.
-
-    2026-08-23 (defect D3): the pinned value moved from ``("", None)``
-    to ``("", "long thought")``. The early-return used to hardcode
-    ``reasoning=None``, DISCARDING a reasoning-only cap-hit. It now
-    returns the reasoning channel faithfully. The INVARIANT this test
-    exists for, that both transports parse the same body identically,
-    is unchanged. The assertion is now strictly stronger: it pins both
-    parity AND retention.
     """
     from smolbench.evals.providers import ec2
 
@@ -171,7 +163,7 @@ def test_ec2_stream_matches_non_streamed_when_content_is_null(ec2_env, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# D3 (2026-08-23): the null-content early return must not discard reasoning
+# The null-content early return must not discard reasoning
 # ---------------------------------------------------------------------------
 # A reasoning-only cap-hit (content=None, finish_reason="length") used
 # to surface as a fully EMPTY row. The early-return hardcoded

@@ -6,35 +6,28 @@ delivery fault, per arm. The expected shape is a large lift confined to
 the arms whose draws reach the token cap. The noise arm, which does not
 reach it, should stay unmoved.
 
-WHAT THIS SCRIPT DOES AND DOES NOT SHOW
----------------------------------------
-This script shows the gap. It does NOT establish the mechanism. An
-earlier version of this docstring overclaimed that it did, by calling
-the effect "survivorship."
-
-Survivorship is the wrong word. The landing timestamps show that ZERO
-of the 23 old seeds landed after fault onset (~13:48Z on 08-14; the
-latest old seed landed 10:46Z). So that cohort was never filtered by
-the fault: it simply ran first. The right frame is MISSING-NOT-AT-RANDOM
-exclusion: the 7 seeds are intrinsically cap-out-prone, which is why
-they could not finish inside the fault window.
-
-Nor does the flat noise arm below prove the mechanism on its own. It
-rules out arm-uniform causes, but a length-mediated per-process or
-build shift would spare the noise arm too. The evidence that pins the
-mechanism down is external to this script: server counters from inside
-the fault window show those same seeds at ~68% cap-length on the OLD
-builds, matching what they show today on the new one. Cite those
-counters.
+WHAT THIS SHOWS, AND WHAT IT DOES NOT
+-------------------------------------
+This shows the GAP. It does not establish the mechanism. The frame is
+MISSING-NOT-AT-RANDOM exclusion: the 7 re-collected seeds are intrinsically
+cap-out-prone, which is why they could not finish inside the fault window.
+The flat noise arm below rules out arm-uniform causes, but a length-mediated
+per-process shift would spare the noise arm too. The evidence that pins the
+mechanism is external to this script: server counters from inside the fault
+window.
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/workspace/SmolBench/notebooks/induction")
+# Anchored on __file__, never an absolute checkout path: `response_audit`
+# is this probe's own sibling under `audits/`, and `results/` sits one
+# level up at the study root.
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 import yaml
 from response_audit import TagIgnoringLoader
 
-RESULTS = Path("/workspace/SmolBench/notebooks/induction/results")
+RESULTS = HERE.parent / "results"
 REDONE = {19, 24, 25, 26, 27, 28, 29}
 ARMS = ("intens", "extens", "noise_intens", "zero")
 

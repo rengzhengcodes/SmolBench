@@ -55,8 +55,8 @@ _PROVIDER_MODULES: dict[str, str] = {
 def provider_module(name: Optional[str] = None) -> ModuleType:
     """Resolve a provider module, either explicitly or from the environment.
 
-    ``name=None`` (the default) reproduces the original env-dispatch
-    behavior: this function reads INFERENCE_PROVIDER from the environment
+    ``name=None`` (the default) dispatches from ``INFERENCE_PROVIDER``:
+    this function reads it from the environment
     (default "openrouter" when unset). Passing an explicit `name` bypasses
     the environment entirely and resolves that provider directly. See the
     module docstring for why a caller (e.g. a Lean sweep runner mixing
@@ -96,10 +96,9 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
     # elsewhere in the process (needed for mixed-provider sweeps).
     resolved = (name if name is not None else os.getenv("INFERENCE_PROVIDER", "openrouter")).lower()
     if resolved not in _PROVIDER_MODULES:
-        # Error text keeps saying "INFERENCE_PROVIDER" for the env-dispatch
-        # case (name=None) so it stays byte-identical to the pre-rename
-        # message notebooks/tests may already match on; explicit-name
-        # lookups get a generic "provider" label instead.
+        # Error text says INFERENCE_PROVIDER for the env-dispatch case,
+        # which tests match on; explicit-name lookups get a generic
+        # "provider" label instead.
         label = "INFERENCE_PROVIDER" if name is None else "provider"
         raise ValueError(
             f"Unknown {label}={resolved!r}. "

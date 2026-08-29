@@ -20,8 +20,7 @@ Module map:
     (`build_user_prompt`), and tactic-block extraction from a model
     response.
   - `runner`, `verify`, `cli` — orchestration, Lean-side proof replay, and
-    the command-line entry points. These are owned and maintained
-    separately from the four generation-side modules above.
+    the command-line entry points.
 
 Environment split: the four modules above (`corpus`, `premises`, `context`,
 `prompt`) handle generation and analysis. They run under any Python >= 3.12,

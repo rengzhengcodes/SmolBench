@@ -64,7 +64,7 @@ With fresh creds for profile `rengz`:
 
 ```bash
 export AWS_PROFILE=rengz AWS_REGION=us-east-1
-export EC2_EXPERIMENT_TAG=cleanup-smoke-0702 \
+export EC2_EXPERIMENT_TAG=smoke-test \
        EC2_STATE_FILE=/tmp/cleanup_smoke_state.json \
        EC2_INSTANCE_TYPES=g6.2xlarge,g5.2xlarge \
        EC2_REGIONS=us-east-1 EC2_ROOT_VOLUME_GB=100 EC2_IDLE_TIMEOUT_MIN=25
@@ -79,7 +79,7 @@ export EC2_EXPERIMENT_TAG=cleanup-smoke-0702 \
 
 # 2. Confirm nothing is left running/billing:
 aws ec2 describe-instances --region us-east-1 \
-  --filters "Name=tag:smolbench:experiment,Values=cleanup-smoke-0702" \
+  --filters "Name=tag:smolbench:experiment,Values=smoke-test" \
   --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output table
 ```
 

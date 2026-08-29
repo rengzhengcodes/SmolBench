@@ -207,8 +207,7 @@ def run_cell(
     ----------
     provider : str
         Provider name, resolved via `smolbench.evals.provider.provider_module`
-        (e.g. "primeintellect", "openrouter", "aws", "ec2"). This parameter
-        replaces the pre-refactor `client: LLMClient` parameter — see the
+        (e.g. "primeintellect", "openrouter", "aws", "ec2"). See the
         module docstring's "Generation dispatch" note.
     model : str
         Provider-specific model id.
@@ -267,13 +266,10 @@ def run_cell(
     for replicate_idx in range(n_replicates):
         replicate_seed = seed + replicate_idx
         t0 = time.monotonic()
-        # Design: this function wraps `complete()` in no try/except. This
-        # matches the pre-refactor `run_cell`, which let generation
-        # failures propagate to its caller (the `run-cell` CLI command)
-        # instead of recording an exception row. `sweep` owns that
-        # resumable-exception-row behavior (see `_execute_one_cell` and the
-        # concurrent path below); `run_cell` is a single-shot, non-resuming
-        # entry point.
+        # Design: this function wraps `complete()` in no try/except.
+        # `run_cell` is single-shot and non-resuming, so generation
+        # failures propagate; `sweep` owns exception rows (see
+        # `_execute_one_cell` and the concurrent path below).
         rsp = mod.complete(
             user_prompt, model, replicate_seed,
             system=SYSTEM,
@@ -311,7 +307,7 @@ def run_cell(
             "prompt_tokens": rsp.prompt_tokens,
             "completion_tokens": rsp.completion_tokens,
             "cache_read_tokens": rsp.cached_prompt_tokens,
-            "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+            "cache_creation_tokens": 0,  # no provider reports cache-creation
             "finish_reason": rsp.finish_reason,
             "context_chars": len(rendered.text),
             "gen_ms": gen_ms,
@@ -359,8 +355,7 @@ def _select_theorems(
         When given, this narrows the returned pool to exactly the theorems
         that own at least one cell key in this set (see
         `load_cell_whitelist` for the key shape). `None` (the default)
-        applies no narrowing -- the result is byte-identical to this
-        function's pre-whitelist behavior. Callers pass this explicitly
+        applies no extra filtering. Callers pass this explicitly
         rather than reading it from `spec`, unlike `shard` below: the
         whitelist is env-gated (`LEAN_CELL_WHITELIST`, loaded once by
         `sweep`), not a sweep-config field, because it names specific
@@ -448,11 +443,10 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 # Cell whitelist (LEAN_CELL_WHITELIST) -- an env-gated cell-level filter, in
 # the same spirit as the `theorems.shard` mechanism above, but scoped to
 # specific (model, theorem, k, rung, replicate_idx) cells instead of a
-# stride over the theorem pool. `scripts/flip_probe.py`'s score-level flip
-# experiment (notebooks/DETERMINISM_PLAN_2026-08-16.md §6.2) uses this to
-# regenerate an exact n=200-cell sample on a fresh box, without re-running
-# (or re-sanity-gating) the other ~700 cells of a 300-theorem lane. See
-# `sweep`'s own docstring for exactly where this is consulted.
+# stride over the theorem pool. Used to regenerate an exact small cell
+# sample on a fresh box without re-running (or re-sanity-gating) the rest
+# of a lane. See `sweep`'s own docstring for exactly where this is
+# consulted.
 # ---------------------------------------------------------------------------
 
 
@@ -495,13 +489,9 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
 
     Notes
     -----
-    This function deliberately does NOT fall back to "no whitelist" (an
-    unfiltered run) on any error. A missing file or malformed JSON must
-    abort the sweep before it generates a single cell. It must never
-    silently degrade into a full, expensive re-run of the whole lane. See
-    the module's `sweep` docstring and `scripts/flip_probe.py`'s "HARD
-    RULE" section for why an accidental full re-run of this specific lane
-    would be a real, costly mistake, not just a wasted whitelist.
+    A missing file or malformed JSON must abort the sweep before it
+    generates a single cell; it must never silently degrade into a full,
+    expensive re-run of the whole lane.
     """
     path = Path(path_str)
     try:
@@ -544,10 +534,7 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
     twice: `sweep`'s own `manifest.json` already carries the whitelist
     PATH (see `notebooks/deduction/run_study.py`'s `build_config`, which
     stamps a conditional `cell_whitelist: {"path": ..., "sha256": ...}`
-    config entry exactly here), and `scripts/flip_probe.py`'s
-    `sample_manifest.json` records the same digest for the sample it drew.
-    The two can then compare byte-for-byte without re-reading or
-    re-diffing either file.
+    config entry exactly here).
 
     Parameters
     ----------
@@ -601,45 +588,20 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
       interruption, an idle watchdog, an unreachable endpoint, a transient
       API error). Nothing was ever measured. Re-run the cell.
 
-    The check restricts to survivors on purpose. This preserves a
-    deliberate older behavior: a cell whose ONLY record is an
-    ``exception`` re-runs even when that row carries proof text. An
-    exception can come from the VERIFIER, leaving a proof that was
-    never checked.
+    The check restricts to survivors on purpose: a cell whose ONLY record is
+    an ``exception`` re-runs even when that row carries proof text, because
+    an exception can come from the VERIFIER, leaving a proof that was never
+    checked.
 
-    Why not "re-run whenever an exception row exists and there is no
-    content"? That was this function's rule between 2026-08-14 and
-    2026-08-15. Under that rule, a cell that lost its FIRST attempt to a
-    spot kill and then answered emptily still owned that old exception row
-    forever, so the rule re-ran it on every relaunch. This had two
-    consequences, both measured:
-
-    1. **Resampling bias.** Generation is not deterministic across server
-       processes (measured: 8/8 byte-identical within one vLLM process, 0/8
-       across two), so each retry is an independent draw. Re-running a cell
-       that already answered emptily, until it happens to emit a proof,
-       turns a failure into a success. **This resampled 67 cells across
-       three lanes** (56 in ministral-3-3b) -- 0.4% of all cells carrying a
-       proof, and pure inflation of a pass@1 metric.
-    2. **An unbounded futile loop.** The old rule retried cells that kept
-       answering emptily forever, at ~12 minutes each, and kept the
-       completeness gate permanently red.
-
-    One tempting alternative rule fails: "it burned the whole 32,768-token
-    budget, so retrying is pointless." Measurement REFUTES this: qwen3.5-27b
-    cells that hit the cap emptily went on to produce proofs on a later
-    attempt. Truncation is a property of the draw, not of the cell.
-
-    A retry cap (K clean attempts) would also work, but it is a tuned
-    constant. ``prompt_tokens`` states the actual distinction, needs no
-    tuning, and is the same signal `scripts/results/audit_run_completeness.py`
-    uses to separate infrastructure loss from genuine empty output.
-
-    NOTE: this rule is NOT a superset of any earlier version. Relative to
-    the 2026-08-14/15 rule, it re-runs strictly fewer cells (that is the
-    fix). Relative to the original row-by-row rule, it still recovers
-    infra losses the original could not reach. Measurement, not assertion,
-    confirms both directions against all 21 landed lanes.
+    A cell that was asked and answered emptily must NOT re-run. Generation
+    is not deterministic across server processes, so each retry is an
+    independent draw; re-running an empty answer until it happens to emit a
+    proof turns a failure into a success and inflates pass@1. Truncation is
+    a property of the draw, not of the cell, so "it burned the whole token
+    budget" is not grounds to retry either. ``prompt_tokens`` states the
+    distinction with no tuned constant, and is the same signal
+    `scripts/results/audit_run_completeness.py` uses to separate
+    infrastructure loss from genuine empty output.
     """
     if not jsonl_path.exists():
         return set()
@@ -783,12 +745,9 @@ def _glyph(v: str) -> str:
 #: Filename marker for a RETIRED row artifact. On ``--force-rerun``,
 #: ``notebooks/deduction/run_study.py`` renames a superseded
 #: ``all_rows.jsonl`` to ``all_rows_SUPERSEDED-<stamp>.jsonl`` instead of
-#: deleting it. The rows stay as an audit trail, and the rerun exists to
-#: leave behind the hardware that collected them. Anything that globs row
-#: files must therefore refuse them by name; silently pooling them back in
-#: re-creates the mixed-hardware confound the archiving removed.
+#: deleting it. Anything that globs row files must refuse them by name.
 #:
-#: (``notebooks/deduction/power_analysis.py`` carries its own copy of this
+#: (``notebooks/deduction/analysis/power_analysis.py`` carries its own copy of this
 #: marker and of the check below. It cannot import this module: the
 #: analysis scripts run under ``uv run --no-project --with numpy --with
 #: scipy``, an environment with no smolbench installed. The duplication is
@@ -1122,8 +1081,7 @@ def _run_cells_at_step(
     """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped).
 
     `cell_whitelist` (see `sweep`'s docstring and `load_cell_whitelist`):
-    `None` (the default) applies no extra filtering -- the result is
-    byte-identical to this function's pre-whitelist behavior. When given, a
+    `None` (the default) applies no extra filtering. When given, a
     cell whose row key is NOT a member gets skipped exactly like an
     already-`done_keys` cell (counted in the same `n_skipped` return
     value). This function does not distinguish the two reasons for
@@ -1377,7 +1335,7 @@ def _run_cells_at_step_concurrent(
                         "prompt_tokens": rsp.prompt_tokens,
                         "completion_tokens": rsp.completion_tokens,
                         "cache_read_tokens": rsp.cached_prompt_tokens,
-                        "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+                        "cache_creation_tokens": 0,  # no provider reports cache-creation
                         "finish_reason": rsp.finish_reason,
                         "gen_ms": gen_ms, "verify_ms": verify_ms,
                         "candidate_proof": candidate, "raw_response": rsp.content,
@@ -1492,7 +1450,7 @@ def _execute_one_cell(
         "prompt_tokens": rsp.prompt_tokens,
         "completion_tokens": rsp.completion_tokens,
         "cache_read_tokens": rsp.cached_prompt_tokens,
-        "cache_creation_tokens": 0,  # vestigial: no provider reports cache-creation now
+        "cache_creation_tokens": 0,  # no provider reports cache-creation
         "finish_reason": rsp.finish_reason,
         "gen_ms": gen_ms, "verify_ms": verify_ms,
         "candidate_proof": candidate, "raw_response": rsp.content,
@@ -1569,14 +1527,13 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     own at least one whitelisted cell still gets its full, unconditional
     sanity-gate replay -- the whitelist narrows WHICH cells generate, not
     whether a surviving theorem's ground truth gets re-checked. The env
-    var, left unset (the default), is byte-identical to this function's
-    pre-whitelist behavior. A missing file or malformed JSON raises
-    `ValueError` here, before this function even selects a theorem. See
-    `load_cell_whitelist`'s Notes for why silently falling through to an
-    unfiltered (full-lane) run would be a real, costly mistake for this
-    env var's intended caller. `scripts/flip_probe.py`'s score-level flip
-    experiment draws a small n=200-cell sample from an otherwise
-    ~300-theorem lane.
+    var, left unset (the default), applies no extra filtering. A missing
+    file or malformed JSON raises `ValueError` here, before this function
+    even selects a theorem. See `load_cell_whitelist`'s Notes for why
+    silently falling through to an unfiltered (full-lane) run would be a
+    real, costly mistake for this env var's intended caller. This lets an
+    exact small cell sample be regenerated from an otherwise large lane,
+    without re-running the rest of it.
 
     Config keys (all optional; sane defaults below — see the module
     docstring's "Generation dispatch" section for the rationale behind
@@ -1601,7 +1558,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         Sweep configuration; see the keys above plus `theorems`, `rungs`,
         `models`, `k`, `n_replicates`, `temperature`, `max_tokens`,
         `dojo_timeout`, `concurrent_gen`, `max_concurrency`,
-        `skip_trivial`, `theorem_workers` (all pre-existing, unchanged).
+        `skip_trivial`, `theorem_workers`.
     run_dir : Path
         Output directory; see the module docstring's "Output layout".
     resume : bool, default True
@@ -1650,9 +1607,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
 
     models_cfg = list(config["models"])
     # This fails fast on unknown provider names. Resolution here is pure
-    # module resolution, with no network call, so a typo'd or legacy
-    # provider (e.g. the retired "openai_compat"/"anthropic") aborts here
-    # with provider_module's actionable ValueError, instead of after the
+    # module resolution, with no network call, so a typo'd or unknown
+    # provider name aborts here with provider_module's actionable
+    # ValueError, instead of after the
     # first theorem has already burned a real sanity replay inside a Dojo
     # session.
     for mc in models_cfg:
@@ -1700,11 +1657,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     # (from `_ctx_len_for`) is model-specific -- two model configs on the
     # same provider can have different context windows -- so the key
     # includes `mc["model"]`; without it, one model's context length
-    # could silently leak onto another's token-usage guard. (The
-    # pre-refactor `clients` cache also keyed on a per-model `base_url`
-    # override; that key is dead now, since each provider module resolves
-    # endpoints from its own env vars.) See `_provider_for` for why
-    # provider resolution happens explicitly per model, not env-dispatched.
+    # could silently leak onto another's token-usage guard. See
+    # `_provider_for` for why provider resolution happens explicitly per
+    # model, not env-dispatched.
     provider_cache: dict[tuple, tuple] = {}
     def _provider_and_ctx_for(mc: dict) -> tuple:
         key = (mc["provider"], mc["model"])

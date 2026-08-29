@@ -67,19 +67,12 @@ METADATA_TIMEOUT_S: int = 120
 def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
     """Perform one bearer-authenticated metadata GET and return its parsed JSON body.
 
-    This function is extracted from four near-identical copies that had
-    grown independently: OpenRouter's and Prime Intellect's
-    ``get_model_context_length`` (a GET against ``/models/{model}/endpoints``
-    or ``/models/{model}``), and AWS's and EC2's ``list_models`` (a GET
-    against ``/models``). All four built the same ``requests.get(url,
-    headers={"Authorization": f"Bearer {key}"}, timeout=...).json()`` call.
-    They differed only in the URL, the timeout (all four use
-    ``METADATA_TIMEOUT_S`` today), and whether the response status is
-    checked before parsing; see the FIDELITY note below for why this
-    function preserves that last difference via ``check_status`` rather
-    than unifying it. Each call site keeps its own URL construction,
-    ``lru_cache`` (where applicable), and JSON post-processing; this
-    function only performs the GET and returns the raw parsed body.
+    This function performs the shared GET/auth/timeout mechanics behind
+    OpenRouter's and Prime Intellect's ``get_model_context_length`` (a GET
+    against ``/models/{model}/endpoints`` or ``/models/{model}``), and AWS's
+    and EC2's ``list_models`` (a GET against ``/models``). Each call site
+    keeps its own URL construction, ``lru_cache`` (where applicable), and
+    JSON post-processing.
 
     Parameters
     ----------
@@ -137,17 +130,11 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     Notes
     -----
     FIDELITY: the two context-length lookups (OpenRouter, Prime Intellect)
-    deliberately do NOT check status before parsing. An error response's
-    JSON body flows straight into the caller's shape-specific indexing
-    (``response["data"]["endpoints"][0]["context_length"]`` etc.), which
-    raises its own ``KeyError``/``TypeError`` on a malformed or error-shaped
-    body. This matches each provider's pre-extraction behavior under the
-    retry machinery in ``ChatClient`` and is NOT a bug to "fix" here. The
-    two ``list_models`` call sites (AWS, EC2) already DID check status
-    before this extraction. ``check_status`` exists to preserve BOTH
-    behaviors verbatim, one per call-site kind. Do not change either
-    default when calling this function, and do not collapse the parameter
-    to a single hardcoded choice.
+    deliberately do NOT check status before parsing; an error body flows
+    into the caller's shape-specific indexing and raises there. The two
+    ``list_models`` call sites (AWS, EC2) DO check. ``check_status`` has no
+    default so this split can never be silently unified -- do not collapse
+    it.
     """
     response = requests.get(
         url=url,
@@ -189,26 +176,11 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     """Reassemble an SSE completion stream into a NON-streamed response body.
 
     A non-streaming completion is silent on the wire for the whole
-    generation: the request goes out, then nothing flows until the finished
-    body comes back. On 2026-08-16 that silence was measured to be fatal on
-    the ``ministral-3-14b`` induction path. The server finished four
-    cap-length responses (``vllm:request_success_total{finished_reason=
-    "length"}`` went 0 -> 4, ``generation_tokens_total`` froze at 354,389),
-    while this host held four ESTABLISHED sockets with EMPTY receive queues
-    for 57 minutes, then took four 5400 s read timeouts. The short ``stop``
-    response in the same batch arrived normally, so the loss was selective
-    by generation LENGTH, i.e. by how long the socket sat quiet.
-
-    An A/B test on that same box settled it: two requests with identical
-    sampling parameters, issued concurrently and differing only in
-    ``stream``, gave::
-
-        non_streamed  ReadTimeout after 5400.1 s, nothing delivered
-        streamed      first byte at 0.62 s, 87,843 chunks, 19,856,415 bytes,
-                      complete in 2,461 s
-
-    19.9 MB arrives intact where a quarter-megabyte body never arrives at
-    all, because SSE chunks keep bytes flowing and the flow is never idle.
+    generation, and a long-quiet socket can be dropped in transit: the
+    request goes out and nothing ever comes back, until the read timeout.
+    The loss is selective by generation LENGTH -- short responses in the
+    same batch arrive normally. SSE keeps bytes flowing, so the flow is
+    never idle.
 
     This function reassembles the stream into the non-streamed shape,
     rather than returning its own shape, because everything downstream
@@ -276,21 +248,12 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
 
-    # NO content deltas -> content is None, NOT "". This looks pedantic, but
-    # it is not. vLLM's non-streamed body sends `"content": null` when a
-    # generation spends its whole budget in the reasoning channel. The
-    # caller has a dedicated early-return for that case, which yields
-    # (content="", reasoning=<the reasoning text>) and now RETAINS the
-    # reasoning instead of discarding it. Measured live on 2026-08-16
-    # against ministral-3-14b: the same prompt returned content=None with
-    # 1,553 characters of `reasoning` non-streamed. An earlier version of
-    # this function returned "" instead, which skipped that branch and
-    # recorded reasoning where the non-streamed path at the time recorded
-    # null. That is precisely the cap-length population this lane is
-    # missing, so the difference would have landed in the data rather than
-    # staying in the transport. The two transports must agree regardless of
-    # what the caller's early-return does with the reasoning it receives.
-    # They now agree on retention, not just on presence/absence.
+    # NO content deltas -> content is None, NOT "". vLLM's non-streamed body
+    # sends `"content": null` when a generation spends its whole budget in
+    # the reasoning channel, and the caller has a dedicated early-return for
+    # that case which retains the reasoning. Returning "" here would skip
+    # that branch, so the two transports would disagree on retention for
+    # exactly the cap-length population.
     message: Dict[str, Any] = {"content": "".join(content_parts) if saw_content else None}
     if saw_reasoning:
         message["reasoning_content"] = "".join(reasoning_parts)
@@ -327,15 +290,11 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
     whether the model was RIGHT, ``compliance`` says whether it followed
     the FORMAT.
 
-    That separation is the point. This function used to call
-    ``QnA.condition`` directly, so a right answer in the wrong shape
-    (``"Answer: False"`` when the prompt demanded a bare ``False``) raised
-    and scored as invalid, indistinguishable from a wrong answer. The
-    induction ``noise_intens`` arm made that costly. It is supposed to
-    control for prompt LENGTH only, but its whitespace padding measurably
-    degrades instruction following, so a chunk of its marks were failing on
-    formatting rather than reasoning. This function recovers the answer and
-    flags the violation, so it keeps both facts.
+    That separation is the point. A right answer in the wrong shape
+    (``"Answer: False"`` when the prompt demanded a bare ``False``) would
+    otherwise be indistinguishable from a wrong answer. This matters for the
+    induction ``noise_intens`` arm, which controls for prompt LENGTH only,
+    but whose whitespace padding measurably degrades instruction following.
 
     A response that genuinely yields no answer -- empty, repetition
     collapse, or a reasoning chain truncated before any verdict -- still
@@ -367,14 +326,9 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
         try:
             parsed = parse_for(q, raw)
         except Exception as exc:  # noqa: BLE001 -- see below; deliberate
-            # A parser bug must not destroy a run. This step runs after the
-            # expensive part: hours of GPU time, and every replicate already
-            # graded in this process. An exception here throws away work
-            # that cannot be recovered by retrying, and on a spot instance
-            # it keeps billing while nothing progresses. This happened once:
-            # a model emitted a 20,379-digit number and int() raised (Python
-            # refuses int/str conversion past 4,300 digits), which
-            # propagated out of grade() and killed a live study mid-arm.
+            # A parser bug must not destroy a run: this step runs after hours
+            # of GPU time, and an exception here throws away work retrying
+            # cannot recover.
             #
             # An unreadable response is exactly what `score=None` means, so
             # degrading to "invalid" loses nothing but the one mark. The raw
@@ -438,13 +392,12 @@ class ChatResult:
     """Hold the full per-call response from :meth:`ChatClient.complete`.
 
     This class is a superset of the ``(content, reasoning)`` 2-tuple
-    :meth:`ChatClient.query` has always returned: it adds token usage, the
+    :meth:`ChatClient.query` returns: it adds token usage, the
     model id the server actually reports, and the finish reason. It exists
     so callers that need more than content/reasoning -- e.g. a Lean
     theorem-proving sweep runner that budgets retries against token usage
     inside an open verification session -- don't have to change
-    ``query()``'s signature or return type, which every existing provider
-    module and notebook relies on (see ``ChatClient.query``).
+    ``query()``'s signature or return type (see ``ChatClient.query``).
 
     Every field is populated DEFENSIVELY from the response body (``.get``
     chains in ``ChatClient.complete``). Some servers (certain SageMaker
@@ -560,16 +513,11 @@ class ChatClient:
         """Query ``model`` once, and return the full response as a ``ChatResult``.
 
         This method holds the message assembly, retry loop,
-        ``<think>``-splitting, usage guard, and logging that used to live
-        directly in ``query()``. ``query()`` is now a thin wrapper that
-        narrows this method's ``ChatResult`` down to the ``(content,
-        reasoning)`` 2-tuple every existing provider module,
-        ``evaluate()``/``_indexed_query``, and the notebooks rely on (see
-        ``query``'s docstring for that compatibility contract). New callers
-        that need token usage, the server-reported model id, or a bounded
-        retry count -- e.g. a Lean sweep runner that must not spin forever
-        inside an open verification session -- should call this method
-        directly.
+        ``<think>``-splitting, usage guard, and logging. ``query()`` is a
+        thin wrapper narrowing the ``ChatResult`` to the ``(content,
+        reasoning)`` 2-tuple; callers that need token usage, the
+        server-reported model id, or a bounded retry count should call this
+        method directly.
 
         Parameters
         ----------
@@ -605,8 +553,8 @@ class ChatClient:
         max_retries : int, optional
             Caps retryable failures (HTTP 429/5xx, or connection-level
             errors) at N. The Nth retryable failure re-raises the last error
-            instead of sleeping again. None (default) preserves the
-            original behavior of retrying retryable errors forever.
+            instead of sleeping again. None (default) retries retryable
+            errors indefinitely.
             Non-retryable errors (4xx other than 429) always raise
             immediately on first occurrence, regardless of this cap. The
             existing ``max_connection_failures``/``on_unreachable``
@@ -659,12 +607,9 @@ class ChatClient:
         # OPT-IN streaming transport, off by default. When set, the request
         # asks for SSE, and the chunks are reassembled into the ordinary
         # response shape (see ``collect_stream``). The study's data path
-        # does not fork. This is enabled per LANE, never globally: on
-        # 2026-08-16 it was the measured difference between a cap-length
-        # response arriving and vanishing, but every already-collected row
-        # in this study came over the non-streamed path, so flipping the
-        # default would split the transport under data that is already on
-        # disk.
+        # does not fork. This is enabled per LANE, never globally: rows
+        # already on disk came over the non-streamed path, so flipping the
+        # default would split the transport under existing data.
         stream: bool = self._flag("STREAM_COMPLETIONS")
 
         attempt: int = 0
@@ -757,8 +702,8 @@ class ChatClient:
 
                 if msg["content"] is None:
                     logging.warning("Body returned none value: \n" f"{body}")
-                    # Design: this branch used to hardcode reasoning=None.
-                    # That turned a reasoning-only cap-hit (server spends
+                    # Design: never hardcode reasoning=None here. That
+                    # would turn a reasoning-only cap-hit (server spends
                     # the whole budget in the reasoning channel and returns
                     # content=null) into an indistinguishably empty row and
                     # destroyed real generations. This was measured live as
@@ -864,16 +809,10 @@ class ChatClient:
     ) -> Tuple[str, Optional[str]]:
         """Query ``model`` once, retrying transient failures indefinitely.
 
-        This method is a thin wrapper over ``complete()``. The positional
-        signature and ``(content, reasoning)`` return type are UNCHANGED
-        from before ``complete()`` existed (every provider module and the
-        notebooks call this positionally), and ``system``/``max_retries``
-        are new keyword-only parameters appended at the end, so no existing
-        call site -- positional or keyword -- breaks. See ``complete()``
-        for the full parameter docs (including these two) and for the
-        additional ``ChatResult`` fields (token usage, server-reported
-        model, finish_reason) this wrapper discards. Callers that need
-        those should call ``complete()`` directly.
+        This method is a thin wrapper over ``complete()``, narrowing its
+        result to ``(content, reasoning)``. See ``complete()`` for the full
+        parameter docs and the additional ``ChatResult`` fields this
+        wrapper discards.
 
         Returns
         -------

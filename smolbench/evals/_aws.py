@@ -4,11 +4,10 @@ Share AWS provisioning primitives between the SageMaker and EC2 providers.
 Used by :mod:`smolbench.evals.providers.aws` (SageMaker) and
 :mod:`smolbench.evals.providers.ec2` (self-provisioned EC2 Spot). Both provider
 modules talk to IAM, EC2, SageMaker, and S3 to stand up an
-inference endpoint. Before this module existed, each provider carried its
-own copy of the same primitives: a fresh-Session client constructor, an
-``Error.Code`` extractor, an assume-role trust-policy dict, a poll-until-
-ready loop, and a best-effort teardown sweep. This module holds the single
-copy. Each provider wires its own model- or endpoint-specific logic on top.
+inference endpoint. This module holds the shared primitives: a fresh-Session
+client constructor, an ``Error.Code`` extractor, an assume-role trust-policy
+dict, a poll-until-ready loop, and a best-effort teardown sweep. Each
+provider wires its own model- or endpoint-specific logic on top.
 
 The two providers' endpoint lifecycles use DELIBERATELY different shapes.
 They do not diverge by accident:
@@ -122,7 +121,7 @@ def error_code(err: Exception) -> str:
 def assume_role_trust_policy(service: str) -> Dict[str, Any]:
     """Build an EC2-style AssumeRole trust policy for one AWS service principal.
 
-    Both provider modules independently built this exact document: one for
+    Both callers need this document: one for
     ``"sagemaker.amazonaws.com"`` (aws.py's SageMaker execution role), and
     one for ``"ec2.amazonaws.com"`` (ec2.py's instance-profile role). The two
     documents differ only in the ``Principal.Service`` value, so this
@@ -139,11 +138,10 @@ def assume_role_trust_policy(service: str) -> Dict[str, Any]:
     -------
     Dict[str, Any]
         An IAM trust-policy document permitting ``sts:AssumeRole`` for
-        ``service``. The dict's key order (``Version`` -> ``Statement`` ->
-        ``Effect``/``Principal``/``Action`` within each statement) matches
-        the inline dicts this function replaced, byte-for-byte under
-        ``json.dumps``. Callers that pin the exact ``AssumeRolePolicyDocument``
-        JSON string sent to IAM rely on that stable ordering.
+        ``service``, with a fixed key order (``Version`` -> ``Statement`` ->
+        ``Effect``/``Principal``/``Action`` within each statement).
+        Callers pin the exact ``AssumeRolePolicyDocument`` JSON string, so
+        the key order is stable.
     """
     return {
         "Version": "2012-10-17",
@@ -160,15 +158,10 @@ def assume_role_trust_policy(service: str) -> Dict[str, Any]:
 def ensure_sagemaker_execution_role(role_name: str) -> str:
     """Return the SageMaker execution role ARN, creating it if absent.
 
-    This function is transcribed from ``aws.py``'s original
-    ``_ensure_exec_role`` (pre-refactor), parametrized on the role name so
+    This function is parametrized on the role name so
     both a SageMaker deployment path and any future caller can name their
-    own role. One intentional behavioral delta remains from the original:
-    the IAM client comes from ``fresh_client("iam")`` (a brand-new boto3
-    Session per call) rather than the original's process-wide-default-session
-    ``boto3.client("iam")``. This delta is payload-invariant: it sends
-    identical IAM API calls and identical request bodies. It only changes
-    which credentials snapshot signs the request, so a rotated
+    own role. The IAM client comes from ``fresh_client("iam")`` (a brand-new
+    boto3 Session per call), so a rotated
     ``~/.aws/credentials`` file is actually picked up instead of silently
     signing with stale, expired credentials (see ``fresh_client``'s
     docstring for the full rationale).
@@ -192,8 +185,8 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
 
     Notes
     -----
-    On the CREATE path this sleeps 10 seconds (``time.sleep(10)``, preserved
-    exactly from the original) after ``attach_role_policy`` and before
+    On the CREATE path this sleeps 10 seconds (``time.sleep(10)``) after
+    ``attach_role_policy`` and before
     returning. The sleep lets IAM's eventual consistency catch up before
     SageMaker tries to assume the role. The already-exists path skips the
     sleep, since that role has presumably already propagated.
@@ -220,19 +213,16 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
 def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: int) -> str:
     """Return the EC2 instance-profile name for the S3 model cache.
 
-    Creates the role and profile if they are absent. This function is
-    transcribed verbatim (in behavior) from ``ec2.py``'s
-    original ``_ensure_instance_profile``. The two values that were module
-    constants there (``EC2_INSTANCE_ROLE_NAME``, ``_IAM_PROPAGATION_SLEEP_S``)
-    are threaded through as parameters instead, so this function carries no
-    ec2.py-specific global state. The role grants two things: (a) read/write
-    scoped to ``bucket``, and (b) SSM core, which doubles as the break-glass
-    shell for a box launched with no SSH key.
+    Creates the role and profile if they are absent. ``EC2_INSTANCE_ROLE_NAME``
+    and ``_IAM_PROPAGATION_SLEEP_S`` are threaded through as parameters, so
+    this function carries no ec2.py-specific global state. The role grants
+    two things: (a) read/write scoped to ``bucket``, and (b) SSM core, which
+    doubles as the break-glass shell for a box launched with no SSH key.
 
     Parameters
     ----------
     role_name : str
-        IAM role AND instance-profile name (the original uses one name for
+        IAM role AND instance-profile name (one name for
         both), e.g. ``EC2_INSTANCE_ROLE_NAME``.
     bucket : str
         S3 bucket name the role's inline policy is scoped to (list + get/put
@@ -247,9 +237,7 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
     Returns
     -------
     str
-        ``role_name`` itself, returned for call-site convenience. This
-        mirrors the original, which returns the same string it was passed
-        in as ``EC2_INSTANCE_ROLE_NAME``.
+        ``role_name`` itself, returned for call-site convenience.
 
     Raises
     ------
@@ -359,14 +347,12 @@ def poll_until(
     interval_s: float,
     on_timeout: Callable[[], Exception],
 ) -> T:
-    """Poll in a loop, matching the exact ordering of every wait loop it replaces.
+    """Poll in a loop, with a fixed, load-bearing ordering.
 
-    Both provider modules independently grew several structurally-identical
-    ``while True: ... check ... if time.time() > deadline: raise ... time.
-    sleep(...)`` loops. They wait for a public IP, a control agent, a
-    healthy model, or an ``InService`` SageMaker endpoint. This function is
-    that shape, generalized: ``check`` does one poll attempt and returns
-    either a non-None success value or ``None`` to keep waiting. ``check``
+    Callers wait for a public IP, a control agent, a
+    healthy model, or an ``InService`` SageMaker endpoint. ``check`` does one
+    poll attempt and returns either a non-None success value or ``None`` to
+    keep waiting. ``check``
     may itself raise, to abort the loop early for an unrecoverable
     condition (e.g. "the instance is terminated, waiting further is
     pointless").
@@ -408,8 +394,8 @@ def poll_until(
 
     Notes
     -----
-    This function has a load-bearing ordering contract. It must match every
-    wait loop migrated onto this function, byte-for-byte in behavior:
+    This function has a load-bearing ordering contract. Every wait loop
+    built on it must match it exactly:
 
     1. Call ``check()``.
     2. If it returned non-``None``, return that value immediately. The
@@ -441,13 +427,10 @@ def best_effort_teardown(
 ) -> None:
     """Run every teardown step, logging (never raising) each one's outcome.
 
-    This function is generalized from ``aws.py``'s original
-    ``provision_endpoint`` ``finally`` block, which tore down a SageMaker
-    endpoint/endpoint-config/model in a fixed 3-tuple loop with the same
-    try/log-success/except-log-failure shape. Here it takes an arbitrary
-    sequence of (label, callable) steps, so other teardown sequences (e.g. a
-    different resource ordering) can reuse the same "never let cleanup mask
-    the real error" behavior.
+    This function takes an arbitrary
+    sequence of (label, callable) steps, so any teardown sequence (e.g. a
+    SageMaker endpoint/endpoint-config/model triple, in a fixed order) can
+    reuse the same "never let cleanup mask the real error" behavior.
 
     Parameters
     ----------
@@ -558,10 +541,7 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: EC2/vLLM ONLY: LoRA adapters to stage from S3 and register with vLLM,
     #: as ``[{"name": ..., "s3": "<prefix>/<base_key>[/<sub>]", "region": ...}]``.
     #: ``ec2.serve_model`` consumes this field and passes the staging plan to
-    #: the on-box agent. ``EC2_SPEC_KEYS`` has listed it since the LoRA arms
-    #: first shipped, but it was previously missing from this TypedDict, so
-    #: type checkers flagged adapter-carrying spec literals. Base-only
-    #: studies never set it.
+    #: the on-box agent. Base-only studies never set it.
     adapters: list
 
 

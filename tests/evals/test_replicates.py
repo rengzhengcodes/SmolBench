@@ -325,7 +325,7 @@ def test_force_seeds_subset_recollects_only_those_seeds(harness, fake_evaluate):
     assert not unrelated.has_outstanding("stub-model")
 
 
-# server_config provenance stamping (2026-08-14, user directive: results must
+# server_config provenance stamping (results must
 # record what serving stack generated them).
 
 def test_run_replicates_stamps_server_config_on_every_dump(harness, fake_evaluate, tmp_path):

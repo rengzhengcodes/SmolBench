@@ -267,8 +267,7 @@ def random_labels(
     Label length is
     ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``.
     RNG call order: exactly one ``np.random.default_rng`` construction,
-    followed by one ``random_unique_strings`` call. This matches the
-    pre-hoist call sites byte-for-byte.
+    followed by one ``random_unique_strings`` call.
     """
     length: int = max(
         min_length,
@@ -297,8 +296,7 @@ WHITESPACE_UNITS: Tuple[str, ...] = (
     # tokenizers merge EVERY mixed space/tab/newline run (Gemma ships
     # dedicated multi-whitespace tokens), so none of the units above cost
     # 1 token/rep there. A bare carriage return does: neither vocab has a
-    # multi-\r merge. This was verified linear through 30,000 repetitions on
-    # gemma-4-{e2b,12b,31b} and exaone-4.0-32b (2026-08-11).
+    # multi-\r merge.
     "\r",
     "\x0b",
 )

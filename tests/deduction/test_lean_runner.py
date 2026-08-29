@@ -239,11 +239,9 @@ REQUIRED_ROW_KEYS = {
     "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
     "gen_ms", "verify_ms", "candidate_proof", "raw_response",
     "reasoning_content", "verdict", "lean_error", "final_state_pp",
-    # 2026-08-23 (defect D6): the server's stop reason. "length" with a
-    # large completion_tokens is what distinguishes a finished
-    # generation from one that spent its whole budget in the reasoning
-    # channel. That is the population whose rows were being recorded as
-    # indistinguishably empty.
+    # The server's stop reason. "length" with a large completion_tokens
+    # is what distinguishes a finished generation from one that spent its
+    # whole budget in the reasoning channel.
     "finish_reason",
 }
 
@@ -391,7 +389,7 @@ def test_sweep_resume_and_exception_rerun(sweep_ctx, concurrent):
 
 
 # ---------------------------------------------------------------------------
-# (c2) resume decides per CELL, not per row -- the 2026-08-14 silent data fault
+# (c2) resume decides per CELL, not per row
 # ---------------------------------------------------------------------------
 
 
@@ -405,12 +403,6 @@ def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
     deterministic across server processes (measured: 8/8 byte-identical
     within one vLLM process, 0/8 across two), so the retry really can
     eventually "succeed".
-
-    That is not hypothetical. The rule this replaces re-ran any
-    contentless cell that owned an old `exception` row. 67 cells across
-    three lanes were resampled from empty to a proof before it was
-    caught, 0.4% of all cells carrying a proof, straight into a pass@1
-    numerator.
 
     The tempting alternative, "it burned the full token budget, so
     retrying is pointless", is refuted: qwen3.5-27b cells that hit the
@@ -519,7 +511,7 @@ def test_run_cell_path(sweep_ctx):
 
 
 # ---------------------------------------------------------------------------
-# D6 (2026-08-23): finish_reason on every cell row
+# finish_reason on every cell row
 # ---------------------------------------------------------------------------
 
 
@@ -541,15 +533,14 @@ def test_run_cell_records_the_servers_finish_reason(sweep_ctx):
 
 
 def test_reasoning_only_cap_hit_is_never_graded_as_a_proof(sweep_ctx):
-    """THE study-side safety property behind defect D3.
+    """A reasoning-only cap-hit is never graded as a proof.
 
-    The client now RETAINS the reasoning text on a null-content cap-hit,
-    instead of discarding it. This pins that the retained text stays out
-    of the candidate. The success marker sits in the REASONING channel
-    and nowhere else, so a runner that conflated the two channels would
-    grade this row "success". It must grade the row as a failure with an
-    EMPTY candidate, while still recording the reasoning and the finish
-    reason.
+    The client RETAINS the reasoning text on a null-content cap-hit. This
+    pins that the retained text stays out of the candidate. The success
+    marker sits in the REASONING channel and nowhere else, so a runner
+    that conflated the two channels would grade this row "success". It
+    must grade the row as a failure with an EMPTY candidate, while still
+    recording the reasoning and the finish reason.
     """
     sweep_ctx.pi.default_response = {
         "choices": [{"message": {"content": None,
@@ -923,8 +914,8 @@ def test_select_theorems_shard_rejects_malformed_values(sweep_ctx):
 
 
 # ---------------------------------------------------------------------------
-# (m) LEAN_CELL_WHITELIST -- cell-level filter used by scripts/flip_probe.py's
-# score-level flip experiment (notebooks/DETERMINISM_PLAN_2026-08-16.md §6.2)
+# (m) LEAN_CELL_WHITELIST -- cell-level filter for regenerating an exact
+# cell sample on a fresh box
 # ---------------------------------------------------------------------------
 
 
@@ -974,9 +965,9 @@ def test_hash_cell_keys_is_order_and_type_independent():
     """The digest must depend only on the SET of keys, not on-disk order or type.
 
     It must not depend on their on-disk order, nor on whether they arrive as tuples or
-    plain JSON-decoded lists. `notebooks/deduction/run_study.py`'s sidecar stamp and
-    `scripts/flip_probe.py`'s sample_manifest.json compute this digest through two
-    different code paths, and must agree for the SAME cell set.
+    plain JSON-decoded lists. `notebooks/deduction/run_study.py`'s sidecar stamp and any
+    external cell-sample manifest compute this digest independently, and must
+    agree for the SAME cell set.
     """
     keys_a = [("m", "T", 1, "stepk:1", 0), ("m", "U", 2, "hint:2", 1)]
     keys_b = [["m", "U", 2, "hint:2", 1], ["m", "T", 1, "stepk:1", 0]]

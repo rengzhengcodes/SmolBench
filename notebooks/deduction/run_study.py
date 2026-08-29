@@ -58,9 +58,8 @@ lanes swapped their served checkpoints.
      three, matching ``notebooks/induction/run_study.py``'s own late-import
      style for the same reason).
 
-WHY THIS ORDER IS CORRECT (verified against the current tree, not assumed
-from memory of some other file's contents -- see the note at the end of
-this section):
+WHY THIS ORDER IS CORRECT
+-------------------------
 
   * ``smolbench/evals/providers/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
     ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES``, and ``EC2_REGIONS`` via
@@ -78,15 +77,13 @@ this section):
     ``smolbench.induction.experiment``, which imports
     ``smolbench.evals.providers.ec2``. So step 6 is ALSO the first point that
     imports ``ec2.py``. Steps 4 and 6 must stay in this order.
-  * That ``load_dotenv`` call does NOT pass ``override=True`` (confirmed by
-    reading that file directly, not assumed). So it can only fill in
+  * That ``load_dotenv`` call does NOT pass ``override=True``. So it can only fill in
     variables that are CURRENTLY UNSET in ``os.environ`` -- it can never
     overwrite a value already present. This is why "our setdefault first,
     then load that module" is enough: whatever ``keys.env`` does or does
     not set is irrelevant to variables we already set ourselves before
     that module loads.
-  * One caveat, stated plainly rather than left implicit: this file does
-    not rely on, or hardcode, WHICH specific ``EC2_*`` keys
+  * This file does not rely on, or hardcode, WHICH specific ``EC2_*`` keys
     ``notebooks/induction/keys.env`` sets. A sibling study owns that file,
     and its contents can and do change over time (run ``grep '^EC2_'
     notebooks/induction/keys.env`` for the CURRENT answer). The ordering
@@ -159,25 +156,14 @@ LIFECYCLE (``main``)
    STANDALONE use: a solo smoke test of this file with nothing else
    depending on the box.
 
-S3 SPOOL (``spool_to_s3``) -- END-OF-RUN ONLY, a documented limitation
+S3 SPOOL (``spool_to_s3``) -- END-OF-RUN ONLY
 --------------------------------------------------------------------------
-``spool_to_s3`` is called exactly ONCE, after ``runner.sweep`` returns.
-``runner.sweep``'s full signature and config-key list expose NO progress
-hook, no per-cell callback, and no way to observe partial completion from
-outside the call. It is a single blocking call that returns only when the
-whole sweep finishes (or raises an unrecoverable exception). An
-incremental, every-N-cells sync would need a new callback parameter on
-``runner.sweep`` itself -- a change to
-``smolbench/deduction/lean/runner.py``, and therefore explicitly OUT OF
-SCOPE for this file (a sibling module owns that file; this file must not
-touch it). So every replicate this lane collects sits on local disk for
-the full sweep, and reaches S3 only at the very end. A crash mid-sweep
-means whatever the sweep already wrote to ``all_rows.jsonl`` on local disk
-stays unspooled until a later call reaches this point again. Even so, a
-RELAUNCH of this same lane picks up where the crash left off, because
-``runner.sweep`` has its own on-disk ``all_rows.jsonl``/resume mechanism
-(see ``runner.sweep``'s ``resume`` parameter) -- independent of whether
-anything was ever spooled.
+``spool_to_s3`` is called exactly ONCE, after ``runner.sweep`` returns:
+``runner.sweep`` exposes no progress hook. So every replicate this lane
+collects sits on local disk for the full sweep and reaches S3 only at the
+end, and a crash mid-sweep leaves it unspooled. A RELAUNCH of the same lane
+still picks up where the crash left off, via ``runner.sweep``'s own on-disk
+``all_rows.jsonl``/``resume`` mechanism, independent of spooling.
 
 Cost warning
 ------------
@@ -311,9 +297,8 @@ def lane_env_defaults(
         - ``"EC2_EXPERIMENT_TAG"``: ``f"scaling-{key}"``.
         - ``"EC2_STATE_FILE"``: absolute path string, derived as described
           above.
-        - ``"EC2_VLLM_IMAGE"``: digest-pinned to the build the 2026-08-16
-          determinism hinge experiment certified (see
-          ``smolbench.evals.providers.ec2.EC2_VLLM_IMAGE``'s own comment for the full
+        - ``"EC2_VLLM_IMAGE"``: digest-pinned (see
+          ``smolbench.evals.providers.ec2.EC2_VLLM_IMAGE``'s own comment for the
           provenance). This driver reattaches to a box already serving
           under that same image during the induction phase, so using any
           other image here would risk a mid-study image swap.
@@ -388,13 +373,10 @@ if _RAW_LEAN_MODEL:
     # serves its own model on top of it. Rows generated after such a swap
     # get attributed to the wrong model.
     #
-    # This is not hypothetical. keys.env ships
-    # ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a standalone-run safety
-    # default, and a launcher that sources keys.env with ``set -a`` exports
-    # it into every lane. On 2026-08-14 three lanes (exaone-4.5-33b,
-    # gemma-4-31b, deepseek-v3.1) converged on one g6e.12xlarge this way. We
-    # caught it because the instance was tagged scaling-standalone rather
-    # than scaling-<key>, before any row was written.
+    # keys.env ships ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a
+    # standalone-run safety default, and a launcher that sources keys.env
+    # with ``set -a`` exports it into every lane -- which is how two lanes
+    # end up sharing a tag.
     #
     # A lane's tag must name its lane. Fail loudly, rather than let a run
     # produce mislabelled data.
@@ -1004,9 +986,7 @@ def main(argv: list[str] | None = None) -> None:
                 import yaml
 
                 # mkdir first: runner.sweep creates run_dir itself, but
-                # this sidecar writes BEFORE the sweep runs. (2026-08-14:
-                # a missing mkdir crashed the first gemma deduction
-                # relaunch.)
+                # this sidecar writes BEFORE the sweep runs.
                 run_dir.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 with (run_dir / "server_config.yaml").open("a") as sink:

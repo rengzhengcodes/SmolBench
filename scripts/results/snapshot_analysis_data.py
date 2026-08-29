@@ -39,11 +39,9 @@ the copy.
 SUPERSEDED FILES ARE INCLUDED ON PURPOSE
 ----------------------------------------
 This script also copies files named ``*_SUPERSEDED-*``, ``*_STALE-*``,
-and ``*_BROKEN-*``. They are the audit trail for the 2026-08-15/16
-repairs: the mixed-hardware rows that nemotron-3-nano-4b's re-run
-replaced, and the verification output that predates six lanes being
-regenerated. An analyst who wants to check what changed needs these
-files; their names say plainly that they are not the current data.
+and ``*_BROKEN-*``. They are the repair audit trail: an analyst who wants
+to check what changed needs them, and their names say plainly that they
+are not the current data.
 
 USAGE
     scripts/results/snapshot_analysis_data.py --dry-run
@@ -66,9 +64,10 @@ SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents this script copies alongside the data, so the
 #: snapshot explains itself.
 PROVENANCE_DOCS = (
-    # CONTAMINATION_INVENTORY_2026-08-15.md and CONFOUND_AUDIT_2026-08-13.md
-    # were archived to S3 on 2026-08-25; notebooks/README.md records where.
+    # notebooks/README.md is the tree index; notebooks/ARCHIVE.md says where
+    # the archived provenance docs live.
     "notebooks/README.md",
+    "notebooks/ARCHIVE.md",
     "notebooks/deduction/README.md",
 )
 
@@ -197,10 +196,9 @@ def main() -> int:
         return 0
 
     # Copies run CONCURRENTLY. Each copy is two S3 round trips (copy, then
-    # verify). Serially, 55k objects would take about 5 hours of pure
-    # latency, while moving no bytes through this host. A serial run
-    # measured 175 objects/min before this change. Threads are the right
-    # tool here: the work is entirely network wait.
+    # verify), and 55k objects serially would be about 5 hours of pure
+    # latency while moving no bytes through this host. The work is entirely
+    # network wait, so threads are the right tool.
     counts = collections.Counter()
     done = 0
 

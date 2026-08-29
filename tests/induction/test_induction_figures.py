@@ -1,7 +1,5 @@
 """Test smolbench.induction.figures: the plotting helpers extracted from the notebook.
 
-The source notebook is notebooks/chromatic/induction_eval_analysis.ipynb.
-
 Matplotlib is set to the non-interactive "Agg" backend (through the
 MPLBACKEND env var, read at import time) before pyplot is ever imported
 anywhere in the process. This is required to render figures headlessly in

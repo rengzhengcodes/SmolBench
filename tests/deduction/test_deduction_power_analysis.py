@@ -2,9 +2,8 @@
 
 `load_joint_cells` turns per-cell rows into a paired success/failure matrix.
 It makes two decisions about which row to believe, and those decisions are
-the difference between a pass@1 metric and a flattering one. Both decisions
-were wrong before 2026-08-15, and both are cheap to get wrong again, so this
-file pins them.
+the difference between a pass@1 metric and a flattering one. Both are cheap
+to get wrong, so this file pins them.
 """
 
 import importlib.util
@@ -15,7 +14,7 @@ from pathlib import Path
 from tests._paths import NOTEBOOKS
 
 _SPEC = importlib.util.spec_from_file_location(
-    "deduction_power_analysis", NOTEBOOKS / "deduction" / "power_analysis.py"
+    "deduction_power_analysis", NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py"
 )
 pa = importlib.util.module_from_spec(_SPEC)
 # Register the module before exec. The module defines dataclasses, and
@@ -43,12 +42,11 @@ def _cell(model, theorem, verdict, k=1, rung="stepk:1"):
 def test_earliest_surviving_attempt_wins_not_the_last(tmp_path):
     """A cell with several surviving attempts is scored on its first one.
 
-    Rows are appended, so file order is chronological. A 2026-08-15 resume bug re-ran
-    cells the model had already answered with an empty output. Because generation is not
-    deterministic across server processes, those retries were fresh draws, and 74 cells
-    ended up with more than one surviving attempt. If the last one is taken, that
-    reports pass@N as pass@1, worth +5.9 points on ministral-3-3b, whose worst cell
-    reads [empty, empty, empty, proof].
+    Rows are appended, so file order is chronological. Generation is not
+    deterministic across server processes, so a re-run of an already-answered
+    cell is a fresh draw. Taking the last one reports pass@N as pass@1, worth
+    +5.9 points on ministral-3-3b, whose worst cell reads [empty, empty,
+    empty, proof].
     """
     rows = [
         _cell("m1", "thm.resampled", "lean_error"),   # first real measurement

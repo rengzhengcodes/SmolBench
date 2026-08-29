@@ -53,12 +53,10 @@ Not seeded
 ----------
 This bucket is a clean, append-only EXPERIMENT LOG. The eval harness
 writes to it through ``smolbench.evals.results_store`` (``S3ResultsStore``)
-as it runs, never through this script. It is deliberately NOT seeded with
-historical results. The repo-root results archive and the repo's git
-history remain the historical record for anything collected before this
-bucket existed. IF historical results are ever imported into this bucket,
-they MUST be written THROUGH the store, not bulk-synced directly, so they
-land in the CURRENT log layout::
+as it runs, never through this script. It is deliberately NOT seeded. IF
+historical results are ever imported into this bucket, they MUST be
+written THROUGH the store, not bulk-synced directly, so they land in the
+CURRENT log layout::
 
     <experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml
 

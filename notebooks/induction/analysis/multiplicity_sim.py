@@ -1,6 +1,6 @@
 """Run a Monte Carlo study of TEST and CORRECTION choice for the induction study.
 
-This is a scratch analysis for the periodic-induction family-ladder
+Standalone Monte Carlo for the periodic-induction family-ladder
 scaling study (21 models x 4 info arms, R=30 replicates x 9 harmonics).
 It is self-contained. Run it with:
   uv run --no-project --with numpy --with scipy python multiplicity_sim.py
@@ -8,7 +8,7 @@ It is self-contained. Run it with:
 Every statistic below is simulated. This script never analytic-approximates
 a reported number. The pairwise test is byte-for-byte the repo's
 continuity-corrected 2x2xK CMH
-(notebooks/induction/power_analysis.py::cmh_reject). The 2-df
+(notebooks/induction/analysis/power_analysis.py::cmh_reject). The 2-df
 general-association statistic mirrors that file's gcmh_reject.
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import numpy as np
 from scipy.stats import binom, chi2
@@ -27,7 +28,10 @@ N_PRIMARY = 210
 ALPHA = 0.05
 ALPHA_BONF = ALPHA / N_PRIMARY          # 2.381e-4
 OUT = {}
-SCRATCH = "/tmp/claude-1001/-workspace-SmolBench/54dbdffb-0485-4ced-9231-fa52049df286/scratchpad"
+# Design: anchored on __file__, not the process cwd, so this script's output
+# lands next to it regardless of the shell's invocation directory (repo
+# convention -- see notebooks/_power_common.py's results_dir).
+OUT_PATH = Path(__file__).resolve().parent / "multiplicity_sim_results.json"
 
 
 def dump(tag: str) -> None:
@@ -40,7 +44,7 @@ def dump(tag: str) -> None:
         Printed to the log after the write, so a long run's progress
         stays visible.
     """
-    with open(f"{SCRATCH}/multiplicity_sim_results.json", "w") as fh:
+    with open(OUT_PATH, "w") as fh:
         json.dump(OUT, fh, indent=2, default=float)
     print(f"[checkpoint written after {tag}]", flush=True)
 

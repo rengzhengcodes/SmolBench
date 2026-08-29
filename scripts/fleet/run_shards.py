@@ -1,10 +1,9 @@
 """Babysit direct (supervisor-less) ``run_study.py`` shard fleets.
 
-``scripts/fleet/run_fleet.py`` supervises one-model-per-box lanes. But the
-homogeneity re-runs of 2026-08-13 launch
-``notebooks/induction/run_study.py`` DIRECTLY, one process per
-``INDUCTION_SHARD``. A direct process that dies (spot reclaim, a
-capacity-exhausted hunt, a crash) stays dead. This script closes that gap
+``scripts/fleet/run_fleet.py`` supervises one-model-per-box lanes. Some
+runs instead launch ``notebooks/induction/run_study.py`` DIRECTLY, one
+process per ``INDUCTION_SHARD``. A direct process that dies (spot reclaim,
+a capacity-exhausted hunt, a crash) stays dead. This script closes that gap
 for ONE shard group:
 
 * This script **adopts** already-running shard processes, matched by
@@ -41,10 +40,9 @@ Usage (one invocation per shard group, detached)::
         --request-timeout 10800 \\
         >> notebooks/induction/results/fleet_logs/shards_gemma-4-12b.log 2>&1 &
 
-Pass ``--count 1 --no-shard`` to supervise a single unsharded run (for
-example, the deepseek-v4-flash seeds 0-11 re-collection). In that case,
-you must pass ``--tag`` and ``--state-file`` explicitly, because there is
-no shard suffix to derive them from.
+Pass ``--count 1 --no-shard`` to supervise a single unsharded run. In that
+case you must pass ``--tag`` and ``--state-file`` explicitly, because there
+is no shard suffix to derive them from.
 """
 
 from __future__ import annotations
@@ -123,11 +121,11 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
     """Find the PID of a live ``run_study.py`` process for (`model`, `shard`).
 
-    This function matches through ``/proc/<pid>/environ``, exactly like
-    the operating session's manual checks: ``INDUCTION_MODELS`` must equal
-    `model`, and ``INDUCTION_SHARD`` must equal `shard` (or be absent when
-    `shard` is ``None``). The first match wins. The launch discipline
-    guarantees at most one process per (model, shard).
+    This function matches through ``/proc/<pid>/environ``:
+    ``INDUCTION_MODELS`` must equal `model`, and ``INDUCTION_SHARD`` must
+    equal `shard` (or be absent when `shard` is ``None``). The first match
+    wins. The launch discipline guarantees at most one process per (model,
+    shard).
 
     Parameters
     ----------
@@ -230,12 +228,10 @@ def main() -> int:
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")
     # WHY: the driver provisions BEFORE it checks has_outstanding(). So a
     # shard whose seeds are already collected still bids for a box, holds
-    # it through boot, finds nothing to do, and exits. During the
-    # 2026-08-14 ministral reshard, those no-op shards held 4 x 96 vCPU
-    # against a 768 vCPU quota, and starved the one shard that had real
-    # work for 47 minutes. The --only-shards filter keeps the
-    # seed->shard mapping intact (--count still defines it), while it
-    # skips launching the empty shards.
+    # it through boot, finds nothing to do, and exits -- starving the
+    # shards that have real work against the account's vCPU quota. The
+    # --only-shards filter keeps the seed->shard mapping intact (--count
+    # still defines it), while it skips launching the empty shards.
     parser.add_argument(
         "--only-shards", default="",
         help="Comma-separated shard indices to run (default: all). "

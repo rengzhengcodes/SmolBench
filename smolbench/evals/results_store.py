@@ -46,10 +46,7 @@ instead of S3.
 
 S3 key layout: an APPEND-ONLY EXPERIMENT LOG, not a mirror of the local tree
 -------------------------------------------------------------------------------
-An earlier version of this module mirrored ``results_dir``'s
-repo-relative path directly onto the S3 key space: one object per
-replicate file, updated in place on every rerun. That scheme is GONE.
-The bucket now holds a clean, append-only log, organized by model, seed,
+The bucket holds a clean, append-only log, organized by model, seed,
 and collection time::
 
     <base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml
@@ -74,10 +71,10 @@ and collection time::
   "earliest run" lookup in this module be a plain lexicographic string
   MINIMUM over listed keys, with no timestamp parsing anywhere.
 
-Worked example -- empty base prefix, notebook ``periodic_moe``, model
-``gpt-oss-120b``, seed 1776, info ``extens``::
+Worked example -- empty base prefix, notebook ``induction``, model
+``gemma-4-12b``, seed 1776, info ``extens``::
 
-    periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml
+    induction/gemma-4-12b/seed=1776/extens--20260810T193000Z.yaml
 
 APPEND-ONLY, and every read resolves the EARLIEST run
 -------------------------------------------------------
@@ -92,13 +89,14 @@ as live. Every later object under the same (model, seed, info) prefix
 is log history: readable directly from S3 (e.g. for an audit of a
 re-collection), but invisible to every method in this module.
 
-EARLIEST-wins is a user ruling (2026-08-16), not a stylistic choice. The
-reads resolved LATEST until that date. The first logged run is the one
-measurement whose selection cannot correlate with anything discovered
-after it was taken -- retries, re-collections, and regrades all postdate
-it. So it is the estimator that keeps every reported score pass@1, under
-any later operational history. (Either extreme is outcome-blind; "any
-run with a desirable property" is the rule that would not be.)
+Reads resolve the EARLIEST logged run per (model, seed, info); later
+runs are log history and are never returned. The first logged run is
+the one measurement whose selection cannot correlate with anything
+discovered after it was taken -- retries, re-collections, and regrades
+all postdate it. So it is the estimator that keeps every reported score
+pass@1, under any later operational history. (Either extreme is
+outcome-blind; "any run with a desirable property" is the rule that
+would not be.)
 
 The corollary is deliberate, and must not be engineered around: **a
 re-collection can never supersede logged data.** A new object for an
@@ -132,7 +130,7 @@ When :func:`resolve_store` returns an :class:`S3ResultsStore`, a
 replicate is appended ONLY to the S3 log -- this module makes no local
 write-through copy alongside it. This keeps a spot instance's local disk
 out of the durability picture entirely (the whole point of moving to
-S3). The cost is that the analysis layer (``notebooks/*/power_analysis.py``,
+S3). The cost is that the analysis layer (``notebooks/*/analysis/power_analysis.py``,
 the figure scripts) reads a LOCAL results tree, and is deliberately NOT
 being ported to go through ``ResultsStore``. So it cannot see
 S3-resident results until they are pulled down. :func:`sync_down` is
@@ -164,15 +162,11 @@ edit either: the new object postdates the original, so it stays
 invisible to readers. Concretely, ``scripts/results/regrade.py --write``
 rewrites replicate YAMLs IN PLACE on the local tree, and a later
 ``sync_down`` of the same experiment overwrites that regrade back to
-the log's earliest verdict, with no warning. The safe operator sequence
-is: sync down, unset ``SMOLBENCH_RESULTS_S3`` (so subsequent runs touch
-the local tree only, not S3), and regrade locally. The pre-ruling
-sequence ended "...then re-seed the regraded tree back to S3"; that
-step is now DEAD. A re-seeded object postdates the original, so no
-reader here will ever resolve it (and seeding a regrade over history is
-separately forbidden for this bucket regardless). A regrade that must
-outlive the local tree is an explicit-exclusion problem, not a re-seed
-problem.
+the log's earliest verdict, with no warning. The safe operator sequence is: sync down, unset ``SMOLBENCH_RESULTS_S3``,
+and regrade locally. A regrade cannot be pushed back through the log --
+a re-appended object postdates the original and no reader here will
+resolve it. A regrade that must outlive the local tree is an
+explicit-exclusion problem.
 
 URI parsing: one parser, shared
 ----------------------------------
@@ -225,8 +219,7 @@ def repo_root() -> Path:
     temp-dir cwd, and the power-analysis scripts read the same
     ``results/`` tree from a different working directory entirely. This
     function is that one blessed anchor, reused by every path derived
-    below (and, via ``smolbench.induction.experiment``'s re-export, by
-    every existing caller that predates this module).
+    below.
 
     Returns
     -------
@@ -453,9 +446,7 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     This is the one case where "the full repo-relative POSIX path" would
     otherwise be that awkward single character. This function
     special-cases it to ``""`` instead (folding a non-empty `prefix` in
-    directly, with no leading ``"/"``), mirroring the equivalent special
-    case the pre-log-scheme version of :func:`resolve_store` used to
-    apply to its own repo-mirroring prefix.
+    directly, with no leading ``"/"``).
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -690,10 +681,8 @@ class ResultsStore(abc.ABC):
 class LocalResultsStore(ResultsStore):
     """Store to the filesystem: today's on-disk replicate tree, unchanged.
 
-    Every method here reproduces the pre-``ResultsStore`` behavior that
-    used to live directly in ``ReplicateHarness``/``Marks``,
-    byte-for-byte. So an existing local results tree (including an
-    already-committed one) stays readable, with no migration step. This
+    An existing local results tree (including an already-committed one)
+    stays readable, with no migration step. This
     store IGNORES `addr.model` and the `run_ts` argument to
     :meth:`dump_marks` entirely: there is exactly one local file per
     (tag, info, seed) replicate, and a new run overwrites it, exactly as
@@ -742,8 +731,7 @@ class LocalResultsStore(ResultsStore):
         method's own responsibility, not the caller's. So a single
         ``dump_marks`` call is a complete unit of work for BOTH
         backends. S3 needs no mkdir at all (there are no directories,
-        only keys), so the harness can no longer be the one responsible
-        for it.
+        only keys), so `dump_marks` owns it.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -764,12 +752,10 @@ class LocalResultsStore(ResultsStore):
         ``root/{prefix}{tag}_{info}``, and parses the integer seed out of
         each matched name (the text between ``"rep_"`` and the
         ``.yaml`` suffix, via ``Path.stem``). It SKIPS, rather than
-        counts, a name whose seed portion does not parse as a plain
-        ``int``. Today's original glob-based ``summarize`` would have
-        counted any ``rep_*.yaml`` file, regardless of what followed the
-        underscore. But a malformed name (hand-edited, partially
-        written, or from some other tool entirely) is not a genuine
-        replicate, and should not be reported as one. ``Path.glob`` on a
+        counts, a name whose seed portion does not parse as an int:
+        a malformed name (hand-edited, partially written, or from some
+        other tool entirely) is not a genuine replicate, and should not
+        be reported as one. ``Path.glob`` on a
         directory that does not exist yields nothing rather than
         raising, which is exactly right for an archetype/info-type
         combination that has not been run yet.
@@ -879,8 +865,8 @@ class S3ResultsStore(ResultsStore):
     #: Base prefix carried by the ``SMOLBENCH_RESULTS_S3`` URI; never has a
     #: leading or trailing ``"/"``. May be ``""`` (no base prefix).
     base_prefix: str
-    #: This experiment's log path segment, e.g. ``"periodic_moe"`` or
-    #: ``"chromatic/one_hop"`` -- see :func:`experiment_name`.
+    #: This experiment's log path segment, e.g. ``"induction"`` or
+    #: ``"induction/one_hop"`` -- see :func:`experiment_name`.
     experiment: str
     #: Region for the S3 client, or ``None`` to let boto3 resolve one from
     #: its own chain.
@@ -1013,7 +999,7 @@ class S3ResultsStore(ResultsStore):
             Without this guard, Python's f-string interpolation of
             ``None`` would silently degrade into the literal path
             segment ``"None"`` (e.g.
-            ``"periodic_moe/None/seed=1776/intens--....yaml"``), rather
+            ``"induction/None/seed=1776/intens--....yaml"``), rather
             than raising. That would be written to the APPEND-ONLY log,
             where nothing can later overwrite or correct it. Unlike
             every other mistake in this design, which is self-healing
@@ -1071,11 +1057,9 @@ class S3ResultsStore(ResultsStore):
             (model, seed, info) prefix. Thanks to `run_ts`'s fixed width
             (see :func:`format_run_ts`), this is exactly the
             chronologically first logged run. This method ignores every
-            later run under the same prefix: user ruling 2026-08-16,
-            "use the earliest results to keep pass@1" (this method
-            resolved LATEST before that date; see the module docstring
+            later run under the same prefix -- see the module docstring
             for the rationale and the supersede-requires-explicit-
-            exclusion corollary).
+            exclusion corollary.
 
         Raises
         ------
@@ -1093,9 +1077,8 @@ class S3ResultsStore(ResultsStore):
         the minimum. The loop below still scans the (tiny: one to a few
         keys) listing with an explicit running min, rather than an
         early ``break``. This states the selection rule in code as an
-        ordering rule -- symmetric with what a reader of the pre-ruling
-        running-max version would have seen -- rather than as an
-        artifact of S3's iteration order.
+        ordering rule, rather than as an artifact of S3's iteration
+        order.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -1200,12 +1183,7 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
        for unrelated interactive work. No test needs to unset the
        variable to stay hermetic.
     4. Derive this experiment's log path segment via
-       :func:`experiment_name`, which re-derives the same repo-relative
-       path computed in step 3. This is a second, cheap
-       ``Path.relative_to`` call, rather than threading the
-       already-computed value through, so each function stays
-       self-contained (see :func:`main`'s docstring for the same
-       accepted-duplication rationale elsewhere in this module).
+       :func:`experiment_name`.
     5. Resolve the region: ``SMOLBENCH_RESULTS_S3_REGION``, else
        ``AWS_REGION``, else ``None``.
     6. Return the resulting ``S3ResultsStore``.
@@ -1222,8 +1200,7 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
         The harness's namespace prefix (e.g. ``"one_hop_"``, forwarded
         verbatim from ``ReplicateHarness.prefix``). This threads through
         to whichever store is returned: it becomes
-        ``LocalResultsStore.prefix`` on the local path (unchanged from
-        before this parameter existed), or folds into
+        ``LocalResultsStore.prefix`` on the local path, or folds into
         ``S3ResultsStore.experiment`` via :func:`experiment_name` on
         the S3 path. Defaults to ``""``.
 
@@ -1366,7 +1343,7 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
 def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> int:
     """Translate an S3-backed experiment's log into the local analysis layout.
 
-    The analysis layer (``notebooks/*/power_analysis.py`` and the figure
+    The analysis layer (``notebooks/*/analysis/power_analysis.py`` and the figure
     scripts) reads a LOCAL results tree off disk, and is deliberately not
     being ported onto ``ResultsStore`` -- see the module docstring's "No
     local write-through when S3 is active" section. This function is the
@@ -1448,9 +1425,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     :func:`_parse_log_entry` into ``(seed, info, run_ts)``. It keeps
     only the entry with the LEXICOGRAPHICALLY MINIMUM `run_ts` per
     ``(seed, info)`` -- i.e. the earliest logged run, exactly as
-    ``S3ResultsStore.load_marks`` resolves it (user ruling 2026-08-16;
-    both functions MUST agree, or a synced tree and a direct load
-    would silently fork the analysis). This function silently skips,
+    ``S3ResultsStore.load_marks`` resolves it. Both functions MUST agree,
+    or a synced tree and a direct load would silently fork the analysis.
+    This function silently skips,
     rather than downloads, a key that does not match the expected
     shape (stray, hand-placed, or predating this key scheme).
 
@@ -1534,10 +1511,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     for model, tag in tags.items():
         list_prefix = f"{store.log_prefix}/{model}/"
         # Per (seed, info): (run_ts, key, etag) of the EARLIEST run seen
-        # so far. This selection rule is user-ruled (2026-08-16, "use
-        # the earliest results to keep pass@1"), and it must match
-        # load_marks exactly -- a sync_down that resolved a different
-        # run than a direct load would silently fork the analysis. A
+        # so far. This selection rule must match load_marks exactly --
+        # a sync_down that resolved a different run than a direct load
+        # would silently fork the analysis. A
         # dict keyed on (seed, info) is the natural shape for "keep
         # only the winner of a running min over run_ts": no separate
         # grouping/sorting pass is needed, since the running-min update
@@ -1558,10 +1534,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
 
         for (seed, info), (_run_ts, key, etag) in earliest.items():
             local_rel = f"{prefix}{tag}_{info}/rep_{seed}.yaml"
-            # F5 guard FIRST: validate before touching the filesystem
-            # at all. So a refused entry leaves no trace (no mkdir, no
-            # partial write, not even a stat/exists call against a
-            # bogus path).
+            # Validate BEFORE touching the filesystem, so a refused entry
+            # leaves no trace (no mkdir, no partial write, not even a stat
+            # against a bogus path).
             local_path = _resolve_download_path(resolved_dir, local_rel, key)
             etag_md5 = _etag_md5(etag)
             if (
@@ -1629,15 +1604,7 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     objects downloaded, and the resolved store's
     :meth:`ResultsStore.describe`, e.g.::
 
-        notebooks/periodic_moe/results: 42 downloaded from s3://my-bucket/archive/periodic_moe
-
-    It calls ``resolve_store`` once more here, purely to obtain that
-    description string; :func:`sync_down` performs its own independent
-    resolution internally. This duplicate resolution is cheap (an
-    env-var read and some string joins, no I/O of its own), and it keeps
-    each function's env-read self-contained per the module docstring's
-    call-time contract, rather than threading a pre-resolved store
-    through ``sync_down``'s public signature.
+        notebooks/induction/results: 42 downloaded from s3://my-bucket/archive/induction
     """
     import argparse
 

@@ -1,9 +1,8 @@
 """Run a Bedrock-mantle live smoke test: list_models plus one seeded evaluate.
 
-This script checks the cleanup-pass changes in smolbench/evals/providers/aws.py:
-METADATA_TIMEOUT_S on list_models, call-time formatting of
-AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE, the get_model_context_length
-env-or-default path after the _CONTEXT_LENGTHS removal, and the unchanged
+Checks ``smolbench/evals/providers/aws.py`` end to end: ``list_models``,
+the call-time formatting of ``AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE``,
+``get_model_context_length``'s env-or-default path, and one seeded
 inference round trip.
 """
 import os

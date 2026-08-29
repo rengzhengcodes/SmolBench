@@ -112,7 +112,7 @@ def _base_url_template() -> str:
     OpenAI-compatible surface fronting a broad model catalog (Qwen,
     Mistral, DeepSeek, Gemma, gpt-oss, GLM, Kimi, Nemotron, MiniMax, ...;
     no Anthropic -- see the module docstring; call ``list_models()`` to
-    list them). This default was verified live in us-east-1.
+    list them).
 
     Override ``AWS_INFERENCE_BASE_URL`` to reach a different surface:
 
@@ -208,8 +208,7 @@ def _body_model(model: str) -> str:
     reject ``""`` and require its served id instead, with a 400 error. This
     function therefore resolves each endpoint's served id once via
     ``list_models`` (cached per endpoint) and falls back to ``""`` if the
-    listing is unavailable. This way every endpoint, including the
-    notebook's three distinct SageMaker endpoints, gets the name its own
+    listing is unavailable. This way every endpoint gets the name its own
     container expects.
 
     Parameters
@@ -371,21 +370,6 @@ def _sagemaker_client():
     Any
         A boto3 SageMaker client from a fresh session (see
         ``_aws.fresh_client``).
-
-    Notes
-    -----
-    This wrapper carries one intentional behavioral delta from the
-    pre-refactor version, inherited from ``_aws.fresh_client`` (see its
-    docstring for the full rationale). The original built
-    ``boto3.client("sagemaker", region_name=_region())`` directly, which
-    resolves against the process-wide DEFAULT boto3 session and caches
-    credentials at first resolve. This wrapper instead constructs a
-    brand-new ``boto3.session.Session()`` on every call, so a rotated
-    ``~/.aws/credentials`` file is picked up on the very next call, rather
-    than raising ``ExpiredToken``/``RequestExpired`` until the process
-    restarts. The delta is payload-invariant: every request kwargs dict this
-    module builds and sends (see ``_create_model_kwargs`` and friends) is
-    identical either way. Only the credential-resolution mechanics differ.
     """
     return _aws.fresh_client("sagemaker", _region())
 
@@ -442,10 +426,6 @@ def _ensure_exec_role() -> str:
     ``provision_endpoint``, so tests can monkeypatch this one name. This
     matches the convention ``_sagemaker_client`` and ec2.py's own thin
     wrappers (``_ec2_client``, ``_ensure_instance_profile``) already use.
-    The IAM calls, trust policy, and 10s propagation sleep all now live in
-    ``_aws.py`` (see its docstring for the one intentional behavioral delta:
-    a fresh boto3 Session per call instead of the process-wide default
-    session).
 
     Returns
     -------
@@ -455,18 +435,9 @@ def _ensure_exec_role() -> str:
     return _aws.ensure_sagemaker_execution_role(SAGEMAKER_EXEC_ROLE_NAME)
 
 
-# ---------------------------------------------------------------------------
-# Pure kwargs builders -- no AWS I/O, no boto3 import, fully offline-pinnable.
-# ---------------------------------------------------------------------------
-# Design: `provision_endpoint`'s three CreateX calls and its teardown loop
-# used to build their request dicts inline. This module extracts them to
-# standalone functions, so `tests/evals/test_aws_provision.py` can pin the exact
-# payload each one produces (a dict-equality assertion) without
-# constructing a SageMaker client or a `provision_endpoint` context at all.
-# Every literal below (`SAGEMAKER_ENABLE_LOAD_AWARE`, the `1800`s
-# health-check timeout, the `|` env-merge precedence, the
-# `f"{model}-model"`/`f"{model}-config"` naming) is preserved byte-for-byte
-# from the pre-extraction inline code.
+# Pure kwargs builders -- no AWS I/O, no boto3 import. tests/evals/
+# test_aws_provision.py pins each payload by dict equality, with no
+# SageMaker client or provision_endpoint context.
 
 
 def _create_model_kwargs(model: str, spec: DeploySpec, role_arn: str) -> Dict[str, Any]:
@@ -626,16 +597,11 @@ def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
 
     Notes
     -----
-    This function deliberately returns bare labels (``"endpoint"``, not
-    e.g. ``f"endpoint {model}"``), rather than embedding ``model`` into the
-    label string. If it embedded ``model``, a generic step-runner's SUCCESS
-    log line would reproduce the pre-extraction format (which appended the
-    model name), but the same change would just as much corrupt its
-    FAILURE/skip log line (which, in the pre-extraction code, did NOT
-    include the model name). See
-    ``provision_endpoint``'s ``finally`` block for why this function's
-    caller therefore hand-rolls its own teardown loop, instead of
-    delegating to ``_aws.best_effort_teardown``.
+    This function returns bare labels (``"endpoint"``, not
+    ``f"endpoint {model}"``); ``tests/evals/test_aws_provision.py``'s
+    ``test_teardown_steps_order_and_calls`` pins that shape, and
+    ``provision_endpoint``'s ``finally`` block formats the model name into
+    its own log lines.
     """
     mdl, cfg = f"{model}-model", f"{model}-config"
     return [
@@ -694,12 +660,11 @@ def provision_endpoint(model: str, timeout_min: int = 40):
     ``_create_model_kwargs``/``_create_endpoint_config_kwargs``/
     ``_create_endpoint_kwargs`` (pure, offline-pinnable; see
     ``tests/evals/test_aws_provision.py``), and its teardown steps via
-    ``_teardown_steps``. It does NOT delegate the actual polling to
-    ``_aws.poll_until``'s caller-facing `on_timeout`/`check` machinery
-    blindly. See the ``check``/``on_timeout`` closures below for how the
-    pre-extraction wait loop's exact semantics (deadline consulted only
+    ``_teardown_steps``. It builds on ``_aws.poll_until``'s caller-facing
+    `on_timeout`/`check` machinery. See the ``check``/``on_timeout``
+    closures below for the wait loop's semantics (deadline consulted only
     after a failed check, the last-seen status embedded in the timeout
-    message) are preserved on top of that shared primitive. Similarly, the
+    message). Similarly, the
     ``finally`` block does NOT delegate to ``_aws.best_effort_teardown``;
     see that block's own comment for why.
     """
@@ -721,9 +686,8 @@ def provision_endpoint(model: str, timeout_min: int = 40):
             f"provision_endpoint: deploying {model!r} ({spec['hf_model_id']} on {spec['instance_type']}) ..."
         )
         # Design: use one fresh `_sagemaker_client()` per create call, not a
-        # single client reused across all three. This matches the
-        # pre-extraction code exactly. Each call independently benefits from
-        # picking up a just-rotated credentials file (see
+        # single client reused across all three. Each call independently
+        # benefits from picking up a just-rotated credentials file (see
         # `_sagemaker_client`'s docstring), and a long-running notebook cell
         # is exactly the case where that matters most.
         _sagemaker_client().create_model(**_create_model_kwargs(model, spec, role))
@@ -734,8 +698,8 @@ def provision_endpoint(model: str, timeout_min: int = 40):
         # wait loops) rather than a hand-rolled `while True`. `last_status`
         # is threaded through via `nonlocal`, because `on_timeout()` -- called
         # AFTER `check()` returns None and the deadline has passed -- needs
-        # the MOST RECENTLY POLLED status to build the exact pre-extraction
-        # TimeoutError message. `poll_until`'s `check` contract is otherwise
+        # the MOST RECENTLY POLLED status to build the TimeoutError message.
+        # `poll_until`'s `check` contract is otherwise
         # stateless (it only distinguishes success/None/raise).
         last_status: Optional[str] = None
 
@@ -768,21 +732,11 @@ def provision_endpoint(model: str, timeout_min: int = 40):
 
         yield model
     finally:
-        # Guaranteed teardown -- runs on success, error, or interrupt. This
-        # is NOT delegated to `_aws.best_effort_teardown`. That helper's log
-        # lines are always f"{log_prefix}: torn down {label}" / f"{log_prefix}:
-        # teardown skip {label}: ...", but the pre-extraction format here is
-        # ASYMMETRIC: the success line appends the model name ("torn down
-        # endpoint {model}") while the skip/failure line does not ("teardown
-        # skip endpoint: ..."). If the step label embedded `model` (e.g.
-        # "endpoint {model}"), that would fix the success line but then
-        # wrongly leak into the skip line too, and `tests/evals/test_aws_provision.py`'s
-        # `test_teardown_steps_order_and_calls` pins bare labels
-        # (``"endpoint"``, not ``f"endpoint {model}"``) for exactly this
-        # reason. So the loop stays here, hand-rolled with the original
-        # f-strings, with only its (label, call) pairs sourced from
-        # `_teardown_steps`. A byte-for-byte match of today's log output
-        # takes priority over reusing the shared helper.
+        # Guaranteed teardown -- runs on success, error, or interrupt.
+        # Hand-rolled rather than delegated to _aws.best_effort_teardown:
+        # the success line names the model and the skip line does not, and
+        # test_aws_provision.py pins the bare (label, call) shape from
+        # _teardown_steps.
         for label, call in _teardown_steps(_sagemaker_client(), model):
             try:
                 call()

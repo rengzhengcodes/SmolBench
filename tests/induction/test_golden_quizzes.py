@@ -1,19 +1,14 @@
 """Run a seed-fixed golden regression for the induction generation pipelines.
 
-The hashes in tests/fixtures/golden_quizzes.json were captured from the
-pre-refactor code (2026-07-01, branch periodic-induction) at the
+The hashes in tests/fixtures/golden_quizzes.json are recorded at the
 notebooks' production configs. Any change to label sampling, interval
 assignment, noise padding, prompt rendering, or the query generators shows
 up here as a hash mismatch. This matters because committed results are
 only attributable to their recorded seeds while generation stays
 byte-stable.
 
-The ``noise_intens`` hashes were re-recorded on 2026-08-02, when that arm
-switched from random characters matched on character count to whitespace
-matched on token count (see ``smolbench.induction._common``). The
-``intens``/``extens`` hashes are unchanged from the 2026-07-01 capture and
-must stay that way: they are the check that the change is confined to the
-noise arm.
+The ``intens``/``extens`` hashes must not move: they are the check that a
+change to the noise arm stays confined to the noise arm.
 
 The noise arm now depends on a tokenizer, and these hashes are recorded
 against ``conftest.StubTokenizer``, not a real model's tokenizer. That
@@ -83,7 +78,7 @@ def quiz_hash(quiz) -> str:
 
 def assert_matches(key: str, quizzes) -> None:
     got = {k: quiz_hash(q) for k, q in zip(("intens", "extens", "noise_intens"), quizzes)}
-    assert got == GOLDEN[key], f"generation drifted from pre-refactor golden {key}"
+    assert got == GOLDEN[key], f"generation drifted from golden {key}"
 
 
 # The tokenizer the noise arm is sized against. It is fixed and offline;

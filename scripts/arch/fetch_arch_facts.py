@@ -352,9 +352,9 @@ def collect() -> Dict[str, Any]:
 def cross_check(facts: Dict[str, Any]) -> List[str]:
     """Compare fetched configs against the deploy-spec test's own fixture.
 
-    ``tests/fixtures/roster_configs.json`` was captured when the fleet was
-    built. A mismatch now means the upstream checkpoint moved under the
-    study. This function reports that instead of quietly absorbing it.
+    A mismatch against ``tests/fixtures/roster_configs.json`` means the
+    upstream checkpoint moved under the study. This function reports that
+    instead of quietly absorbing it.
 
     Returns
     -------

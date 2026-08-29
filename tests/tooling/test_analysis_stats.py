@@ -1,16 +1,15 @@
 """Test the statistical contracts of the five family-ladder analysis scripts.
 
-The scripts under ``notebooks/induction`` and ``notebooks/deduction`` produce
-the study's headline numbers. Until now, none of them had a single pytest.
-This file pins four properties. A silent edit could break any of them while
-every report still looks right.
+The scripts under ``notebooks/induction/analysis`` and
+``notebooks/deduction/analysis`` produce
+the study's headline numbers. This file pins four properties. A silent edit
+could break any of them while every report still looks right.
 
 1. Tie-order invariance of Holm and Hochberg. Both families have many exact
    ties. The seed sign-flip test has a hard resolution floor at
    ``2 / 2**30``, and several contrasts sit exactly on it. So the rejection
    set must be a function of the p-values, never of the order the contrasts
-   are built in. (The 2026-08-21 engineering pass checked this invariance ad
-   hoc. It is a permanent test now.)
+   are built in.
 2. Exactness of the seed-level sign-flip test. Its p-values are checked
    against hand-enumerated reference distributions on 2-3 clusters. These are
    written out in the comments, so the test is an independent calculation,
@@ -20,12 +19,11 @@ every report still looks right.
    to collapse onto exact McNemar when every cluster holds one item. That
    claim is load-bearing: it is why the cluster test is a correction, not a
    different question. This file checks the claim.
-4. One row rule, one denominator rule. ``grade_verdicts`` is now the only
+4. One row rule, one denominator rule. ``grade_verdicts`` is the only
    implementation of earliest-surviving-row-per-cell plus the
    unmeasurable-verdict exclusion. ``error_bars.build_pool``'s un-augmented
-   pool must equal ``load_joint_cells``'s blocks exactly. This equality used
-   to be asserted at runtime on every report run (``_check_against_loader``);
-   it lives here now. The superseded-artifact refusal is pinned alongside it.
+   pool must equal ``load_joint_cells``'s blocks exactly. The
+   superseded-artifact refusal is pinned alongside it.
 
 Everything here is fixture-based and offline: no results tree, no rows
 directory, no network. The whole file runs in well under a second.
@@ -82,8 +80,8 @@ def _bound(**modules):
                 sys.modules[n] = old
 
 
-_DED = NOTEBOOKS / "deduction"
-_IND = NOTEBOOKS / "induction"
+_DED = NOTEBOOKS / "deduction" / "analysis"
+_IND = NOTEBOOKS / "induction" / "analysis"
 
 ded_pa = _load("ded_power_analysis", _DED / "power_analysis.py")
 with _bound(power_analysis=ded_pa):
@@ -98,6 +96,27 @@ with _bound(power_analysis=ind_pa):
         significance = _load("ind_significance_report", _IND / "significance_report.py")
         with _bound(significance_report=significance):
             extens_vs_noise = _load("ind_extens_vs_noise", _IND / "extens_vs_noise.py")
+
+
+# --------------------------------------------------------------------------- #
+# Where each leg reads its results from.
+# --------------------------------------------------------------------------- #
+def test_both_legs_resolve_their_study_results_dir():
+    """Each leg's ``RESULTS_DIR`` must be ``notebooks/<study>/results`` exactly.
+
+    Both scripts sit one level below their study root (under ``analysis/``)
+    and pass ``up=1`` to `_power_common.results_dir` to climb back out. Drop
+    that argument and the module still imports, still runs, and still prints
+    a report -- it just reads a directory no experiment writes.
+
+    The same three-component path is what `results_store.experiment_name`
+    matches to derive the SHORT S3 experiment prefix; a deeper one takes its
+    documented full-path fallback and names a different prefix instead. This
+    reads the modules' own resolved attributes, not a recomputation of the
+    helper, so it fails on a wrong ``up=`` at the call site.
+    """
+    assert ind_pa.RESULTS_DIR == NOTEBOOKS / "induction" / "results"
+    assert ded_pa.RESULTS_DIR == NOTEBOOKS / "deduction" / "results"
 
 
 # --------------------------------------------------------------------------- #
@@ -500,11 +519,10 @@ def test_grade_verdicts_is_the_row_rule(verdicts, expected):
 def test_all_loaders_share_the_one_row_rule(rows_dir, monkeypatch):
     """``lane_outcomes`` and ``load_joint_cells`` agree, cell for cell.
 
-    This is the check ``error_bars._check_against_loader`` used to make on
-    every report run. Since 2026-08-21 the two read rows through the same
-    ``grade_verdicts``, so drift is no longer possible by construction. But
-    the equality is the contract the count-as-failure and recovery layers
-    are built on, so this test pins it here instead of dropping it.
+    ``build_pool``'s un-augmented pool must equal ``load_joint_cells``'s
+    blocks exactly. Both read rows through the same ``grade_verdicts``, and
+    this equality is the contract the count-as-failure and recovery layers
+    are built on.
     """
     monkeypatch.setattr(error_bars, "MODELS", ["m1", "m2"])
 

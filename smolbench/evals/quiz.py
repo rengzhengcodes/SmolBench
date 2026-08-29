@@ -157,16 +157,13 @@ class Mark:
     #: response obeyed the contract exactly. See `smolbench.evals.parsing`
     #: for the label values.
     #:
-    #: This field is kept separate from ``score``. That split lets an
-    #: analysis tell "the model was wrong" apart from "the model was right
-    #: but broke the format". Before this field existed, both cases
-    #: counted as the same failure: the strict parser could not read a
-    #: non-compliant response, so it scored as a failure either way.
+    #: This field is kept separate from ``score``, so an analysis can tell
+    #: "the model was wrong" apart from "the model was right but broke the
+    #: format".
     #:
-    #: The default is None, not a required value. A replicate YAML written
-    #: before this field existed still loads (``Marks.load`` builds each
-    #: mark with ``Mark(**m)``). For such an old mark, None means "not
-    #: assessed", not "compliant".
+    #: It MUST stay optional: stored marks written without it are still read
+    #: (``Marks.load`` builds each mark with ``Mark(**m)``), and None there
+    #: means "not assessed", not "compliant".
     compliance: Optional[str] = None
 
 
@@ -180,16 +177,13 @@ class Marks:
     marks: tuple[Mark, ...]
     #: Date the quiz was run.
     date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    #: Serving-stack snapshot the completions were generated under
-    #: (instance type, GPUs, tensor-parallel degree, image, ...). This is
-    #: provenance: it makes a result file self-describing about its
-    #: hardware, so a reader does not need a separate timestamp -> config
-    #: side table (the 2026-08-13 confound audit had to reconstruct
-    #: exactly that table). None on a result written before this field
-    #: existed, and for a provider with nothing meaningful to report. The
-    #: default is a plain value, not a default_factory, so a legacy
-    #: ``!!python/object`` file missing the attribute still falls back to
-    #: the class attribute on access.
+    #: Serving-stack snapshot the completions were generated under (instance
+    #: type, GPUs, tensor-parallel degree, image, ...). Provenance: it makes a
+    #: result file self-describing about its hardware, so a reader needs no
+    #: separate timestamp -> config side table. None for a provider with
+    #: nothing to report, and for stored results that predate the field. The
+    #: default is a plain value, not a default_factory, so a tagged file
+    #: missing the attribute falls back to the class attribute on access.
     server_config: Optional[dict] = None
 
     @property
@@ -233,8 +227,7 @@ class Marks:
     # local path to ``open()``. An ``S3ResultsStore`` round-trips through
     # ``put_object``/``get_object`` request/response bodies (bytes over the
     # wire), not a filesystem, so it needs the str-in/str-out form directly.
-    # ``LocalResultsStore`` and every pre-existing on-disk caller keep using
-    # ``dump``/``load`` unchanged.
+    # Path-based callers use ``dump``/``load``.
 
     def dumps(self) -> str:
         """Serialize this result to a plain-mapping YAML string.

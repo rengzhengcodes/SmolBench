@@ -16,7 +16,7 @@ Two layouts are under test, and they are deliberately different:
 * S3 is an append-only experiment LOG keyed by model, seed, and run
   time: ``<base>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.
   yaml``. A re-run ADDS an object. Reads resolve the EARLIEST
-  ``run_ts`` (user ruling 2026-08-16: the first logged run is the
+  ``run_ts`` (the first logged run is the
   pass@1 measurement, and a re-run is log history, invisible to every
   reader).
 
@@ -427,7 +427,7 @@ def test_s3_dump_is_append_only(fake_s3):
 
 
 def test_s3_load_marks_returns_the_earliest_run(fake_s3):
-    """User ruling 2026-08-16: the FIRST logged run is the measurement.
+    """The FIRST logged run is the measurement.
 
     A re-collection is log history. A flip of this assertion is a
     change to which data every analysis consumes; never make it
@@ -680,7 +680,7 @@ def test_sync_down_writes_only_the_earliest_run_per_replicate(s3_env, fake_repo,
 
     This is the same run ``load_marks`` resolves. A synced tree and a
     direct load disagreeing would silently fork the analysis (user
-    ruling 2026-08-16).
+    rule).
     """
     results = fake_repo / "notebooks" / "periodic" / "results"
     first = sample_marks(score=1).dumps().encode()
@@ -960,8 +960,7 @@ def test_harness_has_outstanding_reads_the_log(s3_harness, fake_s3, freeze_ts):
 def test_harness_summarize_uses_the_earliest_run(s3_harness, fake_s3, capsys):
     """Printed format is byte-identical and the count is distinct seeds.
 
-    The tallies come from the EARLIEST logged run of each replicate (user ruling
-    2026-08-16).
+    The tallies come from the EARLIEST logged run of each replicate.
     """
     for seed in (1, 2):
         fake_s3.objects[

@@ -4,13 +4,44 @@ This is the DEDUCTION side of the family-ladder scaling study. The sweep
 configuration lives in `run_study.py` (`build_config`), the roster is
 imported from `notebooks/induction/run_study.py` (`MODELS`, `COT_ARGS`),
 and the fleet-aware entry point for exploring and validating the study is
-`lean_eval.ipynb`. This file is intentionally small: it documents the data
+`lean_eval.ipynb`. This file documents this directory's layout, the data
 layout, the results/verification contracts, and how to run one lane by
-hand. It does not document a run-from-cells workflow -- the retired
-`notebooks/lean/README.md` documented that older design for a different
-(pre-fleet) driver; this study's driver is a per-lane subprocess launched
-from a terminal, not from notebook cells (see `lean_eval.ipynb`'s "Fleet
-Launch" section).
+hand. There is no run-from-cells workflow: this study's driver is a
+per-lane subprocess launched from a terminal (see `lean_eval.ipynb`'s
+"Fleet Launch" section).
+
+## Layout
+
+```
+deduction/
+  run_study.py       the per-lane, generation-only driver  <- pinned here
+  lean_eval.ipynb    the exploration notebook
+  results/, data/    S3-mirrored; both archived out of the tree
+  analysis/          the numbers that got published
+```
+
+`run_study.py` stays at this study root because `scripts/fleet/run_fleet.py`
+builds each lane's argv from the literal path `notebooks/deduction/run_study.py`
+(as does `scripts/deduction/merge_lean_shards.py`), and `results/` stays
+directly beneath it because `notebooks/deduction/results` is the path
+`results_store.experiment_name` matches -- and what
+`smolbench.deduction.lean.runner.results_root()` falls back to.
+
+`analysis/` holds the three read-only report scripts. Each puts its own
+directory on `sys.path` and imports its siblings by bare name, so
+`power_analysis.py` -> `error_bars.py` -> `hint_vs_noise.py` must be loaded
+in that order by anything importing them programmatically (see
+`tests/tooling/test_analysis_stats.py`).
+
+| File | What it's for |
+| --- | --- |
+| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. Owns `RESULTS_DIR` and the `--s3` run-file download for the chain. |
+| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--no-count-as-failure` drops cells with no surviving rollout instead of counting them as failures. |
+| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. |
+
+Note both legs ship a file named `power_analysis.py`. A process loading
+this one and the induction one together must give each a unique
+`sys.modules` name -- see `notebooks/README.md`, "Sibling imports".
 
 ## Data layout
 
@@ -202,13 +233,11 @@ unset or unknown key lists every valid key). Useful flags:
 (see `run_study.py`'s module docstring, "Environment," for the full list);
 neither needs to be set for an ad hoc standalone run against a fresh box.
 
-## Replicate terminology note
+## Replicate terminology
 
-The replication axis is called **replicates** throughout this study:
-`n_replicates` in a sweep config, `replicate_idx` on a result row. An
-earlier, now-retired synonym for this same axis must not reappear in this
-study's code, notebooks, or documentation -- use "replicate"/"replicates"
-exclusively.
+The replication axis is called **replicates**: `n_replicates` in a sweep
+config, `replicate_idx` on a result row. Use that word exclusively in this
+study's code, notebooks, and documentation.
 
 ## What's not in scope
 
@@ -245,8 +274,7 @@ exclusively.
   imports `smolbench.deduction.lean.verify` or opens a real Dojo session --
   see "Generation -> verification split" above.
 
-## Results and data archived (2026-08-25)
+## Results and data
 
-`results/` and `data/` were removed from the tree and attached to PR #4 as
-`pr4_evidence_and_data_2026-08-25.zip`; see `notebooks/README.md` for the
-contents, hashes, and how to restore or regenerate each file.
+`results/` and `data/` are not in this tree; see `notebooks/ARCHIVE.md`
+for where they live and how to restore or regenerate each.

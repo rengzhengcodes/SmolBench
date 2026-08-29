@@ -19,10 +19,9 @@ from smolbench.evals.providers import ec2
 # ---------------------------------------------------------------------------
 # _run_instances_kwargs: pins the exact RunInstances kwargs dict
 # ---------------------------------------------------------------------------
-# Copied directly from the inline dict this helper was extracted from
-# (provision_spot_instance's fresh-launch branch, pre-refactor). Any
-# accidental structural drift introduced by the extraction (a dropped key,
-# a typo'd literal, wrong nesting) fails one of these tests. The two
+# Pinned as literals, not derived from the helper. Any structural drift
+# (a dropped key, a typo'd literal, wrong nesting) fails one of these
+# tests. The two
 # fields that are themselves env-configurable module constants
 # (root-volume throughput/IOPS, the experiment tag) are checked through
 # ``ec2.EC2_*``, not hardcoded literals, so the pin stays valid under a
@@ -142,7 +141,7 @@ def test_run_instances_kwargs_is_pure():
 # tested directly, not through _recover_state_from_instance's
 # DescribeInstanceAttribute call.
 # ---------------------------------------------------------------------------
-# User-data ships gzip-compressed since the 2026-08-18 determinism change
+# User-data ships gzip-compressed
 # (see payloads.pack_user_data), but a live instance launched before that
 # change can outlive the code that provisioned it. _recover_state_from_
 # instance is exactly the best-effort "state file was lost, rebuild it
@@ -151,7 +150,7 @@ def test_run_instances_kwargs_is_pure():
 
 
 def test_decode_user_data_gunzips_pack_user_data_output():
-    """The normal, post-2026-08-18 case: gzip round-trips to the exact script.
+    """The normal case: gzip round-trips to the exact script.
 
     gzip-compressed bytes decode back to the exact rendered script, matching
     pack_user_data's own round-trip contract. (tests/evals/test_ec2_payloads.py
@@ -408,7 +407,7 @@ def test_provision_reservation_env_terminates_off_block_recovered_instance(monke
 # shutdown_instance -- the instance_terminated waiter expiring is not a
 # failure. TerminateInstances has already succeeded by then, so the box is
 # dying regardless. p5-class teardown routinely outlasts botocore's 10-min
-# waiter (seen live 2026-07-18, twice), and crashing would strand callers
+# waiter, and crashing would strand callers
 # after the only action that matters had already been taken.
 # ---------------------------------------------------------------------------
 
@@ -452,7 +451,7 @@ def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# max_price / _spot_price_map (2026-08-13 audit: price-aware capacity hunt)
+# max_price / _spot_price_map (price-aware capacity hunt)
 # ---------------------------------------------------------------------------
 
 
@@ -503,7 +502,7 @@ def test_spot_price_map_failure_degrades_to_price_blind(monkeypatch):
 
 # _wait_public_ip absent-streak tolerance: DescribeInstances is eventually
 # consistent, so a just-launched instance can be invisible for a few polls
-# (observed live 2026-08-14 during a quota-race relaunch: the driver
+# (a quota-race relaunch: the driver
 # declared a healthy box "absent" and crash-looped). Only a sustained
 # absent streak may abort; positively-observed death states abort
 # immediately.
@@ -575,7 +574,7 @@ def test_server_config_never_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# ec2.server_config §5 extension (DETERMINISM_PLAN_2026-08-16.md section 5):
+# ec2.server_config hardware fields:
 # vllm_args/max_model_len/served_at (from state["last_serve"]), vllm_version/
 # vllm_cache_config/agent_fingerprint/vllm_image_digest (live probes),
 # max_parallel_requests/stream (client-side env config). The live-probe
@@ -909,7 +908,7 @@ def test_on_demand_market_drops_instance_market_options(monkeypatch):
     it, so a launch that merely renamed the MarketType would be rejected.
     Every other kwarg must be byte-identical to the spot shape, because
     the whole point of this path is buying the same silicon a different
-    way. It exists for a lane (deepseek-v3.1, 2026-08-15) whose
+    way. It exists for a lane whose
     p5e.48xlarge had no spot capacity in any AZ, and whose hardware could
     not be substituted without contaminating the study.
 
@@ -949,10 +948,8 @@ def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch)
 
     If you raise the multiplier, it only helps when an AZ's price genuinely exceeds the
     cap. Within spot, InsufficientInstanceCapacity is about physical hosts, not money.
-    It does not follow that on-demand is better at acquiring capacity; that claim was
-    made here and was wrong. deepseek-v3.1 failed 2,079 on-demand attempts across 13 AZs
-    with InsufficientInstanceCapacity and then landed on spot within one attempt
-    (2026-08-16). On-demand's priority concerns interruption, not which pool has free
+    It does not follow that on-demand is better at acquiring capacity.
+    On-demand's priority concerns interruption, not which pool has free
     hosts.
     """
     assert ec2.EC2_SPOT_BID_MULTIPLIER == 1.25, "default headroom over median"

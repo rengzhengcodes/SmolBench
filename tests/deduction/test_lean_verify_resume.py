@@ -47,8 +47,7 @@ import pytest
 from tests._paths import SCRIPTS
 
 # ``scripts/`` is not an importable package, so the module is loaded by
-# path. This mirrors tests/test_flip_probe.py's convention for a
-# sibling script. The module name is unique to this file, so it never
+# path. The module name is unique to this file, so it never
 # collides with the copy tests/deduction/test_deduction_study.py loads and pops.
 _SPEC = importlib.util.spec_from_file_location(
     "lean_verify_rows_resume_under_test",
@@ -194,12 +193,11 @@ def _run(monkeypatch, tmp_path, all_rows, prior=None, *, verifier=None, **kw):
 def test_resume_marks_a_group_done_only_when_every_cell_is_graded():
     """A half-graded group must NOT count as resumed-done.
 
-    The ANY-cell rule this replaces was sound only under its stated
-    premise, "one worker task always finishes a whole group". That
-    premise holds within a pass, but NOT across passes: a regenerated
-    lane appends new cells to a group a prior pass already completed.
-    Under ANY, those new cells are skipped on every subsequent pass and
-    stay ``"unverified"`` forever.
+    The ANY-cell alternative is sound only under the premise "one worker
+    task always finishes a whole group". That premise holds within a pass,
+    but NOT across passes: a regenerated lane appends new cells to a group
+    a prior pass already completed, and under ANY those new cells are
+    skipped on every subsequent pass and stay ``"unverified"`` forever.
 
     Single-cell groups cannot tell the two rules apart, which is why
     both groups here carry two cells.
@@ -511,7 +509,7 @@ def test_cells_appended_to_an_already_graded_group_are_verified(monkeypatch, tmp
 
     # `unique_candidates` reads `candidate_proof` off the SEEDED rows.
     # This pins what the replay actually sends to Lean: a matched slot holds the PRIOR
-    # row object wholesale. So the old cell is replayed with the prior pass's candidate
+    # row object wholesale. So the cell is replayed with the prior pass's candidate
     # text, and only the appended cell carries the current one. That is the deliberate
     # carryover contract, since mixing a regenerated proof with an old verdict would be
     # worse. `--no-resume` is the documented remedy for a lane phase 1 genuinely

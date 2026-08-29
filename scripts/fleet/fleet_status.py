@@ -32,9 +32,8 @@ from typing import Any, Callable, Optional, Sequence
 #: must agree between the two modules, or this file finds nothing.
 SCALING_TAG_PREFIX = "scaling-"
 #: Every region a lane might have provisioned in. This matches
-#: ``run_fleet.DEFAULT_REGIONS``. Tier D used a two-region override until
-#: 2026-08-13, but its override now spans all three regions too (for
-#: p6-b200/SM100 capacity hunts), so these three regions cover every tier.
+#: ``run_fleet.DEFAULT_REGIONS``; tier D's override spans the same three
+#: regions, so these cover every tier.
 STATUS_REGIONS: tuple[str, ...] = ("us-east-1", "us-east-2", "us-west-2")
 
 

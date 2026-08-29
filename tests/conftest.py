@@ -247,10 +247,8 @@ def _clear_provider_context_length_caches():
     Some tests avoid cross-test cache bleed by picking a globally unique
     model-name string per test (see the "Unique model name per test avoids
     ... lru_cache" comments in test_openai_compat.py and
-    test_lean_runner.py). This convention is fragile: it breaks silently the
-    moment two tests reuse the same model id against two different stub
-    servers. This cache-clearing around every test makes that isolation a
-    real guarantee, not a naming convention every test author must remember.
+    test_lean_runner.py). Clearing around every test makes cross-test
+    isolation a real guarantee, rather than a per-test naming convention.
 
     The clear step is guarded by ImportError, so this fixture degrades
     gracefully (skips silently) if a provider module is ever renamed or
@@ -274,17 +272,17 @@ def _clear_provider_context_length_caches():
 
 
 # ---------------------------------------------------------------------------
-# S3-resident archive (2026-08-25): evidence tree, data sidecars, LeanDojo corpus
+# S3-resident archive: evidence tree, data sidecars, LeanDojo corpus
 # ---------------------------------------------------------------------------
 
 
 class S3Archive:
-    """Read-only, in-memory access to the 2026-08-25 archive prefix on S3.
+    """Read-only, in-memory access to an archive prefix on S3.
 
     The archived evidence tree (``notebooks/deduction/results/**``), the
     data sidecars (``notebooks/deduction/data/*``) and the LeanDojo
     corpus live ONLY under ``<SMOLBENCH_ARCHIVE_S3>/notebooks/deduction/``
-    (see ``notebooks/README.md``). Tests that need them stream each object
+    (see ``notebooks/ARCHIVE.md``). Tests that need them stream each object
     into memory through this class. Nothing is written to disk: the
     user's ruling is that archived data is accessed on AWS, never pulled
     into a local tree.
@@ -348,7 +346,7 @@ class S3Archive:
 
 @pytest.fixture(scope="session")
 def s3_archive() -> "S3Archive":
-    """The 2026-08-25 S3 archive, or skip.
+    """The S3 archive, or skip.
 
     Opt-in: set ``SMOLBENCH_ARCHIVE_S3=s3://<bucket>/<prefix>`` (and, if
     needed, ``SMOLBENCH_RESULTS_S3_REGION``) with live AWS credentials.

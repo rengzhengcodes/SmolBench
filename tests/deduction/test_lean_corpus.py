@@ -87,7 +87,7 @@ def test_data_root_default_anchoring(monkeypatch):
 # not just re-derive the path arithmetic. All four sidecars are COMMITTED
 # files, unlike leandojo_benchmark_4/ itself, which is wholesale-gitignored.
 # So a checkout always has them, and the existence check is a real gate.
-# If data_root() still pointed at the retired notebooks/lean/data, every one
+# If data_root() pointed anywhere else, every one
 # of these paths would resolve to a nonexistent file, and these tests would
 # fail. That is exactly the regression they exist to catch.
 # ---------------------------------------------------------------------------

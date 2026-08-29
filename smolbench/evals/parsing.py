@@ -28,25 +28,19 @@ violation separately. An analysis can then ask "how often was the model
 right?" and "how often did it obey the instructions?" as two different
 questions. That distinction is load-bearing for the induction benchmarks:
 the token-matched whitespace pad in the ``noise_intens`` arm measurably
-degrades instruction following (0% invalid under the old random-character
-pad, 19-28% under whitespace on chromatic/decode). An arm meant only to
+degrades instruction following. An arm meant only to
 control for LENGTH was also silently penalizing format compliance.
 
 Recovery is deliberately conservative
 ---------------------------------------
-An early version mined a verdict from anywhere in the response, and
-"recovered" 96% of invalids. But it fired on reasoning chains TRUNCATED by
-the completion budget, matching a stray "no" inside thinking that never
-reached a conclusion. Inventing verdicts out of unfinished reasoning is
-worse than leaving them invalid. So a long response is only mined when it
-ENDS in a verdict; otherwise it stays unparseable and gets the
-`TRUNCATED` label.
+Mining a verdict from anywhere in a response fires on reasoning chains
+TRUNCATED by the completion budget, inventing verdicts out of unfinished
+reasoning. So a long response is only mined when it ENDS in a verdict;
+otherwise it stays unparseable and gets the `TRUNCATED` label.
 
 Repetition collapse gets its own label for the same reason: it is not a
-parsing problem. Nemotron-Ultra-253B, under the whitespace-padded noise
-arm, emitted 24,576 characters of "0" on every question -- 8,192 tokens
-of "000", the entire completion budget. No parser can recover an answer
-that was never produced.
+parsing problem. A model that spends its whole budget emitting one repeated
+token produced no answer for any parser to recover.
 """
 
 import ast
@@ -333,7 +327,7 @@ def parse_tof(text: str) -> ParseResult:
 
     stripped = text.strip()
 
-    # Fully compliant: exactly the demanded token (the original strict rule).
+    # Fully compliant: exactly the demanded token.
     if stripped.lower() in ("true", "false"):
         return ParseResult(stripped.lower() == "true", None)
 
@@ -379,9 +373,8 @@ def parse_numeric(text: str) -> ParseResult:
 
     The contract is "return exactly one integer and nothing else". So
     prose, markup, or a worked calculation around the number are all
-    violations. The worked-calculation case is the dangerous one: the
-    original first-integer rule silently graded such an answer on an
-    operand.
+    violations. The worked-calculation case is the dangerous one: picking
+    the first integer would score an operand.
     """
     if not text or not text.strip():
         return ParseResult(None, EMPTY)
@@ -421,7 +414,7 @@ def parse_numeric(text: str) -> ParseResult:
 
     # Several integers appear. A concluding "Answer: N", or a terminal
     # integer, is the result; the earlier ones are working. Taking the
-    # FIRST integer (the old rule) is what produced silent mis-grades.
+    # FIRST integer would score working, not the result.
     terminal = _TERMINAL_INT.search(stripped[-_TAIL_WINDOW:])
     if terminal:
         return ParseResult(_safe_int(terminal.group(1)), MULTIPLE_VALUES)
@@ -437,9 +430,8 @@ def parse_for(question: QnA, text: str) -> ParseResult:
     """Parse `text` with the extractor matching `question`'s answer type.
 
     For any QnA subclass this module does not special-case, this
-    function falls back to the question's own ``condition``. An unknown
-    question type then degrades to the original strict behavior, instead
-    of being silently mis-parsed.
+    function falls back to the question's own strict ``condition``,
+    instead of being silently mis-parsed.
     """
     if isinstance(question, ToF):
         return parse_tof(text)
