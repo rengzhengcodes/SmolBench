@@ -37,7 +37,7 @@ SAFETY PROPERTIES
   writes a fresh ``manifest.json``. At merge time, copy the prelude into
   the canonical directory before you spool.
 
-Runbook (gemma-4-12b mid-flight reshard, 2026-08-14)::
+Runbook (mid-flight reshard)::
 
     kill -9 <driver-pid>                       # NOT SIGINT/SIGTERM: the
                                                # --teardown finally block must
@@ -45,8 +45,8 @@ Runbook (gemma-4-12b mid-flight reshard, 2026-08-14)::
     mv results/runs/scaling_<key> results/runs/scaling_<key>_presplit
     .venv/bin/python scripts/deduction/split_lean_run_into_shards.py <key> --n 4 \
         --source results/runs/scaling_<key>_presplit
-    bash scripts/launch_gemma12b_deduction_shards.sh   # within 30 min of the
-                                               # kill (idle watchdog) for shard 0
+    # then relaunch one driver per shard with LEAN_SHARD=i/n, within 30 min
+    # of the kill (the idle watchdog) for shard 0
 """
 
 import argparse

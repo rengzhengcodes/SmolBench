@@ -5,11 +5,9 @@ credentials, and nothing here ever executes it against AWS. Every
 client is a fake. The real bucket now exists and must not be touched,
 which makes the fakes a safety property, not just a speed one.
 
-Scope note: this script is PROVISION-ONLY. It used to also seed the
-bucket from local result trees, and those tests are gone with that
-feature. The bucket is deliberately empty, and results reach it only
-by being written through ``smolbench.evals.results_store`` in the
-append-only log layout.
+Scope note: this script is PROVISION-ONLY. The bucket is deliberately
+empty, and results reach it only by being written through
+``smolbench.evals.results_store`` in the append-only log layout.
 """
 
 import json
@@ -104,8 +102,8 @@ def test_seeding_machinery_is_removed(removed):
     """The bucket is deliberately empty and is never bulk-seeded.
 
     This is pinned by name, because a leftover helper is an invitation
-    to re-enable the old repo-mirroring upload path, which would write
-    objects in a layout nothing reads any more.
+    to re-enable a bulk upload path that would write objects in a layout
+    nothing reads.
     """
     assert not hasattr(p, removed), f"{removed} should have been removed with seeding"
 

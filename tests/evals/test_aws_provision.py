@@ -6,14 +6,10 @@ This file covers the pure kwargs builders (``_create_model_kwargs``,
 fast path for non-SageMaker providers, the unknown-spec ``KeyError``, and, in
 the happy-path tests below, the full deploy/poll/yield/teardown sequence.
 
-Every pinned literal in the builder tests is copied from the pre-refactor
-inline code that ``provision_endpoint`` used to contain (the
-``create_model``/``create_endpoint_config``/``create_endpoint`` calls and the
-teardown loop, formerly inline at roughly aws.py:350-412). The tests do not
-derive the literals from the builders themselves. Like
-``tests/evals/test_aws_shared.py`` and ``tests/evals/test_ec2_provision.py``, the point
-is to catch the extraction drifting silently from what the inline code did,
-not to describe whatever the builders happen to return today.
+Every literal in the builder tests is pinned, not derived from the builders
+themselves: the point is to catch a builder drifting silently from the call
+it constructs, not to describe whatever it happens to return today. Like
+``tests/evals/test_aws_shared.py`` and ``tests/evals/test_ec2_provision.py``.
 
 No boto3 credentials or network access are used anywhere in this file.
 ``provision_endpoint`` runs against small hand-rolled recording fakes that
@@ -31,22 +27,8 @@ import pytest
 from smolbench.evals.providers import aws
 
 # ---------------------------------------------------------------------------
-# _create_model_kwargs: pinned against the pre-refactor create_model() call
+# _create_model_kwargs: the exact CreateModel kwargs dict
 # ---------------------------------------------------------------------------
-# Original (pre-refactor):
-#     _sagemaker_client().create_model(
-#         ModelName=mdl,
-#         ExecutionRoleArn=role,
-#         PrimaryContainer={
-#             "Image": spec.get("image", SAGEMAKER_VLLM_DLC),
-#             "Environment": {
-#                 "HF_MODEL_ID": spec["hf_model_id"],
-#                 "SM_VLLM_TENSOR_PARALLEL_SIZE": str(spec.get("tp", 1)),
-#                 "SAGEMAKER_ENABLE_LOAD_AWARE": "1",
-#             }
-#             | spec.get("env", {}),
-#         },
-#     )
 
 _SPEC = {"hf_model_id": "org/model", "instance_type": "ml.p5.48xlarge", "tp": 8}
 _ROLE_ARN = "arn:aws:iam::0:role/x"
@@ -117,8 +99,7 @@ def test_create_model_kwargs_no_env_key_is_base_dict_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# _create_endpoint_config_kwargs: pinned against the pre-refactor
-# create_endpoint_config() call
+# _create_endpoint_config_kwargs
 # ---------------------------------------------------------------------------
 
 
@@ -144,8 +125,7 @@ def test_create_endpoint_config_kwargs_instance_type_passthrough():
 
 
 # ---------------------------------------------------------------------------
-# _create_endpoint_kwargs: pinned against the pre-refactor create_endpoint()
-# call
+# _create_endpoint_kwargs
 # ---------------------------------------------------------------------------
 
 
@@ -157,15 +137,8 @@ def test_create_endpoint_kwargs_pinned():
 
 
 # ---------------------------------------------------------------------------
-# _teardown_steps: pinned against the pre-refactor `finally` block's 3-tuple
+# _teardown_steps: the 3-tuple of (label, delete call), in order
 # ---------------------------------------------------------------------------
-# Original (pre-refactor):
-#     sm = _sagemaker_client()
-#     for label, call in (
-#         ("endpoint", lambda: sm.delete_endpoint(EndpointName=model)),
-#         ("endpoint-config", lambda: sm.delete_endpoint_config(EndpointConfigName=cfg)),
-#         ("model", lambda: sm.delete_model(ModelName=mdl)),
-#     ):
 
 
 class _RecordingSagemakerClient:

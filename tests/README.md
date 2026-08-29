@@ -16,7 +16,7 @@ without a `tests/__init__.py`.
 
 ## Grouping
 
-Tests are grouped by subsystem under test, not by file age:
+Tests are grouped by subsystem under test:
 
 - `evals/` -- harness infrastructure and providers (EC2, AWS, OpenAI-compat,
   results store, marks I/O, tokenization/parsing).

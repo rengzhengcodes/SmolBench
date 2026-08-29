@@ -60,11 +60,9 @@ def test_payloads_parse():
 
 
 def test_agent_fingerprint_addition_compiles_and_is_present():
-    """The /status ``fingerprint`` object is new code in AGENT_PY.
+    """The /status ``fingerprint`` object compiles and is present in AGENT_PY.
 
-    (This is the server_config §5 provenance extension,
-    DETERMINISM_PLAN_2026-08-16.md section 5.) This test calls
-    ``compile()`` on it directly, a stricter check than
+    This test calls ``compile()`` on it directly, a stricter check than
     ``test_payloads_parse``'s ``ast.parse``: it catches anything a plain
     parse would not, for example a bytecode-level issue. It also confirms
     the addition actually landed in the rendered payload, not only in a
@@ -327,9 +325,8 @@ def test_vllm_api_key_is_passed_as_one_token_not_two():
         vllm serve: error: argument --api-key: expected at least one argument
 
     That is a roughly 1-in-65 random box-launch death that looks exactly
-    like flaky infrastructure. It killed a ministral-3-3b relaunch on
-    2026-08-15, and would have been dismissed as capacity noise. The `=`
-    form binds the value to the option, so a leading hyphen is just data.
+    like flaky infrastructure. The `=` form binds the value to the option,
+    so a leading hyphen is just data.
     """
     from smolbench.evals.payloads import AGENT_PY
 

@@ -19,8 +19,7 @@ resolves once per harness, lazily, the first time ``self.store`` is
 accessed -- see that cached property's docstring:
 
 - ``LocalResultsStore``: on local disk, at
-  ``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml`` -- exactly what
-  every notebook wrote before this indirection existed. This is still
+  ``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml``. This is
   the offline-test default, and still the shape every analysis
   script/notebook reads. ONE FILE PER REPLICATE: a rerun overwrites it
   in place.
@@ -28,7 +27,7 @@ accessed -- see that cached property's docstring:
   ``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``. A rerun
   ADDS a new timestamped object rather than overwriting anything. Every
   read (``summarize``, ``cot_chain_lengths``) resolves the EARLIEST
-  logged run per (model, seed, info) -- user ruling 2026-08-16.
+  logged run per (model, seed, info).
   ``ReplicateHarness.sync_down()`` translates this log back into the
   local layout above, for the local-reading analysis tooling.
 
@@ -42,11 +41,8 @@ SINGLE ``run_ts`` (captured once per seed, before the pooled call -- see
 ``run_replicates``'s docstring). They represent one evaluation event
 that happened to cover several info types at once.
 
-This module exists because three notebooks (periodic/induction_eval,
-chromatic/induction_eval, chromatic/induction_eval_one_hop) used to
-carry hand-copied versions of this harness that had already drifted
-(cwd-relative results dirs, missing pooling, divergent summaries).
-Notebooks now hold only their experiment config and templates.
+A study's driver holds only its experiment config and templates; this
+harness holds the replication mechanics.
 
 ``make_quizzes`` is keyed on (seed, model), not on seed alone. The
 induction benchmarks' ``noise_intens`` arm is a length control, padded to
@@ -55,12 +51,9 @@ that one arm's prompts are model-specific. The ``intens``/``extens``
 arms stay byte-identical across models, so a cross-model comparison is
 still a paired comparison on identical prompts wherever it matters.
 
-A notebook cell no longer constructs ``ReplicateHarness`` directly: each
-notebook builds one ``smolbench.induction.experiment.InductionExperiment``
-instead. That class bundles a ``ReplicateHarness`` (unchanged, see its
-``harness`` cached property) with the EC2 provisioning lifecycle that
-serves the models under test. See that module for the notebook-facing
-API.
+Callers construct a ``smolbench.induction.experiment.InductionExperiment``,
+which bundles a ``ReplicateHarness`` with the EC2 lifecycle that serves
+the models under test. See that module for the caller-facing API.
 """
 
 import functools
@@ -124,18 +117,14 @@ class ReplicateHarness:
     #: re-logged under a fresh ``run_ts``. ``None`` (the default) disables
     #: forcing entirely.
     #:
-    #: WARNING (user ruling 2026-08-16, earliest-wins reads): against an
-    #: S3-backed store, this knob can no longer SUPERSEDE anything. It was
-    #: built when readers resolved the LATEST run_ts, and was used
-    #: 2026-08-13 to re-collect early seeds on new hardware. Readers now
-    #: resolve the EARLIEST run instead, so a forced re-collection of an
-    #: already-logged seed appends an object that no reader in this
-    #: codebase will ever return -- it spends real GPU money producing log
-    #: history. Forcing is only meaningful for a seed with no logged run
-    #: (where it is redundant with the normal outstanding check), or
-    #: against a LOCAL store (which overwrites in place). If logged data
-    #: must be replaced, that is an explicit-exclusion problem -- see the
-    #: results_store module docstring.
+    #: WARNING: against an S3-backed store this knob cannot SUPERSEDE
+    #: anything. Reads resolve the EARLIEST logged run, so a forced
+    #: re-collection of an already-logged seed appends an object no reader
+    #: here will ever return -- it spends real GPU money producing log
+    #: history. Forcing is meaningful only for a seed with no logged run, or
+    #: against a LOCAL store (which overwrites in place). Replacing logged
+    #: data is an explicit-exclusion problem -- see the results_store module
+    #: docstring.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
@@ -267,7 +256,7 @@ class ReplicateHarness:
         call dumps (``Marks.server_config``), so each stored replicate
         self-describes the serving stack that generated it -- instance
         type, GPUs, tp, image (see ``ec2.server_config``). None (the
-        default) leaves the field None, exactly as before it existed.
+        default) leaves the field None.
 
         Notes
         -----
@@ -283,19 +272,10 @@ class ReplicateHarness:
         entirely, so this only matters for an S3-backed store.)
         """
         tag: str = self.archetype_tags[model]
-        # This logs once, unconditionally, before the resume-skip/eval
-        # work below. So a DIRECT call to this method still logs, even
-        # when every replicate is already stored (the loop below then
-        # does nothing). That guarantee is local to run_replicates
-        # itself: it does NOT extend through InductionExperiment.run,
-        # which checks has_outstanding() and returns BEFORE ever calling
-        # run_replicates when nothing is outstanding (see experiment.py's
-        # run()). So on that facade path, a fully-resumed model logs
-        # nothing here at all. On a direct call that does reach this
-        # line on a resumed run, this line is the only visible
-        # difference between a real S3 run and a silent local fallback
-        # (see `store`'s docstring for how -- and when -- that
-        # resolution happens).
+        # Logged unconditionally, before the resume-skip loop, so a direct
+        # call still names the resolved store even when nothing is
+        # outstanding. (InductionExperiment.run returns before reaching
+        # here when has_outstanding() is False.)
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
         eval_kwargs: dict = {}
         if extra_args is not None:
@@ -351,8 +331,7 @@ class ReplicateHarness:
 
         Against an S3-backed store, "stored" means "has at least one
         logged run". The totals are computed from the EARLIEST logged run
-        of each such seed; later re-collections are never read (user
-        ruling 2026-08-16) -- see
+        of each such seed; later re-collections are never read -- see
         ``ResultsStore.list_seeds``/``ResultsStore.load_marks``. The
         printed line's replicate count is ``len(seeds)``: the number of
         DISTINCT seeds with a stored replicate, never the number of
@@ -438,8 +417,8 @@ class ReplicateHarness:
         ``smolbench.evals.results_store.sync_down(self.results_dir,
         self.archetype_tags, self.prefix)`` -- the PRIMARY way to bring
         an S3-backed experiment's results onto local disk for the
-        local-reading analysis tooling (``power_analysis.py``, the
-        figure scripts), because this harness is the only place the
+        local-reading analysis tooling (``notebooks/*/analysis/power_analysis.py``,
+        the figure scripts), because this harness is the only place the
         model -> tag mapping (``archetype_tags``) already lives. The
         module-level CLI (``python -m smolbench.evals.results_store``)
         exists purely for out-of-notebook use, where that mapping has to

@@ -28,8 +28,7 @@ MERGE GATES (all hard failures -- nothing is written past a failed gate)
   double-run lane.
 - Merged totals equal ``--expect-cells``/``--expect-sanity`` (defaults 944
   and 300: the model-independent full-lane counts for this study's fixed
-  theorem set and rungs). Every completed lane to date has exactly these
-  totals.
+  theorem set and rungs).
 - No ``theorems/`` path collides between shards.
 - The canonical directory holds no pre-existing ``all_rows.jsonl``. This
   script never overwrites one.

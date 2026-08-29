@@ -48,8 +48,7 @@ A fourth, standalone condition sits below this zero point of the
 information gradient: :func:`get_periodic_zero_info_numeric_quiz` renders
 the same count queries with an EMPTY context, so the model gets no rules
 and no listing at all. It returns one ``Quiz``, not the three-condition
-tuple above, so it does not change ``get_periodic_numeric_quiz``'s shape or
-any existing caller.
+tuple above, so it does not change ``get_periodic_numeric_quiz``'s shape.
 
 Harmonic periods: consecutive vs coprime
 ----------------------------------------
@@ -195,8 +194,7 @@ class PeriodicConfig:
     n: int
     # Labels for each harmonic: n strings, or int n to auto-generate n
     # random labels. This field assigns labels in ascending-period order, so
-    # labels[i] belongs to the i-th smallest period (identical to the old
-    # labels[k-1] on the 1..n pathway).
+    # labels[i] belongs to the i-th smallest period.
     labels: Collection[Label] | int
     # RNG seed for reproducibility.
     seed: int
@@ -205,8 +203,7 @@ class PeriodicConfig:
     sep: str = "|"
     # Explicit harmonic periods, replacing the default 1..n. None (the
     # default) selects the consecutive-integer pathway, whose generated
-    # bytes are pinned by tests/induction/test_golden_quizzes.py. Leave it None and
-    # nothing about this class's behavior changes.
+    # bytes are pinned by tests/induction/test_golden_quizzes.py.
     periods: Tuple[int, ...] | None = None
     # The sequence length `periods` is expected to produce. Omit it, and the
     # periods must be PAIRWISE COPRIME, so lcm == product, and the length is
@@ -551,8 +548,7 @@ def get_periodic_zero_info_numeric_quiz(
 
     This function stands alone: it returns ONE Quiz, and it does not touch
     the 3-condition ``get_periodic_numeric_quiz`` or the shared
-    ``(intens, extens, noise_intens)`` tuple shape. Existing callers, and
-    the chromatic benchmark, are unaffected.
+    ``(intens, extens, noise_intens)`` tuple shape.
 
     Parameters
     ----------

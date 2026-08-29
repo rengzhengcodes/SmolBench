@@ -8,8 +8,8 @@ from smolbench.evals import provider
 def test_dispatch_follows_env_after_import(monkeypatch):
     """If you set INFERENCE_PROVIDER after import, it must take effect.
 
-    The old import-time dispatch silently ignored it, forcing
-    notebooks to mutate os.environ before the import.
+    Dispatch reads the env var per call, so notebooks need not mutate
+    os.environ before the import.
     """
     from smolbench.evals.providers import ec2, openrouter
 

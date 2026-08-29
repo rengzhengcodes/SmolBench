@@ -1,18 +1,15 @@
 """
 Power analysis for the family-ladder SCALING study (notebooks/induction).
 
-This script is a sibling of the retired
-``notebooks/periodic_moe/power_analysis.py`` (see ``git show
-f13b60d0~1:notebooks/periodic_moe/power_analysis.py``). It uses the SAME
-periodic induction task, harmonic strata, and stratified-CMH statistics.
-Two things change from that script:
+This uses the periodic induction task, harmonic strata, and
+stratified-CMH statistics. Two design facts drive everything below:
 
-  1. The MODEL SET grows from 3 MoE generalists to 7 model families x 3
-     parameter-count rungs each = 21 models (see `MODELS` / `FAMILIES`
-     below). This is a SCALING study: it asks how accuracy moves along a
-     family's small -> medium -> large ladder, not just across families.
-  2. The CONTRAST FAMILY is restructured. It moves from one flat all-pairs
-     list into three PRE-REGISTERED tiers (see "Contrast tiers" below). An
+  1. The MODEL SET is 7 model families x 3 parameter-count rungs each = 21
+     models (see `MODELS` / `FAMILIES` below). This is a SCALING study: it
+     asks how accuracy moves along a family's small -> medium -> large
+     ladder, not just across families.
+  2. The CONTRAST FAMILY is three PRE-REGISTERED tiers (see "Contrast
+     tiers" below). An
      all-pairs family over 21 models would need C(21, 2) x len(INFOS) =
      210 x 4 = 840 model-vs-model contrasts alone, before even counting
      the within-model info-arm contrasts. Bonferroni-correcting for that
@@ -77,11 +74,9 @@ alongside.
 
 Data availability
 ------------------
-This study is user-locked to BASE_SEED = 0 (every prior induction study
-used 1776; see `PILOT_SEED` below). Its results are S3-backed
-(SMOLBENCH_RESULTS_S3), not committed to the repo as a flat or
-per-replicate YAML tree. Unlike the archived periodic_moe script, this
-script keeps no flat-file fallback: this study never had a flat layout.
+This study is user-locked to BASE_SEED = 0 (see `PILOT_SEED` below). Its
+results are S3-backed (SMOLBENCH_RESULTS_S3), not committed to the repo as
+a flat or per-replicate YAML tree.
 So `load_outcomes` raises a `SystemExit` with an actionable message
 (instead of an obscure FileNotFoundError traceback). That message names
 the exact missing path and points at
@@ -94,7 +89,7 @@ example, a fresh checkout), run sync_down() instead.
 
 Run (ephemeral env via --no-project: plain `uv run` would sync the project
 and strip the notebook/dev extras from .venv):
-    uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/induction/power_analysis.py
+    uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/induction/analysis/power_analysis.py
 """
 
 import re
@@ -106,7 +101,7 @@ from pathlib import Path
 # script's directory. The path is __file__-anchored, so the import works
 # regardless of the caller's cwd (repo convention -- see _power_common.py
 # itself).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 from scipy.stats import chi2
@@ -122,8 +117,7 @@ from _power_common import (
 # ---------------------------------------------------------------------------
 # Experiment design: 7 model families x 3 parameter-count rungs = 21 models,
 # same periodic induction task and 4 info arms as periodic_moe. MODELS and
-# FAMILIES are given verbatim by the study spec (not derived from
-# _power_common, which pins the older 3-archetype / 3-info design).
+# FAMILIES are given verbatim by the study spec.
 # ---------------------------------------------------------------------------
 MODELS = (
     "qwen35_27b", "qwen35_122b", "qwen35_397b",
@@ -172,7 +166,7 @@ PILOT_SEED = 0                                          # CHANGED: seed 0, file 
 # they stay interchangeable if either changes independently in the
 # future.
 
-RESULTS_DIR = results_dir(__file__)
+RESULTS_DIR = results_dir(__file__, up=1)
 
 # Simulation parameters specific to this script's stratified-CMH design
 # (not shared with chromatic's quiz-level design). Values are unchanged

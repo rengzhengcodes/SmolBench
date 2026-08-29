@@ -1,29 +1,18 @@
 """Test scripts/results/evidence_manifest.py, offline: the EVIDENCE.json mechanism.
 
-Why this exists: ``notebooks/*/results/`` is gitignored wholesale
-(.gitignore:235), so every tracked file under it is a hand-picked ``git add
--f``. Nothing forced a writeup's cited artifacts into git, and the audited
-consequence was real. The regime-mean package committed an interim raw
-under a ``_final_`` name, while its preregistration, its estimator, and its
-true raw stayed only in /tmp. An EVIDENCE.json per results directory closes
-that hole, but only if the checks have teeth. So this file is written in
-two layers:
+``notebooks/*/results/`` is gitignored wholesale (.gitignore:235), so every
+tracked file under it is a hand-picked ``git add -f`` and nothing forces a
+writeup's cited artifacts into git. An EVIDENCE.json per results directory
+closes that hole, but only if the checks have teeth. So the synthetic
+fixtures in ``tmp_path`` below prove each failure mode fires on its own: sha
+drift, a vanished file, a vanished tarball member, a cited artifact covered
+by nothing, and, the subtle one, a citation that a string-suffix match would
+wrongly accept (``all_rows.jsonl`` must not be satisfied by
+``originals_all_rows.jsonl``). A verify() that always returns ok would pass a
+test suite that only checked the happy path. Each of these tests exists to
+make the tool say no.
 
-1. Synthetic fixtures in ``tmp_path`` that prove each failure mode fires on
-   its own: sha drift, a vanished file, a vanished tarball member, a cited
-   artifact covered by nothing, and, the subtle one, a citation that a
-   string-suffix match would wrongly accept (``all_rows.jsonl`` must not be
-   satisfied by ``originals_all_rows.jsonl``). A verify() that always
-   returns ok would pass a test suite that only checked the happy path.
-   Each of these tests exists to make the tool say no.
-2. The repo gate, which walks git's own index instead of a hardcoded list
-   of directories, so a writeup committed tomorrow into a new results dir
-   is gated too. It checks that the discovered writeup set is non-empty
-   first: a ``git ls-files`` that silently returned nothing would
-   otherwise turn the whole gate into a vacuous pass.
-
-``scripts/`` is not an importable package, so the module loads by path
-(mirroring tests/test_recover_dojoinit.py and tests/test_determinism_probes.py).
+``scripts/`` is not an importable package, so the module loads by path.
 """
 
 from __future__ import annotations
@@ -32,14 +21,13 @@ import hashlib
 import importlib.util
 import io
 import json
-import subprocess
 import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
-from tests._paths import REPO_ROOT as REPO, SCRIPTS
+from tests._paths import SCRIPTS
 
 
 @pytest.fixture(scope="module")
@@ -53,9 +41,7 @@ def em():
     resolves ``dataclasses.KW_ONLY`` by looking its own module up in
     ``sys.modules``, which returns None for a module executed by path. So
     the decorator dies with ``AttributeError: 'NoneType' object has no
-    attribute '__dict__'`` before any test runs. This was reproduced in 6
-    lines against a stub module, so it is a property of the loader, not of
-    the module under test.
+    attribute '__dict__'`` before any test runs.
     """
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(
@@ -67,9 +53,7 @@ def em():
         spec.loader.exec_module(mod)
         yield mod
     finally:
-        # Leave no global state behind (mirrors
-        # tests/test_determinism_probes.py, which is equally careful about
-        # the import-time state its loads touch).
+        # Leave no global state behind.
         sys.modules.pop(name, None)
 
 
@@ -358,7 +342,7 @@ def test_tarball_member_covers_by_member_path(tmp_path, em):
     """A citation is covered by the member path inside the tarball.
 
     Coverage is not limited to files on disk; that is the whole point of
-    preserving the scratchpad.
+    preserving tarballs.
     """
     pkg = tmp_path / "pkg"
     pkg.mkdir()
@@ -412,19 +396,6 @@ def test_verify_reports_malformed_entry(tmp_path, em):
 def test_verify_missing_manifest_raises(tmp_path, em):
     with pytest.raises(FileNotFoundError):
         em.verify(tmp_path)
-
-
-# --------------------------------------------------------------------------
-# layer 2 -- the repo gate
-# --------------------------------------------------------------------------
-
-def _git(*args: str) -> str:
-    return subprocess.run(("git", *args), cwd=REPO, check=True,
-                          capture_output=True, text=True).stdout
-
-
-
-
 
 
 

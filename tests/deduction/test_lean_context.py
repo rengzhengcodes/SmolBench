@@ -167,7 +167,7 @@ def test_noise_token_count_exactly_equals_paired_hint(thms):
 def test_noise_padding_is_whitespace_only_and_not_lorem(thms):
     """The pad is the `hint:(N-1)` baseline plus WHITESPACE, and nothing else.
 
-    This also confirms removal of the old lorem-ipsum filler. Prose padding
+    Prose padding
     adds information the paired hint rung does not have. The old
     `## Filler ...` header was itself unmatched content.
     """

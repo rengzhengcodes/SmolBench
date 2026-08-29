@@ -1,17 +1,9 @@
-"""Provide plotting helpers for the induction analysis notebook(s).
+"""Provide plotting helpers for induction analysis.
 
-This module was extracted from ``notebooks/chromatic/induction_eval_analysis.
-ipynb`` (a PINNED HISTORICAL figure; see that notebook's intro cell; the
-notebook itself is now archived, see f13b60d0), which had grown an inline
-accuracy/loading/plotting pipeline directly in its code cells. That pipeline
-is centralized here, so the same three steps (score a ``Marks`` into a
-scalar accuracy, load a ``{(model, condition): accuracy}`` table from a
-directory of result YAMLs, and render the grouped-bar comparison figure)
-could be reused by a future periodic-benchmark analysis notebook without
-re-copy-pasting the cell contents. No such notebook has used this module
-yet; today it is exercised only by the offline test
-``tests/induction/test_induction_figures.py``, rather than by re-running a notebook
-by hand.
+Three steps: score a ``Marks`` into a scalar accuracy, load a
+``{(model, condition): accuracy}`` table from a directory of result YAMLs,
+and render the grouped-bar comparison figure. Exercised by
+``tests/induction/test_induction_figures.py``.
 
 This module imports matplotlib LAZILY, inside :func:`plot_archetype_accuracy`
 only. Matplotlib lives in this project's ``notebook`` extra (see
@@ -31,10 +23,6 @@ from smolbench.evals import Marks
 def accuracy(marks: Marks) -> float:
     """Compute the fraction of a quiz's questions the model answered correctly.
 
-    This function moved verbatim (same formula, same zero-division
-    handling) from the ``accuracy`` function inline in
-    ``induction_eval_analysis.ipynb``'s loading cell.
-
     Parameters
     ----------
     marks : Marks
@@ -48,12 +36,8 @@ def accuracy(marks: Marks) -> float:
         as a fraction of all questions. Invalid/unparseable responses count
         against the model in this denominator, the same as incorrect ones.
         Returns ``0.0`` if ``marks`` has no questions at all (``total == 0``).
-        This is the notebook's original behavior, preserved here rather than
-        raising: the notebook's ``FILES`` table only ever called this on
-        ``Marks`` loaded from a non-empty result file, so the zero-question
-        case never actually arose for its real inputs. But returning 0.0 (a
-        valid, in-range accuracy value) is a safer default than raising, for
-        any future caller that happens to pass an empty ``Marks``.
+        Returning 0.0 (a valid, in-range value) rather than raising keeps
+        an empty ``Marks`` from aborting a table build.
     """
     total = marks.correct + marks.incorrect + marks.invalid
     return marks.correct / total if total > 0 else 0.0
@@ -65,8 +49,7 @@ def load_condition_accuracies(
 ) -> Dict[Tuple[str, str], Optional[float]]:
     """Load a ``{(model, condition): accuracy}`` table from result YAMLs.
 
-    Moved verbatim from ``induction_eval_analysis.ipynb``'s loading cell: for
-    each ``(model_key, condition_key) -> filename`` entry, loads
+    For each ``(model_key, condition_key) -> filename`` entry, loads
     ``results_dir / filename`` via ``Marks.load`` and scores it with
     :func:`accuracy`, or records ``None`` and prints a diagnostic when the
     file is absent.
@@ -74,10 +57,10 @@ def load_condition_accuracies(
     Parameters
     ----------
     results_dir : pathlib.Path
-        Directory containing the result YAML files (the notebook's pinned
-        ``result2/`` archive of flat, single-run pilot files -- NOT the
-        per-replicate ``results/<tag>/rep_<seed>.yaml`` tree the current
-        experiment writes; see the notebook's HISTORICAL-pin banner).
+        Directory containing the result YAML files (a flat, single-run
+        ``result2/`` archive -- NOT the per-replicate
+        ``results/<tag>/rep_<seed>.yaml`` tree the current experiment
+        writes).
     files : Mapping[Tuple[str, str], str]
         Maps ``(model_key, condition_key)`` to the result filename expected
         under ``results_dir`` (the notebook's ``FILES`` dict).
@@ -121,22 +104,17 @@ def plot_archetype_accuracy(
 ):
     """Render the grouped-bar (model x condition) accuracy comparison figure.
 
-    Moved from ``induction_eval_analysis.ipynb``'s plotting cell, with the
-    cell's hardcoded literals (``MODELS``, ``CONDITIONS``, the title string,
-    the 0.5 chance line, the output filename, ...) promoted to parameters
-    whose defaults match the notebook's original values --  calling this
-    with the notebook's own ``MODELS``/``CONDITIONS``/title reproduces the
-    original figure exactly (see ``tests/induction/test_induction_figures.py`` and the
-    pixel/data comparison recorded when this module was extracted).
+    Renders one group of bars per entry in ``models`` (x-axis), one bar per
+    entry in ``conditions`` within each group. ``MODELS``/``CONDITIONS``/
+    title/chance-line/output-filename are parameters with defaults.
 
     One group of bars is drawn per entry in ``models`` (x-axis), with one
     bar per entry in ``conditions`` inside each group, colored per
     ``conditions``' own color and labeled in the legend by ``conditions``'
     own label. Each bar is annotated with its own height as a percentage,
-    unless the height is exactly 0 (which the notebook uses to mean "no
-    data" -- see ``data.get(...) or 0.0`` below -- so a genuine 0% result is
-    indistinguishable from missing data on this figure, exactly as in the
-    original notebook).
+    unless the height is exactly 0. A bar of height 0 is not annotated
+    (``data.get(...) or 0.0`` makes a genuine 0% indistinguishable from
+    missing data).
 
     Parameters
     ----------

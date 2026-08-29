@@ -57,12 +57,10 @@ substitutions, and one of the query generators above), together determine a
 run. :func:`get_random_exclusive_prompts` is the core generator that both
 quiz wrappers and the ``__main__`` demo build on. This module only supplies
 the generation machinery and its built-in query generators; it does not
-hold canonical configs for a live eval driver. No current notebook or
-script drives real eval runs through ``ChromaticIntervalsConfig`` -- the
-module is exercised by ``tests/induction/test_golden_quizzes.py``,
-``tests/induction/test_noise_token_match.py``, and ``tests/induction/test_induction_semantics.py``.
-The earlier ``notebooks/chromatic/`` notebooks that once drove it are
-archived (see ``smolbench/induction/README.md``).
+hold canonical configs for a live eval driver. This module is exercised by
+``tests/induction/test_golden_quizzes.py``,
+``tests/induction/test_noise_token_match.py``, and
+``tests/induction/test_induction_semantics.py``.
 
 Seed discipline
 ----------------
@@ -304,9 +302,8 @@ def _join_english_list(items: Iterable[str]) -> Iterator[str]:
     ``_prompt_extensional``: both render a sequence of strings the same way.
     Only the per-item rendering differs (interval ranges like "5 to 10" vs.
     individual years like "7"), so the join logic lives here exactly once.
-    A prior merge of the two callers' join logic was verified to leave both
-    callers' byte-for-byte output unchanged: each caller now just
-    pre-renders its items to strings, then delegates the joining here.
+    Each caller pre-renders its items to strings, then delegates the
+    joining here.
 
     The rules below deliberately do NOT use the Oxford-comma convention for
     exactly two items; they match natural "A and B" phrasing rather than
@@ -335,8 +332,7 @@ def _join_english_list(items: Iterable[str]) -> Iterator[str]:
     ValueError
         If ``items`` is empty: unpacking requires at least one item. Both
         callers here always pass at least one interval or year, so this
-        case is unreachable through them; the earlier join-logic merge did
-        not introduce it.
+        case is unreachable through them.
     """
     # This picks off the last item for "and" handling.
     *left, terminus = items
@@ -422,9 +418,7 @@ def get_random_exclusive_prompts(
     intension: str = ""
     # This hoists `role` out of the loop: it is constant across colors, and
     # pulling it out of the f-string avoids nesting a "..." lookup inside an
-    # f-string that is itself delimited with "...". That nesting had forced
-    # the original onto an awkward line-broken replacement field just to
-    # keep the quoting legal.
+    # f-string that is itself delimited with "...".
     role: str = prompter.substitution["role"]
     for color, inters in label_to_intervals.items():
         if not inters.any():

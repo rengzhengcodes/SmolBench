@@ -377,9 +377,7 @@ def test_lane_env_defaults_values_and_purity(driver, tmp_path):
 
     assert got["EC2_EXPERIMENT_TAG"] == f"scaling-{KEY}"
     assert got["EC2_STATE_FILE"] == str(tmp_path / f".ec2_state_scaling_{KEY}.json")
-    # Digest-pinned since the 2026-08-18 determinism change. Before that it
-    # was the mutable "vllm/vllm-openai:nightly" tag. See ec2.py's own
-    # EC2_VLLM_IMAGE comment for the full provenance.
+    # Digest-pinned; see ec2.py's own EC2_VLLM_IMAGE comment.
     assert got["EC2_VLLM_IMAGE"] == (
         "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
     )
@@ -887,8 +885,7 @@ def test_driver_refuses_a_tag_that_does_not_name_its_lane():
     a launcher that sources it with ``set -a`` exports that into every
     lane. Boxes are then discovered by tag (``_recover_tagged_instance``),
     and the second lane adopts the first lane's instance, serving its own
-    model on top. Three lanes converged on one g6e.12xlarge this way on
-    2026-08-14.
+    model on top.
     """
     code = (
         "import os, sys, importlib.util\n"

@@ -55,14 +55,8 @@ and then calls its methods in lifecycle order: `provision()` once,
 `cot_chain_lengths()` any number of times, and `teardown()` once at the
 end.
 
-The live driver is `notebooks/induction/run_study.py` (with its sibling
-notebook `notebooks/induction/induction_eval.ipynb`). The three retired
-Jupyter notebooks that this API was extracted for
-(`periodic/induction_eval.ipynb`, `chromatic/induction_eval.ipynb`, and
-`chromatic/induction_eval_one_hop.ipynb`) now live only in the archive
-zip and the git history. `smolbench/evals/replicates.py` keeps the
-record of why the shared harness exists: the three notebooks used to
-copy-paste these cells, and the copies had begun to drift.
+The live driver is `notebooks/induction/run_study.py`, with its sibling
+notebook `notebooks/induction/induction_eval.ipynb`.
 
 ### keys.env first, then import
 
@@ -87,10 +81,10 @@ section) for the full contract.
 A "replicate" is the SAME quiz regenerated under a fresh seed, not a
 different quiz. `InductionExperiment.seeds` is always
 `tuple(base_seed + r for r in range(n_replicates))`. The constructor's
-default is `base_seed=1776` (the July 4th, 1776 nod), which every
-retired notebook used with `n_replicates=30`. The current family-ladder
-study deliberately overrides this: `notebooks/induction/run_study.py`
-locks `BASE_SEED=0` (seeds 0..29) — see its docstring for why. One seed
+default is `base_seed=1776` (the July 4th, 1776 nod). The current
+family-ladder study deliberately overrides this:
+`notebooks/induction/run_study.py` locks `BASE_SEED=0` (seeds 0..29) -- see
+its docstring for why. One seed
 does double duty: it drives the quiz's OWN randomness (label, interval,
 and color sampling — see `PeriodicConfig.seed` /
 `ChromaticIntervalsConfig.seed`) AND, in the same call, threads through
@@ -112,14 +106,11 @@ See `smolbench/evals/providers/ec2.py` for the current per-hour rate and the
 idle-watchdog / max-lifetime safety nets that cover an abandoned
 driver.
 
-### Figures and the analysis notebook
+### Figures
 
-`smolbench/induction/figures.py` (`accuracy`,
-`load_condition_accuracies`, `plot_archetype_accuracy`) was extracted
-from `induction_eval_analysis.ipynb`, a PINNED HISTORICAL figure over
-the archived `result2/` pilot directory (flat, single-run result files
-— not the per-replicate `results/<tag>/rep_<seed>.yaml` tree that
-`InductionExperiment` writes). That notebook is retired to the archive
-zip with the rest of the old trees. Matplotlib imports lazily inside
-`plot_archetype_accuracy` only, so an import of `figures.py` (or the
-rest of `smolbench.induction`) does not require the `notebook` extra.
+`smolbench/induction/figures.py` (`accuracy`, `load_condition_accuracies`,
+`plot_archetype_accuracy`) reads the FLAT, single-run result layout -- not
+the per-replicate `results/<tag>/rep_<seed>.yaml` tree `InductionExperiment`
+writes. Matplotlib imports lazily inside `plot_archetype_accuracy` only, so
+importing `figures.py` (or the rest of `smolbench.induction`) does not
+require the `notebook` extra.

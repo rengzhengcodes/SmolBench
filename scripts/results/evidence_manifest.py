@@ -8,16 +8,11 @@ changed artifact is easy to find.
 
 ``notebooks/*/results/`` is gitignored wholesale (see ``.gitignore:235``).
 Every tracked file under it needs a manual ``git add -f``, so nothing
-forces a writeup's cited artifacts into git. This gap was real: the
-regime-mean package committed an INTERIM raw file under a ``_final_``
-name, while its preregistration, its estimator, and its true raw file
-stayed only in ``/tmp``. An audit found 23 cited-but-untracked artifact
-names across the committed writeups. The repo now keeps those scratch
-files as tracked tarballs under
+forces a writeup's cited artifacts into git, and scratch files a writeup
+cites can end up preserved only as tracked tarballs under
 ``notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/``.
-
-This module turns that class of gap from "found by audit two weeks
-later" into "found by a test". For each results directory:
+This module turns that class of gap into a test. For each results
+directory:
 
   * ``EVIDENCE.json`` pins every artifact by sha256, including artifacts
     that exist only INSIDE one of the preserved tarballs. The manifest
@@ -64,8 +59,7 @@ Load this module by file path. ``scripts/`` is not an importable
 package, so callers reach this module through
 ``importlib.util.spec_from_file_location``/``module_from_spec``.
 Register the module in ``sys.modules`` BEFORE calling ``exec_module``.
-This is importlib's own documented recipe, and the pattern
-``scripts/flip_probe.py`` and the tests already use.
+This is importlib's own documented recipe, and the pattern the tests use.
 
 This step is required, not optional. Under
 ``from __future__ import annotations``, every annotation is a string.
@@ -197,7 +191,7 @@ def _candidates(relpath: str) -> list[str]:
     offers TWO: the tarball's own path, since a writeup may legitimately
     cite the preserved archive, and the member path inside it. The
     member path is how a citation of an artifact that exists only inside
-    the scratchpad gets covered.
+    a preserved tarball gets covered.
 
     Parameters
     ----------
@@ -378,9 +372,7 @@ def covers(cited: str, entry_path: str) -> bool:
     citation of ``all_rows.jsonl`` IS satisfied by an entry
     ``sub/all_rows.jsonl`` -- the same file, addressed from a different
     place. It is NOT satisfied by ``originals_all_rows.jsonl``, which
-    merely ends with the same bytes and names a DIFFERENT artifact. This
-    is exactly the confusion the audit found; a plain
-    ``str.endswith()`` implementation would have accepted it.
+    merely ends with the same bytes and names a DIFFERENT artifact.
 
     Parameters
     ----------

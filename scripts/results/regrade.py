@@ -2,12 +2,11 @@
 
 Why this is needed
 ------------------
-Grading semantics changed. ``smolbench.evals.parsing`` now recovers an
-answer that is correct but wrongly formatted, and records HOW the response
-broke the prompt's output contract, instead of scoring it as a plain
-failure. Replicates collected before that change were graded strictly. So
-a results tree can hold two different grading conventions at once, which
-would make an arm collected today incomparable with the arm it should be
+``smolbench.evals.parsing`` recovers an answer that is correct but wrongly
+formatted, and records HOW the response broke the prompt's output
+contract, instead of scoring it as a plain failure. A results tree can
+hold replicates graded under an older, stricter convention, which would
+make an arm collected today incomparable with the arm it should be
 contrasted against.
 
 Every mark stores its raw ``response``, so the fix needs no model, no GPU,
@@ -20,17 +19,15 @@ Per condition, before vs after:
 
 * accuracy, and how many marks change verdict;
 * invalid count: how many unreadable marks the parser recovers;
-* NONCOMPLIANCE, the new signal: how often the model disobeyed the output
-  contract, regardless of whether it got the answer right. This number
-  shows whether a condition degrades instruction following rather than
-  reasoning. This is exactly the question the induction ``noise_intens``
-  arm raised.
+* NONCOMPLIANCE: how often the model disobeyed the output contract,
+  regardless of whether it got the answer right. This number shows
+  whether a condition degrades instruction following rather than
+  reasoning.
 
 This script runs as a dry run by default. ``--write`` rewrites the YAMLs
 in place. There is NO git safety net: ``.gitignore`` ignores
 ``notebooks/*/results/`` for every study, so git tracks no result YAML,
-and ``git checkout`` recovers nothing (verified 2026-08-14: ``git
-ls-files 'notebooks/*/results/*'`` returns 0). You can recover a bad
+and ``git checkout`` recovers nothing. You can recover a bad
 ``--write`` pass ONLY by re-fetching the results: for S3-backed studies,
 through ``InductionExperiment.harness.sync_down()``. That same sync_down
 call also silently DISCARDS a good pass; see the guard below.
@@ -47,10 +44,8 @@ already in the local tree. A local-only edit this script makes
 (``--write``) never reaches S3, so the very next ``sync_down`` silently
 clobbers it back to the stale, pre-regrade S3 copy. This is not a loud
 failure: a regrade's typical edit is a score flip (for example ``1 ->
-0``), which preserves the file's byte length. A direct measurement
-confirmed this: 147 bytes before and after, with only the content (and
-its MD5) different. So nothing about file size or presence would tip the
-operator off that the regrade was ever lost.
+0``), which preserves the file's byte length, so nothing about file size
+or presence would tip the operator off that the regrade was ever lost.
 
 Before it does ANY work, this script checks every study it would touch
 (respecting ``--study``) through
@@ -64,7 +59,7 @@ absent or stale local tree, would mislead the operator at exactly the
 moment they decide whether to write. See `_s3_backed_studies` and the
 guard block at the top of `main` for the implementation, and see the
 printed message for the exact recovery sequence (sync down, unset the
-env var, re-run, re-seed).
+env var, re-run).
 
 Run this script from the repo root, in the main venv:
     .venv/bin/python scripts/results/regrade.py                     # report only
@@ -83,38 +78,15 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from smolbench.evals import Marks  # noqa: E402
-from smolbench.evals.parsing import parse_numeric, parse_tof  # noqa: E402
+from smolbench.evals.parsing import parse_numeric  # noqa: E402
 
 STUDIES = {
     # The family-ladder scaling study (notebooks/induction) is S3-backed
     # (SMOLBENCH_RESULTS_S3). So the S3 guard below refuses a local regrade
     # until the operator deliberately syncs down, unsets the env var, and
-    # re-seeds; see the module docstring. Retired studies (periodic,
-    # chromatic, periodic_moe, and others) live in archive_2026-08-11.zip
-    # and in git history. This script can no longer regrade them in place.
+    # re-seeds; see the module docstring.
     "induction": "notebooks/induction/results",
 }
-
-
-def parser_for(study: str):
-    """Return the response parser for `study`.
-
-    Every study currently in `STUDIES` asks for an integer verdict. This
-    function keeps the ``"chromatic"`` branch (True/False verdicts) for a
-    retired study that once lived in `STUDIES`; see the module docstring.
-
-    Parameters
-    ----------
-    study : str
-        Study name, a key of `STUDIES`.
-
-    Returns
-    -------
-    callable
-        ``parse_tof`` for ``study == "chromatic"``, otherwise
-        ``parse_numeric``.
-    """
-    return parse_tof if study == "chromatic" else parse_numeric
 
 
 def _s3_backed_studies(studies) -> List:
@@ -265,8 +237,7 @@ def main() -> int:
             "\nTo proceed:\n"
             "  1. Sync down: python -m smolbench.evals.results_store <results_dir>\n"
             "  2. Unset SMOLBENCH_RESULTS_S3\n"
-            "  3. Re-run this regrade\n"
-            "  4. Deliberately re-seed the regraded trees back to S3"
+            "  3. Re-run this regrade"
         )
         return 1
 
@@ -275,7 +246,7 @@ def main() -> int:
         results = REPO / STUDIES[study]
         if not results.is_dir():
             continue
-        parse = parser_for(study)
+        parse = parse_numeric
         print(f"\n{'=' * 92}\n### {study}{'  (DRY RUN)' if not args.write else '  (WRITING)'}\n{'=' * 92}")
         print(
             f"{'condition':26s} {'n':>6s} {'acc before':>11s} {'acc after':>10s} "

@@ -1,9 +1,8 @@
-"""Correct KV-cache sizing for the family-ladder roster.
+"""KV-cache sizing for the family-ladder roster.
 
-The original tier/tp assignments assumed every layer holds full-context KV.
-The 2026-08-13 fleet audit showed that assumption is false for a third of
-the roster. Three attention mechanisms shrink KV by 4-25x versus the naive
-figure. A fourth mechanism, tp replication, grows it instead:
+A naive figure that assumes every layer holds full-context KV is wrong for
+a third of the roster. Three attention mechanisms shrink KV by 4-25x versus
+that figure. A fourth mechanism, tp replication, grows it instead:
 
 * **sliding/local layers** cache only ``min(ctx, sliding_window)`` tokens
   (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` pattern at
@@ -112,8 +111,8 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
         Tensor-parallel degree. KV heads replicate when ``tp > n_kv`` for
         non-MLA models, which multiplies total KV by ``tp / n_kv``.
     naive : bool
-        When True, reproduce the WRONG pre-audit assumption (every layer
-        holds full-context GQA KV), for comparison columns.
+        When True, assume every layer holds full-context GQA KV (the
+        uncorrected figure), for the comparison column.
 
     Returns
     -------
@@ -156,7 +155,7 @@ def main() -> None:
     from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 
     raw = json.loads(_CONFIGS.read_text())
-    gib = 1e9  # decimal GB, matching the 2026-08-13 audit tables
+    gib = 1e9  # decimal GB
     print(f"{'model':<28}{'naive GB':>10}{'actual GB':>11}{'@spec tp':>10}   notes")
     for model in sorted(raw):
         cfg = _text_config(raw[model])

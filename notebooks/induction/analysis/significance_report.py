@@ -7,11 +7,6 @@ procedures disagree.
 
 Test choice
 -----------
-[Corrected 2026-08-21: the primary test is now the CLUSTER test. The
-paragraph below described the item-level exact McNemar as the
-headline; that statistic treats a lane's 270 marks as 270 independent
-pairs, which they are not.]
-
 The independent unit in this design is the REPLICATE SEED. A seed
 draws one label alphabet and one answer vector, and the 9 harmonic
 items inside it share them. So a seed on which a model's arm collapses
@@ -23,16 +18,12 @@ DP, and reads off P(|T*| >= |T_obs|). This test is exact, deterministic
 (no resampling seed), and reduces to exact McNemar when every cluster
 is a singleton. It is also unimprovable within its family:
 studentizing is a provable no-op, because sum_s d_s^2 is sign-flip
-invariant. This follows the repo's own standing recommendation
-(MULTIPLICITY_PLAN.md section 4; MULTIPLICITY_CMH_VARIANTS.md "PERMUTE
-/ BLOCK-BOOTSTRAP WHOLE REPLICATES"), applied to the primary family at
-last.
+invariant.
 
 Item-level exact McNemar and the unpaired harmonic-stratified CMH that
 ``power_analysis.py`` plans are both retained as DESCRIPTIVE columns,
 clearly labelled. The gap between them and the cluster p is the design
-effect, and it is not small: Holm falls from 125 rejections to 119,
-and every loss is a ladder contrast.
+effect.
 
 Procedure choice
 ----------------
@@ -47,17 +38,7 @@ assumption.
 
 Reporting discipline
 --------------------
-[Retired 2026-08-21, by user ruling: this section used to fence six
-``noise_intens`` lanes into a QUARANTINED bucket, and exclude them from
-the findings. The quarantine is retired. Output collapse under
-whitespace padding is a RESULT, not a data-quality excuse: padding a
-prompt to a matched token count destroyed the output contract in 6 of
-21 models, and that is worth stating plainly. The historical rule was
-also asymmetric: a hand-written six-element set of noise cells, while
-cells like ``min3_14b/extens`` at 84.4% non-compliance were merely
-tagged.]
-
-Every contrast now lands in exactly one of two buckets, and nothing is
+Every contrast lands in exactly one of two buckets, and nothing is
 hidden:
 
   * FINDINGS -- the 126 contrasts between two informative arms.
@@ -74,7 +55,7 @@ failure mode. The annotation states what the mechanism may be; it does
 not remove the contrast from the record.
 
 Run:
-    uv run --no-project --with numpy --with scipy python notebooks/induction/significance_report.py
+    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/significance_report.py
 """
 
 import re
@@ -101,25 +82,14 @@ from paired_analysis import (  # noqa: E402
 ALPHA = 0.05
 
 #: A cell at or above this share of non-compliant completions gets a
-#: mechanism annotation on every contrast it touches. This is ONE number,
-#: applied to all four arms of all 21 lanes. See the module docstring's
-#: retirement note for why the old hand-written six-cell quarantine set
-#: was replaced by a symmetric criterion.
+#: mechanism annotation on every contrast it touches. ONE number, applied
+#: symmetrically to all four arms of all 21 lanes.
 COLLAPSE_THRESHOLD = 0.25
 
 #: Above this share, the arm is not merely degraded: it has stopped
 #: emitting parseable answers at all. Used only to word the census,
 #: never to fence.
 TOTAL_COLLAPSE = 0.95
-
-#: The six lanes the 2026-08-21 ruling names as the padding-collapse
-#: result: the set the retired quarantine hard-coded. Kept ONLY so the
-#: report can say where a symmetric criterion disagrees with that
-#: historical list. Nothing is selected, excluded, or scored by
-#: membership here; every rate below is measured from the marks.
-RULING_COLLAPSE_LANES = (
-    "exaone_32b", "exaone_33b", "min3_8b", "min3_14b", "glm_flash", "glm_air",
-)
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
@@ -245,12 +215,6 @@ def classify(label: str, key_a, key_b) -> str:
         control), or ``"zero-vs-zero"`` (a ladder contrast between two
         baseline arms: null by construction). The last two are jointly
         the zero-arm controls.
-
-    Notes
-    -----
-    [Changed 2026-08-21: the ``"quarantined"`` bucket this function used
-    to return is retired. No contrast is fenced out of the record any
-    more. See the module docstring.]
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -346,8 +310,7 @@ def main() -> None:
           "arms -- so the 270 marks are 30 clusters of 9, not 270\n  "
           "independent pairs. Exact (2^30 assignments enumerated by DP), "
           "deterministic,\n  and equal to exact McNemar when every cluster is a "
-          "singleton.\n  [Adopted 2026-08-21; the previous headline was the "
-          "item-level McNemar, kept below\n  as a descriptive column.]\n")
+          "singleton.\n")
 
     print(f"{'test':26s} {'procedure':10s} {'rejected':>9s}  "
           f"{'uncorrected p<0.05':>19s}")
@@ -443,8 +406,7 @@ def main() -> None:
           f"whitespace padding to a matched token count is not inert, it "
           f"destroys\n   the output contract in a substantial minority of "
           f"models. Every contrast that\n   touches such an arm stays in the "
-          f"findings, annotated -- see the ruling of\n   2026-08-21 that "
-          f"retired the quarantine.\n")
+          f"findings, annotated.\n")
 
     print("ALL cells at or above the criterion, any arm:\n")
     print(f"{'lane':13s} {'arm':13s} {'non-compl.':>10s} {'n':>5s}  "
@@ -459,22 +421,9 @@ def main() -> None:
               f"{modes}{star}")
     print(f"\n{len(over)} of {len(census)} cells are at or above the "
           f"{COLLAPSE_THRESHOLD:.0%} criterion; {len(noise_over)} of them are "
-          f"noise arms.\nThe criterion is applied SYMMETRICALLY to all four arms "
-          f"-- which is how cells like\nmin3_14b/extens and min3_8b/intens, "
-          f"tagged but never fenced under the retired\nquarantine, appear here "
-          f"beside the noise arms.")
-    if len(noise_over) > len(RULING_COLLAPSE_LANES):
-        extra_noise = [k for k in noise_over if k[0] not in RULING_COLLAPSE_LANES]
-        named_min = min(census[(m, "noise_intens")]["rate"]
-                        for m in RULING_COLLAPSE_LANES)
-        print(f"It is also why {len(noise_over)} noise arms qualify rather than "
-              f"the {len(RULING_COLLAPSE_LANES)} named in the\n2026-08-21 "
-              f"ruling: "
-              + "; ".join(
-                  f"{k[0]} at {census[k]['rate']:.1%}" for k in extra_noise)
-              + f" clears the criterion and is\nHIGHER than the lowest named "
-              f"lane ({named_min:.1%}), but the hand-written quarantine set\n"
-              f"never included it.")
+          f"noise arms.\nThe criterion is applied SYMMETRICALLY to all four arms, "
+          f"which is why cells like\nmin3_14b/extens and min3_8b/intens appear "
+          f"here beside the noise arms.")
     zero_over = [k for k in over if k[1] == "zero"]
     if zero_over:
         print(f"Two of them are `zero` baseline cells "

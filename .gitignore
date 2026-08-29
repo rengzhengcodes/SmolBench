@@ -219,9 +219,9 @@ __marimo__/
 # instance's control token and vLLM api key).
 .ec2_state*.json
 
-# SSH private key for the lean-train GPU box (scripts/lean_train_ec2.py) and any
-# loose HF token file -- secrets, must never be committed. The .pem.pub public
-# key is not secret but is machine-generated; ignore it too.
+# SSH private keys and any loose HF token file -- secrets, must never be
+# committed. The .pem.pub public key is not secret but is machine-generated;
+# ignore it too.
 *.pem
 *.pem.pub
 .hf_token
@@ -240,14 +240,8 @@ notebooks/*/results/
 !.claude/skills/
 CLAUDE.md
 
-# Pre-S3-migration replicate archive: 292MB, exceeds GitHub's 100MB file
-# limit. This zip + git history are the only record of the retired local
-# results trees -- keep it on disk, never in a commit.
+# Local archives of retired result trees and experiment directories: kept on
+# disk, never committed (one exceeds GitHub's 100MB file limit; the other is
+# kept out by policy).
 /local_results_2026-08-10.zip
-
-# Retired-experiment archive: the tracked trees, scripts and write-ups for the
-# chromatic/periodic/periodic_{coprime,divisor,moe} induction studies and the
-# lean deduction study. Unlike local_results_2026-08-10.zip this one is small
-# enough to commit -- it is kept out by policy, not by GitHub's size limit.
-# This zip plus git history are the only record.
 /archive_2026-08-11.zip

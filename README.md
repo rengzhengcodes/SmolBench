@@ -44,12 +44,17 @@ smolbench/                 the installable library
     runner.py, verify.py                            the sweep runner and lean-dojo verification
     decontam.py, lean3.py, sft.py, nullverify.py, cli.py
 
-notebooks/                 experiment drivers and analysis, one directory per study
+notebooks/                 experiment drivers and analysis, one directory per study (see notebooks/README.md)
   induction/                family-ladder induction study (see notebooks/induction/README.md)
+    run_study.py, induction_eval.ipynb   the driver (launched by literal path) and its notebook
+    analysis/                  the published numbers: power, paired, significance, extens-vs-noise
+    audits/                    concluded one-off probes, kept for the record
   deduction/                family-ladder Lean deduction study (see notebooks/deduction/README.md)
-  README.md                 archive index: what was removed from the tree, and how to get it back
+    run_study.py, lean_eval.ipynb        the generation-only driver and its notebook
+    analysis/                  the published numbers: power, error bars, hint-vs-noise
   statistical_analyses.ipynb  the single notebook holding this study's cross-cutting statistics
   _power_common.py           shared results_dir()/stats helpers both studies' analysis scripts import
+  ARCHIVE.md                 where historical artifacts live (S3, releases) and what is regenerable
 
 scripts/                   operational scripts, grouped by job (see scripts/README.md)
   fleet/                     launch and babysit the 21-lane EC2 fleet
@@ -71,6 +76,7 @@ tests/                     the offline pytest suite (see tests/README.md), zero 
 | I want to... | Go to |
 | --- | --- |
 | Run a study | `notebooks/<study>/run_study.py` |
+| Reproduce a published number | `notebooks/<study>/analysis/`, or `notebooks/statistical_analyses.ipynb` |
 | Operate the EC2 fleet | `scripts/fleet/` |
 | Verify, merge, or audit results | `scripts/deduction/` (Lean verify/shard/merge), `scripts/results/` (bucket admin, regrade, completeness, evidence manifest) |
 | Add or change an inference provider | `smolbench/evals/providers/` |

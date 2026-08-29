@@ -25,21 +25,20 @@ Launch order and the family gate
 ---------------------------------
 1. Tier D launches first, staggered ``LAUNCH_STAGGER_SECONDS`` apart. It
    has the longest provisioning tail and the scarcest capacity
-   (``p6-b200.48xlarge``, since 2026-08-13; previously p5e/p5en).
+   (``p6-b200.48xlarge``).
 2. Tier A launches next, staggered. It is the cheapest tier and the
    fastest to prove out.
 3. FAMILY GATE (skippable with ``--no-gate``): tiers B and C wait until
    EVERY model in ``GATE_MODELS`` has logged a healthy serve
    (``is_serve_healthy``). ``GATE_MODELS`` names three tier-A
    checkpoints, one per *reasoning-toggle style* in the roster. The
-   whole roster serves under the digest-pinned ``FLEET_IMAGE`` (post-study
-   determinism pin, 2026-08-18 -- see ``ec2.py``'s deploy-spec roster
-   comment). Pinned or not, that build has only ever served two roster
-   models, so this gate still turns a 21-way bet on one image into a
-   cheap 3-way bet on single-GPU boxes: if ``gemma-4-e2b`` cannot serve,
-   ``gemma-4-31b`` will not either. That failure is cheap to discover
-   on a ``g6e.4xlarge`` -- a rounding error -- next to discovering it
-   on six freshly provisioned ``p6-b200.48xlarge`` instances.
+   whole roster serves under the digest-pinned ``FLEET_IMAGE``, and that
+   build has only ever served two roster models, so this gate turns a
+   21-way bet on one image into a cheap 3-way bet on single-GPU boxes:
+   if ``gemma-4-e2b`` cannot serve, ``gemma-4-31b`` will not either.
+   That failure is cheap to discover on a ``g6e.4xlarge`` -- a rounding
+   error -- next to discovering it on six freshly provisioned
+   ``p6-b200.48xlarge`` instances.
 4. Tiers B and C launch, staggered.
 
 Restart policy
@@ -157,23 +156,16 @@ from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 # Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
 # ---------------------------------------------------------------------------
 DEFAULT_REGIONS = "us-east-1,us-east-2,us-west-2"
-# Post-study determinism pin (2026-08-18, user directive): the fleet used
-# to serve EC2_VLLM_IMAGE=vllm/vllm-openai:nightly, a moving target that
-# >=4 distinct builds served the family-ladder study through. Every lane
-# now launches the digest-pinned build the 2026-08-16 hinge experiment
-# certified deterministic (vLLM 0.27.2rc1.dev122+g8efa13b70; Docker Hub
-# tag nightly-8efa13b700f1836657699cae2503dc2feab27fa0). This mirrors
-# ec2.py's EC2_VLLM_IMAGE default. The fleet sets the env per lane, so
-# it must pin too, or the code default becomes dead letter for fleet
-# runs. Bump this value only on purpose.
+# Digest-pinned build (vLLM 0.27.2rc1.dev122+g8efa13b70; Docker Hub tag
+# nightly-8efa13b700f1836657699cae2503dc2feab27fa0), certified
+# deterministic. This mirrors ec2.py's EC2_VLLM_IMAGE default. The fleet
+# sets the env per lane, so it must pin too, or the code default becomes
+# dead letter for fleet runs. Bump this value only on purpose.
 FLEET_IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
-# Per-lane image pins (default: FLEET_IMAGE). The V4 lanes run the
-# tagged v0.27.1 release. That version's SM90 serving path (Marlin
+# Per-lane image pins (default: FLEET_IMAGE). The V4 lanes run the tagged
+# v0.27.1 release, digest-pinned: that version's SM90 serving path (Marlin
 # MXFP4 + FLASHMLA_SPARSE_DSV4, see the DeepSeek block in
-# EC2_DEPLOY_SPECS) was source-verified and issue-proven (vllm#51822 on
-# 4xH200), while nightly drifts daily. Digest-pinned 2026-08-18 to the
-# exact content the tag v0.27.1-cu129-ubuntu2404 resolved to, so the
-# exception is deterministic too.
+# EC2_DEPLOY_SPECS) is the one V4 is known to serve on.
 LANE_IMAGE_OVERRIDES = {
     "deepseek-v4-flash": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
     "deepseek-v4-pro": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
@@ -182,48 +174,32 @@ MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
 # deepseek-v4-pro serves --enforce-eager (see EC2_DEPLOY_SPECS). A
 # budget-burning 87k-token generation takes >1h at eager Pro throughput,
-# so under the fleet-wide 3600s timeout those cells retry forever
-# (observed at attempt 7 on seed 0). 7500s still lost races on the
-# slowest tail cells (attempts 2-4 observed at 27/36 on seed 0, each
-# failed attempt burning a full ~2h regeneration). 14400s lets a
-# worst-case cell finish in ONE attempt. The box-side idle watchdog keys
-# on vLLM metrics activity, so an hours-long in-flight generation cannot
-# trip it.
-# CAVEAT (2026-08-18): every timeout above and below was computed
-# against BATCHED serving. The determinism bundle (ec2.py
-# DETERMINISM_ARGS) now serves --max-num-seqs 1 fleet-wide, so
-# concurrent requests to one lane serialize on the server, and
-# per-request wall time multiplies by the in-flight count. Recompute
-# these against batch-1 throughput before the next paid fleet run.
+# so under the fleet-wide 3600s timeout those cells retry forever. 14400s
+# lets a worst-case cell finish in ONE attempt. The box-side idle watchdog
+# keys on vLLM metrics activity, so an hours-long in-flight generation
+# cannot trip it. NOTE: every timeout here was computed against BATCHED
+# serving; ec2.py's DETERMINISM_ARGS serve --max-num-seqs 1 fleet-wide, so
+# concurrent requests serialize and per-request wall time multiplies by the
+# in-flight count. Recompute before the next paid fleet run.
 LANE_REQUEST_TIMEOUT_OVERRIDES = {
     "deepseek-v4-pro": "14400",
-    # gemma-4-12b wedged 2026-08-13 at 14/30: its g6e.12xl (4x L40S)
-    # serves ~146 tok/s AGGREGATE, so concurrent 87k-token
-    # budget-burner cells run >1h each, and every request died at the
-    # 3600s read timeout (observed at attempt 5, each retry burning
-    # another hour, the box healthy the whole time). 10800s covers the
-    # worst case (~90 min at 3 concurrent) with 2x headroom.
+    # gemma-4-12b and ministral-3-14b serve on g6e.12xl (4x L40S) at ~146
+    # tok/s AGGREGATE, so concurrent 87k-token budget-burner cells run
+    # >1h each and die at the 3600s read timeout. 10800s covers the worst
+    # case (~90 min at 3 concurrent) with 2x headroom.
     "gemma-4-12b": "10800",
-    # ministral-3-14b: same disease, same g6e.12xl class. This lane hit
-    # 141 read-timeout retries while limping through seed 10.
     "ministral-3-14b": "10800",
 }
 
 TIER_INSTANCE_TYPES = {
-    # g6e.12xlarge was appended 2026-08-11: small-G spot in the hunt AZs
-    # was reclaimed for hours on end while 12xl capacity (and the
-    # raised G quota) sat available. A 3x-cost fallback beats an idle
-    # lane.
+    # g6e.12xlarge is the fallback when small-G spot is reclaimed in the
+    # hunt AZs: a 3x-cost fallback beats an idle lane.
     "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
-    # D switched to p6-b200 (8x B200, SM100) 2026-08-13 for the
-    # deepseek-v4-pro experiment. SM90 graph capture IMA'd twice, and
-    # eager mode can't finish 30 seeds, so Pro's spec dropped its
-    # Marlin pin for SM100's native MXFP4 path. That marlin-less spec
-    # MUST NOT serve on p5e/p5en (see the spec comment in ec2.py).
-    # glm-4.7 and deepseek-v3.1, the other D lanes, completed on the
-    # old p5e/p5en list and never relaunch.
+    # D is p6-b200 (8x B200, SM100). deepseek-v4-pro's spec drops its
+    # Marlin pin for SM100's native MXFP4 path; that marlin-less spec MUST
+    # NOT serve on p5e/p5en (see the spec comment in ec2.py).
     "D": "p6-b200.48xlarge",
 }
 # Override for tier D only; every other tier falls back to
@@ -235,11 +211,9 @@ TIER_REGIONS = {"D": "us-east-1,us-east-2,us-west-2"}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 
 TIER_MEMBERS = {
-    # gemma-4-12b moved A->B 2026-08-12. Its spec runs tp=4: tp=1 on a
-    # 4-GPU box wedged every request past the 1h read timeout. Tier A's
-    # hunt list mixes 1-GPU types, where tp=4 cannot construct ("World
-    # size (4) is larger than the number of available GPUs"). Tier B is
-    # all-4-GPU.
+    # gemma-4-12b is tier B, not A: its spec runs tp=4, and tier A's hunt
+    # list mixes 1-GPU types where tp=4 cannot construct ("World size (4)
+    # is larger than the number of available GPUs"). Tier B is all-4-GPU.
     "A": ("nemotron-3-nano-4b", "gemma-4-e2b", "ministral-3-3b"),
     "B": (
         "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-12b", "gemma-4-31b",
@@ -250,7 +224,7 @@ TIER_MEMBERS = {
         "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
         "glm-4.5-air", "k-exaone-236b-a23b",
     ),
-    # deepseek-v4-flash moved C->D 2026-08-13. Its spec switched to the
+    # deepseek-v4-flash is tier D. Its spec switched to the
     # marlin-less SM100 recipe (see ec2.py), which must only serve on
     # tier D's p6-b200 hunt list, never on C's p5/p5e.
     "D": ("glm-4.7", "deepseek-v3.1", "deepseek-v4-pro", "deepseek-v4-flash"),
@@ -258,15 +232,13 @@ TIER_MEMBERS = {
 
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
 MAX_CRASH_RELAUNCHES = 2
-# Lowered 0.9 -> 0.5 (2026-08-11, live): with only 9 intens marks, one
-# or two direct answers from a capable model read as 78-89% and
-# tripped the halt. A DEAD toggle measures ~0-11% (bare integers
-# everywhere); a working-but-variable soft protocol measures 78-100%.
-# 0.5 cleanly separates the two regimes.
+# A DEAD toggle measures ~0-11% (bare integers everywhere); a
+# working-but-variable soft protocol measures 78-100%. 0.5 cleanly
+# separates the two regimes. (With only 9 intens marks, a 0.9 threshold
+# trips on one or two direct answers from a capable model.)
 COT_MIN_FRACTION = 0.5
-#: A response longer than this counts as a reasoning chain carried in
 #: content (the quiz contract asks for a single bare integer). See
-#: ``reasoning_fraction``'s Notes for the live incident this encodes.
+#: ``reasoning_fraction``'s Notes.
 COT_CONTENT_REASONING_MIN_CHARS = 200
 LAUNCH_STAGGER_SECONDS = 30
 MONITOR_INTERVAL_SECONDS = 60
@@ -313,9 +285,8 @@ class Lane:
     def regions(self) -> str:
         """Comma-separated AWS regions this lane may provision in.
 
-        ``TIER_REGIONS`` overrides for tier D (p6-b200 capacity, since
-        the 2026-08-13 switch away from p5e). Every other tier uses
-        ``DEFAULT_REGIONS``.
+        ``TIER_REGIONS`` overrides for tier D (p6-b200 capacity). Every
+        other tier uses ``DEFAULT_REGIONS``.
         """
         return TIER_REGIONS.get(self.tier, DEFAULT_REGIONS)
 
@@ -495,17 +466,11 @@ def lane_env(
 
     Notes
     -----
-    CORRECTED: earlier versions of this docstring said
-    ``notebooks/deduction/run_study.py`` "does not exist yet" and
-    called ``LEAN_RUN_NAME`` an inferred, unconfirmed variable. That
-    driver now exists (added in commit ``c68b7451``) and reads
-    ``LEAN_RUN_NAME`` directly, defaulting to
-    ``f"scaling_{LEAN_MODEL}"`` when unset -- the same value this
-    function passes. ``LEAN_RUN_NAME`` is CONFIRMED LOAD-BEARING: it is
-    what lets :func:`sync_deduction_spool` (below) find the run
-    directory at ``notebooks/deduction/results/runs/scaling_<key>/``,
-    the ``scaling_<model>`` run-directory convention that
-    ``notebooks/deduction/run_study.py`` also defaults to.
+    ``LEAN_RUN_NAME`` is load-bearing: it is what lets
+    :func:`sync_deduction_spool` find the run directory at
+    ``notebooks/deduction/results/runs/scaling_<key>/``, the
+    ``scaling_<model>`` convention ``notebooks/deduction/run_study.py``
+    also defaults to.
     """
     if base_env is None:
         import os
@@ -752,23 +717,20 @@ def reasoning_fraction(
 
     Notes
     -----
-    Why response length counts (added 2026-08-11, from live fleet
-    data): models whose thinking rides a SOFT protocol reason on
-    essentially every mark, but only sometimes wrap it in their think
-    markup. Ministral's [THINK] system-prompt protocol and EXAONE's
-    ``enable_thinking`` both produced "Alright, let's tackle this step
-    by step..." chains in plain ``response`` content on 40-60% of
-    marks. The reasoning parsers, and the client-side ``</think>``
-    split, rightly leave those chains unsplit. That IS
-    chain-of-thought; only the channel differs. A channel-only count
-    halted those lanes as "silently non-thinking" when the
-    transcript shows the opposite. The quiz's output contract is
-    "return exactly one integer and nothing else", so a TRULY
-    non-thinking mark is a few characters. Any response beyond
+    Why response length counts: models whose thinking rides a SOFT
+    protocol reason on essentially every mark, but only sometimes wrap
+    it in their think markup. Ministral's [THINK] system-prompt
+    protocol and EXAONE's ``enable_thinking`` produce "Alright, let's
+    tackle this step by step..." chains in plain ``response`` content
+    on 40-60% of marks. The reasoning parsers, and the client-side
+    ``</think>`` split, rightly leave those chains unsplit. That IS
+    chain-of-thought; only the channel differs. The quiz's output
+    contract is "return exactly one integer and nothing else", so a
+    TRULY non-thinking mark is a few characters. Any response beyond
     ``COT_CONTENT_REASONING_MIN_CHARS`` is a reasoning chain in
     content, not a compliant bare answer. A lane whose toggle is
     genuinely broken -- bare integers everywhere, empty reasoning
-    channel -- still fails this check exactly as before.
+    channel -- still fails this check.
 
     Silently non-thinking data is worse than no data at all. A lane
     that quietly collects 30 replicates of non-reasoning output looks,
@@ -896,8 +858,8 @@ def preflight(lanes: Sequence[Lane]) -> dict[str, int]:
 def fleet_image_digest() -> Optional[str]:
     """Look up a best-effort ``docker manifest inspect`` digest for ``FLEET_IMAGE``.
 
-    With FLEET_IMAGE now digest-pinned, this is a resolvability sanity
-    check, not a record of what a moving tag currently points at. NOTE:
+    ``FLEET_IMAGE`` is digest-pinned, so this is a resolvability sanity
+    check, not a record of what a moving tag points at. NOTE:
     for a multi-arch image, this function returns a PER-ARCHITECTURE
     manifest digest (the parser falls back to
     ``manifests[0].digest`` on a manifest list), not the index digest
@@ -916,11 +878,8 @@ def fleet_image_digest() -> Optional[str]:
     -----
     This function is purely informational: the run banner records its
     result, so the launch image is written down somewhere durable (lane
-    logs, stdout). It dates from the ``:nightly`` era, when "which
-    build did this study actually run against" was otherwise
-    unanswerable after the fact. Under the digest pin, it mostly proves
-    the ref still resolves. This function never raises; a
-    digest-lookup failure must never block a launch.
+    logs, stdout). This function never raises; a digest-lookup failure
+    must never block a launch.
     """
     if shutil.which("docker") is None:
         logging.info("fleet_image_digest: docker not found on PATH; skipping digest lookup.")
@@ -1134,11 +1093,8 @@ def _fleet_status_module():
 class _LaneRun:
     """Mutable per-lane runtime state, tracked across monitor-loop ticks.
 
-    This class is not part of this file's tested contract; nothing in
-    ``tests/tooling/test_run_fleet.py`` touches it. It exists purely to give
-    the monitor-loop helpers below a single place to carry a lane's
-    subprocess handle, its position in its phase sequence, and its
-    restart/halt bookkeeping between ticks.
+    Carries a lane's subprocess handle, its position in its phase
+    sequence, and its restart/halt bookkeeping between ticks.
     """
 
     lane: Lane
@@ -1334,17 +1290,12 @@ def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = bui
             continue
         try:
             store = store_factory()
-            # This check uses intens ONLY (2026-08-11, live fleet). It
-            # is a WIRING check -- "did the thinking toggle reach the
-            # model" -- and intens is the short, well-formed arm where
-            # every correctly-wired model demonstrably reasons. An
-            # all-arms pool halted EXAONE-4.0, whose toggle provably works
-            # (intens/zero 100% reasoning), because the model COLLAPSES
-            # on the ~30k-token extens listing and confabulates on the
-            # whitespace-padded noise arm. That collapse is exactly the
-            # phenomenon the study measures (compare Nemotron-3's
-            # extens collapse in the prior study) -- data, not a
-            # fault.
+            # This check uses intens ONLY. It is a WIRING check -- "did the
+            # thinking toggle reach the model" -- and intens is the short,
+            # well-formed arm where every correctly-wired model reasons. An
+            # all-arms pool would halt lanes that collapse on the ~30k-token
+            # extens listing or confabulate on the noise arm, which is the
+            # phenomenon the study measures: data, not a fault.
             fraction = reasoning_fraction(
                 store, run.lane.key, run.lane.tag, infos=("intens",)
             )
@@ -1449,7 +1400,7 @@ def _run_fleet(
         if all(runs[k].halted for k in gate_keys):
             logging.error(
                 "run_fleet: FAMILY GATE FAILED -- every GATE_MODELS lane halted; NOT "
-                "launching tiers B/C. Investigate the nightly image before retrying."
+                "launching tiers B/C. Investigate FLEET_IMAGE before retrying."
             )
             gate_keys = []  # stop waiting; skip the else-clause launch below
             break
@@ -1504,7 +1455,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Print the launch plan (tier, command, full environment per lane) "
         "and exit. Launches no subprocess and makes no AWS call. Does NOT run "
         "preflight (tokenizer warm-up + completion-budget derivation) or check "
-        "the nightly image digest -- those steps only run on a live launch. "
+        "that FLEET_IMAGE resolves -- those steps only run on a live launch. "
         "This proves the wiring is correct, not that the lanes will actually "
         "start.",
     )

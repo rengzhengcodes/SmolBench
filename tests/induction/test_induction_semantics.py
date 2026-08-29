@@ -365,27 +365,23 @@ def test_chromatic_succession_answers_match_interval_map():
 
 
 # ---------------------------------------------------------------------------
-# Chromatic: duration totals, including the n=40 config that regresses the
-# pre-fix ndarray-truthiness crash in duration_query_gen.
+# Chromatic: duration totals, including the n=40 config that covers the
+# ndarray-truthiness path in duration_query_gen.
 # ---------------------------------------------------------------------------
 
 
 def test_chromatic_duration_query_gen_totals_and_zero_interval_color():
-    """Regression test for the fixed ``if not intervals:`` ndarray-truthiness bug.
+    """``duration_query_gen`` must not call ``bool()`` on a multi-row ndarray.
 
-    (Documented in duration_query_gen's docstring, chromatic.py.) Calling
-    ``bool()`` on a multi-row ndarray raises, so the old code crashed for
-    any color holding more than one interval. n=40/intervals=8/colors=4/
-    seed=1776 is a known configuration (chosen by the architect for this
-    test) that simultaneously produces:
+    (Documented in duration_query_gen's docstring, chromatic.py.) An
+    ``if not intervals:`` guard raises for any color holding more than one
+    interval. n=40/intervals=8/colors=4/seed=1776 simultaneously produces:
 
     - a color with zero intervals (must be skipped, no query at all, not
       a query answered 0), exercising the ``len(intervals) == 0`` branch;
     - colors with multiple intervals, some of which anneal together
       (consecutive or overlapping intervals merged into one span) and
-      some of which stay separate, exercising the annealing branch that
-      the old ``if not intervals:`` code could never even reach without
-      crashing.
+      some of which stay separate, exercising the annealing branch.
 
     Each yielded total is checked against an independently-computed sum of annealed
     interval lengths (calling anneal_intervals directly here, instead of trusting

@@ -454,8 +454,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     counts as a pass@N pass if ANY of its replicates verified; N is the
     max replicate count seen across all cells. Sweeps with exactly one
     replicate per cell everywhere (the common, non-replicated case) omit
-    both tables -- their output is byte-identical to the pre-pass@N/trunc
-    format, aside from the added ``trunc`` column in the detail table.
+    both tables.
     """
     from collections import defaultdict
 
@@ -526,7 +525,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             # instead.
             raw_text = r.get("raw_response", "") or r.get("content", "")
             unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-            # Fix (parser-path blind spot): when the box serves WITH a vLLM
+            # Parser-path case: when the box serves WITH a vLLM
             # --reasoning-parser, the server splits the model's <think>
             # block out into `reasoning_content` server-side, and it never
             # lands in `raw_response` at all. So a generation that died

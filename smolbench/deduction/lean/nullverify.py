@@ -78,7 +78,7 @@ class NullReplayResult:
     order. `runner.py` code that reads a real `ReplayResult`'s attributes
     (``sanity.verdict``, ``sanity.tactics_applied``, ``sanity.tactics_total``,
     ``sanity.error``, when building the sweep's per-theorem sanity row)
-    works unchanged against this class. `NullVerifier.replay_ground_truth`
+    works against this class. `NullVerifier.replay_ground_truth`
     returns this exclusively, always with ``verdict="skipped"``.
     """
 

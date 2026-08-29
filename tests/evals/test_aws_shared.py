@@ -2,14 +2,11 @@
 
 ``aws.py`` covers SageMaker, and ``ec2.py`` covers EC2 Spot.
 
-Every pinned literal in this file (the two AssumeRole trust-policy dicts,
-the IAM call kwargs, the deploy-spec key sets) is copied from the
-pre-refactor source: aws.py's ``_ensure_exec_role``, and ec2.py's
-``_ensure_instance_profile`` / ``EC2_DEPLOY_SPECS`` / ``SAGEMAKER_DEPLOY_
-SPECS``. The tests do not derive these literals from ``_aws.py`` itself. The
-point of this suite is to catch the extraction drifting silently from what
-those two modules did before ``_aws.py`` existed, not to describe whatever
-``_aws.py`` happens to do today.
+Every literal in this file (the two AssumeRole trust-policy dicts, the IAM
+call kwargs, the deploy-spec key sets) is pinned, not derived from
+``_aws.py`` itself. The point is to catch ``_aws.py`` drifting silently
+from what ``aws.py`` and ``ec2.py`` need, not to describe whatever it
+happens to do today.
 
 No boto3 credentials or network access are used anywhere here. IAM calls go
 through small hand-rolled recording fakes. Real
@@ -106,11 +103,11 @@ def test_poll_until_deadline_checked_after_check_not_before(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# assume_role_trust_policy: pinned against the two pre-refactor inline dicts
+# assume_role_trust_policy: pinned against the two inline dicts it serves
 # ---------------------------------------------------------------------------
-# Copied literally from aws.py:294-303 (_ensure_exec_role) and
-# ec2.py:1259-1268 (_ensure_instance_profile). Both have the same shape,
-# and differ only in the Principal.Service value.
+# Copied literally from aws.py's ``_ensure_exec_role`` and ec2.py's
+# ``_ensure_instance_profile``. Both have the same shape, and differ only
+# in the Principal.Service value.
 
 _SAGEMAKER_TRUST_POLICY_PRE_REFACTOR = {
     "Version": "2012-10-17",

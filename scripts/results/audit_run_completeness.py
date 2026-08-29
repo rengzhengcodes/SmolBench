@@ -2,24 +2,13 @@
 
 WHY THIS EXISTS
 ---------------
-On 2026-08-14, an audit found the deduction leg missing 2,564 of 19,824
-cells (12.9%). The loss concentrated in five lanes; one lane had lost
-93.8% of its data. Nothing flagged it. Every check that existed passed:
-
-  * the fleet driver reported the lane COMPLETE (it had run to the end);
-  * the shard merge gates passed (944 cells + 300 sanity = 1,244 rows;
-    the KEYS were all present);
-  * the verification pass reported 0 tracebacks and uploaded 22/22 files.
-
-The rows were there. They were just EMPTY: ``candidate_proof: ""``,
-``completion_tokens: 0``. The generating box had died mid-run, and the
+**A completeness check that counts rows is not a completeness check.** A
+row can be present and EMPTY (``candidate_proof: ""``,
+``completion_tokens: 0``) when the generating box died mid-run and the
 driver recorded the failure as an ordinary per-cell ``exception`` row.
-The loss surfaced only when someone asked why one lane's verified output
-was 90% ``exception``.
-
-The lesson, and the rule this script enforces: **a completeness check
-that counts rows is not a completeness check.** The presence of a key
-proves an attempt was made, not that data came back. Assert on CONTENT.
+Row counts, shard-merge gates and traceback counts all pass on that data.
+The presence of a key proves an attempt was made, not that data came
+back. Assert on CONTENT.
 
 WHAT COUNTS AS A FAULT
 ----------------------
@@ -33,17 +22,12 @@ them:
           re-running. ``runner._existing_keys()`` re-runs a cell when
           all its surviving rows are empty AND the cell also owns an
           ``exception`` row, so a plain relaunch regenerates exactly
-          these cells. (Until 2026-08-14, that function decided per ROW
-          instead of per cell, so one empty non-exception row could pin
-          a dead cell as done, and no relaunch could ever reach it.
-          qwen3.5-27b lost 6 cells that way, and reported COMPLETE
-          having written nothing.)
+          these cells.
 
   GENUINE No error anywhere: the model was asked and returned nothing.
-          This is DATA, not loss (962 such cells exist across the
-          study, for example 272 in gemma-4-12b). A regeneration of
-          these cells would fabricate results by resampling until the
-          model happens to answer. Never "repair" these cells.
+          This is DATA, not loss. A regeneration of these cells would
+          fabricate results by resampling until the model happens to
+          answer. Never "repair" these cells.
 
 This script exits with status 1 when INFRA loss exists, so a pipeline can
 gate on it. It reports genuine empties, but never fails the run over them.
@@ -54,8 +38,7 @@ USAGE
     scripts/results/audit_run_completeness.py --local          # audit local run dirs
     scripts/results/audit_run_completeness.py --induction      # seed coverage too
 
-    # Programmatic, per lane (how the archived repair launcher gated a
-    # restored run dir before relaunching it):
+    # Programmatic, per lane:
     #   sys.path.insert(0, "scripts/results"); from audit_run_completeness import audit_lane
     #   audit_lane(open(f"{run_dir}/all_rows.jsonl").read())["infra"]  # dead cells
 """
@@ -181,14 +164,6 @@ def audit_lane(text: str) -> Dict[str, object]:
         # `prompt_tokens > 0` means the server counted a prompt, so the
         # model WAS asked, and the empty result is its answer: data, not
         # loss.
-        #
-        # An earlier version classified on the error text alone (any row
-        # matching INFRA_PATTERNS). That made a cell infra FOREVER once it
-        # had lost a single attempt to a spot kill, even after later
-        # attempts ran cleanly and answered emptily. Eight cells were
-        # stuck that way on 2026-08-15. This kept two lanes permanently
-        # red, and, worse, fed an unbounded retry loop that resampled 67
-        # cells from empty to a proof.
         reached_model = any(int(r.get("prompt_tokens") or 0) > 0 for r in rows)
         blob = " ".join(str(r.get("lean_error") or "") for r in rows)
         if not reached_model and INFRA_PATTERNS.search(blob):
@@ -284,11 +259,7 @@ def main() -> int:
     if not audited:
         # An audit that examined NOTHING must never report success. That
         # would be the exact failure this script exists to catch, turned
-        # on itself. This happened for real on 2026-08-15:
-        # `--local --lane qwen3.5-27b` printed "All audited lanes
-        # complete" and exited 0, because the driver had already pruned
-        # the local spool after uploading to S3. The lane in fact still
-        # had a dead cell, which the S3 audit found immediately.
+        # on itself.
         where = "local run dirs" if args.local else "S3"
         print(
             f"\n*** AUDITED NOTHING: no lane in {where} matched "

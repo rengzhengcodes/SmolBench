@@ -279,13 +279,12 @@ def test_rename_applicability_requires_align():
 
 
 def test_rfl_transform_never_targets_term_position_rfl():
-    """Regression: 2026-07-12 review finding (adversarially confirmed 2-0).
+    """`rfl` in TERM position is never rewritten to `refl`.
 
     `exact rfl` holds `rfl` in TERM position. A rewrite to `refl` would produce `exact
     refl`, which `find_relics` rule 2 deliberately does NOT flag (only tactic-head
-    `refl` is a relic). So the unrestricted rewrite injected a phantom `refl` relic the
-    detector could never corroborate, which mis-classed `synth_error` for the repair
-    dataset.
+    `refl` is a relic), so it would inject a phantom `refl` relic the detector could
+    never corroborate, mis-classing `synth_error` for the repair dataset.
 
     The transform is now gated on the same head-position predicate as
     rule 2, and `corrupt_tail`'s post-condition corroborates every
@@ -324,14 +323,12 @@ def test_rfl_transform_still_targets_tactic_head_rfl():
 
 
 def test_rename_skips_identity_align_pairs():
-    """Regression: 2026-07-12 review finding (adversarially confirmed 2-0).
+    """Identity ``#align`` pairs must never be claimed as a `lean3-name` relic.
 
     mathlib4 carries about 8k identity `#align` pairs (``#align inv_inv
-    inv_inv``), whose "rename" is a byte-level no-op. The transform used
-    to claim a `lean3-name` relic for them anyway. Downstream,
-    `synth_error` turned that into a false ``unknown identifier
-    'inv_inv'`` about a perfectly valid Lean 4 name (109/1600 rows of
-    the first real dataset build).
+    inv_inv``), whose "rename" is a byte-level no-op. Claiming a relic for
+    them makes `synth_error` emit a false ``unknown identifier 'inv_inv'``
+    about a perfectly valid Lean 4 name.
 
     `_rename_candidates` now drops identity pairs, and replacement rule
     6 does not re-flag them. So no seed may claim a `lean3-name`

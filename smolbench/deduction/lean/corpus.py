@@ -50,9 +50,8 @@ def data_root() -> Path:
     not to the current working directory. This anchors off the top-level
     package, instead of counting ``parents`` up from *this* file, which
     keeps the resolution correct no matter how deeply this module is
-    nested. So moving the subpackage (e.g. ``smolbench/lean`` ->
-    ``smolbench/deduction/lean``) cannot silently break it. This mirrors
-    the repo-anchoring pattern used for ``_DEFAULT_STATE_FILE`` in
+    nested. This mirrors the repo-anchoring pattern used for
+    ``_DEFAULT_STATE_FILE`` in
     ``smolbench/evals/providers/ec2.py`` and ``repo_root()`` in
     ``smolbench/induction/experiment.py``. Notebook
     kernels and test runners invoke this module from arbitrary cwds

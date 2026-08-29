@@ -17,7 +17,7 @@ content, not just its bulk.
 
 Scope of the deduction arm -- narrower than the induction one
 -------------------------------------------------------------
-[Corrected 2026-08-21.] `hint:3` and `noise:3` are byte-identical through the
+`hint:3` and `noise:3` are byte-identical through the
 current goal, the full tactic state, the proof so far, and the premises used
 in the next tactic, including their signatures and full source. The two rungs
 differ in ONE block only. `hint:3` ends with a trailing 1-hop TRANSITIVE
@@ -33,7 +33,7 @@ Pairing: this leg matches cells on ``(theorem_id, k)`` WITHIN one model. So
 each model acts as its own control, and the two rungs compare identical
 theorems at identical prefix depth. Exact McNemar is the right test HERE, and it stays
 the primary test. This differs from the two family-ladder families, which
-needed a cluster test as of 2026-08-21: this contrast contributes exactly ONE
+need a cluster test: this contrast contributes exactly ONE
 cell per theorem per model, so the pairs are truly independent. No cluster
 correction applies here.
 
@@ -44,7 +44,7 @@ one theorem set.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
-        notebooks/deduction/hint_vs_noise.py --rows-dir <dir>
+        notebooks/deduction/analysis/hint_vs_noise.py --rows-dir <dir>
 """
 
 import argparse
@@ -86,8 +86,6 @@ def load_rungs(path: Path, model: str) -> dict:
     whose verdict is a measurement wins: a later retry is an independent
     draw, and a last-wins rule would report pass@N as pass@1. A cell with
     no measurable row stays ABSENT, not scored 0.
-    [Changed 2026-08-21: this loader used to carry its own copy of both
-    rules.]
 
     This function calls `reject_unverified_verdicts` at INGESTION, before
     the rung filter below. That call refuses any row that still carries the
@@ -285,13 +283,7 @@ def main(argv=None) -> int:
         print(f"Median 80%-power MDE:                      "
               f"{np.median(mde80s):.3f} accuracy points "
               f"(range {min(mde80s):.3f}-{max(mde80s):.3f}).")
-        print("  Provenance: mde80 is a deterministic bisection on the "
-              "CLOSED-FORM binomial power,\n  so it does not move between runs. "
-              "A 200k-draw simulated search of the same\n  quantity (external "
-              "audit, 2026-08-20) reported a median of 0.118; the per-model\n  "
-              "range agrees exactly. The one-thousandth gap on the median is "
-              "Monte-Carlo error\n  in that search, not a different "
-              "definition.")
+        print("  Provenance: mde80 is a deterministic bisection on the CLOSED-FORM binomial power,\n  so it does not move between runs.")
         print(f"Largest observed |difference|: "
               f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}.")
         print("So this null rules out LARGE effects of 1-hop transitive premise "

@@ -19,9 +19,7 @@ These tests exist to catch four failure modes:
   under each other. The builder must be pure, and its output exact.
 * **Region pins.** Tier D hunts ``p6-b200.48xlarge`` across all three
   study regions (us-east-1, us-east-2, us-west-2) for its four
-  models. (Before the 2026-08-13 switch to p6-b200, tier D hunted
-  ``p5e.48xlarge``, which exists only in us-east-2 and us-west-2, so
-  the tier-D models of that era were excluded from us-east-1.)
+  models.
 * **Restart misclassification.** A spot reclaim deserves unlimited
   retries; a crash loop deserves 2 and then a halt. A backwards
   classifier either abandons a study lane on a routine interruption,
@@ -58,8 +56,8 @@ EXPECTED_TIERS = {
         "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
         "glm-4.5-air", "k-exaone-236b-a23b",
     },
-    # deepseek-v4-flash rides tier D since 2026-08-13: its marlin-less SM100
-    # spec must only ever serve on the p6-b200 hunt list.
+    # deepseek-v4-flash rides tier D: its marlin-less SM100 spec must only
+    # ever serve on the p6-b200 hunt list.
     "D": {"glm-4.7", "deepseek-v3.1", "deepseek-v4-pro", "deepseek-v4-flash"},
 }
 
@@ -134,9 +132,9 @@ def test_lane_tags_come_from_the_study_driver(fleet):
         ("A", "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge"),
         ("B", "g6e.12xlarge,g6e.24xlarge"),
         ("C", "p5.48xlarge,p5e.48xlarge"),
-        # D pivoted to p6-b200 2026-08-13: deepseek-v4-pro's marlin-less SM100
-        # spec must never serve on SM90 boxes, so the hunt list carries only
-        # the B200 type (see TIER_INSTANCE_TYPES' comment in run_fleet.py).
+        # D's hunt list carries only the B200 type: deepseek-v4-pro's
+        # marlin-less SM100 spec must never serve on SM90 boxes (see
+        # TIER_INSTANCE_TYPES' comment in run_fleet.py).
         ("D", "p6-b200.48xlarge"),
     ],
 )
@@ -372,8 +370,7 @@ def test_reasoning_fraction_counts_long_content_as_reasoning(fleet):
     """A reasoning chain carried in ``response`` counts as thinking.
 
     This covers soft-protocol models that reason without their think
-    markup, the live Ministral/EXAONE incident from 2026-08-11. A
-    compliant bare integer does not count as thinking.
+    markup. A compliant bare integer does not count as thinking.
     """
     chain = "Alright, let's tackle this problem step by step. " * 10  # >200 chars
     store = _FakeStore(

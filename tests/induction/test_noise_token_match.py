@@ -4,9 +4,7 @@
 until its prompt is as long as the extensional prompt, so an
 intens-vs-extens gap cannot be explained by prompt length. This only
 works if "as long as" is exact, and measured in the unit the model
-consumes. It used to be neither: random alphanumerics matched on
-CHARACTER count came out 1.4-1.6x the extensional prompt's token count,
-so the control was longer than the thing it controlled for.
+consumes.
 
 These tests pin the properties that make the replacement a control:
 

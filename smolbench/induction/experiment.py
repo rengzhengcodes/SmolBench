@@ -1,22 +1,14 @@
 """Provide one facade over the induction eval harness and EC2 lifecycle.
 
-Three now-archived notebooks (``notebooks/periodic/induction_eval.ipynb``,
-``notebooks/chromatic/induction_eval.ipynb``, and
-``notebooks/chromatic/induction_eval_one_hop.ipynb``; see f13b60d0) each
-hand-copied the same handful of cells: build a :class:`~smolbench.evals.
-replicates.ReplicateHarness`, provision an EC2 spot instance, run each
-archetype's replicates inside a ``serve_model`` block, and tear the
-instance down. :class:`InductionExperiment` collects that copy-pasted glue
-into one dataclass, so a caller only supplies its experiment-specific
-config (results directory name, archetype tags, quiz factory, replicate
-count, optional EC2 state-file namespace) and calls
+:class:`InductionExperiment` bundles the induction eval harness with the EC2
+spot-instance lifecycle that serves the models under test. A caller supplies
+only its experiment-specific config (results directory name, archetype tags,
+quiz factory, replicate count, optional EC2 state-file namespace) and calls
 ``provision()`` / ``run(model, ...)`` / ``summarize(model)`` / ``teardown()``.
-The current family-ladder scaling study drives this same lifecycle from a
-plain script instead of notebook cells: ``notebooks/induction/run_study.py``
-builds one module-level ``EXPERIMENT = InductionExperiment(...)`` and calls
-``provision()`` / ``run()`` / ``summarize()`` from its ``main()``, launched
-per lane by ``scripts/fleet/run_fleet.py`` (see that script's docstring). This
-class's contract does not change between the two calling styles.
+The family-ladder scaling study drives this from a plain script:
+``notebooks/induction/run_study.py`` builds one module-level
+``EXPERIMENT = InductionExperiment(...)``, launched per lane by
+``scripts/fleet/run_fleet.py``.
 
 Seed convention
 ----------------
@@ -33,8 +25,7 @@ token count under the model's own tokenizer. A rep file's DIRECTORY already
 names the archetype it belongs to, so a replicate stays regenerable from
 its path.) ``seeds`` is always
 ``tuple(base_seed + r for r in range(n_replicates))``, so replicate 0 uses
-``base_seed`` itself. The field default, ``base_seed=1776``, matches every
-archived notebook's preliminary run. The current family-ladder study
+``base_seed`` itself. The current family-ladder study
 overrides it to ``base_seed=0`` on purpose, so its own seed range (0..29)
 can never alias a sibling study's 1776-based range; see
 ``notebooks/induction/run_study.py``'s ``BASE_SEED`` comment.
@@ -47,10 +38,7 @@ type, seed, and, for the S3 backend only, model id). See
 :class:`~smolbench.evals.replicates.ReplicateHarness` for the pooling and
 resume-skip mechanics (delegated to unchanged here). ``prefix`` exists so
 more than one experiment can share one ``results_dir`` without their
-replicates colliding. The now-archived ``induction_eval_one_hop.ipynb``
-set ``prefix="one_hop_"`` to share ``notebooks/chromatic/results`` with
-``induction_eval.ipynb``; this is the mechanism's original motivating case,
-not its only one.
+replicates colliding.
 
 A choice between local disk and S3 decides where a replicate actually
 lives. :func:`smolbench.evals.results_store.resolve_store` makes that
@@ -60,7 +48,7 @@ selects the local store; set, it selects S3) and
 ``SMOLBENCH_RESULTS_S3_REGION`` (default: ``AWS_REGION``, else boto3's own
 resolution chain). Both env vars are read at call time.
 
-The LOCAL layout is unchanged and byte-identical to every prior release:
+The LOCAL layout is
 ``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir``, one file
 per replicate, overwritten on rerun. Every analysis script, notebook, and
 already-committed results tree depends on this shape staying exactly as it
@@ -74,27 +62,26 @@ seed, and collection time. It is NOT a mirror of the local tree::
 ``results_store.experiment_name`` derives ``experiment`` from
 ``results_dir``: ``repo_root()/notebooks/<notebook_dir>/results`` maps to
 ``<notebook_dir>``, with ``prefix`` (e.g. ``"one_hop_"``) folded in as a
-sub-level with its trailing ``"_"`` stripped. So ``notebook_dir="chromatic"``,
-``prefix="one_hop_"`` maps to ``"chromatic/one_hop"``. ``run_ts`` is a
+sub-level with its trailing ``"_"`` stripped. So ``notebook_dir="induction"``,
+``prefix="one_hop_"`` maps to ``"induction/one_hop"``. ``run_ts`` is a
 fixed-width UTC ``YYYYMMDDTHHMMSSZ`` stamp, so lexicographic key order is
-chronological order. A worked example: ``notebook_dir="periodic_moe"``,
-model ``"gpt-oss-120b"``, seed 1776, info ``"extens"``, empty base prefix::
+chronological order. A worked example: ``notebook_dir="induction"``,
+model ``"gemma-4-12b"``, seed 0, info ``"extens"``, empty base prefix::
 
-    periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml
+    induction/gemma-4-12b/seed=0/extens--20260810T193000Z.yaml
 
 A run NEVER overwrites a prior run's object in the S3 log. Re-running an
 experiment APPENDS a new timestamped object rather than replacing anything,
 so a superseded verdict stays recoverable as log history instead of being
 destroyed. Every READ path (``summarize()``, ``cot_chain_lengths()``,
 ``harness.sync_down()``) resolves the EARLIEST ``run_ts`` per (model,
-seed, info) and treats only that one as live. This follows a user ruling
-from 2026-08-16: the first logged run is the pass@1 measurement, and later
-re-collections are log history.
+seed, info) and treats only that one as live. The first logged run is the
+pass@1 measurement, and later re-collections are log history.
 
 ``InductionExperiment.harness.sync_down()`` translates an S3-backed
 experiment's append-only log back into the local layout above, for tooling
-(``power_analysis.py``, the figure scripts) that reads a local tree and is
-not itself store-aware. It supplies this experiment's own
+(``notebooks/*/analysis/power_analysis.py``, the figure scripts) that reads
+a local tree and is not itself store-aware. It supplies this experiment's own
 ``archetype_tags`` as the model-to-tag mapping the log cannot carry (a log
 key names a model, never a tag). See
 ``smolbench.evals.results_store.sync_down`` for the full contract,
@@ -110,9 +97,7 @@ see ``smolbench/evals/providers/ec2.py``). ``summarize()`` and ``cot_chain_lengt
 never touch EC2 or inference spend. But with an S3-backed results store
 (see "Results layout and resume semantics" above) they DO issue S3 reads
 (``list_objects_v2``/``get_object`` per replicate). So "never touch AWS or
-the network" is only true for the default local store. The point of this
-warning, that these two calls cannot trigger GPU billing, still holds
-either way.
+the network" is only true for the default local store.
 
 CRITICAL: no ``smolbench.evals.providers.ec2`` import at module scope
 ---------------------------------------------------------------------
@@ -149,11 +134,8 @@ from smolbench.evals import Quiz
 from smolbench.evals.replicates import ReplicateHarness
 
 
-# Canonical definition now lives in smolbench.evals.results_store: the
-# results store maps a repo-anchored results directory onto an S3 key
-# prefix, and needs this same repo-root anchor to do it. Re-exported here so
-# every existing `from smolbench.induction.experiment import repo_root`
-# caller (including this module's own uses below) keeps working unchanged.
+# Canonical definition lives in smolbench.evals.results_store; re-exported
+# here for this module's own path construction.
 from smolbench.evals.results_store import repo_root  # noqa: F401 -- re-exported
 
 
@@ -179,11 +161,7 @@ class InductionExperiment:
 
     #: Which results tree this experiment belongs to. Used only to locate
     #: results: ``repo_root()/notebooks/<notebook_dir>/results``. The
-    #: current family-ladder study uses ``"induction"``; the archived
-    #: periodic and chromatic notebooks used ``"periodic"`` and
-    #: ``"chromatic"`` (see ``prefix`` below for how the one-hop chromatic
-    #: notebook avoided colliding with its sibling, both under
-    #: ``notebook_dir="chromatic"``).
+    #: current family-ladder study uses ``"induction"``.
     notebook_dir: str
     #: Model name -> short archetype tag used in result directory names
     #: (e.g. ``{"olmo-3.1-32b-instruct": "decode"}``). Forwarded verbatim to
@@ -200,10 +178,9 @@ class InductionExperiment:
     #: comment for the derivation).
     n_replicates: int = 30
     #: First replicate's seed; replicate 0 uses this seed exactly. The
-    #: default, 1776, matches every archived notebook's preliminary run
-    #: (the July 4th, 1776 nod). The current family-ladder study overrides
-    #: this to 0 on purpose; see the module docstring's "Seed convention"
-    #: section.
+    #: default is 1776 (the July 4th, 1776 nod). The current family-ladder
+    #: study overrides this to 0 on purpose; see the module docstring's
+    #: "Seed convention" section.
     base_seed: int = 1776
     #: Info types evaluated per replicate, in serialization order. Forwarded
     #: verbatim to ``ReplicateHarness``. The field default lists the
@@ -217,23 +194,17 @@ class InductionExperiment:
     #: ``results_dir`` without their replicate directories colliding.
     #: Forwarded verbatim to ``ReplicateHarness``.
     prefix: str = ""
-    #: Repo-root-anchored basename (e.g. ``".ec2_state_chromatic.json"``)
+    #: Repo-root-anchored basename (e.g. ``".ec2_state_induction.json"``)
     #: for this experiment's EC2 state file, or None to use ``ec2.py``'s own
-    #: default. Historically, the periodic experiment shared that default,
-    #: and only the chromatic experiments needed a private state file, to
-    #: avoid clobbering each other's instance record; see ``_apply_env``.
-    #: The current family-ladder study also sets a private state file (see
-    #: ``INDUCTION_STATE_FILE`` in ``notebooks/induction/run_study.py``).
+    #: default. Set this when two experiments could run concurrently, so
+    #: they do not clobber each other's instance record; see
+    #: ``_apply_env``. The current family-ladder study sets a private state
+    #: file (see ``INDUCTION_STATE_FILE`` in
+    #: ``notebooks/induction/run_study.py``).
     state_file: Optional[str] = None
     #: ``(index, count)`` that selects a disjoint slice of the replicates,
     #: so N processes on N instances can collect one model's replicates in
     #: parallel. None (the default) means this process runs all of them.
-    #:
-    #: This field removes the LAST serialization in a study. A study
-    #: already splits by model, which lets several checkpoints run at
-    #: once, but a single model's replicates still run one after another
-    #: on one box, so wall-clock time is set by the slowest model alone.
-    #: Shards divide that too.
     #:
     #: Replicates are independent by construction: each is a fresh
     #: ``PeriodicConfig`` seed, and results are keyed by (tag, info, seed).
@@ -241,9 +212,10 @@ class InductionExperiment:
     #: guarantees.
     shard: Optional[Tuple[int, int]] = None
     #: Forwarded to ``ReplicateHarness.force_seeds``: seeds whose replicates
-    #: get re-collected and re-logged past the resume-skip (the newest
-    #: run_ts supersedes on read). ``None`` disables this. Use it only for
-    #: deliberate re-collection.
+    #: get re-collected past the resume-skip. ``None`` disables this. Against
+    #: an S3 store, reads resolve the EARLIEST run, so a forced re-collection
+    #: of an already-logged seed is never returned by any reader -- see
+    #: ``ReplicateHarness.force_seeds``.
     force_seeds: Optional[frozenset] = None
 
     def __post_init__(self) -> None:
@@ -368,13 +340,11 @@ class InductionExperiment:
     def provision(self) -> Dict[str, Any]:
         """Provision, or reattach to, this experiment's EC2 spot instance.
 
-        Mirrors the archived notebooks' "Provision" cell exactly: applies
-        this experiment's env (provider + optional state-file namespace),
-        then provisions with no argument overrides. This method always
-        calls ``provision_spot_instance()`` bare, relying entirely on the
-        ``EC2_*`` environment for instance types/regions/volume/idle
-        timeout/max lifetime, exactly as the notebooks' cells did, and
-        prints the same one-line instance summary the notebooks did.
+        Applies this experiment's env (provider + optional state-file
+        namespace), then provisions with no argument overrides. This method
+        always calls ``provision_spot_instance()`` bare, relying entirely on
+        the ``EC2_*`` environment for instance types/regions/volume/idle
+        timeout/max lifetime, and prints a one-line instance summary.
 
         Notes
         -----
@@ -413,8 +383,8 @@ class InductionExperiment:
     ) -> None:
         """Serve ``model`` and run every outstanding replicate against it.
 
-        Mirrors an archetype section cell: swaps the provisioned instance's
-        vLLM container to ``model`` (``ec2.serve_model`` is idempotent; it
+        Swaps the provisioned instance's vLLM container to ``model``
+        (``ec2.serve_model`` is idempotent; it
         skips the swap when the instance already serves it unchanged), and,
         while it is up, runs every info type's outstanding replicates via
         ``self.harness.run_replicates``. Safe to re-run after an
@@ -522,9 +492,8 @@ class InductionExperiment:
         Parameters
         ----------
         tag : str, default "cot"
-            Archetype tag whose cached replicates to scan. The default,
-            "cot", matches every caller's bare ``cot_chain_lengths()`` call
-            to date (every CoT archetype is tagged "cot").
+            Archetype tag whose cached replicates to scan; every CoT
+            archetype is tagged "cot".
 
         Returns
         -------
@@ -564,8 +533,7 @@ class InductionExperiment:
     def teardown(self) -> None:
         """Terminate this experiment's EC2 spot instance and clear its state.
 
-        Mirrors the archived notebooks' final "Teardown" cell exactly:
-        applies this experiment's env, then calls ``ec2.shutdown_instance()``
+        Applies this experiment's env, then calls ``ec2.shutdown_instance()``
         with no argument overrides. Safe to call even if provisioning
         already failed or the state file was lost: ``shutdown_instance``
         falls back to the ``smolbench:experiment`` instance tag. The

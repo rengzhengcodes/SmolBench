@@ -20,18 +20,13 @@ the standard cluster/block bootstrap (Davison & Hinkley 1997, ch. 3; Field
 & Welsh 2007 for the clustered case).
 
 The effective sample size is the number of THEOREM BLOCKS, not the cell
-count. Under the default denominator rule below, the 21-way paired set has
-218 theorem blocks. The cell count is about 3.3x larger. This is why the
-intervals below are wider than a naive binomial on the cells would give.
-The script computes and reports both figures next to every result, so
-nobody needs to re-derive a tighter number.
+count, so the intervals below are wider than a naive binomial on the cells
+would give. The script computes and reports both figures next to every
+result.
 
 Significance uses the SAME resampling unit as the intervals
 -----------------------------------------------------------
-[Corrected 2026-08-21.] Holm used to run on an exact McNemar p-value
-computed over all paired CELLS. That McNemar test assumes the cells are
-independent. Everything else on this page rejects that assumption. The
-PRIMARY p-value is now a BLOCK SIGN-FLIP permutation test. For each
+The PRIMARY p-value is a BLOCK SIGN-FLIP permutation test. For each
 contrast, form the per-theorem difference D_t = successes_b(t) -
 successes_a(t). Compare |sum_t D_t| against its distribution under
 independent random sign flips of whole theorem blocks. This is exactly the
@@ -39,8 +34,7 @@ null "within a theorem, which of the two models does better is a coin
 flip". It inherits the block structure the BCa intervals already respect.
 With one cell per block, it collapses onto exact McNemar (verified
 numerically). Cell-level McNemar stays in the table as a labelled
-DESCRIPTIVE column. On the 707-cell pool it rejects 17 of 21 where the
-block test rejects 14. The gap is entirely clustering.
+DESCRIPTIVE column; the gap between them is clustering.
 
 Interval method
 ---------------
@@ -56,7 +50,7 @@ returning a silent NaN.
 
 Denominator rule: COUNT-AS-FAILURE (default)
 --------------------------------------------
-[Adopted 2026-08-21.] A handful of cells have no surviving measurable row
+A handful of cells have no surviving measurable row
 in ONE lane, while grading fine in the other twenty. The cause is an
 elaboration timeout or a verifier crash on that model's own cap-length
 generation. If the script drops these cells, the denominator becomes
@@ -86,19 +80,13 @@ implementation of earliest-surviving-row-per-cell and the
 unmeasurable-verdict exclusion. It is shared with ``load_joint_cells`` and
 ``hint_vs_noise.load_rungs``. This file layers only what is genuinely
 different on top of it: the count-as-failure denominator rule, and the
-recovery rows' second schema. [Changed 2026-08-21: this file used to carry
-its own copy of the rules, plus a ``_check_against_loader`` runtime
-assertion that the two agreed. One rule cannot drift from itself.
-``tests/tooling/test_analysis_stats.py`` now pins the equivalence of this pool
-with ``load_joint_cells``'s, instead of re-deriving it on every run.] See
-``load_joint_cells``'s docstring and
-``notebooks/CONTAMINATION_INVENTORY_2026-08-15.md``.
+recovery rows' second schema. See ``load_joint_cells``'s docstring.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
-        notebooks/deduction/error_bars.py --rows-dir <dir> --mode sweep
+        notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode sweep
     uv run --no-project --with numpy --with scipy python \
-        notebooks/deduction/error_bars.py --rows-dir <dir> --mode report -B 20000
+        notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode report -B 20000
 """
 
 import argparse
@@ -426,8 +414,8 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     standard Monte-Carlo correction. It keeps the test exact-valid at
     finite B.
 
-    This test is the block analogue of the cell-level exact McNemar the
-    report used to correct over. It degenerates to that test: with one
+    This test is the block analogue of the cell-level exact McNemar.
+    It degenerates to that test: with one
     cell per theorem, every D_t is 0 or +-1, and the sign-flip
     distribution IS the binomial McNemar conditions on. All 21 contrasts
     are permuted with the SAME eps draws. This costs nothing and keeps the
@@ -767,7 +755,7 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
     print(f"The effective sample size is {n_thm} THEOREMS, not {n_cells} cells "
           f"-- see the module docstring.")
     if meta:
-        rule = ("COUNT-AS-FAILURE (default since 2026-08-21)"
+        rule = ("COUNT-AS-FAILURE (default)"
                 if meta["count_as_failure"] else "DROP unmeasurable (legacy)")
         n_added = sum(len(v) for v in meta["added"].values())
         print(f"Denominator rule: {rule}.", end=" ")
@@ -793,13 +781,11 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
                       f"are unchanged; only the\n  denominator moves, and it "
                       f"moves to the SAME value in all 21 lanes.")
         else:
-            print("no-survivor cells dropped, so five lanes carry 711 "
-                  "measurable cells and\n  the paired pool loses two whole "
-                  "theorem blocks.")
+            print("no-survivor cells dropped, so per-lane denominators "
+                  "diverge.")
         if meta["recovery"]:
             print("  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
-                  "configuration. The headline\n  figures are Mathlib-only; see "
-                  "DOJOINIT_RECOVERY_2026-08-18.md caveat 3 (archived 2026-08-25; see notebooks/README.md).")
+                  "configuration. The headline\n  figures are Mathlib-only.")
     print()
 
     print(f"{'model':30s} {'pass@1':>7s} {'95% BCa':>17s} {'width':>7s} "
@@ -924,8 +910,7 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
               f"denominator rules\n{'=' * 92}")
         print("Each row re-pools the cells and re-runs the block sign-flip test "
               "from scratch.\nRe-pooling the DojoInit recovery rows is a "
-              "sensitivity only: the headline figures\nare Mathlib-only "
-              "(FAMILY_LADDER_ANALYSIS caveat 12).\n")
+              "sensitivity only: the headline figures\nare Mathlib-only.\n")
         print(f"{'pool':46s} {'cells':>7s} {'blocks':>7s} {'Holm':>6s} "
               f"{'max own-vs-paired':>18s}")
         print("-" * 90)

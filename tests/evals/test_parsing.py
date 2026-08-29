@@ -1,11 +1,10 @@
 """Test answer extraction and output-contract compliance.
 
-The eval prompts demand a bare answer and nothing else. The original
-graders enforced that by parsing strictly. That made "the model was
-wrong" and "the model was right but ignored the format" the same
-event, a distinction the induction ``noise_intens`` arm badly needs.
-Its whitespace padding degrades instruction following without touching
-the reasoning being measured.
+The eval prompts demand a bare answer and nothing else. A strict grader
+makes "the model was wrong" and "the model was right but ignored the
+format" the same event, a distinction the induction ``noise_intens`` arm
+badly needs: its whitespace padding degrades instruction following without
+touching the reasoning being measured.
 
 These tests pin both halves of the split: the answer that gets
 extracted, and the violation label that records how the response broke

@@ -1,15 +1,7 @@
 """Build LLM prompts from rendered context.
 
-This module no longer assembles the static system prompt (`SYSTEM`) and the
-(theorem, k, rung)-fixed context block into a hand-rolled `Message` list.
-Instead, `SYSTEM` travels as the calling `ChatClient`'s per-call `system=`
-argument, and `build_user_prompt` returns the plain user-turn string.
-
-The old Anthropic Messages client used `cache_breakpoint=True` hints to mark
-the end of the system message and the end of the context block as cache
-boundaries. Those hints are gone along with that client. OpenRouter
-auto-caches long, stable Anthropic prompt prefixes without an explicit
-breakpoint, so this drop loses no caching benefit.
+`SYSTEM` travels as the calling `ChatClient`'s per-call `system=` argument;
+`build_user_prompt` returns the plain user-turn string.
 """
 
 from __future__ import annotations
@@ -122,10 +114,7 @@ def build_user_prompt(rendered: RenderedContext) -> str:
     Returns
     -------
     str
-        `rendered.text` followed by a blank line and `INSTRUCTION`. This
-        text is byte-identical to the `content` of the user-role message
-        the pre-refactor `build_messages` used to build. Only the
-        packaging changed, not the text sent to the model.
+        `rendered.text` followed by a blank line and `INSTRUCTION`.
 
     Notes
     -----

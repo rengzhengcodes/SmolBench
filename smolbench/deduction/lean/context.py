@@ -317,18 +317,14 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     `base_text + pad` -- precisely what `token_matched_noise_prompt`
     measured and verified.
 
-    The pad is pure whitespace, not placeholder prose. The prior
-    implementation this replaces generated a fixed paragraph, repeated.
-    Prose is itself informational content the paired `hint:N` rung does
-    not have, and a markdown section header announcing the padding's own
-    presence is unmatched content in its own right. Whitespace carries
-    nothing a model could read as signal, and the match is exact, not
-    merely "close" -- both properties this experiment's noise arm
-    requires to be a clean length control. (See `smolbench.induction.
-    _common`'s module docstring for the same argument made about the
-    induction benchmarks' own noise arm, where an earlier
-    *character*-matched pad was found to silently overshoot its
-    token-count target by 1.6x.)
+    The pad is pure whitespace, not placeholder prose. Prose is itself
+    informational content the paired `hint:N` rung does not have, and a
+    markdown section header announcing the padding's own presence is
+    unmatched content in its own right. Whitespace carries nothing a
+    model could read as signal, and the match is exact, not merely
+    "close" -- both properties this experiment's noise arm requires to
+    be a clean length control (see `smolbench.induction._common` for the
+    same argument on the induction noise arm).
 
     This function never trusts `token_matched_noise_prompt`'s return
     value blindly, even though that function already verifies its own
@@ -557,9 +553,7 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
         - `level < 1` (``validate`` alone does not reject ``noise:0``,
           since there is no noise counterpart for the
-          `hint:0`/`stepk:2` baseline it would pad; see
-          ``figures.NOISE_RUNGS_ALIGNED``'s docstring for the same gap
-          described from the figure-plotting side);
+          `hint:0`/`stepk:2` baseline it would pad);
         - the `hint:(level - 1)` baseline somehow being LONGER, in
           tokens, than the `hint:level` target it must be padded to
           match; and

@@ -24,10 +24,8 @@ readme = "README.md"
 # 3.14 by the offline test suite.
 requires-python = ">=3.12"
 
-# These are the direct runtime dependencies observed from the repository's
-# import graph and confirmed by the `smolbench` pyenv `pip freeze`.
-# They are expressed as lower bounds at the currently installed versions,
-# meaning "known working here" rather than "minimum version ever supported".
+# Direct runtime dependencies, expressed as lower bounds at the versions
+# known to work here rather than the minimum ever supported.
 dependencies = [
     "joblib>=1.0",
     "numpy>=2.4.3",
@@ -88,10 +86,9 @@ lean = [
     "tiktoken>=0.13",
 ]
 
-# The repository now includes a checked-in notebook under `notebooks/`.
-# The active `smolbench` pyenv uses VS Code/Jupyter kernel support via
-# `ipykernel`, so expose that as a separate extra without pulling in a full
-# notebook server stack that is not currently part of the environment.
+# Jupyter kernel support for the checked-in notebooks under `notebooks/`,
+# exposed as its own extra rather than pulling in a full notebook server
+# stack.
 notebook = [
     "ipykernel>=7.2.0",
     # Runtime libraries the checked-in notebooks import directly:
@@ -106,11 +103,11 @@ notebook = [
     # smolbench.induction.figures plots results with matplotlib; pinned to a
     # cp314-wheel release.
     "matplotlib>=3.10.0",
-    # The two power-analysis scripts (notebooks/{induction,deduction}/
+    # The two power-analysis scripts (notebooks/{induction,deduction}/analysis/
     # power_analysis.py) import scipy.stats for the CMH chi-square / Welch t
     # reference distributions, and notebooks/induction additionally imports
-    # statsmodels for the omnibus interaction test. Both were previously undeclared, so `uv sync`
-    # would silently strip them and leave those scripts failing on
+    # statsmodels for the omnibus interaction test. Both must stay declared:
+    # `uv sync` strips anything undeclared, and those scripts then fail on
     # ModuleNotFoundError partway through a run.
     "scipy>=1.15",
     "statsmodels>=0.14",
@@ -136,12 +133,11 @@ where = ["."]
 include = ["smolbench*"]
 
 [tool.pytest.ini_options]
-# A bare `pytest` invoked from the repo root previously failed: tests import
-# `tests._paths` and, in some scripts tests, `scripts.*` namespace packages,
-# both of which need the repo root on sys.path, and pytest's default
-# rootdir-insertion doesn't guarantee that without a tests/__init__.py
-# (deliberately not added -- see tests/README.md). `pythonpath` fixes the
-# sys.path gap; `testpaths` is what lets a bare `pytest` from the repo root
-# collect the suite at all.
+# A bare `pytest` from the repo root needs the repo root on sys.path: tests
+# import `tests._paths` and, in some scripts tests, `scripts.*` namespace
+# packages, and pytest's default rootdir insertion doesn't guarantee that
+# without a tests/__init__.py (deliberately not added -- see
+# tests/README.md). `pythonpath` fixes the sys.path gap; `testpaths` is what
+# lets a bare `pytest` from the repo root collect the suite at all.
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -46,11 +46,6 @@ def test_no_resume_discards_prior_verdicts_and_reverifies_every_group(tmp_path, 
     are completely different. So the pass reports success, verifies
     nothing, and leaves verified_rows.jsonl describing text that no
     longer exists.
-
-    That is not hypothetical. On 2026-08-16, six lanes were in exactly
-    that state after the day's repairs, and the dry run cheerfully
-    reported "0 to process" for all 21. nemotron-3-nano-4b had had all
-    944 of its cells regenerated on new hardware.
     """
     import importlib.util, sys
 

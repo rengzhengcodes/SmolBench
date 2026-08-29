@@ -52,10 +52,14 @@ naming the subpackage never drags in the other three, never trips
 `ec2.py`'s read-env-at-first-import contract, and cannot cycle back through
 `smolbench.evals`.
 
+The on-disk mark YAML is also read by an independent regex parser
+(`notebooks/induction/analysis/power_analysis.py` matches `score:` lines
+rather than loading the document), so the per-mark `score:` line shape is
+a format contract, not an implementation detail.
+
 ### The `__init__.py` -> `quiz.py` split
 
-The package `__init__` used to *be* the datamodel. It is now `quiz.py`, and
-`__init__.py` re-exports `Answer`, `QnA`, `ToF`, `Numeric`, `Quiz`, `Mark`
+The datamodel lives in `quiz.py`; `__init__.py` re-exports `Answer`, `QnA`, `ToF`, `Numeric`, `Quiz`, `Mark`
 and `Marks` from it. That re-export is load-bearing twice over: it keeps
 `from smolbench.evals import Marks` working for every caller, and it keeps
 the legacy YAML tag `!!python/object:smolbench.evals.Marks` resolving in
@@ -66,9 +70,8 @@ result files written before the split (pinned by
 
 `providers/aws.py` (Bedrock/SageMaker) and `providers/ec2.py`
 (self-provisioned EC2 Spot) both
-need to talk to IAM/EC2/SageMaker/S3 to stand up an inference endpoint, and
-used to each carry their own copy of the same handful of primitives.
-`smolbench/evals/_aws.py` is now the single copy: `fresh_client` (a
+need to talk to IAM/EC2/SageMaker/S3 to stand up an inference endpoint.
+`smolbench/evals/_aws.py` is the single copy of those primitives: `fresh_client` (a
 brand-new `boto3.session.Session` per call, so a rotated
 `~/.aws/credentials` file is picked up on the next call instead of raising
 `ExpiredToken` until the process restarts), `error_code` (a
@@ -125,36 +128,20 @@ today, buying nothing over two small independent functions.
 
 ### `metadata_get` and the `check_status` fidelity split
 
-`openai_compat.metadata_get` now backs all four provider metadata GETs that
-used to be near-identical copies: OpenRouter's and Prime Intellect's
+`openai_compat.metadata_get` backs all four provider metadata GETs:
+OpenRouter's and Prime Intellect's
 `get_model_context_length`, and AWS's and EC2's `list_models`. All four
 issue the same bearer-authenticated `requests.get(...).json()` call and
 differ only in URL and in whether the response status is checked before
 parsing — `check_status=True` (AWS/EC2's `list_models`, both) calls
 `raise_for_status()` first; `check_status=False` (OpenRouter/Prime
 Intellect's context-length lookups) parses an error body straight into the
-caller's shape-specific indexing, matching each provider's pre-extraction
-behavior exactly. `check_status` has no default specifically so this split
+caller's shape-specific indexing. `check_status` has no default specifically so this split
 can never be silently unified into one "correct" choice.
-
-### Known delta and recommended re-verification
-
-`aws.py`'s SageMaker client construction (`_sagemaker_client`, and every
-`_aws.py`-mediated IAM call) moved from `boto3.client(...)` against the
-process-wide default session to a fresh `boto3.session.Session()` per call —
-the same fix `ec2.py` already used, now shared via `_aws.fresh_client`. This
-is payload-invariant (identical API calls and request bodies either way);
-it only changes which credentials snapshot signs the request, so a rotated
-`~/.aws/credentials` file is picked up on the very next call instead of
-raising `RequestExpired`/`ExpiredToken` until the process restarts. Because
-this touches every live AWS call this module makes, a live re-verification
-(`scripts/smoke/bedrock_smoke.py` for aws.py, `scripts/smoke/ec2_lifecycle_smoke.py` for
-ec2.py) is recommended before the next real provisioning run, even though
-the offline suite already pins every request payload byte-for-byte.
 
 ## Results store
 
-`results_store.py` gives replicate results a second backend. Today every
+`results_store.py` gives replicate results a second backend. Every
 replicate YAML a `ReplicateHarness` produces (`{tag}_{info}/rep_{seed}.yaml`)
 is written straight to a local directory under `notebooks/<notebook>/
 results/`. With `results_store.py` in the loop, the same file can instead
@@ -164,12 +151,11 @@ the analysis.
 
 ### Two layouts, one interface
 
-LOCAL storage is unchanged and byte-identical to before `results_store.py`
-existed: `{prefix}{tag}_{info}/rep_{seed}.yaml` under
-`notebooks/<notebook>/results/`. It remains the default, and it is the
-offline/test fallback (see "Local fallback" below) — every analysis script
-and notebook keeps reading this layout regardless of where a study's
-replicates were originally written.
+LOCAL storage is the default and the offline/test fallback (see "Local
+fallback" below): `{prefix}{tag}_{info}/rep_{seed}.yaml` under
+`notebooks/<notebook>/results/`. Every analysis script and notebook reads
+this layout regardless of where a study's replicates were originally
+written.
 
 S3 is a separate, append-only EXPERIMENT LOG, not a mirror of the local
 layout — see "The S3 log key scheme" below for its own key shape, and
@@ -182,7 +168,7 @@ Two environment variables select and configure the S3 backend:
 
 - `SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]` — set to route a
   results directory's reads/writes through S3; unset, empty, or
-  whitespace-only keeps the local store (today's unchanged behavior).
+  whitespace-only keeps the local store.
 - `SMOLBENCH_RESULTS_S3_REGION` — the S3 client's region. Defaults to
   `AWS_REGION` if unset, and to boto3's own resolution chain (profile
   config, instance metadata, …) if that is unset too.
@@ -207,7 +193,7 @@ A logged replicate's S3 key has the shape:
 worked example:
 
 ```
-periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml
+induction/gemma-4-12b/seed=0/extens--20260810T193000Z.yaml
 ```
 
 Each level:
@@ -229,19 +215,20 @@ Each level:
   one timestamp.
 
 Fixed-width UTC matters specifically because it makes lexicographic key
-order the same as chronological order: "the latest run for this
+order the same as chronological order: "the earliest run for this
 (model, seed, info)" is answered by a plain string comparison / sort over
 sibling keys, with no timestamp parsing required anywhere in the read path.
 
-### Append-only, and latest-wins
+### Append-only, and earliest-wins
 
 Writes always create a new `<info>--<run_ts>.yaml` object; they never
 overwrite a prior run's object. Re-running an experiment against an
 already-logged (model, seed) therefore accumulates history rather than
-replacing it. Every read path resolves the LATEST `run_ts` per
-(model, seed, info) — that includes `ReplicateHarness`'s resume-skip check,
-which asks only whether ANY run has been logged for that (model, seed,
-info), not which one.
+replacing it. Every read path resolves the EARLIEST `run_ts` per
+(model, seed, info), so a forced re-run stays in the log but is invisible
+to analysis -- voiding data requires an explicit exclusion, not a newer
+object. `ReplicateHarness`'s resume-skip check asks only whether ANY run
+has been logged for that (model, seed, info), not which one.
 
 ### Local fallback and test-suite hermeticity
 
@@ -257,7 +244,7 @@ to unset the variable to stay hermetic.
 
 `ReplicateHarness.sync_down()` (equivalently, `InductionExperiment.harness
 .sync_down()`) is the bridge: it translates an experiment's S3 log into the
-local analysis layout, resolving the latest run per (model, seed, info) and
+local analysis layout, resolving the earliest run per (model, seed, info) and
 writing `{prefix}{tag}_{info}/rep_{seed}.yaml`. It is the primary entry
 point because it is the piece that knows the model → archetype-tag mapping
 — information the log itself does not carry, since the log keys on the
@@ -273,7 +260,7 @@ python -m smolbench.evals.results_store notebooks/induction/results --tag gpt-os
 `--tag model=tag` is repeatable (one per model in the study); `--prefix
 one_hop_` supplies a harness prefix for a prefixed experiment.
 
-**Run this before analysis, not after** — `notebooks/*/power_analysis.py`
+**Run this before analysis, not after** — `notebooks/*/analysis/power_analysis.py`
 and the figure scripts all read local trees, so any results that only ever
 landed in S3 are invisible to them until `sync_down` has pulled them down.
 
@@ -306,12 +293,10 @@ contents — and attaches it to the `smolbench-ec2-operators` group.
 This needs ADMIN credentials: the scoped operator key used day-to-day by the
 eval drivers is deliberately EC2-only and cannot manage S3 or IAM.
 
-The bucket is deliberately EMPTY: historical results are NOT seeded into it.
-The repo-root results archive and the repo's git history remain the
-historical record for anything collected before this bucket existed. Any
-future import of historical results into the bucket must go THROUGH
-`results_store.py` so it lands in the log layout above — never bulk-synced
-directly in the old repo-mirroring layout, which nothing reads any more.
+The bucket holds no pre-migration results and none should be seeded into
+it. Any import of historical results must go THROUGH `results_store.py` so
+it lands in the log layout above -- never bulk-synced in a repo-mirroring
+layout, which nothing reads.
 
 See the script's module docstring for the full runbook and its
 exit-status contract.
