@@ -15,7 +15,7 @@ The current family-ladder scaling study drives this same lifecycle from a
 plain script instead of notebook cells: ``notebooks/induction/run_study.py``
 builds one module-level ``EXPERIMENT = InductionExperiment(...)`` and calls
 ``provision()`` / ``run()`` / ``summarize()`` from its ``main()``, launched
-per lane by ``scripts/run_fleet.py`` (see that script's docstring). This
+per lane by ``scripts/fleet/run_fleet.py`` (see that script's docstring). This
 class's contract does not change between the two calling styles.
 
 Seed convention
@@ -106,7 +106,7 @@ Cost warning
 ``provision()``, ``run()``, ``agent_status()``, and ``teardown()`` are LIVE
 AWS calls against a self-provisioned EC2 spot instance, billed for the
 duration it is up (~$30-45/h for the p5e/p5 family at the time of writing;
-see ``smolbench/evals/ec2.py``). ``summarize()`` and ``cot_chain_lengths()``
+see ``smolbench/evals/providers/ec2.py``). ``summarize()`` and ``cot_chain_lengths()``
 never touch EC2 or inference spend. But with an S3-backed results store
 (see "Results layout and resume semantics" above) they DO issue S3 reads
 (``list_objects_v2``/``get_object`` per replicate). So "never touch AWS or
@@ -114,9 +114,9 @@ the network" is only true for the default local store. The point of this
 warning, that these two calls cannot trigger GPU billing, still holds
 either way.
 
-CRITICAL: no ``smolbench.evals.ec2`` import at module scope
---------------------------------------------------------------
-This module must NOT ``import smolbench.evals.ec2`` at the top level, and
+CRITICAL: no ``smolbench.evals.providers.ec2`` import at module scope
+---------------------------------------------------------------------
+This module must NOT ``import smolbench.evals.providers.ec2`` at the top level, and
 none of its lazy imports may be hoisted there either. ``ec2.py``'s own
 module docstring documents that its ``EC2_*`` module-level constants
 (``EC2_EXPERIMENT_TAG``, ``EC2_INSTANCE_TYPES``, ...) are captured at
@@ -125,12 +125,12 @@ attributes, not call-time getters, because a caller reads them back as
 ``ec2.EC2_EXPERIMENT_TAG`` etc. Every notebook's or script's first cell (or
 top-level code) calls ``load_dotenv(keys.env)`` to populate those variables
 (e.g. ``EC2_EXPERIMENT_TAG=chromatic-induction``) BEFORE
-``smolbench.evals.ec2`` is ever imported. If this facade imported ``ec2``
+``smolbench.evals.providers.ec2`` is ever imported. If this facade imported ``ec2``
 eagerly, then code that executes ``import smolbench.induction.experiment``
 ahead of its ``load_dotenv`` call (a perfectly ordinary import order) would
 freeze those constants to their un-overridden defaults for the rest of the
 process's life, with no error to signal it. Every method below that needs
-the EC2 lifecycle therefore does ``from smolbench.evals import ec2`` INSIDE
+the EC2 lifecycle therefore does ``from smolbench.evals.providers import ec2`` INSIDE
 the method body, after ``_apply_env()`` has run and after the caller has
 had every opportunity to ``load_dotenv`` first. (Importing
 ``smolbench.evals.replicates`` at module scope is safe: it only imports
@@ -163,7 +163,7 @@ class InductionExperiment:
 
     This class bundles a :class:`~smolbench.evals.replicates.ReplicateHarness`
     (results layout + quiz factory) with the EC2 spot-instance lifecycle
-    (``smolbench.evals.ec2``) that serves the models under test. A caller
+    (``smolbench.evals.providers.ec2``) that serves the models under test. A caller
     then only needs to construct one ``InductionExperiment`` and call its
     methods in the lifecycle order documented on each one: ``provision()``
     once, ``run(model, ...)`` once per archetype section,
@@ -334,7 +334,7 @@ class InductionExperiment:
         )
 
     def _apply_env(self) -> None:
-        """Set the environment ``smolbench.evals.ec2`` reads at call time.
+        """Set the environment ``smolbench.evals.providers.ec2`` reads at call time.
 
         Sets ``INFERENCE_PROVIDER=ec2``, so ``smolbench.evals.provider``
         dispatches to the EC2 vLLM provider (read at CALL time; see that
@@ -379,7 +379,7 @@ class InductionExperiment:
         Notes
         -----
         Live AWS call; see the module docstring's cost warning. Imports
-        ``smolbench.evals.ec2`` lazily; see the module docstring's CRITICAL
+        ``smolbench.evals.providers.ec2`` lazily; see the module docstring's CRITICAL
         section for why that import cannot be hoisted to module scope.
 
         Returns
@@ -394,7 +394,7 @@ class InductionExperiment:
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
-        from smolbench.evals import ec2
+        from smolbench.evals.providers import ec2
 
         state = ec2.provision_spot_instance()
         print(
@@ -427,7 +427,7 @@ class InductionExperiment:
             The archetype's model id. Must be a key of ``archetype_tags``
             (``run_replicates`` raises ``KeyError`` immediately otherwise;
             see ``ReplicateHarness.run_replicates``) and of
-            ``smolbench.evals.ec2.EC2_DEPLOY_SPECS`` (``serve_model`` raises
+            ``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS`` (``serve_model`` raises
             its own ``KeyError`` otherwise).
         extra_args : dict, optional
             Extra chat-completions request-body fields (e.g. a CoT
@@ -446,7 +446,7 @@ class InductionExperiment:
         Notes
         -----
         Live AWS call (the ``serve_model`` container swap), followed by
-        live inference calls. Imports ``smolbench.evals.ec2`` lazily; see
+        live inference calls. Imports ``smolbench.evals.providers.ec2`` lazily; see
         the module docstring's CRITICAL section.
 
         Returns
@@ -455,7 +455,7 @@ class InductionExperiment:
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
-        from smolbench.evals import ec2
+        from smolbench.evals.providers import ec2
 
         # Nothing to do => do not SERVE. The serve_model block swaps the
         # instance's vLLM container to this checkpoint. For the large
@@ -541,7 +541,7 @@ class InductionExperiment:
 
         Notes
         -----
-        Live AWS call. Imports ``smolbench.evals.ec2`` lazily; see the
+        Live AWS call. Imports ``smolbench.evals.providers.ec2`` lazily; see the
         module docstring's CRITICAL section.
 
         Returns
@@ -557,7 +557,7 @@ class InductionExperiment:
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
-        from smolbench.evals import ec2
+        from smolbench.evals.providers import ec2
 
         return ec2.agent_status()
 
@@ -571,13 +571,13 @@ class InductionExperiment:
         falls back to the ``smolbench:experiment`` instance tag. The
         current family-ladder study calls this method itself only behind
         an explicit ``--teardown`` flag: the fleet supervisor
-        (``scripts/run_fleet.py``) owns instance teardown end-to-end for
-        that study, with ``scripts/fleet_teardown.py`` as a safety net (see
+        (``scripts/fleet/run_fleet.py``) owns instance teardown end-to-end for
+        that study, with ``scripts/fleet/fleet_teardown.py`` as a safety net (see
         ``notebooks/induction/run_study.py``'s module docstring).
 
         Notes
         -----
-        Live AWS call. Imports ``smolbench.evals.ec2`` lazily; see the
+        Live AWS call. Imports ``smolbench.evals.providers.ec2`` lazily; see the
         module docstring's CRITICAL section.
 
         Returns
@@ -586,6 +586,6 @@ class InductionExperiment:
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
-        from smolbench.evals import ec2
+        from smolbench.evals.providers import ec2
 
         return ec2.shutdown_instance()

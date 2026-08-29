@@ -1,8 +1,8 @@
 """
 Share AWS provisioning primitives between the SageMaker and EC2 providers.
 
-Used by :mod:`smolbench.evals.aws` (SageMaker) and
-:mod:`smolbench.evals.ec2` (self-provisioned EC2 Spot). Both provider
+Used by :mod:`smolbench.evals.providers.aws` (SageMaker) and
+:mod:`smolbench.evals.providers.ec2` (self-provisioned EC2 Spot). Both provider
 modules talk to IAM, EC2, SageMaker, and S3 to stand up an
 inference endpoint. Before this module existed, each provider carried its
 own copy of the same primitives: a fresh-Session client constructor, an

@@ -26,7 +26,7 @@ providers had grown separately, so no provider loses behavior:
 - When no server-side reasoning channel is present, but the content carries
   a plain-text ``<think>...</think>`` block (models whose tokenizers have
   no think token ids, e.g. Nemotron-Ultra and Olmo-Think -- see the
-  ``EC2_DEPLOY_SPECS`` notes in ``smolbench.evals.ec2``), it splits the
+  ``EC2_DEPLOY_SPECS`` notes in ``smolbench.evals.providers.ec2``), it splits the
   block out client-side, so scoring sees only the answer.
 - The ``usage.total_tokens`` context guard fires only when the server
   actually reports usage (some SageMaker containers omit it).

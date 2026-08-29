@@ -53,7 +53,7 @@ def data_root() -> Path:
     nested. So moving the subpackage (e.g. ``smolbench/lean`` ->
     ``smolbench/deduction/lean``) cannot silently break it. This mirrors
     the repo-anchoring pattern used for ``_DEFAULT_STATE_FILE`` in
-    ``smolbench/evals/ec2.py`` and ``repo_root()`` in
+    ``smolbench/evals/providers/ec2.py`` and ``repo_root()`` in
     ``smolbench/induction/experiment.py``. Notebook
     kernels and test runners invoke this module from arbitrary cwds
     (temp dirs included), so a cwd-relative default would silently

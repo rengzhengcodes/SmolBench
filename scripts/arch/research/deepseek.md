@@ -344,7 +344,7 @@ single-token inference FLOPs" versus V3.2 [6].
 - **Quantisation.** FP8 e4m3 / UE8M0 / `[128,128]` blocks for the trunk, FP4 for routed experts (§2.4).
 - `tie_word_embeddings: false`, `torch_dtype: bfloat16`, `attention_bias: false`.
 - **No chat template.** The repos ship no `chat_template` (verified in-repo 2026-08-11,
-  `smolbench/evals/ec2.py:284-293`); the protocol lives in `encoding/encoding_dsv4.py` — model card: *"This
+  `smolbench/evals/providers/ec2.py:284-293`); the protocol lives in `encoding/encoding_dsv4.py` — model card: *"This
   release does not include a Jinja-format chat template."* [6] Reading the shipped module (vendored at
   `tests/fixtures/dsv4/encoding_dsv4_vendored.py`) [10] — **VERIFIED**:
   - Prompt shape: `<｜begin▁of▁sentence｜>{system}<｜User｜>{content}<｜Assistant｜>` then **`<think>` to
@@ -506,7 +506,7 @@ Neither V4 rung produced results in this study. **The task brief handed me a clo
 repo's own current state contradicts.** The brief states the failure is closed as
 `vllm/models/deepseek_v4/nvidia/model.py` raising `NotImplementedError("DeepGEMM MegaMoE requires SM100
 GPUs.")`, i.e. V4's FP4 expert path being Blackwell-only against an 8×H200 (SM90) envelope.
-`smolbench/evals/ec2.py:379-396` (comment dated 2026-08-12, commit `28fac794` *"SM100 claim refuted — pin
+`smolbench/evals/providers/ec2.py:379-396` (comment dated 2026-08-12, commit `28fac794` *"SM100 claim refuted — pin
 DeepSeek-V4's official SM90 path"*) records an adversarial re-read of vLLM v0.27.1 concluding that closure
 was **also wrong**.
 
@@ -600,5 +600,5 @@ The fetcher flagged ten fields on both V4 rungs. Every one is resolved above: `c
       — https://github.com/vllm-project/vllm
     - HF transformers — `src/transformers/models/deepseek_v4/{configuration_deepseek_v4.py,
       modular_deepseek_v4.py}` — https://github.com/huggingface/transformers
-11. In-repo: `smolbench/evals/ec2.py:284-408`; `scripts/arch/arch_configs_raw.json`;
+11. In-repo: `smolbench/evals/providers/ec2.py:284-408`; `scripts/arch/arch_configs_raw.json`;
     `scripts/arch/arch_facts.json`.

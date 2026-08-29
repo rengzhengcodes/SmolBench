@@ -68,18 +68,18 @@ copy-paste these cells, and the copies had begun to drift.
 
 Load `keys.env` (via `load_dotenv`) before you import anything that
 reads `EC2_*` provisioning config. This is not stylistic.
-`smolbench.evals.ec2` captures its provisioning constants
+`smolbench.evals.providers.ec2` captures its provisioning constants
 (`EC2_EXPERIMENT_TAG`, `EC2_INSTANCE_TYPES`, `EC2_S3_MODEL_CACHE`, ...)
 once at IMPORT time as ordinary module attributes; it does not re-read
 them per call. An import that runs ahead of `load_dotenv` silently
 freezes them to their un-overridden defaults for the rest of the
 process. For this reason `smolbench.induction.experiment` never imports
-`smolbench.evals.ec2` at module scope: every `InductionExperiment`
+`smolbench.evals.providers.ec2` at module scope: every `InductionExperiment`
 method that needs the EC2 lifecycle (`provision`, `run`,
 `agent_status`, `teardown`) imports it lazily, inside the method body.
 A driver that imports `smolbench.induction.experiment` ahead of its
 `load_dotenv` call still gets the override. See that module's docstring
-(the "CRITICAL: no `smolbench.evals.ec2` import at module scope"
+(the "CRITICAL: no `smolbench.evals.providers.ec2` import at module scope"
 section) for the full contract.
 
 ### Seed conventions
@@ -108,7 +108,7 @@ read cached YAML off disk. They make no AWS or network calls, so you
 can call them any number of times. `.provision()`, `.run(model, ...)`,
 `.agent_status()`, and `.teardown()` are LIVE AWS calls against a
 self-provisioned EC2 spot instance, billed for the duration it is up.
-See `smolbench/evals/ec2.py` for the current per-hour rate and the
+See `smolbench/evals/providers/ec2.py` for the current per-hour rate and the
 idle-watchdog / max-lifetime safety nets that cover an abandoned
 driver.
 

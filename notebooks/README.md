@@ -1,5 +1,32 @@
 # Archived regenerable artifacts (2026-08-25)
 
+The S3 archive keys and zip contents cited throughout this file were
+written on 2026-08-25, three days before the 2026-08-28 `scripts/`/`tests/`
+regroup (`scripts/*.py` flat, `tests/test_*.py` flat). They are immutable
+snapshots and are NOT updated for the regroup -- a key like
+`tests/test_delivery_probe.py` inside a zip or at the S3 prefix root means
+exactly that flat path as it existed on 2026-08-25, never the grouped path
+below. Live tooling that survived the regroup moved as follows (prose
+elsewhere in this file -- the "Kept under `scripts/`" list, the
+archived-tests list, and the S3-archive test instructions -- already cites
+the current grouped paths):
+
+| Was (pre-2026-08-28 flat path) | Now |
+| --- | --- |
+| `scripts/fleet_status.py`, `run_fleet.py`, `fleet_teardown.py`, `run_shards.py` | `scripts/fleet/` |
+| `scripts/lean_verify_rows.py`, `merge_lean_shards.py`, `split_lean_run_into_shards.py` | `scripts/deduction/` |
+| `scripts/audit_run_completeness.py`, `evidence_manifest.py`, `provision_results_bucket.py`, `regrade.py`, `snapshot_analysis_data.py` | `scripts/results/` |
+| `scripts/bedrock_smoke.py`, `ec2_lifecycle_smoke.py` | `scripts/smoke/` |
+| `tests/test_lean_*.py`, `test_deduction_study.py`, `test_deduction_power_analysis.py`, `test_merge_lean_shards.py`, `test_s3_archive.py` | `tests/deduction/` |
+| `tests/test_aws_*.py`, `test_ec2_*.py`, `test_deploy_specs.py`, `test_dsv4_chat_template.py`, `test_marks_io.py`, `test_openai_compat.py`, `test_parsing.py`, `test_provider_dispatch.py`, `test_replicates.py`, `test_results_store.py`, `test_tokenization.py` | `tests/evals/` |
+| `tests/test_experiment.py`, `test_golden_quizzes.py`, `test_induction_*.py`, `test_noise_token_match.py` | `tests/induction/` |
+| `tests/test_analysis_stats.py`, `test_evidence_manifest.py`, `test_kv_budget.py`, `test_power_common.py`, `test_provision_results_bucket.py`, `test_run_fleet.py`, `test_run_shards.py` | `tests/tooling/` |
+
+`tests/test_delivery_probe.py`, `test_determinism_probes.py`,
+`test_flip_probe.py`, and `test_recover_dojoinit.py` (the fourth archive,
+below) have no "now": they were deleted from the tree in the same
+2026-08-25 archive, not moved, so the regroup never touched them.
+
 On 2026-08-25 a security review of every tracked file under `notebooks/` and
 `scripts/` (150 files, archive members and notebook cell outputs included)
 found no API keys, tokens, private keys, or personal data. Following that
@@ -17,7 +44,7 @@ and attached to PR #4 as the release asset
 | `scripts/arch/page_data.json`, `scripts/arch/model_architectures.html` | `.venv/bin/python scripts/arch/build_page.py` |
 
 The four reports render from the 2026-08-16 S3 analysis snapshot
-(`scripts/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
+(`scripts/results/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
 audit round reproduced `EXTENS_VS_NOISE_REPORT.txt` byte-identically.
 The writeups that cite these reports by file and line number
 (`FAMILY_LADDER_ANALYSIS_2026-08-16.md`, `DOJOINIT_RECOVERY_2026-08-18.md`,
@@ -51,9 +78,9 @@ were removed from the tree and attached to the same PR #4 release as
   `data_root().parent`; restore them there before running the deduction study.
 - Seven tests that pinned those files (`tests/archived_tests_2026-08-25.py`
   inside the zip): the four tracked-manifest tests and `tracked` fixture from
-  `tests/test_evidence_manifest.py`, two sidecar-resolution tests from
-  `tests/test_lean_corpus.py`, and `test_noise_rung_is_token_matched_to_its_hint_counterpart`
-  from `tests/test_deduction_study.py`. The manifest *mechanism* tests remain.
+  `tests/tooling/test_evidence_manifest.py`, two sidecar-resolution tests from
+  `tests/deduction/test_lean_corpus.py`, and `test_noise_rung_is_token_matched_to_its_hint_counterpart`
+  from `tests/deduction/test_deduction_study.py`. The manifest *mechanism* tests remain.
 
 ### Where the archive lives, and how the gates run now
 
@@ -65,14 +92,14 @@ prefix root, the tree under `notebooks/deduction/`). The same two zips are
 attached to PR #4 as release assets.
 
 The seven tests moved out of the offline suite are re-homed in
-`tests/test_s3_archive.py` against that prefix. They stream each object
+`tests/deduction/test_s3_archive.py` against that prefix. They stream each object
 into memory through `tests/conftest.py::S3Archive` and never write to a
 local tree (user ruling 2026-08-25: archived data is accessed on AWS, not
 pulled locally). They skip unless opted in:
 
 ```bash
 SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \
-    .venv/bin/python -m pytest tests/test_s3_archive.py -q
+    .venv/bin/python -m pytest tests/deduction/test_s3_archive.py -q
 ```
 
 Last live run 2026-08-25: 7 passed (all four `EVIDENCE.json` manifests
@@ -126,7 +153,7 @@ individually under `scripts/` and `tests/` at the prefix):
   `tp8_hinge_probe.py`, `moe_tp8_probe.py`, `hardware_equivalence_probe.py`,
   `delivery_probe.py`, `streaming_ab_probe.py`, `keepalive_ab_probe.py`,
   `tp8_hinge_summary.py`. Their findings are the determinism bundle that is
-  now `smolbench.evals.ec2.DETERMINISM_ARGS` (the default config) and the
+  now `smolbench.evals.providers.ec2.DETERMINISM_ARGS` (the default config) and the
   streaming transport; their reports are in the evidence archive above.
 - 2026-08-14/16 incident-response launchers: `launch_gemma12b_deduction_shards.sh`,
   `relaunch_damaged_deduction.sh`, `resume_all_runs.sh`,
@@ -148,15 +175,11 @@ individually under `scripts/` and `tests/` at the prefix):
   needs as a directory. Outputs are committed cleared.
 - Tests archived with them: `tests/test_delivery_probe.py`,
   `test_determinism_probes.py`, `test_flip_probe.py`, `test_recover_dojoinit.py`
-  (116 tests; the offline suite is 1104 passed / 7 skipped after the move).
+  (116 tests; the offline suite was 1104 passed / 7 skipped immediately after the move; 1105 since the ec2 state-file pin).
 
-Kept in `scripts/` (live tooling): the `arch/` atlas pipeline, `run_fleet.py`,
-`fleet_status.py`, `fleet_teardown.py`, `run_shards.py`, `merge_lean_shards.py`,
-`split_lean_run_into_shards.py`, `lean_verify_rows.py`, `audit_run_completeness.py`,
-`regrade.py`, `snapshot_analysis_data.py`, `provision_results_bucket.py`,
-`evidence_manifest.py`, `bedrock_smoke.py`, `ec2_lifecycle_smoke.py`.
-`smolbench/evals/ec2.py`'s provenance notes that named `hinge_probe.py` now
-point here. Security: all 21 files scanned -- no secrets or PII (cloud IDs
-only).
+Kept under `scripts/` (live tooling), now grouped by job: see
+`scripts/README.md` for the current inventory. `smolbench/evals/providers/ec2.py`'s
+provenance notes that named `hinge_probe.py` now point here. Security: all
+21 files scanned -- no secrets or PII (cloud IDs only).
 
 Nothing under `notebooks/` or `scripts/` is now regenerable-and-tracked.

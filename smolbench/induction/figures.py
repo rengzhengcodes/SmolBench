@@ -10,7 +10,7 @@ directory of result YAMLs, and render the grouped-bar comparison figure)
 could be reused by a future periodic-benchmark analysis notebook without
 re-copy-pasting the cell contents. No such notebook has used this module
 yet; today it is exercised only by the offline test
-``tests/test_induction_figures.py``, rather than by re-running a notebook
+``tests/induction/test_induction_figures.py``, rather than by re-running a notebook
 by hand.
 
 This module imports matplotlib LAZILY, inside :func:`plot_archetype_accuracy`
@@ -126,7 +126,7 @@ def plot_archetype_accuracy(
     the 0.5 chance line, the output filename, ...) promoted to parameters
     whose defaults match the notebook's original values --  calling this
     with the notebook's own ``MODELS``/``CONDITIONS``/title reproduces the
-    original figure exactly (see ``tests/test_induction_figures.py`` and the
+    original figure exactly (see ``tests/induction/test_induction_figures.py`` and the
     pixel/data comparison recorded when this module was extracted).
 
     One group of bars is drawn per entry in ``models`` (x-axis), with one

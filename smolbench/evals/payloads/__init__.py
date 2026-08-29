@@ -4,7 +4,7 @@ The ``.py.txt`` / ``.sh`` assets in this directory ride to EC2 inside
 cloud-init user-data (or, for the train template, directly inside
 ``RunInstances``' UserData). Nothing on the client ever imports them as
 modules. They run under Ubuntu 22.04's system python3 (3.10) and bash:
-keep them stdlib-only and 3.10-compatible. ``tests/test_ec2_payloads.py``
+keep them stdlib-only and 3.10-compatible. ``tests/evals/test_ec2_payloads.py``
 is their only pre-launch validation.
 
 The assets are BYTE-EXACT payloads with a hard budget: EC2 caps user-data
@@ -14,7 +14,7 @@ headroom was only 7 bytes even before the digest-pinned
 ``EC2_VLLM_IMAGE`` reference (+57 B over the cap). The section-5 agent
 fingerprint later grew the raw render to about 4.6 KB over. Compression
 keeps about 9 KB of margin (9,025 B measured 2026-08-18; the headroom
-canary in ``tests/test_ec2_payloads.py`` prints both the raw and
+canary in ``tests/evals/test_ec2_payloads.py`` prints both the raw and
 compressed live margins). Every byte in ``agent.py.txt`` /
 ``watchdog.py.txt`` / ``user_data.sh`` ships verbatim, comments included
 -- do not reformat them, and keep them LF-only (pinned by
@@ -230,7 +230,7 @@ def pack_user_data(rendered: str) -> bytes:
     # Design: mtime=0 rather than the gzip default (current wall-clock time)
     # -- see the Returns section above for why byte-reproducibility matters
     # here (it is also what makes the byte-stability test in
-    # tests/test_ec2_payloads.py meaningful rather than trivially true).
+    # tests/evals/test_ec2_payloads.py meaningful rather than trivially true).
     packed = gzip.compress(rendered.encode(), mtime=0)
     assert len(packed) < 16384, f"compressed user-data too large: {len(packed)} bytes"
     return packed

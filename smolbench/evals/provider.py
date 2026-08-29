@@ -6,7 +6,7 @@ primeintellect, aws (Amazon Bedrock by default; set AWS_INFERENCE_BASE_URL
 to target a SageMaker endpoint instead), or ec2 (a self-provisioned EC2
 spot instance running vLLM). For ec2, the endpoint is resolved at call
 time from the local state file written by
-smolbench.evals.ec2.provision_spot_instance. Then import
+smolbench.evals.providers.ec2.provision_spot_instance. Then import
 query/complete/evaluate/get_model_context_length from this module, instead
 of from a provider-specific one.
 
@@ -43,12 +43,12 @@ from typing import Optional
 
 #: Provider name -> module implementing query/complete/evaluate/get_model_context_length.
 _PROVIDER_MODULES: dict[str, str] = {
-    "openrouter": "smolbench.evals.openrouter",
-    "primeintellect": "smolbench.evals.primeintellect",
-    "aws": "smolbench.evals.aws",
-    "bedrock": "smolbench.evals.aws",
-    "sagemaker": "smolbench.evals.aws",
-    "ec2": "smolbench.evals.ec2",
+    "openrouter": "smolbench.evals.providers.openrouter",
+    "primeintellect": "smolbench.evals.providers.primeintellect",
+    "aws": "smolbench.evals.providers.aws",
+    "bedrock": "smolbench.evals.providers.aws",
+    "sagemaker": "smolbench.evals.providers.aws",
+    "ec2": "smolbench.evals.providers.ec2",
 }
 
 

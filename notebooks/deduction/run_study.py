@@ -4,7 +4,7 @@ WHAT THIS IS
 ------------
 ``notebooks/induction/run_study.py`` documents a 21-checkpoint family-ladder
 scaling study (``MODELS``: 7 vendor families x 3 rungs each). It runs ONE
-MODEL PER BOX under a fleet supervisor (``scripts/run_fleet.py``). That file
+MODEL PER BOX under a fleet supervisor (``scripts/fleet/run_fleet.py``). That file
 covers the INDUCTION phase. THIS file is the matching DEDUCTION-phase
 driver. One invocation serves exactly ONE checkpoint on one EC2 box. It
 runs one ``smolbench.deduction.lean.runner.sweep`` (a Lean4 theorem-proving
@@ -12,7 +12,7 @@ sweep) against that checkpoint. The fleet supervisor launches up to 21 of
 these as subprocesses, one per lane. Each lane normally REATTACHES to the
 same box its induction phase already provisioned. It reuses the same
 ``EC2_EXPERIMENT_TAG`` and the same EC2 state file (see
-``scripts/run_fleet.py``'s ``lane_env``). This avoids provisioning a second
+``scripts/fleet/run_fleet.py``'s ``lane_env``). This avoids provisioning a second
 instance per model.
 
 This file does not redeclare ``MODELS`` (spec key -> short analysis tag) or
@@ -28,7 +28,7 @@ order is the single most important property of this file. If you get it
 wrong, the file raises no exception. Instead, this lane's EC2 tag, state
 file, and vLLM image silently drift onto whatever value a
 fleet-supervisor export, an unrelated ``keys.env``, or
-``smolbench.evals.ec2``'s own hardcoded defaults happen to set. You
+``smolbench.evals.providers.ec2``'s own hardcoded defaults happen to set. You
 discover this drift only later, on a live billing box, when you notice two
 lanes swapped their served checkpoints.
 
@@ -46,14 +46,14 @@ lanes swapped their served checkpoints.
      NEVER a bare assignment, for all four variables. This way, a value
      the fleet supervisor already exported into this subprocess's
      environment always wins over this file's own default.
-  5. THEN, and only then, import ``smolbench.evals.ec2`` (transitively, via
+  5. THEN, and only then, import ``smolbench.evals.providers.ec2`` (transitively, via
      loading ``notebooks/induction/run_study.py`` in step 6 below) and
      anything else that reads ``EC2_*`` environment variables at MODULE
      SCOPE.
   6. Load ``notebooks/induction/run_study.py`` by file path (never a bare
      ``import run_study`` -- see the docstring of the loader block below for
      why), and bind ``MODELS`` / ``COT_ARGS`` from it.
-  7. Import ``smolbench.evals.ec2``, ``smolbench.deduction.lean.runner``,
+  7. Import ``smolbench.evals.providers.ec2``, ``smolbench.deduction.lean.runner``,
      and ``smolbench.deduction.lean.nullverify`` (``# noqa: E402`` on all
      three, matching ``notebooks/induction/run_study.py``'s own late-import
      style for the same reason).
@@ -62,7 +62,7 @@ WHY THIS ORDER IS CORRECT (verified against the current tree, not assumed
 from memory of some other file's contents -- see the note at the end of
 this section):
 
-  * ``smolbench/evals/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
+  * ``smolbench/evals/providers/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
     ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES``, and ``EC2_REGIONS`` via
     ``os.getenv(...)`` at MODULE SCOPE, and freezes each into a plain
     module constant. Python caches module imports in ``sys.modules``, so
@@ -70,13 +70,13 @@ this section):
     fixed for the rest of the process. An ``os.environ`` write after that
     import has NO effect on them, however you spell it. So our own
     ``setdefault`` calls (step 4) matter only if they land before the
-    FIRST import of ``smolbench.evals.ec2`` anywhere in this process
+    FIRST import of ``smolbench.evals.providers.ec2`` anywhere in this process
     (step 7, and transitively step 6 -- see below).
   * Step 6 loads ``notebooks/induction/run_study.py``. That module's own
     top-level code calls ``load_dotenv(.../induction/keys.env)`` as a side
     effect (see that file's own module docstring). This call pulls in
     ``smolbench.induction.experiment``, which imports
-    ``smolbench.evals.ec2``. So step 6 is ALSO the first point that
+    ``smolbench.evals.providers.ec2``. So step 6 is ALSO the first point that
     imports ``ec2.py``. Steps 4 and 6 must stay in this order.
   * That ``load_dotenv`` call does NOT pass ``override=True`` (confirmed by
     reading that file directly, not assumed). So it can only fill in
@@ -133,7 +133,7 @@ LIFECYCLE (``main``)
    so a bad ``LEAN_VERIFY`` value aborts before any EC2 spend. This matches
    the "fail fast before billing" pattern used throughout this study's
    tooling (see e.g. ``notebooks/induction/run_study.py``'s
-   ``completion_budget`` and ``scripts/run_fleet.py``'s ``preflight``, both
+   ``completion_budget`` and ``scripts/fleet/run_fleet.py``'s ``preflight``, both
    of which run entirely before ``provision_spot_instance``).
 4. Call ``ec2.provision_spot_instance()`` with NO arguments. Its behavior
    depends entirely on the ``EC2_INSTANCE_TYPES``/``EC2_REGIONS`` frozen
@@ -154,7 +154,7 @@ LIFECYCLE (``main``)
    WITHOUT the flag (the default), nothing is torn down: under the fleet,
    the supervisor owns instance lifecycle end-to-end, and shuts the box
    down itself once it has finished with this lane (see
-   ``scripts/run_fleet.py``'s module docstring, "Phases and the
+   ``scripts/fleet/run_fleet.py``'s module docstring, "Phases and the
    reuse-then-shutdown lifecycle"). ``--teardown`` exists purely for
    STANDALONE use: a solo smoke test of this file with nothing else
    depending on the box.
@@ -200,7 +200,7 @@ Environment
     Optional. A bare filename or absolute path for this lane's EC2 state
     file. When unset (the default), this driver derives
     ``.ec2_state_scaling_<LEAN_MODEL>.json`` under ``REPO_ROOT``. The fleet
-    supervisor passes a bare filename here (see ``scripts/run_fleet.py``'s
+    supervisor passes a bare filename here (see ``scripts/fleet/run_fleet.py``'s
     ``Lane.state_file``), specifically so this driver reattaches to the box
     its own induction phase already provisioned: both phases resolve the
     SAME bare filename against the SAME repo root.
@@ -254,7 +254,7 @@ logging.basicConfig(level=logging.INFO)
 # working directory.
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
-#: Same bucket and region ``scripts/run_fleet.py``'s own
+#: Same bucket and region ``scripts/fleet/run_fleet.py``'s own
 #: ``sync_deduction_spool`` uses for the induction-phase results store.
 #: This study's whole S3 footprint lives in one bucket. This value is a
 #: plain literal (not imported from ``run_fleet``), so this file has no
@@ -313,7 +313,7 @@ def lane_env_defaults(
           above.
         - ``"EC2_VLLM_IMAGE"``: digest-pinned to the build the 2026-08-16
           determinism hinge experiment certified (see
-          ``smolbench.evals.ec2.EC2_VLLM_IMAGE``'s own comment for the full
+          ``smolbench.evals.providers.ec2.EC2_VLLM_IMAGE``'s own comment for the full
           provenance). This driver reattaches to a box already serving
           under that same image during the induction phase, so using any
           other image here would risk a mid-study image swap.
@@ -332,7 +332,7 @@ def lane_env_defaults(
     See the module docstring's "MODULE IMPORT ORDER" section for why it
     uses ``setdefault`` specifically, and why the four resulting
     ``os.environ`` writes must land before the first import of
-    ``smolbench.evals.ec2``.
+    ``smolbench.evals.providers.ec2``.
 
     Examples
     --------
@@ -356,13 +356,13 @@ def lane_env_defaults(
 
 
 # ---------------------------------------------------------------------------
-# Env setdefaults -- MUST run before smolbench.evals.ec2 is imported by
+# Env setdefaults -- MUST run before smolbench.evals.providers.ec2 is imported by
 # anything (directly or transitively). See the module docstring's "MODULE
 # IMPORT ORDER" section for the full mechanical justification.
 # ---------------------------------------------------------------------------
 # Read RAW, unvalidated. The table that would let us validate LEAN_MODEL
 # (MODELS, loaded below) is not available yet. Validating it here would
-# require loading that table first, which would import smolbench.evals.ec2
+# require loading that table first, which would import smolbench.evals.providers.ec2
 # too early. Validation waits for selected_model(), called later from
 # main().
 _RAW_LEAN_MODEL: str = os.environ.get("LEAN_MODEL", "").strip()
@@ -426,7 +426,7 @@ if _RAW_LEAN_MODEL:
 # this repo's own deduction and induction trees each ship a same-named
 # run_study.py, so a bare module-name import would be ambiguous the
 # moment both are ever on sys.path in the same process. That is exactly
-# the situation scripts/run_fleet.py is already in, and it uses this same
+# the situation scripts/fleet/run_fleet.py is already in, and it uses this same
 # by-path pattern for the same reason.
 # ---------------------------------------------------------------------------
 _INDUCTION_RUN_STUDY_PATH: Path = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
@@ -457,7 +457,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # same reason: these imports are intentionally not at the top of the
 # file.
 # ---------------------------------------------------------------------------
-from smolbench.evals import ec2  # noqa: E402
+from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.deduction.lean import runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
@@ -556,7 +556,7 @@ def build_config(key: str) -> dict:
 
     ``LEAN_RUN_NAME``, when unset or empty, falls back to
     ``f"scaling_{key}"`` (plus the shard suffix above, when present) --
-    matching ``scripts/run_fleet.py``'s ``Lane`` naming convention for
+    matching ``scripts/fleet/run_fleet.py``'s ``Lane`` naming convention for
     ``scaling_<model>`` run directories.
 
     Also reads ``LEAN_CELL_WHITELIST`` at CALL time and, when set,
@@ -697,7 +697,7 @@ def select_verifier() -> Any:
           propagate, so the message can name this driver's actual normal
           path: run with ``LEAN_VERIFY=defer`` (generation only), then
           verify separately, later, under ``.venv-lean`` via
-          ``scripts/lean_verify_rows.py``.
+          ``scripts/deduction/lean_verify_rows.py``.
         - Any other value: the message names the two valid values
           (``"defer"``, ``"real"``).
 
@@ -724,7 +724,7 @@ def select_verifier() -> Any:
                 f"{sys.version_info.major}.{sys.version_info.minor}. The normal "
                 "path for this driver is LEAN_VERIFY=defer (generation only, "
                 "the default) followed by a separate verification pass under "
-                ".venv-lean via scripts/lean_verify_rows.py."
+                ".venv-lean via scripts/deduction/lean_verify_rows.py."
             )
         from smolbench.deduction.lean import verify  # local: only reachable under .venv-lean
 
@@ -766,8 +766,8 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         ``None`` (the default) makes this function lazily import ``boto3``
         INSIDE itself, and build a real client against `SPOOL_REGION`.
         boto3 is never imported at module scope, so importing this file
-        needs no AWS SDK at all (this mirrors ``smolbench.evals.ec2``'s
-        own lazy-import convention, and ``scripts/run_fleet.py``'s
+        needs no AWS SDK at all (this mirrors ``smolbench.evals.providers.ec2``'s
+        own lazy-import convention, and ``scripts/fleet/run_fleet.py``'s
         ``sync_deduction_spool``, which follows the same pattern). This
         parameter exists so tests can inject a fake client with no network
         access.

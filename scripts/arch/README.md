@@ -4,7 +4,7 @@ Builds a published reference page describing what each of the study's 21
 checkpoints actually is: how every layer mixes tokens, how every layer encodes
 position, where the feed-forward goes sparse.
 
-The study's own record (`smolbench/evals/ec2.py`, `scripts/run_fleet.py`,
+The study's own record (`smolbench/evals/providers/ec2.py`, `scripts/fleet/run_fleet.py`,
 `notebooks/induction/run_study.py`) captures how each checkpoint was *served* —
 tensor parallelism, context window, reasoning wiring — but nothing about what
 each one *is*. This closes that gap so the results can be read mechanistically.
@@ -65,7 +65,7 @@ node scripts/arch/render_check.mjs                          # runs the page's re
 ```
 
 `--check` compares the fetched configs against
-`tests/fixtures/roster_configs.json`, the fixture `tests/test_deploy_specs.py`
+`tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
 pins against, on the four fields both hold; a mismatch means an upstream
 checkpoint moved under the study.
 

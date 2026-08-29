@@ -1184,7 +1184,7 @@
   "flags": [
    {
     "kind": "serving",
-    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
+    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/providers/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
    },
    {
     "kind": "contradiction",
@@ -1311,7 +1311,7 @@
   "flags": [
    {
     "kind": "serving",
-    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
+    "text": "Neither V4 rung produced results in this study, and the cause is open. The earlier closure — that vLLM raises `NotImplementedError(\"DeepGEMM MegaMoE requires SM100 GPUs.\")` — was itself refuted: that raise sits behind an opt-in `--moe-backend deep_gemm_mega_moe` the study never passed, an in-tree SM90 serving path is now pinned in `smolbench/evals/providers/ec2.py`, and with that path pinned the model now loads — it then died with an illegal memory access during CUDA-graph warmup, which the lane now works around with eager mode and an NCCL all-reduce. As of 2026-08-12 no result has been produced."
    },
    {
     "kind": "contradiction",

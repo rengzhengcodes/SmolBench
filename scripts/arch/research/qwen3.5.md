@@ -297,7 +297,7 @@ in the checkpoint — the FP8 `modules_to_not_convert` list names `mtp.fc`,
   with the concatenation order swapped. Qwen has published **no MTP paper**; the Qwen3
   Technical Report contains zero occurrences of "MTP", "multi-token" or "speculative" [V].
 - **The study did not use MTP.** `EC2_DEPLOY_SPECS` passes no `--speculative-config`, so the
-  MTP weights were dead on arrival [C, `smolbench/evals/ec2.py`].
+  MTP weights were dead on arrival [C, `smolbench/evals/providers/ec2.py`].
 
 ### Multimodal wrapper and what the text tower inherits
 
@@ -581,7 +581,7 @@ explicable, and three of them are **vestigial in this family**:
 
 ## How this study served them
 
-From `smolbench/evals/ec2.py` [C]: all three at `max_model_len 131072` with
+From `smolbench/evals/providers/ec2.py` [C]: all three at `max_model_len 131072` with
 `--reasoning-parser qwen3 --language-model-only --enable-prefix-caching`; `tp=4` for the
 27B (tier B, 4x L40S), `tp=8` for both MoE rungs (tier C, 8x H100). `--language-model-only`
 means the vision tower was never constructed, so M-RoPE degenerated to 1-D partial RoPE and
@@ -601,7 +601,7 @@ replicates them across ranks.
    `fc05daec18b0a78c049392ed2e771dde82bdf654` (27B),
    `dc4d348443bc740c68e2d77492492c11606384d5` (122B-A10B),
    `ea5b4f81096f3901c91dea97f81324302495781d` (397B-A17B-FP8).
-2. `smolbench/evals/ec2.py` — `EC2_DEPLOY_SPECS` serving configuration.
+2. `smolbench/evals/providers/ec2.py` — `EC2_DEPLOY_SPECS` serving configuration.
 
 **Reference implementations**
 3. huggingface/transformers `main`, `src/transformers/models/qwen3_5/`:

@@ -12,9 +12,60 @@ Select a provider with `INFERENCE_PROVIDER` (read at call time) and import
 `Marks.dump`/`Marks.load` (plain-mapping YAML; the loader also reads the
 legacy `!!python/object`-tagged files).
 
+## Layout
+
+```
+smolbench/evals/
+  __init__.py       re-exports the quiz.py datamodel; no other code
+  quiz.py           QnA / ToF / Numeric / Quiz / Mark / Marks
+  openai_compat.py  the shared HTTP+parsing engine
+  provider.py       name -> provider module registry, call-time dispatch
+  providers/        one module per inference backend
+    openrouter.py  primeintellect.py  aws.py  ec2.py
+  _aws.py           AWS primitives shared by providers/ and results_store
+  parsing.py  tokenization.py  replicates.py  results_store.py
+  payloads/         byte-exact on-instance assets for providers/ec2.py
+```
+
+Only the four backends live under `providers/`. Everything that is not a
+backend deliberately stays at the `evals/` level:
+
+- `provider.py` is the registry; putting it inside the package it dispatches
+  to would invert the dependency.
+- `openai_compat.py` is the engine every backend configures, and is not
+  itself selectable by `INFERENCE_PROVIDER` — it has no registry entry.
+- `_aws.py` is shared by `providers/aws.py`, `providers/ec2.py` AND
+  `results_store.py` (S3); it is a provisioning toolkit, not a provider.
+- `parsing.py`, `tokenization.py`, `replicates.py`, `results_store.py` are
+  provider-agnostic; `payloads/` is frozen data (`.gitattributes` pins its
+  bytes to LF and `pyproject.toml`'s `package-data` anchor names
+  `smolbench.evals.payloads` literally), so its path does not move.
+
+Below this section, bare `aws.py` and `ec2.py` mean `providers/aws.py` and
+`providers/ec2.py`; the shorter names are kept because the lifecycle and
+resolver tables read as comparisons between the two backends.
+
+`providers/__init__.py` holds a docstring and nothing else — no imports, no
+re-exports. Provider resolution therefore stays a call-time act:
+`provider.provider_module(name)` `importlib`s exactly one backend, so
+naming the subpackage never drags in the other three, never trips
+`ec2.py`'s read-env-at-first-import contract, and cannot cycle back through
+`smolbench.evals`.
+
+### The `__init__.py` -> `quiz.py` split
+
+The package `__init__` used to *be* the datamodel. It is now `quiz.py`, and
+`__init__.py` re-exports `Answer`, `QnA`, `ToF`, `Numeric`, `Quiz`, `Mark`
+and `Marks` from it. That re-export is load-bearing twice over: it keeps
+`from smolbench.evals import Marks` working for every caller, and it keeps
+the legacy YAML tag `!!python/object:smolbench.evals.Marks` resolving in
+result files written before the split (pinned by
+`tests/evals/test_marks_io.py`'s legacy fixture).
+
 ## Shared AWS provisioning primitives (`_aws.py`)
 
-`aws.py` (Bedrock/SageMaker) and `ec2.py` (self-provisioned EC2 Spot) both
+`providers/aws.py` (Bedrock/SageMaker) and `providers/ec2.py`
+(self-provisioned EC2 Spot) both
 need to talk to IAM/EC2/SageMaker/S3 to stand up an inference endpoint, and
 used to each carry their own copy of the same handful of primitives.
 `smolbench/evals/_aws.py` is now the single copy: `fresh_client` (a
@@ -97,7 +148,7 @@ it only changes which credentials snapshot signs the request, so a rotated
 `~/.aws/credentials` file is picked up on the very next call instead of
 raising `RequestExpired`/`ExpiredToken` until the process restarts. Because
 this touches every live AWS call this module makes, a live re-verification
-(`scripts/bedrock_smoke.py` for aws.py, `scripts/ec2_lifecycle_smoke.py` for
+(`scripts/smoke/bedrock_smoke.py` for aws.py, `scripts/smoke/ec2_lifecycle_smoke.py` for
 ec2.py) is recommended before the next real provisioning run, even though
 the offline suite already pins every request payload byte-for-byte.
 
@@ -230,7 +281,7 @@ landed in S3 are invisible to them until `sync_down` has pulled them down.
 
 `sync_down` goes S3 → local only: it never uploads, and it OVERWRITES
 whatever is already at the matching local path. This matters for anything
-that edits a results tree locally — concretely, `scripts/regrade.py
+that edits a results tree locally — concretely, `scripts/results/regrade.py
 --write`, which rewrites `rep_*.yaml` in place. A local regrade is silently
 clobbered back to the stale synced copy by the very next `sync_down`,
 because a score flip (e.g. `1` → `0`) is byte-length preserving and so
@@ -244,7 +295,7 @@ log layout, not bulk-uploaded).
 
 ### Provisioning the bucket
 
-`scripts/provision_results_bucket.py` is the one-time (idempotent, safe to
+`scripts/results/provision_results_bucket.py` is the one-time (idempotent, safe to
 re-run) runbook that provisions the bucket itself:
 `smolbench-results-414266451290` in `us-west-2`, with public access blocked
 (all four block-public-access flags on) and versioning enabled. It also

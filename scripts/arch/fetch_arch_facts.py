@@ -1,6 +1,6 @@
 """Fetch and normalise the architecture facts for the family-ladder roster.
 
-The 21-checkpoint family-ladder study (see ``scripts/run_fleet.py``) records
+The 21-checkpoint family-ladder study (see ``scripts/fleet/run_fleet.py``) records
 how each checkpoint was *served*: tensor parallelism, context window,
 reasoning wiring. It records nothing about what each checkpoint *is*. This
 script closes that gap. It pulls every rung's own ``config.json`` (and
@@ -20,9 +20,9 @@ moved checkpoint.
 
 Roster: a single source of truth
 --------------------------------
-The roster comes from :data:`smolbench.evals.ec2.EC2_DEPLOY_SPECS`, the same
+The roster comes from :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS`, the same
 table the fleet serves from, minus the ``qwen2.5-1.5b`` smoke entry. This is
-exactly the subset ``scripts/run_fleet.py`` already pins its tiers against.
+exactly the subset ``scripts/fleet/run_fleet.py`` already pins its tiers against.
 This file deliberately holds no literal copy of the model list: a fourth
 copy of the roster is a fourth thing that can silently drift out of sync.
 
@@ -63,7 +63,7 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from smolbench.evals.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
+from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
 #: The smoke-test entry is not part of the study roster; ``run_fleet`` excludes
 #: it from its own tier check the same way.
