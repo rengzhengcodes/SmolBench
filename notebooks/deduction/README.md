@@ -14,10 +14,11 @@ per-lane subprocess launched from a terminal (see `lean_eval.ipynb`'s
 
 ```
 deduction/
-  run_study.py       the per-lane, generation-only driver  <- pinned here
-  lean_eval.ipynb    the exploration notebook
-  results/, data/    S3-mirrored; both archived out of the tree
-  analysis/          the numbers that got published
+  run_study.py           the per-lane, generation-only driver  <- pinned here
+  lean_eval.ipynb        the exploration notebook
+  pinned_theorems.json   the 300 theorems every lane ran  <- see "The pinned 300"
+  results/, data/        S3-mirrored; both archived out of the tree
+  analysis/              the numbers that got published
 ```
 
 `run_study.py` stays at this study root because `scripts/fleet/run_fleet.py`
@@ -100,6 +101,81 @@ from the bootstrapped dataset (`python -m smolbench.deduction.lean.cli
 filter --kind novel_premises --split val`) and are committed once
 generated, so a normal clone of this repo already has them without needing
 to regenerate.
+
+### The pinned 300
+
+`build_config` draws its sample with `random.Random(0).sample(pool, 300)`
+over the 805-theorem pool above, so the drawn set is fixed only as long as
+that pool is -- and the pool is not stable by construction. It comes from
+the `replay_passing` sidecars, which are produced by live Dojo replay, and
+Dojo init fails nondeterministically. Regenerating a sidecar can add or drop
+a theorem, and because `rng.sample` depends on both the membership AND the
+order of its population, one changed theorem reshuffles the entire 300.
+Nothing downstream compares the drawn set against anything, so that
+reshuffle would be silent.
+
+`pinned_theorems.json` therefore records the drawn set verbatim: the 300
+`full_name`s, the corpus provenance, the derivation recipe, and a sha256
+over the sorted names. `tests/deduction/test_lean_pinning_audit.py` pins
+that digest, so a reshuffle fails a test instead of quietly changing which
+theorems the study measures. That file is also the only in-tree answer to
+"which theorems does this study run": the corpus and both sidecars are
+archived out of the tree.
+
+`scripts/results/audit_lean_pinning.py` checks the drawn set against what
+the 21 lanes actually ran, from the S3 spool -- identical `theorems` config
+and seed, identical theorem sets, identical `(theorem, rung)` cell keys,
+byte-identical rendered prompts (compared by ETag, so no spool download),
+and containment of the recovery and flip side-runs. All 21 lanes ran the
+same 300 theorems and 944 cells with byte-identical prompts.
+
+Byte equality is the load-bearing check, not set equality: it proves the
+same theorem was asked at the same step `k` under the same rendered context.
+It also covers `noise:3`, which is whitespace padded to a token-matched
+length -- the induction leg pads under each model's own tokenizer, and had
+this leg done the same, that rung would not be comparable across models.
+
+This gates the questions ASKED, not the data that came back. Cells can be
+present and dead, and the published pools (707/828/833 cells) are smaller
+than 944 because dead cells and verdict filtering shrink it unevenly. Use
+`scripts/results/audit_run_completeness.py` for that axis.
+
+### Corpus date vs. model cutoffs
+
+`metadata.json` records the trace as mathlib4 at commit `fe4454af`, with
+`creation_time` 2024-03-24. Every theorem record in every split carries that
+one commit, so the benchmark is a single snapshot, not a date range.
+
+Every checkpoint on the roster postdates it. The earliest pretraining cutoff
+documented for any of them is September 2024 (`nemotron-3-nano-4b`, which is
+a Nemotron-2-generation descendant rather than a Nemotron-3 pretrain); Gemma
+4 is January 2025, and the other two Nemotron-3 rungs are June 2025. The
+remaining 15 checkpoints publish no cutoff, but their release dates run from
+2025-07 to 2026-04.
+
+So no theorem in this study postdates any model's cutoff, and no sampling,
+seed, or split change over this benchmark can produce one -- a single-commit
+snapshot has no post-cutoff tail to filter for. This study measures
+next-tactic success on mathematics the models had likely seen during
+pretraining, together with its ground-truth proofs. It is not a held-out
+generalization measurement, and cross-family comparisons inherit whatever
+differences exist in how much mathlib4 each vendor ingested.
+
+Neither of the study's two holdout mechanisms changes this, and neither
+should be cited as if it did. `decontam.py` guards a synthetic SFT corpus
+against reproducing eval theorems; `novel_premises` selects theorems whose
+premises are under-represented in the benchmark's own train split. The first
+addresses a corpus this repo builds, the second is benchmark-internal
+generalization within the same 2024-03-24 snapshot.
+
+Making the study post-cutoff needs a different corpus, not a filter: trace
+mathlib4 at a recent commit and at the last commit at or before the target
+date, take the declarations present in the first and absent from the second
+(a name-wise set difference, so "post-cutoff" is provable rather than
+inferred from commit dates), re-derive `replay_passing`, and re-collect all
+21 lanes. Fixing the target date requires cutoffs for the 15 checkpoints
+that publish none, and at a target in late 2025 the resulting pool may not
+reach 300 theorems.
 
 ## What the eval exposes per theorem
 
