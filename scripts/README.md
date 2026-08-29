@@ -2,7 +2,7 @@
 
 Operational scripts, grouped by job. `scripts/arch/` is a separate,
 already-coherent subpackage with its own README (`scripts/arch/README.md`)
-covering the model architecture atlas pipeline; it is not described here.
+covering the roster's architecture facts; it is not described here.
 
 There is no `__init__.py` under `scripts/` -- the directories are implicit
 namespace packages, so `from scripts.<group>.<module> import ...` works
