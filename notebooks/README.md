@@ -41,7 +41,7 @@ and attached to PR #4 as the release asset
 | `notebooks/induction/SIGNIFICANCE_REPORT.txt` | `.venv/bin/python notebooks/induction/significance_report.py` |
 | `notebooks/deduction/ERROR_BARS_REPORT.txt` | `.venv/bin/python notebooks/deduction/error_bars.py` |
 | `notebooks/deduction/HINT_VS_NOISE_REPORT.txt` | `.venv/bin/python notebooks/deduction/hint_vs_noise.py` |
-| `scripts/arch/page_data.json`, `scripts/arch/model_architectures.html` | `.venv/bin/python scripts/arch/build_page.py` |
+| `scripts/arch/page_data.json`, `scripts/arch/model_architectures.html` | no longer regenerable in-tree; see the note below |
 
 The four reports render from the 2026-08-16 S3 analysis snapshot
 (`scripts/results/snapshot_analysis_data.py`; needs AWS credentials). The 2026-08-21
@@ -52,11 +52,12 @@ The writeups that cite these reports by file and line number
 (third archive, below); every citation between them resolves inside the
 archive.
 
-The arch atlas outputs rebuild from the tracked inputs (`arch_configs_raw.json`,
-`arch_facts.json`, `annotations*.json`, `page_template.html`) with no network,
-but note that `build_page_data.py` embeds the *current* `EC2_DEPLOY_SPECS`; the
-archived copy records the fleet's as-served (pre-determinism-bundle) serving
-arguments, so a fresh build differs in the per-model `vllm_args` block.
+The arch atlas outputs rebuilt from tracked inputs at the time of that
+archive. The builder itself was removed on 2026-08-29 (see
+`scripts/arch/README.md`), so the two files above are now recoverable only from
+the PR #4 release asset. They record the fleet's as-served
+(pre-determinism-bundle) serving arguments, which `build_page_data.py` embedded
+from the *current* `EC2_DEPLOY_SPECS` at build time.
 
 ## Second archive: evidence tree, data sidecars, and their tests
 
@@ -180,6 +181,8 @@ individually under `scripts/` and `tests/` at the prefix):
 Kept under `scripts/` (live tooling), now grouped by job: see
 `scripts/README.md` for the current inventory. `smolbench/evals/providers/ec2.py`'s
 provenance notes that named `hinge_probe.py` now point here. Security: all
-21 files scanned -- no secrets or PII (cloud IDs only).
+21 files kept at that date were scanned -- no secrets or PII (cloud IDs only).
+Eight of them, the atlas page builder, were removed on 2026-08-29; see
+`scripts/arch/README.md`.
 
 Nothing under `notebooks/` or `scripts/` is now regenerable-and-tracked.
