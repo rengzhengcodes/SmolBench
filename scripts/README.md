@@ -44,6 +44,7 @@ everywhere else under `scripts/`, runs under `.venv`.
 | `provision_results_bucket.py` | ADMIN-credentialed, one-time (idempotent) runbook that provisions the S3-backed replicate results bucket `smolbench.evals.results_store` reads and writes. |
 | `regrade.py` | Re-grades already-collected replicates with the current compliance-aware parser, in place. |
 | `audit_run_completeness.py` | Audits content-level run completeness against S3 (or a local run directory) to catch silent data faults that row/key counts alone would miss. |
+| `audit_lean_pinning.py` | Audits that all 21 deduction lanes were asked the SAME pinned theorems, against S3: config, theorem sets, cell keys, byte-identical prompts (via ETag), and side-run containment. Complements `audit_run_completeness.py` -- this one gates the questions asked, that one gates the data that came back. |
 | `snapshot_analysis_data.py` | Publishes an analysis-ready snapshot of the family-ladder study to S3, tagging superseded/stale/broken prior snapshots. |
 | `evidence_manifest.py` | Builds and verifies `EVIDENCE.json`, the manifest that pins the artifacts (by sha256) a results writeup cites. |
 
