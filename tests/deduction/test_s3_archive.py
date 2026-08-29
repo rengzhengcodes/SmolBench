@@ -1,27 +1,13 @@
-"""Gates over the S3 archive, streamed -- never pulled to disk.
-
-Why this exists: the evidence tree
-(``notebooks/deduction/results/**``), the data sidecars
-(``notebooks/deduction/data/*``) and the LeanDojo corpus left the git tree
-for ``<SMOLBENCH_ARCHIVE_S3>/notebooks/deduction/`` (see
-``notebooks/ARCHIVE.md``). Each object is read into
-memory through :class:`conftest.S3Archive`; nothing is written to a
-local tree, per the user's ruling that archived data is accessed on AWS.
-
-Every test skips unless ``SMOLBENCH_ARCHIVE_S3`` is set and reachable, so
-the default suite stays offline. Run them with live credentials::
+"""Gates over the S3 archive, streamed -- never pulled to disk; skipped offline::
 
     SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \\
         .venv/bin/python -m pytest tests/deduction/test_s3_archive.py -q
-
-``scripts/results/evidence_manifest.verify`` walks a local directory, so the
-manifest gates below re-implement its loop over S3 objects with the same
-public helpers (schema checks, reference splitting, citation coverage).
 """
 
 from __future__ import annotations
 
 import functools
+import hashlib
 import importlib.util
 import io
 import json
@@ -42,9 +28,9 @@ CORPUS = f"{DATA}/leandojo_benchmark_4"
 
 @pytest.fixture(scope="module")
 def em():
-    """Load ``scripts/results/evidence_manifest.py`` by path (same recipe as its own tests)."""
-    path = SCRIPTS / "results" / "evidence_manifest.py"
-    spec = importlib.util.spec_from_file_location("evidence_manifest_s3", path)
+    """Load scripts/results/evidence_manifest.py by path."""
+    spec = importlib.util.spec_from_file_location(
+        "evidence_manifest_s3", SCRIPTS / "results" / "evidence_manifest.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     try:
@@ -54,15 +40,12 @@ def em():
         sys.modules.pop(spec.name, None)
 
 
-# ---------------------------------------------------------------------------
-# Evidence manifests (from tests/tooling/test_evidence_manifest.py)
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="module")
 def tracked(s3_archive) -> set[str]:
-    """Every archive-relative path under the results tree."""
-    return set(s3_archive.keys(RESULTS))
+    """Every archive-relative path under the results tree; guards against a vacuous pass."""
+    out = set(s3_archive.keys(RESULTS))
+    assert len(out) >= 30, sorted(out)
+    return out
 
 
 def _sha256_of_reference(archive, manifest_dir: str, relpath: str, em) -> str:
@@ -75,8 +58,6 @@ def _sha256_of_reference(archive, manifest_dir: str, relpath: str, em) -> str:
         stream = tf.extractfile(member)
         if stream is None:
             raise FileNotFoundError(f"{rel}!{member}")
-        import hashlib
-
         h = hashlib.sha256()
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             h.update(chunk)
@@ -118,13 +99,8 @@ def _verify_on_s3(archive, manifest_dir: str, em) -> list[str]:
     return failures
 
 
-def test_tracked_results_files_were_found(tracked):
-    """Guard every gate below against a vacuous pass."""
-    assert len(tracked) >= 30, sorted(tracked)
-
-
 def test_every_tracked_writeup_has_a_verified_manifest(tracked, s3_archive, em):
-    """The gate: every .md/.txt under results/ sits in a manifested dir and is listed."""
+    """Every .md/.txt under results/ sits in a manifested dir and is listed."""
     writeups = sorted(p for p in tracked
                       if Path(p).suffix in em.WRITEUP_SUFFIXES
                       and Path(p).name != em.MANIFEST_NAME)
@@ -144,6 +120,7 @@ def test_every_tracked_writeup_has_a_verified_manifest(tracked, s3_archive, em):
 
 
 def test_every_tracked_manifest_verifies(tracked, s3_archive, em):
+    """Every EVIDENCE.json in the archive verifies against its objects."""
     manifests = sorted(p for p in tracked if Path(p).name == em.MANIFEST_NAME)
     assert manifests, "no EVIDENCE.json in the archive"
     for mf in manifests:
@@ -153,59 +130,35 @@ def test_every_tracked_manifest_verifies(tracked, s3_archive, em):
 
 def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
     """The interim raw under a ``_final_`` name must be marked SUPERSEDED."""
-    rel = f"{RESULTS}/runs/regime_mean_2026-08-21"
-    assert f"{rel}/{em.MANIFEST_NAME}" in tracked
-    manifest = json.loads(s3_archive.text(f"{rel}/{em.MANIFEST_NAME}"))
-    interim = [e for e in manifest["entries"]
-               if e["relpath"].endswith("all_rows_leg2_final_raw.jsonl.gz")
+    mf = f"{RESULTS}/runs/regime_mean_2026-08-21/{em.MANIFEST_NAME}"
+    assert mf in tracked
+    entries = json.loads(s3_archive.text(mf))["entries"]
+    interim = [e for e in entries if e["relpath"].endswith("all_rows_leg2_final_raw.jsonl.gz")
                and not e["relpath"].startswith("tarball:")]
-    assert len(interim) == 1, manifest["entries"]
+    assert len(interim) == 1, entries
     note = interim[0].get("note", "")
-    assert "SUPERSEDED" in note.upper()
-    assert "all_rows_leg2_full_raw.jsonl.gz" in note
+    assert "SUPERSEDED" in note.upper(), note
+    assert "all_rows_leg2_full_raw.jsonl.gz" in note, note
     assert any(e["relpath"].endswith("!r6-regime/all_rows_leg2_full_raw.jsonl.gz")
-               for e in manifest["entries"]), "the true raw is not pinned"
+               for e in entries), "the true raw is not pinned"
 
 
-# ---------------------------------------------------------------------------
-# Data sidecars (from tests/deduction/test_lean_corpus.py)
-# ---------------------------------------------------------------------------
-
-
-def test_replay_passing_sidecars_resolve_to_archived_objects(s3_archive):
-    """The sidecars ``corpus.replay_passing_path`` names exist under the archive's data/."""
-    for split in ("val", "test"):
-        name = corpus.replay_passing_path("novel_premises", split).name
-        assert s3_archive.exists(f"{DATA}/{name}"), f"archived sidecar missing: {DATA}/{name}"
-
-
-def test_align_asset_loads_from_archive(s3_archive):
-    """``lean3.AlignMap`` parses from the archived ``lean3_align.json.gz`` bytes."""
+def test_archived_data_assets_resolve(s3_archive):
+    """Replay-passing sidecars exist and the align asset parses from the archive."""
     import gzip
 
     import smolbench.deduction.lean.lean3 as lean3
-
+    for split in ("val", "test"):
+        name = corpus.replay_passing_path("novel_premises", split).name
+        assert s3_archive.exists(f"{DATA}/{name}"), f"archived sidecar missing: {DATA}/{name}"
     raw = gzip.decompress(s3_archive.read(f"{DATA}/{lean3.ALIGN_ASSET_NAME}"))
     amap = lean3.AlignMap(json.loads(raw)["lean3_to_lean4"])
     assert len(amap.lean3_to_lean4) > 100
     assert amap.lean3_to_lean4["ADE_inequality.A"] == "ADEInequality.A"
 
 
-# ---------------------------------------------------------------------------
-# Token matching on the real corpus (from tests/deduction/test_deduction_study.py)
-# ---------------------------------------------------------------------------
-
-
 def test_noise_rung_is_token_matched_to_its_hint_counterpart(s3_archive, monkeypatch):
-    """``noise:3`` matches ``hint:3``'s token count exactly, on the real corpus.
-
-    The corpus (``novel_premises/val.json``, ``corpus.jsonl``) and the
-    replay-passing sidecar are streamed from S3 and handed to the loaders
-    in memory: ``corpus.load_split`` and ``premises._index`` are replaced
-    with cached S3-backed equivalents, and the sidecar filter is applied
-    here. Missing Lean source files fall back to ``Premise.code``, as they
-    do in production.
-    """
+    """``noise:3`` matches ``hint:3``'s token count exactly, on the real corpus."""
     from smolbench.deduction.lean import context, premises
 
     corpus.reset_caches()
@@ -232,12 +185,10 @@ def test_noise_rung_is_token_matched_to_its_hint_counterpart(s3_archive, monkeyp
 
     monkeypatch.setattr(corpus, "load_split", load_split_s3)
     monkeypatch.setattr(premises, "_index", index_s3)
-
     sidecar = corpus.replay_passing_path("novel_premises", "val").name
     passing = {json.loads(line)["full_name"]
                for line in s3_archive.text(f"{DATA}/{sidecar}").splitlines() if line.strip()}
     pool = [t for t in load_split_s3("novel_premises", "val") if t.full_name in passing]
-
     chosen = None
     for theorem in pool[:60]:
         k = len(theorem.traced_tactics) - 1
@@ -246,7 +197,6 @@ def test_noise_rung_is_token_matched_to_its_hint_counterpart(s3_archive, monkeyp
         if hint3 > hint2:
             chosen = (theorem, k, hint3)
             break
-
     assert chosen is not None, "no theorem exercised the noise padding path"
     theorem, k, hint3_tokens = chosen
     noise3_tokens = context._count_tokens(context.render(theorem, k, "noise", 3).text)

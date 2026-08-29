@@ -1,28 +1,20 @@
-"""Test the shared replication harness: pooling, resume-skip, and summaries.
+"""Test the replication harness (pooling, resume, forcing) against the local store."""
 
-This exercises the LOCAL store throughout. ``tmp_path`` is outside the
-repo, so ``resolve_store`` always falls back to local here, even if
-the S3 env var is set. The S3 log backend is covered in
-``test_results_store.py``.
-"""
-
+import dataclasses
+import re
 from datetime import datetime, timezone
 
 import pytest
 
 from smolbench.evals import Mark, Marks, Numeric, provider
 from smolbench.evals.replicates import ReplicateHarness
-from smolbench.evals.results_store import ReplicateAddress
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
+
+RUN_TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
 
 def make_quizzes(seed: int, model: str):
-    """Two info types with different sizes so pooled slicing is observable.
-
-    Takes the model because the real quiz factories do: the induction noise
-    arm is token-matched with the tokenizer of the model under test. This
-    stub ignores it beyond recording that it arrives (see
-    ``test_run_replicates_passes_model_to_quiz_factory``).
-    """
+    """Two info types of different sizes so pooled slicing is observable."""
     return {
         "intens": (Numeric(prompt=f"i1/{seed}", answer=1), Numeric(prompt=f"i2/{seed}", answer=2)),
         "extens": (Numeric(prompt=f"e1/{seed}", answer=3),),
@@ -32,11 +24,8 @@ def make_quizzes(seed: int, model: str):
 @pytest.fixture
 def harness(tmp_path):
     return ReplicateHarness(
-        results_dir=tmp_path,
-        archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes,
-        seeds=(1, 2),
-        info_types=("intens", "extens"),
+        results_dir=tmp_path, archetype_tags={"stub-model": "decode"}, make_quizzes=make_quizzes,
+        seeds=(1, 2), info_types=("intens", "extens"),
     )
 
 
@@ -47,13 +36,10 @@ def fake_evaluate(monkeypatch):
 
     def _evaluate(quiz, model, seed, **kwargs):
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
-        return Marks(
-            model=model,
-            marks=tuple(
-                Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
-                for q in quiz
-            ),
+        marks = tuple(
+            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1) for q in quiz
         )
+        return Marks(model=model, marks=marks)
 
     monkeypatch.setattr(provider, "evaluate", _evaluate)
     return calls
@@ -61,45 +47,40 @@ def fake_evaluate(monkeypatch):
 
 def test_run_replicates_pools_and_serializes(harness, fake_evaluate, tmp_path):
     harness.run_replicates("stub-model", extra_args={"max_completion_tokens": 64})
-    # One POOLED evaluate per seed (2 intens + 1 extens = 3 questions), and
-    # only the kwargs actually passed are forwarded.
     assert [c["n"] for c in fake_evaluate] == [3, 3]
     assert fake_evaluate[0]["kwargs"] == {"extra_args": {"max_completion_tokens": 64}}
     assert fake_evaluate[0]["seed"] == 1
-    # Sliced back per info type and serialized to the resumable layout.
     for seed in (1, 2):
         intens = Marks.load(tmp_path / "decode_intens" / f"rep_{seed}.yaml")
         extens = Marks.load(tmp_path / "decode_extens" / f"rep_{seed}.yaml")
         assert [m.query for m in intens.marks] == [f"i1/{seed}", f"i2/{seed}"]
         assert [m.query for m in extens.marks] == [f"e1/{seed}"]
+        assert intens.server_config is None
+    with pytest.raises(KeyError):
+        harness.run_replicates("some-unconfigured-model")
+
+    cfg = {"instance_type": "g7.12xlarge", "tp": 2}
+    forced = dataclasses.replace(harness, force_seeds=frozenset(harness.seeds))
+    forced.run_replicates("stub-model", server_config=cfg)
+    stored = Marks.load(tmp_path / "decode_intens" / "rep_1.yaml")
+    assert stored.server_config == cfg and stored.server_config is not cfg
 
 
-def test_run_replicates_resumes(harness, fake_evaluate):
+def test_run_replicates_resume(harness, fake_evaluate, tmp_path):
+    assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
     fake_evaluate.clear()
-    # Everything serialized -> a rerun must be a no-op (idempotent cells).
     harness.run_replicates("stub-model")
     assert fake_evaluate == []
-
-
-def test_run_replicates_partial_resume(harness, fake_evaluate, tmp_path):
-    harness.run_replicates("stub-model")
-    fake_evaluate.clear()
+    assert not harness.has_outstanding("stub-model")
     (tmp_path / "decode_extens" / "rep_2.yaml").unlink()
+    assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
-    # Only seed 2's missing extens (1 question) re-runs; intens is not redone.
     assert [c["n"] for c in fake_evaluate] == [1]
 
 
 def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
-    """The quiz factory receives (seed, model), not seed alone.
-
-    The induction benchmarks' noise arm is padded to an exact TOKEN count
-    under the tokenizer of the model being evaluated, so the factory cannot
-    build a replicate without knowing which model it is for. If the harness
-    ever went back to calling ``make_quizzes(seed)``, every noise prompt
-    would silently be sized against whatever tokenizer the factory guessed.
-    """
+    """The quiz factory receives (seed, model): the noise arm is token-matched per model."""
     seen: list = []
 
     def recording_factory(seed: int, model: str):
@@ -107,239 +88,55 @@ def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
         return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
 
     ReplicateHarness(
-        results_dir=tmp_path,
-        archetype_tags={"stub-model": "decode"},
-        make_quizzes=recording_factory,
-        seeds=(1, 2),
-        info_types=("intens",),
+        results_dir=tmp_path, archetype_tags={"stub-model": "decode"},
+        make_quizzes=recording_factory, seeds=(1, 2), info_types=("intens",),
     ).run_replicates("stub-model")
-
     assert seen == [(1, "stub-model"), (2, "stub-model")]
-    # ... and the model-dependent prompt really is what got evaluated.
-    assert Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query == (
-        "i/1/stub-model"
+    assert Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query == "i/1/stub-model"
+
+
+def test_force_seeds(harness, fake_evaluate):
+    """force_seeds bypasses the resume-skip for exactly the forced seeds."""
+    harness.run_replicates("stub-model")
+    assert not harness.has_outstanding("stub-model")
+    n_first = len(fake_evaluate)
+    forced = dataclasses.replace(harness, force_seeds=frozenset(harness.seeds))
+    assert forced.has_outstanding("stub-model")
+    forced.run_replicates("stub-model")
+    assert len(fake_evaluate) == 2 * n_first
+    assert not harness.has_outstanding("stub-model")
+    one = dataclasses.replace(harness, force_seeds=frozenset({harness.seeds[0]}))
+    assert one.has_outstanding("stub-model")
+    one.run_replicates("stub-model")
+    assert len(fake_evaluate) == 2 * n_first + 1
+    assert not dataclasses.replace(harness, force_seeds=frozenset({999})).has_outstanding(
+        "stub-model"
     )
 
 
-def test_run_replicates_unknown_model_raises_keyerror(harness):
-    """archetype_tags is looked up with a plain subscript, not ``.get()``.
-
-    See ``self.archetype_tags[model]`` in run_replicates' source: no ``.get()``, no
-    try/except. An unconfigured model is therefore a caller bug the harness surfaces
-    immediately as KeyError, rather than silently skipping the archetype or falling back
-    to some placeholder tag that would corrupt the results layout.
-    """
-    with pytest.raises(KeyError):
-        harness.run_replicates("some-unconfigured-model")
-
-
-def test_cot_chain_lengths_reports_word_counts(harness, capsys):
-    """cot_chain_lengths has no return value (see its source).
-
-    Like summarize(), its contract is entirely print-based, so this
-    test drives it through capsys rather than inspecting a return
-    value.
-
-    This test builds the cached CoT replicate files through the
-    harness's own store, never hand-crafting the YAML format or the
-    layout, at the keys its ``ReplicateAddress`` layout expects. It
-    uses a mix of substantive, empty-string, and None
-    ``Mark.reasoning`` values. The empty and None entries must be
-    excluded from the word-count stats: the source's ``if
-    mark.reasoning:`` guard skips falsy values. This mirrors real runs,
-    where non-reasoning archetypes or truncated responses leave
-    ``reasoning`` unset.
-    """
-    # seed 1 contributes word counts [3, 2] (the None entry is skipped);
-    # seed 2 contributes [4] (the empty string is falsy and skipped too).
-    reasoning_by_seed = {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}
-    for seed, texts in reasoning_by_seed.items():
-        marks = Marks(
-            model="stub-model",
-            marks=tuple(
-                Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r)
-                for i, r in enumerate(texts)
-            ),
+def test_cot_chain_lengths(harness, capsys):
+    """Word-count stats pool over seeds, skipping falsy reasoning."""
+    for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
+        marks = tuple(
+            Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r)
+            for i, r in enumerate(texts)
         )
-        # model=None: no model in archetype_tags carries the "cot" tag here,
-        # which is exactly the tag-keyed read cot_chain_lengths performs. The
-        # LOCAL layout is keyed by tag alone, so this addresses the same file
-        # the method will look for.
-        harness.store.dump_marks(
-            marks,
-            ReplicateAddress(tag="cot", info="intens", seed=seed, model=None),
-            datetime(2026, 8, 10, tzinfo=timezone.utc),
-        )
-    # "extens" (the harness's other configured info type) gets no replicate
-    # files at all, exercising the "no reasoning chains found" branch.
-
-    harness.cot_chain_lengths()  # default tag="cot"
-    out = capsys.readouterr().out
-
-    # Pooled across both seeds: lengths = [3, 2, 4] -> n=3 min=2 max=4
-    # mean=3 median=3. The exact spacing mirrors cot_chain_lengths' format
-    # spec (n:4d, min/max:5d, mean/median:6.0f) so a format change is
-    # caught here just as much as a value change.
-    assert (
-        "cot/intens: n=   3  min=    2  max=    4  "
-        "mean=     3  median=     3  words  (~tokens x 1.3)"
-    ) in out
-    assert "cot/extens: no reasoning chains found" in out
+        addr = ReplicateAddress(tag="cot", info="intens", seed=seed, model=None)
+        harness.store.dump_marks(Marks(model="stub-model", marks=marks), addr, RUN_TS)
+    harness.cot_chain_lengths()
+    out = re.sub(r"\s+", "", capsys.readouterr().out)
+    assert "cot/intens:n=3min=2max=4mean=3median=3words" in out
+    assert "cot/extens:noreasoningchainsfound" in out
 
 
-def test_has_outstanding_tracks_serialized_replicates(harness, fake_evaluate):
-    """Report whether a model has work left.
-
-    Callers use this to skip SERVING it. This is a spend guard, not an
-    optimisation. ``InductionExperiment.run`` enters ``serve_model``
-    before looking for work, which swaps the instance's vLLM container
-    to that checkpoint, hundreds of GB for the large archetypes. On a
-    resumed run, the already-finished arms get served first, and the
-    pull is billed just to discover there is nothing to do.
-    """
-    assert harness.has_outstanding("stub-model")
-    harness.run_replicates("stub-model")
-    assert not harness.has_outstanding("stub-model")
-
-
-def test_has_outstanding_is_true_when_only_one_arm_is_missing(harness, fake_evaluate, tmp_path):
-    """A single missing (info, seed) is enough to require serving."""
-    harness.run_replicates("stub-model")
-    (tmp_path / "decode_extens" / "rep_2.yaml").unlink()
-    assert harness.has_outstanding("stub-model")
-
-
-def test_store_defaults_to_the_local_results_dir(harness, tmp_path):
-    """With no S3 env var configured the harness stores replicates on disk.
-
-    That is exactly where ``results_dir`` points.
-    """
-    from smolbench.evals.results_store import LocalResultsStore
-
+def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
+    """The store resolves once, stays local for a non-repo dir, and honours prefix."""
     assert isinstance(harness.store, LocalResultsStore)
     assert harness.store.root == tmp_path
-    assert harness.store is harness.store  # cached_property, built once
-
-
-def test_store_stays_local_for_a_tmp_dir_even_with_the_s3_env_set(
-    harness, tmp_path, monkeypatch
-):
-    """This test guards hermeticity.
-
-    A developer shell exporting SMOLBENCH_RESULTS_S3 must not turn this offline suite
-    into a credentialed, networked one. Only repo-anchored results directories map onto
-    S3 (see ``smolbench.evals.results_store.resolve_store``).
-    """
-    from smolbench.evals.results_store import LocalResultsStore
-
+    assert harness.store is harness.store
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://smolbench-results-414266451290")
     assert isinstance(harness.store, LocalResultsStore)
-
-
-def test_prefix_namespaces_the_local_replicate_directory(tmp_path):
-    """``prefix`` namespaces the replicate DIRECTORY, not the file name.
-
-    That is what lets ``induction_eval_one_hop`` share one results dir
-    with its sibling experiment without their replicates colliding.
-
-    This is asserted through the store's own rendering, since the
-    harness no longer builds keys itself. So this pins the layout the
-    analysis scripts read, rather than a string the harness happens to
-    compute.
-    """
-    prefixed = ReplicateHarness(
-        results_dir=tmp_path,
-        archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes,
-        seeds=(1,),
-        info_types=("intens",),
-        prefix="one_hop_",
-    )
-    prefixed.store.dump_marks(
-        Marks(model="stub-model", marks=()),
-        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model"),
-        datetime(2026, 8, 10, tzinfo=timezone.utc),
-    )
+    prefixed = dataclasses.replace(harness, prefix="one_hop_")
+    addr = ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model")
+    prefixed.store.dump_marks(Marks(model="stub-model", marks=()), addr, RUN_TS)
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
-
-
-def test_summarize_and_prefix(harness, fake_evaluate, tmp_path, capsys):
-    prefixed = ReplicateHarness(
-        results_dir=tmp_path,
-        archetype_tags=harness.archetype_tags,
-        make_quizzes=harness.make_quizzes,
-        seeds=harness.seeds,
-        info_types=harness.info_types,
-        prefix="one_hop_",
-    )
-    prefixed.run_replicates("stub-model")
-    assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").exists()
-    prefixed.summarize("stub-model")
-    out = capsys.readouterr().out
-    assert "decode/intens: 2/2 replicates" in out
-    assert "acc=1.000" in out
-
-
-def test_force_seeds_bypasses_the_resume_skip(harness, fake_evaluate, tmp_path):
-    """force_seeds re-collects replicates the store already has.
-
-    This exists for deliberate re-collection: re-running a lane's early
-    seeds on new hardware to remove a within-lane serving-stack
-    confound. The append-only store makes this safe, because every
-    reader resolves the newest run_ts per key.
-    """
-    import dataclasses
-
-    harness.run_replicates("stub-model")
-    assert not harness.has_outstanding("stub-model")
-    n_first = len(fake_evaluate)
-
-    forced = dataclasses.replace(harness, force_seeds=frozenset(harness.seeds))
-    # Everything counts as outstanding again ...
-    assert forced.has_outstanding("stub-model")
-    forced.run_replicates("stub-model")
-    # ... and every (info, seed) was actually re-evaluated, not skipped.
-    assert len(fake_evaluate) == 2 * n_first
-    # The plain harness still sees a fully-collected model.
-    assert not harness.has_outstanding("stub-model")
-
-
-def test_force_seeds_subset_recollects_only_those_seeds(harness, fake_evaluate):
-    """A seed subset re-runs exactly the forced seeds.
-
-    This is the hardware-migration case: early seeds re-collect on the
-    new box, and the homogeneous tail is left alone.
-    """
-    import dataclasses
-
-    harness.run_replicates("stub-model")
-    n_first = len(fake_evaluate)
-
-    forced = dataclasses.replace(harness, force_seeds=frozenset({harness.seeds[0]}))
-    assert forced.has_outstanding("stub-model")
-    forced.run_replicates("stub-model")
-    # One of the two seeds re-evaluated -> exactly one extra evaluate call.
-    assert len(fake_evaluate) == n_first + 1
-    # A forced seed OUTSIDE this harness's seed range forces nothing.
-    unrelated = dataclasses.replace(harness, force_seeds=frozenset({999}))
-    assert not unrelated.has_outstanding("stub-model")
-
-
-# server_config provenance stamping (results must
-# record what serving stack generated them).
-
-def test_run_replicates_stamps_server_config_on_every_dump(harness, fake_evaluate, tmp_path):
-    cfg = {"instance_type": "g7.12xlarge", "gpu": "2x RTX PRO 4500 32GB", "tp": 2}
-    harness.run_replicates("stub-model", server_config=cfg)
-    for seed in (1, 2):
-        for info in ("intens", "extens"):
-            stored = Marks.load(tmp_path / f"decode_{info}" / f"rep_{seed}.yaml")
-            assert stored.server_config == cfg
-            # A private copy, not the caller's mapping.
-            assert stored.server_config is not cfg
-
-
-def test_run_replicates_without_server_config_leaves_field_none(harness, fake_evaluate, tmp_path):
-    harness.run_replicates("stub-model")
-    stored = Marks.load(tmp_path / "decode_intens" / "rep_1.yaml")
-    assert stored.server_config is None

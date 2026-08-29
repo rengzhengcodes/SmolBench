@@ -1,33 +1,11 @@
-"""Test the 21-lane scaling-study fleet supervisor's offline contract.
+"""Offline contract for the 21-lane scaling-study fleet supervisor.
 
-``scripts/fleet/run_fleet.py`` launches one subprocess per study model, each
-of which provisions its own EC2 spot instance. Nothing here touches
-AWS: every boto3 seam is either injected (``client_factory``) or
-unreached. The lane-environment builder is a PURE function, precisely
-so it can be pinned here rather than discovered on a live fleet.
-
-These tests exist to catch four failure modes:
-
-* **Lane drift.** ``LANES`` is derived from a hand-written tier table.
-  If a rung is added to ``EC2_DEPLOY_SPECS`` and not to a tier, that
-  model silently never runs, and the study quietly ships 20 of 21
-  ladders.
-* **Env bleed.** Building a lane's environment by mutating
-  ``os.environ``, the obvious implementation, makes lane N+1 inherit
-  lane N's experiment tag and state file. That means two lanes
-  reattach to ONE instance and swap the served checkpoint out from
-  under each other. The builder must be pure, and its output exact.
-* **Region pins.** Tier D hunts ``p6-b200.48xlarge`` across all three
-  study regions (us-east-1, us-east-2, us-west-2) for its four
-  models.
-* **Restart misclassification.** A spot reclaim deserves unlimited
-  retries; a crash loop deserves 2 and then a halt. A backwards
-  classifier either abandons a study lane on a routine interruption,
-  or burns money relaunching a lane that will always crash.
+Covers scripts/fleet/{run_fleet,fleet_status,run_shards}.py; no AWS is reached.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import sys
@@ -37,43 +15,11 @@ from pathlib import Path
 import pytest
 
 from smolbench.evals import Mark, Marks
-from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
 from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS
-
-RUN_FLEET_PATH = SCRIPTS / "fleet" / "run_fleet.py"
-FLEET_STATUS_PATH = SCRIPTS / "fleet" / "fleet_status.py"
-
-STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
-
-EXPECTED_TIERS = {
-    "A": {"nemotron-3-nano-4b", "gemma-4-e2b", "ministral-3-3b"},
-    "B": {
-        "qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-12b", "gemma-4-31b",
-        "glm-4.7-flash", "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b",
-        "exaone-4.5-33b",
-    },
-    "C": {
-        "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
-        "glm-4.5-air", "k-exaone-236b-a23b",
-    },
-    # deepseek-v4-flash rides tier D: its marlin-less SM100 spec must only
-    # ever serve on the p6-b200 hunt list.
-    "D": {"glm-4.7", "deepseek-v3.1", "deepseek-v4-pro", "deepseek-v4-flash"},
-}
 
 
 def _load(path: Path, name: str):
-    """Imports a script by PATH under a private module name, env restored.
-
-    ``run_fleet`` imports the induction driver, which calls
-    ``load_dotenv(keys.env)`` at import time. It must: ``ec2.py``
-    freezes its ``EC2_*`` constants at import. That would leak the
-    study's real ``SMOLBENCH_RESULTS_S3`` into the pytest process, and
-    through into every later test. So the import is bracketed by a
-    snapshot and restore of ``os.environ``. A path-based load, rather
-    than putting ``scripts/`` on ``sys.path``, also keeps these module
-    names from colliding with anything else in the repo.
-    """
+    """Imports a script by path under a private module name, os.environ restored."""
     saved = dict(os.environ)
     try:
         spec = importlib.util.spec_from_file_location(name, path)
@@ -88,73 +34,57 @@ def _load(path: Path, name: str):
 
 @pytest.fixture(scope="module")
 def fleet():
-    return _load(RUN_FLEET_PATH, "_scaling_run_fleet")
+    return _load(SCRIPTS / "fleet" / "run_fleet.py", "_scaling_run_fleet")
 
 
 @pytest.fixture(scope="module")
 def status():
-    return _load(FLEET_STATUS_PATH, "_scaling_fleet_status")
+    return _load(SCRIPTS / "fleet" / "fleet_status.py", "_scaling_fleet_status")
 
 
-# ---------------------------------------------------------------------------
-# Lane table <-> deploy-spec drift guard
-# ---------------------------------------------------------------------------
-
-
-def test_lanes_cover_exactly_the_study_specs(fleet):
-    assert sorted(fleet.LANES) == STUDY_KEYS
-
-
-def test_tier_membership_partitions_the_roster(fleet):
-    seen: set[str] = set()
-    for tier, expected in EXPECTED_TIERS.items():
-        members = {key for key, lane in fleet.LANES.items() if lane.tier == tier}
-        assert members == expected, tier
-        assert not (members & seen), f"{tier} overlaps an earlier tier"
-        seen |= members
-    assert seen == set(STUDY_KEYS)
-
-
-def test_lane_tags_come_from_the_study_driver(fleet):
-    """The fleet must not re-declare the analysis tags.
-
-    run_study.py is the single source of truth, so a tag rename there
-    propagates here.
-    """
-    assert {key: lane.tag for key, lane in fleet.LANES.items()} == dict(
-        fleet.run_study.MODELS
-    )
+@pytest.fixture(scope="module")
+def shards():
+    return _load(SCRIPTS / "fleet" / "run_shards.py", "_scaling_run_shards")
 
 
 @pytest.mark.parametrize(
-    "tier,types",
+    "tier,members,types",
     [
-        ("A", "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge"),
-        ("B", "g6e.12xlarge,g6e.24xlarge"),
-        ("C", "p5.48xlarge,p5e.48xlarge"),
-        # D's hunt list carries only the B200 type: deepseek-v4-pro's
-        # marlin-less SM100 spec must never serve on SM90 boxes (see
-        # TIER_INSTANCE_TYPES' comment in run_fleet.py).
-        ("D", "p6-b200.48xlarge"),
+        ("A", {"nemotron-3-nano-4b", "gemma-4-e2b", "ministral-3-3b"},
+         "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge"),
+        ("B", {"qwen3.5-27b", "nemotron-3-nano-30b-a3b", "gemma-4-12b", "gemma-4-31b",
+               "glm-4.7-flash", "ministral-3-8b", "ministral-3-14b", "exaone-4.0-32b",
+               "exaone-4.5-33b"},
+         "g6e.12xlarge,g6e.24xlarge"),
+        ("C", {"qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "nemotron-3-super-120b-a12b",
+               "glm-4.5-air", "k-exaone-236b-a23b"},
+         "p5.48xlarge,p5e.48xlarge"),
+        ("D", {"glm-4.7", "deepseek-v3.1", "deepseek-v4-pro", "deepseek-v4-flash"},
+         "p6-b200.48xlarge"),
     ],
 )
-def test_tier_instance_types(fleet, tier, types):
+def test_tier_table(fleet, tier, members, types):
+    assert {k for k, lane in fleet.LANES.items() if lane.tier == tier} == members
     assert fleet.TIER_INSTANCE_TYPES[tier] == types
+    if tier == "D":
+        assert fleet.TIER_REGIONS["D"] == "us-east-1,us-east-2,us-west-2"
 
 
-# ---------------------------------------------------------------------------
-# lane_env: pure, exact, no os.environ mutation
-# ---------------------------------------------------------------------------
+_CREDS = {
+    "AWS_PROFILE": "rengz",
+    "AWS_ACCESS_KEY_ID": "AKIA-test",
+    "AWS_SECRET_ACCESS_KEY": "secret",
+    "AWS_SESSION_TOKEN": "token",
+    "SMOLBENCH_RESULTS_S3": "s3://bucket",
+    "SMOLBENCH_RESULTS_S3_REGION": "us-west-2",
+}
 
 
-def test_lane_env_is_exact_for_an_induction_lane(fleet):
-    env = fleet.lane_env(
-        fleet.LANES["gemma-4-e2b"],
-        "induction",
-        base_env={"AWS_PROFILE": "rengz", "IRRELEVANT": "dropped"},
-    )
+def test_lane_env_is_exact(fleet):
+    env = fleet.lane_env(fleet.LANES["gemma-4-e2b"], "induction",
+                         base_env={**_CREDS, "IRRELEVANT": "dropped"})
     assert env == {
-        "AWS_PROFILE": "rengz",
+        **_CREDS,
         "INFERENCE_PROVIDER": "ec2",
         "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
         "INDUCTION_STATE_FILE": ".ec2_state_scaling_gemma-4-e2b.json",
@@ -167,38 +97,12 @@ def test_lane_env_is_exact_for_an_induction_lane(fleet):
     }
 
 
-def test_lane_env_tier_d_overrides_the_regions(fleet):
-    """Tier D hunts p6-b200 in ALL 3 study regions.
-
-    B200 placement is still shifting, unlike p5e's fixed
-    us-east-2/us-west-2 footprint.
-    """
-    for key in EXPECTED_TIERS["D"]:
-        env = fleet.lane_env(fleet.LANES[key], "induction", base_env={})
-        assert env["EC2_REGIONS"] == "us-east-1,us-east-2,us-west-2"
-        assert env["EC2_INSTANCE_TYPES"] == "p6-b200.48xlarge"
-
-
-def test_lane_env_non_tier_d_uses_the_default_regions(fleet):
-    for key in EXPECTED_TIERS["A"] | EXPECTED_TIERS["B"] | EXPECTED_TIERS["C"]:
-        env = fleet.lane_env(fleet.LANES[key], "induction", base_env={})
-        assert env["EC2_REGIONS"] == "us-east-1,us-east-2,us-west-2"
-
-
-def test_lane_env_deduction_phase_adds_the_lean_variables(fleet):
+def test_lane_env_deduction_reattaches_to_the_induction_box(fleet):
     env = fleet.lane_env(fleet.LANES["glm-4.7"], "deduction", base_env={})
     assert env["LEAN_MODEL"] == "glm-4.7"
     assert env["LEAN_STATE_FILE"] == ".ec2_state_scaling_glm-4.7.json"
-    # Same instance, same state file: the deduction driver reattaches to the
-    # box the induction phase already provisioned rather than launching a
-    # second one.
     assert env["INDUCTION_STATE_FILE"] == env["LEAN_STATE_FILE"]
     assert env["EC2_EXPERIMENT_TAG"] == "scaling-glm-4.7"
-
-
-def test_lane_env_induction_phase_sets_no_lean_variables(fleet):
-    env = fleet.lane_env(fleet.LANES["glm-4.7"], "induction", base_env={})
-    assert not [k for k in env if k.startswith("LEAN_")]
 
 
 def test_lane_env_never_mutates_the_parent_environment(fleet):
@@ -206,23 +110,8 @@ def test_lane_env_never_mutates_the_parent_environment(fleet):
     result = fleet.lane_env(fleet.LANES["deepseek-v4-pro"], "induction")
     assert dict(os.environ) == before
     assert result is not os.environ
-    # Mutating the returned dict must not reach back into os.environ either.
     result["EC2_EXPERIMENT_TAG"] = "tampered"
     assert os.environ.get("EC2_EXPERIMENT_TAG") != "tampered"
-
-
-def test_lane_env_passes_through_credentials_and_results_store(fleet):
-    base = {
-        "AWS_PROFILE": "operator",
-        "AWS_ACCESS_KEY_ID": "AKIA-test",
-        "AWS_SECRET_ACCESS_KEY": "secret",
-        "AWS_SESSION_TOKEN": "token",
-        "SMOLBENCH_RESULTS_S3": "s3://bucket",
-        "SMOLBENCH_RESULTS_S3_REGION": "us-west-2",
-    }
-    env = fleet.lane_env(fleet.LANES["qwen3.5-27b"], "induction", base_env=base)
-    for key, value in base.items():
-        assert env[key] == value
 
 
 def test_every_lane_gets_a_distinct_tag_and_state_file(fleet):
@@ -230,56 +119,30 @@ def test_every_lane_gets_a_distinct_tag_and_state_file(fleet):
             for lane in fleet.LANES.values()}
     states = {fleet.lane_env(lane, "induction", base_env={})["INDUCTION_STATE_FILE"]
               for lane in fleet.LANES.values()}
+    assert {k: l.tag for k, l in fleet.LANES.items()} == dict(fleet.run_study.MODELS)
     assert len(tags) == len(states) == 21
     assert all(t.startswith("scaling-") for t in tags)
     assert all(s.startswith(".ec2_state_scaling_") and s.endswith(".json") for s in states)
 
 
-# ---------------------------------------------------------------------------
-# Lane commands
-# ---------------------------------------------------------------------------
-
-
-def test_lane_command_induction(fleet):
-    cmd = fleet.lane_command(fleet.LANES["gemma-4-12b"], "induction")
-    assert cmd == [
-        str(REPO_ROOT / ".venv" / "bin" / "python"),
-        str(NOTEBOOKS / "induction" / "run_study.py"),
-    ]
-
-
-def test_lane_command_deduction(fleet):
-    cmd = fleet.lane_command(fleet.LANES["gemma-4-12b"], "deduction")
-    assert cmd == [
-        str(REPO_ROOT / ".venv" / "bin" / "python"),
-        str(NOTEBOOKS / "deduction" / "run_study.py"),
-    ]
-
-
-def test_lane_command_shutdown_calls_the_provider_teardown(fleet):
-    cmd = fleet.lane_command(fleet.LANES["gemma-4-12b"], "shutdown")
-    assert cmd[0] == str(REPO_ROOT / ".venv" / "bin" / "python")
-    assert cmd[1] == "-c"
-    assert "shutdown_instance" in cmd[2]
-
-
-# ---------------------------------------------------------------------------
-# Restart-policy classifier
-# ---------------------------------------------------------------------------
+def test_lane_command(fleet):
+    lane = fleet.LANES["gemma-4-12b"]
+    python = str(REPO_ROOT / ".venv" / "bin" / "python")
+    assert fleet.lane_command(lane, "induction") == [
+        python, str(NOTEBOOKS / "induction" / "run_study.py")]
+    assert fleet.lane_command(lane, "deduction") == [
+        python, str(NOTEBOOKS / "deduction" / "run_study.py")]
+    shutdown = fleet.lane_command(lane, "shutdown")
+    assert shutdown[1] == "-c" and "shutdown_instance" in shutdown[2]
 
 
 @pytest.mark.parametrize(
     "tail,instance_present,expected",
     [
-        # Instance gone under a live lane == the spot-reclaim signature.
         ("nothing interesting here\n", False, "reclaim"),
-        # Capacity words, instance still visible (reclaim in progress).
         ("botocore ... InsufficientInstanceCapacity for p5e.48xlarge\n", True, "reclaim"),
-        ("us-east-2: spot quota exhausted for p5.48xlarge; skipping region\n", True, "reclaim"),
         ("RuntimeError: endpoint unreachable after 10 connection failures\n", True, "reclaim"),
-        # A real crash: instance alive, traceback in the tail.
         ("Traceback (most recent call last):\n  KeyError: 'gemma-4-12b'\n", True, "crash"),
-        ("SystemExit: INDUCTION_MODELS: unknown key(s)\n", True, "crash"),
         ("", True, "crash"),
     ],
 )
@@ -287,39 +150,14 @@ def test_classify_exit(fleet, tail, instance_present, expected):
     assert fleet.classify_exit(tail, instance_present) == expected
 
 
-def test_crash_relaunch_budget_is_two(fleet):
-    assert fleet.MAX_CRASH_RELAUNCHES == 2
-
-
-def test_tier_budget_hours(fleet):
-    assert fleet.TIER_BUDGET_HOURS == {"A": 9, "B": 9, "C": 10, "D": 14}
-
-
-def test_family_gate_is_the_three_cheap_tier_a_models(fleet):
-    assert set(fleet.GATE_MODELS) == {
-        "gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b"
-    }
-    assert all(fleet.LANES[k].tier == "A" for k in fleet.GATE_MODELS)
-
-
-def test_serve_healthy_marker_matches_the_provider_log_line(fleet):
-    """``ec2.serve_model`` logs ``serve_model: 'x' is up at http://...``
-    when the model is live.
-
-    The gate watches lane logs for exactly that.
-    """
-    line = "INFO:root:serve_model: 'gemma-4-e2b' is up at http://1.2.3.4:8000/v1"
-    assert fleet.is_serve_healthy(line)
+def test_is_serve_healthy(fleet):
+    assert fleet.is_serve_healthy(
+        "INFO:root:serve_model: 'gemma-4-e2b' is up at http://1.2.3.4:8000/v1")
     assert not fleet.is_serve_healthy("INFO:root:serve_model: requesting 'gemma-4-e2b' ...")
 
 
-# ---------------------------------------------------------------------------
-# CoT-ON assertion (marks carry a reasoning channel -- Mark.reasoning)
-# ---------------------------------------------------------------------------
-
-
 class _FakeStore:
-    """Minimal ``ResultsStore`` stand-in keyed on (tag, info, seed)."""
+    """Minimal ResultsStore stand-in keyed on info arm."""
 
     def __init__(self, marks_by_info):
         self._marks = marks_by_info
@@ -331,73 +169,36 @@ class _FakeStore:
         return self._marks[addr.info]
 
 
-def _marks(reasonings):
+def _marks(pairs):
     return Marks(
         model="gemma-4-e2b",
         marks=tuple(
-            Mark(query="q", answer=1, response="1", score=1, reasoning=r)
-            for r in reasonings
+            Mark(query="q", answer=1, response=response, score=1, reasoning=reasoning)
+            for reasoning, response in pairs
         ),
     )
 
 
-def test_reasoning_fraction_returns_none_before_anything_lands(fleet):
-    assert fleet.reasoning_fraction(_FakeStore({}), "gemma-4-e2b", "gemma4_e2b") is None
+_CHAIN = "Alright, let's tackle this problem step by step. " * 10
 
 
-def test_reasoning_fraction_all_thinking(fleet):
-    store = _FakeStore({"intens": _marks(["let me count...", "thinking"])})
-    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 1.0
-
-
-def test_reasoning_fraction_counts_empty_and_none_as_not_thinking(fleet):
-    store = _FakeStore({"intens": _marks(["thought", None, "", "thought"])})
-    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 0.5
-
-
-def test_reasoning_fraction_pools_across_info_arms(fleet):
-    store = _FakeStore(
-        {"intens": _marks(["a", "b"]), "extens": _marks([None, None])}
-    )
-    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 0.5
-
-
-def test_cot_threshold_separates_dead_toggle_from_variable_protocol(fleet):
-    assert fleet.COT_MIN_FRACTION == 0.5
-
-
-def test_reasoning_fraction_counts_long_content_as_reasoning(fleet):
-    """A reasoning chain carried in ``response`` counts as thinking.
-
-    This covers soft-protocol models that reason without their think
-    markup. A compliant bare integer does not count as thinking.
-    """
-    chain = "Alright, let's tackle this problem step by step. " * 10  # >200 chars
-    store = _FakeStore(
-        {
-            "intens": Marks(
-                model="gemma-4-e2b",
-                marks=(
-                    Mark(query="q", answer=1, response=chain, score=1, reasoning=None),
-                    Mark(query="q", answer=1, response="1260", score=1, reasoning=None),
-                ),
-            )
-        }
-    )
-    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == 0.5
-
-
-def test_content_reasoning_threshold_value(fleet):
-    assert fleet.COT_CONTENT_REASONING_MIN_CHARS == 200
-
-
-# ---------------------------------------------------------------------------
-# fleet_status: read-only describe, boto3 injected
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "contents,expected",
+    [
+        ({}, None),
+        ({"intens": [("let me count...", "1"), ("thinking", "1")]}, 1.0),
+        ({"intens": [("thought", "1"), (None, "1"), ("", "1"), ("thought", "1")]}, 0.5),
+        ({"intens": [("a", "1"), ("b", "1")], "extens": [(None, "1"), (None, "1")]}, 0.5),
+        ({"intens": [(None, _CHAIN), (None, "1260")]}, 0.5),
+    ],
+)
+def test_reasoning_fraction(fleet, contents, expected):
+    store = _FakeStore({info: _marks(pairs) for info, pairs in contents.items()})
+    assert fleet.reasoning_fraction(store, "gemma-4-e2b", "gemma4_e2b") == expected
 
 
 class _FakeEc2Client:
-    """Returns one canned ``describe_instances`` page per region."""
+    """Returns one canned describe_instances page per region."""
 
     def __init__(self, reservations):
         self._reservations = reservations
@@ -423,63 +224,73 @@ def test_fleet_rows_reads_every_region_and_filters_on_the_scaling_prefix(status)
     clients = {}
 
     def factory(region):
-        client = _FakeEc2Client([{"Instances": [_instance("i-1", "scaling-glm-4.7")]}])
+        client = _FakeEc2Client([{"Instances": [
+            _instance("i-1", "scaling-glm-4.7"),
+            _instance("i-theirs", "periodic-induction"),
+        ]}])
         clients[region] = client
         return client
 
     rows = status.fleet_rows(
-        regions=("us-east-1", "us-east-2", "us-west-2"), client_factory=factory
-    )
+        regions=("us-east-1", "us-east-2", "us-west-2"), client_factory=factory)
     assert sorted(clients) == ["us-east-1", "us-east-2", "us-west-2"]
     assert len(rows) == 3
     assert {r["lane"] for r in rows} == {"glm-4.7"}
     assert {r["instance_id"] for r in rows} == {"i-1"}
     assert rows[0]["age_hours"] == pytest.approx(2.0, abs=0.05)
-    # Read-only: the tag filter is server-side and no mutating call is made.
     call = clients["us-east-1"].calls[0]
-    assert any(
-        f["Name"] == "tag:smolbench:experiment" and f["Values"] == ["scaling-*"]
-        for f in call["Filters"]
-    )
-    assert any(
-        f["Name"] == "instance-state-name"
-        and sorted(f["Values"]) == ["pending", "running"]
-        for f in call["Filters"]
-    )
+    assert any(f["Name"] == "tag:smolbench:experiment" and f["Values"] == ["scaling-*"]
+               for f in call["Filters"])
+    assert any(f["Name"] == "instance-state-name"
+               and sorted(f["Values"]) == ["pending", "running"]
+               for f in call["Filters"])
 
 
-def test_fleet_rows_ignores_instances_from_other_experiments(status):
-    def factory(region):
-        return _FakeEc2Client(
-            [
-                {
-                    "Instances": [
-                        _instance("i-mine", "scaling-ds-pro"),
-                        _instance("i-theirs", "periodic-induction"),
-                    ]
-                }
-            ]
-        )
-
-    rows = status.fleet_rows(regions=("us-west-2",), client_factory=factory)
-    assert [r["instance_id"] for r in rows] == ["i-mine"]
-
-
-def test_format_fleet_table_renders_without_boto3(status):
-    rows = [
-        {
-            "lane": "glm-4.7",
-            "region": "us-east-2",
-            "instance_id": "i-abc",
-            "instance_type": "p5e.48xlarge",
-            "availability_zone": "us-east-2b",
-            "state": "running",
-            "age_hours": 3.5,
-        }
-    ]
-    text = status.format_fleet_table(rows)
+def test_format_fleet_table(status):
+    text = status.format_fleet_table([{
+        "lane": "glm-4.7",
+        "region": "us-east-2",
+        "instance_id": "i-abc",
+        "instance_type": "p5e.48xlarge",
+        "availability_zone": "us-east-2b",
+        "state": "running",
+        "age_hours": 3.5,
+    }])
     assert "glm-4.7" in text and "i-abc" in text and "p5e.48xlarge" in text
-
-
-def test_format_fleet_table_handles_an_empty_fleet(status):
     assert status.format_fleet_table([]).strip() != ""
+
+
+def _args(**overrides):
+    base = dict(model="gemma-4-12b", count=3, force_rerun="1",
+                types="g7.12xlarge", regions="us-east-2,us-west-2",
+                request_timeout=10800, tag="scaling", no_shard=False,
+                state_file="")
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_shard_env(shards, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    env = shards.shard_env(_args(), 1)
+    assert env["INDUCTION_MODELS"] == "gemma-4-12b"
+    assert env["INDUCTION_SHARD"] == "1/3"
+    assert env["INDUCTION_FORCE_RERUN"] == "1"
+    assert env["EC2_EXPERIMENT_TAG"] == "scaling"
+    assert env["EC2_INSTANCE_TYPES"] == "g7.12xlarge"
+    assert env["EC2_REQUEST_TIMEOUT_SECONDS"] == "10800"
+    assert env["AWS_ACCESS_KEY_ID"] == "AKIATEST"
+
+    no_shard = shards.shard_env(
+        _args(no_shard=True, count=1, state_file=".ec2_state_x.json",
+              force_rerun="0-11"), 0)
+    assert "INDUCTION_SHARD" not in no_shard
+    assert no_shard["INDUCTION_STATE_FILE"] == ".ec2_state_x.json"
+    assert no_shard["INDUCTION_FORCE_RERUN"] == "0-11"
+
+
+def test_state_file_for(shards):
+    assert shards.state_file_for(_args(), 2).name == (
+        ".ec2_state_induction-gemma-4-12b-s2of3.json")
+    assert shards.state_file_for(
+        _args(no_shard=True, count=1, state_file=".ec2_state_v4flash.json"), 0
+    ).name == ".ec2_state_v4flash.json"

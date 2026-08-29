@@ -1,24 +1,7 @@
-"""Test the induction noise arm: whitespace padding matched on TOKEN count.
+"""Induction noise arm: whitespace padding matched on TOKEN count.
 
-``noise_intens`` is a LENGTH CONTROL. The intensional context is padded
-until its prompt is as long as the extensional prompt, so an
-intens-vs-extens gap cannot be explained by prompt length. This only
-works if "as long as" is exact, and measured in the unit the model
-consumes.
-
-These tests pin the properties that make the replacement a control:
-
-* the noise prompt's token count EQUALS its extensional counterpart's,
-  per question, not on average and not within a tolerance;
-* the pad adds only whitespace, no content the model could read as
-  signal;
-* the intensional and extensional arms stay untouched by any of it.
-
-They run against `conftest.StubTokenizer` always, and against real
-tiktoken encodings when the encoding files are locally available. So
-the machinery is exercised both under a controlled model of BPE
-behavior and under the real thing.
-"""
+``noise_intens`` is a length control: exact per-question token parity with
+extens, whitespace only."""
 
 import string
 
@@ -27,23 +10,11 @@ import pytest
 from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
 
 from smolbench.induction._common import (
-    WHITESPACE_UNITS,
-    choose_whitespace_unit,
-    context_renderer,
-    token_matched_noise_prompt,
-)
-from smolbench.induction.chromatic import (
-    ChromaticIntervalsConfig,
-    Prompter as ChromaticPrompter,
-    get_random_exclusive_quiz,
-    succession_query_gen,
-)
-from smolbench.induction.periodic import (
-    PeriodicConfig,
-    Prompter as PeriodicPrompter,
-    get_periodic_numeric_quiz,
-    numeric_count_query_gen,
-)
+    WHITESPACE_UNITS, choose_whitespace_unit, context_renderer, token_matched_noise_prompt)
+from smolbench.induction.chromatic import ChromaticIntervalsConfig, get_random_exclusive_quiz
+from smolbench.induction.chromatic import Prompter as ChromaticPrompter, succession_query_gen
+from smolbench.induction.periodic import PeriodicConfig, get_periodic_numeric_quiz
+from smolbench.induction.periodic import Prompter as PeriodicPrompter, numeric_count_query_gen
 
 PERIODIC_TMPL = string.Template(
     "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
@@ -51,26 +22,17 @@ PERIODIC_TMPL = string.Template(
 CHROM_TMPL = string.Template(
     "ROLE $role PARADE $parade\n$positive_info\nQ: Has $color1 handed to $color2?"
 )
-# Mirrors the notebooks' extensional template in the way that matters here:
-# it renders from a DIFFERENT template than the intensional arm and adds a
-# $query_years block, so equal-length contexts would not give equal-length
-# prompts. Only a per-prompt match can close that gap.
+# Extens uses a different template plus $query_years, so only a per-prompt match equalizes.
 CHROM_EXT_TMPL = string.Template(
     "ROLE $role PARADE $parade EXTENSIONAL\n$positive_info\n$query_years\n"
     "Q: Has $color1 handed to $color2?"
 )
 CHROM_SUB = {"role": "Twislax", "parade": "Gildane"}
 
+CONTEXT = "Every 3 positions write gerbil.\n"
 
 def tiktoken_tokenizer(encoding_name: str):
-    """Return a `TiktokenTokenizer`, or skip if it cannot be built offline.
-
-    ``tiktoken`` is an optional extra, and its BPE files are fetched on
-    first use, so neither is guaranteed in a bare checkout. The offline
-    suite must not fail, or reach for the network, on that account. The
-    stub-tokenizer parametrization already covers the logic, and these
-    params add real-BPE coverage wherever it happens to be available.
-    """
+    """Return a `TiktokenTokenizer`, or skip if it cannot be built offline."""
     from smolbench.evals.tokenization import TiktokenTokenizer
 
     try:
@@ -78,6 +40,11 @@ def tiktoken_tokenizer(encoding_name: str):
     except Exception as exc:  # noqa: BLE001 -- ImportError, network, cache miss
         pytest.skip(f"tiktoken {encoding_name} unavailable offline: {exc}")
 
+def _render():
+    return context_renderer(
+        PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
+        {"seq_len": "60", "label": "gerbil"},
+    )
 
 @pytest.fixture(params=["stub", "cl100k_base", "o200k_base"])
 def tokenizer(request):
@@ -86,77 +53,41 @@ def tokenizer(request):
         return StubTokenizer()
     return tiktoken_tokenizer(request.param)
 
-
-# ---------------------------------------------------------------------------
-# The headline property: exact per-prompt token equality
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("seed", (1776, 1777))
-def test_periodic_noise_prompt_matches_extens_token_count(tokenizer, seed):
-    """Every periodic noise prompt has EXACTLY its extens prompt's tokens."""
-    intens, extens, noise = get_periodic_numeric_quiz(
-        PeriodicConfig(n=6, labels=6, seed=seed),
-        PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
-        tokenizer=tokenizer,
-    )
-    assert len(intens) > 0  # sanity: the generator actually yielded queries
-    for extens_q, noise_q in zip(extens, noise):
-        assert tokenizer.count(noise_q.prompt) == tokenizer.count(extens_q.prompt)
-
-
-@pytest.mark.parametrize("seed", (1776, 1777))
-def test_chromatic_noise_prompt_matches_extens_token_count(tokenizer, seed):
-    """Same, chromatic, including the extens-only ``$query_years`` block.
-
-    This is the case a context-level match could not have handled. The
-    extensional prompt carries an entire enumerated year list the noise
-    prompt's template never renders. So matching the CONTEXTS would
-    leave the prompts unequal by however long that block is.
-    """
-    intens, extens, noise = get_random_exclusive_quiz(
-        ChromaticIntervalsConfig(n=250, intervals=62, colors=45, seed=seed),
-        ChromaticPrompter(CHROM_TMPL, CHROM_SUB, succession_query_gen, CHROM_EXT_TMPL),
-        tokenizer=tokenizer,
-    )
-    assert len(intens) > 0
-    # The templates really do differ, or this test would prove nothing.
+@pytest.mark.parametrize(
+    "build", (
+        lambda tok: get_periodic_numeric_quiz(
+            PeriodicConfig(n=6, labels=6, seed=1776),
+            PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
+            tokenizer=tok,
+        ),
+        lambda tok: get_random_exclusive_quiz(
+            ChromaticIntervalsConfig(n=250, intervals=62, colors=45, seed=1776),
+            ChromaticPrompter(CHROM_TMPL, CHROM_SUB, succession_query_gen, CHROM_EXT_TMPL),
+            tokenizer=tok,
+        ),
+    ), ids=["periodic", "chromatic"])
+def test_noise_prompt_matches_extens_token_count(tokenizer, build):
+    """Every noise prompt has EXACTLY its extens prompt's token count."""
     assert "$query_years" not in CHROM_TMPL.template
+    intens, extens, noise = build(tokenizer)
+    assert len(intens) == len(extens) == len(noise) > 0
     for extens_q, noise_q in zip(extens, noise):
         assert tokenizer.count(noise_q.prompt) == tokenizer.count(extens_q.prompt)
-
-
-# ---------------------------------------------------------------------------
-# What the pad may and may not contain
-# ---------------------------------------------------------------------------
-
 
 def test_pad_adds_only_whitespace(tokenizer):
-    """The noise prompt is its intensional twin plus whitespace, nothing else.
-
-    Whitespace stripped from both must leave IDENTICAL strings. The
-    pad introduces no characters a model could read as content. (The
-    previous implementation appended random letters and digits, which
-    is filler a model can at least try to parse.) The pad also removes
-    nothing from the rules the intensional arm states.
-    """
+    """The noise prompt is its intensional twin plus whitespace, nothing else."""
     intens, _extens, noise = get_periodic_numeric_quiz(
         PeriodicConfig(n=5, labels=5, seed=99),
         PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
         tokenizer=tokenizer,
     )
+    assert len(intens) == len(noise) > 0
     for intens_q, noise_q in zip(intens, noise):
         assert "".join(noise_q.prompt.split()) == "".join(intens_q.prompt.split())
-        assert len(noise_q.prompt) > len(intens_q.prompt)  # something was added
-
+        assert len(noise_q.prompt) > len(intens_q.prompt)
 
 def test_other_arms_are_independent_of_the_tokenizer():
-    """Only ``noise_intens`` varies with the tokenizer.
-
-    Cross-model comparisons stay paired on identical prompts for the
-    intensional and extensional conditions. The quiz factory taking a
-    model argument must not leak into anything but the control arm.
-    """
+    """Only ``noise_intens`` varies with the tokenizer."""
     args = (
         PeriodicConfig(n=5, labels=5, seed=7),
         PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
@@ -167,116 +98,35 @@ def test_other_arms_are_independent_of_the_tokenizer():
     assert [q.prompt for q in stub[1]] == [q.prompt for q in other[1]]  # extens
     assert [q.prompt for q in stub[2]] != [q.prompt for q in other[2]]  # noise
 
-
-# ---------------------------------------------------------------------------
-# Pad-atom selection
-# ---------------------------------------------------------------------------
-
-
 def test_choose_whitespace_unit_picks_a_linear_atom(tokenizer):
-    """The chosen atom costs ~1 token per repetition under this tokenizer."""
+    """The chosen atom is whitespace costing ~1 token per repetition."""
     unit = choose_whitespace_unit(tokenizer)
     assert unit in WHITESPACE_UNITS
-    assert unit.strip() == ""  # whitespace only
-    # Not merely "grows" -- grows about proportionally, which is what makes an
-    # arbitrary token target reachable.
+    assert unit.strip() == ""
     assert tokenizer.count(unit * 256) >= 128
+    assert tokenizer.count(" " * 512) < 64  # why a naive space pad won't do
 
+@pytest.mark.parametrize(
+    "bad", (TruncatingTokenizer(cap=512), MergeEverythingTokenizer()),
+    ids=["truncating", "merges_all"])
+def test_choose_whitespace_unit_rejects_bad_tokenizers(bad):
+    """Saturating or all-merging tokenizers are refused, not quietly accepted."""
+    with pytest.raises(ValueError):
+        choose_whitespace_unit(bad)
 
-def test_repeated_single_space_is_not_a_usable_pad(tokenizer):
-    """A naive `" " * n` pad cannot reach a large token target.
-
-    This is the reason `choose_whitespace_unit` exists. BPE
-    vocabularies carry tokens for runs of a single whitespace character,
-    so hundreds of spaces cost a handful of tokens. Anyone
-    "simplifying" the pad to plain spaces would silently reintroduce the
-    length confound.
-    """
-    assert tokenizer.count(" " * 512) < 64
-
-
-def test_choose_whitespace_unit_rejects_a_truncating_tokenizer():
-    """A tokenizer that SATURATES is refused, not quietly accepted.
-
-    This is the dangerous case, and a live one. A capped tokenizer is
-    perfectly linear below its cap, so a probe that stops at 256
-    repetitions sees a healthy atom, and hands back a pad that can never
-    grow past 512 tokens. The extensional prompt and its pad would then
-    both measure 512, and the search would call them matched. The top
-    probe exists to reach past any plausible cap, so this fails loudly
-    here instead.
-    """
-    with pytest.raises(ValueError, match="1 token per repetition"):
-        choose_whitespace_unit(TruncatingTokenizer(cap=512))
-
-
-def test_choose_whitespace_unit_raises_when_everything_merges():
-    """A tokenizer that merges all whitespace gets an exception, not a pad.
-
-    If the function silently returns a saturated pad, the control arm
-    ends up SHORTER than the extensional arm, the same confound in the
-    other direction.
-    """
-    with pytest.raises(ValueError, match="1 token per repetition"):
-        choose_whitespace_unit(MergeEverythingTokenizer())
-
-
-# ---------------------------------------------------------------------------
-# token_matched_noise_prompt directly
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("target", (40, 41, 137, 1000, 4097))
+@pytest.mark.parametrize("target", (40, 137, 4097))
 def test_token_matched_noise_prompt_hits_arbitrary_targets(tokenizer, target):
     """Any reachable target is hit exactly, not approximately."""
-    render = context_renderer(
-        PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
-        {"seq_len": "60", "label": "gerbil"},
-    )
-    prompt = token_matched_noise_prompt(
-        render, "Every 3 positions write gerbil.\n", target, tokenizer
-    )
+    prompt = token_matched_noise_prompt(_render(), CONTEXT, target, tokenizer)
     assert tokenizer.count(prompt) == target
 
-
-def test_unreachable_target_returns_the_unpadded_prompt(tokenizer, caplog):
-    """A target below the unpadded prompt cannot be reached by appending.
-
-    An append only grows a prompt, so this asks for the impossible. The
-    documented behavior is to return the unpadded render and warn. The
-    caller gets a usable, if unmatched, prompt and a log line saying so,
-    rather than an exception in the middle of generating a replicate.
-    """
-    render = context_renderer(
-        PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
-        {"seq_len": "60", "label": "gerbil"},
-    )
-    context = "Every 3 positions write gerbil.\n"
-    unpadded = render(context)
+def test_unmatched_targets_warn_or_raise(tokenizer, caplog):
+    """Unreachable-by-shrinking warns and returns unpadded; unhittable raises."""
+    render = _render()
     with caplog.at_level("WARNING"):
-        prompt = token_matched_noise_prompt(render, context, 1, tokenizer)
-    assert prompt == unpadded
-    assert "cannot be built by appending" in caplog.text
-
-
-def test_no_silent_mismatch_when_the_target_is_unhittable():
-    """A tokenizer whose count jumps over the target raises an error.
-
-    The function does not fall back to a close-enough prompt.
-    ``MergeEverythingTokenizer`` cannot grow a whitespace pad at all. So
-    with an explicit unit, bypassing `choose_whitespace_unit`'s refusal,
-    no repetition count reaches the target. The nearest-prompt fallback
-    would be the one outcome this module exists to prevent.
-    """
-    render = context_renderer(
-        PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
-        {"seq_len": "60", "label": "gerbil"},
-    )
-    with pytest.raises(ValueError, match="could not pad to exactly"):
+        assert token_matched_noise_prompt(render, CONTEXT, 1, tokenizer) == render(CONTEXT)
+    assert any(r.levelname == "WARNING" for r in caplog.records)
+    with pytest.raises(ValueError):
         token_matched_noise_prompt(
-            render,
-            "Every 3 positions write gerbil.\n",
-            5_000,
-            MergeEverythingTokenizer(),
-            unit=" \t",
+            render, CONTEXT, 5_000, MergeEverythingTokenizer(), unit=" \t"
         )

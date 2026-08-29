@@ -599,7 +599,7 @@ def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
     -----
     This function returns bare labels (``"endpoint"``, not
     ``f"endpoint {model}"``); ``tests/evals/test_aws_provision.py``'s
-    ``test_teardown_steps_order_and_calls`` pins that shape, and
+    ``test_provision_endpoint_happy_path_full_lifecycle`` pins that shape, and
     ``provision_endpoint``'s ``finally`` block formats the model name into
     its own log lines.
     """

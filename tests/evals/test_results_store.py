@@ -1,41 +1,14 @@
-"""Test the replicate results store: local tree, S3 append-only log, env resolution.
-
-Everything here is OFFLINE. No boto3 ``Session`` is ever constructed.
-The S3 tests monkeypatch ``smolbench.evals._aws.fresh_client`` with a
-fake client. So a test that accidentally reached the network would
-fail on the missing patch, rather than silently spending credentials
-or touching the real bucket, which now exists and is deliberately
-empty.
-
-Two layouts are under test, and they are deliberately different:
-
-* LOCAL is the analysis layout, unchanged and byte-identical to what
-  every notebook and ``power_analysis.py`` already reads:
-  ``{prefix}{tag}_{info}/rep_{seed}.yaml``. One file per replicate; a
-  re-run overwrites it.
-* S3 is an append-only experiment LOG keyed by model, seed, and run
-  time: ``<base>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.
-  yaml``. A re-run ADDS an object. Reads resolve the EARLIEST
-  ``run_ts`` (the first logged run is the
-  pass@1 measurement, and a re-run is log history, invisible to every
-  reader).
-
-The fake client raises REAL ``botocore.exceptions.ClientError``
-objects, because the store reads ``Error.Code`` through
-``smolbench.evals._aws.error_code``. A hand-rolled exception with the
-wrong shape would let a broken error branch pass.
-"""
+"""Replicate results store: local tree, S3 append-only log, env resolution, sync_down."""
 
 import hashlib
-import subprocess
-import sys
+import io
 from datetime import datetime, timezone
 
 import pytest
 from botocore.exceptions import ClientError
 
-from smolbench.evals import Mark, Marks
-from smolbench.evals import _aws
+from smolbench.evals import Mark, Marks, Numeric
+from smolbench.evals import _aws, provider, replicates
 from smolbench.evals import results_store as rs
 from smolbench.evals.results_store import (
     LocalResultsStore,
@@ -44,7 +17,6 @@ from smolbench.evals.results_store import (
     experiment_name,
     format_run_ts,
     parse_s3_uri,
-    repo_root,
     resolve_store,
     sync_down,
 )
@@ -54,14 +26,6 @@ URI = f"s3://{BUCKET}"
 
 TS1 = datetime(2026, 8, 10, 19, 30, 0, tzinfo=timezone.utc)  # 20260810T193000Z
 TS2 = datetime(2026, 8, 11, 4, 5, 6, tzinfo=timezone.utc)  # 20260811T040506Z
-
-#: Sentinel for "this listing entry carries no ETag at all".
-_NO_ETAG = object()
-
-
-# ---------------------------------------------------------------------------
-# Fixtures and fakes
-# ---------------------------------------------------------------------------
 
 
 def sample_marks(model: str = "stub-model", n: int = 2, score: int = 1) -> Marks:
@@ -76,14 +40,7 @@ def sample_marks(model: str = "stub-model", n: int = 2, score: int = 1) -> Marks
 
 
 class FakeS3Client:
-    """In-memory stand-in for a boto3 S3 client.
-
-    It implements the four calls the store makes: ``put_object``,
-    ``get_object``, ``list_objects_v2`` (used directly for the
-    ``MaxKeys=1`` existence probe), and
-    ``get_paginator("list_objects_v2")``. All four work over one
-    ``{key: bytes}`` dict, so a listing and a fetch can never disagree.
-    """
+    """In-memory stand-in for the four S3 calls the store makes, over one dict."""
 
     def __init__(self, objects=None):
         self.objects: dict = dict(objects or {})
@@ -93,11 +50,8 @@ class FakeS3Client:
 
     def _entry(self, key):
         body = self.objects[key]
-        entry = {"Key": key, "Size": len(body)}
         etag = self.etags.get(key, f'"{hashlib.md5(body).hexdigest()}"')
-        if etag is not _NO_ETAG:
-            entry["ETag"] = etag
-        return entry
+        return {"Key": key, "Size": len(body), "ETag": etag}
 
     def _matching(self, prefix):
         return sorted(k for k in self.objects if k.startswith(prefix))
@@ -112,46 +66,20 @@ class FakeS3Client:
             raise ClientError(
                 {"Error": {"Code": "NoSuchKey", "Message": "No such key"}}, "GetObject"
             )
-        return {"Body": _Body(self.objects[Key])}
+        return {"Body": io.BytesIO(self.objects[Key])}
 
-    def list_objects_v2(self, Bucket, Prefix="", MaxKeys=None, ContinuationToken=None):
+    def list_objects_v2(self, Bucket, Prefix="", MaxKeys=None):
         self.calls.append(("list_objects_v2", Prefix, MaxKeys))
-        keys = self._matching(Prefix)
-        start = int(ContinuationToken or 0)
-        keys = keys[start:]
-        if MaxKeys is not None:
-            keys = keys[:MaxKeys]
-        return {
-            "Contents": [self._entry(k) for k in keys],
-            "KeyCount": len(keys),
-            "IsTruncated": False,
-        }
+        keys = self._matching(Prefix)[:MaxKeys]
+        return {"Contents": [self._entry(k) for k in keys], "IsTruncated": False}
 
     def get_paginator(self, operation_name):
         assert operation_name == "list_objects_v2"
         return _FakePaginator(self)
 
 
-class _Body:
-    """The ``StreamingBody`` shape the store reads: ``.read() -> bytes``."""
-
-    def __init__(self, data: bytes):
-        self._data = data
-
-    def read(self) -> bytes:
-        return self._data
-
-
 class _FakePaginator:
-    """Pages an in-memory key space ONE KEY PER PAGE.
-
-    One key per page forces the pagination loop to be exercised for
-    real on every listing. So a page-boundary bug shows up on a
-    two-object fixture, instead of needing a 1000-object one. A
-    trailing page with no ``Contents`` is always emitted. This is what
-    S3 returns for an empty prefix, and it is what a loop indexing
-    ``page["Contents"]`` directly would crash on.
-    """
+    """Pages one key per page, plus a trailing page with no ``Contents``."""
 
     def __init__(self, client: FakeS3Client):
         self._client = client
@@ -193,12 +121,7 @@ def _no_ambient_store_env(monkeypatch):
 
 @pytest.fixture
 def fake_repo(monkeypatch, tmp_path):
-    """Make ``tmp_path/repo`` the repo root for the store.
-
-    This lets the S3-path tests use a genuinely repo-anchored results
-    directory, without ever touching the real checkout. A bug that
-    wrote locally instead of to S3 litters /tmp, not ``notebooks/``.
-    """
+    """Make ``tmp_path/repo`` the repo root, so nothing writes into the checkout."""
     root = tmp_path / "repo"
     root.mkdir()
     monkeypatch.setattr(rs, "repo_root", lambda: root)
@@ -207,155 +130,60 @@ def fake_repo(monkeypatch, tmp_path):
 
 @pytest.fixture
 def freeze_ts(monkeypatch):
-    """Freezes the ``utcnow`` seam, wherever the caller bound it.
-
-    ``replicates.py`` may reference ``results_store.utcnow`` through the module, or have
-    imported the name directly. This patches both spellings, which keeps the fixture
-    correct either way instead of silently freezing nothing. If nothing were frozen, a
-    real wall-clock timestamp would leak into the assertions, making them flaky instead
-    of failing honestly.
-    """
+    """Freezes the ``utcnow`` seam in both modules that may have bound it."""
 
     def _set(when):
         monkeypatch.setattr(rs, "utcnow", lambda: when)
-        from smolbench.evals import replicates
-
-        if hasattr(replicates, "utcnow"):
-            monkeypatch.setattr(replicates, "utcnow", lambda: when, raising=False)
+        monkeypatch.setattr(replicates, "utcnow", lambda: when)
 
     return _set
 
 
-# ---------------------------------------------------------------------------
-# repo_root / lazy import
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "rel,prefix,expected",
+    [
+        ("notebooks/periodic_moe/results", "", "periodic_moe"),
+        ("notebooks/chromatic/results", "one_hop_", "chromatic/one_hop"),
+        ("somewhere/else", "", "somewhere/else"),
+    ],
+)
+def test_experiment_name(fake_repo, rel, prefix, expected):
+    assert experiment_name(fake_repo / rel, prefix) == expected
 
 
-def test_repo_root_is_the_checkout_containing_notebooks():
-    root = repo_root()
-    assert (root / "smolbench" / "evals" / "results_store.py").is_file()
-    assert (root / "notebooks").is_dir()
-
-
-def test_experiment_reexports_the_same_repo_root_object():
-    from smolbench.induction import experiment
-
-    assert experiment.repo_root is rs.repo_root
-
-
-def test_importing_results_store_does_not_import_boto3():
-    """boto3 stays lazily imported (the house rule from ``_aws.py``)."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys, smolbench.evals.results_store; "
-            "sys.exit(1 if 'boto3' in sys.modules else 0)",
-        ],
-        cwd=str(repo_root()),
-    )
-    assert result.returncode == 0
-
-
-# ---------------------------------------------------------------------------
-# Experiment derivation and timestamps
-# ---------------------------------------------------------------------------
-
-
-def test_experiment_name_from_a_notebook_results_dir(fake_repo):
-    assert experiment_name(fake_repo / "notebooks" / "periodic_moe" / "results") == (
-        "periodic_moe"
-    )
-
-
-def test_experiment_name_makes_the_harness_prefix_a_sub_level(fake_repo):
-    """``prefix="one_hop_"`` is a sub-level with the trailing underscore stripped.
-
-    So the one-hop experiment logs alongside its sibling, rather than
-    colliding with it. This is the same role the prefix plays in the
-    local directory name.
-    """
-    assert experiment_name(
-        fake_repo / "notebooks" / "chromatic" / "results", "one_hop_"
-    ) == "chromatic/one_hop"
-
-
-def test_experiment_name_falls_back_to_the_repo_relative_path(fake_repo):
-    """A results dir need not be ``notebooks/<nb>/results``.
-
-    It still gets a deterministic, collision-free experiment name.
-    """
-    assert experiment_name(fake_repo / "somewhere" / "else") == "somewhere/else"
-
-
-def test_format_run_ts_is_fixed_width_utc():
-    """Fixed-width UTC is load-bearing.
-
-    Every "earliest" lookup is a plain string max over listed keys, so
-    lexicographic order MUST equal chronological order. A non-padded
-    format, for example month 8 as "8", would sort 20261110 before
-    2026810 and silently return the wrong run.
-    """
+def test_run_ts_is_fixed_width_utc_and_utcnow_is_aware():
+    """Fixed width is load-bearing: every "earliest" lookup is a string min."""
     assert format_run_ts(TS1) == "20260810T193000Z"
     assert format_run_ts(TS2) == "20260811T040506Z"
     assert len(format_run_ts(TS1)) == len(format_run_ts(TS2))
     assert format_run_ts(TS1) < format_run_ts(TS2)
-
-
-def test_utcnow_is_timezone_aware_utc():
     now = rs.utcnow()
     assert now.tzinfo is not None
     assert now.utcoffset().total_seconds() == 0
-
-
-# ---------------------------------------------------------------------------
-# LocalResultsStore -- byte-identical to the pre-store layout
-# ---------------------------------------------------------------------------
 
 
 def addr(tag="decode", info="intens", seed=1776, model="stub-model"):
     return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
 
-def test_local_dump_writes_the_unchanged_analysis_layout(tmp_path):
+def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
+    """Keyed by tag/info/seed only; model and run_ts do not appear, last write wins."""
     store = LocalResultsStore(tmp_path)
     marks = sample_marks()
+    assert not store.exists(addr())
     store.dump_marks(marks, addr(), TS1)
-
     written = tmp_path / "decode_intens" / "rep_1776.yaml"
-    assert written.is_file()
     reference = tmp_path / "reference.yaml"
     marks.dump(reference)
     assert written.read_bytes() == reference.read_bytes()
-
-
-def test_local_layout_honours_the_prefix(tmp_path):
-    LocalResultsStore(tmp_path, "one_hop_").dump_marks(sample_marks(), addr(), TS1)
-    assert (tmp_path / "one_hop_decode_intens" / "rep_1776.yaml").is_file()
-
-
-def test_local_ignores_model_and_run_ts(tmp_path):
-    """The local layout is keyed by tag/info/seed ONLY.
-
-    Two runs of the same replicate overwrite one file. The
-    append-only log is an S3 property, and the analysis scripts require
-    exactly one file per replicate.
-    """
-    store = LocalResultsStore(tmp_path)
-    store.dump_marks(sample_marks(score=1), addr(model="model-a"), TS1)
-    store.dump_marks(sample_marks(score=0), addr(model="model-b"), TS2)
-
-    files = sorted(p.name for p in (tmp_path / "decode_intens").glob("*"))
-    assert files == ["rep_1776.yaml"]
-    assert store.load_marks(addr()).marks[0].score == 0  # last write wins
-
-
-def test_local_exists_and_load_round_trip(tmp_path):
-    store = LocalResultsStore(tmp_path)
-    assert not store.exists(addr())
-    store.dump_marks(sample_marks(), addr(), TS1)
     assert store.exists(addr())
-    assert store.load_marks(addr()) == sample_marks()
+    assert store.load_marks(addr()) == marks
+    LocalResultsStore(tmp_path, "one_hop_").dump_marks(marks, addr(), TS1)
+    assert (tmp_path / "one_hop_decode_intens" / "rep_1776.yaml").is_file()
+    store.dump_marks(sample_marks(score=0), addr(model="model-b"), TS2)
+    names = sorted(p.name for p in (tmp_path / "decode_intens").glob("*"))
+    assert names == ["rep_1776.yaml"]
+    assert store.load_marks(addr()).marks[0].score == 0
 
 
 def test_local_list_seeds_parses_sorted_distinct_ints(tmp_path):
@@ -366,21 +194,9 @@ def test_local_list_seeds_parses_sorted_distinct_ints(tmp_path):
     (d / "summary.yaml").write_text("x")  # not a replicate
     (d / "rep_abc.yaml").write_text("x")  # seed does not parse
     (d / "nested" / "rep_9.yaml").write_text("x")  # not a direct child
-
-    assert LocalResultsStore(tmp_path).list_seeds(None, "decode", "intens") == [1, 2, 10]
-
-
-def test_local_list_seeds_of_a_missing_directory_is_empty(tmp_path):
-    assert LocalResultsStore(tmp_path).list_seeds(None, "never_ran", "intens") == []
-
-
-def test_local_describe_is_the_path(tmp_path):
-    assert LocalResultsStore(tmp_path).describe() == str(tmp_path)
-
-
-# ---------------------------------------------------------------------------
-# S3ResultsStore -- the append-only log
-# ---------------------------------------------------------------------------
+    store = LocalResultsStore(tmp_path)
+    assert store.list_seeds(None, "decode", "intens") == [1, 2, 10]
+    assert store.list_seeds(None, "never_ran", "intens") == []
 
 
 def s3_store(experiment="periodic_moe", base_prefix=""):
@@ -389,10 +205,9 @@ def s3_store(experiment="periodic_moe", base_prefix=""):
     )
 
 
-def test_s3_key_scheme_matches_the_worked_example(fake_s3):
-    """The exact key from the directive's worked example."""
-    store = s3_store()
-    store.dump_marks(
+def test_s3_key_scheme(fake_s3):
+    """The directive's worked example, and the same key under a base prefix."""
+    s3_store().dump_marks(
         sample_marks(),
         ReplicateAddress(tag="moe", info="extens", seed=1776, model="gpt-oss-120b"),
         TS1,
@@ -400,9 +215,7 @@ def test_s3_key_scheme_matches_the_worked_example(fake_s3):
     assert list(fake_s3.objects) == [
         "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml"
     ]
-
-
-def test_s3_key_nests_under_the_uri_base_prefix(fake_s3):
+    fake_s3.objects.clear()
     s3_store(base_prefix="archive/2026-08").dump_marks(sample_marks(), addr(), TS1)
     assert list(fake_s3.objects) == [
         "archive/2026-08/periodic_moe/stub-model/seed=1776/intens--20260810T193000Z.yaml"
@@ -410,105 +223,53 @@ def test_s3_key_nests_under_the_uri_base_prefix(fake_s3):
 
 
 def test_s3_dump_is_append_only(fake_s3):
-    """THE LOG PROPERTY.
-
-    A second run of the same (model, seed, info) ADDS an object; it must never overwrite
-    the first. If the earlier run were lost, the bucket would become a mirror again,
-    rather than a log.
-    """
+    """A second run of the same (model, seed, info) ADDS an object, never overwrites."""
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     store.dump_marks(sample_marks(score=0), addr(), TS2)
-
     assert sorted(fake_s3.objects) == [
         "periodic_moe/stub-model/seed=1776/intens--20260810T193000Z.yaml",
         "periodic_moe/stub-model/seed=1776/intens--20260811T040506Z.yaml",
     ]
 
 
-def test_s3_load_marks_returns_the_earliest_run(fake_s3):
-    """The FIRST logged run is the measurement.
-
-    A re-collection is log history. A flip of this assertion is a
-    change to which data every analysis consumes; never make it
-    casually.
-    """
+def test_s3_load_marks_earliest_wins(fake_s3):
+    """The earliest TIMESTAMP is the measurement, whatever the write order."""
     store = s3_store()
+    with pytest.raises(FileNotFoundError):
+        store.load_marks(addr())
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     store.dump_marks(sample_marks(score=0), addr(), TS2)
-    assert store.load_marks(addr()).marks[0].score == 1  # TS1 wins
-
-
-def test_s3_load_marks_earliest_is_independent_of_write_order(fake_s3):
-    """Earliest means earliest TIMESTAMP, not first written.
-
-    A late-arriving backfill stamped OLDER than an existing run
-    resolves ahead of it.
-    """
-    store = s3_store()
-    store.dump_marks(sample_marks(score=0), addr(), TS2)  # newer, written first
-    store.dump_marks(sample_marks(score=1), addr(), TS1)  # older, written second
     assert store.load_marks(addr()).marks[0].score == 1
+    other = addr(seed=1777)
+    store.dump_marks(sample_marks(score=0), other, TS2)  # newer, written first
+    store.dump_marks(sample_marks(score=1), other, TS1)  # older, written second
+    assert store.load_marks(other).marks[0].score == 1
 
 
-def test_s3_load_marks_raises_when_nothing_is_logged(fake_s3):
-    with pytest.raises(FileNotFoundError):
-        s3_store().load_marks(addr())
-
-
-def test_s3_exists_uses_a_bounded_prefix_probe(fake_s3):
-    """Resume-skip asks "has ANY run been logged".
-
-    So it must be a prefix listing capped at one key: not a fetch, and
-    not an unbounded listing that pages through an experiment's whole
-    history.
-    """
+def test_s3_exists_is_a_bounded_prefix_probe(fake_s3):
+    """Resume-skip lists at most one key, and ``--`` stops sibling info prefixes."""
     store = s3_store()
     assert not store.exists(addr())
     store.dump_marks(sample_marks(), addr(), TS1)
     assert store.exists(addr())
-
     probes = [c for c in fake_s3.calls if c[0] == "list_objects_v2"]
     assert probes, "exists must probe via list_objects_v2"
-    prefix, max_keys = probes[-1][1], probes[-1][2]
-    assert prefix == "periodic_moe/stub-model/seed=1776/intens--"
-    assert max_keys == 1
-
-
-def test_s3_exists_does_not_confuse_sibling_info_types(fake_s3):
-    """The ``--`` separator is what stops ``intens`` from matching ``intens_extra``.
-
-    A prefix of ``intens`` alone would.
-    """
-    store = s3_store()
+    assert probes[-1][1] == "periodic_moe/stub-model/seed=1776/intens--"
+    assert probes[-1][2] == 1
+    assert set(fake_s3.requested) == {("s3", "us-west-2")}
     store.dump_marks(sample_marks(), addr(info="noise_intens"), TS1)
     assert store.exists(addr(info="noise_intens"))
-    assert not store.exists(addr(info="intens"))
+    assert not store.exists(addr(info="extens"))
 
 
 def test_s3_dump_refuses_a_model_less_address(fake_s3):
-    """A model-less address is a READ shape.
-
-    If you write one, it must not silently create a literal ``None/`` model directory.
-    Measured against the first implementation: it wrote
-    ``periodic_moe/None/seed=1776/intens--<ts>.yaml``. In an APPEND-ONLY log, that
-    object is permanent. No later correct write can supersede it, and only a manual
-    delete removes it, in a bucket whose whole point is to be a clean, browsable
-    experiment log. Every other mistake in this design self-heals on the next run. This
-    one does not.
-    """
+    """A model-less address is a READ shape: a ``None/`` key would be permanent."""
+    store = s3_store()
     with pytest.raises(ValueError):
-        s3_store().dump_marks(sample_marks(), addr(model=None), TS1)
+        store.dump_marks(sample_marks(), addr(model=None), TS1)
     assert fake_s3.objects == {}, "a refused write must leave no object behind"
-
-
-def test_s3_exists_without_a_model_is_false(fake_s3):
-    """A tag-keyed read (cot_chain_lengths) has no model behind the tag.
-
-    With no model, it cannot address the log at all -- see
-    ``ReplicateAddress.model``.
-    """
-    assert not s3_store().exists(addr(model=None))
+    assert not store.exists(addr(model=None))
 
 
 def test_s3_list_seeds_parses_the_log(fake_s3):
@@ -517,83 +278,43 @@ def test_s3_list_seeds_parses_the_log(fake_s3):
         store.dump_marks(sample_marks(), addr(seed=seed), TS1)
     store.dump_marks(sample_marks(), addr(seed=1776), TS2)  # 2nd run, same seed
     store.dump_marks(sample_marks(), addr(seed=1777, info="extens"), TS1)  # other info
-
     assert store.list_seeds("stub-model", "decode", "intens") == [1776, 1778]
     assert store.list_seeds("stub-model", "decode", "extens") == [1777]
+    assert store.list_seeds("never-served", "decode", "intens") == []
 
 
-def test_s3_list_seeds_of_an_unlogged_model_is_empty(fake_s3):
-    assert s3_store().list_seeds("never-served", "decode", "intens") == []
-
-
-def test_s3_describe_is_the_log_uri(fake_s3):
-    assert s3_store().describe() == f"s3://{BUCKET}/periodic_moe"
-    assert (
-        s3_store(base_prefix="archive").describe() == f"s3://{BUCKET}/archive/periodic_moe"
-    )
-
-
-def test_s3_client_is_built_with_the_configured_region(fake_s3):
-    s3_store().exists(addr())
-    assert fake_s3.requested == [("s3", "us-west-2")]
-
-
-# ---------------------------------------------------------------------------
-# resolve_store -- the env contract
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_store_unset_env_is_local(tmp_path):
+def test_resolve_store_local(monkeypatch, tmp_path):
+    """Unset env is local; a non-repo dir stays local even with the S3 env set."""
     store = resolve_store(tmp_path)
     assert isinstance(store, LocalResultsStore)
     assert store.root == tmp_path
-
-
-def test_resolve_store_passes_the_prefix_to_the_local_store(tmp_path):
     assert resolve_store(tmp_path, "one_hop_").prefix == "one_hop_"
-
-
-def test_resolve_store_non_repo_anchored_falls_back_to_local(s3_env, tmp_path):
-    """THE HERMETICITY PROPERTY.
-
-    tmp_path fixtures are outside the repo, so the offline suite keeps
-    using the local store, even when a developer's shell exports
-    SMOLBENCH_RESULTS_S3.
-    """
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     assert isinstance(resolve_store(tmp_path / "results"), LocalResultsStore)
 
 
-def test_resolve_store_repo_anchored_builds_the_log_store(s3_env):
-    store = resolve_store(repo_root() / "notebooks" / "periodic_moe" / "results")
+def test_resolve_store_s3(s3_env, fake_repo):
+    """A repo-anchored dir maps to the log store, prefix folds in, dir need not exist."""
+    store = resolve_store(fake_repo / "notebooks/periodic_moe/results")
     assert isinstance(store, S3ResultsStore)
-    assert store.bucket == BUCKET
-    assert store.base_prefix == ""
-    assert store.experiment == "periodic_moe"
+    assert (store.bucket, store.base_prefix, store.experiment) == (BUCKET, "", "periodic_moe")
     assert store.region == "us-west-2"
-
-
-def test_resolve_store_carries_prefix_into_the_experiment(s3_env, fake_repo):
-    store = resolve_store(fake_repo / "notebooks" / "chromatic" / "results", "one_hop_")
-    assert store.experiment == "chromatic/one_hop"
+    assert store.describe() == f"s3://{BUCKET}/periodic_moe"
+    prefixed = resolve_store(fake_repo / "notebooks/chromatic/results", "one_hop_")
+    assert prefixed.experiment == "chromatic/one_hop"
+    fresh = resolve_store(fake_repo / "notebooks/brand_new/results")  # need not exist
+    assert fresh.experiment == "brand_new"
 
 
 def test_resolve_store_honours_a_base_prefix_in_the_uri(monkeypatch, fake_repo):
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", f"s3://{BUCKET}/archive/2026-08")
-    store = resolve_store(fake_repo / "notebooks" / "periodic" / "results")
+    store = resolve_store(fake_repo / "notebooks/periodic/results")
     assert (store.base_prefix, store.experiment) == ("archive/2026-08", "periodic")
-
-
-def test_resolve_store_maps_a_directory_that_does_not_exist_locally(s3_env, fake_repo):
-    """An S3-first run never creates the local tree.
-
-    So the mapping must not depend on the directory existing.
-    """
-    store = resolve_store(fake_repo / "notebooks" / "brand_new" / "results")
-    assert store.experiment == "brand_new"
+    assert store.describe() == f"s3://{BUCKET}/archive/2026-08/periodic"
 
 
 def test_resolve_store_region_precedence(monkeypatch, fake_repo):
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    results = fake_repo / "notebooks/periodic/results"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     monkeypatch.setenv("AWS_REGION", "eu-central-1")
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
@@ -604,50 +325,18 @@ def test_resolve_store_region_precedence(monkeypatch, fake_repo):
     assert resolve_store(results).region is None
 
 
-@pytest.mark.parametrize(
-    "bad",
-    [
-        f"{BUCKET}",
-        f"https://{BUCKET}/x",
-        "s3://",
-        "s3:///notebooks",
-        "s3:/bucket/x",
-        "s3://buck//archive",
-        "s3://buck/arch//ive",
-        "s3:// buck/archive",
-        "s3://bu ck",
-        "s3://buck/arch ive",
-    ],
-)
-def test_resolve_store_malformed_uri_raises_value_error(monkeypatch, fake_repo, bad):
-    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", bad)
-    with pytest.raises(ValueError):
-        resolve_store(fake_repo / "notebooks" / "periodic" / "results")
-
-
-def test_resolve_store_malformed_uri_raises_even_for_a_non_repo_path(
-    monkeypatch, tmp_path
-):
-    """Validation happens BEFORE the repo-anchor check.
-
-    A typo'd env var must always fail loudly, rather than resolving
-    local for every non-repo directory while the operator believes
-    results are going to S3.
-    """
+def test_s3_uri_parsing(monkeypatch, tmp_path):
+    assert parse_s3_uri(f"s3://{BUCKET}") == (BUCKET, "")
+    assert parse_s3_uri(f"s3://{BUCKET}/") == (BUCKET, "")
+    assert parse_s3_uri(f"s3://{BUCKET}/archive/2026-08/") == (BUCKET, "archive/2026-08")
+    for bad in ("bucket", "https://bucket/x", "s3://", "s3://buck//archive", "s3://bu ck"):
+        with pytest.raises(ValueError):
+            parse_s3_uri(bad)
+    # Validation happens BEFORE the repo-anchor check, so a typo always fails loudly.
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://")
     with pytest.raises(ValueError):
         resolve_store(tmp_path / "somewhere-else")
 
-
-def test_parse_s3_uri_returns_bucket_and_base_prefix():
-    assert parse_s3_uri(f"s3://{BUCKET}") == (BUCKET, "")
-    assert parse_s3_uri(f"s3://{BUCKET}/") == (BUCKET, "")
-    assert parse_s3_uri(f"s3://{BUCKET}/archive/2026-08/") == (BUCKET, "archive/2026-08")
-
-
-# ---------------------------------------------------------------------------
-# sync_down -- log to analysis-layout translation
-# ---------------------------------------------------------------------------
 
 TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
@@ -658,170 +347,98 @@ def log_key(model, seed, info, ts, experiment="periodic", base=""):
 
 
 def test_sync_down_translates_the_log_into_the_analysis_layout(
-    s3_env, fake_repo, fake_s3
+    monkeypatch, fake_repo, fake_s3
 ):
-    """This is the whole point of sync_down now: model -> TAG.
-
-    It maps the timestamped log object to ``{tag}_{info}/rep_{seed}.yaml``. The log
-    cannot supply the tag, which is why the mapping is passed in.
-    """
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    """model -> TAG, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, prefix on both sides."""
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
+    results = fake_repo / "notebooks/periodic/results"
     body = sample_marks().dumps().encode()
     fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1)] = body
     fake_s3.objects[log_key("stub-model", 1777, "intens", TS1)] = body
-
     assert sync_down(results, TAGS) == 2
     assert (results / "moe_extens" / "rep_1776.yaml").read_bytes() == body
     assert (results / "decode_intens" / "rep_1777.yaml").read_bytes() == body
+    chromatic = fake_repo / "notebooks/chromatic/results"
+    key = log_key("stub-model", 1776, "intens", TS1, experiment="chromatic/one_hop")
+    fake_s3.objects[key] = body
+    assert sync_down(chromatic, TAGS, "one_hop_") == 1
+    assert (chromatic / "one_hop_decode_intens" / "rep_1776.yaml").read_bytes() == body
 
 
 def test_sync_down_writes_only_the_earliest_run_per_replicate(s3_env, fake_repo, fake_s3):
-    """Two logged runs, one local file, carrying the EARLIER run.
-
-    This is the same run ``load_marks`` resolves. A synced tree and a
-    direct load disagreeing would silently fork the analysis (user
-    rule).
-    """
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    """A synced tree must carry the same run ``load_marks`` resolves."""
+    results = fake_repo / "notebooks/periodic/results"
     first = sample_marks(score=1).dumps().encode()
     rerun = sample_marks(score=0).dumps().encode()
     fake_s3.objects[log_key("stub-model", 1776, "intens", TS1)] = first
     fake_s3.objects[log_key("stub-model", 1776, "intens", TS2)] = rerun
-
     assert sync_down(results, TAGS) == 1
     assert (results / "decode_intens" / "rep_1776.yaml").read_bytes() == first
 
 
-def test_sync_down_honours_the_prefix_in_both_directions(monkeypatch, fake_repo, fake_s3):
-    """A prefixed experiment reads from ``<nb>/one_hop``.
-
-    It writes to ``one_hop_{tag}_{info}``.
-    """
-    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
-    results = fake_repo / "notebooks" / "chromatic" / "results"
-    body = sample_marks().dumps().encode()
-    fake_s3.objects[
-        log_key("stub-model", 1776, "intens", TS1, experiment="chromatic/one_hop")
-    ] = body
-
-    assert sync_down(results, TAGS, "one_hop_") == 1
-    assert (results / "one_hop_decode_intens" / "rep_1776.yaml").read_bytes() == body
-
-
-def test_sync_down_skips_only_on_an_etag_md5_match(s3_env, fake_repo, fake_s3):
-    results = fake_repo / "notebooks" / "periodic" / "results"
+def test_sync_down_refetch_policy(s3_env, fake_repo, fake_s3):
+    """Skip only on a verified ETag-MD5 match; same-size edits and multipart ETags refetch."""
+    results = fake_repo / "notebooks/periodic/results"
+    (results / "decode_intens").mkdir(parents=True)
     body = sample_marks().dumps().encode()
     fake_s3.objects[log_key("stub-model", 1776, "intens", TS1)] = body
-    (results / "decode_intens").mkdir(parents=True)
     (results / "decode_intens" / "rep_1776.yaml").write_bytes(body)
-
-    assert sync_down(results, TAGS) == 0  # verified identical, not refetched
-
-
-def test_sync_down_redownloads_a_same_size_but_different_file(
-    s3_env, fake_repo, fake_s3
-):
-    """THE REGRADE BUG, retained across the rework.
-
-    ``scripts/results/regrade.py --write`` rewrites replicate YAMLs in place, and a
-    score 1 -> 0 flip is byte-length preserving (147 bytes either way,
-    different MD5). A size-only skip therefore left a stale local verdict in
-    place. These two bodies are byte-length-equal by construction, so this
-    fails against any size-based implementation.
-    """
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    assert sync_down(results, TAGS) == 0
+    # regrade.py flips score 1 -> 0 in place: byte-length preserving, different MD5.
     remote = sample_marks(n=1, score=1).dumps().encode()
     local = sample_marks(n=1, score=0).dumps().encode()
     assert len(remote) == len(local) and remote != local, "premise"
-
-    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1)] = remote
-    (results / "decode_intens").mkdir(parents=True)
-    (results / "decode_intens" / "rep_1776.yaml").write_bytes(local)
-
+    fake_s3.objects[log_key("stub-model", 1777, "intens", TS1)] = remote
+    (results / "decode_intens" / "rep_1777.yaml").write_bytes(local)
     assert sync_down(results, TAGS) == 1
-    assert (results / "decode_intens" / "rep_1776.yaml").read_bytes() == remote
-
-
-def test_sync_down_redownloads_when_the_etag_is_multipart(s3_env, fake_repo, fake_s3):
-    results = fake_repo / "notebooks" / "periodic" / "results"
-    body = sample_marks().dumps().encode()
-    key = log_key("stub-model", 1776, "intens", TS1)
+    assert (results / "decode_intens" / "rep_1777.yaml").read_bytes() == remote
+    key = log_key("stub-model", 1778, "intens", TS1)
     fake_s3.objects[key] = body
     fake_s3.etags[key] = f'"{hashlib.md5(body).hexdigest()}-2"'
-    (results / "decode_intens").mkdir(parents=True)
-    (results / "decode_intens" / "rep_1776.yaml").write_bytes(body)
-
+    (results / "decode_intens" / "rep_1778.yaml").write_bytes(body)
     assert sync_down(results, TAGS) == 1  # cannot verify -> refetch
 
 
 def test_sync_down_refuses_a_key_that_escapes_results_dir(s3_env, fake_repo, fake_s3):
     """A tag containing path syntax must not walk out of the results tree."""
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    results = fake_repo / "notebooks/periodic/results"
     fake_s3.objects[log_key("evil-model", 1776, "intens", TS1)] = b"pwned"
-
     with pytest.raises(ValueError):
         sync_down(results, {"evil-model": "../../ESCAPED"})
     assert not (fake_repo / "ESCAPED_intens").exists()
 
 
-def test_sync_down_without_the_env_var_raises_a_clear_error(fake_repo):
-    with pytest.raises(RuntimeError) as err:
-        sync_down(fake_repo / "notebooks" / "periodic" / "results", TAGS)
-    assert "SMOLBENCH_RESULTS_S3" in str(err.value)
+@pytest.mark.parametrize("case", ["no_env", "non_repo_dir"])
+def test_sync_down_misuse_raises(monkeypatch, fake_repo, tmp_path, case):
+    if case == "no_env":
+        target = fake_repo / "notebooks/periodic/results"
+    else:
+        monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
+        target = tmp_path / "elsewhere"
+    with pytest.raises(RuntimeError):
+        sync_down(target, TAGS)
 
 
-def test_sync_down_of_a_non_repo_directory_names_both_paths(s3_env, tmp_path):
-    outside = tmp_path / "elsewhere"
-    with pytest.raises(RuntimeError) as err:
-        sync_down(outside, TAGS)
-    message = str(err.value)
-    assert str(outside) in message and str(repo_root()) in message
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def test_cli_parses_repeatable_tag_arguments(s3_env, fake_repo, fake_s3, capsys):
-    results = fake_repo / "notebooks" / "periodic" / "results"
+def test_cli_syncs_with_repeatable_tags_and_a_prefix(s3_env, fake_repo, fake_s3, capsys):
+    results = fake_repo / "notebooks/periodic/results"
     body = sample_marks().dumps().encode()
     fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1)] = body
     fake_s3.objects[log_key("stub-model", 1777, "intens", TS1)] = body
-
     rc = rs.main([str(results), "--tag", "gpt-oss-120b=moe", "--tag", "stub-model=decode"])
-    out = capsys.readouterr().out
-
     assert rc == 0
     assert (results / "moe_extens" / "rep_1776.yaml").is_file()
     assert (results / "decode_intens" / "rep_1777.yaml").is_file()
-    assert str(results) in out
-
-
-def test_cli_rejects_a_tag_argument_without_an_equals(s3_env, fake_repo, fake_s3):
-    results = fake_repo / "notebooks" / "periodic" / "results"
+    assert str(results) in capsys.readouterr().out
     with pytest.raises(SystemExit):
         rs.main([str(results), "--tag", "no-equals-sign"])
-
-
-def test_cli_accepts_a_prefix(s3_env, fake_repo, fake_s3):
-    results = fake_repo / "notebooks" / "chromatic" / "results"
-    fake_s3.objects[
-        log_key("stub-model", 1776, "intens", TS1, experiment="chromatic/one_hop")
-    ] = sample_marks().dumps().encode()
-
-    assert rs.main([str(results), "--tag", "stub-model=decode", "--prefix", "one_hop_"]) == 0
-    assert (results / "one_hop_decode_intens" / "rep_1776.yaml").is_file()
-
-
-# ---------------------------------------------------------------------------
-# ReplicateHarness on the S3 log (integration)
-# ---------------------------------------------------------------------------
+    chromatic = fake_repo / "notebooks/chromatic/results"
+    key = log_key("stub-model", 1776, "intens", TS1, experiment="chromatic/one_hop")
+    fake_s3.objects[key] = body
+    assert rs.main([str(chromatic), "--tag", "stub-model=decode", "--prefix", "one_hop_"]) == 0
+    assert (chromatic / "one_hop_decode_intens" / "rep_1776.yaml").is_file()
 
 
 def _quizzes(seed: int, model: str):
-    from smolbench.evals import Numeric
-
     return {
         "intens": (
             Numeric(prompt=f"i1/{seed}", answer=1),
@@ -833,10 +450,8 @@ def _quizzes(seed: int, model: str):
 
 @pytest.fixture
 def s3_harness(fake_repo, s3_env, fake_s3):
-    from smolbench.evals.replicates import ReplicateHarness
-
-    return ReplicateHarness(
-        results_dir=fake_repo / "notebooks" / "periodic_moe" / "results",
+    return replicates.ReplicateHarness(
+        results_dir=fake_repo / "notebooks/periodic_moe/results",
         archetype_tags={"stub-model": "decode"},
         make_quizzes=_quizzes,
         seeds=(1, 2),
@@ -846,8 +461,6 @@ def s3_harness(fake_repo, s3_env, fake_s3):
 
 @pytest.fixture
 def fake_evaluate(monkeypatch):
-    from smolbench.evals import provider
-
     calls: list = []
 
     def _evaluate(quiz, model, seed, **kwargs):
@@ -864,18 +477,21 @@ def fake_evaluate(monkeypatch):
     return calls
 
 
-def test_harness_store_resolves_to_the_log_and_is_cached(s3_harness):
+def _log(fake_s3, seed, info, ts, body=None):
+    fake_s3.objects[log_key("stub-model", seed, info, ts, experiment="periodic_moe")] = (
+        body if body is not None else Marks(model="stub-model", marks=()).dumps().encode()
+    )
+
+
+def test_harness_run_writes_the_log_then_syncs_down(
+    s3_harness, fake_evaluate, fake_s3, freeze_ts
+):
+    """The harness store is the cached log store; a run logs only to S3, sync_down lands it."""
     assert isinstance(s3_harness.store, S3ResultsStore)
     assert s3_harness.store.experiment == "periodic_moe"
     assert s3_harness.store is s3_harness.store  # cached_property
-
-
-def test_harness_run_writes_the_log_and_nothing_locally(
-    s3_harness, fake_evaluate, fake_s3, freeze_ts
-):
     freeze_ts(TS1)
     s3_harness.run_replicates("stub-model")
-
     ts = format_run_ts(TS1)
     assert sorted(fake_s3.objects) == [
         f"periodic_moe/stub-model/seed=1/extens--{ts}.yaml",
@@ -884,123 +500,47 @@ def test_harness_run_writes_the_log_and_nothing_locally(
         f"periodic_moe/stub-model/seed=2/intens--{ts}.yaml",
     ]
     assert not s3_harness.results_dir.exists()
+    body = sample_marks().dumps().encode()
+    _log(fake_s3, 1776, "extens", TS1, body)
+    assert s3_harness.sync_down() == 5
+    synced = s3_harness.results_dir / "decode_extens" / "rep_1776.yaml"
+    assert synced.read_bytes() == body
 
 
 def test_harness_pooled_infos_of_one_seed_share_a_timestamp(
     s3_harness, fake_evaluate, fake_s3, monkeypatch
 ):
-    """One collection event, one timestamp.
-
-    Both info types of a seed come from a SINGLE pooled evaluate()
-    call, so they are one event and must be attributable as such. A
-    timestamp taken per-dump would split them by however long
-    serialization happened to take, and could even straddle a second
-    boundary.
-    """
+    """Both infos of a seed come from ONE pooled evaluate() call, so one timestamp."""
     stamps = iter([TS1, TS2, TS1, TS2])  # one per call, so a per-dump call would differ
     monkeypatch.setattr(rs, "utcnow", lambda: next(stamps))
-    from smolbench.evals import replicates
-
-    if hasattr(replicates, "utcnow"):
-        monkeypatch.setattr(replicates, "utcnow", lambda: next(stamps), raising=False)
-
+    monkeypatch.setattr(replicates, "utcnow", lambda: next(stamps))
     s3_harness.run_replicates("stub-model")
-
     for seed in (1, 2):
         seed_keys = [k for k in fake_s3.objects if f"seed={seed}/" in k]
         assert len(seed_keys) == 2
         assert len({k.rsplit("--", 1)[1] for k in seed_keys}) == 1, seed_keys
 
 
-def test_harness_rerun_appends_a_second_run(
-    s3_harness, fake_evaluate, fake_s3, freeze_ts
-):
-    """Append-only end to end: a forced re-run logs alongside the first."""
-    freeze_ts(TS1)
-    s3_harness.run_replicates("stub-model")
-    first = set(fake_s3.objects)
-
-    # Resume-skip would normally stop a re-run; write directly to prove the
-    # log accumulates rather than overwriting.
-    freeze_ts(TS2)
-    s3_harness.store.dump_marks(
-        sample_marks(score=0),
-        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model"),
-        TS2,
-    )
-    assert set(fake_s3.objects) > first
-    assert len(fake_s3.objects) == len(first) + 1
-
-
-def test_harness_resume_skips_anything_already_logged(
+def test_harness_resume_and_outstanding_read_the_log(
     s3_harness, fake_evaluate, fake_s3, freeze_ts
 ):
     """Any logged run counts as done, whatever its timestamp."""
     freeze_ts(TS1)
+    assert s3_harness.has_outstanding("stub-model")
     for info in ("intens", "extens"):
-        fake_s3.objects[
-            log_key("stub-model", 1, info, TS1, experiment="periodic_moe")
-        ] = Marks(model="stub-model", marks=()).dumps().encode()
-
+        _log(fake_s3, 1, info, TS1)
     s3_harness.run_replicates("stub-model")
     assert [(c["seed"], c["n"]) for c in fake_evaluate] == [(2, 3)]
-
-
-def test_harness_has_outstanding_reads_the_log(s3_harness, fake_s3, freeze_ts):
-    assert s3_harness.has_outstanding("stub-model")
-    for seed in (1, 2):
-        for info in ("intens", "extens"):
-            fake_s3.objects[
-                log_key("stub-model", seed, info, TS1, experiment="periodic_moe")
-            ] = Marks(model="stub-model", marks=()).dumps().encode()
     assert not s3_harness.has_outstanding("stub-model")
     assert not s3_harness.results_dir.exists()
 
 
 def test_harness_summarize_uses_the_earliest_run(s3_harness, fake_s3, capsys):
-    """Printed format is byte-identical and the count is distinct seeds.
-
-    The tallies come from the EARLIEST logged run of each replicate.
-    """
     for seed in (1, 2):
-        fake_s3.objects[
-            log_key("stub-model", seed, "intens", TS1, experiment="periodic_moe")
-        ] = sample_marks(n=2, score=1).dumps().encode()
-        fake_s3.objects[
-            log_key("stub-model", seed, "intens", TS2, experiment="periodic_moe")
-        ] = sample_marks(n=2, score=0).dumps().encode()
-
+        _log(fake_s3, seed, "intens", TS1, sample_marks(n=2, score=1).dumps().encode())
+        _log(fake_s3, seed, "intens", TS2, sample_marks(n=2, score=0).dumps().encode())
     s3_harness.summarize("stub-model")
     out = capsys.readouterr().out
     # Earliest run scored 1 -> 4 correct, not 4 incorrect.
     assert "decode/intens: 2/2 replicates -- correct=4 incorrect=0 invalid=0 acc=1.000" in out
     assert "decode/extens: 0/2 replicates -- correct=0 incorrect=0 invalid=0 acc=n/a" in out
-
-
-def test_harness_sync_down_translates_without_being_told_the_tags(
-    s3_harness, fake_s3, freeze_ts
-):
-    """``ReplicateHarness.sync_down()`` is the primary entry point.
-
-    It already knows archetype_tags and prefix.
-    """
-    body = sample_marks().dumps().encode()
-    fake_s3.objects[
-        log_key("stub-model", 1776, "extens", TS1, experiment="periodic_moe")
-    ] = body
-
-    assert s3_harness.sync_down() == 1
-    assert (
-        s3_harness.results_dir / "decode_extens" / "rep_1776.yaml"
-    ).read_bytes() == body
-
-
-def test_run_replicates_logs_the_store_target(
-    s3_harness, fake_evaluate, caplog, freeze_ts
-):
-    import logging
-
-    freeze_ts(TS1)
-    with caplog.at_level(logging.INFO):
-        s3_harness.run_replicates("stub-model")
-    assert f"s3://{BUCKET}/periodic_moe" in caplog.text

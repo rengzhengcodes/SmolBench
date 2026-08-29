@@ -1,23 +1,8 @@
-"""Test `cmd_analyze`'s pass@N and truncation additions, offline.
-
-This is `smolbench.deduction.lean.cli.cmd_analyze`. It is pure JSONL aggregation (no
-Dojo session, no lean_dojo import). So these tests build small synthetic
-``all_rows.jsonl`` fixtures by hand, using only the row-schema fields `cmd_analyze`
-actually reads (see `runner.py`'s `base_row`/`row` construction inside its `sweep`
-function for the authoritative field list). They drive `cmd_analyze` the same way `main`
-does: build an `argparse.Namespace` with a `path` attribute and call it directly,
-capturing stdout with `capsys`. This runs on either venv.
-
-Row-extraction helpers below are marker-anchored, not naive ``str.startswith`` scans.
-`cmd_analyze` prints three different tables whose rows can all start with the same rung
-slug (for example ``"stepk:0"``): the ASCII bar chart, the detail table, and (when
-triggered) the pass@N table. So a plain "first line starting with the rung" search can
-silently grab a row from the wrong table. These helpers instead anchor on each table's
-unique header text, which avoids that trap.
-"""
+"""Offline tests for cmd_analyze's pass@N and truncation additions."""
 
 from __future__ import annotations
 
+import itertools
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -27,578 +12,158 @@ import pytest
 from smolbench.deduction.lean.cli import cmd_analyze
 
 
-def _row(
-    *,
-    model: str = "model-a",
-    rung: str = "stepk:0",
-    theorem_id: str = "Mini.theoremA",
-    k: int = 1,
-    replicate_idx: int = 0,
-    verdict: str = "success",
-    raw_response: str = "```lean\nrfl\n```",
-    content: str | None = None,
-    reasoning_content: str | None = None,
-    prompt_tokens: int = 10,
-    completion_tokens: int = 5,
-    gen_ms: int = 100,
-    verify_ms: int = 50,
-) -> dict:
-    """Build one synthetic ``kind: "cell"`` sweep row.
-
-    Parameters
-    ----------
-    model, rung, theorem_id, k : see module row schema
-        Identify the (model, rung, theorem_id, k) cell this replicate
-        belongs to. `cmd_analyze` groups pass@N on exactly this tuple.
-    replicate_idx : int, default 0
-        Recorded but not read by `cmd_analyze`'s pass@N grouping (which
-        groups by row occurrence, not by distinct `replicate_idx`). This
-        is kept here only for schema fidelity with real sweep output.
-    verdict : str, default "success"
-        One of the verdict strings `cmd_analyze` recognizes
-        (``success``/``lean_error``/``incomplete``/``given_up``/
-        ``replay_failed``/``exception``). Anything else falls into the
-        ``exception`` bucket, mirroring the real aggregator.
-    raw_response : str, default a closed fenced tactic block
-        Populates the row's ``raw_response`` field, the primary source
-        for the trunc (unclosed ``<think>``) check.
-    content : str or None, default None
-        When given, this is also written under the row's ``content`` key.
-        This exercises `cmd_analyze`'s ``raw_response``-missing fallback
-        path.
-    reasoning_content : str or None, default None
-        When given, this is also written under the row's
-        ``reasoning_content`` key. This exercises `cmd_analyze`'s
-        reasoning-parser-served truncation path (reasoning present,
-        `raw_response` empty).
-    prompt_tokens, completion_tokens, gen_ms, verify_ms : int
-        Small nonzero defaults, so avg_in/avg_out/avg_s arithmetic in the
-        detail table has something to divide.
-
-    Returns
-    -------
-    dict
-        A JSON-serializable row that matches the real sweep schema's
-        ``kind: "cell"`` rows closely enough for `cmd_analyze` to
-        aggregate.
-    """
+def _row(**kw) -> dict:
+    """Build one synthetic ``kind: "cell"`` sweep row."""
     row = {
-        "kind": "cell",
-        "theorem_id": theorem_id,
-        "k": k,
-        "rung": rung,
-        "replicate_idx": replicate_idx,
-        "model": model,
-        "verdict": verdict,
-        "raw_response": raw_response,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "gen_ms": gen_ms,
-        "verify_ms": verify_ms,
+        "kind": "cell", "theorem_id": "Mini.theoremA", "k": 1, "rung": "stepk:0",
+        "replicate_idx": 0, "model": "model-a", "verdict": "success",
+        "raw_response": "```lean\nrfl\n```", "prompt_tokens": 10,
+        "completion_tokens": 5, "gen_ms": 100, "verify_ms": 50,
     }
-    if content is not None:
-        row["content"] = content
-    if reasoning_content is not None:
-        row["reasoning_content"] = reasoning_content
+    row.update(kw)
     return row
 
 
 def _sanity_row(*, model: str = "model-a", verdict: str = "success") -> dict:
-    """Build one synthetic ``kind: "sanity"`` row (pre-sweep sanity-gate check)."""
+    """Build one synthetic ``kind: "sanity"`` row."""
     return {"kind": "sanity", "model": model, "verdict": verdict}
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
-    """Write `rows` as newline-delimited JSON, one object per line, to `path`."""
-    with open(path, "w") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
+    """Write `rows` as newline-delimited JSON to `path`."""
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def _run_analyze(path: Path, capsys) -> tuple[int, str]:
-    """Invoke `cmd_analyze` the way `cli.main` would and capture stdout.
-
-    Parameters
-    ----------
-    path : Path
-        Sweep JSONL file to analyze.
-    capsys : pytest fixture
-        Standard pytest stdout/stderr capture fixture, passed through
-        from the calling test. It is not imported; pytest injects it.
-
-    Returns
-    -------
-    tuple[int, str]
-        `(exit_code, stdout)`.
-    """
-    rc = cmd_analyze(Namespace(path=str(path)))
+def _run_analyze(tmp_path, rows, capsys) -> tuple[int, str]:
+    """Write `rows` to all_rows.jsonl, invoke `cmd_analyze` as `cli.main` would."""
+    p = tmp_path / "all_rows.jsonl"
+    _write_jsonl(p, rows)
+    rc = cmd_analyze(Namespace(path=str(p)))
     return rc, capsys.readouterr().out
 
 
 def _header_index(lines: list[str], *markers: str) -> int:
-    """Return the index of the first line containing every string in `markers`.
-
-    Design: both the detail table and the pass@N table print a header starting with the
-    ``rung`` column, and both tables' data rows can start with the same rung slug. So
-    callers must locate a table by header text unique to it (for example ``"trunc"`` for
-    the detail table, ``"grp"`` for the pass@N table), instead of scanning for a
-    data-row prefix. Otherwise they risk silently reading a row from the wrong table.
-
-    Raises
-    ------
-    StopIteration
-        If no line contains all of `markers` (propagated from `next`).
-        This is deliberately left unwrapped, so a broken assumption fails
-        loudly at the assertion site, instead of being masked by a
-        default.
-    """
+    """Index of the first line containing every string in `markers` (anchors a table)."""
     return next(i for i, line in enumerate(lines) if all(m in line for m in markers))
 
 
-def _table_rows(lines: list[str], header_idx: int) -> list[str]:
-    """Collect a table's data rows, given the index of its header line.
+def _rows_after(lines: list[str], idx: int) -> list[str]:
+    """Non-blank lines starting at `idx`, up to the blank line closing the block."""
+    return list(itertools.takewhile(lambda line: line.strip(), lines[idx:]))
 
-    Assumes the layout `cmd_analyze` always prints: header line, then a
-    ``"-" * len(header)`` separator line, then one line per data row, then
-    a blank line (or end of output) closing the table.
-    """
-    rows = []
-    for line in lines[header_idx + 2:]:
-        if not line.strip():
-            break
-        rows.append(line)
-    return rows
+
+def _table_rows(lines: list[str], header_idx: int) -> list[str]:
+    """Data rows of a table: header line, separator line, then rows."""
+    return _rows_after(lines, header_idx + 2)
 
 
 def _section_rows(out: str, marker: str) -> list[str]:
-    """Collect the non-blank lines immediately following the line equal to `marker`.
-
-    This is used for the per-model rollup sections, which have no ``"---"`` separator
-    of their own, just a title line then data rows.
-    """
+    """Data rows of a title-only section (no separator line)."""
     lines = out.splitlines()
     idx = next(i for i, line in enumerate(lines) if line.strip() == marker)
-    rows = []
-    for line in lines[idx + 1:]:
-        if not line.strip():
-            break
-        rows.append(line)
-    return rows
-
-
-# ---------------------------------------------------------------------------
-# Single-replicate sweeps: pass@N tables must be entirely absent, and every
-# existing line must be untouched apart from the new trailing `trunc` column.
-# ---------------------------------------------------------------------------
+    return _rows_after(lines, idx + 1)
 
 
 def test_single_replicate_omits_passn_table(tmp_path, capsys):
+    """One replicate per cell: no pass@N tables, and a trunc column of zeros."""
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success"),
         _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, verdict="lean_error"),
         _row(model="model-b", rung="stepk:1", theorem_id="T1", k=2, verdict="incomplete"),
     ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
+    rc, out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 0
     assert "pass@N" not in out
-    # Existing sections still present and correctly computed.
     assert "# 3 cells from" in out
     assert "# sanity gate: 0 pass / 0 fail" in out
     assert "# per-model totals" in out
     assert "model-a" in out and "model-b" in out
-
-
-def test_single_replicate_detail_table_gets_trunc_column_only(tmp_path, capsys):
-    """The one sanctioned change to old output is an always-added `trunc` column.
-
-    It is added to the detail table's header and rows, even when every cell has exactly
-    one replicate and the pass@N tables are skipped.
-    """
-    rows = [_row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success")]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
     lines = out.splitlines()
     hdr = _header_index(lines, "lerr", "trunc")
     assert "trunc" in lines[hdr]
-    (row,) = _table_rows(lines, hdr)
-    # 1 replicate, no <think> in raw_response -> trailing trunc count is 0.
-    assert row.split()[-1] == "0"
+    detail = _table_rows(lines, hdr)
+    assert detail
+    assert all(r.split()[-1] == "0" for r in detail)
 
 
-# ---------------------------------------------------------------------------
-# pass@N: multi-replicate sweeps.
-# ---------------------------------------------------------------------------
-
-
-def test_multi_replicate_pass_at_n_counts_any_success(tmp_path, capsys):
+def test_pass_at_n_grouping(tmp_path, capsys):
+    """pass@N: any success in a (theorem, k) group passes; N is the max replicate count."""
+    reps = {
+        ("stepk:0", "T1"): ["success", "given_up", "replay_failed"],
+        ("stepk:0", "T2"): ["lean_error", "lean_error", "success"],
+        ("stepk:1", "T3"): ["lean_error", "lean_error"],
+        ("stepk:1", "T4"): ["success"],
+    }
     rows = [
-        # T1: replicates [lean_error, success] -> counts as one pass.
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="success"),
-        # T2: replicates [lean_error, lean_error] -> fail.
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=1, verdict="lean_error"),
+        _row(rung=rung, theorem_id=thm, replicate_idx=i, verdict=v)
+        for (rung, thm), verdicts in reps.items()
+        for i, v in enumerate(verdicts)
     ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    assert "# pass@N per rung × model (N=2)" in out
-
-    lines = out.splitlines()
-    hdr = _header_index(lines, "grp")
-    (row,) = _table_rows(lines, hdr)
-    fields = row.split()
-    assert fields[0] == "stepk:0"
-    assert fields[1] == "model-a"
-    # 1 pass out of 2 groups (T1 passes, T2 doesn't) = 50.0%.
-    assert fields[2] == "1/2"
-    assert fields[3] == "50.0%"
-
-    (rollup_row,) = _section_rows(out, "# pass@N per-model totals")
-    assert "model-a" in rollup_row
-    assert "1/2" in rollup_row and "50.0%" in rollup_row
-
-
-def test_multi_replicate_group_pass_ignores_which_replicate_succeeded(tmp_path, capsys):
-    """The order or index of the successful replicate must not matter.
-
-    Any success in the group is enough (replicate 0 succeeding here, not
-    the last one).
-    """
-    rows = [
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="given_up"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=2, verdict="replay_failed"),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
+    rc, out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 0
     assert "# pass@N per rung × model (N=3)" in out
-
     lines = out.splitlines()
-    hdr = _header_index(lines, "grp")
-    (row,) = _table_rows(lines, hdr)
-    fields = row.split()
-    assert fields[2] == "1/1"
-    assert fields[3] == "100.0%"
-
-
-def test_multi_replicate_n_is_max_across_all_cells(tmp_path, capsys):
-    """N in the header reflects the max replicate count seen anywhere in the file.
-
-    This holds even if most cells only have 1 replicate (mixed replication).
-    """
-    rows = [
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=1, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, replicate_idx=2, verdict="success"),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    assert "(N=3)" in out
-
-    lines = out.splitlines()
-    hdr = _header_index(lines, "grp")
-    (row,) = _table_rows(lines, hdr)
-    fields = row.split()
-    # 2 groups total (T1, T2), both pass -> 2/2, 100%.
-    assert fields[2] == "2/2"
-    assert fields[3] == "100.0%"
-
-
-def test_multi_replicate_per_model_rollup_sums_across_rungs(tmp_path, capsys):
-    rows = [
-        # rung stepk:0, T1: pass.
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0, verdict="success"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1, verdict="lean_error"),
-        # rung stepk:1, T2: fail.
-        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, replicate_idx=0, verdict="lean_error"),
-        _row(model="model-a", rung="stepk:1", theorem_id="T2", k=2, replicate_idx=1, verdict="lean_error"),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "grp")
-    passn_rows = _table_rows(lines, hdr)
-    assert len(passn_rows) == 2  # one row per (rung, model): stepk:0 and stepk:1
-
+    passn_rows = _table_rows(lines, _header_index(lines, "grp"))
+    assert len(passn_rows) == 2
+    by_rung = {r.split()[0]: r.split() for r in passn_rows}
+    assert by_rung["stepk:0"][1] == "model-a"
+    assert by_rung["stepk:0"][2] == "2/2" and by_rung["stepk:0"][3] == "100.0%"
+    assert by_rung["stepk:1"][2] == "1/2" and by_rung["stepk:1"][3] == "50.0%"
     (rollup_row,) = _section_rows(out, "# pass@N per-model totals")
-    # model-a: 1 pass out of 2 groups total, summed across both rungs.
-    assert "1/2" in rollup_row and "50.0%" in rollup_row
+    assert "model-a" in rollup_row
+    assert "3/4" in rollup_row and "75.0%" in rollup_row
 
 
-# ---------------------------------------------------------------------------
-# Truncation ("trunc") column.
-# ---------------------------------------------------------------------------
-
-
-def test_trunc_counts_unclosed_think_blocks(tmp_path, capsys):
+def test_trunc_column_classification(tmp_path, capsys):
+    """trunc counts unclosed <think> in raw_response/content, plus reasoning-only rows."""
     rows = [
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1,
-            verdict="incomplete", raw_response="<think>\nreasoning that never finishes",
-        ),
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T2", k=1,
-            verdict="success", raw_response="<think>\nok\n</think>\n\n```lean\nrfl\n```",
-        ),
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T3", k=1,
-            verdict="success", raw_response="```lean\nrfl\n```",
-        ),
+        _row(theorem_id="T1", raw_response="<think>\nreasoning that never finishes"),
+        _row(theorem_id="T2", raw_response="", content="<think>\nstill going"),
+        _row(theorem_id="T3", raw_response="", reasoning_content="never finished"),
+        _row(theorem_id="T4", raw_response="```lean\nrfl\n```", reasoning_content="done"),
+        _row(theorem_id="T5", raw_response="<think>\nok\n</think>\n\n```lean\nrfl\n```"),
+        _row(theorem_id="T6", raw_response="exact h"),
     ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
+    rc, out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 0
     lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    # 3 rows total, exactly 1 has an unclosed <think> -> trunc == 1.
-    assert row.split()[-1] == "1"
-
-
-def test_trunc_zero_for_model_that_never_emits_think(tmp_path, capsys):
-    rows = [
-        _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, raw_response="```lean\nrfl\n```"),
-        _row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, raw_response="exact h"),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    assert row.split()[-1] == "0"
-
-
-def test_trunc_falls_back_to_content_field_when_raw_response_missing(tmp_path, capsys):
-    """`cmd_analyze` must check `content` when `raw_response` is empty or absent.
-
-    This is a defensive check. It exercises a row where only `content` carries an
-    unclosed <think> block.
-    """
-    rows = [
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1,
-            raw_response="", content="<think>\nstill going",
-        ),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    assert row.split()[-1] == "1"
-
-
-def test_trunc_counts_reasoning_parser_death_with_empty_raw_response(tmp_path, capsys):
-    """A vLLM reasoning-parser can route truncated content away from `raw_response`.
-
-    Specifically, when the box is served with a vLLM `--reasoning-parser` flag, a
-    truncated generation's <think> content is split server-side into `reasoning_content`
-    and never reaches `raw_response`/`content` at all. So the
-    unclosed-<think>-in-raw_text check alone reads 0. A row with non-empty
-    `reasoning_content` and empty `raw_response` must still count as truncated (the
-    generation died inside the think channel).
-    """
-    rows = [
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1,
-            verdict="incomplete", raw_response="", reasoning_content="still reasoning, never finished",
-        ),
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T2", k=1,
-            verdict="success", raw_response="```lean\nrfl\n```", reasoning_content="ok, done",
-        ),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    # T1: reasoning present, raw_response empty -> trunc. T2: raw_response
-    # non-empty (closed tactic block, reasoning_content present too) -> not
-    # trunc. Total trunc == 1.
-    assert row.split()[-1] == "1"
-
-
-def test_trunc_reasoning_content_with_nonempty_raw_response_not_counted(tmp_path, capsys):
-    """A reasoning-parser-served row whose `raw_response` did come through.
-
-    (The model finished inside its think channel and still emitted an
-    answer.) It must not be misclassified as truncated just because
-    `reasoning_content` is also present.
-    """
-    rows = [
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1,
-            raw_response="```lean\nrfl\n```", reasoning_content="because rfl closes it",
-        ),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    assert row.split()[-1] == "0"
-
-
-def test_trunc_closed_think_not_counted(tmp_path, capsys):
-    rows = [
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1,
-            raw_response="<think>\nreasoning\n</think>\n\n```lean\nrfl\n```",
-        ),
-    ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    lines = out.splitlines()
-    hdr = _header_index(lines, "lerr", "trunc")
-    (row,) = _table_rows(lines, hdr)
-    assert row.split()[-1] == "0"
-
-
-# ---------------------------------------------------------------------------
-# Sanity rows must not leak into either pass@N grouping or trunc counting.
-# ---------------------------------------------------------------------------
+    (row,) = _table_rows(lines, _header_index(lines, "lerr", "trunc"))
+    assert row.split()[-1] == "3"
 
 
 def test_sanity_rows_excluded_from_passn_and_trunc(tmp_path, capsys):
+    """Sanity rows are reported separately and never enter cell counts, pass@N or trunc."""
     rows = [
         _sanity_row(model="model-a", verdict="lean_error"),
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=0,
-            verdict="success", raw_response="<think>\nunclosed",
-        ),
-        _row(
-            model="model-a", rung="stepk:0", theorem_id="T1", k=1, replicate_idx=1,
-            verdict="lean_error",
-        ),
+        _row(theorem_id="T1", replicate_idx=0, raw_response="<think>\nunclosed"),
+        _row(theorem_id="T1", replicate_idx=1, verdict="lean_error"),
     ]
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, rows)
-
-    rc, out = _run_analyze(p, capsys)
-
+    rc, out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 0
     assert "# sanity gate: 0 pass / 1 fail" in out
     assert "!! 1 sanity-gate failures" in out
-    # 2 cell rows (the sanity row is excluded from the cell count).
     assert "# 2 cells from" in out
-
-    lines = out.splitlines()
-
-    # Both cell rows share one (theorem_id, k) group -> 1 group total, 1 pass.
     assert "(N=2)" in out
-    hdr_passn = _header_index(lines, "grp")
-    (passn_row,) = _table_rows(lines, hdr_passn)
+    lines = out.splitlines()
+    (passn_row,) = _table_rows(lines, _header_index(lines, "grp"))
     fields = passn_row.split()
-    assert fields[2] == "1/1"
-    assert fields[3] == "100.0%"
-
-    # trunc counts only the cell row with the unclosed <think> -> 1, not 2
-    # (the sanity row has no raw_response/content at all and must not crash
-    # or contribute).
-    hdr_detail = _header_index(lines, "lerr", "trunc")
-    (detail_row,) = _table_rows(lines, hdr_detail)
+    assert fields[2] == "1/1" and fields[3] == "100.0%"
+    (detail_row,) = _table_rows(lines, _header_index(lines, "lerr", "trunc"))
     assert detail_row.split()[-1] == "1"
 
 
-# ---------------------------------------------------------------------------
-# Pre-existing behavior, unaffected by this change (regression guard).
-# ---------------------------------------------------------------------------
-
-
-def test_empty_file_returns_1(tmp_path, capsys):
-    p = tmp_path / "all_rows.jsonl"
-    p.write_text("")
-
-    rc, _out = _run_analyze(p, capsys)
-
+@pytest.mark.parametrize("rows", [[], [_sanity_row()]], ids=["empty", "sanity-only"])
+def test_no_cell_rows_returns_1(tmp_path, capsys, rows):
+    """A file with no cell rows is an error, not an empty report."""
+    rc, _out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 1
-
-
-def test_only_sanity_rows_returns_1(tmp_path, capsys):
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, [_sanity_row()])
-
-    rc, _out = _run_analyze(p, capsys)
-
-    assert rc == 1
-
-
-# ---------------------------------------------------------------------------
-# Retired-artifact refusal. `run_study.py --force-rerun` archives a
-# superseded all_rows.jsonl as `all_rows_SUPERSEDED-<stamp>.jsonl` inside
-# the run directory, so a retired artifact sits one `ls` away from live
-# data, and `cmd_analyze` is the one loader that takes an arbitrary user
-# path. The file parses perfectly, so nothing but this guard distinguishes
-# it.
-# ---------------------------------------------------------------------------
 
 
 def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
     """A retired artifact must fail loudly and name the file, not be summarized."""
     p = tmp_path / "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
     _write_jsonl(p, [_row()])
-
     with pytest.raises(ValueError) as excinfo:
         cmd_analyze(Namespace(path=str(p)))
     assert "SUPERSEDED" in str(excinfo.value)
     assert p.name in str(excinfo.value)
-
-
-def test_cmd_analyze_still_reads_a_normal_rows_file(tmp_path, capsys):
-    """Positive control: the guard does not refuse ordinary run artifacts."""
-    p = tmp_path / "all_rows.jsonl"
-    _write_jsonl(p, [_row()])
-
-    rc, out = _run_analyze(p, capsys)
-
-    assert rc == 0
-    assert "stepk:0" in out

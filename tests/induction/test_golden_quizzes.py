@@ -1,22 +1,8 @@
-"""Run a seed-fixed golden regression for the induction generation pipelines.
+"""SHA-256 golden pins of the induction generation pipelines.
 
-The hashes in tests/fixtures/golden_quizzes.json are recorded at the
-notebooks' production configs. Any change to label sampling, interval
-assignment, noise padding, prompt rendering, or the query generators shows
-up here as a hash mismatch. This matters because committed results are
-only attributable to their recorded seeds while generation stays
-byte-stable.
-
-The ``intens``/``extens`` hashes must not move: they are the check that a
-change to the noise arm stays confined to the noise arm.
-
-The noise arm now depends on a tokenizer, and these hashes are recorded
-against ``conftest.StubTokenizer``, not a real model's tokenizer. That
-keeps the fixture offline and byte-stable. (A downloaded tokenizer would
-make the golden depend on a network fetch and on an upstream repo nobody
-here controls.) What it pins is the generation pipeline, while
-tests/induction/test_noise_token_match.py is what checks the pad behaves correctly
-under real tokenizers.
+Hashes in tests/fixtures/golden_quizzes.json are recorded at the notebooks'
+production configs, against conftest.StubTokenizer (offline, byte-stable).
+Any drift in generation, prompting, or noise padding trips these.
 """
 
 import hashlib
@@ -46,25 +32,13 @@ from tests._paths import FIXTURES
 
 GOLDEN = json.loads((FIXTURES / "golden_quizzes.json").read_text())
 
-# Minimal templates exercising every placeholder each generator produces.
-PERIODIC_TMPL = string.Template(
-    "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
-)
-PERIODIC_TOF_TMPL = string.Template(
-    "CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False."
-)
-CHROM_TMPL = string.Template(
-    "ROLE $role PARADE $parade\n$positive_info\nQ: Has $color1 handed to $color2?"
-)
-CHROM_EXT_TMPL = string.Template(
-    "ROLE $role PARADE $parade EXT\n$positive_info\nQ: Has $color1 handed to $color2?"
-)
-ONEHOP_TMPL = string.Template(
-    "ROLE $role PARADE $parade\n$positive_info\nQ: In year $year, could $color head?"
-)
-ONEHOP_EXT_TMPL = string.Template(
-    "ROLE $role PARADE $parade EXT\n$positive_info\nQ: In year $year, could $color head?"
-)
+# Minimal templates covering every placeholder each generator produces.
+PERIODIC_TMPL = string.Template("CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?")
+PERIODIC_TOF_TMPL = string.Template("CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False.")
+CHROM_TMPL = string.Template("ROLE $role PARADE $parade\n$positive_info\nQ: Has $color1 handed to $color2?")
+CHROM_EXT_TMPL = string.Template("ROLE $role PARADE $parade EXT\n$positive_info\nQ: Has $color1 handed to $color2?")
+ONEHOP_TMPL = string.Template("ROLE $role PARADE $parade\n$positive_info\nQ: In year $year, could $color head?")
+ONEHOP_EXT_TMPL = string.Template("ROLE $role PARADE $parade EXT\n$positive_info\nQ: In year $year, could $color head?")
 
 
 def quiz_hash(quiz) -> str:
@@ -81,51 +55,30 @@ def assert_matches(key: str, quizzes) -> None:
     assert got == GOLDEN[key], f"generation drifted from golden {key}"
 
 
-# The tokenizer the noise arm is sized against. It is fixed and offline;
-# see the module docstring for why it is a stub, not a served model's.
+# The fixed, offline tokenizer the noise arm is sized against.
 TOKENIZER = StubTokenizer()
 
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_periodic_golden(seed):
-    # The periodic notebook's production config: n=9 harmonics, random labels.
+    # The periodic notebook's production config.
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
-    assert_matches(
-        f"periodic_numeric_{seed}",
-        get_periodic_numeric_quiz(
-            cfg,
-            PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
-            tokenizer=TOKENIZER,
-        ),
-    )
-    assert_matches(
-        f"periodic_tof_{seed}",
-        get_periodic_quiz(
-            cfg,
-            PeriodicPrompter(PERIODIC_TOF_TMPL, {}, tof_membership_query_gen),
-            tokenizer=TOKENIZER,
-        ),
-    )
+    numeric = PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen)
+    tof = PeriodicPrompter(PERIODIC_TOF_TMPL, {}, tof_membership_query_gen)
+    assert_matches(f"periodic_numeric_{seed}",
+                   get_periodic_numeric_quiz(cfg, numeric, tokenizer=TOKENIZER))
+    assert_matches(f"periodic_tof_{seed}",
+                   get_periodic_quiz(cfg, tof, tokenizer=TOKENIZER))
 
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_chromatic_golden(seed):
-    # The chromatic notebooks' production config: 3000 years, 62 intervals.
+    # The chromatic notebooks' production config.
     cfg = ChromaticIntervalsConfig(n=int(12 * 250), intervals=250 // 4, colors=45, seed=seed)
     sub = {"role": "Twislax", "parade": "Gildane"}
-    assert_matches(
-        f"chromatic_succession_{seed}",
-        get_random_exclusive_quiz(
-            cfg,
-            ChromaticPrompter(CHROM_TMPL, sub, succession_query_gen, CHROM_EXT_TMPL),
-            tokenizer=TOKENIZER,
-        ),
-    )
-    assert_matches(
-        f"chromatic_one_hop_{seed}",
-        get_random_exclusive_quiz(
-            cfg,
-            ChromaticPrompter(ONEHOP_TMPL, sub, one_hop_year_query_gen, ONEHOP_EXT_TMPL),
-            tokenizer=TOKENIZER,
-        ),
-    )
+    succession = ChromaticPrompter(CHROM_TMPL, sub, succession_query_gen, CHROM_EXT_TMPL)
+    one_hop = ChromaticPrompter(ONEHOP_TMPL, sub, one_hop_year_query_gen, ONEHOP_EXT_TMPL)
+    assert_matches(f"chromatic_succession_{seed}",
+                   get_random_exclusive_quiz(cfg, succession, tokenizer=TOKENIZER))
+    assert_matches(f"chromatic_one_hop_{seed}",
+                   get_random_exclusive_quiz(cfg, one_hop, tokenizer=TOKENIZER))

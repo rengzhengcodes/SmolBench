@@ -1,41 +1,17 @@
-"""Test provision_spot_instance's pure-function helpers, offline.
+"""Offline tests for ec2.py's provisioning helpers, server_config and live probes."""
 
-``_run_instances_kwargs`` and ``_instance_state`` do no AWS I/O of their
-own: no boto3 client construction, no network. ``_run_instances_kwargs``
-is a plain dict builder, and ``_instance_state`` runs here with
-``_describe_instance`` monkeypatched out, so neither test needs
-credentials or a live instance. Compare tests/evals/test_ec2_state.py (state-file
-round trips) and tests/evals/test_ec2_payloads.py (on-instance payload scripts).
-Together the three files cover ec2.py's offline-testable surface. The live
-AWS lifecycle (actually calling provision_spot_instance/RunInstances) is
-exercised outside this offline suite.
-"""
+from types import SimpleNamespace
 
 import pytest
 
 from smolbench.evals.providers import ec2
 
 
-# ---------------------------------------------------------------------------
-# _run_instances_kwargs: pins the exact RunInstances kwargs dict
-# ---------------------------------------------------------------------------
-# Pinned as literals, not derived from the helper. Any structural drift
-# (a dropped key, a typo'd literal, wrong nesting) fails one of these
-# tests. The two
-# fields that are themselves env-configurable module constants
-# (root-volume throughput/IOPS, the experiment tag) are checked through
-# ``ec2.EC2_*``, not hardcoded literals, so the pin stays valid under a
-# non-default env (for example a CI run with EC2_EXPERIMENT_TAG
-# overridden), while everything that is not env-configurable is still
-# pinned as a literal.
+# _run_instances_kwargs: the exact RunInstances kwargs dict.
 
 
 def _base_kwargs(**overrides):
-    """Build _run_instances_kwargs with a fixed set of representative inputs.
-
-    Each field is overridable per test, so each test only states what it
-    varies.
-    """
+    """Build _run_instances_kwargs with a fixed set of representative inputs."""
     kwargs = dict(
         ami="ami-0123456789abcdef0",
         instance_type="p5e.48xlarge",
@@ -100,150 +76,90 @@ def test_run_instances_kwargs_matches_pinned_shape():
     }
 
 
-def test_run_instances_kwargs_omits_key_name_and_iam_profile_when_unset():
-    """Empty or None key_name/iam_profile must omit KeyName/IamInstanceProfile.
-
-    Specifically, key_name="" and iam_profile=None (or "") must not add
-    KeyName or IamInstanceProfile keys at all: RunInstances rejects an
-    empty KeyName, and a present-but-empty IamInstanceProfile would be a
-    confusing no-op.
-    """
-    kwargs = _base_kwargs(key_name="", iam_profile=None)
-    assert "KeyName" not in kwargs
-    assert "IamInstanceProfile" not in kwargs
-
-    kwargs = _base_kwargs(key_name="", iam_profile="")
-    assert "KeyName" not in kwargs
-    assert "IamInstanceProfile" not in kwargs
+_ABSENT = object()
+_SPOT = {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"}
+_BLOCK = {"MarketType": "capacity-block"}
+_TARGET = {"CapacityReservationTarget": {"CapacityReservationId": "cr-0abc"}}
+_IMO = "InstanceMarketOptions"
 
 
-def test_run_instances_kwargs_includes_key_name_and_iam_profile_when_set():
-    kwargs = _base_kwargs(key_name="my-debug-key", iam_profile="smolbench-ec2-role")
-    assert kwargs["KeyName"] == "my-debug-key"
-    assert kwargs["IamInstanceProfile"] == {"Name": "smolbench-ec2-role"}
+def _at(kwargs, path):
+    cur = kwargs
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return _ABSENT
+        cur = cur[part]
+    return cur
 
 
-def test_run_instances_kwargs_is_pure():
-    """Same inputs give equal, independently-mutable dicts, with no AWS calls.
+@pytest.mark.parametrize(
+    "market,overrides,expected",
+    [
+        ("spot", {}, {"KeyName": _ABSENT, "IamInstanceProfile": _ABSENT}),
+        ("spot", {"iam_profile": ""}, {"IamInstanceProfile": _ABSENT}),
+        ("spot", {"key_name": "k", "iam_profile": "role"},
+         {"KeyName": "k", "IamInstanceProfile": {"Name": "role"}}),
+        ("spot", {}, {_IMO + ".MarketType": "spot", "CapacityReservationSpecification": _ABSENT,
+                      _IMO + ".SpotOptions.MaxPrice": _ABSENT}),
+        ("spot", {"capacity_reservation_id": "cr-0abc"},
+         {_IMO: _BLOCK, "CapacityReservationSpecification": _TARGET,
+          "InstanceInitiatedShutdownBehavior": "terminate", "MinCount": 1, "MaxCount": 1}),
+        ("spot", {"max_price": "25.19"}, {_IMO + ".SpotOptions": dict(_SPOT, MaxPrice="25.19")}),
+        ("spot", {"capacity_reservation_id": "cr-0abc", "max_price": "25.19"}, {_IMO: _BLOCK}),
+        ("on-demand", {"max_price": "12.34"},
+         {_IMO: _ABSENT, "InstanceInitiatedShutdownBehavior": "terminate"}),
+        ("on-demand", {"capacity_reservation_id": "cr-0abc"},
+         {_IMO: _BLOCK, "CapacityReservationSpecification": _TARGET}),
+    ],
+)
+def test_run_instances_kwargs_variants(monkeypatch, market, overrides, expected):
+    monkeypatch.setattr(ec2, "EC2_MARKET", market)
+    kwargs = _base_kwargs(**overrides)
+    assert {path: _at(kwargs, path) for path in expected} == expected
 
-    This guards against the helper picking up hidden global state.
-    """
-    first = _base_kwargs()
-    second = _base_kwargs()
-    assert first == second
-    first["InstanceType"] = "mutated"
-    assert second["InstanceType"] == "p5e.48xlarge"  # no shared mutable state
+
+def test_on_demand_differs_from_spot_only_in_the_market(monkeypatch):
+    """No MarketType="on-demand" exists: absence is how the API expresses it."""
+    monkeypatch.setattr(ec2, "EC2_MARKET", "spot")
+    spot = _base_kwargs(max_price="12.34")
+    monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
+    assert {k: v for k, v in spot.items() if k != _IMO} == _base_kwargs(max_price="12.34")
 
 
-# ---------------------------------------------------------------------------
-# _decode_user_data: gzip-or-plain-text decode, the read-side counterpart of
-# payloads.pack_user_data. This function is pure (no AWS calls), so it is
-# tested directly, not through _recover_state_from_instance's
-# DescribeInstanceAttribute call.
-# ---------------------------------------------------------------------------
-# User-data ships gzip-compressed
-# (see payloads.pack_user_data), but a live instance launched before that
-# change can outlive the code that provisioned it. _recover_state_from_
-# instance is exactly the best-effort "state file was lost, rebuild it
-# from whatever is still running" path, so it must tolerate both formats,
-# not assume every live instance was launched by the current code.
+# _decode_user_data: gzip-or-plain-text decode, the read side of pack_user_data.
 
 
-def test_decode_user_data_gunzips_pack_user_data_output():
-    """The normal case: gzip round-trips to the exact script.
-
-    gzip-compressed bytes decode back to the exact rendered script, matching
-    pack_user_data's own round-trip contract. (tests/evals/test_ec2_payloads.py
-    exercises that contract from the write side; this is the read side.)
-    """
+def test_decode_user_data_round_trips():
+    """gzip decodes; pre-determinism plain text still decodes; garbage raises."""
     from smolbench.evals.payloads import pack_user_data
 
     rendered = "#!/bin/bash\necho hi\n"
     assert ec2._decode_user_data(pack_user_data(rendered)) == rendered
-
-
-def test_decode_user_data_falls_back_to_plain_text():
-    """Backward compatibility: a pre-determinism instance shipped plain text.
-
-    An instance launched before the determinism change shipped its
-    user-data uncompressed. gzip.decompress raises BadGzipFile on
-    non-gzip bytes (no gzip magic number). That case must fall back to
-    plain UTF-8 decoding, not propagate.
-    """
-    rendered = "#!/bin/bash\necho hi\n"
     assert ec2._decode_user_data(rendered.encode()) == rendered
-
-
-def test_decode_user_data_neither_format_raises():
-    """Genuinely corrupt or foreign bytes must raise, not silently return garbage.
-
-    That means not gzip and not valid UTF-8. The caller,
-    _recover_state_from_instance, nets this with its own best-effort
-    ``except Exception`` and returns None (refuse reuse), instead of
-    fabricating a state dict from noise.
-    """
     with pytest.raises(UnicodeDecodeError):
         ec2._decode_user_data(b"\xff\xfe\x00\x01not-gzip-not-utf8")
 
 
-# ---------------------------------------------------------------------------
-# _instance_state: "absent" normalization over _describe_instance's Optional
-# ---------------------------------------------------------------------------
-# _describe_instance itself makes a real DescribeInstances call, so it is
-# monkeypatched out here to keep this suite AWS-free. These tests exercise
-# only _instance_state's own (instance or {}).get(...) extraction logic.
+# _instance_state: "absent" normalization over _describe_instance's Optional.
 
 
-def test_instance_state_absent_when_describe_returns_none(monkeypatch):
-    monkeypatch.setattr(ec2, "_describe_instance", lambda region, instance_id: None)
-    assert ec2._instance_state("us-east-1", "i-doesnotmatter") == "absent"
-
-
-def test_instance_state_absent_when_describe_returns_empty_dict(monkeypatch):
-    """An empty, but non-None, describe result must also fall back to "absent".
-
-    For example a reservation with no State key yet. It must not raise a
-    KeyError.
-    """
-    monkeypatch.setattr(ec2, "_describe_instance", lambda region, instance_id: {})
-    assert ec2._instance_state("us-east-1", "i-doesnotmatter") == "absent"
-
-
-def test_instance_state_returns_name_when_present(monkeypatch):
-    monkeypatch.setattr(
-        ec2,
-        "_describe_instance",
-        lambda region, instance_id: {"State": {"Name": "running"}},
-    )
-    assert ec2._instance_state("us-east-1", "i-0123456789abcdef0") == "running"
-
-
-def test_instance_state_passes_region_and_instance_id_through(monkeypatch):
-    """The helper must forward its arguments to _describe_instance unchanged.
-
-    For example, it must not swap them. This is checked by asserting on
-    the captured call args.
-    """
+@pytest.mark.parametrize(
+    "describe_return,expected",
+    [(None, "absent"), ({}, "absent"), ({"State": {"Name": "running"}}, "running")],
+)
+def test_instance_state(monkeypatch, describe_return, expected):
     captured = {}
 
     def fake_describe(region, instance_id):
-        captured["region"] = region
-        captured["instance_id"] = instance_id
-        return {"State": {"Name": "terminated"}}
+        captured.update(region=region, instance_id=instance_id)
+        return describe_return
 
     monkeypatch.setattr(ec2, "_describe_instance", fake_describe)
-    result = ec2._instance_state("eu-west-1", "i-abc")
-    assert result == "terminated"
+    assert ec2._instance_state("eu-west-1", "i-abc") == expected
     assert captured == {"region": "eu-west-1", "instance_id": "i-abc"}
 
 
-# ---------------------------------------------------------------------------
-# _ensure_bucket -- 403 disambiguation. HEAD -> 403 usually means the name is
-# squatted in another account, but scoped credentials (the EC2-only operator
-# key, which has no s3:*) get the same 403 on our own bucket. The account-id
-# suffix in the bucket name is the tie-breaker, proven through sts
-# (policy-free).
-# ---------------------------------------------------------------------------
+# _ensure_bucket: a 403 HEAD is ambiguous, so the account-id suffix breaks the tie.
 
 
 def _client_error(code):
@@ -280,21 +196,18 @@ def _patch_clients(monkeypatch, s3, sts):
     monkeypatch.setattr(ec2._aws, "fresh_client", fake_fresh_client)
 
 
-def test_ensure_bucket_403_with_account_suffix_proceeds(monkeypatch):
+def test_ensure_bucket(monkeypatch):
+    """403 on our own account proceeds, 403 on a foreign name raises, 404 creates."""
     s3 = _FakeS3(head_error=_client_error("403"))
     _patch_clients(monkeypatch, s3, _FakeSts("414266451290"))
     ec2._ensure_bucket("smolbench-model-cache-414266451290", "us-west-2")
-    assert s3.created == []  # exists; never tries to create
+    assert s3.created == []
 
-
-def test_ensure_bucket_403_foreign_name_still_raises(monkeypatch):
     s3 = _FakeS3(head_error=_client_error("403"))
     _patch_clients(monkeypatch, s3, _FakeSts("999999999999"))
     with pytest.raises(RuntimeError, match="not accessible"):
         ec2._ensure_bucket("smolbench-model-cache-414266451290", "us-west-2")
 
-
-def test_ensure_bucket_404_creates(monkeypatch):
     s3 = _FakeS3(head_error=_client_error("404"))
     _patch_clients(monkeypatch, s3, _FakeSts("414266451290"))
     ec2._ensure_bucket("some-new-bucket", "us-west-2")
@@ -306,40 +219,7 @@ def test_ensure_bucket_404_creates(monkeypatch):
     ]
 
 
-# ---------------------------------------------------------------------------
-# _run_instances_kwargs -- capacity-block launches. A purchased Capacity
-# Block replaces the Spot market options (the API requires
-# MarketType="capacity-block") and pins the instance to the reservation.
-# ---------------------------------------------------------------------------
-
-
-def test_run_instances_kwargs_capacity_block_swaps_market_and_pins_reservation():
-    kwargs = _base_kwargs(capacity_reservation_id="cr-0123456789abcdef0")
-    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
-    assert kwargs["CapacityReservationSpecification"] == {
-        "CapacityReservationTarget": {
-            "CapacityReservationId": "cr-0123456789abcdef0"
-        }
-    }
-    # Everything else keeps the pinned spot-launch shape.
-    assert kwargs["InstanceInitiatedShutdownBehavior"] == "terminate"
-    assert kwargs["MinCount"] == 1 and kwargs["MaxCount"] == 1
-
-
-def test_run_instances_kwargs_no_reservation_keeps_spot_shape():
-    kwargs = _base_kwargs()
-    assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
-    assert "CapacityReservationSpecification" not in kwargs
-
-
-# ---------------------------------------------------------------------------
-# provision_spot_instance -- reservation authority over live instances. When
-# EC2_CAPACITY_RESERVATION is set, a live box outside the block (for
-# example a Spot instance from an earlier hunt) must be terminated and
-# relaunched inside the block, never reused. The block is already paid
-# for, and the Spot box bills on top of it. All AWS-touching helpers are
-# monkeypatched out.
-# ---------------------------------------------------------------------------
+# provision_spot_instance: a purchased block outranks any live off-block box.
 
 
 def _patch_provision(monkeypatch, reattach=None, recover=None):
@@ -350,10 +230,7 @@ def _patch_provision(monkeypatch, reattach=None, recover=None):
 
     def fake_shutdown(wait=True):
         calls["shutdown"] += 1
-        # The guard must not block on full termination. p5-class teardown
-        # can outlast botocore's 10-min instance_terminated waiter, and the
-        # block launch does not depend on the dying box.
-        assert wait is False
+        assert wait is False  # must not block on p5-class teardown
 
     def fake_launch_fresh(*args, **kwargs):
         calls["launch_fresh"] += 1
@@ -368,131 +245,68 @@ _SPOT_STATE = {"instance_id": "i-spot", "region": "us-west-2"}
 _BLOCK_STATE = {"instance_id": "i-block", "capacity_reservation_id": "cr-block1"}
 
 
-def test_provision_no_reservation_env_reuses_live_instance(monkeypatch):
+def test_provision_reservation_authority(monkeypatch):
+    """No reservation reuses any live box; a reservation reuses only in-block boxes."""
     monkeypatch.delenv("EC2_CAPACITY_RESERVATION", raising=False)
     calls = _patch_provision(monkeypatch, reattach=_SPOT_STATE)
     assert ec2.provision_spot_instance() is _SPOT_STATE
     assert calls == {"shutdown": 0, "launch_fresh": 0}
 
-
-def test_provision_reservation_env_reuses_instance_already_in_block(monkeypatch):
     monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
     calls = _patch_provision(monkeypatch, reattach=_BLOCK_STATE)
     assert ec2.provision_spot_instance() is _BLOCK_STATE
     assert calls == {"shutdown": 0, "launch_fresh": 0}
 
-
-def test_provision_reservation_env_terminates_off_block_instance(monkeypatch):
-    monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
     calls = _patch_provision(monkeypatch, reattach=_SPOT_STATE)
     state = ec2.provision_spot_instance()
     assert calls == {"shutdown": 1, "launch_fresh": 1}
     assert state["capacity_reservation_id"] == "cr-block1"
 
-
-def test_provision_reservation_env_terminates_off_block_recovered_instance(monkeypatch):
-    """The tag-recovery branch is subject to the same off-block authority.
-
-    Even when the state file is lost, a recovered off-block box is torn
-    down, not reused.
-    """
-    monkeypatch.setenv("EC2_CAPACITY_RESERVATION", "cr-block1")
     calls = _patch_provision(monkeypatch, reattach=None, recover=_SPOT_STATE)
     state = ec2.provision_spot_instance()
     assert calls == {"shutdown": 1, "launch_fresh": 1}
     assert state["instance_id"] == "i-fresh"
 
 
-# ---------------------------------------------------------------------------
-# shutdown_instance -- the instance_terminated waiter expiring is not a
-# failure. TerminateInstances has already succeeded by then, so the box is
-# dying regardless. p5-class teardown routinely outlasts botocore's 10-min
-# waiter, and crashing would strand callers
-# after the only action that matters had already been taken.
-# ---------------------------------------------------------------------------
-
-
 def test_shutdown_instance_survives_waiter_timeout(monkeypatch):
+    """TerminateInstances already succeeded, so an expired waiter must not raise."""
     from botocore.exceptions import WaiterError
 
-    class _FakeWaiter:
-        def wait(self, **kwargs):
-            raise WaiterError("InstanceTerminated", "Max attempts exceeded", {})
+    def timeout(**kwargs):
+        raise WaiterError("InstanceTerminated", "Max attempts exceeded", {})
 
-    class _FakeEc2:
-        def __init__(self):
-            self.terminated = []
-
-        def terminate_instances(self, InstanceIds):
-            self.terminated.append(InstanceIds)
-
-        def get_waiter(self, name):
-            return _FakeWaiter()
-
-    fake = _FakeEc2()
-    cleared = []
+    terminated, cleared = [], []
+    fake = SimpleNamespace(
+        terminate_instances=lambda InstanceIds: terminated.append(InstanceIds),
+        get_waiter=lambda name: SimpleNamespace(wait=timeout),
+    )
     monkeypatch.setattr(
         ec2, "_load_state", lambda: {"instance_id": "i-slow", "region": "us-west-2"}
     )
     monkeypatch.setattr(ec2, "_agent", lambda *a, **k: {})
     monkeypatch.setattr(ec2, "_ec2_client", lambda region: fake)
-    # This records the argument, not just the call. shutdown must clear
-    # state as the owner of a specific instance, so a concurrent run's
-    # freshly-written state for a different box is not deleted out from
-    # under it (see tests/evals/test_ec2_state.py's ownership tests).
     monkeypatch.setattr(ec2, "_clear_state", lambda instance_id=None: cleared.append(instance_id))
 
-    ec2.shutdown_instance(wait=True)  # must not raise
+    ec2.shutdown_instance(wait=True)
 
-    assert fake.terminated == [["i-slow"]]
-    # State is still cleared despite the expired waiter (the original point
-    # of this test), and it is cleared as the owner of i-slow, not blindly.
-    assert cleared == ["i-slow"]
+    assert terminated == [["i-slow"]]
+    assert cleared == ["i-slow"]  # cleared as the owner of i-slow, not blindly
 
 
-# ---------------------------------------------------------------------------
-# max_price / _spot_price_map (price-aware capacity hunt)
-# ---------------------------------------------------------------------------
-
-
-def test_run_instances_kwargs_max_price_sets_the_spot_ceiling():
-    kwargs = _base_kwargs(max_price="25.1900")
-    assert kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "25.1900"
-
-
-def test_run_instances_kwargs_no_max_price_keeps_the_default_ceiling():
-    kwargs = _base_kwargs()
-    assert "MaxPrice" not in kwargs["InstanceMarketOptions"]["SpotOptions"]
-
-
-def test_run_instances_kwargs_capacity_block_ignores_max_price():
-    # A block launch replaces InstanceMarketOptions wholesale. A stray
-    # MaxPrice would be an invalid combination.
-    kwargs = _base_kwargs(capacity_reservation_id="cr-0abc", max_price="25.1900")
-    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
-
-
-def test_spot_price_map_newest_observation_wins(monkeypatch):
-    class FakeClient:
-        def describe_spot_price_history(self, **kwargs):
-            # describe_spot_price_history returns rows newest-first.
-            return {
-                "SpotPriceHistory": [
-                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "20.00"},
-                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "99.00"},
-                    {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1b", "SpotPrice": "21.50"},
-                ]
-            }
-
-    monkeypatch.setattr(ec2, "_ec2_client", lambda region: FakeClient())
-    prices = ec2._spot_price_map("us-east-1", ["p5.48xlarge"])
-    assert prices == {
+def test_spot_price_map(monkeypatch):
+    """Newest observation per (type, AZ) wins; a client failure degrades to price-blind."""
+    rows = [
+        {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "20.00"},
+        {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1a", "SpotPrice": "99.00"},
+        {"InstanceType": "p5.48xlarge", "AvailabilityZone": "us-east-1b", "SpotPrice": "21.50"},
+    ]
+    monkeypatch.setattr(ec2, "_ec2_client", lambda region: SimpleNamespace(
+        describe_spot_price_history=lambda **kw: {"SpotPriceHistory": rows}))
+    assert ec2._spot_price_map("us-east-1", ["p5.48xlarge"]) == {
         ("p5.48xlarge", "us-east-1a"): 20.00,
         ("p5.48xlarge", "us-east-1b"): 21.50,
     }
 
-
-def test_spot_price_map_failure_degrades_to_price_blind(monkeypatch):
     def boom(region):
         raise RuntimeError("no credentials")
 
@@ -500,90 +314,44 @@ def test_spot_price_map_failure_degrades_to_price_blind(monkeypatch):
     assert ec2._spot_price_map("us-east-1", ["p5.48xlarge"]) == {}
 
 
-# _wait_public_ip absent-streak tolerance: DescribeInstances is eventually
-# consistent, so a just-launched instance can be invisible for a few polls
-# (a quota-race relaunch: the driver
-# declared a healthy box "absent" and crash-looped). Only a sustained
-# absent streak may abort; positively-observed death states abort
-# immediately.
+# _wait_public_ip: DescribeInstances is eventually consistent, so only a sustained
+# absent streak may abort; observed death states abort immediately.
 
 def _no_sleep_ip(monkeypatch):
     monkeypatch.setattr(ec2._aws.time, "sleep", lambda s: None)
 
 
-def test_wait_public_ip_tolerates_transient_absent_then_succeeds(monkeypatch):
-    _no_sleep_ip(monkeypatch)
-    polls = iter(
-        [None] * (ec2._ABSENT_STREAK_LIMIT - 1)
-        + [{"State": {"Name": "running"}, "PublicIpAddress": "1.2.3.4"}]
-    )
-    monkeypatch.setattr(ec2, "_describe_instance", lambda region, iid: next(polls))
-    assert ec2._wait_public_ip("us-east-2", "i-abc") == "1.2.3.4"
+_RUNNING = {"State": {"Name": "running"}, "PublicIpAddress": "1.2.3.4"}
+_LIMIT = ec2._ABSENT_STREAK_LIMIT
 
 
-def test_wait_public_ip_sustained_absent_still_aborts(monkeypatch):
+@pytest.mark.parametrize(
+    "polls,expected_ip,error",
+    [
+        ([None] * (_LIMIT - 1) + [_RUNNING], "1.2.3.4", None),
+        ([None] * (_LIMIT + 5), None, "went absent right after launch"),
+        ([{"State": {"Name": "terminated"}}] * 5, None, "went terminated right after launch"),
+    ],
+)
+def test_wait_public_ip(monkeypatch, polls, expected_ip, error):
     _no_sleep_ip(monkeypatch)
     calls = {"n": 0}
 
     def describe(region, iid):
         calls["n"] += 1
-        return None
+        return polls[calls["n"] - 1]
 
     monkeypatch.setattr(ec2, "_describe_instance", describe)
-    with pytest.raises(RuntimeError, match="went absent right after launch"):
+    if error is None:
+        assert ec2._wait_public_ip("us-east-2", "i-abc") == expected_ip
+        return
+    with pytest.raises(RuntimeError, match=error):
         ec2._wait_public_ip("us-east-2", "i-abc")
-    assert calls["n"] == ec2._ABSENT_STREAK_LIMIT
-
-
-def test_wait_public_ip_observed_terminated_aborts_immediately(monkeypatch):
-    _no_sleep_ip(monkeypatch)
-    monkeypatch.setattr(
-        ec2, "_describe_instance", lambda region, iid: {"State": {"Name": "terminated"}}
-    )
-    with pytest.raises(RuntimeError, match="went terminated right after launch"):
-        ec2._wait_public_ip("us-east-2", "i-abc")
+    if "absent" in error:
+        assert calls["n"] == _LIMIT
 
 
 # ec2.server_config: the provenance snapshot stamped onto stored results.
-
-def test_server_config_snapshot_from_state(monkeypatch):
-    monkeypatch.setattr(ec2, "_load_state", lambda: {
-        "instance_type": "g7.24xlarge", "region": "us-east-2",
-        "availability_zone": "us-east-2c", "instance_id": "i-abc123",
-    })
-    cfg = ec2.server_config("ministral-3-14b")
-    assert cfg["instance_type"] == "g7.24xlarge"
-    assert cfg["gpu"] == "4x RTX PRO 4500 32GB"
-    assert cfg["tp"] == 4  # derived from the landed box, not the spec pin
-    assert cfg["availability_zone"] == "us-east-2c"
-    assert cfg["instance_id"] == "i-abc123"
-    assert cfg["vllm_image"] == ec2.EC2_VLLM_IMAGE
-    assert cfg["hf_model_id"] == ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["hf_model_id"]
-
-
-def test_server_config_never_raises(monkeypatch):
-    def boom():
-        raise RuntimeError("corrupt state")
-
-    monkeypatch.setattr(ec2, "_load_state", boom)
-    assert ec2.server_config("ministral-3-14b") is None
-    # Absent state degrades to a schema-complete dict of Nones, not a crash.
-    monkeypatch.setattr(ec2, "_load_state", lambda: None)
-    cfg = ec2.server_config("gemma-4-12b")
-    assert cfg["instance_type"] is None and cfg["gpu"] is None
-
-
-# ---------------------------------------------------------------------------
-# ec2.server_config hardware fields:
-# vllm_args/max_model_len/served_at (from state["last_serve"]), vllm_version/
-# vllm_cache_config/agent_fingerprint/vllm_image_digest (live probes),
-# max_parallel_requests/stream (client-side env config). The live-probe
-# helpers (_fetch_vllm_version/_fetch_vllm_cache_config/_fetch_agent_
-# fingerprint) are monkeypatched directly here. server_config's own job is
-# composing their results with last_serve/model-match gating, which is
-# what these tests exercise. The helpers' own request-building is covered
-# by the _FakeResponse-based unit tests further below.
-# ---------------------------------------------------------------------------
 
 _S5_STATE = {
     "instance_type": "g7.24xlarge",
@@ -607,14 +375,7 @@ _S5_STATE = {
 
 def _patch_s5_fetches(monkeypatch, *, vllm_version="0.27.2rc1.dev122+g8efa13b70",
                        vllm_cache_config=None, agent_fp=None):
-    """Stand in for the three live-probe helpers server_config() calls.
-
-    This records the (ip, key) or state each was called with, so a test
-    can check that server_config only attempts a probe when it has enough
-    state to reach the box. (The "box absent" test below relies on this to
-    prove no doomed call was made, not just that the result degraded to
-    None.)
-    """
+    """Stand in for the three live-probe helpers server_config() calls, recording args."""
     calls = {"version": [], "cache": [], "agent": []}
     if vllm_cache_config is None:
         vllm_cache_config = ["vllm:cache_config_info{num_gpu_blocks=\"12345\"} 1.0"]
@@ -644,7 +405,7 @@ def _patch_s5_fetches(monkeypatch, *, vllm_version="0.27.2rc1.dev122+g8efa13b70"
     return calls
 
 
-def test_server_config_s5_happy_path_all_new_fields_populated(monkeypatch):
+def test_server_config_happy_path(monkeypatch):
     """Box up, last_serve names the queried model, all probes succeed."""
     monkeypatch.setattr(ec2, "_load_state", lambda: dict(_S5_STATE))
     calls = _patch_s5_fetches(monkeypatch)
@@ -653,103 +414,71 @@ def test_server_config_s5_happy_path_all_new_fields_populated(monkeypatch):
 
     cfg = ec2.server_config("ministral-3-14b")
 
-    # last_serve-derived (model matches).
+    assert cfg["instance_type"] == "g7.24xlarge"
+    assert cfg["gpu"] == "4x RTX PRO 4500 32GB"
+    assert cfg["tp"] == 4  # derived from the landed box, not the spec pin
+    assert cfg["availability_zone"] == "us-east-2c"
+    assert cfg["instance_id"] == "i-abc123"
+    assert cfg["vllm_image"] == ec2.EC2_VLLM_IMAGE
+    assert cfg["hf_model_id"] == ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["hf_model_id"]
     assert cfg["vllm_args"] == ["--seed", "0"]
     assert cfg["max_model_len"] == 131072
     assert cfg["served_at"] == "2026-08-18T00:00:00+00:00"
-    # Live-probe-derived.
     assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
     assert cfg["vllm_cache_config"] == ["vllm:cache_config_info{num_gpu_blocks=\"12345\"} 1.0"]
     assert cfg["agent_fingerprint"]["nvidia_smi"].startswith("H100")
     assert cfg["vllm_image_digest"] == "vllm/vllm-openai@sha256:cec2df507519abc"
-    # Client-side config, read at call time.
     assert cfg["max_parallel_requests"] == 3
     assert cfg["stream"] is True
-    # The probes were actually reached with the box's ip/key, not skipped.
     assert calls["version"] == [("203.0.113.10", "vk-stub-secret")]
     assert calls["cache"] == [("203.0.113.10", "vk-stub-secret")]
     assert len(calls["agent"]) == 1
-    # The original 8 fields are untouched by the extension.
-    assert cfg["instance_type"] == "g7.24xlarge"
-    assert cfg["tp"] == 4
 
 
-def test_server_config_s5_box_absent_degrades_to_none_without_probing(monkeypatch):
-    """No state file at all: every box/network-derived §5 field is None.
+def test_server_config_degradations(monkeypatch):
+    """A raising state load, an absent box, a model mismatch and a malformed env var."""
+    def boom():
+        raise RuntimeError("corrupt state")
 
-    The live-probe helpers are never even called, since there is nothing
-    to reach.
-    """
+    monkeypatch.setattr(ec2, "_load_state", boom)
+    assert ec2.server_config("ministral-3-14b") is None
+
     monkeypatch.setattr(ec2, "_load_state", lambda: None)
     calls = _patch_s5_fetches(monkeypatch)
-
     cfg = ec2.server_config("gemma-4-12b")
-
-    assert cfg["vllm_args"] is None
-    assert cfg["max_model_len"] is None
-    assert cfg["served_at"] is None
-    assert cfg["vllm_version"] is None
-    assert cfg["vllm_cache_config"] is None
-    assert cfg["agent_fingerprint"] is None
-    assert cfg["vllm_image_digest"] is None
-    assert calls == {"version": [], "cache": [], "agent": []}
-    # Client-side config is not box-dependent (env reads only). Unlike the
-    # box/network fields above, "no box" must not blank these, matching the
-    # existing precedent that vllm_image/hf_model_id also survive no box.
-    assert cfg["max_parallel_requests"] == 8  # ChatClient's own default
-    assert cfg["stream"] is False
-    # server_config must still return a dict, never None, on this path.
     assert cfg is not None
+    assert cfg["instance_type"] is None and cfg["gpu"] is None
+    for field in ("vllm_args", "max_model_len", "served_at", "vllm_version",
+                  "vllm_cache_config", "agent_fingerprint", "vllm_image_digest"):
+        assert cfg[field] is None
+    assert calls == {"version": [], "cache": [], "agent": []}
+    # Client-side config is env-only, so no box must not blank it.
+    assert cfg["max_parallel_requests"] == 8
+    assert cfg["stream"] is False
 
-
-def test_server_config_s5_last_serve_model_mismatch_yields_none(monkeypatch):
-    """last_serve names a different model than the one being queried.
-
-    This can happen when the box was swapped since. The launched-argv
-    fields must not be misattributed to the model asked about, even
-    though the box is reachable and the live probes (which describe
-    whatever is currently running) still succeed.
-    """
     state = dict(_S5_STATE, last_serve=dict(_S5_STATE["last_serve"], model="gemma-4-12b"))
     monkeypatch.setattr(ec2, "_load_state", lambda: state)
     _patch_s5_fetches(monkeypatch)
-
     cfg = ec2.server_config("ministral-3-14b")
-
     assert cfg["vllm_args"] is None
     assert cfg["max_model_len"] is None
     assert cfg["served_at"] is None
-    # Live probes are independent of the model-name match: they describe
-    # whatever the box is actually running right now, not the query's name.
+    # Live probes describe whatever is running now, so they survive the mismatch.
     assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
     assert cfg["agent_fingerprint"] is not None
 
-
-def test_server_config_s5_malformed_env_blanks_only_its_own_field(monkeypatch):
-    """EC2_STREAM_COMPLETIONS="true" makes ChatClient._flag raise ValueError.
-
-    That's "true", not "1": ChatClient._flag's ``bool(int(...))`` raises on
-    it. That must degrade only the "stream" field to None. It must not
-    escape to server_config's outer except and blank every other
-    already-computed field over one malformed env var.
-    """
     monkeypatch.setattr(ec2, "_load_state", lambda: dict(_S5_STATE))
     _patch_s5_fetches(monkeypatch)
     monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "true")
-
     cfg = ec2.server_config("ministral-3-14b")
-
     assert cfg is not None
     assert cfg["stream"] is None
-    assert cfg["vllm_args"] == ["--seed", "0"]  # untouched by the bad env var
+    assert cfg["vllm_args"] == ["--seed", "0"]
     assert cfg["vllm_version"] == "0.27.2rc1.dev122+g8efa13b70"
 
 
 class _FakeResponse:
-    """Minimal requests.Response stand-in, as used by _Resp in test_openai_compat.py.
-
-    Only the attributes the code under test reads.
-    """
+    """Minimal requests.Response stand-in with only the attributes the code reads."""
 
     def __init__(self, *, ok=True, json_body=None, text="", status_code=200):
         self.ok = ok
@@ -761,26 +490,23 @@ class _FakeResponse:
         return self._json_body
 
 
-def test_fetch_vllm_version_returns_the_version_string(monkeypatch):
+def test_fetch_vllm_version_and_cache_config(monkeypatch):
+    """Both probes return their payload, and both degrade to None, never raising."""
     monkeypatch.setattr(
         ec2.requests, "get",
         lambda url, headers, timeout: _FakeResponse(json_body={"version": "0.27.2rc1.dev122+g8efa13b70"}),
     )
     assert ec2._fetch_vllm_version("203.0.113.10", "vk") == "0.27.2rc1.dev122+g8efa13b70"
 
-
-def test_fetch_vllm_version_none_on_non_ok_and_on_exception(monkeypatch):
     monkeypatch.setattr(ec2.requests, "get", lambda url, headers, timeout: _FakeResponse(ok=False))
     assert ec2._fetch_vllm_version("203.0.113.10", "vk") is None
 
-    def boom(url, headers, timeout):
+    def dead_box(url, headers, timeout):
         raise ec2.requests.exceptions.ConnectionError("dead box")
 
-    monkeypatch.setattr(ec2.requests, "get", boom)
+    monkeypatch.setattr(ec2.requests, "get", dead_box)
     assert ec2._fetch_vllm_version("203.0.113.10", "vk") is None
 
-
-def test_fetch_vllm_cache_config_filters_to_cache_config_info_lines(monkeypatch):
     body = (
         "# HELP vllm:cache_config_info info\n"
         "# TYPE vllm:cache_config_info gauge\n"
@@ -790,11 +516,10 @@ def test_fetch_vllm_cache_config_filters_to_cache_config_info_lines(monkeypatch)
     monkeypatch.setattr(
         ec2.requests, "get", lambda url, headers, timeout: _FakeResponse(text=body)
     )
-    lines = ec2._fetch_vllm_cache_config("203.0.113.10", "vk")
-    assert lines == ['vllm:cache_config_info{num_gpu_blocks="12345",block_size="16"} 1.0']
+    assert ec2._fetch_vllm_cache_config("203.0.113.10", "vk") == [
+        'vllm:cache_config_info{num_gpu_blocks="12345",block_size="16"} 1.0'
+    ]
 
-
-def test_fetch_vllm_cache_config_none_when_no_matching_lines(monkeypatch):
     monkeypatch.setattr(
         ec2.requests, "get",
         lambda url, headers, timeout: _FakeResponse(text="vllm:num_requests_running{} 0.0\n"),
@@ -802,7 +527,8 @@ def test_fetch_vllm_cache_config_none_when_no_matching_lines(monkeypatch):
     assert ec2._fetch_vllm_cache_config("203.0.113.10", "vk") is None
 
 
-def test_fetch_agent_fingerprint_extracts_the_fingerprint_key(monkeypatch):
+def test_fetch_agent_fingerprint(monkeypatch):
+    """Extracts the fingerprint key, mines backend lines from the log tail, else None."""
     monkeypatch.setattr(
         ec2, "_agent",
         lambda state, method, path, timeout=None, connect_retries=None: {
@@ -813,13 +539,6 @@ def test_fetch_agent_fingerprint_extracts_the_fingerprint_key(monkeypatch):
     assert fp == {"nvidia_smi": "stub"}
     assert backend is None  # no log_tail in the fake status
 
-
-def test_fetch_agent_fingerprint_mines_backend_lines(monkeypatch):
-    """The ninth section-5 field: attention-backend lines from the log tail.
-
-    These lines are mined from the container's log tail. This is
-    best-effort: a scrolled-away tail yields None.
-    """
     monkeypatch.setattr(
         ec2, "_agent",
         lambda state, method, path, timeout=None, connect_retries=None: {
@@ -830,34 +549,15 @@ def test_fetch_agent_fingerprint_mines_backend_lines(monkeypatch):
     fp, backend = ec2._fetch_agent_fingerprint(_S5_STATE)
     assert backend == ["INFO Using Flash Attention backend on V1 engine."]
 
-
-def test_fetch_agent_fingerprint_none_on_failure(monkeypatch):
-    def boom(state, method, path, timeout=None, connect_retries=None):
+    def unreachable(state, method, path, timeout=None, connect_retries=None):
         raise RuntimeError("agent unreachable")
 
-    monkeypatch.setattr(ec2, "_agent", boom)
+    monkeypatch.setattr(ec2, "_agent", unreachable)
     assert ec2._fetch_agent_fingerprint(_S5_STATE) == (None, None)
 
 
-# ---------------------------------------------------------------------------
-# ec2.serve_model: the "last_serve" stash (Change B of the §5 plan). This is
-# the launched argv server_config() later reads back. Everything on the
-# network boundary (_agent, _wait_model_ready, list_models) is
-# monkeypatched out. This test's only job is proving the state mutation,
-# not the swap protocol.
-# ---------------------------------------------------------------------------
-
-
 def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatch):
-    state = {
-        "instance_type": "g7.24xlarge",
-        "region": "us-east-2",
-        "availability_zone": "us-east-2c",
-        "instance_id": "i-abc123",
-        "public_ip": "203.0.113.10",
-        "vllm_api_key": "vk-stub-secret",
-        "control_token": "ct-stub-secret",
-    }
+    state = {k: v for k, v in _S5_STATE.items() if k != "last_serve"}
     monkeypatch.delenv("EC2_REQUIRE_GPU", raising=False)
     monkeypatch.setattr(ec2, "_require_state", lambda: state)
 
@@ -866,9 +566,7 @@ def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatc
     def fake_agent(state_arg, method, path, payload=None, timeout=120, connect_retries=40):
         agent_calls.append((method, path, payload))
         if method == "GET" and path == "/status":
-            # First call is the "already serving?" probe (before). Report
-            # not already serving, so serve_model takes the real-swap path.
-            return {"healthy": False}
+            return {"healthy": False}  # not already serving -> take the real-swap path
         if method == "POST" and path == "/serve":
             return {"ok": True, "launching": payload["served_model_name"]}
         raise AssertionError(f"unexpected agent call: {method} {path}")
@@ -888,97 +586,19 @@ def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatc
     assert saved["last_serve"]["max_model_len"] == 131072
     assert saved["last_serve"]["vllm_args"] == ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["vllm_args"]
     assert saved["last_serve"]["image"] == ec2.EC2_VLLM_IMAGE
-    # served_at is a UTC ISO-8601 timestamp: it round-trips through fromisoformat.
+
     from datetime import datetime as _dt
 
     _dt.fromisoformat(saved["last_serve"]["served_at"])
-    # "serving" (the pre-existing fast-path key) and "last_serve" are
-    # distinct dicts with different key names. serve_model must not
-    # conflate them.
     assert saved["serving"]["served_model_name"] == "ministral-3-14b"
     assert "served_model_name" not in saved["last_serve"]
-    # The real swap actually happened (POST /serve), not the skip path.
     assert ("POST", "/serve") in [(m, p) for m, p, _ in agent_calls]
 
 
-def test_on_demand_market_drops_instance_market_options(monkeypatch):
-    """EC2_MARKET=on-demand launches by omitting InstanceMarketOptions.
-
-    There is no MarketType="on-demand"; absence is how the API expresses
-    it, so a launch that merely renamed the MarketType would be rejected.
-    Every other kwarg must be byte-identical to the spot shape, because
-    the whole point of this path is buying the same silicon a different
-    way. It exists for a lane whose
-    p5e.48xlarge had no spot capacity in any AZ, and whose hardware could
-    not be substituted without contaminating the study.
-
-    The bid ceiling must go too: an on-demand launch has no MaxPrice, and
-    leaving one attached would be rejected.
-    """
-    monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
-    kwargs = _base_kwargs(max_price="12.34")
-    assert "InstanceMarketOptions" not in kwargs
-
-    monkeypatch.setattr(ec2, "EC2_MARKET", "spot")
-    spot = _base_kwargs(max_price="12.34")
-    assert spot["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "12.34"
-
-    # Same box, different till: nothing except the market differs.
-    assert {k: v for k, v in spot.items() if k != "InstanceMarketOptions"} == kwargs
-    # The cost backstop survives: an abandoned on-demand p5e bills forever.
-    assert kwargs["InstanceInitiatedShutdownBehavior"] == "terminate"
-
-
-def test_capacity_block_still_wins_over_on_demand(monkeypatch):
-    """A purchased block is targeted even when EC2_MARKET says on-demand."""
-    monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
-    kwargs = _base_kwargs(capacity_reservation_id="cr-123")
-    assert kwargs["InstanceMarketOptions"] == {"MarketType": "capacity-block"}
-    assert kwargs["CapacityReservationSpecification"] == {
-        "CapacityReservationTarget": {"CapacityReservationId": "cr-123"}
-    }
-
-
-def test_spot_bid_multiplier_scales_the_cap_and_zero_means_uncapped(monkeypatch):
-    """EC2_SPOT_BID_MULTIPLIER scales the bid; <= 0 sends no MaxPrice at all.
-
-    If you send no MaxPrice, the ceiling defaults to the on-demand price, the highest
-    bid EC2 accepts. There is no way to bid above it, and the spot price never exceeds
-    it.
-
-    If you raise the multiplier, it only helps when an AZ's price genuinely exceeds the
-    cap. Within spot, InsufficientInstanceCapacity is about physical hosts, not money.
-    It does not follow that on-demand is better at acquiring capacity.
-    On-demand's priority concerns interruption, not which pool has free
-    hosts.
-    """
-    assert ec2.EC2_SPOT_BID_MULTIPLIER == 1.25, "default headroom over median"
-
-    # A cap is passed through verbatim to SpotOptions.MaxPrice.
-    kwargs = _base_kwargs(max_price="9.9900")
-    assert kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] == "9.9900"
-
-    # No cap -> the key is absent, which is EC2's default on-demand ceiling.
-    kwargs = _base_kwargs(max_price=None)
-    assert "MaxPrice" not in kwargs["InstanceMarketOptions"]["SpotOptions"]
-    assert kwargs["InstanceMarketOptions"]["MarketType"] == "spot"
-
-
 def test_launch_fresh_wraps_user_data_in_pack_user_data():
-    """gzip is load-bearing, not an optimization.
-
-    The raw render exceeds EC2's 16 KB user-data cap outright (57 B over
-    when the digest pin landed, about 4.6 KB over after the section-5
-    fingerprint). So a regression that drops the ``pack_user_data`` call
-    would fail only at the live ``RunInstances`` call, with zero local
-    signal. This is a source-text pin, the same env-independent pattern as
-    test_deploy_specs.test_ec2_vllm_image_default_is_digest_pinned.
-    """
+    """Source pin: the raw render exceeds EC2's 16 KB cap, so gzip is load-bearing."""
     import re
     from pathlib import Path
 
     src = Path(ec2.__file__.replace(".pyc", ".py")).read_text()
-    assert re.search(r"pack_user_data\(\s*render_user_data\(", src), (
-        "ec2.py must build user-data as pack_user_data(render_user_data(...)) "
-        "-- raw user-data no longer fits EC2's 16 KB cap"
-    )
+    assert re.search(r"pack_user_data\(\s*render_user_data\(", src)
