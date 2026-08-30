@@ -120,6 +120,13 @@ notebook = [
     "statsmodels>=0.14",
 ]
 
+[tool.uv]
+# Everything here runs on Linux (the dev box and the EC2/remote-compute
+# fleet), so resolve and lock for Linux only. This keeps uv.lock small and
+# reviewable: without it uv also locks win32/emscripten resolution forks and
+# every platform's wheels for every package.
+environments = ["sys_platform == 'linux'"]
+
 [tool.setuptools]
 # This project is pure Python and ships only the package source under
 # `smolbench/` (plus the explicitly listed payload assets below).
