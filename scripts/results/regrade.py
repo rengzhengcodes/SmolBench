@@ -5,22 +5,21 @@ a whole results tree with no model, no GPU and no re-run -- use this to bring
 arms graded under an older, stricter convention onto one convention. Per
 condition it reports before/after accuracy, changed verdicts, invalid marks
 recovered, and NONCOMPLIANCE: how often the model broke the output contract
-regardless of correctness, separating degraded instruction following from
+regardless of correctness, which separates degraded instruction following from
 degraded reasoning.
 
-Dry run by default; ``--write`` rewrites the YAMLs in place. There is NO git
-safety net: ``.gitignore`` excludes ``notebooks/*/results/``, so no result YAML
-is tracked and ``git checkout`` recovers nothing. Only a re-fetch undoes a bad
-``--write`` (``InductionExperiment.harness.sync_down()``) -- and that same call
-silently DISCARDS a good one.
+Dry run by default; ``--write`` rewrites the YAMLs in place with NO git safety
+net, since ``.gitignore`` excludes ``notebooks/*/results/``. Only a re-fetch
+undoes a bad ``--write`` (``InductionExperiment.harness.sync_down()``) -- and
+that same call silently DISCARDS a good one.
 
 S3-backed results guard: this script edits ``rep_*.yaml`` on the LOCAL
-filesystem only, while ``smolbench.evals.results_store.sync_down`` is a one-way
-S3-to-local mirror that OVERWRITES the local tree, so a local-only regrade is
-clobbered back to the stale S3 copy on the next sync -- invisibly, since a score
-flip preserves byte length. So `main` refuses -- before touching a file, and
-regardless of ``--write`` -- if `_s3_backed_studies` finds any requested study
-resolving to an ``S3ResultsStore``, printing the recovery sequence.
+filesystem only, while ``results_store.sync_down`` is a one-way S3-to-local
+mirror that OVERWRITES the local tree, so a local-only regrade is clobbered back
+to the stale S3 copy on the next sync -- invisibly, since a score flip preserves
+byte length. `main` therefore refuses -- before touching a file, and regardless
+of ``--write`` -- if `_s3_backed_studies` finds any requested study resolving to
+an ``S3ResultsStore``, printing the recovery sequence instead.
 
 Run from the repo root:
     .venv/bin/python scripts/results/regrade.py [--study induction] [--write]
@@ -41,9 +40,9 @@ from smolbench.evals.parsing import parse_numeric  # noqa: E402
 
 STUDIES = {
     # The family-ladder scaling study (notebooks/induction) is S3-backed
-    # (SMOLBENCH_RESULTS_S3). So the S3 guard below refuses a local regrade
-    # until the operator deliberately syncs down, unsets the env var, and
-    # re-seeds; see the module docstring.
+    # (SMOLBENCH_RESULTS_S3), so the guard in `main` refuses a local regrade
+    # until the operator syncs down and unsets the env var; see the module
+    # docstring's "S3-backed results guard".
     "induction": "notebooks/induction/results",
 }
 
@@ -56,7 +55,7 @@ def _s3_backed_studies(studies) -> List:
     locally, i.e. whenever ``SMOLBENCH_RESULTS_S3`` is unset. Studies are
     resolved one at a time rather than short-circuiting on that env var, so the
     refusal names each offending tree by its own ``describe()`` value.
-    ``results_store`` is imported lazily, per this repo's house convention that
+    ``results_store`` is imported lazily, per the house convention that
     importing a module must not require the AWS SDK.
     """
     from smolbench.evals.results_store import S3ResultsStore, resolve_store
@@ -131,13 +130,10 @@ def main() -> int:
     args = argp.parse_args()
     studies = args.study or sorted(STUDIES)
 
-    # Guard (see the module docstring's "S3-backed results guard" section).
-    # Refuse OUTRIGHT, before this function touches a single file, if any
-    # study this run would touch is S3-backed. This guard fires regardless
-    # of --write: a dry run's tallies would themselves come from a local
-    # tree that is not authoritative once SMOLBENCH_RESULTS_S3 is set,
-    # which would mislead rather than inform the operator's --write
-    # decision.
+    # Guard (see the module docstring's "S3-backed results guard"). It fires
+    # regardless of --write: once SMOLBENCH_RESULTS_S3 is set, a dry run's
+    # tallies come from a local tree that is not authoritative, which would
+    # mislead rather than inform the operator's --write decision.
     offending = _s3_backed_studies(studies)
     if offending:
         print("REFUSING to regrade: the following stud(y/ies) are S3-backed, not local:")

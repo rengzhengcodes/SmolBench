@@ -3,23 +3,21 @@
 ``power_analysis.py::cmh_reject`` treats the arms as independent binomials, but
 every model answers the SAME seeds with byte-identical prompts and the four info
 arms at a seed reuse one query/answer set, so all 210 PRIMARY contrasts are
-matched item-for-item. Each contrast is recomputed three ways and the change in
-Holm rejection status reported: unpaired CMH; item-level exact McNemar
-(DESCRIPTIVE only -- marks within a replicate are not independent); and
-`signflip_exact_p` over whole replicates, which carries the inference here as it
-does in `significance_report.py` and `extens_vs_noise.py`. `design_effect`
-measures the variance CMH omits by summing the 9 harmonic strata as if
-independent (>1 anticonservative, <1 conservative).
+matched item-for-item. Each is recomputed three ways and the change in Holm
+rejection status reported: unpaired CMH; item-level exact McNemar (DESCRIPTIVE
+only -- marks within a replicate are not independent); and `signflip_exact_p`
+over whole replicates, which carries the inference here as in
+`significance_report.py` and `extens_vs_noise.py`. `design_effect` measures the
+variance CMH omits by summing the 9 harmonic strata as if independent (>1
+anticonservative, <1 conservative).
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
-(``{model}_{info}/rep_{seed}.yaml``). Those YAMLs carry ``!!python/object``
-tags, so, as in ``power_analysis.py``, per-mark ``score:`` lines are regexed
-rather than unsafe-loaded; marks are serialized in ascending-period order, so
-position recovers the harmonic. Scoring matches
-``power_analysis.py::load_outcomes``: ``score: 1`` is correct, ``0`` and
-``null`` (an invalid completion) both fail. About 4% of marks are ``null``, so a
-sensitivity pass that DROPS item-pairs where either arm is invalid accompanies
-every headline.
+(``{model}_{info}/rep_{seed}.yaml``); as in ``power_analysis.py`` the
+``!!python/object`` tags force a regex over per-mark ``score:`` lines, and
+ascending-period serialization means position recovers the harmonic. Scoring
+matches ``load_outcomes``: ``score: 1`` correct, ``0`` and ``null`` (invalid
+completion) both fail. About 4% of marks are ``null``, so a DROP-INVALID
+sensitivity pass accompanies every headline.
 
 Run (ephemeral env via --no-project, per repo convention):
     uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/paired_analysis.py
@@ -53,7 +51,7 @@ def load_marks() -> tuple[dict, dict]:
     """Read every landed replicate into per-condition (seed -> 9-vector) maps.
 
     Seeds are whatever ``rep_*.yaml`` files exist, so a still-collecting lane
-    simply contributes fewer; `aligned` intersects seeds per contrast.
+    contributes fewer; `aligned` intersects seeds per contrast.
 
     Returns
     -------
@@ -65,8 +63,8 @@ def load_marks() -> tuple[dict, dict]:
     Raises
     ------
     SystemExit
-        If a condition's results directory is missing -- call
-        ``InductionExperiment.harness.sync_down()`` first.
+        If a condition's results directory is missing (call
+        ``InductionExperiment.harness.sync_down()`` first).
     """
     correct: dict = {}
     valid: dict = {}
@@ -103,16 +101,16 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
     """Build item-matched mark vectors for one contrast.
 
     Intersects `key_a`'s and `key_b`'s seeds (a still-collecting lane is
-    compared only on the seeds it has), then flattens seed x harmonic into a
-    single item axis, preserving the pairing. `drop_invalid` drops item-pairs
-    where either arm's mark is invalid (``score: null``).
+    compared only on the seeds it has), then flattens seed x harmonic into one
+    item axis, preserving the pairing. `drop_invalid` drops item-pairs where
+    either arm's mark is invalid (``score: null``).
 
     Returns
     -------
     tuple
-        ``(a, b, seed_index)`` over matched items. `seed_index` records each
-        item's replicate, which the clustering measurements need in order to
-        resample whole replicates.
+        ``(a, b, seed_index)`` over matched items; `seed_index` records each
+        item's replicate, which the clustering measurements need to resample
+        whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
@@ -129,10 +127,9 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
 def mcnemar_exact_p(b: int, c: int) -> float:
     """Two-sided exact conditional (binomial) McNemar p for discordant counts `b`, `c`.
 
-    Returns 1.0 when there are no discordant pairs. Treats the 270 marks as 270
-    independent pairs, which they are not: DESCRIPTIVE only, while
-    `signflip_exact_p` carries the inference and collapses onto this test when
-    every cluster is a singleton.
+    1.0 when there are no discordant pairs. DESCRIPTIVE only (it treats the 270
+    marks as 270 independent pairs, which they are not); `signflip_exact_p`
+    carries the inference and collapses onto this test at singleton clusters.
     """
     nd = b + c
     if nd == 0:
@@ -143,11 +140,11 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     """Per-replicate arm difference, one integer per unique seed in `seed_idx`.
 
-    ``d_s`` = (# correct in arm A at seed s) - (# correct in arm B at seed s),
-    over the items `aligned` kept for that seed; the per-cluster summary
+    ``d_s`` = (# correct in arm A at seed s) - (# correct in arm B at seed s)
+    over the items `aligned` kept for that seed: the per-cluster summary
     `signflip_exact_p` permutes. ``sum(d_s) == b - c`` exactly (the McNemar
-    discordance margin), so the two tests read the same signal and differ only
-    in what they treat as exchangeable.
+    discordance margin), so both tests read the same signal and differ only in
+    what they treat as exchangeable.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -165,15 +162,15 @@ def signflip_exact_p(diffs) -> float:
     difference is equally likely to have come out with the opposite sign, so
     ``p = P(|T*| >= |T_obs|)`` over the 2^S sign assignments of
     ``T = sum_s d_s`` is exact. Enumerated by dynamic programming over
-    attainable totals (S dict passes, not 2^S draws), so the value is
-    deterministic and needs no seed. Returns 1.0 for empty `diffs`.
+    attainable totals (S dict passes, not 2^S draws), so it is deterministic
+    and needs no seed. Returns 1.0 for empty `diffs`.
 
     With one item per cluster the test IS exact McNemar, and Studentizing is a
     provable no-op (``sum_s d_s^2`` is sign-flip invariant), so the unweighted
     seed sum is the natural member of the cluster-permutation family. The
-    resolution floor is ``2 / 2^S`` (the observed assignment and its global
-    negation always qualify) = 1.86e-09 at S = 30; contrasts that saturate it
-    are reported at the floor, not at a fabricated smaller number.
+    resolution floor is ``2 / 2^S`` = 1.86e-09 at S = 30 (the observed
+    assignment and its global negation always qualify); contrasts that saturate
+    it are reported at the floor, not at a fabricated smaller number.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -196,15 +193,14 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
     Deliberately mirrors ``power_analysis.py::cmh_reject`` (same continuity
     correction, same hypergeometric variance), so the paired-vs-unpaired
     comparison isolates the PAIRING. Rebuilt from `aligned`'s flat item arrays,
-    recovering the harmonic index as position-within-seed. Returns 1.0 if no
+    the harmonic index recovered as position-within-seed. Returns 1.0 if no
     stratum has enough items to contribute variance.
     """
-    # `seed_idx` groups items by replicate, and within a replicate items
-    # stay in ascending harmonic order, so an item's offset within its
-    # own seed block IS its harmonic. (Under drop_invalid a replicate
-    # can be short, which shifts later offsets. That only mislabels
-    # which stratum an item lands in; it never breaks the pairing, and
-    # the pre-registered pass does not drop anything.)
+    # Items stay in ascending harmonic order within a replicate, so an item's
+    # offset inside its own seed block IS its harmonic. (Under drop_invalid a
+    # short replicate shifts later offsets, which only mislabels the stratum an
+    # item lands in; the pairing is untouched and the pre-registered pass drops
+    # nothing.)
     num_terms, den_terms = [], []
     order = np.concatenate([np.arange((seed_idx == s).sum()) for s in np.unique(seed_idx)])
     for k in np.unique(order):
@@ -233,7 +229,7 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Controls FWER under ARBITRARY dependence. The sort is STABLE because ties
     are pervasive here -- the sign-flip test has a hard resolution floor at
     2/2^30 and three lanes sit exactly on it -- and the rejection set must not
-    depend on the order the contrasts happen to be built in.
+    depend on contrast build order.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -275,9 +271,9 @@ def main() -> None:
     Over the 210-contrast PRIMARY family, for both the pre-registered pass
     (null == incorrect) and a DROP-INVALID sensitivity pass: rejection counts
     for unpaired CMH, paired McNemar and (pre-registered pass only) seed
-    sign-flip; the contrasts that change status under pairing; the standing
-    intens-vs-noise question per model; and the design-effect summary. Then
-    SECONDARY-family (Benjamini-Hochberg) discoveries under both tests.
+    sign-flip; contrasts that change status under pairing; the standing
+    intens-vs-noise question per model; the design-effect summary. Then
+    SECONDARY (Benjamini-Hochberg) discoveries under both tests.
     """
     print("Loading marks ...", flush=True)
     correct, valid = load_marks()
@@ -303,10 +299,9 @@ def main() -> None:
             nc = int((~a & b).sum())
             p_paired = mcnemar_exact_p(nb, nc)
             p_unpaired = cmh_unpaired_p(a, b, sidx)
-            # The cluster test is only meaningful on the pre-registered
-            # pass. If invalid pairs are dropped, the per-seed sum
-            # becomes a sum over a VARIABLE number of items, which is a
-            # different statistic.
+            # Cluster test only on the pre-registered pass: dropping invalid
+            # pairs makes the per-seed sum a sum over a VARIABLE number of
+            # items, i.e. a different statistic.
             p_cluster = (
                 signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
             )

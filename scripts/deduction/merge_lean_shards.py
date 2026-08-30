@@ -2,25 +2,23 @@
 
 ``notebooks/deduction/run_study.py`` can run one lane as N theorem-stride shards
 (``LEAN_SHARD=i/n``; see ``runner._select_theorems``'s ``shard`` key), each
-writing its own NON-canonical dir ``runs/scaling_<key>_shard<i>of<n>`` under
-``--no-s3``. Shard dirs must never reach the canonical S3 prefix, whose sole
+writing its own NON-canonical ``runs/scaling_<key>_shard<i>of<n>`` under
+``--no-s3``: shard dirs must never reach the canonical S3 prefix, whose sole
 ``all_rows.jsonl`` is the exact object the verification pass
 (``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script
-folds the completed shards into one canonical ``runs/scaling_<key>``,
-regenerates ``analysis.txt`` and, under ``--spool``, uploads via the driver's own
-verified two-phase ``spool_to_s3`` and only then prunes the shard dirs, so no run
-data accumulates on the local host.
+folds the completed shards into one canonical ``runs/scaling_<key>``, regenerates
+``analysis.txt`` and, under ``--spool``, uploads via the driver's own verified
+two-phase ``spool_to_s3`` and only then prunes the shard dirs, so no run data
+accumulates on the local host.
 
-Merge gates -- all hard failures; nothing is written past a failed gate: every
-shard dir exists with ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell
-key (model, theorem_id, k, rung, replicate_idx) and no duplicate sanity theorem
+Merge gates -- all hard failures, nothing written past a failed one: every shard
+dir exists with ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell key
+(model, theorem_id, k, rung, replicate_idx) and no duplicate sanity theorem
 across shards (theorem-stride shards are disjoint by construction, so a duplicate
 means a mis-sharded or double-run lane); merged totals equal
-``--expect-cells``/``--expect-sanity``, default 944/300, the model-independent
-full-lane counts for this study's fixed 300-theorem set and 4 rungs
-(``skip_trivial`` depends only on theorem structure); no ``theorems/`` path
-collides between shards; and the canonical dir has no pre-existing
-``all_rows.jsonl``, which is never overwritten.
+``--expect-cells``/``--expect-sanity`` (default `EXPECT_CELLS`/`EXPECT_SANITY`);
+no ``theorems/`` path collides between shards; and the canonical
+``all_rows.jsonl`` must not already exist -- it is never overwritten.
 
 Run from the repo root after the shard drivers have exited::
 
@@ -40,9 +38,9 @@ logging.basicConfig(level=logging.INFO)
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
-#: Model-independent full-lane row counts (300 fixed theorems, 4 rungs;
-#: skip_trivial depends only on theorem structure). See the module
-#: docstring.
+#: Model-independent full-lane row counts for this study's fixed 300-theorem set
+#: and 4 rungs; they do not vary by model because skip_trivial depends only on
+#: theorem structure.
 EXPECT_CELLS: int = 944
 EXPECT_SANITY: int = 300
 
@@ -82,9 +80,9 @@ def merge_shards(
     Raises
     ------
     SystemExit
-        On any failed gate (see the module docstring). On failure the canonical
-        dir is left absent or partially written, but the shard dirs are never
-        touched: only ``main`` prunes them, and only after a verified S3 spool.
+        On any failed gate (see the module docstring). A failure may leave the
+        canonical dir absent or partly written, but never touches the shard dirs:
+        only ``main`` prunes them, and only after a verified S3 spool.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]
@@ -147,10 +145,9 @@ def merge_shards(
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(d / rel, dst)
 
-    # server_config.yaml sidecars: each shard's file is already a YAML list
-    # of timestamped snapshots (the driver appends to it). Plain
-    # concatenation, in shard order, stays valid YAML and preserves the
-    # three-box provenance the study's logging directive requires.
+    # Each shard's server_config.yaml is already a YAML list of timestamped
+    # snapshots (the driver appends), so plain concatenation in shard order stays
+    # valid YAML and preserves the three-box provenance the study requires.
     with (canonical / "server_config.yaml").open("w") as sink:
         for d in shard_dirs:
             sc = d / "server_config.yaml"
@@ -217,18 +214,16 @@ def main(argv: list[str] | None = None) -> None:
         expect_sanity=None if args.no_expect else args.expect_sanity,
     )
 
-    # Regenerate analysis.txt over the MERGED rows. Per-shard analysis
-    # files were never written into the canonical dir, and would be
-    # partial anyway.
+    # Regenerate analysis.txt over the MERGED rows: per-shard analysis files were
+    # never copied into the canonical dir, and would be partial anyway.
     from smolbench.deduction.lean import runner  # late: heavy import chain
 
     runner.write_run_analysis(canonical)
 
     if args.spool:
-        # Reuse the driver's verified two-phase spool, instead of
-        # re-deriving bucket/prefix/verify semantics here. This script
-        # loads the driver by file path, for the same reason the driver
-        # itself loads its sibling that way.
+        # Reuse the driver's verified two-phase spool rather than re-deriving
+        # bucket/prefix/verify semantics here; loaded by file path, for the same
+        # reason the driver itself loads its sibling that way.
         spec = importlib.util.spec_from_file_location(
             "merge_lean_shards_driver",
             REPO_ROOT / "notebooks" / "deduction" / "run_study.py",
@@ -238,8 +233,7 @@ def main(argv: list[str] | None = None) -> None:
         spec.loader.exec_module(driver)
         uploaded = driver.spool_to_s3(canonical, args.key)
         logging.info(f"spooled {uploaded} file(s) for scaling_{args.key}")
-        # The spool verified every upload. Only now does this script prune
-        # the shard directories.
+        # The spool verified every upload; only now prune the shard dirs.
         for i in range(args.n):
             shard_dir = RESULTS_RUNS / f"scaling_{args.key}_shard{i}of{args.n}"
             shutil.rmtree(shard_dir)

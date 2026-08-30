@@ -8,11 +8,11 @@ PRIMARY test: the exact seed-level sign-flip randomization test
 (``paired_analysis.signflip_exact_p``). The independent unit is the REPLICATE
 SEED -- one label alphabet and one answer vector shared by its 9 harmonic items
 -- so a seed on which an arm collapses contributes up to 9 correlated
-discordances, not 9 pieces of evidence. It enumerates all 2^30 sign assignments
-of the 30 per-seed differences by DP: exact, deterministic (no resampling seed),
-and equal to exact McNemar when every cluster is a singleton. Item-level McNemar
-and the unpaired harmonic-stratified CMH stay as labelled DESCRIPTIVE columns;
-the gap to the cluster p is the design effect.
+discordances, not 9 pieces of evidence. All 2^30 sign assignments of the 30
+per-seed differences are enumerated by DP: exact, deterministic (no resampling
+seed), equal to exact McNemar when every cluster is a singleton. Item-level
+McNemar and the unpaired harmonic-stratified CMH stay labelled DESCRIPTIVE
+columns; the gap to the cluster p is the design effect.
 
 Holm holds under ARBITRARY dependence and is the headline; Hochberg needs
 Simes-type positive dependence (MTP2, Sarkar 1998), NOT verified for 210
@@ -50,27 +50,25 @@ from paired_analysis import (  # noqa: E402
 
 ALPHA = 0.05
 
-#: A cell at or above this share of non-compliant completions gets a
-#: mechanism annotation on every contrast it touches. ONE number, applied
-#: symmetrically to all four arms of all 21 lanes.
+#: A cell at or above this share of non-compliant completions gets a mechanism
+#: annotation on every contrast it touches -- ONE number, applied symmetrically
+#: to all four arms of all 21 lanes.
 COLLAPSE_THRESHOLD = 0.25
 
-#: Above this share, the arm is not merely degraded: it has stopped
-#: emitting parseable answers at all. Used only to word the census,
-#: never to fence.
+#: Above this share the arm has stopped emitting parseable answers at all,
+#: not merely degraded. Used only to word the census, never to fence.
 TOTAL_COLLAPSE = 0.95
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Hochberg (1988) step-up rejections at familywise level `alpha`.
 
-    Same critical values as Holm but stepping UP from the largest p: reject the k
-    smallest, k = max{i : p_(i) <= alpha / (m - i + 1)}. Uniformly at least as
-    powerful as Holm, but valid only under Simes-type positive dependence.
-
-    The sort is stable, for the same reason as ``paired_analysis.holm``: the cluster
-    test has a hard resolution floor at 2/2^30 and several contrasts sit exactly on
-    it, so the rejection set must not depend on contrast build order.
+    Same critical values as Holm but stepping UP from the largest p: reject the
+    k smallest, k = max{i : p_(i) <= alpha / (m - i + 1)}. Uniformly at least as
+    powerful as Holm, but valid only under Simes-type positive dependence. The
+    sort is stable for the same reason as ``paired_analysis.holm``: the cluster
+    test's hard 2/2^30 resolution floor puts several contrasts in an exact tie,
+    and the rejection set must not depend on contrast build order.
 
     Returns
     -------
@@ -95,7 +93,7 @@ def compliance_census() -> dict:
     other value names HOW it failed (``empty``, ``multiple-values``,
     ``degenerate-repetition``, ``prefixed``, ``unparseable``, ``markup``,
     ``truncated``, ``verbose``). Counting the modes, not just the nulls, is what
-    makes the census describe a mechanism instead of a bare rate; which cells get
+    lets the census describe a mechanism instead of a bare rate; which cells get
     annotated is a threshold decision made downstream, so the criterion stays
     visible and symmetric.
 
@@ -103,7 +101,7 @@ def compliance_census() -> dict:
     -------
     dict
         Cell key -> ``rate`` (non-compliance share), ``n`` (mark count) and
-        ``modes`` (a `collections.Counter` of non-null labels). Cells with no
+        ``modes`` (`collections.Counter` of non-null labels). Cells with no
         marks are omitted.
     """
     rx = re.compile(r"^\s*compliance:\s*(\S+)", re.M)
@@ -126,9 +124,9 @@ def collapse_note(key, census: dict) -> str:
     """One-line mechanism annotation for a cell; ``""`` below `COLLAPSE_THRESHOLD`.
 
     Carries the measured rate AND the dominant failure mode: "99.6%
-    multiple-values" and "28.5% empty" are different results, and a bare COLLAPSE
-    label would erase the distinction the census exists to make. Also ``""`` when
-    the cell is missing from `census` (`compliance_census`'s output).
+    multiple-values" and "28.5% empty" are different results, which a bare
+    COLLAPSE label would erase. Also ``""`` for a cell missing from `census`
+    (`compliance_census`'s output).
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -139,16 +137,14 @@ def collapse_note(key, census: dict) -> str:
 
 
 def classify(label: str, key_a, key_b) -> str:
-    """Bucket a contrast from its two ``(model, info)`` keys.
-
-    `label` is not read by the current logic; callers pass it uniformly.
+    """Bucket a contrast from its two ``(model, info)`` keys (`label` is unused).
 
     Returns
     -------
     str
-        ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one informative
-        arm against the chance baseline: a positive control), or
-        ``"zero-vs-zero"`` (a ladder contrast between two baseline arms, null by
+        ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
+        informative arm against the chance baseline: a positive control), or
+        ``"zero-vs-zero"`` (ladder contrast between two baseline arms, null by
         construction). The last two are jointly the zero-arm controls.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
@@ -162,10 +158,9 @@ def classify(label: str, key_a, key_b) -> str:
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
     """Print the Holm step-down around where it stopped (rank / p / own threshold).
 
-    A count on its own hides how close the decision was; the two ranks either side
-    of the boundary show whether the family is comfortably separated or resting on a
-    single contrast. `pvals` is in `rows` order, `m` is the family size, `n_rej` the
-    Holm rejection count.
+    A count alone hides how close the decision was; the two ranks either side of
+    the boundary show whether the family is comfortably separated or resting on
+    one contrast. `pvals` is in `rows` order, `n_rej` the Holm rejection count.
     """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")
@@ -179,10 +174,10 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
 def main() -> None:
     """Run the significance report and print it.
 
-    Nine sections, from the family size and PRIMARY test statement through the
-    rejection counts, the cluster-vs-item and Holm-vs-Hochberg disagreements, the
-    Holm step-down boundary, the collapse census, the significant findings, the
-    zero-arm controls, and what is NOT significant. Methodology is in the module
+    Nine sections: family size and PRIMARY test statement, rejection counts,
+    the cluster-vs-item and Holm-vs-Hochberg disagreements, the Holm step-down
+    boundary, the collapse census, the significant findings, the zero-arm
+    controls, and what is NOT significant. Methodology is in the module
     docstring.
     """
     correct, valid = load_marks()

@@ -3,7 +3,7 @@
 
 A results directory's ``EVIDENCE.json`` pins by sha256 every artifact a writeup
 relies on. ``notebooks/*/results/`` is gitignored wholesale, so some survive
-only inside tracked tarballs, under
+only inside tracked tarballs under
 ``notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/``;
 those are addressed as ``tarball:<tarball-relpath>!<member-path>`` and hashed by
 STREAMING the member -- never extracted, since a scratch tree in a gitignored
@@ -13,18 +13,16 @@ every reference, then requires each backtick-quoted artifact name in a
 to carry an ``allowlist`` entry WITH A REASON; whether an artifact is the
 *right* one is a claim for its ``note``, not for this tool.
 
-Two properties are easy to break by "improving" them: a reference MAY traverse
-upward with ``..``, so there is deliberately no containment guard; and
-:func:`build` is DETERMINISTIC, so a diff on a rebuild means the evidence moved.
+Deliberate, and easy to "fix" by mistake: a reference MAY traverse upward with
+``..`` (no containment guard), and :func:`build` is DETERMINISTIC, so a diff on
+a rebuild means the evidence moved.
 
-Entry points: ``evidence_manifest.py verify [dir ...]`` (no directories = every
-manifest under ``notebooks/*/results/``; exits non-zero if any fails) and
-``evidence_manifest.py build <dir> --spec <spec.json>``.
-
-``scripts/`` is not an importable package: load this module by file path and
-register it in ``sys.modules`` BEFORE ``exec_module``, or the ``@dataclass``
-:class:`VerifyResult` raises ``AttributeError`` (under ``from __future__ import
-annotations`` dataclasses resolve annotations via
+Entry points: ``verify [dir ...]`` (no directories = every manifest under
+``notebooks/*/results/``; exits non-zero if any fails) and ``build <dir> --spec
+<spec.json>``. ``scripts/`` is not an importable package: load this module by
+file path and register it in ``sys.modules`` BEFORE ``exec_module``, or the
+``@dataclass`` :class:`VerifyResult` raises ``AttributeError`` (under ``from
+__future__ import annotations`` dataclasses resolve annotations via
 ``sys.modules[cls.__module__]``, ``None`` for an unregistered module).
 """
 from __future__ import annotations
@@ -44,17 +42,16 @@ MANIFEST_NAME = "EVIDENCE.json"
 SCHEMA = "smolbench-evidence-manifest/1"
 
 #: The closed role vocabulary. A role states WHY an artifact is in the
-#: package. That is what makes a missing ``estimator`` or
-#: ``preregistration`` entry visible as an absence. The set stays closed
-#: on purpose, so a typo fails loudly instead of silently inventing a
-#: role nobody greps for.
+#: package, which is what makes a missing ``estimator`` or
+#: ``preregistration`` entry visible as an absence. Closed on purpose, so a
+#: typo fails loudly instead of inventing a role nobody greps for.
 ROLES = ("writeup", "analysis_input", "raw", "estimator", "preregistration",
          "config", "gate", "teardown", "log", "other")
 
 #: Suffixes that make a backtick-quoted token look like an artifact worth
-#: gating. The list stays narrow on purpose: the scanner runs over human
-#: prose, and a false positive costs a human an allowlist entry. The bar
-#: is "ends like a file we would ever commit".
+#: gating. Narrow on purpose: the scanner runs over human prose, and a false
+#: positive costs a human an allowlist entry. The bar is "ends like a file
+#: we would ever commit".
 CITED_SUFFIXES = (".json", ".jsonl", ".gz", ".yaml", ".yml", ".txt", ".md",
                   ".sh", ".py")
 
@@ -66,9 +63,8 @@ REPO = Path(__file__).resolve().parents[2]
 #: Marker prefix for a reference into a preserved tarball.
 TARBALL_PREFIX = "tarball:"
 
-#: Hashing chunk size. 1 MiB keeps a large gzipped raw file off the heap,
-#: while still reading one block at a time. These packages pin whole run
-#: dumps, not just summaries.
+#: Hashing chunk size. 1 MiB keeps a large gzipped raw file off the heap;
+#: these packages pin whole run dumps, not just summaries.
 CHUNK_BYTES = 1 << 20
 
 _HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -85,7 +81,7 @@ class ResolutionError(FileNotFoundError):
     Subclasses :class:`FileNotFoundError`, so :func:`build` meets its documented
     contract by propagation while :func:`verify` folds the message into its
     failure census. Messages are built complete (``"<relpath>: missing tarball
-    member: <member>"``), so both callers report the same wording.
+    member: <member>"``), so both callers report identical wording.
     """
 
 
@@ -99,10 +95,10 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
     Parameters
     ----------
     relpath : str
-        A POSIX path relative to the manifest's own directory (``..`` allowed
-        and used in practice), or ``tarball:<tarball-relpath>!<member-path>``,
-        split on the FIRST ``!`` -- so a member path may contain one and a
-        tarball path effectively cannot, rather than inventing an escape syntax.
+        POSIX path relative to the manifest's own directory (``..`` allowed and
+        used in practice), or ``tarball:<tarball>!<member>``, split on the FIRST
+        ``!``: a member may contain one, a tarball path effectively cannot, and
+        no escape syntax has to be invented.
 
     Returns
     -------
@@ -113,7 +109,7 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
     Raises
     ------
     ValueError
-        A ``tarball:`` reference with no ``!`` separator or an empty side.
+        ``tarball:`` reference with no ``!`` separator, or an empty side.
     """
     if not relpath.startswith(TARBALL_PREFIX):
         return relpath, None
@@ -130,8 +126,8 @@ def _candidates(relpath: str) -> list[str]:
     """Return the path strings a citation may be matched against.
 
     A plain reference offers itself; a tarball reference offers two, in fixed
-    order -- the tarball's own path (a writeup may cite the preserved archive)
-    then the member path (how an artifact living only inside one gets covered).
+    order -- the tarball's own path (a writeup may cite the archive itself) then
+    the member path (how an artifact living only inside one gets covered).
     """
     path, member = _split_reference(relpath)
     return [path] if member is None else [path, member]
@@ -147,10 +143,9 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
 
     Parameters
     ----------
-    manifest_dir : Path
-        Directory ``relpath`` resolves against.
     relpath : str
-        A reference in :func:`_split_reference`'s grammar.
+        Reference in :func:`_split_reference`'s grammar, resolved against
+        ``manifest_dir``.
 
     Yields
     ------
@@ -164,7 +159,7 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
     ValueError
         Malformed ``tarball:`` reference.
     tarfile.TarError
-        The archive exists but is not readable as a gzipped tar.
+        The archive is not readable as a gzipped tar.
     """
     tar_relpath, member = _split_reference(relpath)
     target = manifest_dir / tar_relpath
@@ -188,9 +183,9 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
         except KeyError:
             raise ResolutionError(
                 f"{relpath}: missing tarball member: {member}") from None
-        # A directory, symlink, or hardlink member reports the same
-        # "missing tarball member" phrase, plus a parenthetical. What is
-        # missing is the regular file the manifest claims to have pinned.
+        # A directory, symlink, or hardlink member reports the same "missing
+        # tarball member" phrase plus a parenthetical: what is missing is the
+        # regular file the manifest claims to have pinned.
         stream = archive.extractfile(info) if info.isfile() else None
         if stream is None:
             raise ResolutionError(
@@ -204,8 +199,8 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     """Stream a reference and return its sha256 as 64 lowercase hex chars.
 
     Reads in :data:`CHUNK_BYTES` blocks: these packages pin whole run dumps, so
-    a tool needing each artifact to fit in RAM would never run on the ones that
-    matter most. Raises `ResolutionError` if the reference does not resolve.
+    requiring each artifact to fit in RAM would fail on the ones that matter
+    most. Raises `ResolutionError` if the reference does not resolve.
     """
     digest = hashlib.sha256()
     with _open_reference(manifest_dir, relpath) as stream:
@@ -221,13 +216,12 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
-    Returns sorted, deduplicated tokens, verbatim as written: only
-    backtick-quoted, whitespace-free ones ending in a :data:`CITED_SUFFIXES`
-    suffix, and never spanning a newline, so an unmatched backtick cannot
-    swallow the rest of the document and prose like ``sha256(pool_analyze.py) =
-    3824a4`` is not read as a citation. Anything cleverer -- stripping
-    punctuation, splitting on ``/`` -- would trade a hard, explainable rule for
-    a heuristic; a miss costs only one real citation going ungated.
+    Returns sorted, deduplicated tokens verbatim: backtick-quoted,
+    whitespace-free, ending in a :data:`CITED_SUFFIXES` suffix, never spanning a
+    newline -- so an unmatched backtick cannot swallow the document, and prose
+    like ``sha256(pool_analyze.py) = 3824a4`` is not read as a citation.
+    Anything cleverer would trade a hard rule for a heuristic; a miss costs only
+    one real citation going ungated.
     """
     found: set[str] = set()
     for raw in _BACKTICKED.findall(text):
@@ -242,11 +236,10 @@ def cited_artifacts(text: str) -> list[str]:
 def covers(cited: str, entry_path: str) -> bool:
     """Is ``cited`` a whole-path-component suffix of ``entry_path``?
 
-    The load-bearing subtlety of the coverage mechanism. ``entry_path`` is a
-    manifest candidate: a plain relpath, or a tarball's own path or member path.
-    The check is asymmetric by design -- a longer citation is never covered by a
-    shorter entry path, because the writeup made the more specific claim and the
-    manifest must meet it.
+    ``entry_path`` is a manifest candidate: a plain relpath, or a tarball's own
+    path or member path. Asymmetric by design -- a longer citation is never
+    covered by a shorter entry path, since the writeup made the more specific
+    claim and the manifest must meet it.
 
     Examples
     --------
@@ -278,8 +271,8 @@ def build(manifest_dir: str | Path,
 
     Caller order is kept for both lists (grouping by role is an editorial choice
     sorting would destroy) and no timestamp is written, so rebuilds are
-    byte-identical and a diff on ``EVIDENCE.json`` means the evidence moved.
-    Coverage is NOT checked here; only :func:`verify` judges a writeup's claims.
+    byte-identical and a diff means the evidence moved. Coverage is NOT checked
+    here; only :func:`verify` judges a writeup's claims.
 
     Parameters
     ----------
@@ -310,10 +303,8 @@ def build(manifest_dir: str | Path,
         An entry does not resolve (missing plain file, tarball, or member);
         nothing is written in that case.
     ValueError
-        Missing/empty ``relpath``; ``role`` outside :data:`ROLES`; malformed
-        ``tarball:`` reference; non-str ``note``; supplied ``sha256``
-        disagreeing with the computed one; allowlist entry missing or with an
-        empty ``name`` or ``reason``.
+        Any ``entries``/``allowlist``/``note`` constraint above violated, or a
+        supplied ``sha256`` disagreeing with the computed one.
     """
     mdir = Path(manifest_dir)
 
@@ -334,9 +325,8 @@ def build(manifest_dir: str | Path,
                 "allowlist entry with no reason is an undocumented hole")
         checked_allowlist.append({"name": name, "reason": reason})
 
-    # For each entry, validate the cheap schema first, then resolve and
-    # hash it. This order reports a bad role as a ValueError, instead of
-    # whatever the filesystem happens to say about its path.
+    # Validate the cheap schema before resolving and hashing, so a bad role
+    # is a ValueError instead of whatever the filesystem says about its path.
     checked_entries: list[dict[str, Any]] = []
     for i, raw in enumerate(entries):
         relpath = raw.get("relpath")
@@ -372,8 +362,8 @@ def build(manifest_dir: str | Path,
     manifest["allowlist"] = checked_allowlist
 
     if write:
-        # newline="\n" pins the exact bytes written. The determinism
-        # guarantee covers the FILE, not just the dict.
+        # newline="\n" pins the exact bytes: the determinism guarantee
+        # covers the FILE, not just the dict.
         (mdir / MANIFEST_NAME).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8", newline="\n")
@@ -397,8 +387,8 @@ class VerifyResult:
     n_entries : int
         Entries the manifest LISTS, including any the schema check rejected.
     roles : dict of str to int
-        Counts per role over schema-valid entries only; a role with no entries
-        is absent rather than zero.
+        Counts per role over schema-valid entries only; a role with none is
+        absent rather than zero.
     allowlist : list of dict
         The schema-valid allowlist entries only, as stored.
     citations : dict of str to list of str
@@ -420,10 +410,10 @@ class VerifyResult:
 def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     """Validate one raw manifest entry, appending any defects to ``failures``.
 
-    ``index`` names the entry in messages, since the ``relpath`` may itself be
-    the missing field. Returns True if the entry is well formed enough to
-    resolve and to serve as a coverage candidate. Every check runs before
-    returning, so a hand-edited entry reports all its defects in one pass.
+    ``index`` names the entry in messages, since ``relpath`` may itself be the
+    missing field. Returns True if the entry is well formed enough to resolve
+    and to serve as a coverage candidate. Every check runs before returning, so
+    a hand-edited entry reports all its defects in one pass.
     """
     if not isinstance(entry, Mapping):
         failures.append(f"entry {index}: not an object: {entry!r}")
@@ -467,11 +457,11 @@ def _check_allowlist_schema(raw_allowlist: Any,
                             failures: list[str]) -> list[dict]:
     """Validate the manifest's allowlist, returning its usable entries.
 
-    ``raw_allowlist`` is the decoded ``allowlist`` value (absent is treated as
-    empty); well-formed ``{"name": ..., "reason": ...}`` entries come back in
-    file order. An entry whose ``reason`` is missing is reported AND dropped: it
-    must not keep working as an escape hatch, or the cheapest way to silence a
-    coverage failure would be to delete its justification.
+    ``raw_allowlist`` is the decoded ``allowlist`` value (absent = empty);
+    well-formed ``{"name": ..., "reason": ...}`` entries come back in file
+    order. An entry whose ``reason`` is missing is reported AND dropped, or the
+    cheapest way to silence a coverage failure would be to delete the
+    justification for it.
     """
     if not isinstance(raw_allowlist, list):
         failures.append(f"allowlist: not a list: {raw_allowlist!r}")
@@ -500,12 +490,12 @@ def _check_allowlist_schema(raw_allowlist: Any,
 def verify(manifest_dir: str | Path) -> VerifyResult:
     """Re-hash a directory's pinned evidence and check its citation coverage.
 
-    Checks, in order: manifest schema; reference resolution; sha256 (by
-    streaming); citation coverage for every ``writeup`` entry. Read-only.
-    Every defect except a missing or unparseable manifest is COLLECTED into the
-    result rather than raised on, so one run reports the whole state of a
-    package; a sha256 mismatch does NOT stop that entry's citation scan, since a
-    writeup that drifted is the one whose citations most need checking.
+    Read-only. Checks in order: manifest schema; reference resolution; sha256
+    (by streaming); citation coverage for every ``writeup`` entry. Every defect
+    except a missing or unparseable manifest is COLLECTED rather than raised, so
+    one run reports the whole state of a package; a sha256 mismatch does NOT
+    stop that entry's citation scan, since a writeup that drifted is the one
+    whose citations most need checking.
 
     Returns
     -------
@@ -517,8 +507,8 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
     FileNotFoundError
         ``manifest_dir/EVIDENCE.json`` does not exist.
     json.JSONDecodeError
-        The manifest is not valid JSON. This propagates deliberately: there is
-        no partial census to report in that case.
+        The manifest is not valid JSON; propagates deliberately, since there is
+        no partial census to report.
     """
     mdir = Path(manifest_dir)
     manifest_path = mdir / MANIFEST_NAME
@@ -537,10 +527,9 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
              if _check_entry_schema(i, e, failures)]
     allowlist = _check_allowlist_schema(data.get("allowlist", []), failures)
 
-    # Coverage candidates come from every schema-valid entry, whether or
-    # not it resolves. A broken tarball is one failure. It must not also
-    # cascade into a bogus "cited artifact not covered" for every name
-    # it holds.
+    # Coverage candidates come from every schema-valid entry, whether or not it
+    # resolves: a broken tarball is one failure, and must not also cascade into
+    # a bogus "cited artifact not covered" for every name it holds.
     candidates: list[str] = []
     for entry in valid:
         candidates.extend(_candidates(entry["relpath"]))
@@ -572,9 +561,8 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
             with _open_reference(mdir, relpath) as stream:
                 text = stream.read().decode("utf-8", errors="replace")
         except (ResolutionError, OSError, tarfile.TarError) as exc:
-            # Unreachable in practice: this function hashed the file a
-            # moment ago. Handled anyway, so a file that changes out
-            # from under this run degrades to a failure line.
+            # Unreachable in practice (hashed a moment ago), handled anyway so
+            # a file changing under this run degrades to a failure line.
             failures.append(f"{relpath}: unreadable writeup: {exc}")
             continue
         cited = cited_artifacts(text)
@@ -618,13 +606,13 @@ def _display_dir(path: Path) -> str:
 def _census_lines(result: VerifyResult) -> list[str]:
     """Render the human-readable census for one verified manifest.
 
-    WITHOUT the FAIL lines, which the caller prints unindented so they grep
+    Excludes the FAIL lines, which the caller prints unindented so they grep
     cleanly out of a long run.
     """
     lines = [f"{_display_dir(result.manifest_dir)}: {result.n_entries} entries"]
     if result.roles:
-        # Render in ROLES order, not manifest order, so the census of
-        # two packages stays diffable against each other.
+        # Render in ROLES order, not manifest order, so two packages'
+        # censuses stay diffable against each other.
         lines.append("  roles: " + ", ".join(
             f"{role}={result.roles[role]}" for role in ROLES
             if role in result.roles))
@@ -654,9 +642,8 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
         try:
             result = verify(target)
         except FileNotFoundError as exc:
-            # A directory named on the command line with no manifest is
-            # a user error, not a crash. Report it in the same census
-            # shape.
+            # A named directory with no manifest is a user error, not a
+            # crash: report it in the same census shape.
             print(f"FAIL {_display_dir(target)}: {exc}")
             n_failed += 1
             continue
@@ -678,9 +665,9 @@ def _cmd_build(manifest_dir: str, spec_path: str) -> int:
     """Build one ``EVIDENCE.json`` from a JSON spec file.
 
     ``spec_path`` holds ``{"note": ..., "entries": [...], "allowlist": [...]}``
-    and carries no hashes -- they are computed here, so a spec can be
-    hand-written and re-run after the evidence legitimately changes. Returns 0;
-    any defect raises out of :func:`build` instead.
+    with no hashes -- they are computed here, so a spec can be hand-written and
+    re-run after the evidence legitimately changes. Returns 0; any defect raises
+    out of :func:`build` instead.
     """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     manifest = build(manifest_dir,

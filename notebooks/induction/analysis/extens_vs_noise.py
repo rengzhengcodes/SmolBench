@@ -2,28 +2,27 @@
 
 Both arms are LONG: `extens` is the fully enumerated position -> label listing,
 `noise_intens` the compact rule form padded with whitespace to exactly the same
-token count under the model's own tokenizer. The contrast holds prompt LENGTH
+token count under the model's own tokenizer, so the contrast holds prompt LENGTH
 fixed and varies only whether the tokens carry information.
 
 TWO MECHANISMS, not one. "extens < noise means length is not the explanation"
 holds only where the noise arm is a working control, and whitespace padding
 DESTROYS the output contract in a substantial minority of models. So all 21
-lanes print their measured non-compliance on both arms and are classified by
+lanes print their measured non-compliance on both arms and are bucketed by
 `mechanism`, making the split visible rather than editorial: INFORMATION /
 LABEL-DENSITY (noise arm well-formed and still outscoring the enumeration, so
 enumerated evidence really is harder to induce from at equal length) vs
 PADDING-ROBUSTNESS COLLAPSE (noise arm largely non-compliant, so extens > noise
-is mechanically forced -- a finding about padding robustness, NOT excluded and
-NOT evidence about information).
+is mechanically forced -- a padding-robustness finding, NOT excluded and NOT
+evidence about information).
 
-The PRIMARY p-value is the exact seed-level sign-flip randomization test (30
-replicate seeds are the independent unit; the 9 harmonic items inside a seed
-share one answer vector, which item-level McNemar would treat as 270 independent
-pairs); the item-level p stays as a labelled DESCRIPTIVE column. These 21
-contrasts are a SUBSET of the 210 pre-registered PRIMARY family and the primary
-inference stays at m = 210: re-correcting at m = 21 after choosing the subset
-because it looked interesting would be data-dependent family sizing, so the
-m = 21 column is a SENSITIVITY check only.
+PRIMARY p = the exact seed-level sign-flip test; the 30 replicate seeds are the
+independent unit, since the 9 harmonic items in a seed share one answer vector
+that item-level McNemar (kept as a DESCRIPTIVE column) would treat as 270
+independent pairs. These 21 contrasts are a SUBSET of the pre-registered PRIMARY
+family, so the inference stays at m = 210: re-correcting at m = 21 after picking
+the subset because it looked interesting would be data-dependent family sizing,
+and the m = 21 column is a SENSITIVITY check only.
 
 Run:
     uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/extens_vs_noise.py
@@ -70,9 +69,8 @@ def mechanism(nc_e: float, nc_n: float) -> str:
     Returns
     -------
     str
-        ``"COLLAPSE"`` if the noise arm is at or above `COLLAPSE_THRESHOLD`,
-        ``"extens degraded"`` if only the extens arm is, else
-        ``"information"``.
+        ``"COLLAPSE"`` (noise arm at or above `COLLAPSE_THRESHOLD`),
+        ``"extens degraded"`` (only the extens arm is) or ``"information"``.
     """
     if nc_n >= COLLAPSE_THRESHOLD:
         return "COLLAPSE"          # noise arm broken: extens-higher is forced
@@ -84,9 +82,10 @@ def mechanism(nc_e: float, nc_n: float) -> str:
 def main() -> None:
     """Run the extens-vs-noise focused test and print the report.
 
-    Sections (methodology in the module docstring): the per-model table, seed-level
-    vs item-level agreement, the lanes significant under the primary correction, the
-    three mechanism buckets, and the raw direction across all 21 lanes unfiltered.
+    Sections (methodology in the module docstring): the per-model table,
+    seed-level vs item-level agreement, the lanes significant under the primary
+    correction, the three mechanism buckets, and the unfiltered raw direction
+    across all 21 lanes.
     """
     correct, valid = load_marks()
     census = compliance_census()
@@ -95,9 +94,8 @@ def main() -> None:
         cell = census.get(key)
         return float("nan") if cell is None else cell["rate"]
 
-    # p-values for the FULL pre-registered family, so the m=210 Holm
-    # decision for these 21 is the real one, not a recomputation on a
-    # subset.
+    # p-values for the FULL pre-registered family, so the m=210 Holm decision
+    # for these 21 is the real one, not a recomputation on a subset.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
         a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)

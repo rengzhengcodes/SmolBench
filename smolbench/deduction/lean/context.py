@@ -22,27 +22,20 @@ Chain = Literal["stepk", "hint", "noise"]
 
 # `_MAX_LEVEL` bounds `validate`'s (chain, level) range check, per chain:
 #
-# - "stepk" caps at 2. `_render_stepk_parts` only defines levels 0 (bare
-#   goal), 1 (+ full tactic state), and 2 (+ proof-so-far + theorem
-#   identity). There is no level 3+ to render.
-# - "hint" caps at 9. `_render_hint_parts` defines levels 0 (premise
-#   names), 1 (+ signatures), 2 (+ full bodies with proofs), and 3+ as a
-#   transitive premise-dependency closure whose *hop count* is `level -
-#   2` (hint:3 = 1-hop, hint:4 = 2-hop, ..., hint:9 = 7-hop -- see
-#   `_render_hint_parts`'s `depth = level - 2`). This deliberately extends
-#   well past the range `notebooks/deduction/README.md` documents and
-#   sweep-tests (hint:0..4). Nothing in the renderer actually breaks past
-#   hint:4, since `_HINT2_3_TOKEN_CAP` (50k tokens) already bounds the
-#   rendered text no matter how many hops the closure walks. A caller
-#   experimenting with deeper hops just hits earlier truncation (more
-#   content discovered, none of it rendered) rather than an error. The cap
-#   exists to keep `validate` a real bound, rather than removing
-#   range-checking outright, without artificially restricting
-#   experimentation to the currently used levels.
-# - "noise" caps at 9 to mirror "hint". `_render_noise_parts(level)`
-#   renders `_render_hint_parts` at both `level - 1` and `level` to find
-#   the exact token count a whitespace pad must hit, so it needs the same
-#   level range "hint" supports.
+# - "stepk" caps at 2: `_render_stepk_parts` defines only 0 (bare goal),
+#   1 (+ full tactic state), 2 (+ proof-so-far + theorem identity).
+# - "hint" caps at 9: `_render_hint_parts` defines 0 (premise names), 1
+#   (+ signatures), 2 (+ full bodies with proofs), and 3+ as a transitive
+#   premise-dependency closure of `level - 2` hops (hint:3 = 1-hop ...
+#   hint:9 = 7-hop). That deliberately runs past the hint:0..4 range
+#   `notebooks/deduction/README.md` documents and sweep-tests: nothing
+#   breaks, because `_HINT2_3_TOKEN_CAP` (50k tokens) bounds the rendered
+#   text however far the closure walks, so deeper hops only truncate
+#   earlier. The cap keeps `validate` a real bound without pinning it to
+#   the levels currently in use.
+# - "noise" caps at 9 to mirror "hint": `_render_noise_parts(level)`
+#   renders `_render_hint_parts` at both `level - 1` and `level`, so it
+#   needs the same range.
 _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 
 
@@ -86,12 +79,10 @@ class RenderedContext:
     result row records `label` as the cell's ``rung``.
     """
 
-    #: Which chain this rung belongs to.
     chain: Chain
-    #: The rung's level within `chain`.
     level: int
-    #: The fully-assembled prompt-context text for this rung: the
-    #: chain-specific parts, blank-line-joined by `render`.
+    #: Prompt-context text: the chain-specific parts, blank-line-joined by
+    #: `render`.
     text: str
 
     @property
@@ -145,10 +136,10 @@ _HINT2_3_TOKEN_CAP = 50_000  # token budget for transitive closure rendering
 def _count_tokens(s: str) -> int:
     """Token count of `s`: `tiktoken` ``cl100k_base``, else ``len(s) // 4``.
 
-    The module's only token counter, and already an approximation of the
-    prompted model's tokenizer. Approximate suffices for `_render_hint_parts`'s
-    hint:3+ budget and `is_trivial_rung`, but the char-based fallback makes
-    `_render_noise_parts`'s exact-token padding unsatisfiable — it raises.
+    Already an approximation of the prompted model's tokenizer, which suffices
+    for `_render_hint_parts`'s hint:3+ budget and `is_trivial_rung`; but the
+    char-based fallback makes `_render_noise_parts`'s exact-token padding
+    unsatisfiable — it raises.
     """
     try:
         import tiktoken
@@ -161,15 +152,13 @@ class _TokenCounter:
     """Adapt `_count_tokens` to the interface the pad search expects.
 
     `smolbench.induction._common`'s token-matching search needs `count()` and
-    `name`. Ad hoc rather than `smolbench.evals.tokenization.Tokenizer`, a
-    duck-typed `Protocol`: this module must not depend on `smolbench.evals`
+    `name`. Ad hoc rather than `smolbench.evals.tokenization.Tokenizer`, which
+    is duck-typed anyway: this module must not depend on `smolbench.evals`
     (see `_render_noise_parts`'s Notes).
     """
 
-    #: Identifies which counter is in play, in
-    #: `token_matched_noise_prompt`'s `ValueError` messages (e.g. "no
-    #: whitespace unit costs ~1 token per repetition under tokenizer
-    #: ..."). Nothing else consumes this attribute.
+    #: Names the counter in `token_matched_noise_prompt`'s `ValueError`
+    #: messages; nothing else consumes it.
     name = "smolbench.deduction.lean.context._count_tokens (tiktoken cl100k_base, or len//4 fallback)"
 
     def count(self, text: str) -> int:
@@ -212,8 +201,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
 
-    # Lazy import -- see this function's Notes for why
-    # `smolbench.induction._common` must not be pulled in at module top.
+    # Lazy import -- see this function's Notes.
     from smolbench.induction._common import choose_whitespace_unit, token_matched_noise_prompt
 
     base_parts = _render_hint_parts(theorem, k, level - 1)
@@ -232,12 +220,10 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
             "length control"
         )
     if base_tokens == target_tokens:
-        # Already exact: nothing to pad. This case is real and common:
-        # every rung where hint:level adds nothing over hint:(level - 1)
-        # hits it, and `is_trivial_rung` independently reports those as
-        # trivial. `render()` still calls this on trivial noise rungs
-        # when a sweep sets `skip_trivial: false`, so this must return
-        # cleanly, not raise.
+        # Already exact: nothing to pad. Common -- every rung where
+        # hint:level adds nothing over hint:(level - 1) lands here, and
+        # `render()` still calls this on such rungs under
+        # `skip_trivial: false`, so it must return cleanly, not raise.
         return base_parts
 
     counter = _TokenCounter()
@@ -249,8 +235,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
         unit=choose_whitespace_unit(counter),
     )
 
-    # Belt-and-braces (see Notes): this verifies exactness itself, rather
-    # than trusting the helper's own internal verification blindly.
+    # Verify exactness here rather than trusting the helper (see Notes).
     padded_tokens = _count_tokens(padded_text)
     if padded_tokens != target_tokens:
         raise ValueError(
@@ -388,8 +373,7 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     Returns
     -------
     RenderedContext
-        `chain`/`level` echoed back, with `text` = the chain-specific parts
-        joined by blank lines.
+        `text` = the chain-specific parts joined by blank lines.
 
     Raises
     ------
@@ -414,9 +398,8 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
 
 # Canonical default rung universe. hint:N for N≥3 is a (N−2)-hop
-# transitive closure. Depths up to 9 are runnable, but hit the 50k token
-# cap by depth ~5-6 in mathlib, since the per-premise dependency graph
-# fans out fast.
+# transitive closure; depths up to 9 run, but mathlib's dependency fan-out
+# hits the 50k token cap by depth ~5-6.
 IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
     ("stepk", 0), ("stepk", 1), ("stepk", 2),
     ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3),
@@ -463,15 +446,13 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
             hyps, _ = split_state(tt.state_before)
             return not hyps.strip()
         if level == 2:
-            # stepk:2 adds theorem identity even at k=0, so it is never
-            # trivial.
+            # stepk:2 adds theorem identity even at k=0.
             return False
         return False
 
     if chain == "hint":
-        # Without recorded premises, the entire hint chain collapses:
-        # hint:0 would just say "(none recorded)", and 1+ have nothing to
-        # elaborate.
+        # Without recorded premises the whole chain collapses: hint:0 says
+        # "(none recorded)", and 1+ have nothing to elaborate.
         if not tt.premises:
             return True
         if level == 0:

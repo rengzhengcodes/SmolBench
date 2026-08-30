@@ -1,9 +1,9 @@
 """Run a Bedrock-mantle live smoke test: list_models plus one seeded evaluate.
 
-Checks ``smolbench/evals/providers/aws.py`` end to end: ``list_models``,
-the call-time formatting of ``AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE``,
-``get_model_context_length``'s env-or-default path, and one seeded
-inference round trip.
+Checks ``smolbench/evals/providers/aws.py`` end to end: ``list_models``, the
+call-time formatting of ``AWS_BEDROCK_DEFAULT_BASE_URL_TEMPLATE``,
+``get_model_context_length``'s env-or-default path, and one seeded inference
+round trip.
 """
 import os
 import sys
@@ -29,9 +29,9 @@ ctx = aws.get_model_context_length("anything")
 print(f"get_model_context_length default: {ctx}")
 assert ctx == 200000
 
-# Pick a small, cheap, non-reasoning chat model for the content check.
-# Use gemma-3, not gemma-4: google.gemma-4-* returns a 401 error for this
-# account ("Berm is not enabled"), even though it appears in the catalog.
+# A small, cheap, non-reasoning chat model for the content check. gemma-3, not
+# gemma-4: google.gemma-4-* 401s for this account ("Berm is not enabled") even
+# though it appears in the catalog.
 preferred = [m for m in models if "qwen3-8b" in m or "mistral-small" in m.lower()
              or "gemma-3" in m.lower()]
 model = preferred[0] if preferred else models[0]

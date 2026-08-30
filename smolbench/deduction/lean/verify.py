@@ -29,9 +29,7 @@ try:
     )
 except ImportError as exc:
     # Only this module -- the Lean-side verifier -- needs lean_dojo; the
-    # generation/analysis modules (corpus, context, prompt, runner dispatch)
-    # import without it. Re-raise with the fix instead of a bare "no module
-    # named lean_dojo".
+    # generation/analysis modules import without it. Re-raise with the fix.
     raise ImportError(
         "smolbench.deduction.lean.verify requires the 'lean_dojo' package "
         "(the `lean` extra). Install it into the project venv with\n"
@@ -45,11 +43,9 @@ except ImportError as exc:
 from .corpus import BenchmarkTheorem
 
 
-# LeanDojo's Dojo init occasionally fails with "Unexpected EOF" or similar
-# transient errors when several sessions open concurrently. The underlying
-# Lean subprocess startup races on the build cache. A manual reopen of the
-# same theorem typically succeeds within seconds, so retry with backoff
-# before giving up.
+# LeanDojo's Dojo init occasionally fails ("Unexpected EOF" and similar) when
+# several sessions open concurrently: the Lean subprocess startup races on the
+# build cache. A reopen usually succeeds within seconds, so retry with backoff.
 _DOJO_OPEN_RETRIES = 3
 _DOJO_OPEN_BACKOFF_S = (5.0, 15.0, 45.0)
 
@@ -73,14 +69,12 @@ def _open_dojo_with_retry(thm: Theorem, timeout: int):
 # Verdict taxonomy
 # ---------------------------------------------------------------------------
 #
-# All 6 values below are valid for `ProofResult.verdict`. `try_tail` /
-# `verify_proof_tail` produce it, or `smolbench.deduction.lean.runner`'s
-# exception-handling paths construct it directly, when generation or
-# verification raises. `ReplayResult.verdict` (`replay_ground_truth`) only
-# ever takes 5 of them. It never produces `"replay_failed"`, since
-# replaying the FULL ground-truth proof has no prefix/tail split for a
-# prefix-replay step to fail independently of (see each dataclass's
-# docstring for its own applicable subset).
+# All 6 values below are valid for `ProofResult.verdict`, produced by
+# `try_tail` / `verify_proof_tail` or constructed directly by
+# `smolbench.deduction.lean.runner`'s exception-handling paths.
+# `ReplayResult.verdict` (`replay_ground_truth`) takes only 5: replaying the
+# FULL ground-truth proof has no prefix/tail split, so it never produces
+# `"replay_failed"`.
 #
 #   success         -- ProofFinished: every goal was closed.
 #   lean_error      -- Lean rejected a tactic (LeanError); `error` holds
@@ -89,18 +83,16 @@ def _open_dojo_with_retry(thm: Theorem, timeout: int):
 #                      open when tactics ran out (a `TacticState`, never
 #                      reaching `ProofFinished`/`ProofGivenUp`).
 #   given_up        -- a tactic explicitly gave up (`ProofGivenUp`, e.g. an
-#                       LLM emitting `sorry`).
-#   exception       -- an unexpected Python exception was caught (network,
-#                      Dojo, or parsing failure) rather than a Lean-reported
-#                      outcome; `error` holds `f"{type(exc).__name__}: {exc}"`.
+#                      LLM emitting `sorry`).
+#   exception       -- an unexpected Python exception (network, Dojo, or
+#                      parsing) rather than a Lean-reported outcome; `error`
+#                      holds `f"{type(exc).__name__}: {exc}"`.
 #   replay_failed   -- (`ProofResult` only) `open_at_step`'s prefix replay
-#                      (tactics `0..k-1`) itself failed to reach a
-#                      `TacticState` before the tail was ever attempted.
-#                      `verify_proof_tail` catches `open_at_step`'s
-#                      `RuntimeError` and reports this instead of
-#                      `"exception"`, so a broken *prefix* (a ground-truth
-#                      replay problem) is distinguishable from a broken
-#                      *tail* (the candidate's own failure).
+#                      (tactics `0..k-1`) failed to reach a `TacticState`
+#                      before the tail was attempted. `verify_proof_tail`
+#                      catches that `RuntimeError` and reports this rather
+#                      than `"exception"`, so a broken *prefix* (ground-truth
+#                      problem) stays distinguishable from a broken *tail*.
 Verdict = Literal["success", "lean_error", "incomplete", "given_up", "exception", "replay_failed"]
 
 
@@ -109,11 +101,10 @@ class ReplayResult:
     """Outcome of replaying a theorem's full recorded ground-truth proof.
 
     Produced by `replay_ground_truth`, the sanity gate (`cli.py`'s ``replay`` /
-    ``filter``, `runner.sweep`'s per-theorem sanity row) that the ground truth is
-    replayable before any LLM tail is compared against it. `verdict` takes 5 of
-    the 6 values in the "Verdict taxonomy" comment above `Verdict` -- never
-    ``"replay_failed"``, since a whole-proof replay has no prefix/tail split for
-    a prefix step to fail independently of (those surface as ``"exception"``).
+    ``filter``, `runner.sweep`'s per-theorem sanity row) that the ground truth
+    is replayable before any LLM tail is compared against it. `verdict` takes 5
+    of the 6 values in the "Verdict taxonomy" comment above `Verdict` -- never
+    ``"replay_failed"``; a failing prefix step surfaces as ``"exception"``.
     """
 
     #: The theorem's `full_name`.
@@ -121,9 +112,9 @@ class ReplayResult:
     #: Replay outcome; see the module's verdict taxonomy comment (excludes
     #: ``"replay_failed"`` -- see this class's docstring).
     verdict: Verdict
-    #: Number of tactics successfully applied before `verdict` was reached.
-    #: Equals `tactics_total` for ``"success"``/``"incomplete"``; less than
-    #: it for ``"lean_error"``/``"given_up"``, which stop mid-replay.
+    #: Tactics successfully applied before `verdict` was reached. Equals
+    #: `tactics_total` for ``"success"``/``"incomplete"``, less for
+    #: ``"lean_error"``/``"given_up"``, which stop mid-replay.
     tactics_applied: int
     #: Total number of tactics in the theorem's recorded proof
     #: (``len(bt.traced_tactics)``). 0 when `bt.has_proof` is False.
@@ -132,9 +123,8 @@ class ReplayResult:
     #: ``f"{type(exc).__name__}: {exc}"`` (``"exception"``); None for every
     #: other verdict.
     error: str | None = None
-    #: Pretty-printed final tactic state, populated only when replay ends
-    #: ``"incomplete"`` with an open `TacticState` remaining; None for every
-    #: other verdict.
+    #: Pretty-printed final tactic state, only when replay ends
+    #: ``"incomplete"`` with an open `TacticState`; None otherwise.
     final_state_pp: str | None = None
 
 
@@ -142,7 +132,7 @@ def _to_dojo_theorem(bt: BenchmarkTheorem) -> Theorem:
     """Build a `lean_dojo.Theorem` handle for a `BenchmarkTheorem`.
 
     Constructing the handle performs no I/O; opening it
-    (`_open_dojo_with_retry`) is what pulls or reuses the cached traced repo.
+    (`_open_dojo_with_retry`) pulls or reuses the cached traced repo.
     """
     repo = LeanGitRepo(bt.url, bt.commit)
     return Theorem(repo, Path(bt.file_path), bt.full_name)
@@ -153,10 +143,10 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
 
     `timeout` is seconds for the whole Dojo session (opening it, per
     `_open_dojo_with_retry`, plus every tactic). Returns ``"incomplete"`` with
-    zero counts without opening Dojo at all when `bt.has_proof` is False. Every
-    exception raised while opening or driving the session is caught and reported
-    as ``verdict="exception"`` rather than propagated: callers loop over many
-    theorems and one theorem's failure must not abort the batch.
+    zero counts, without opening Dojo, when `bt.has_proof` is False. Every
+    exception from opening or driving the session is caught and reported as
+    ``verdict="exception"`` rather than propagated: callers loop over many
+    theorems, and one failure must not abort the batch.
     """
     if not bt.has_proof:
         return ReplayResult(bt.full_name, "incomplete", 0, 0, error="no traced tactics")
@@ -199,9 +189,9 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
 class ProofResult:
     """Outcome of trying a candidate proof tail from a specific proof step.
 
-    Produced by `try_tail` (and its wrapper `verify_proof_tail`), and constructed
-    directly by `smolbench.deduction.lean.runner`'s exception handlers. The only one
-    of the two result classes that can carry ``"replay_failed"``.
+    Produced by `try_tail` (and its wrapper `verify_proof_tail`), and
+    constructed directly by `runner`'s exception handlers. The only one of the
+    two result classes that can carry ``"replay_failed"``.
     """
 
     #: The theorem's `full_name`.
@@ -209,26 +199,24 @@ class ProofResult:
     #: Outcome of trying `tail_tried`; see the module's verdict taxonomy
     #: comment.
     verdict: Verdict
-    #: The candidate tail text that was attempted (as passed to `try_tail`
-    #: / `verify_proof_tail`), recorded even on failure so result rows and
-    #: summaries can show what was actually tried.
+    #: The candidate tail text attempted, recorded even on failure so result
+    #: rows and summaries can show what was actually tried.
     tail_tried: str
     #: Lean's error message, prefixed with which tail step failed (see
     #: `try_tail`, ``"lean_error"``); the prefix-replay failure message
     #: (``"replay_failed"``); or ``f"{type(exc).__name__}: {exc}"``
     #: (``"exception"``). None for every other verdict.
     error: str | None = None
-    #: Pretty-printed final tactic state, populated only when the tail ends
-    #: ``"incomplete"`` with an open `TacticState` remaining; None for
-    #: every other verdict.
+    #: Pretty-printed final tactic state, only when the tail ends
+    #: ``"incomplete"`` with an open `TacticState`; None otherwise.
     final_state_pp: str | None = None
 
 
 def _split_tactics(tail: str) -> list[str]:
     """Split an LLM-produced tail into one stripped, non-blank line per tactic.
 
-    Dojo's `run_tac` takes one tactic per call. This does *not* split on ``;`` or
-    ``<;>``: those are combinators, and ``t1 <;> t2`` is one tactic Dojo parses fine.
+    Dojo's `run_tac` takes one tactic per call. Deliberately does *not* split on
+    ``;`` or ``<;>``: those are combinators, and ``t1 <;> t2`` is one tactic.
     """
     return [line.strip() for line in tail.splitlines() if line.strip()]
 
@@ -237,9 +225,9 @@ def try_tail(dojo, state_at_k, tail: str, theorem_name: str) -> ProofResult:
     """Apply each line of `tail` as a separate tactic from `state_at_k`.
 
     Dojo states are immutable and `run_tac` returns a new state, so many calls
-    can branch independently from the same `state_at_k` checkpoint with no
-    re-replay. `theorem_name` is caller-supplied (neither `dojo` nor `state_at_k`
-    carries one) and recorded verbatim as `ProofResult.theorem`.
+    branch independently from the same `state_at_k` checkpoint with no re-replay.
+    `theorem_name` is caller-supplied (neither `dojo` nor `state_at_k` carries
+    one) and recorded verbatim as `ProofResult.theorem`.
 
     Returns
     -------
@@ -273,7 +261,7 @@ def try_tail(dojo, state_at_k, tail: str, theorem_name: str) -> ProofResult:
 def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[tuple]:
     """Open Dojo, replay tactics 0..k-1, yield `(dojo, state_at_k)`.
 
-    The prefix ``bt.traced_tactics[:k]`` is replayed once and multiple `try_tail`
+    The prefix ``bt.traced_tactics[:k]`` is replayed once and many `try_tail`
     calls branch from the same checkpoint. `timeout` is seconds for the session,
     per `_open_dojo_with_retry`. The session is always closed on the way out,
     whether the `with`-block completes, raises, or the prefix replay raises
@@ -284,10 +272,10 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     ValueError
         `k` is outside ``[0, len(bt.traced_tactics))``.
     RuntimeError
-        A prefix tactic failed to produce a `TacticState` -- the RECORDED
+        A prefix tactic failed to produce a `TacticState`: the RECORDED
         ground-truth prefix does not replay cleanly. Distinct from a
-        tail-verification failure, which callers report as a `ProofResult`
-        verdict and never raise; `verify_proof_tail` catches this and reports
+        tail-verification failure, which is reported as a `ProofResult` verdict
+        and never raised; `verify_proof_tail` catches this as
         ``"replay_failed"``.
     """
     if not (0 <= k < len(bt.traced_tactics)):
@@ -311,9 +299,9 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
 def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600) -> ProofResult:
     """One-shot verifier: open Dojo, replay 0..k-1, run tail, return verdict.
 
-    Opens exactly one Dojo session per call -- the entry point `runner.run_cell`
-    uses, where each cell is independent; contrast `runner.sweep`, which shares
-    one session per ``(theorem, k)`` via `open_at_step` + `try_tail`.
+    Opens exactly one Dojo session per call -- what `runner.run_cell` needs,
+    each cell being independent; contrast `runner.sweep`, which shares one
+    session per ``(theorem, k)`` via `open_at_step` + `try_tail`.
 
     Returns
     -------

@@ -1,21 +1,20 @@
 """
 Dispatch to the active inference provider, based on INFERENCE_PROVIDER.
 
-Set INFERENCE_PROVIDER in keys.env to openrouter (the default),
-primeintellect, aws (Bedrock; set AWS_INFERENCE_BASE_URL to target a
-SageMaker endpoint instead), or ec2 (a self-provisioned vLLM spot instance,
-whose endpoint is resolved at call time from the state file written by
-smolbench.evals.providers.ec2.provision_spot_instance), then import
-query/complete/evaluate/get_model_context_length from here.
+Set INFERENCE_PROVIDER in keys.env to one of the keys below (default
+"openrouter"), then import query/complete/evaluate/get_model_context_length
+from here. "aws" is Bedrock unless AWS_INFERENCE_BASE_URL targets a SageMaker
+endpoint; "ec2" is a self-provisioned vLLM spot instance whose endpoint is
+resolved at call time from the state file written by
+smolbench.evals.providers.ec2.provision_spot_instance.
 
-Dispatch happens at CALL time -- the env var is read and the provider module
-imported on each call -- so a notebook only needs its env configured before the
-first query/evaluate call, not before any import. To mix providers per model in
-one process (one env var cannot express that), resolve explicitly with
+Dispatch happens at CALL time -- the env var is read and the module imported on
+each call -- so a notebook only needs its env configured before the first
+query/evaluate call, not before any import. To mix providers per model in one
+process (one env var cannot express that), resolve explicitly with
 provider_module("ec2"), which bypasses the environment; smolbench.deduction.lean
-uses that pattern, everything else uses env dispatch. This module only
-dispatches: the AWS provisioning primitives shared by aws.py and ec2.py live in
-smolbench.evals._aws.
+uses that pattern. This module only dispatches: the AWS provisioning primitives
+shared by aws.py and ec2.py live in smolbench.evals._aws.
 """
 
 import importlib
@@ -40,7 +39,8 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
     Parameters
     ----------
     name : str, optional
-        Explicit provider name, bypassing the environment entirely; None (the
+        Explicit provider name, bypassing the environment entirely (so a
+        mixed-provider sweep is unaffected by INFERENCE_PROVIDER); None (the
         default) dispatches from ``INFERENCE_PROVIDER`` ("openrouter" unset).
 
     Raises
@@ -51,15 +51,9 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
         URL, so it would otherwise silently hit Bedrock. (ec2 needs no such
         guard: it raises at call time when it finds no provisioned instance.)
     """
-    # Design: an explicit `name` bypasses the environment lookup entirely
-    # rather than merely overriding it, so a caller resolving "ec2" here
-    # is unaffected by whatever INFERENCE_PROVIDER happens to be set to
-    # elsewhere in the process (needed for mixed-provider sweeps).
     resolved = (name if name is not None else os.getenv("INFERENCE_PROVIDER", "openrouter")).lower()
     if resolved not in _PROVIDER_MODULES:
-        # Error text says INFERENCE_PROVIDER for the env-dispatch case,
-        # which tests match on; explicit-name lookups get a generic
-        # "provider" label instead.
+        # Says INFERENCE_PROVIDER for env dispatch, which tests match on.
         label = "INFERENCE_PROVIDER" if name is None else "provider"
         raise ValueError(
             f"Unknown {label}={resolved!r}. "
@@ -87,11 +81,7 @@ def complete(*args, **kwargs):
 
 
 def evaluate(*args, **kwargs):
-    """Evaluate a quiz on the active provider; see ChatClient.evaluate.
-
-    Every provider shares that one implementation, so per-call tuning behaves
-    identically regardless of INFERENCE_PROVIDER.
-    """
+    """Evaluate a quiz on the active provider; see ChatClient.evaluate."""
     return provider_module().evaluate(*args, **kwargs)
 
 

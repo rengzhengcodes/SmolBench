@@ -30,7 +30,7 @@ def data_root() -> Path:
     ``SMOLBENCH_LEAN_DATA`` if set, else
     ``notebooks/deduction/data/leandojo_benchmark_4`` anchored off the installed
     ``smolbench`` package, never cwd. Read at *call* time, so a late-set env var
-    still takes effect -- but call `reset_caches` to drop stale memoized results.
+    takes effect -- but call `reset_caches` to drop stale memoized results.
     """
     override = os.getenv("SMOLBENCH_LEAN_DATA")
     if override:
@@ -63,14 +63,12 @@ class TracedTactic:
     #: applied (``"no goals"`` when the tactic closes the last goal).
     state_after: str
     #: Premises referenced by name inside `tactic`, one dict per reference:
-    #: ``{full_name, def_path, def_pos, def_end_pos}``. This is a lighter,
-    #: distinct shape from ``smolbench.deduction.lean.premises.Premise``
-    #: (no ``code``/``kind``). ``full_name`` is the join key used to look
-    #: the full premise up via ``smolbench.deduction.lean.premises.lookup``
-    #: (see ``context._render_hint_parts``). Empty when the tactic
-    #: references no known premise (most tactics -- e.g. ``intro h``, bare
-    #: ``simp``). See ``_from_json`` for how this is extracted from the
-    #: raw ``annotated_tactic`` field.
+    #: ``{full_name, def_path, def_pos, def_end_pos}`` -- a lighter shape
+    #: than ``smolbench.deduction.lean.premises.Premise`` (no
+    #: ``code``/``kind``). ``full_name`` is the join key into
+    #: ``premises.lookup`` (see ``context._render_hint_parts``). Empty for
+    #: most tactics (``intro h``, bare ``simp``). Extracted from the raw
+    #: ``annotated_tactic`` field by ``_from_json``.
     premises: list[dict]
 
 
@@ -88,17 +86,13 @@ class BenchmarkTheorem:
     #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
     full_name: str
     #: ``(line, column)`` of the declaration's start, as recorded in the
-    #: LeanDojo trace. Nothing in this codebase consumes these fields for
-    #: source slicing. This differs from the parallel
-    #: ``smolbench.deduction.lean.premises.Premise.start``/``.end``, whose
-    #: *line* is provably 1-indexed (see ``premises.slice_full_decl``'s
-    #: explicit ``start_line - 1`` conversion before list-indexing a
-    #: file's lines). So this field's indexing convention is not
-    #: independently exercised here. The fixture data is consistent with
-    #: a 1-indexed line (``start == (1, 1)`` for a declaration at the very
-    #: top of its file), but the column's indexing is not distinguishable
-    #: from that alone. Treat both as opaque LeanDojo trace positions,
-    #: unless a caller adds code that depends on the exact convention.
+    #: LeanDojo trace. Nothing here slices source with it, so its indexing
+    #: convention is untested -- unlike
+    #: ``smolbench.deduction.lean.premises.Premise.start``, whose *line* is
+    #: provably 1-indexed (``premises.slice_full_decl`` converts with an
+    #: explicit ``start_line - 1``). Fixture data is consistent with a
+    #: 1-indexed line (``start == (1, 1)`` at the top of a file) but does
+    #: not pin the column. Treat both as opaque trace positions.
     start: tuple[int, int]
     #: ``(line, column)`` of the declaration's end. See `start`.
     end: tuple[int, int]
@@ -111,7 +105,7 @@ class BenchmarkTheorem:
         """True if LeanDojo recorded at least one traced tactic step.
 
         Empty usually means a term-mode or otherwise untraceable proof;
-        `iter_with_proof` skips those theorems.
+        `iter_with_proof` skips those.
         """
         return len(self.traced_tactics) > 0
 
@@ -234,12 +228,12 @@ def reset_caches() -> None:
 
     Those loaders key only on their own arguments, never on `data_root()`, so
     call this after repointing ``SMOLBENCH_LEAN_DATA`` to force a re-read.
-    `premises` is imported inside the body because it imports `data_root` from
-    here; a top-level import would be a cycle that fails at package import.
+    `premises` is imported in the body because it imports `data_root` from here;
+    a top-level import would be a cycle that fails at package import.
     """
     load_split.cache_clear()
 
-    # Lazy import to avoid the corpus <-> premises import cycle (see above).
+    # Lazy import to avoid the corpus <-> premises import cycle.
     from . import premises
 
     premises._index.cache_clear()

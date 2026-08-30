@@ -14,24 +14,22 @@ at module top, so importing it would raise). EC2 caps user-data at 16 KB before
 base64, and the cap binds on the GZIP-COMPRESSED bootstrap (see
 ``pack_user_data``), not the raw render, which no longer fits.
 
-The assets are read ONCE at import time into plain ``str`` constants, so a test
-can ``ast.parse()`` them directly and a missing file surfaces at import rather
-than mid-provision.
+Assets are read ONCE at import into plain ``str`` constants, so a test can
+``ast.parse()`` them directly and a missing file surfaces at import, not
+mid-provision.
 """
 
 import gzip
 from pathlib import Path
 
-# Anchored to this file, matching the repo's __file__-anchoring convention --
-# resolves identically under both editable venvs and a built wheel (the
-# assets ship via [tool.setuptools.package-data] in pyproject.toml).
+# __file__-anchored per repo convention: resolves identically under an editable
+# venv and a built wheel (assets ship via [tool.setuptools.package-data]).
 _HERE = Path(__file__).resolve().parent
 
 
 def _asset(name: str) -> str:
-    # Default universal-newline read_text (never newline=""): a CRLF-corrupted
-    # checkout then still yields the LF bytes the heredocs and the 16 KB cap
-    # were sized for, and the .gitattributes pin keeps CRLF out of the repo.
+    # Universal-newline read_text (never newline=""): a CRLF-corrupted checkout
+    # still yields the LF bytes the heredocs and the 16 KB cap were sized for.
     return (_HERE / name).read_text(encoding="utf-8")
 
 
@@ -39,32 +37,30 @@ def _asset(name: str) -> str:
 # role). Bearer-authenticated HTTP on :9000; every authenticated request also
 # feeds the idle watchdog by touching last_active. /serve launches docker
 # asynchronously because a cold `docker run` may first pull the multi-GB vLLM
-# image; progress is observable via /status instead of a long-blocking POST.
+# image; /status reports progress instead of a long-blocking POST.
 AGENT_PY: str = _asset("agent.py.txt")
 
-# Idle watchdog: a long-running service that checks once a minute. It is a
-# plain loop under Restart=always rather than a systemd timer ON PURPOSE --
-# the obvious OnUnitActiveSec=60 + Type=oneshot pairing fires exactly once,
-# because a oneshot unit never enters the "active" state the timer measures
-# from (found live: the smoke instance's watchdog never re-armed). Activity =
+# Idle watchdog: checks once a minute. A plain loop under Restart=always, NOT
+# the obvious OnUnitActiveSec=60 + Type=oneshot timer -- a oneshot unit never
+# enters the "active" state the timer measures from, so it fires exactly once
+# (measured live: the smoke instance's watchdog never re-armed). Activity =
 #   (a) any authenticated control-agent request (the agent touches last_active),
 #   (b) movement in vLLM's request-token counters, or requests in flight
 #       (clients hit vLLM directly during evals, invisible to the agent), or
-#   (c) a container that is up but not yet answering /metrics (weights still
-#       downloading/loading), honored only within the startup grace window.
-# vLLM's --api-key only guards /v1/*; /metrics and /health are keyless on
+#   (c) a container up but not yet answering /metrics (weights still
+#       downloading/loading), only within the startup grace window.
+# vLLM's --api-key guards only /v1/*; /metrics and /health are keyless on
 # localhost, and the security group closes the port to everyone else.
 WATCHDOG_PY: str = _asset("watchdog.py.txt")
 
 # Cloud-init bootstrap for the SERVING box. @@PLACEHOLDER@@ markers are filled
 # by render_user_data via str.replace -- NOT str.format/f-strings, since the
-# embedded bash and python are full of braces and dollar signs. The max-
-# lifetime backstop is scheduled FIRST so the box self-halts even if a later
-# bootstrap step fails. Heredocs are single-quoted (<<'EOF') so the embedded
-# scripts land byte-exact. The static systemd units stay inside this template
-# on purpose: they render through the same heredoc mechanism, and keeping each
-# heredoc next to its delimiter is what makes the truncation guard in
-# render_user_data easy to reason about.
+# embedded bash and python are full of braces and dollar signs. The max-lifetime
+# backstop is scheduled FIRST so the box self-halts even if a later bootstrap
+# step fails. Heredocs are single-quoted (<<'EOF') so the embedded scripts land
+# byte-exact. The static systemd units stay in this template so they render
+# through the same heredoc mechanism, each heredoc next to its delimiter, which
+# is what keeps render_user_data's truncation guard easy to reason about.
 USER_DATA_TEMPLATE: str = _asset("user_data.sh")
 
 def render_user_data(
@@ -106,19 +102,17 @@ def render_user_data(
     Returns
     -------
     str
-        The rendered script, NOT yet ready for ``RunInstances``' ``UserData``
-        -- pass it through :func:`pack_user_data` first.
+        The rendered script; pass it through :func:`pack_user_data` before
+        ``RunInstances``' ``UserData``.
 
     Raises
     ------
     AssertionError
         A heredoc delimiter appears inside an embedded payload script (it would
-        truncate the heredoc early), or an ``@@...@@`` marker survived
-        substitution.
+        truncate the heredoc early), or an ``@@...@@`` marker survived.
     """
     for payload, delimiter in ((AGENT_PY, "AGENT_EOF"), (WATCHDOG_PY, "WATCHDOG_EOF")):
-        # A heredoc terminates at its delimiter; the scripts must never
-        # contain one as a line of their own.
+        # A heredoc terminates at its delimiter, so a script must not contain one.
         assert delimiter not in payload, f"{delimiter} must not appear in the embedded script"
     rendered = USER_DATA_TEMPLATE
     for marker, value in (
@@ -151,20 +145,18 @@ def pack_user_data(rendered: str) -> bytes:
     -------
     bytes
         `rendered`, UTF-8 encoded then gzip-compressed, ready to pass straight
-        to ``run_instances(UserData=...)``. ``mtime=0`` (rather than gzip's
-        default "now") keeps the output byte-for-byte reproducible for
-        identical input, which is what makes the byte-stability test in
-        ``tests/evals/test_ec2_payloads.py`` meaningful.
+        to ``run_instances(UserData=...)``. ``mtime=0`` rather than gzip's
+        default "now" keeps the output byte-for-byte reproducible for identical
+        input, which is what makes the byte-stability test in
+        ``tests/evals/test_ec2_payloads.py`` meaningful rather than trivial.
 
     Raises
     ------
     AssertionError
         The compressed result is >= 16 KB.
     """
-    # Design: mtime=0 rather than the gzip default (current wall-clock time)
-    # -- see the Returns section above for why byte-reproducibility matters
-    # here (it is also what makes the byte-stability test in
-    # tests/evals/test_ec2_payloads.py meaningful rather than trivially true).
+    # mtime=0, not gzip's wall-clock default: see Returns for why the output
+    # must be byte-reproducible.
     packed = gzip.compress(rendered.encode(), mtime=0)
     assert len(packed) < 16384, f"compressed user-data too large: {len(packed)} bytes"
     return packed

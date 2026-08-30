@@ -31,28 +31,25 @@ _FENCE_RE = __import__("re").compile(
 def extract_tactic_block(text: str) -> str:
     """Pull the Lean tactics out of an LLM response, stripped.
 
-    Four steps in order: (0) strip a leading ``<think>`` block through its first
-    ``</think>`` -- belt-and-suspenders, since `smolbench/evals/openai_compat.py`
-    is the primary split point; (1) return the LAST fenced ```` ```lean ```` (or
-    unlabelled) block, since models that reason first put the answer last; (2)
-    else strip a single surrounding fence; (3) else the stripped text as-is.
+    In order: strip a leading ``<think>`` block through its first ``</think>``
+    (belt-and-suspenders -- `smolbench/evals/openai_compat.py` is the primary
+    split point); return the LAST fenced ```` ```lean ```` or unlabelled block,
+    since a model that reasons first puts the answer last; else strip a single
+    surrounding fence; else return the stripped text as-is.
 
     Returns
     -------
     str
         The tactic text, or ``""`` when the response opens with an UNCLOSED
-        ``<think>`` block: truncated mid-reasoning with no recoverable tactic
-        text, and scoring it would pollute ``lean_error`` stats with parse noise
-        instead of giving a clean "no answer" signal.
+        ``<think>`` block: no recoverable tactic text, and scoring it would
+        pollute ``lean_error`` stats instead of giving a clean "no answer".
     """
     s = text.strip()
     if s.startswith("<think>"):
         close_idx = s.find("</think>")
         if close_idx == -1:
-            # Truncated CoT: no closing tag means no tactic text survived
-            # to be extracted. Returning "" (rather than, say, the raw
-            # blob) keeps this a clean miss instead of a guaranteed-wrong
-            # proof attempt polluting lean_error stats. See docstring above.
+            # Truncated CoT: "" keeps this a clean miss rather than a
+            # guaranteed-wrong proof attempt (see Returns above).
             return ""
         s = s[close_idx + len("</think>") :].lstrip()
     matches = _FENCE_RE.findall(s)

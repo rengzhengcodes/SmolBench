@@ -13,8 +13,7 @@ at the same step ``k`` in the same rendered context, and catch model-dependent
 ``noise:N`` padding (token-matched, so it may differ per tokenizer); and (5) the
 additive ``dojoinit_recovery_2026-08-18`` and the not-folded ``flip*``
 process-nondeterminism runs, which share this ``theorems`` block, staying inside
-the pinned 944, since a cell outside it would mean the draw was not
-deterministic.
+the pinned 944.
 
 Layers 4-5 must slug theorem names as `runner.slug_theorem` does, or ~18 phantom
 out-of-set cells per lane are reported. A pass means the lanes were ASKED the
@@ -45,11 +44,10 @@ REGION = "us-west-2"
 RUN_PREFIX = "deduction/runs"
 RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 
-#: Side-runs that share the study's `theorems` block but live under their
-#: own run prefix, as ``(run_name, lane)``. These are the flip-rate
-#: (process-nondeterminism) re-runs: NOT folded into headline pools, but
-#: still required to stay inside the pin, since a stray theorem would mean
-#: the draw was not deterministic.
+#: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: they
+#: share the study's `theorems` block but live under their own run prefix,
+#: and are NOT folded into headline pools. Still gated against the pin,
+#: since a stray theorem would mean the draw was not deterministic.
 FLIP_RUNS = [("flip_nemotron-3-nano-4b", "nemotron-3-nano-4b"),
              ("flip2_nemotron-3-nano-4b", "nemotron-3-nano-4b")]
 
@@ -75,9 +73,9 @@ EXPECTED_CELLS = 944
 def slug_theorem(name: str) -> str:
     """Filesystem-safe theorem name; mirrors `runner.slug_theorem` exactly.
 
-    Duplicated rather than imported, for the same reason ``LANES`` is: this
-    audit must not inherit a bug from the module under audit. The two are kept
-    in step by ``tests/deduction/test_lean_pinning_audit.py``.
+    Duplicated rather than imported, like ``LANES``: this audit must not inherit
+    a bug from the module under audit. Kept in step by
+    ``tests/deduction/test_lean_pinning_audit.py``.
     """
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
@@ -104,10 +102,10 @@ def fetch_spool_index(s3) -> tuple[dict[str, set[str]], dict[str, dict[str, str]
     -------
     tuple of (dict, dict)
         Both keyed by lane: cell keys ``"<theorem-slug>|<rung-slug>"`` for every
-        ``outputs/`` object (presence only, content gated elsewhere), then each
-        cell's ``prompts/<rung>.md`` ETag. Those are small single-part uploads,
-        so the ETag is the object MD5 and cross-lane equality is byte equality
-        without downloading ~19 MB x 21 of spool.
+        ``outputs/`` object (presence only; content is gated elsewhere), then
+        each cell's ``prompts/<rung>.md`` ETag. Those are small single-part
+        uploads, so the ETag is the object MD5 and cross-lane equality is byte
+        equality without downloading ~19 MB x 21 of spool.
     """
     cells: dict[str, set[str]] = {}
     prompts: dict[str, dict[str, str]] = {}
@@ -149,8 +147,8 @@ def fetch_recovery(s3) -> dict[str, set[str]]:
 def fetch_flip_cells(s3) -> dict[str, set[str]]:
     """Cell keys reached by the flip-rate side-runs, per run name.
 
-    These spool in the normal ``theorems/<slug>/outputs/`` layout, not the recovery
-    run's flat ``recovered_rows.jsonl``.
+    These spool in the normal ``theorems/<slug>/outputs/`` layout, not the
+    recovery run's flat ``recovered_rows.jsonl``.
     """
     out: dict[str, set[str]] = {}
     for run, _lane in FLIP_RUNS:
@@ -171,7 +169,7 @@ def reproduce_pin(val_json: Path, replay_jsonl: Path) -> list[str]:
     Mirrors `runner._select_theorems` for this study's spec: from the
     ``novel_premises``/``val`` split keep, IN SPLIT ORDER, the theorems whose
     ground-truth proof replays (``verdict == "success"`` in the sidecar), then
-    ``random.Random(0).sample(pool, 300)``. Split order is load-bearing:
+    ``random.Random(0).sample(pool, 300)``. Split order is load-bearing --
     ``rng.sample`` is order-sensitive, so a re-sorted pool yields a different
     300 under the same seed.
     """

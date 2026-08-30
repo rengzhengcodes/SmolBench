@@ -8,17 +8,17 @@ wrong answer with a right answer in the wrong format, in both directions:
 takes the FIRST integer, silently scoring ``"2520 // 8 = 315\\n\\n315"`` as 2520.
 
 This module extracts the answer robustly and reports the contract violation
-SEPARATELY (see the label constants below), so an analysis can ask "how often
-was the model right?" and "how often did it obey the instructions?"
-independently. That split is load-bearing for the induction benchmarks: the
-``noise_intens`` arm's token-matched whitespace pad, meant to control only for
-LENGTH, measurably degrades instruction following too.
+SEPARATELY (see the label constants below), so "how often was the model right?"
+and "how often did it obey the instructions?" can be asked independently. That
+split is load-bearing for the induction benchmarks: the ``noise_intens`` arm's
+token-matched whitespace pad, meant to control only for LENGTH, measurably
+degrades instruction following too.
 
-Recovery is deliberately conservative: mining a verdict from anywhere in a
-response would invent verdicts out of chains cut off by the completion budget,
-so a long response is mined only when it ENDS in a verdict and otherwise gets
-the `TRUNCATED` label. Repetition collapse gets its own `DEGENERATE` label for
-the same reason -- calling it a parse failure would misattribute the finding.
+Recovery is deliberately conservative: mining a verdict from anywhere would
+invent verdicts out of chains cut off by the completion budget, so a long
+response is mined only when it ENDS in a verdict and otherwise gets
+`TRUNCATED`. Repetition collapse gets its own `DEGENERATE` label for the same
+reason -- calling it a parse failure would misattribute the finding.
 """
 
 import ast
@@ -29,9 +29,9 @@ from typing import Optional
 from smolbench.evals import Answer, Numeric, QnA, ToF
 
 # --- Violation labels -------------------------------------------------------
-# None means the response obeyed the prompt's output contract exactly. Every
-# other label names one specific way it did not. This lets the failure modes
-# get counted separately, instead of collapsing into "invalid".
+# None means the response obeyed the contract exactly; every other label names
+# one specific way it did not, so the failure modes are counted separately
+# instead of collapsing into "invalid".
 
 #: Verdict behind a lead-in, e.g. ``"Answer: False"``. Violates "nothing else".
 PREFIXED = "prefixed"
@@ -52,49 +52,41 @@ EMPTY = "empty"
 #: Non-empty, but no answer could be extracted.
 UNPARSEABLE = "unparseable"
 #: An arithmetic expression instead of the integer it evaluates to, e.g.
-#: ``"2520/2"`` where 1260 was wanted. It gets its own label because BOTH
-#: naive rules get it wrong: taking the first integer scores the numerator,
-#: taking the last scores the divisor, while the model actually answered
-#: correctly.
+#: ``"2520/2"`` where 1260 was wanted. Its own label because BOTH naive rules
+#: get it wrong: first-integer scores the numerator, last-integer the divisor,
+#: while the model actually answered correctly.
 EXPRESSION = "unevaluated-expression"
 
-# Beyond this length, treat a response as prose/reasoning rather than an
-# answer. Only a terminal verdict is trusted past this length. See the
-# module docstring.
+# Beyond this length a response is prose/reasoning, not an answer: only a
+# terminal verdict is trusted past it (see the module docstring).
 _LONG_RESPONSE = 200
 #: How much of the tail counts as "the concluding statement".
 _TAIL_WINDOW = 60
-#: A long response built from this few distinct characters is repetition
-#: collapse.
+#: A long response built from this few distinct characters is collapse.
 _DEGENERATE_ALPHABET = 3
 _DEGENERATE_MIN_LEN = 500
-#: Tail examined for a collapse that starts partway through a response.
-#: This window is long enough that ordinary repetition (a rule of dashes,
-#: a run of newlines) does not trip it. It is short enough to catch a
-#: model that broke down near the end.
+#: Tail examined for a collapse that starts partway through a response: long
+#: enough that ordinary repetition (a rule of dashes, a run of newlines) does
+#: not trip it, short enough to catch a model that broke down near the end.
 _DEGENERATE_TAIL = 400
 #: Word-level collapse: how many trailing words to examine, and how few
-#: distinct words among them mean the model is looping on a phrase rather
-#: than writing. This size keeps ordinary prose from qualifying: 60
-#: consecutive words of genuine text carry far more than 8 distinct
-#: tokens.
+#: distinct words among them mean the model is looping on a phrase. 60
+#: consecutive words of genuine prose carry far more than 8 distinct tokens.
 _DEGENERATE_MIN_WORDS = 60
 _DEGENERATE_WORD_ALPHABET = 8
-#: Whole-response vocabulary collapse. Llama-4-Maverick looped
-#: "## Step 1" for thousands of words, then drifted into unrelated
-#: hallucinated text. Neither its tail nor its character alphabet looks
-#: wrong, but it used only 67 distinct words across 4,746 (1.4%). Genuine
-#: reasoning of that length runs an order of magnitude richer, so a
-#: ratio this low means the model stopped composing.
+#: Whole-response vocabulary collapse. Llama-4-Maverick looped "## Step 1" for
+#: thousands of words, then drifted into hallucinated text: neither its tail nor
+#: its character alphabet looks wrong, yet it used 67 distinct words across
+#: 4,746 (1.4%). Genuine reasoning of that length runs an order of magnitude
+#: richer, so a ratio this low means the model stopped composing.
 _DEGENERATE_RATIO_MIN_WORDS = 200
 _DEGENERATE_WORD_RATIO = 0.05
 
-#: Longest integer this module will convert. Python raises ValueError
-#: above 4,300 digits (the int/str conversion limit), and a degenerating
-#: model really does emit numbers that long: one response carried a
-#: 20,379-digit run, which crashed grading and took a live run down with
-#: it. The eval's answers are counts bounded by lcm(1..9) = 2520, so
-#: anything past this many digits is not an answer under any reading.
+#: Longest integer this module will convert. Python raises ValueError above
+#: 4,300 digits (the int/str conversion limit) and a degenerating model does
+#: emit numbers that long: one 20,379-digit run crashed grading and took a live
+#: run down. The eval's answers are counts bounded by lcm(1..9) = 2520, so more
+#: digits than this is not an answer under any reading.
 _MAX_ANSWER_DIGITS = 40
 
 _TOF_TOKEN = re.compile(r"\b(true|false)\b", re.IGNORECASE)
@@ -117,8 +109,7 @@ class ParseResult:
     """One response's extracted answer plus its contract compliance.
 
     ``value`` is None when nothing could be extracted; ``violation`` is None
-    when the response obeyed the output contract exactly, otherwise one of this
-    module's labels.
+    when the response obeyed the contract exactly, else one of the labels above.
     """
 
     value: Optional[Answer]
@@ -138,16 +129,15 @@ class ParseResult:
 def is_degenerate(text: str) -> bool:
     """Return whether `text` is repetition collapse rather than an answer.
 
-    The check is structural, not pattern-based: a long stretch drawn from a tiny
-    alphabet is degenerate whatever it repeats. Three shapes seen live, all
-    under the whitespace-padded noise arm, motivate the three tests: collapse
-    from the start (Nemotron-Ultra-253B: 24,576 characters of "0"), collapse
-    after a real beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens after
-    genuine reasoning -- the TAIL check), and collapse onto a PHRASE with a wide
-    character alphabet (Llama-4-Maverick looping ``"## Step 1\\n\\n"`` -- the
-    WORD checks). Misclassifying these is not cosmetic: `TRUNCATED` blames the
-    completion budget and `MULTIPLE_VALUES` blames the parser, when the finding
-    is that the condition breaks the model.
+    Structural, not pattern-based: a long stretch drawn from a tiny alphabet is
+    degenerate whatever it repeats. Three shapes seen live, all under the
+    whitespace-padded noise arm, motivate the three tests -- collapse from the
+    start (Nemotron-Ultra-253B: 24,576 characters of "0"), collapse after a real
+    beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens, the TAIL check), and
+    collapse onto a PHRASE with a wide character alphabet (Llama-4-Maverick
+    looping ``"## Step 1\\n\\n"``, the WORD checks). Misclassifying these would
+    blame the completion budget (`TRUNCATED`) or the parser
+    (`MULTIPLE_VALUES`) for a finding about the condition breaking the model.
     """
     stripped = text.strip()
     if not stripped:
@@ -164,16 +154,15 @@ def is_degenerate(text: str) -> bool:
         and len(set(tail)) <= _DEGENERATE_ALPHABET
     ):
         return True
-    # Phrase-level looping: a long stretch of text drawing on only a handful
-    # of distinct words.
+    # Phrase-level looping: a long stretch drawing on a handful of words.
     words = stripped.split()
     if len(words) < _DEGENERATE_MIN_WORDS:
         return False
     word_tail = words[-_DEGENERATE_MIN_WORDS:]
     if len(set(word_tail)) <= _DEGENERATE_WORD_ALPHABET:
         return True
-    # Vocabulary collapse across the whole response, for a model that loops
-    # and then wanders instead of looping all the way to the end.
+    # Whole-response vocabulary collapse, for a model that loops and then
+    # wanders instead of looping all the way to the end.
     return (
         len(words) >= _DEGENERATE_RATIO_MIN_WORDS
         and len(set(words)) / len(words) <= _DEGENERATE_WORD_RATIO
@@ -191,8 +180,7 @@ def _eval_arithmetic(text: str) -> Optional[int]:
     """Evaluate a bare arithmetic expression (``"2520/2"`` -> 1260), or None.
 
     Walks a validated AST instead of calling ``eval``, honoring only numeric
-    literals and `_ARITHMETIC_BINOPS`, so a hostile response cannot execute
-    code.
+    literals and `_ARITHMETIC_BINOPS`, so a hostile response cannot run code.
 
     Returns
     -------
@@ -243,8 +231,8 @@ def _safe_int(digits: str) -> Optional[int]:
     """Convert `digits` to int, or return None past `_MAX_ANSWER_DIGITS`.
 
     Python raises ValueError on int/str conversion beyond 4,300 digits, so an
-    unguarded ``int()`` crashes grading -- it took a live run down when a model
-    emitted a 20,379-digit run. No such number is a plausible answer anyway.
+    unguarded ``int()`` crashes grading -- a 20,379-digit run took a live run
+    down. No such number is a plausible answer anyway.
     """
     stripped = digits.lstrip("-")
     if len(stripped) > _MAX_ANSWER_DIGITS:
@@ -263,8 +251,8 @@ def _preamble(text: str) -> Optional[str]:
 def parse_tof(text: str) -> ParseResult:
     """Extract a True/False verdict, and classify contract compliance.
 
-    The contract is "return exactly one of these two strings and nothing else",
-    so anything beyond a bare ``True``/``False`` is a violation even when the
+    The contract is "exactly one of these two strings and nothing else", so
+    anything beyond a bare ``True``/``False`` is a violation even when the
     verdict is still recovered.
     """
     if not text or not text.strip():
@@ -278,18 +266,15 @@ def parse_tof(text: str) -> ParseResult:
     if stripped.lower() in ("true", "false"):
         return ParseResult(stripped.lower() == "true", None)
 
-    # Tolerated as compliant-ish: the bare token wearing punctuation or
-    # markup, e.g. "**False**" or '"True".' This still violates "nothing
-    # else", but it is a purely cosmetic violation, so it gets its own
-    # label.
+    # The bare token wearing punctuation or markup, e.g. "**False**" or
+    # '"True".' Still violates "nothing else", but only cosmetically, so it
+    # gets its own label.
     if re.fullmatch(r"[\s*_`\"'.]*(true|false)[\s*_`\"'.]*", stripped, re.IGNORECASE):
         return ParseResult(_TOF_TOKEN.search(stripped).group(1).lower() == "true", MARKUP)
 
-    # A response that ENDS in a verdict did conclude, however much text
-    # came before it. When the text also contains a DIFFERENT verdict
-    # earlier, that disagreement is the more informative violation to
-    # report -- more informative than whatever wrapping the final verdict
-    # wore.
+    # A response that ENDS in a verdict did conclude, however much text came
+    # before it. An earlier DIFFERENT verdict is the more informative violation
+    # to report than whatever wrapping the final verdict wore.
     terminal = _TERMINAL_TOF.search(stripped[-_TAIL_WINDOW:])
     if terminal:
         verdict = terminal.group(1).lower() == "true"
@@ -309,18 +294,17 @@ def parse_tof(text: str) -> ParseResult:
             return ParseResult(terminal_yn.group(1).lower() == "yes", WRONG_LEXICON)
         return ParseResult(None, UNPARSEABLE)
 
-    # Long, and never concluded: a chain cut off mid-thought. This function
-    # deliberately does not mine it for a verdict -- see the module
-    # docstring.
+    # Long and never concluded: a chain cut off mid-thought, deliberately not
+    # mined for a verdict -- see the module docstring.
     return ParseResult(None, TRUNCATED)
 
 
 def parse_numeric(text: str) -> ParseResult:
     """Extract an integer answer, and classify contract compliance.
 
-    The contract is "return exactly one integer and nothing else", so prose,
-    markup, or a worked calculation around the number are all violations. The
-    worked calculation is the dangerous case: the first integer is an operand.
+    The contract is "exactly one integer and nothing else", so prose, markup,
+    or a worked calculation around the number are all violations. The worked
+    calculation is the dangerous case: the first integer is an operand.
     """
     if not text or not text.strip():
         return ParseResult(None, EMPTY)
@@ -333,9 +317,8 @@ def parse_numeric(text: str) -> ParseResult:
         value = _safe_int(stripped)
         return ParseResult(value, None if value is not None else DEGENERATE)
 
-    # A bare integer wearing markup or punctuation, e.g. "**42**" or
-    # '"42".' Only the number is present, so only the "no punctuation"
-    # clause was broken.
+    # A bare integer wearing markup or punctuation, e.g. "**42**" or '"42".'
+    # Only the number is present, so only the "no punctuation" clause broke.
     if re.fullmatch(r"[\s*_`\"'.]*-?\d+[\s*_`\"'.]*", stripped):
         return ParseResult(_safe_int(_INT.search(stripped).group()), MARKUP)
 
@@ -344,9 +327,8 @@ def parse_numeric(text: str) -> ParseResult:
     if boxed:
         return ParseResult(_safe_int(boxed.group(1)), MARKUP)
 
-    # A calculation rather than its result, e.g. "2520/2". This check runs
-    # before any integer-picking rule, because every such rule would score
-    # an operand instead.
+    # A calculation rather than its result, e.g. "2520/2". Before any
+    # integer-picking rule, each of which would score an operand instead.
     arithmetic = _eval_arithmetic(stripped)
     if arithmetic is not None:
         return ParseResult(arithmetic, EXPRESSION)
@@ -358,9 +340,8 @@ def parse_numeric(text: str) -> ParseResult:
     if len(ints) == 1:
         return ParseResult(_safe_int(ints[0]), _preamble(stripped))
 
-    # Several integers appear. A concluding "Answer: N", or a terminal
-    # integer, is the result; the earlier ones are working. Taking the
-    # FIRST integer would score working, not the result.
+    # Several integers: a concluding "Answer: N" or a terminal integer is the
+    # result, the earlier ones are working. FIRST would score the working.
     terminal = _TERMINAL_INT.search(stripped[-_TAIL_WINDOW:])
     if terminal:
         return ParseResult(_safe_int(terminal.group(1)), MULTIPLE_VALUES)

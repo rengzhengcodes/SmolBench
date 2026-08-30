@@ -1,18 +1,17 @@
 """Deduction leg of the "information or just length?" question: hint:3 vs noise:3.
 
-The two rungs are byte-identical through the goal, tactic state, proof so far,
-and the premises used by the next tactic; hint:3 then ends with a trailing 1-hop
-TRANSITIVE premise-closure block that noise:3 replaces with padding of the same
-token count. So this leg asks only whether 1-hop transitive background helps ON
-TOP OF an already-complete direct-premise context. It is NOT the deduction
-analogue of the induction extens-vs-noise contrast, which swaps the encoding of
-the whole evidence set; results do not carry between legs.
+The rungs are byte-identical through goal, tactic state, proof so far, and the
+premises the next tactic uses; hint:3 then adds a trailing 1-hop TRANSITIVE
+premise-closure block that noise:3 replaces with token-matched padding. So this leg
+asks only whether that background helps ON TOP OF an already-complete
+direct-premise context -- NOT the induction extens-vs-noise contrast, which swaps
+the encoding of the whole evidence set; results do not carry between legs.
 
-Cells are paired on (theorem_id, k) WITHIN one model, which contributes exactly
-ONE cell per theorem: the pairs are independent, exact McNemar is the primary
-test, and NO cluster correction applies here (unlike the family-ladder
-contrasts). Multiplicity is Holm-Bonferroni over the 21 models at FWER 0.05,
-valid under the arbitrary dependence induced by the shared theorem set.
+Cells are paired on (theorem_id, k) WITHIN one model, which contributes exactly ONE
+cell per theorem: the pairs are independent, exact McNemar is the primary test, and
+no cluster correction applies here (unlike the family-ladder contrasts).
+Multiplicity is Holm-Bonferroni over the 21 models at FWER 0.05, valid under the
+arbitrary dependence induced by the shared theorem set.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
@@ -46,29 +45,26 @@ RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 
 
 def load_rungs(path: Path, model: str) -> dict:
-    """Map each ``(theorem_id, k)`` cell of one model's ``verified_rows.jsonl`` to its
-    `RUNG_INFO` / `RUNG_NOISE` outcomes.
+    """Map each ``(theorem_id, k)`` cell of one model to its two rung outcomes.
 
-    Reads only ``kind == "cell"``, ``replicate_idx == 0`` rows in those two rungs,
-    graded through ``power_analysis.grade_verdicts`` (the single implementation of
-    this study's row rules). The EARLIEST measurable row for a cell+rung wins -- a
-    later retry is an independent draw, and last-wins would report pass@N as pass@1.
-
-    `model` is unused.
+    Reads `path` (a model's ``verified_rows.jsonl``): only ``kind == "cell"``,
+    ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded
+    through ``power_analysis.grade_verdicts`` (the single implementation of this
+    study's row rules). The EARLIEST measurable row for a cell+rung wins: a retry is
+    an independent draw, so last-wins would report pass@N as pass@1. `model` is unused.
 
     Returns
     -------
     dict
-        ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``. A cell with no
+        ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``; a cell with no
         measurable row stays ABSENT, never scored 0.
 
     Raises
     ------
     SystemExit
-        From `reject_superseded`, or from `reject_unverified_verdicts`, which runs
-        at INGESTION before the rung filter -- so an ungraded row in a rung this
-        comparison never reads still raises, since it proves the verification pass
-        on this file did not finish.
+        From `reject_superseded`, or from `reject_unverified_verdicts`, which runs at
+        INGESTION before the rung filter -- an ungraded row in a rung this comparison
+        never reads still raises, since it proves verification did not finish.
     """
     reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
@@ -79,8 +75,8 @@ def load_rungs(path: Path, model: str) -> dict:
             continue
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
             continue
-        # None means this row is not a measurement. It does not score the
-        # cell or claim it, so the next row still gets its chance.
+        # None = not a measurement: neither scores nor claims the cell, so the
+        # next row still gets its chance.
         grade = grade_verdicts([row.get("verdict")])
         if grade is None:
             continue
@@ -97,8 +93,8 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     The region is the two-sided exact-McNemar one, ``{b <= k_crit} U {b >= n_disc -
     k_crit}`` for a discordant total `n_disc` (``b + c``); under a true
     discordant-favour probability pi, b is Binomial(`n_disc`, pi), so power has a
-    CLOSED FORM. A fixed 200-step bisection over ``[0.5, 1.0]`` on it (hence no
-    convergence check): no seed, no Monte Carlo error, same number every run.
+    CLOSED FORM. The fixed 200-step bisection over ``[0.5, 1.0]`` on it needs no
+    convergence check: no seed, no Monte Carlo error, same number every run.
     """
     lo, hi = 0.5, 1.0
     for _ in range(200):
@@ -159,27 +155,20 @@ def main(argv=None) -> int:
     print(f"  hint:3 HIGHER (information helps): {len(up)}")
     print(f"  noise:3 HIGHER:                    {len(sig) - len(up)}")
 
-    # A null result means nothing without the effect it could have caught.
-    # So this report states the MINIMUM DETECTABLE EFFECT. It does not let
-    # the reader assume the test had enough power.
+    # A null means nothing without the effect it could have caught, so this
+    # report states the MINIMUM DETECTABLE EFFECT -- two distinct quantities:
     #
-    # This report tracks TWO different quantities. An earlier version of
-    # this report conflated them: it called the first one "the MDE".
+    #   boundary -- the most balanced discordant split that still clears Holm's
+    #               FIRST (strictest) threshold at the model's OBSERVED
+    #               discordant total, i.e. the smallest effect that WOULD HAVE
+    #               been significant. A ~50%-power figure, not a design's MDE.
+    #   mde80    -- the smallest TRUE effect this design detects 80% of the
+    #               time: the smallest pi = P(a discordant pair favours hint:3)
+    #               whose exact binomial power at that threshold reaches 0.80,
+    #               converted back to accuracy points.
     #
-    #   boundary  -- the most balanced discordant split that still clears
-    #                Holm's FIRST (strictest) threshold, at the model's
-    #                OBSERVED discordant total. This is the smallest effect
-    #                that WOULD HAVE BEEN significant, had it landed exactly
-    #                at the boundary. It is a ~50%-power figure, not a
-    #                design's MDE.
-    #   mde80     -- the smallest TRUE effect this design detects 80% of the
-    #                time: the smallest pi = P(a discordant pair favours
-    #                hint:3) whose exact binomial power, at that same
-    #                threshold, reaches 0.80, converted back to accuracy
-    #                points.
-    #
-    # Both quantities condition on the observed discordant total. That total
-    # is itself random, so an unconditional MDE would be larger still.
+    # Both condition on the observed discordant total, itself random, so an
+    # unconditional MDE would be larger still.
     print(f"\n{'-' * 78}\nMINIMUM DETECTABLE EFFECT -- what this null actually rules out")
     print(f"{'-' * 78}")
     print(f"Both columns are evaluated at each model's OBSERVED discordant "

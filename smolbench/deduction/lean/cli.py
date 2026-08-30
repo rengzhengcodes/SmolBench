@@ -1,11 +1,11 @@
 """Command-line entry points: `python -m smolbench.deduction.lean.cli <subcommand>`.
 
 Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs
-against Lean and so need `smolbench.deduction.lean.verify`, which requires
-`lean_dojo` (the `lean` extra, plus elan and a traced-repo cache at runtime);
-`metadata`, `list`, `analyze`, `report`, `show`, `compare` and `prompt-stats`
-need none of that. To keep the split real, `.verify` is imported lazily inside
-`cmd_replay`/`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
+against Lean and so need `.verify`, which requires `lean_dojo` (the `lean`
+extra, plus elan and a traced-repo cache at runtime); `metadata`, `list`,
+`analyze`, `report`, `show`, `compare` and `prompt-stats` need none of that. To
+keep the split real, `.verify` is imported lazily inside `cmd_replay` and
+`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
 `runner._default_verifier()`.
 """
 
@@ -31,8 +31,7 @@ def cmd_metadata(_: argparse.Namespace) -> int:
     Raises
     ------
     FileNotFoundError
-        Propagated from `corpus.metadata` when the dataset has not been
-        bootstrapped.
+        From `corpus.metadata` when the dataset is not bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -64,10 +63,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         2 if ``--full-name`` matches no theorem, 0 if every replay verdict is
         ``"success"``, else 1.
     """
-    # Local import: `.verify` requires `lean_dojo` (see that module's
-    # import guard). Deferring the import to this function body, rather
-    # than the module top, keeps every OTHER subcommand importable without
-    # lean_dojo installed.
+    # Local import: `.verify` requires `lean_dojo`, so deferring it here
+    # keeps every OTHER subcommand importable without lean_dojo installed.
     from .verify import replay_ground_truth
 
     pool = list(iter_with_proof(args.kind, args.split))
@@ -79,8 +76,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             print(f"theorem not found: {args.full_name}", file=sys.stderr)
             return 2
     else:
-        # This biases toward short proofs for the smoke: they run faster
-        # and are more likely to succeed.
+        # Biases toward short proofs for the smoke: faster, likelier to pass.
         max_len = args.max_tactics
         candidates = [t for t in pool if 1 <= len(t.traced_tactics) <= max_len]
         targets = rng.sample(candidates, min(args.n, len(candidates)))
@@ -115,7 +111,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
     recorded there, so an interrupt loses at most the in-flight theorem.
     ``--fresh`` deletes the sidecar; ``--limit 0`` means no cap. Always 0.
     """
-    # Local import: see `cmd_replay`'s comment above `.verify`'s import.
+    # Local import: see `cmd_replay`.
     from .verify import replay_ground_truth
 
     pool = list(iter_with_proof(args.kind, args.split))
@@ -327,10 +323,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     it, or died in the reasoning channel. A pass@N table follows only when some
     cell recorded more than one replicate: a cell passes if ANY replicate
     verified, and N is the max replicate count seen IN THE DATA, not the sweep
-    config, so mixed-replicate sweeps stay correct. `path` is user-supplied, so
-    it is checked against `runner.reject_superseded_rows` first — a retired
-    file's rows parse cleanly and would aggregate into a plausible, wrong
-    summary.
+    config, so mixed-replicate sweeps stay correct. `path` is user-supplied and
+    is checked against `runner.reject_superseded_rows` first — a retired file's
+    rows parse cleanly and would aggregate into a plausible, wrong summary.
 
     Returns
     -------
@@ -347,27 +342,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
-    # Design: this dict keys on the full cell identity (model, rung,
-    # theorem_id, k) -- one entry per group, holding every replicate's
-    # verdict for that group -- instead of folding straight into `cells`.
-    # pass@N needs to ask "did ANY replicate of *this exact* (theorem, k)
-    # succeed", a question the (rung, model)-only `cells` aggregation has
-    # already lost the answer to.
+    # Keyed on full cell identity (model, rung, theorem_id, k), not folded
+    # into `cells`: pass@N must ask "did ANY replicate of *this exact*
+    # (theorem, k) succeed", which the (rung, model)-only `cells`
+    # aggregation has already lost.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    # `path` is arbitrary and user-supplied. Unlike the run-directory globs
-    # elsewhere in this file, nothing upstream has already filtered it.
-    # That makes this the likeliest place someone accidentally points at a
-    # retired `all_rows_SUPERSEDED-<stamp>.jsonl` (see
-    # runner.RETIRED_MARKERS). This code rejects it before opening the
-    # file: its rows parse cleanly and are well-formed, so an admitted
-    # SUPERSEDED file would not crash here -- it would aggregate into a
-    # complete, plausible, and wrong summary. A warning cannot substitute
-    # for the raise when the bad output looks just like good output.
+    # `path` is user-supplied and, unlike the run-directory globs elsewhere
+    # in this file, unfiltered upstream -- the likeliest place to point at a
+    # retired `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
+    # Reject before opening: those rows parse cleanly, so the failure mode
+    # is a plausible wrong summary, not a crash, and a warning would not do.
     reject_superseded_rows([args.path])
     with open(args.path) as f:
         for line in f:
@@ -395,28 +384,20 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             c["tok_out"] += r.get("completion_tokens", 0)
             c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
 
-            # Truncation smell: a reasoning model cut off mid-<think> never
-            # emits a tactic block at all. Without this check, that case
-            # just looks like an ordinary `incomplete`/`given_up` verdict.
-            # This surfaces it separately, so a wave of these cases is not
-            # misread as the model reasoning itself into a dead end.
-            # `raw_response` is the field the runner actually writes (see
-            # runner.py); `content` is a defensive fallback for any row
-            # schema variant that used the provider SDK's own key name
-            # instead.
+            # Truncation smell: a reasoning model cut off mid-<think> emits
+            # no tactic block, which otherwise looks like an ordinary
+            # `incomplete`/`given_up` verdict; counting it separately keeps
+            # a wave of truncations from reading as reasoning dead ends.
+            # `raw_response` is the field runner.py writes; `content` is a
+            # fallback for row variants using the provider SDK's key name.
             raw_text = r.get("raw_response", "") or r.get("content", "")
             unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-            # Parser-path case: when the box serves WITH a vLLM
-            # --reasoning-parser, the server splits the model's <think>
-            # block out into `reasoning_content` server-side, and it never
-            # lands in `raw_response` at all. So a generation that died
-            # inside the think channel leaves `raw_response` EMPTY (not
-            # "<think>... unclosed"), and the check above silently reads 0.
-            # This catches that shape too: reasoning was produced, but no
-            # answer content made it out at all. This deliberately checks
-            # `raw_response` alone here, not the `content`-fallback
-            # `raw_text` above, matching the row schema `runner.py`
-            # actually writes under a --reasoning-parser server.
+            # Parser-path case: under a vLLM --reasoning-parser the server
+            # splits <think> into `reasoning_content`, so a generation that
+            # died in the think channel leaves `raw_response` EMPTY rather
+            # than unclosed, and the check above reads 0. Deliberately tests
+            # `raw_response` alone, not the `content`-fallback `raw_text`,
+            # matching the row schema runner.py writes in that mode.
             died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
             if unclosed_think_in_raw or died_in_reasoning_channel:
                 c["trunc"] += 1
@@ -503,13 +484,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
 
-    # ---- pass@N (only meaningful once a sweep actually ran multiple
-    # replicates). With n_replicates==1 everywhere, "pass@N" and the plain
-    # success rate above are identical, so this code skips it instead of
-    # printing a redundant, visually-noisy duplicate table. N comes from
-    # the data itself (max replicates seen in any single cell), not from
-    # the sweep config, so this stays correct even for sweeps that mix
-    # replicate counts across models/rungs.
+    # ---- pass@N. With n_replicates==1 everywhere it duplicates the plain
+    # success rate above, so it is skipped. N comes from the data (max
+    # replicates in any single cell), not the sweep config, so sweeps that
+    # mix replicate counts across models/rungs stay correct.
     n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
     if n_max_replicates > 1:
         passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
@@ -595,8 +573,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             continue
         if r.get("rung") not in (args.rung_a, args.rung_b):
             continue
-        # With multiple replicates, this prefers the first.
-        # Pass --replicate to pick another.
+        # With multiple replicates this compares only --replicate (default 0).
         if r.get("replicate_idx", 0) != args.replicate:
             continue
         by_thm.setdefault(r["theorem_id"], {})[r["rung"]] = r

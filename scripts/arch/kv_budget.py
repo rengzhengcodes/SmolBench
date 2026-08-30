@@ -1,9 +1,8 @@
 """KV-cache sizing for the family-ladder roster.
 
-A naive figure that assumes every layer holds full-context KV is wrong for a
-third of the roster: three attention mechanisms shrink KV by 4-25x, and a
-fourth, tp replication, grows it. Per layer and per token of effective context,
-at BF16 (2 bytes):
+A naive figure assuming every layer holds full-context KV is wrong for a third
+of the roster: three attention mechanisms shrink KV by 4-25x, and tp
+replication grows it. Per layer, per token of effective context, at BF16:
 
 * **full attention**: ``2 * n_kv * head_dim * 2`` bytes.
 * **sliding/local layers**: the same, over ``min(ctx, sliding_window)`` tokens
@@ -16,18 +15,17 @@ at BF16 (2 bytes):
   non-MLA KV by ``max(1, tp / n_kv)``: DeepSeek-V4's single KV head at tp=8 is
   8x its tp=1 figure.
 
-The layer mix comes from the config: ``layer_types`` (a list) when present,
-else ``sliding_window_pattern`` (a cycling string, ``L`` local / ``G`` global),
-else every layer counts as full attention. A bare ``sliding_window`` value with
-neither mix field is deliberately NOT applied -- DeepSeek-V4 carries
+The layer mix comes from ``layer_types`` (a list), else
+``sliding_window_pattern`` (a cycling string, ``L`` local / ``G`` global), else
+every layer counts as full attention. A bare ``sliding_window`` with neither
+mix field is deliberately NOT applied: DeepSeek-V4 carries
 ``sliding_window=128`` for its CSA/HCA sparse scheme yet keeps full-length KV.
 
-For replication-study box sizing, budget ``weights + 2.0 x KV@131k`` against
-``0.90 x total VRAM`` (about 8 concurrent requests); a box sized for a single
-sequence goes negative at real concurrency. Weight sizes come from checkpoint
-shard totals, not this tool. ``.venv/bin/python scripts/arch/kv_budget.py
-[--ctx 131072]`` prints one row per roster model: the naive figure against the
-corrected one at tp=1 and at the deploy spec's tp.
+For box sizing, budget ``weights + 2.0 x KV@131k`` (about 8 concurrent
+requests) against ``0.90 x total VRAM``; a box sized for one sequence goes
+negative at real concurrency. Weight sizes come from checkpoint shard totals,
+not this tool. ``kv_budget.py [--ctx 131072]`` prints, per roster model, the
+naive figure against the corrected one at tp=1 and at the deploy spec's tp.
 """
 
 from __future__ import annotations
@@ -50,7 +48,7 @@ def _text_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     config = raw["config"]
     inner = config.get("text_config")
     if isinstance(inner, dict):
-        # Fall back to the outer block for fields the wrapper hoists.
+        # The outer block still supplies fields the wrapper hoists.
         merged = dict(config)
         merged.update(inner)
         return merged
@@ -77,11 +75,10 @@ def _layer_mix(cfg: Dict[str, Any]) -> list:
             "sliding" if pattern[i % len(pattern)] == "L" else "full"
             for i in range(n_layers)
         ]
-    # NOT a bug: this deliberately ignores a bare ``sliding_window`` value
-    # with neither mix field set. DeepSeek-V4 carries ``sliding_window=128``
-    # as CSA/HCA scaffolding while it keeps full-length KV. A window
-    # applied here would shrink its KV ~1000x and size boxes that OOM at
-    # serve.
+    # NOT a bug: a bare ``sliding_window`` with neither mix field is ignored.
+    # DeepSeek-V4 carries ``sliding_window=128`` as CSA/HCA scaffolding while
+    # keeping full-length KV; applying it would shrink KV ~1000x and size boxes
+    # that OOM at serve.
     return ["full"] * n_layers
 
 
@@ -102,8 +99,8 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     Returns
     -------
     int
-        KV bytes across all layers and all tp shards. Replication makes the
-        total exceed the tp=1 figure; it never shrinks it.
+        KV bytes across all layers and tp shards. Replication only ever raises
+        the total above the tp=1 figure.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

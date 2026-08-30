@@ -8,9 +8,9 @@ script supervises ONE shard group:
 - ADOPTS already-running shards (matched on ``INDUCTION_MODELS`` /
   ``INDUCTION_SHARD`` in ``/proc/<pid>/environ``) rather than double-launching
   them, so it is safe to start mid-run.
-- Relaunches a dead shard on the hand-launch environment recipe, so the
-  relaunch REATTACHES to a still-live box through its state file, or provisions
-  a fresh one.
+- Relaunches a dead shard on the hand-launch environment recipe, so it
+  REATTACHES to a still-live box through its state file, or provisions a fresh
+  one.
 - HALTS a shard that dies within ``FAST_CRASH_SECONDS`` of launch
   ``MAX_FAST_CRASHES`` times in a row; capacity-exhausted hunts
   (``CAPACITY_MARKER``) are exempt and retry indefinitely on a longer backoff.
@@ -19,17 +19,13 @@ script supervises ONE shard group:
   until the on-box watchdog fires.
 - Exits once every shard is complete or halted, non-zero if any halted.
 
-Launch it from a shell that has sourced ``notebooks/induction/keys.env`` and
-``notebooks/ec2-operator.env``: children inherit this process's environment,
-with only per-shard variables layered on top. ``--count 1 --no-shard``
-supervises a single unsharded run, and then needs explicit ``--tag`` and
-``--state-file``, there being no shard suffix to derive them from::
-
-    setsid nohup .venv/bin/python -u scripts/fleet/run_shards.py \\
-        --model gemma-4-12b --count 3 --force-rerun 1 \\
-        --types g7.12xlarge --regions us-east-2,us-west-2,us-east-1 \\
-        --request-timeout 10800 \\
-        >> notebooks/induction/results/fleet_logs/shards_gemma-4-12b.log 2>&1 &
+Launch it detached (``setsid nohup ... &``, redirecting to a log under
+``notebooks/induction/results/fleet_logs/``) from a shell that has sourced
+``notebooks/induction/keys.env`` and ``notebooks/ec2-operator.env``: children
+inherit this process's environment, with only per-shard variables layered on
+top. ``--count 1 --no-shard`` supervises a single unsharded run, and then needs
+explicit ``--tag`` and ``--state-file``, there being no shard suffix to derive
+them from.
 """
 
 from __future__ import annotations
@@ -55,12 +51,11 @@ RELAUNCH_BACKOFF_SECONDS = 60
 FAST_CRASH_SECONDS = 300
 MAX_FAST_CRASHES = 3
 #: A capacity-exhausted hunt prints this marker and exits within about 2-3
-#: minutes. This LOOKS like a fast crash, but this script must retry it
-#: indefinitely: capacity and quota free up on their own (run_fleet
-#: classifies the analogous lane exit as RECLAIM, with unlimited retries).
-#: This script checks the marker against the LOG TAIL of the attempt that
-#: just died, and retries on a longer backoff, so it does not hammer a dry
-#: pool.
+#: minutes. That LOOKS like a fast crash, but must be retried indefinitely:
+#: capacity and quota free up on their own (run_fleet classifies the analogous
+#: lane exit as RECLAIM, with unlimited retries). Checked against the LOG TAIL
+#: of the attempt that just died, and retried on a longer backoff so it does
+#: not hammer a dry pool.
 CAPACITY_MARKER = "No spot capacity for any"
 CAPACITY_BACKOFF_SECONDS = 300
 
@@ -70,9 +65,9 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 
     Mirrors the hand-launch recipe: the inherited base environment (keys.env
     plus operator credentials) plus per-shard variables. Passing the same base
-    ``EC2_EXPERIMENT_TAG`` yields the same tags as the hand launches -- the
-    driver derives the per-shard tag and state-file suffix from
-    ``INDUCTION_SHARD`` -- which is what makes adoption and reattach seamless.
+    ``EC2_EXPERIMENT_TAG`` reproduces the hand launches' tags -- the driver
+    derives the per-shard tag and state-file suffix from ``INDUCTION_SHARD`` --
+    which is what makes adoption and reattach seamless.
     """
     env = dict(os.environ)
     env["INDUCTION_MODELS"] = args.model
@@ -94,10 +89,9 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
     """Return the PID of a live ``run_study.py`` process for (`model`, `shard`), or None.
 
-    Matches through ``/proc/<pid>/environ``: ``INDUCTION_MODELS`` equal to
-    `model` and ``INDUCTION_SHARD`` equal to `shard` (``"i/n"``, or ``None`` for
-    an unsharded run). First match wins; the launch discipline guarantees at
-    most one process per (model, shard).
+    Matches through ``/proc/<pid>/environ`` on ``INDUCTION_MODELS`` and
+    ``INDUCTION_SHARD`` (``"i/n"``, or ``None`` for an unsharded run). First
+    match wins; the launch discipline guarantees at most one per (model, shard).
     """
     try:
         pids = subprocess.run(
@@ -136,8 +130,8 @@ def terminate_shard_box(args: argparse.Namespace, index: int) -> None:
     """Best-effort terminate of completed shard `index`'s instance, via its state file.
 
     Direct runs do no teardown by contract, so this reclaims the box at once
-    instead of waiting about 30 minutes for the on-box idle watchdog. Any
-    failure is logged and swallowed; that watchdog is the backstop.
+    instead of waiting ~30 minutes for the on-box idle watchdog. Any failure is
+    logged and swallowed; that watchdog is the backstop.
     """
     path = state_file_for(args, index)
     try:

@@ -1,31 +1,28 @@
 """Split an UNSHARDED deduction run's outputs into pre-seeded shard run dirs.
 
-Reshards a mid-flight lane so it finishes faster: kill the driver, split what it
-already banked into n theorem-stride shard dirs
-(``runs/scaling_<key>_shard<i>of<n>``), then relaunch n drivers with
-``LEAN_SHARD=i/n`` -- each one's resume skips the pre-seeded cells and generates
-only what is missing. ``scripts/deduction/merge_lean_shards.py`` folds them back
-into the canonical run. Shard assignment goes through
-``runner._select_theorems`` with ``shard: "i/n"``, the exact code path the
-relaunched shards use, so split and shards can never disagree about ownership.
+Reshards a mid-flight lane: kill the driver, split what it banked into n
+theorem-stride dirs ``runs/scaling_<key>_shard<i>of<n>``, relaunch n drivers with
+``LEAN_SHARD=i/n`` (resume then generates only the missing cells), and fold them
+back with ``scripts/deduction/merge_lean_shards.py``. Assignment goes through
+``runner._select_theorems`` with ``shard: "i/n"`` -- the relaunched shards' own
+code path -- so the two can never disagree about ownership.
 
-The source dir is only READ (rows copied out, ``theorems/`` subtrees copied not
-moved); the caller renames it out of the canonical path first and deletes it only
-after the merge's verified S3 spool. Every row must land in exactly one shard, so
-the script aborts BEFORE writing any shard dir on an unmapped ``theorem_id``, an
-unknown ``kind``, a duplicate cell key, or a torn MIDDLE line (corruption), while
-a torn FINAL line (SIGKILL mid-write) is dropped with a warning and regenerates
-on resume. ``server_config.yaml`` and ``manifest.json`` go to shard 0 (the latter
-as ``manifest_prelude.json``, the unsharded phase's provenance; the shard's own
-sweep writes a fresh ``manifest.json``), because shard 0 relaunches against the
-ORIGINAL box through the original state file, keeping the sidecar chain as one
-box's history -- copy the prelude into the canonical dir before spooling.
+`source` is only READ (``theorems/`` subtrees copied, not moved); the caller
+renames it out of the canonical path first and deletes it only after the merge's
+verified S3 spool. Every row must land in exactly one shard, so the script aborts
+BEFORE writing any shard dir on an unmapped ``theorem_id``, an unknown ``kind``,
+a duplicate cell key, or a torn MIDDLE line; a torn FINAL line (SIGKILL
+mid-write) is dropped with a warning and regenerates on resume.
+``server_config.yaml`` and ``manifest.json`` go to shard 0 -- the latter as
+``manifest_prelude.json``, the unsharded phase's provenance, since the shard's
+own sweep writes a fresh ``manifest.json`` -- because shard 0 relaunches against
+the ORIGINAL box through the original state file, keeping the sidecar chain as
+one box's history; copy the prelude into the canonical dir before spooling.
 
-Runbook: ``kill -9`` the driver -- NOT SIGINT/SIGTERM, whose ``--teardown``
-finally block must never run against the live box -- rename
-``runs/scaling_<key>`` aside, run this script against that copy, then relaunch
-one driver per shard with ``LEAN_SHARD=i/n``, within 30 minutes of the kill
-(shard 0's idle watchdog).
+Runbook: ``kill -9`` the driver (NOT SIGINT/SIGTERM, whose ``--teardown`` finally
+block would run against the live box), rename ``runs/scaling_<key>`` aside, run
+this script against that copy, then relaunch one driver per shard within 30
+minutes of the kill (shard 0's idle watchdog).
 """
 
 import argparse
@@ -68,22 +65,21 @@ def split_run(
     source : Path
         The unsharded run dir; READ only.
     runs_root : Path
-        Parent the ``scaling_<key>_shard<i>of<n>`` dirs are created under.
+        Parent of the created ``scaling_<key>_shard<i>of<n>`` dirs.
     theorems_spec : dict
-        The lane's theorems config; must NOT carry a ``shard`` key, since this
-        function adds ``shard: "i/n"`` per shard before calling
-        ``runner._select_theorems``.
+        The lane's theorems config; must NOT carry a ``shard`` key -- this
+        function adds ``shard: "i/n"`` per shard.
 
     Returns
     -------
     list[Path]
-        The shard directory paths, in shard order.
+        The shard directories, in shard order.
 
     Raises
     ------
     SystemExit
-        On any failed gate (see the module docstring), or if `source` has no
-        ``all_rows.jsonl``, or if a target shard directory already exists.
+        On any failed gate (see the module docstring), if `source` has no
+        ``all_rows.jsonl``, or if a target shard dir exists.
     """
     from smolbench.deduction.lean import runner  # heavy import chain; local
 
@@ -108,7 +104,7 @@ def split_run(
             owner[name] = i
             slug_owner[runner.slug_theorem(name)] = i
 
-    # Partition rows. This function gates every row before it writes anything.
+    # Gate every row before anything is written.
     lines = (source / "all_rows.jsonl").read_text().splitlines()
     per_shard: list[list[str]] = [[] for _ in range(n)]
     seen_cells: set[tuple] = set()
@@ -175,9 +171,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    # The study's user-locked theorems spec. It must match the shards'
-    # config (notebooks/deduction/run_study.py build_config), or the split
-    # disagrees with the relaunched shards about theorem ownership.
+    # The study's user-locked theorems spec; must match the shards' own config
+    # (notebooks/deduction/run_study.py build_config) or split and shards
+    # disagree about theorem ownership.
     theorems_spec = {
         "source": "replay_passing",
         "kind": "novel_premises",

@@ -4,9 +4,8 @@
 an eval theorem under another name (mathlib has duplicate lemmas; an
 autoformalized corpus shares no naming at all), and answer-content overlap
 without the theorem -- mathlib-derived synthetic corpora (e.g. LeanNavigator)
-reproduce an eval theorem's states and tactic chains inside *other* theorems.
-`HoldoutIndex` fingerprints every eval theorem; `HoldoutIndex.check` reports
-which keys a candidate row hits.
+reproduce eval states and tactic chains inside *other* theorems. `HoldoutIndex`
+fingerprints every eval theorem; `.check` reports which keys a candidate hits.
 
 Key families
 ------------
@@ -14,7 +13,7 @@ Key families
 - **K2 statement** -- normalized step-0 ``state_before``, exact *and*
   MinHash/LSH near-duplicate (catches alpha-renamed restatements).
 - **K3 state** -- normalized ``state_before`` of *every* proof step, since
-  sweeps stratify ``k`` so every step is answer-conditional (what each rung
+  sweeps stratify ``k``, making every step answer-conditional (what each rung
   exposes: ``notebooks/deduction/README.md``).
 - **K4 tactic chain** -- (a) full chain plus every 3-tactic window, only for
   proofs with >= 3 tactics; (b) ``(state, next-tactic)`` pairs, the answer unit
@@ -23,9 +22,9 @@ Key families
   revealing no answer, and the pair key covers them *with* the state that makes
   them answer-conditional.
 
-Fully deterministic (pure text normalization, seeded MinHash, no model calls),
-so a build is byte-reproducible from its manifest config. Like `sft`, imports
-only generation-side siblings, never `verify`: no Lean toolchain needed.
+Deterministic (pure text normalization, seeded MinHash, no model calls), so a
+build is byte-reproducible from its manifest config. Imports only
+generation-side siblings, never `verify`: no Lean toolchain needed.
 """
 
 from __future__ import annotations
@@ -47,16 +46,14 @@ from .sft import DEFAULT_EVAL_SPECS
 # ---------------------------------------------------------------------------
 
 
-# Incidental, context-specific tokens that Lean allocates deterministically
-# per elaboration. These differ between two traces of the *same* goal, e.g.
-# under a different proof context, or a different mathlib commit
-# (LeanNavigator pins none). This canonicalization lets a mathlib-derived
-# corpus's goal states and tactic chains match the eval's, even when these
-# counters diverge. On a full 4.7M-row LeanNavigator scan, this recovered 29
-# goal-state and 22 (state, tactic) matches that exact byte-match missed,
-# while collapsing only 4 of the eval's ~20.5k state variants. That is,
-# canonicalization is near-injective on real states, so the added recall
-# costs almost no over-drop.
+# Incidental tokens Lean allocates deterministically per elaboration; they
+# differ between two traces of the *same* goal (different proof context, or a
+# different mathlib commit -- LeanNavigator pins none). Canonicalizing them lets
+# a mathlib-derived corpus's states and chains match the eval's. On a full
+# 4.7M-row LeanNavigator scan this recovered 29 goal-state and 22 (state,
+# tactic) matches that exact byte-match missed, while collapsing only 4 of the
+# eval's ~20.5k state variants -- near-injective, so the recall costs almost no
+# over-drop.
 _METAVAR_RE = re.compile(r"\?[\w]+(?:\.\d+)?")  # ?m.248692, ?a, ?_  -> ?m
 # Superscript digits span TWO Unicode blocks: ¹²³ are Latin-1 (U+00B9/B2/B3),
 # ⁰⁴⁵⁶⁷⁸⁹ are Superscripts-and-Subscripts (U+2070/2074-2079) -- so a range
@@ -68,11 +65,11 @@ _UNIVERSE_RE = re.compile(r"\bu_\d+\b")  # universe params u_1 -> u
 def normalize_text(s: str) -> str:
     """Canonicalize Lean text for fingerprinting.
 
-    In order: (1) Unicode NFC; (2) collapse the per-elaboration counters that differ
-    between two traces of one goal -- ``?m.248692`` -> ``?m``, ``inst✝⁶`` ->
-    ``inst✝``, ``u_1`` -> ``u``; (3) collapse every whitespace run *including
-    newlines* to one space, then strip, so multi-line and one-line renderings of a
-    state collide. Applied identically to the index and query sides, so the
+    In order: Unicode NFC; collapse the per-elaboration counters that differ
+    between two traces of one goal (``?m.248692`` -> ``?m``, ``inst✝⁶`` ->
+    ``inst✝``, ``u_1`` -> ``u``); collapse every whitespace run *including
+    newlines* to one space, then strip, so multi-line and one-line renderings of
+    a state collide. Applied identically to index and query sides, so the
     collapses can only *add* matches.
     """
     s = unicodedata.normalize("NFC", s)
@@ -86,9 +83,9 @@ def state_variants(state_pp: str) -> list[str]:
     """One or two normalized variants of a pretty-printed tactic state.
 
     Full form first, empties dropped: the full state and, when it differs, the
-    goal-only block (`context.extract_goal_only`, what ``stepk:0`` renders) -- so a
+    goal-only block (`context.extract_goal_only`, what ``stepk:0`` renders), so a
     hypotheses-stripped copy of an eval state still collides with the eval's
-    ``stepk:0`` rung content.
+    ``stepk:0`` content.
     """
     full = normalize_text(state_pp)
     goal = normalize_text(extract_goal_only(state_pp))
@@ -97,13 +94,11 @@ def state_variants(state_pp: str) -> list[str]:
 
 
 #: Minimum normalized length for a *goal-only* variant to become a
-#: statement/state index key. Bare goals shorter than this (``⊢ False``,
-#: ``⊢ a = b``) recur across unrelated theorems all over mathlib. They
-#: identify nothing, and indexing them would mass-drop harmless training
-#: rows. The full-state variant (hypotheses included) is always indexed.
-#: `pairs` keys keep even short goal variants, since a (state, tactic)
-#: match must reproduce the eval cell's *answer*, which is
-#: answer-conditional at any length.
+#: statement/state index key: shorter bare goals (``⊢ False``, ``⊢ a = b``)
+#: recur across unrelated mathlib theorems, identify nothing, and indexing them
+#: would mass-drop harmless training rows. The full-state variant is always
+#: indexed, and `pairs` keeps even short goal variants -- a (state, tactic)
+#: match reproduces the eval cell's *answer* at any length.
 _MIN_GOAL_KEY_CHARS = 24
 
 
@@ -119,25 +114,25 @@ def _index_variants(state_pp: str) -> list[str]:
 # MinHash / LSH near-duplicate index (statements only)
 # ---------------------------------------------------------------------------
 
-#: Character-shingle width for MinHash. 5 chars spans roughly one Lean token
-#: plus its neighborhood, so renaming one hypothesis perturbs only the
-#: shingles that touch it -- the signature stays close for alpha-renames.
+#: Character-shingle width. 5 chars spans roughly one Lean token plus its
+#: neighborhood, so renaming one hypothesis perturbs only the shingles that
+#: touch it -- the signature stays close under alpha-renaming.
 _SHINGLE_N = 5
-#: MinHash permutations. 64 keeps signatures cheap while the band structure
-#: below puts the LSH candidate threshold safely under `_JACCARD_THRESHOLD`.
+#: MinHash permutations; 64 keeps signatures cheap while the banding below puts
+#: the LSH candidate threshold safely under `_JACCARD_THRESHOLD`.
 _NUM_PERM = 64
-#: LSH banding: 8 bands x 8 rows over the 64-slot signature. Candidate
-#: recall threshold ~ (1/8)^(1/8) ~= 0.77, below the decision threshold.
-#: So true near-dups at 0.85 are reliably surfaced as candidates, then
-#: confirmed by exact Jaccard (no false drops from LSH alone).
+#: LSH banding: 8 bands x 8 rows over the 64-slot signature. Candidate recall
+#: threshold ~ (1/8)^(1/8) ~= 0.77, below the 0.85 decision threshold, so true
+#: near-dups surface as candidates and are then confirmed by exact Jaccard (no
+#: false drops from LSH alone).
 _BANDS = 8
 _ROWS = _NUM_PERM // _BANDS
 #: Final decision threshold on exact shingle-set Jaccard similarity.
 _JACCARD_THRESHOLD = 0.85
 #: Mersenne prime for the universal-hash permutations.
 _MERSENNE = (1 << 61) - 1
-#: Seed for the permutation parameters. Fixed (not caller-configurable) so
-#: every index built anywhere hashes identically; the value is arbitrary.
+#: Fixed, not caller-configurable, so every index built anywhere hashes
+#: identically; the value is arbitrary.
 _PERM_SEED = 1776
 
 
@@ -196,8 +191,8 @@ class Hit:
     key: str
     #: ``full_name`` of the eval theorem whose content matched.
     theorem: str
-    #: Short human-readable description of what matched (matched text is
-    #: truncated -- this is for manifests/logs, not for re-matching).
+    #: Human-readable description of the match, with matched text truncated:
+    #: for manifests/logs, not for re-matching.
     detail: str
 
 
@@ -238,9 +233,9 @@ class HoldoutIndex:
     ) -> "HoldoutIndex":
         """Index every theorem of the given eval splits.
 
-        `eval_specs` is loaded via `corpus.load_split` -- the *whole* split, matching
-        `sft.eval_holdout_names`' stricter-than-replay-passing stance. Theorems without
-        traced tactics contribute their name (K1) only.
+        Loads via `corpus.load_split` -- the *whole* split, matching
+        `sft.eval_holdout_names`' stricter-than-replay-passing stance. Theorems
+        without traced tactics contribute their name (K1) only.
         """
         idx = cls()
         for kind, split in eval_specs:
@@ -253,8 +248,8 @@ class HoldoutIndex:
         self.names.add(t.full_name)
         if not t.traced_tactics:
             return
-        # K2: the statement is the step-0 state (what stepk:0/1 render at
-        # the start of the proof, and what an external corpus would restate).
+        # K2: the statement is the step-0 state -- what stepk:0/1 render at the
+        # start of the proof, and what an external corpus would restate.
         for vi, variant in enumerate(_index_variants(t.traced_tactics[0].state_before)):
             self.statements.setdefault(variant, t.full_name)
             shingles = _shingles(variant)
@@ -265,7 +260,7 @@ class HoldoutIndex:
                 for band in range(_BANDS):
                     bucket = (band, sig[band * _ROWS : (band + 1) * _ROWS])
                     self._lsh.setdefault(bucket, []).append(key)
-        # K3 + K4b: every step's state (and its goal-only variant), plus the
+        # K3 + K4b: every step's state (and goal-only variant), plus the
         # (state, next-tactic) answer pair.
         tactics = [normalize_text(tt.tactic) for tt in t.traced_tactics]
         for tt, tactic in zip(t.traced_tactics, tactics):
@@ -323,8 +318,8 @@ class HoldoutIndex:
         name : str, optional
             K1.
         statement : str, optional
-            K2 exact + near-dup, and also K3: a state-shaped row's "statement"
-            may be a mid-proof eval state.
+            K2 exact + near-dup, and K3: a state-shaped row's "statement" may be
+            a mid-proof eval state.
         states : iterable of str, optional
             K3, exact only.
         tactics : sequence of str, optional
@@ -391,16 +386,16 @@ class HoldoutIndex:
     def count_name_mentions(self, text: str) -> int:
         """Count eval-theorem names appearing *inside* `text` (report-only).
 
-        A row that merely *invokes* an eval theorem (``exact Nat.add_comm ...``) reveals
-        its existence -- which mathlib pretraining already does -- but not its proof, so
-        it is **not** dropped; builders report this count in their manifest instead.
-        Occurrences are non-overlapping and identifier-bounded, so ``Nat.add_comm`` does
-        not fire inside ``Nat.add_comm'`` or ``Foo.Nat.add_comm``.
+        A row that merely *invokes* an eval theorem (``exact Nat.add_comm ...``)
+        reveals its existence -- as mathlib pretraining already does -- but not
+        its proof, so it is **not** dropped; builders report this count in their
+        manifest instead. Occurrences are non-overlapping and identifier-bounded,
+        so ``Nat.add_comm`` fires inside neither ``Nat.add_comm'`` nor
+        ``Foo.Nat.add_comm``.
         """
         if self._name_re is None:
-            # Longest-first so a name that prefixes another (Foo.bar vs
-            # Foo.bar_baz would otherwise be reachable if boundaries ever
-            # loosen) can never be shadowed by its prefix.
+            # Longest-first so a name can never be shadowed by a prefix of it,
+            # should the identifier boundaries in the pattern below ever loosen.
             alternation = "|".join(re.escape(n) for n in sorted(self.names, key=len, reverse=True))
             self._name_re = (
                 re.compile(rf"(?<![\w.'])(?:{alternation})(?![\w.'])")

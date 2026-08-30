@@ -1,12 +1,11 @@
 """List the family-ladder scaling study's live EC2 fleet, read-only.
 
 Companion to ``scripts/fleet/run_fleet.py`` (launches and monitors) and
-``scripts/fleet/fleet_teardown.py`` (terminates). Lists every EC2 instance
-tagged for this study across every region the study might use, and is safe to
-call from anywhere: analysis notebooks and ``run_fleet``'s monitor loop import
-it directly, and tests reach it through `client_factory` injection. boto3 is
-imported lazily inside `_default_client_factory`, never at module scope, so
-importing this module requires no AWS SDK.
+``scripts/fleet/fleet_teardown.py`` (terminates). Safe to call from anywhere:
+analysis notebooks and ``run_fleet``'s monitor loop import it directly, and
+tests reach it through `client_factory` injection. boto3 is imported lazily
+inside `_default_client_factory`, never at module scope, so importing this
+module requires no AWS SDK.
 """
 
 from __future__ import annotations
@@ -17,12 +16,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Sequence
 
 #: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``). This is the ONE constant that
-#: must agree between the two modules, or this file finds nothing.
+#: (see ``run_fleet.Lane.experiment_tag``) -- the ONE constant that must agree
+#: between the two modules, or this file finds nothing.
 SCALING_TAG_PREFIX = "scaling-"
-#: Every region a lane might have provisioned in. This matches
-#: ``run_fleet.DEFAULT_REGIONS``; tier D's override spans the same three
-#: regions, so these cover every tier.
+#: Every region a lane might have provisioned in: matches
+#: ``run_fleet.DEFAULT_REGIONS``, and tier D's override spans the same three.
 STATUS_REGIONS: tuple[str, ...] = ("us-east-1", "us-east-2", "us-west-2")
 
 
@@ -43,10 +41,9 @@ def fleet_rows(
     Parameters
     ----------
     client_factory : Callable[[str], Any] or None, optional
-        Maps a region name to an object exposing ``describe_instances(**kwargs)``;
-        ``None`` uses `_default_client_factory`. That seam is what makes this
-        testable with no AWS SDK (``tests/tooling/test_run_fleet.py``'s
-        ``_FakeEc2Client``).
+        Region name -> object exposing ``describe_instances(**kwargs)``; ``None``
+        uses `_default_client_factory`. The seam that makes this testable with no
+        AWS SDK (``tests/tooling/test_run_fleet.py``'s ``_FakeEc2Client``).
 
     Returns
     -------
@@ -60,14 +57,13 @@ def fleet_rows(
 
     Notes
     -----
-    Only ``running``/``pending`` are queried: the LIVE fleet an operator cares
-    about, and what ``fleet_teardown.py --terminate`` reads to decide what to
-    kill. The `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept
-    a trailing ``*``), so this never lists the whole account, and re-checked
-    CLIENT-SIDE so a regression in the server-side filter still cannot let a
-    sibling experiment's instances leak in. A region that raises (no credentials,
-    disabled region, throttle) is logged and skipped, so one bad region cannot
-    hide the other two.
+    Only ``running``/``pending`` are queried -- the LIVE fleet, and what
+    ``fleet_teardown.py --terminate`` reads to decide what to kill. The
+    `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept a
+    trailing ``*``), so this never lists the whole account, and re-checked
+    CLIENT-SIDE so a regression there still cannot let a sibling experiment's
+    instances leak in. A region that raises (no credentials, disabled region,
+    throttle) is logged and skipped, so one bad region cannot hide the others.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -117,9 +113,8 @@ def fleet_rows(
 def format_fleet_table(rows: Sequence[dict]) -> str:
     """Render `rows` (as returned by `fleet_rows`) as a fixed-width text table.
 
-    Never returns an empty string: empty `rows` render an explicit "no
-    scaling-* instances found" line, so an empty fleet and a broken query read
-    differently to the operator.
+    Never empty: empty `rows` render an explicit "no scaling-* instances found"
+    line, so an empty fleet and a broken query read differently to the operator.
     """
     if not rows:
         return f"fleet_status: no {SCALING_TAG_PREFIX}* instances found in any region.\n"
@@ -154,9 +149,9 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 def main(argv: Optional[list[str]] = None) -> int:
     """Print the live fleet table; always returns ``0``.
 
-    No flags: `fleet_rows`'s defaults already cover every region this study could
-    have provisioned in, and it logs and skips a region that fails to describe,
-    so there is no fatal path short of an unrecognized argument.
+    No flags: `fleet_rows`'s defaults cover every region this study could have
+    provisioned in, and it logs and skips a region that fails to describe, so
+    there is no fatal path short of an unrecognized argument.
     """
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."

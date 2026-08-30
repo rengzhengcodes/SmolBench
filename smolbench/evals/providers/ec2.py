@@ -4,7 +4,7 @@ Serve models from a self-provisioned EC2 Spot instance.
 One large Spot box per experiment runs vLLM's OpenAI-compatible server in
 Docker; sections swap WHICH model it serves rather than provisioning new
 hardware, because multi-GPU SageMaker endpoint quotas default to 0 while Spot
-P5 capacity is available. One step per notebook cell::
+P5 capacity is available. One lifecycle step per notebook cell::
 
     state = provision_spot_instance()   # idempotent; once at notebook start
     with serve_model(DENSE_MODEL):      # per archetype section
@@ -22,23 +22,22 @@ one-time Spot with InstanceInitiatedShutdownBehavior=terminate, so any OS
 shutdown terminates the box and deletes its EBS volume.
 
 Env-read timing
-    Setup: ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region tried, more
-    via ``EC2_REGIONS``), boto3-resolvable credentials, and ``HF_TOKEN`` only
-    for gated repos (baked into user-data at provision time). PROVISIONING
-    ``EC2_*`` constants are captured at IMPORT time -- set them before the
-    first import (e.g. keys.env), since notebooks bind them as module
-    attributes; only ``EC2_INFERENCE_BASE_URL``, ``EC2_VLLM_API_KEY``,
-    ``EC2_STATE_FILE`` and ``HF_TOKEN`` are read at call time. boto3/botocore
-    import lazily, so the inference path needs neither. The ``model`` argument
-    to query()/evaluate() is an ``EC2_DEPLOY_SPECS`` key, which is also vLLM's
-    ``--served-model-name``.
+    Provisioning ``EC2_*`` constants are captured at IMPORT time -- set them
+    before the first import (e.g. keys.env); only ``EC2_INFERENCE_BASE_URL``,
+    ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE`` and ``HF_TOKEN`` are read at call
+    time. Setup needs ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region
+    tried, more via ``EC2_REGIONS``), boto3-resolvable credentials, and
+    ``HF_TOKEN`` only for gated repos (baked into user-data at provision
+    time). boto3/botocore import lazily, so the inference path needs neither.
+    The ``model`` argument to query()/evaluate() is an ``EC2_DEPLOY_SPECS``
+    key, which is also vLLM's ``--served-model-name``.
 
 Security model
-    Accepted for a short-lived single-user box: ports 8000 (vLLM) and 9000
-    (agent) are opened ONLY to the caller's public IP /32, re-asserted by every
-    provisioning call -- re-run it if your IP changes. Both are plain HTTP
-    behind a per-experiment random token held in the state file and in
-    user-data (readable in-account via DescribeInstanceAttribute).
+    Ports 8000 (vLLM) and 9000 (agent) are open ONLY to the caller's public IP
+    /32, re-asserted by every provisioning call -- re-run it if your IP
+    changes. Both are plain HTTP behind a per-experiment random token held in
+    the state file and in user-data (readable in-account via
+    DescribeInstanceAttribute); accepted for a short-lived single-user box.
 """
 
 import contextlib
@@ -62,12 +61,11 @@ from smolbench.evals.payloads import pack_user_data, render_user_data
 from smolbench.evals.results_store import repo_root
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
-# Spot capacity hunt order. The hunt tries types type-major: it tries each
-# type across every region before it falls back to the next type. It tries
-# p5e (8xH200, 1128 GB VRAM) first, then p5 (8xH100, 640 GB). Regions
-# default to AWS_REGION plus the US regions that offer the P5 family. Both
-# lists are runtime-filtered against describe_instance_type_offerings, so it
-# is harmless to list a region a type has not reached yet.
+# Spot capacity hunt order, tried TYPE-MAJOR: each type across every region
+# before falling back to the next type. p5e = 8xH200/1128 GB VRAM, p5 =
+# 8xH100/640 GB. Both lists are runtime-filtered against
+# describe_instance_type_offerings, so listing a region a type has not
+# reached yet is harmless.
 EC2_INSTANCE_TYPES: Tuple[str, ...] = tuple(
     dict.fromkeys(
         t.strip()
@@ -81,13 +79,12 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
         r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()
     )
 )
-# Root gp3 volume: holds the OS and the docker image only. The model cache
-# lives on instance-store NVMe when the type has one (every targeted type
-# does: p5e/p5/p4de/g5/g6). Bootstrap formats and mounts the first NVMe
-# device at /opt/hf-cache, to dodge gp3's 1000 MB/s ceiling. If you launch a
-# type WITHOUT instance store, the cache falls back to the root volume:
-# raise EC2_ROOT_VOLUME_GB to hold your checkpoints (the FP8 trio is
-# ~1.1 TB).
+# Root gp3 volume: OS and docker image only. The model cache lives on
+# instance-store NVMe (bootstrap formats and mounts the first device at
+# /opt/hf-cache) to dodge gp3's 1000 MB/s ceiling; every targeted type has
+# one (p5e/p5/p4de/g5/g6). On a type WITHOUT instance store the cache falls
+# back to the root volume -- raise EC2_ROOT_VOLUME_GB to hold your
+# checkpoints (the FP8 trio is ~1.1 TB).
 EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
 EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
@@ -102,136 +99,119 @@ EC2_AMI_SSM_PARAM: str = os.getenv(
     "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id",
 )
 EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-inference")
-# Fixed ports for the two on-instance HTTP planes. Unlike the EC2_* knobs
-# around them, these are NOT env-configurable -- see the module docstring's
-# "Security model" section for what each port guards. They stay plain
-# constants, not EC2_*-style os.getenv knobs, because changing either needs
-# coordinated changes beyond this client: the security group ingress rule,
-# the payload scripts' docker port-publish/probe URLs, and vLLM's own
-# listen port. A future override belongs in code, not in a stray env var.
+# Fixed ports for the two on-instance HTTP planes -- see the module
+# docstring's "Security model" section for what each guards. Deliberately NOT
+# env-configurable: changing either needs coordinated changes beyond this
+# client (the security-group ingress rule, the payload scripts' docker
+# port-publish/probe URLs, vLLM's own listen port), so an override belongs in
+# code, not in a stray env var.
 EC2_VLLM_PORT: int = 8000
 EC2_AGENT_PORT: int = 9000
-# Value of the ``smolbench:experiment`` tag; the module uses it to find,
-# reattach to, and terminate this experiment's instance. The
-# "periodic-induction" default is specific to THIS experiment. Other
-# experiments that share this module (each study) set
-# EC2_EXPERIMENT_TAG in their own env BEFORE the first `import
-# smolbench.evals.providers.ec2`. This is an import-time capture (see "Env-read
-# timing" in the module docstring), so setting it later has no effect.
+# Value of the ``smolbench:experiment`` tag, used to find, reattach to and
+# terminate this experiment's instance. The "periodic-induction" default is
+# specific to THIS experiment; every other study sets EC2_EXPERIMENT_TAG in
+# its own env BEFORE the first `import smolbench.evals.providers.ec2`, since
+# this is an import-time capture (see "Env-read timing" in the module
+# docstring) and setting it later has no effect.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
-# Anchored to the repo root via the package's own accessor (`repo_root()`),
-# not the cwd and not a hand-counted depth off this file. The file holds
-# the control token and the vLLM key, so it is gitignored. The
-# EC2_STATE_FILE env override is read at call time (in `_state_path`).
+# Anchored to the repo root via `repo_root()`, not the cwd and not a
+# hand-counted depth off this file. Gitignored: it holds the control token
+# and the vLLM key. The EC2_STATE_FILE override is read at call time, in
+# `_state_path`.
 _DEFAULT_STATE_FILE: Path = repo_root() / ".ec2_state.json"
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
 # The serve timeout and the watchdog's loading-counts-as-active grace must
-# cover a COLD checkpoint pull from HF. A ~410 GB download proved that 90
-# and 120 min are too tight -- a live 405B serve outran both. With the S3
-# cache warm, the pull takes minutes, but the first-ever pull sets the
-# bound.
+# cover a COLD checkpoint pull from HF: a ~410 GB download on a live 405B
+# serve outran both 90 and 120 min. A warm S3 cache takes minutes, but the
+# first-ever pull sets the bound.
 # INVARIANT: the watchdog payload's own STARTUP_GRACE_MIN env fallback
-# (payloads/watchdog.py.txt; used only if the env var somehow fails to
-# propagate to the instance) must match this default. Keep both at "180" if
-# either changes.
+# (payloads/watchdog.py.txt, used only if the env var fails to propagate to
+# the instance) must match this default -- keep both at "180".
 EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
 #: "spot" (default) or "on-demand". Set this only on purpose: on-demand pays
 #: several times the spot rate and cannot be reclaimed, so a forgotten box
 #: bills at full price until the idle watchdog or the lifetime backstop
-#: fires. This knob exists for a lane whose exact instance type has NO spot
-#: capacity anywhere, and whose hardware must not change -- buying the same
-#: silicon a different way is the only move that keeps the lane
-#: uncontaminated.
+#: fires. It exists for a lane whose exact instance type has NO spot capacity
+#: anywhere and whose hardware must not change -- same silicon, bought
+#: differently, is the only move that keeps the lane uncontaminated.
 EC2_MARKET: str = os.getenv("EC2_MARKET", "spot")
 #: Spot bid ceiling, as a multiple of the median observed AZ price. The 1.25
-#: default gives a normal-priced AZ headroom. It lets outlier AZs (a 2.46x
-#: intra-type spread) fail fast with
-#: SpotMaxPriceTooLow, so the hunt moves on. Set this to <= 0 to send NO
-#: MaxPrice at all; that defaults the ceiling to the on-demand price, the
+#: default clears a normal-priced AZ while outlier AZs (2.46x intra-type
+#: spread) fail fast with SpotMaxPriceTooLow, so the hunt moves on. Set <= 0
+#: to send NO MaxPrice: the ceiling then defaults to the on-demand price, the
 #: highest bid EC2 accepts.
 #:
-#: Within spot, InsufficientInstanceCapacity describes physical hosts, not
-#: money: EC2 does not allocate by bid, and the spot price never exceeds
-#: on-demand. Raising the multiplier only helps when an AZ's price exceeds
-#: the cap; it cannot conjure hosts. On-demand does not acquire capacity
-#: more reliably than spot -- its priority protects against interruption,
-#: not against an empty pool. Practical rule: when on-demand reports no
+#: Within spot, InsufficientInstanceCapacity is about physical hosts, not
+#: money -- EC2 does not allocate by bid, so raising the multiplier only helps
+#: when an AZ's price exceeds the cap. On-demand's priority protects against
+#: interruption, not against an empty pool: when on-demand reports no
 #: capacity, TRY SPOT before concluding the hardware is unavailable.
 EC2_SPOT_BID_MULTIPLIER: float = float(os.getenv("EC2_SPOT_BID_MULTIPLIER", "1.25"))
 EC2_SERVE_TIMEOUT_MIN: int = int(os.getenv("EC2_SERVE_TIMEOUT_MIN", "180"))
-# Optional EC2 key pair name for SSH debugging. Empty means no SSH (the
-# default) -- boot problems are then visible only via the serial console or
-# instance screenshot.
+# Optional EC2 key pair for SSH debugging. Empty (the default) means no SSH:
+# boot problems are then visible only via the serial console or the instance
+# screenshot.
 EC2_KEY_NAME: str = os.getenv("EC2_KEY_NAME", "")
 # evaluate()'s default fan-out is the EC2_MAX_PARALLEL_REQUESTS env var
 # (default 8), which the shared ChatClient reads at call time.
-# Per-request inference read timeout. Long CoT generations
-# (max_completion_tokens over big prompts) can exceed the old hardcoded
-# 120 s. This default is raised, and callers may override it per eval, so
-# long chains finish on attempt 1 (deterministic) instead of timing out and
-# surviving only through the retry lottery -- which censors the top of the
+# Per-request inference READ timeout, kept generous (and overridable per
+# eval) so long CoT generations finish on attempt 1 (deterministic) instead
+# of surviving only through the retry lottery, which censors the top of the
 # CoT-length distribution.
 EC2_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("EC2_REQUEST_TIMEOUT_SECONDS", "600"))
-# Connect timeout, kept SHORT and SEPARATE from the long read timeout above.
-# The requests library treats a scalar ``timeout`` as both connect AND
-# read. A generous read timeout for long CoT generations would also make a
-# dead or unreachable box (spot reclaim, IP drift) blackhole each connect
-# for the full read timeout before it retries -- 10 attempts would then
-# turn into hours of hanging. A short connect timeout fails fast, so the
-# connection-failure cap trips within minutes and raises the actionable
-# "endpoint unreachable" error. A genuinely slow generation still gets the
-# full read budget.
+# Connect timeout, kept SHORT and SEPARATE from the long read timeout above,
+# because requests treats a scalar ``timeout`` as both connect AND read: a
+# dead or unreachable box (spot reclaim, IP drift) would then blackhole each
+# connect for the full read budget, turning 10 attempts into hours of
+# hanging. Failing connects fast trips the connection-failure cap within
+# minutes and raises the actionable "endpoint unreachable" error, while a
+# genuinely slow generation still gets the full read budget.
 EC2_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("EC2_CONNECT_TIMEOUT_SECONDS", "10"))
 EC2_RETRY_BACKOFF_SECONDS: int = int(os.getenv("EC2_RETRY_BACKOFF_SECONDS", "60"))
-# Consecutive connection failures the module tolerates before it concludes
-# the endpoint is gone (spot interruption or IP drift), not transiently
-# overloaded.
+# Consecutive connection failures tolerated before concluding the endpoint is
+# gone (spot interruption or IP drift) rather than transiently overloaded.
 EC2_MAX_CONNECTION_FAILURES: int = int(os.getenv("EC2_MAX_CONNECTION_FAILURES", "10"))
 # Soft, post-hoc token guard for models that have no deploy spec.
 EC2_CONTEXT_LENGTH: int = int(os.getenv("EC2_CONTEXT_LENGTH", "16384"))
 # Optional S3 model cache, e.g. s3://smolbench-model-cache-<acct>/hf. When
-# set, provisioning creates the bucket and an instance profile (S3 RW on
-# the bucket, plus SSM core). The agent pulls each checkpoint from S3
-# before it launches vLLM -- a same-region S3-to-NVMe pull runs at
-# multi-GB/s, versus 10-35 min from HF. serve_model then uploads freshly
-# downloaded weights back in the background, so the mirror seeds itself:
-# the first instance pays the HF cost once, and later instances do not.
-# Cross-region pulls still work, though slower (~$0.02/GB), so put the
-# bucket where spot capacity usually lands (EC2_S3_CACHE_REGION).
+# set, provisioning creates the bucket and an instance profile (S3 RW on the
+# bucket, plus SSM core); the agent pulls each checkpoint from S3 before
+# launching vLLM (same-region S3-to-NVMe runs at multi-GB/s, versus 10-35 min
+# from HF) and serve_model uploads fresh weights back in the background, so
+# the mirror seeds itself and only the first instance pays the HF cost.
+# Cross-region pulls still work, slower and at ~$0.02/GB, so put the bucket
+# where spot capacity usually lands (EC2_S3_CACHE_REGION).
 EC2_S3_MODEL_CACHE: str = os.getenv("EC2_S3_MODEL_CACHE", "").rstrip("/")
 EC2_S3_CACHE_REGION: str = os.getenv("EC2_S3_CACHE_REGION", AWS_REGION)
 EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2-role")
-# EC2_INFERENCE_BASE_URL / EC2_VLLM_API_KEY env overrides bypass the state
-# file and point the inference path at any OpenAI-compatible server (used
-# by tests/evals/test_openai_compat.py's local stub server). The module reads
-# them at call time, in _base_url/_api_key/_connection, not here. EC2_INFO
-# and EC2_INFO_RESPONSE (verbose logging) are likewise read at call time,
-# by the shared ChatClient.
+# EC2_INFERENCE_BASE_URL / EC2_VLLM_API_KEY bypass the state file and point
+# the inference path at any OpenAI-compatible server (the stub server in
+# tests/evals/test_openai_compat.py). They are read at call time, in
+# _base_url/_api_key/_connection, not here; so are EC2_INFO and
+# EC2_INFO_RESPONSE (verbose logging), by the shared ChatClient.
 
-# Per-model deployment spec. The dict key serves two roles: it is (a) the
-# ``model`` argument the notebook passes to query()/evaluate(), and (b)
-# vLLM's ``--served-model-name``, so the OpenAI request body carries it
-# verbatim. Keys: hf_model_id, tp (tensor parallelism), max_model_len (also
-# the soft context guard), optional vllm_args (extra CLI flags), and
-# optional system_prompt (prepended to every request for that model).
+# Per-model deployment spec. The dict key is both (a) the ``model`` argument
+# the notebook passes to query()/evaluate() and (b) vLLM's
+# ``--served-model-name``, so the OpenAI request body carries it verbatim.
+# Keys: hf_model_id, tp (tensor parallelism), max_model_len (also the soft
+# context guard), optional vllm_args (extra CLI flags), optional
+# system_prompt (prepended to every request for that model).
 #
 # --- Family-ladder scaling study roster --------------------------------
 # 21 models = 7 families x 3 rungs, one EC2 instance per model. Every
 # architecture is in-tree upstream, so no entry needs --trust-remote-code;
-# every repo is ungated. Every entry serves at a uniform max_model_len=131072: the
-# smallest native window on the roster is exactly 131072 (gemma-4-E2B,
-# GLM-4.5-Air, EXAONE-4.0-32B), so nothing is down-capped below native, and
-# a scaling study cannot let context vary with the vendor's YaRN
-# generosity.
-# Every spec serves DETERMINISM_ARGS (appended after this dict) on top of
-# the digest-pinned image and a per-spec --revision/--tokenizer-revision
-# pin. Prefix caching is OFF everywhere: it is a nondeterminism source.
-# Results generated under this config must NEVER pool with stock-config
-# data. Both revision flags are pinned even though tokenizer_revision
-# inherits --revision at the pinned build, so the pin does not depend on
-# that inheritance.
+# every repo is ungated. Uniform max_model_len=131072: the smallest native
+# window on the roster is exactly 131072 (gemma-4-E2B, GLM-4.5-Air,
+# EXAONE-4.0-32B), so nothing is down-capped below native and a scaling study
+# cannot let context vary with the vendor's YaRN generosity. Every spec also
+# serves DETERMINISM_ARGS (appended after this dict) on top of the
+# digest-pinned image and a per-spec --revision/--tokenizer-revision pin;
+# both revision flags are pinned even though tokenizer_revision inherits
+# --revision at the pinned build, so the pin does not depend on that
+# inheritance. Prefix caching is OFF everywhere (a nondeterminism source),
+# and results from this config must NEVER pool with stock-config data.
 #
 # Instance tiers (chosen from weights-size and 128k-KV arithmetic; the
 # fleet supervisor maps these to EC2_INSTANCE_TYPES per lane):
@@ -247,48 +227,46 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # tp notes: GLM-4.7-Flash has 20 attention heads, so tp must divide 20; it
 # runs tp=4 on tier B (a p5 would idle half its GPUs). Nemotron-Nano-30B has
 # only 2 KV heads; vLLM replicates KV heads when tp exceeds n_kv. All other
-# tp choices divide the head counts exactly (verified from each
-# config.json).
+# tp choices divide the head counts exactly (verified from each config.json).
 #
-# Reasoning wiring (CoT is ON for every model in this study; the
-# per-request chat_template_kwargs toggles ride in extra_args from the
-# study drivers -- see notebooks/induction/run_study.py COT_ARGS):
+# Reasoning wiring (CoT is ON for every model in this study; the per-request
+# chat_template_kwargs toggles ride in extra_args from the study drivers --
+# see notebooks/induction/run_study.py COT_ARGS):
 #   * Qwen3.5 / Gemma-4: a server-side --reasoning-parser (qwen3 / gemma4)
 #     splits the think block into reasoning_content. Gemma-4's template
-#     defaults enable_thinking to FALSE, so the driver MUST pass it true.
-#     Its think tags are Gemma-specific, so the client-side "</think>"
+#     defaults enable_thinking to FALSE, so the driver MUST pass it true, and
+#     its think tags are Gemma-specific, so the client-side "</think>"
 #     fallback would NOT catch them -- the parser is load-bearing there.
-#   * Nemotron-3: enable_thinking defaults on in the shipped template.
-#     query() splits the plain-text <think> block CLIENT-side; do not
-#     switch to the vLLM nemotron_v3 parser without re-verifying.
+#   * Nemotron-3: enable_thinking defaults on in the shipped template, and
+#     query() splits the plain-text <think> block CLIENT-side; do not switch
+#     to the vLLM nemotron_v3 parser without re-verifying.
 #   * GLM-4.x: thinking defaults ON; the glm47/glm45 parsers split it
 #     server-side.
 #   * Ministral-3 Reasoning: the [THINK] protocol lives ONLY in the shipped
-#     template's default_system_message, and the template injects that
-#     message ONLY when no system message is supplied. The Lean eval always
-#     supplies one, which would silently disable thinking. The fix injects
-#     that exact default text as the provider system_prompt below.
-#     ChatClient puts it FIRST, and the template renders each system
-#     message as its own [SYSTEM_PROMPT] block, so induction stays
-#     byte-identical to out-of-box behavior while Lean gets the
-#     think-protocol plus its own instructions. Do NOT switch these
-#     entries to --tokenizer-mode mistral: that bypasses the Jinja
+#     template's default_system_message, which the template injects ONLY when
+#     no system message is supplied -- so the Lean eval, which always supplies
+#     one, would silently disable thinking. Fix: inject that exact default
+#     text as the provider system_prompt below. ChatClient puts it FIRST and
+#     the template renders each system message as its own [SYSTEM_PROMPT]
+#     block, so induction stays byte-identical to out-of-box behavior while
+#     Lean gets the think protocol plus its own instructions. Do NOT switch
+#     these entries to --tokenizer-mode mistral: that bypasses the Jinja
 #     template entirely.
-#   * EXAONE: no vLLM reasoning parser exists for it, so query() splits
-#     the plain-text <think> block client-side. EXAONE-4.0-32B defaults
-#     enable_thinking OFF, so the driver must pass it true. Only 4.5-33B is
-#     a multimodal wrapper (hence its --language-model-only).
+#   * EXAONE: no vLLM reasoning parser exists for it, so query() splits the
+#     plain-text <think> block client-side. EXAONE-4.0-32B defaults
+#     enable_thinking OFF, so the driver must pass it true. Only 4.5-33B is a
+#     multimodal wrapper (hence its --language-model-only).
 #   * DeepSeek V4: the repos ship NO chat template (404, and no
-#     tokenizer_config key); the toggle lives in the
-#     repo's Python encoding_dsv4.py. vLLM accepts a LITERAL template
-#     string via --chat-template, so DSV4_CHAT_TEMPLATE below reproduces
-#     the shipped encoding for the [system?, user] + generation-prompt
-#     shapes this repo sends (byte-equality pinned by
-#     tests/evals/test_dsv4_chat_template.py against the vendored encoding
-#     module). chat_template_kwargs {"thinking": true} drives both the
-#     template branch and vLLM's deepseek_v4 parser, whose initial state
-#     accepts the prompt-final <think>. DeepSeek-V3.1 DOES ship its own
-#     template (thinking kwarg), so it needs no override.
+#     tokenizer_config key); the toggle lives in the repo's Python
+#     encoding_dsv4.py. vLLM accepts a LITERAL template string via
+#     --chat-template, so DSV4_CHAT_TEMPLATE below reproduces the shipped
+#     encoding for the [system?, user] + generation-prompt shapes this repo
+#     sends (byte-equality pinned by tests/evals/test_dsv4_chat_template.py
+#     against the vendored encoding module). chat_template_kwargs
+#     {"thinking": true} drives both the template branch and vLLM's
+#     deepseek_v4 parser, whose initial state accepts the prompt-final
+#     <think>. DeepSeek-V3.1 DOES ship its own template (thinking kwarg), so
+#     it needs no override.
 DSV4_CHAT_TEMPLATE: str = (
     "<｜begin▁of▁sentence｜>"
     "{%- for m in messages -%}"
@@ -318,10 +296,9 @@ MINISTRAL_THINK_SYSTEM: str = (
 )
 
 EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
-    # Small smoke-test entry: it exercises the full lifecycle on a cheap
-    # single-GPU spot instance (g6.2xlarge / g5.2xlarge) for well under a
-    # dollar. 32768 is the checkpoint's native window; the canary quiz needs
-    # more than 16384 tokens.
+    # Smoke-test entry: exercises the full lifecycle on a cheap single-GPU
+    # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar. 32768
+    # is the checkpoint's native window; the canary quiz needs > 16384 tokens.
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768,
                             "vllm_args": ["--revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
                                           "--tokenizer-revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"]},
@@ -353,12 +330,11 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
                                   "--tokenizer-revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7"]},
-    # tp=4: tier A's g6e.12xlarge capacity fallback means this
-    # lane lands on 4x L40S in practice. A 12B model with ~95k-token
-    # thinking budgets on ONE L40S hit the 3600s read timeout on long arms.
-    # 16 attention heads and 8 KV heads shard cleanly. tp=4 simply requires
-    # the 4-GPU box, which the fallback list provides; on a true
-    # single-GPU box vLLM ignores nothing.
+    # tp=4: tier A's g6e.12xlarge capacity fallback lands this lane on 4x
+    # L40S in practice, and a 12B model with ~95k-token thinking budgets on
+    # ONE L40S hit the 3600s read timeout on long arms. 16 attention heads
+    # and 8 KV heads shard cleanly across 4; tp=4 does require that 4-GPU
+    # box, which the fallback list provides.
     "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
@@ -409,10 +385,9 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                                          "--revision", "61e6d578eb102b578e5704e2916ac841df9eca0a",
                                          "--tokenizer-revision", "61e6d578eb102b578e5704e2916ac841df9eca0a"]},
     # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
-    # SM90 hazard: on p5/p5e/p5en this spec MUST carry the Marlin W4A16
-    # MXFP4 pin; the marlin-less arg set below serves only on SM100/B200
-    # (FLASHMLA_SPARSE_DSV4 accepts major in [9,10]; fp8_ds_mla KV).
-    # Do NOT serve this spec on p5/p5e/p5en.
+    # SM90 hazard: on p5/p5e/p5en this spec MUST carry the Marlin W4A16 MXFP4
+    # pin, so do NOT serve this marlin-less arg set there -- it is SM100/B200
+    # only (FLASHMLA_SPARSE_DSV4 accepts major in [9,10]; fp8_ds_mla KV).
     # Memory: Flash weights are 160 GB. --disable-custom-all-reduce stays.
     "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
                           "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
@@ -451,22 +426,19 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     assert "--enable-prefix-caching" not in _args, _spec_key
     assert not ({a for a in DETERMINISM_ARGS if a.startswith("--")} & set(_args)), _spec_key
     # Plan §4 row 4: make the KV budget a function of the spec, not of free
-    # VRAM at profiling time. 0.92 equals vLLM's default AT THE PINNED
-    # BUILD (vllm/config/cache.py:69 at 8efa13b70), made explicit here. It
-    # is also the value the hinge det arms actually resolved to (their
-    # cache_config_info records gpu_memory_utilization=0.92), so this
-    # change does not alter anything the experiment certified.
-    # deepseek-v4-pro (0.93) keeps its larger footprint; k-exaone's
-    # explicit 0.92 now coincides with the default.
+    # VRAM at profiling time. 0.92 equals vLLM's default AT THE PINNED BUILD
+    # (vllm/config/cache.py:69 at 8efa13b70), made explicit here, and is what
+    # the hinge det arms actually resolved to (their cache_config_info
+    # records gpu_memory_utilization=0.92), so nothing the experiment
+    # certified changes. deepseek-v4-pro keeps 0.93 for its larger footprint.
     if "--gpu-memory-utilization" not in _args:
         _args += ["--gpu-memory-utilization", "0.92"]
     _spec["vllm_args"] = _args + DETERMINISM_ARGS
 
 #: ``num_attention_heads`` per family-ladder checkpoint, copied from each
-#: model's config.json (scripts/arch/arch_configs_raw.json is the archived
-#: source; test_deploy_specs drift-pins this map against it). `derive_tp`
-#: uses this map; models absent here (e.g. the qwen2.5-1.5b canary) fall
-#: back to their spec's static ``tp``.
+#: model's config.json (archived source scripts/arch/arch_configs_raw.json;
+#: test_deploy_specs drift-pins this map against it). Models absent here (the
+#: qwen2.5-1.5b canary) fall back to their spec's static ``tp`` in derive_tp.
 MODEL_ATTENTION_HEADS = {
     "deepseek-v3.1": 128,
     "deepseek-v4-flash": 64,
@@ -496,12 +468,12 @@ MODEL_ATTENTION_HEADS = {
 _INSTANCE_GPU_COUNTS = {
     "g6e.xlarge": 1, "g6e.2xlarge": 1, "g6e.4xlarge": 1, "g6e.8xlarge": 1,
     "g6e.16xlarge": 1, "g6e.12xlarge": 4, "g6e.24xlarge": 4, "g6e.48xlarge": 8,
-    # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both are SM120,
-    # PCIe-only. Counts are verified via describe-instance-types (note the
-    # 12xlarge sizes carry TWO GPUs, unlike g6e's four). A partially-mapped
-    # family is worse than an unmapped one: a lane whose --types spans a
-    # mapped and an unmapped size gets derived tp on one box and
-    # spec-fallback tp on the other. That is a silent mid-lane tp change.
+    # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both SM120,
+    # PCIe-only. Counts verified via describe-instance-types -- the 12xlarge
+    # sizes carry TWO GPUs, unlike g6e's four. Map a family fully or not at
+    # all: a lane whose --types spans a mapped and an unmapped size gets
+    # derived tp on one box and spec-fallback tp on the other, a silent
+    # mid-lane tp change.
     "g7.2xlarge": 1, "g7.4xlarge": 1, "g7.8xlarge": 1,
     "g7.12xlarge": 2, "g7.24xlarge": 4, "g7.48xlarge": 8,
     "g7e.2xlarge": 1, "g7e.4xlarge": 1, "g7e.8xlarge": 1,
@@ -516,10 +488,9 @@ _INSTANCE_GPU_COUNTS = {
 def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     """Return the tensor-parallel degree (>= 1) for `model` on the box that landed.
 
-    ``tp = gcd(num_attention_heads, gpu_count)`` -- the largest head-divisor
-    that also divides the landed GPU count, so every GPU the hunt paid for is
-    used whenever head divisibility allows (a tp=1 spec on a 4-GPU
-    g6e.12xlarge idled 3 of 4 L40S).
+    ``tp = gcd(num_attention_heads, gpu_count)``: the largest head-divisor that
+    also divides the landed GPU count, so every GPU the hunt paid for is used
+    where divisibility allows (a tp=1 spec idled 3 of 4 L40S on g6e.12xlarge).
 
     Parameters
     ----------
@@ -532,11 +503,10 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
     if heads is None or gpus is None:
         if heads is not None and instance_type:
-            # A known model on an unmapped instance type is the dangerous
-            # fallback. If a lane's hunt spans mapped AND unmapped types,
-            # the spec tp used here can differ from the derived tp on the
-            # mapped box -- a silent mid-lane tp change. This warning is
-            # loud on purpose, so the gap gets mapped.
+            # The dangerous fallback: if a lane's hunt spans mapped AND
+            # unmapped types, the spec tp used here differs from the derived
+            # tp on the mapped box -- a silent mid-lane tp change, so warn
+            # loudly and get the gap mapped.
             logging.warning(
                 f"derive_tp: instance type {instance_type!r} not in "
                 f"_INSTANCE_GPU_COUNTS; falling back to spec tp="
@@ -546,10 +516,9 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
         return spec.get("tp", 1)
     tp = max(1, math.gcd(heads, gpus))
     if tp < gpus:
-        # Correct but wasteful: head divisibility strands GPUs (e.g. 20
-        # heads on an 8-GPU box give tp=4, and four GPUs sit idle). This
-        # warning is loud on purpose, so a half-used expensive box stays
-        # visible instead of silent.
+        # Correct but wasteful: head divisibility strands GPUs (20 heads on an
+        # 8-GPU box give tp=4, idling four). Warn loudly so a half-used
+        # expensive box stays visible.
         logging.warning(
             f"derive_tp: {model!r} on {instance_type} uses tp={tp} of {gpus} "
             f"GPUs ({heads} attention heads don't divide further) -- "
@@ -558,10 +527,10 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     return tp
 
 
-#: GPU marketing name and memory, per instance FAMILY (the type prefix
-#: before the size dot). Purely descriptive: ``server_config`` consumes
-#: this so a result file names its silicon without the reader needing this
-#: module's type tables. p6 families keep their full hyphenated prefix.
+#: GPU marketing name and memory per instance FAMILY (the type prefix before
+#: the size dot; p6 families keep their full hyphenated prefix). Purely
+#: descriptive: ``server_config`` uses it so a result file names its silicon
+#: without the reader needing this module's type tables.
 _INSTANCE_GPU_NAMES = {
     "g6e": "L40S 48GB", "g7": "RTX PRO 4500 32GB", "g7e": "RTX PRO 6000 96GB",
     "p4d": "A100 40GB", "p5": "H100 80GB", "p5e": "H200 141GB",
@@ -573,11 +542,11 @@ _INSTANCE_GPU_NAMES = {
 #: ``"L40S:1"``). When set, a lane REFUSES to serve on a box whose silicon
 #: does not match.
 #:
-#: WHY: widening ``EC2_INSTANCE_TYPES`` to escape a capacity wall is the
-#: obvious move, and it is a silent confound -- a wider list can land a
-#: lane on a box with a different GPU count, changing derived tp mid-lane.
-#: Pin the silicon, not the instance size: a same-GPU substitution stays
-#: legal, a tp-changing one is refused.
+#: WHY: widening ``EC2_INSTANCE_TYPES`` to escape a capacity wall is a silent
+#: confound -- a wider list can land a lane on a box with a different GPU
+#: count, changing derived tp mid-lane. Pinning the silicon rather than the
+#: instance size keeps a same-GPU substitution legal and refuses a
+#: tp-changing one.
 EC2_REQUIRE_GPU: str = os.getenv("EC2_REQUIRE_GPU", "")
 
 
@@ -617,13 +586,11 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
         )
 
 
-# Short, separate timeout for server_config()'s best-effort LIVE probes
-# (vLLM /version, /metrics, the agent /status). It is deliberately much
-# shorter than the on-instance polling timeouts above (_AGENT_POLL_S etc.):
-# server_config is provenance, typically called once per replicate batch,
-# and a slow or dead endpoint must degrade a handful of fields to None in
-# seconds, not make an eval batch wait on a field that is allowed to be
-# missing.
+# Short, separate timeout for server_config()'s best-effort LIVE probes (vLLM
+# /version, /metrics, the agent /status). Deliberately much shorter than the
+# on-instance polling timeouts (_AGENT_POLL_S etc.): provenance fields are
+# allowed to be missing, so a slow or dead endpoint must degrade a handful of
+# them to None in seconds rather than stall an eval batch.
 _SERVER_CONFIG_PROBE_TIMEOUT_S: int = 5
 
 
@@ -674,8 +641,7 @@ def _fetch_agent_fingerprint(
     called with ``connect_retries=0`` because this is a snapshot, not a wait
     loop. The backend lines are mined from ``/status``'s ``log_tail`` (the
     container's last ~300 lines; they appear in no metrics endpoint), a moving
-    window -- call ``server_config`` right after serve or they may already have
-    scrolled away.
+    window -- call ``server_config`` right after serve or they may have gone.
     """
     try:
         status = _agent(
@@ -707,14 +673,14 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     -------
     Optional[Dict[str, Any]]
         None only when the state-file read itself raised; otherwise every key
-        is present, None for unknown/unreachable pieces, so readers see the
-        schema even from a half-built snapshot. Four groups:
+        of the returned literal is present, None for unknown/unreachable
+        pieces, so readers see the schema even from a half-built snapshot.
+        Four groups:
 
-        - From state/spec, no network: ``instance_type``, ``gpu`` (from a
-          static per-type table, NOT an nvidia-smi observation), ``tp``,
-          ``region``, ``availability_zone``, ``instance_id``, ``vllm_image``
-          (the CONFIGURED ``EC2_VLLM_IMAGE``, possibly a mutable tag),
-          ``hf_model_id`` (the spec's pin, not necessarily what is loaded).
+        - From state/spec, no network: ``gpu`` comes from a static per-type
+          table, NOT an nvidia-smi observation; ``vllm_image`` is the
+          CONFIGURED ``EC2_VLLM_IMAGE``, possibly a mutable tag;
+          ``hf_model_id`` is the spec's pin, not necessarily what is loaded.
         - From ``state["last_serve"]`` (the argv actually POSTed):
           ``vllm_args``, ``max_model_len``, ``served_at`` (UTC ISO-8601), all
           None unless ``last_serve["model"] == model``, so a previous swap on
@@ -723,11 +689,11 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
           ``_SERVER_CONFIG_PROBE_TIMEOUT_S``), None on any failure including
           "no box": ``vllm_version``, ``vllm_cache_config`` (raw unparsed
           ``cache_config_info`` Prometheus lines), ``attention_backend_log``,
-          ``agent_fingerprint`` (``payloads/agent.py.txt``'s ``fingerprint()``:
-          ``image_repo_digests``, ``nvidia_smi`` -- an OBSERVATION, unlike the
-          static ``gpu`` --, ``hf_snapshots`` = resolved revision dirnames on
-          disk, ``weights_digest`` = sha256 of the safetensors index plus
-          per-file sizes, NOT a full weights read), ``vllm_image_digest``.
+          ``vllm_image_digest``, ``agent_fingerprint``
+          (``payloads/agent.py.txt``'s ``fingerprint()``: ``nvidia_smi`` is an
+          OBSERVATION, unlike the static ``gpu``; ``hf_snapshots`` = resolved
+          revision dirnames on disk; ``weights_digest`` = sha256 of the
+          safetensors index plus per-file sizes, NOT a full weights read).
         - Client-side env reads, populated even with no box:
           ``max_parallel_requests`` (``EC2_MAX_PARALLEL_REQUESTS``, default 8)
           and ``stream`` (``EC2_STREAM_COMPLETIONS``), each individually
@@ -745,19 +711,17 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
         name = _INSTANCE_GPU_NAMES.get(itype.split(".", 1)[0])
 
         # The ACTUAL launched argv, not the (possibly since-edited) spec --
-        # see serve_model's "last_serve" stash. This is trusted only when it
-        # names THIS model: a stale last_serve from a previous swap on the
-        # same box must not be misattributed to whatever is being asked
-        # about now.
+        # see serve_model's "last_serve" stash. Trusted only when it names
+        # THIS model, so a previous swap on the same box is never
+        # misattributed.
         last_serve = state.get("last_serve") or {}
         last_serve_matches = bool(state) and last_serve.get("model") == model
         vllm_args = last_serve.get("vllm_args") if last_serve_matches else None
         max_model_len = last_serve.get("max_model_len") if last_serve_matches else None
         served_at = last_serve.get("served_at") if last_serve_matches else None
 
-        # Live probes: the function attempts these only with enough state
-        # to reach the box at all; otherwise it short-circuits to None
-        # without a doomed call.
+        # Live probes are attempted only with enough state to reach the box
+        # at all; otherwise short-circuit to None without a doomed call.
         ip = state.get("public_ip")
         vllm_key = state.get("vllm_api_key")
         vllm_version = _fetch_vllm_version(ip, vllm_key) if ip and vllm_key else None
@@ -770,13 +734,10 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
             if digests:
                 vllm_image_digest = digests[0]
 
-        # Individually guarded, not just by the function-wide except below:
-        # both of these parse an env var, and a malformed override (e.g.
-        # EC2_STREAM_COMPLETIONS=true instead of "1") must degrade only
-        # THIS field to None. If it escapes to the outer except, it would
-        # blank the entire snapshot over one bad env value. That would
-        # break the "each field None when unavailable" contract for
-        # every other field that had already been computed successfully.
+        # Guarded individually, not just by the function-wide except below:
+        # both parse an env var, and a malformed override (e.g.
+        # EC2_STREAM_COMPLETIONS=true instead of "1") must degrade only THIS
+        # field to None, not blank the whole already-computed snapshot.
         try:
             max_parallel_requests = _CLIENT._default_max_parallel()
         except Exception:  # noqa: BLE001
@@ -813,33 +774,29 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
 
 # ---------------------------------------------------------------------------
 # Internal poll/timeout tuning: an implementation detail, NOT
-# env-configurable like the EC2_* knobs above. These bound how chattily
-# this module polls AWS and the instance; a notebook run should not need
-# to tune them.
+# env-configurable like the EC2_* knobs above. These bound how chattily this
+# module polls AWS and the instance; a notebook run should not tune them.
 # ---------------------------------------------------------------------------
-# _wait_public_ip: how long to wait for DescribeInstances to report a
-# public IP after launch, and how often to re-poll while it waits.
+# _wait_public_ip: budget and cadence for DescribeInstances reporting a
+# public IP after launch.
 _WAIT_IP_TIMEOUT_S: int = 300
 _WAIT_IP_POLL_S: int = 5
-# Consecutive "absent" DescribeInstances polls the module tolerates before
-# it concludes the instance is really gone (~30s at _WAIT_IP_POLL_S=5; the
+# Consecutive "absent" DescribeInstances polls tolerated before concluding
+# the instance is really gone (~30s at _WAIT_IP_POLL_S=5; the
 # eventual-consistency window is typically a few seconds).
 _ABSENT_STREAK_LIMIT: int = 6
-# _wait_agent: how often it retries the control-agent's /status probe, and
-# every how many polls it additionally confirms (via DescribeInstances)
-# that the instance itself is still alive. 6 polls * 10s gives one extra
-# DescribeInstances call per minute -- cheap insurance against silently
+# _wait_agent: /status retry cadence, and how often it additionally confirms
+# via DescribeInstances that the instance is still alive. 6 polls * 10s is one
+# extra DescribeInstances per minute -- cheap insurance against silently
 # polling a dead box for the whole timeout instead of failing fast.
 _AGENT_POLL_S: int = 10
 _AGENT_PROGRESS_EVERY_N_POLLS: int = 6
-# _wait_model_ready: how often it re-polls the agent's /status while a
-# model loads (the checkpoint download dominates this time; see the
-# function's docstring).
+# _wait_model_ready: /status re-poll cadence while a model loads (the
+# checkpoint download dominates; see the function's docstring).
 _MODEL_READY_POLL_S: int = 15
-# _ensure_instance_profile: IAM is eventually consistent, so a
-# just-created role/instance-profile is not always immediately usable by
-# RunInstances. This value gives empirically enough slack for that
-# propagation to catch up.
+# _ensure_instance_profile: IAM is eventually consistent, so a just-created
+# role/instance-profile is not immediately usable by RunInstances; this is
+# empirically enough slack for that propagation to catch up.
 _IAM_PROPAGATION_SLEEP_S: int = 12
 # list_models(): inherits openai_compat.METADATA_TIMEOUT_S through
 # metadata_get's default parameter.
@@ -875,10 +832,10 @@ def _clear_state(instance_id: Optional[str] = None) -> None:
     Parameters
     ----------
     instance_id : Optional[str]
-        The instance being torn down. When the file now names a different one
-        -- a second run for the same experiment tag provisioned a fresh box
-        mid-teardown -- the file is LEFT ALONE, because deleting it strands a
-        live, billing GPU box with no driver and no local record. None deletes
+        The instance being torn down; when the file names a DIFFERENT one (a
+        second run for the same experiment tag provisioned a fresh box
+        mid-teardown) it is left alone, since deleting it strands a live,
+        billing GPU box with no driver and no local record. None deletes
         unconditionally, for callers with no instance in hand.
     """
     try:
@@ -949,14 +906,14 @@ def get_model_context_length(model: str) -> int:
 def list_models(model: str = "") -> List[str]:
     """Return the ``data[].id`` values from vLLM's ``GET /v1/models``.
 
-    Normally a single-element list: this instance serves exactly one model at a
-    time, whichever ``serve_model`` last swapped in.
+    Normally a single-element list: this instance serves exactly one model at
+    a time, whichever ``serve_model`` last swapped in.
 
     Parameters
     ----------
     model : str
         Accepted and IGNORED; it exists only for signature parity with
-        ``smolbench.evals.providers.aws.list_models``, which does use it, so
+        ``smolbench.evals.providers.aws.list_models`` so
         ``smolbench.evals.provider`` can dispatch uniformly.
     """
     response = metadata_get(f"{_base_url()}/models", _api_key(), check_status=True)
@@ -981,16 +938,12 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
                 "Reservations"
             ]
             instances = reservations[0]["Instances"] if reservations else []
-            # NOTE: this intentionally does NOT use the
-            # _instance_state(region, id) helper (see its docstring). That
-            # helper routes through _describe_instance, which SWALLOWS
-            # InvalidInstanceID.NotFound into "absent". Here, a raw
-            # ClientError (including NotFound) is meant to fall into the
-            # `except Exception` below and produce the generic
-            # "instance-state check failed" detail, not the specific "is
-            # absent" RuntimeError. If this site switched to the helper,
-            # that error message would silently change for an aged-out
-            # instance id.
+            # Deliberately NOT the _instance_state helper (see its
+            # docstring): it swallows InvalidInstanceID.NotFound into
+            # "absent", whereas here a raw ClientError must fall into the
+            # `except Exception` below and give the generic "instance-state
+            # check failed" detail. Switching would silently change the
+            # message for an aged-out instance id.
             inst_state = instances[0]["State"]["Name"] if instances else "absent"
             if inst_state not in ("pending", "running"):
                 raise RuntimeError(
@@ -1046,26 +999,24 @@ _CLIENT = ChatClient(
     context_length=get_model_context_length,
     system_prompt=_system_prompt,
     retry_backoff_s=EC2_RETRY_BACKOFF_SECONDS,
-    # (connect, read): a short connect fails fast on a dead box; a long
-    # read covers genuine long CoT generations (see the constants'
-    # comments).
+    # (connect, read): a short connect fails fast on a dead box, a long read
+    # covers genuine long CoT generations (see the constants' comments).
     connect_timeout_s=EC2_CONNECT_TIMEOUT_SECONDS,
     read_timeout_s=EC2_REQUEST_TIMEOUT_SECONDS,
-    # A self-managed spot endpoint can vanish (interruption, watchdog, or
-    # caller-IP drift). Unlike managed providers, this caps
-    # connection-level failures instead of retrying forever against a dead
-    # box, and it diagnoses the cause (spot reclaim vs. caller-IP drift)
-    # in the raised error.
+    # A self-managed spot endpoint can vanish (interruption, watchdog,
+    # caller-IP drift), so unlike managed providers this caps connection-level
+    # failures instead of retrying forever against a dead box, and diagnoses
+    # the cause (spot reclaim vs. caller-IP drift) in the raised error.
     max_connection_failures=EC2_MAX_CONNECTION_FAILURES,
     on_unreachable=_raise_endpoint_unreachable,
 )
 
 # The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query / ChatClient.complete /
-# ChatClient.evaluate. The plain-text <think> splitting that Nemotron-3
-# and EXAONE need (this study serves neither with a server-side reasoning
-# parser; see the "Reasoning wiring" note in EC2_DEPLOY_SPECS) lives in
-# the shared client, so every provider handles it identically.
+# parameter docs live on ChatClient.query/complete/evaluate. The plain-text
+# <think> splitting that Nemotron-3 and EXAONE need (this study serves
+# neither with a server-side reasoning parser; see the "Reasoning wiring"
+# note in EC2_DEPLOY_SPECS) lives in the shared client, so every provider
+# handles it identically.
 query = _CLIENT.query
 complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
 evaluate = _CLIENT.evaluate
@@ -1074,34 +1025,30 @@ evaluate = _CLIENT.evaluate
 # ---------------------------------------------------------------------------
 # On-instance payloads (control agent, idle watchdog, cloud-init bootstrap)
 # ---------------------------------------------------------------------------
-# The payload programs and cloud-init templates live as byte-exact assets
-# in smolbench/evals/payloads/ (agent.py.txt, watchdog.py.txt,
-# user_data.sh). That package exposes them as string constants and renders
-# them with payloads.render_user_data, then gzip-compresses the result with
-# payloads.pack_user_data (both imported at the top of this module) before
-# it rides into RunInstances' UserData kwarg. See that package's docstring
-# for the payload contract (py3.10/stdlib-only, 16 KB user-data budget --
-# now measured post-compression) and tests/evals/test_ec2_payloads.py for their
-# pre-launch validation.
+# The payload programs and cloud-init templates live as byte-exact assets in
+# smolbench/evals/payloads/ (agent.py.txt, watchdog.py.txt, user_data.sh).
+# That package renders them with payloads.render_user_data and gzip-compresses
+# the result with payloads.pack_user_data before it rides into RunInstances'
+# UserData kwarg. See that package's docstring for the payload contract
+# (py3.10/stdlib-only, 16 KB user-data budget, measured post-compression) and
+# tests/evals/test_ec2_payloads.py for their pre-launch validation.
 
 
 # ---------------------------------------------------------------------------
 # EC2 spot provisioning / lifecycle (lazy boto3; opt-in)
 # ---------------------------------------------------------------------------
-# These functions import boto3/botocore internally (transitively, via
-# _aws.fresh_client), so the inference path stays dependency-free (see the
-# module docstring). Each client comes from a FRESH boto3 Session per
-# operation, not from boto3.client(), whose process-wide default session
-# caches credentials at first resolve. Without this, a refreshed
-# ~/.aws/credentials (IdP sessions here last ~12h) would otherwise keep
-# raising RequestExpired until the kernel restarts. See
-# smolbench.evals._aws.fresh_client's docstring for the full rationale --
-# this module and aws.py both hit the same failure mode independently,
-# which is why the fix now lives in one shared place.
+# These functions import boto3/botocore internally (via _aws.fresh_client),
+# so the inference path stays dependency-free (see the module docstring).
+# Each client comes from a FRESH boto3 Session per operation, not from
+# boto3.client(), whose process-wide default session caches credentials at
+# first resolve: without this, a refreshed ~/.aws/credentials (IdP sessions
+# here last ~12h) keeps raising RequestExpired until the kernel restarts.
+# Full rationale in smolbench.evals._aws.fresh_client's docstring; aws.py
+# hits the same failure mode, which is why the fix is shared.
 
-# ClientError codes that mean "this pool cannot fill the request right
-# now" -- worth trying the next subnet or region -- as opposed to quota or
-# genuine errors.
+# ClientError codes that mean "this pool cannot fill the request right now"
+# -- worth trying the next subnet or region -- as opposed to quota or genuine
+# errors.
 _CAPACITY_ERROR_CODES = frozenset(
     {
         "InsufficientInstanceCapacity",
@@ -1225,14 +1172,13 @@ def _ensure_bucket(bucket: str, region: str) -> None:
     except ClientError as err:
         code = _error_code(err)
         if code not in ("404", "NoSuchBucket"):
-            # 403/301 is ambiguous. Either the name exists in another
-            # account or region (creating would fail confusingly, so this
-            # surfaces it), or HEAD is simply denied to scoped credentials
-            # (the EC2-only operator key has no s3:*; instances reach the
-            # cache via their instance profile, not the caller's
-            # credentials). An account-id suffix in the bucket name
-            # proves it is ours -- sts:GetCallerIdentity needs no policy,
-            # so it works even for the most restricted principal.
+            # 403/301 is ambiguous: either the name exists in another account
+            # or region (surfaced here rather than failing confusingly at
+            # create), or HEAD is simply denied to scoped credentials (the
+            # EC2-only operator key has no s3:*; instances reach the cache via
+            # their instance profile, not the caller's). An account-id suffix
+            # proves the bucket is ours, and sts:GetCallerIdentity needs no
+            # policy, so the check works for the most restricted principal.
             if code == "403":
                 account = _aws.fresh_client("sts", region).get_caller_identity()["Account"]
                 if bucket.endswith(account):
@@ -1284,8 +1230,8 @@ def _decode_user_data(raw: bytes) -> str:
     """Decode already-base64-decoded user-data bytes into the rendered script.
 
     User-data ships gzip-compressed (``payloads.pack_user_data``), so gunzip
-    first and fall back to plain UTF-8 text, since a live instance can outlive
-    the code change that provisioned it. Both exceptions below land in
+    first and fall back to plain UTF-8, since a live instance can outlive the
+    code change that provisioned it. Both exceptions below land in
     ``_recover_state_from_instance``'s best-effort ``except Exception``.
 
     Raises
@@ -1385,9 +1331,9 @@ def _instance_state(region: str, instance_id: str) -> str:
     -----
     Sites that also need another field from the same describe result
     (``_wait_public_ip``, ``_reattach_existing_instance``) deliberately do NOT
-    use this helper -- it would cost them a second DescribeInstances call for
-    data they already hold. ``_raise_endpoint_unreachable`` avoids it for a
-    different reason: it wants the raw ClientError, not "absent".
+    use this helper -- it would cost a second DescribeInstances call for data
+    they already hold. ``_raise_endpoint_unreachable`` avoids it because it
+    wants the raw ClientError, not "absent".
     """
     instance = _describe_instance(region, instance_id)
     return (instance or {}).get("State", {}).get("Name", "absent")
@@ -1438,19 +1384,15 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     def check() -> Optional[str]:
         nonlocal absent_streak
         instance = _describe_instance(region, instance_id)
-        # NOTE: this does NOT use _instance_state(region, instance_id) --
-        # this site also needs PublicIpAddress from the SAME describe
-        # result right below, and the helper would cost a second
-        # DescribeInstances call for state alone. See _instance_state's
-        # docstring.
+        # Not _instance_state: this site also needs PublicIpAddress from the
+        # SAME describe result right below, and the helper would cost a
+        # second DescribeInstances call. See _instance_state's docstring.
         inst_state = (instance or {}).get("State", {}).get("Name", "absent")
         if inst_state == "absent":
             # DescribeInstances is eventually consistent: a just-launched
-            # instance can be invisible for several seconds even though it
-            # is coming up fine (a truly reclaimed instance stays
-            # describable as "terminated" for ~an hour -- it does not
-            # vanish). Only a sustained streak means the instance is
-            # really gone.
+            # instance can be invisible for seconds while coming up fine,
+            # whereas a truly reclaimed one stays describable as "terminated"
+            # for ~an hour. Only a sustained streak means it is really gone.
             absent_streak += 1
             if absent_streak < _ABSENT_STREAK_LIMIT:
                 return None
@@ -1483,9 +1425,8 @@ def _agent(
         (``requests.ConnectionError``, which covers ConnectTimeout): the
         caller's egress NAT drops connections in bursts and killed one-shot
         ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint is
-        idempotent, so connect patience is always safe; the polling loops
-        (``_wait_agent``/``_wait_model_ready``) and the best-effort graceful
-        shutdown pass 0 to keep their own cadence and fail-fast semantics.
+        idempotent, so connect patience is always safe; the polling loops and
+        the best-effort graceful shutdown pass 0 to keep their own cadence.
     """
     for attempt in range(connect_retries + 1):
         try:
@@ -1511,8 +1452,8 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
 
     Polls ``GET /status`` every ``_AGENT_POLL_S`` seconds; every
     ``_AGENT_PROGRESS_EVERY_N_POLLS`` polls it also confirms via
-    DescribeInstances that the instance is still alive, so a spot reclaim
-    during boot fails fast instead of burning the whole budget.
+    DescribeInstances that the instance is alive, so a spot reclaim during
+    boot fails fast instead of burning the whole budget.
 
     Parameters
     ----------
@@ -1549,12 +1490,11 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
                         "for its agent (spot reclaimed?); re-run provision_spot_instance()."
                     )
             except ClientError:
-                # A transient describe failure (throttling, a brief
-                # AWS-side blip) should not abort the wait. This swallows
-                # it and re-checks on the next progress poll. The
-                # RuntimeError raised just above (instance genuinely gone)
-                # is not a ClientError, and it still propagates out of
-                # check(), per poll_until's contract.
+                # A transient describe failure (throttling, a brief AWS-side
+                # blip) must not abort the wait: swallow it and re-check on
+                # the next progress poll. The RuntimeError just above
+                # (instance genuinely gone) is not a ClientError, so it still
+                # propagates out of check(), per poll_until's contract.
                 pass
         return None
 
@@ -1574,29 +1514,24 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
 def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 1: reuse the state-file instance.
 
-    Safe to call unconditionally; a missing or corrupt state file is a normal
-    "nothing to reattach to" outcome, not an error.
+    Safe to call unconditionally: a missing or corrupt state file is a normal
+    "nothing to reattach to" outcome, not an error. On reattach it
+    re-authorizes the security group for `my_ip`, refreshes and persists
+    ``public_ip``, and blocks until the agent answers; a dead recorded
+    instance clears the stale state file so the next strategy starts clean.
 
     Returns
     -------
     Optional[Dict[str, Any]]
         The refreshed, already-saved state dict when the recorded instance is
         still ``pending``/``running``, else None.
-
-    Notes
-    -----
-    On reattach it re-authorizes the security group for `my_ip`, refreshes and
-    persists ``public_ip``, and blocks until the agent answers. A dead recorded
-    instance clears the stale state file, so the caller's next strategy starts
-    clean.
     """
     state = _load_state()
     if state is None:
         return None
     instance = _describe_instance(state["region"], state["instance_id"])
-    # NOTE: this does NOT use _instance_state(region, instance_id) --
-    # `instance` is reused for PublicIpAddress just below, and the helper
-    # would cost a second DescribeInstances call for state alone. See
+    # Not _instance_state: `instance` is reused for PublicIpAddress just
+    # below, and the helper would cost a second DescribeInstances call. See
     # _instance_state's docstring.
     inst_state = (instance or {}).get("State", {}).get("Name", "absent")
     if inst_state in ("pending", "running"):
@@ -1621,12 +1556,11 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
 def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 2: recover a live tagged instance.
 
-    Runs only after branch 1 finds nothing, and covers a lost state file: an
+    Runs only after branch 1 finds nothing, covering a lost state file: an
     instance tagged ``smolbench:experiment=EC2_EXPERIMENT_TAG`` carries its own
-    secrets in its user-data (see ``_recover_state_from_instance``), so the
-    state dict is rebuilt from the instance rather than stranding a $30-45/h
-    box. Same side effects as ``_reattach_existing_instance``: re-authorize
-    ingress, refresh and persist ``public_ip``, wait for the agent.
+    secrets in its user-data (see ``_recover_state_from_instance``), so state
+    is rebuilt from the instance rather than stranding a $30-45/h box. Same
+    side effects as ``_reattach_existing_instance``.
 
     Returns
     -------
@@ -1637,9 +1571,9 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     Raises
     ------
     RuntimeError
-        A tagged live instance exists but its user-data would not parse for the
-        control token (foreign or older-format box): refuse to reuse a box this
-        process cannot authenticate to.
+        A tagged live instance exists but its user-data would not parse for
+        the control token (foreign or older-format box) -- refuse to reuse a
+        box this process cannot authenticate to.
     """
     found = _find_tagged_instance()
     if found is None:
@@ -1713,28 +1647,24 @@ def _run_instances_kwargs(
 ) -> Dict[str, Any]:
     """Build the ``run_instances`` kwargs for one launch attempt.
 
-    Pure and side-effect-free (no AWS calls). The result describes a one-time
-    Spot instance with InstanceInitiatedShutdownBehavior=terminate
-    (``_try_launch`` retries without it when an API path rejects the
-    combination), a single ENI with a public IP in the experiment's security
-    group, and a gp3 root volume tuned from ``EC2_ROOT_VOLUME_*``. Per-attempt
-    values are parameters; experiment-wide ones (root-volume throughput/IOPS,
-    the experiment tag) come from the module-level ``EC2_*`` constants.
+    Pure and side-effect-free (no AWS calls). Describes a one-time Spot
+    instance with InstanceInitiatedShutdownBehavior=terminate (``_try_launch``
+    retries without it when an API path rejects the combination), a single ENI
+    with a public IP in the experiment's security group, and a gp3 root volume
+    tuned from ``EC2_ROOT_VOLUME_*``. Per-attempt values are parameters;
+    experiment-wide ones (root-volume throughput/IOPS, the experiment tag)
+    come from the module-level ``EC2_*`` constants.
 
     Parameters
     ----------
-    ami, root_device : str
-        From ``_resolve_ami`` for this attempt's region.
     subnet_id : str
         Pins the AZ for this attempt.
-    group_id : str
-        From ``_ensure_security_group``.
     volume_gb : int
         Root volume size, in GiB.
     user_data : bytes
-        Gzip-compressed cloud-init script (``payloads.pack_user_data``), passed
-        through UNENCODED: boto3 base64-encodes bytes ``UserData`` itself (see
-        ``base64_encode_user_data`` in botocore's handlers).
+        Gzip-compressed cloud-init script (``payloads.pack_user_data``),
+        passed through UNENCODED: boto3's ``base64_encode_user_data`` handler
+        base64-encodes bytes ``UserData`` itself.
     key_name : str
         EC2 key pair for SSH debugging; ``""`` omits ``KeyName`` entirely.
     iam_profile : Optional[str]
@@ -1742,18 +1672,16 @@ def _run_instances_kwargs(
         ``IamInstanceProfile`` (no S3 cache).
     capacity_reservation_id : Optional[str]
         Purchased EC2 Capacity Block id. When set, MarketType becomes
-        ``"capacity-block"`` (required by the API) and a
-        ``CapacityReservationSpecification`` pins the instance to the block
-        instead of the Spot market; the caller must pass the block's own AZ
-        subnet and instance type or RunInstances rejects the launch.
+        ``"capacity-block"`` (required by the API) and the instance is pinned
+        to the block instead of the Spot market; the caller must pass the
+        block's own AZ subnet and instance type or RunInstances rejects it.
     max_price : Optional[str]
         Spot bid ceiling in USD/hour, stringified as the API wants; ``None``
         leaves EC2's default ceiling (the on-demand price). Price-blind
         defaults paid 1.29-1.48x each type's cheapest AZ against a 2.46x
         intra-type spread, hence the cap derived from live
-        ``describe_spot_price_history`` medians. A bid under an AZ's current
-        price fails fast with ``SpotMaxPriceTooLow``, which the hunt tolerates
-        and moves on from.
+        ``describe_spot_price_history`` medians; a bid under an AZ's current
+        price fails fast with ``SpotMaxPriceTooLow`` and the hunt moves on.
     """
     kwargs: Dict[str, Any] = {
         "ImageId": ami,
@@ -1765,9 +1693,8 @@ def _run_instances_kwargs(
             "SpotOptions": {
                 "SpotInstanceType": "one-time",
                 "InstanceInterruptionBehavior": "terminate",
-                # MaxPrice is added below only when the caller derived a
-                # cap. Without it, EC2 keeps its default ceiling (the
-                # on-demand price).
+                # MaxPrice is added below only when the caller derived a cap;
+                # without it EC2 keeps its default on-demand-price ceiling.
             },
         },
         "InstanceInitiatedShutdownBehavior": "terminate",
@@ -1811,17 +1738,14 @@ def _run_instances_kwargs(
             }
         }
     elif EC2_MARKET == "on-demand":
-        # On-demand is expressed by the ABSENCE of InstanceMarketOptions:
-        # there is no MarketType="on-demand". MaxPrice goes with it, since
-        # an on-demand launch has no bid.
-        #
-        # The instance type, GPU count, and tp are IDENTICAL to the
-        # lane's original box -- only how the capacity was purchased
-        # differs, so nothing about what ran changes. InstanceInitiatedShutdownBehavior stays
-        # "terminate", and the idle watchdog still fires. That matters far
+        # On-demand is expressed by the ABSENCE of InstanceMarketOptions --
+        # there is no MarketType="on-demand" -- and MaxPrice goes with it,
+        # since an on-demand launch has no bid. Instance type, GPU count and
+        # tp stay IDENTICAL to the lane's spot box, so only how the capacity
+        # was purchased differs. InstanceInitiatedShutdownBehavior stays
+        # "terminate" and the idle watchdog still fires, which matters far
         # more here: an abandoned on-demand p5e bills at full rate
-        # indefinitely, while an abandoned spot box is at least
-        # reclaimable.
+        # indefinitely, while an abandoned spot box is at least reclaimable.
         kwargs.pop("InstanceMarketOptions", None)
     elif max_price:
         kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] = max_price
@@ -1843,14 +1767,13 @@ def _launch_fresh(
     """Run ``provision_spot_instance`` branch 3: hunt capacity and launch fresh.
 
     Runs only after branches 1 and 2 find nothing. Generates fresh
-    per-experiment secrets (control token, vLLM API key), optionally provisions
-    the S3 model-cache bucket/instance-profile, renders the cloud-init
-    user-data once, then hunts Spot capacity TYPE-MAJOR: every region (and
-    every default-VPC subnet/AZ within it) for the first instance type before
-    falling back to the next. Per-region resources (AMI, security group,
-    subnets) are resolved once and cached across the instance-type loop via
-    ``region_info``. Every argument arrives already defaulted by
-    ``provision_spot_instance`` from the corresponding ``EC2_*`` constant.
+    per-experiment secrets (control token, vLLM API key), optionally
+    provisions the S3 model-cache bucket/instance-profile, renders the
+    cloud-init user-data once, then hunts Spot capacity TYPE-MAJOR: every
+    region (and every default-VPC subnet/AZ within it) for the first instance
+    type before falling back to the next. Per-region resources (AMI, security
+    group, subnets) are resolved once and cached via ``region_info``. Every
+    argument arrives already defaulted from the matching ``EC2_*`` constant.
 
     Parameters
     ----------
@@ -1859,8 +1782,8 @@ def _launch_fresh(
     idle_timeout_min, max_lifetime_min : int
         Watchdog and boot-scheduled-halt budgets, in minutes.
     my_ip : str
-        Caller's public IP, resolved ONCE by the caller rather than per region,
-        to save a ``checkip.amazonaws.com`` round trip each time.
+        Caller's public IP, resolved ONCE by the caller rather than per
+        region, to save a ``checkip.amazonaws.com`` round trip each time.
 
     Returns
     -------
@@ -1877,14 +1800,12 @@ def _launch_fresh(
     control_token = secrets.token_urlsafe(32)
     vllm_api_key = secrets.token_urlsafe(32)
     hf_token = os.getenv("HF_TOKEN", "")
-    # The token is baked into user-data at boot and CANNOT be injected
-    # later. The default EC2_DEPLOY_SPECS now use
-    # only UNGATED repos (Qwen, NVIDIA, Google, zai-org, mistralai,
-    # LGAI-EXAONE, deepseek-ai), so an empty token is fine. Anyone who
-    # swaps a gated checkpoint into the specs must set HF_TOKEN BEFORE
-    # provisioning. Conversely, a set-but-invalid token breaks even
-    # ungated downloads (the hub rejects bad credentials outright), so
-    # leave it empty unless it is real.
+    # The token is baked into user-data at boot and CANNOT be injected later,
+    # so a gated checkpoint swapped into the specs needs HF_TOKEN set BEFORE
+    # provisioning. The default EC2_DEPLOY_SPECS are all UNGATED repos (Qwen,
+    # NVIDIA, Google, zai-org, mistralai, LGAI-EXAONE, deepseek-ai), so an
+    # empty token is fine -- and a set-but-INVALID one breaks even ungated
+    # downloads (the hub rejects bad credentials outright).
     if not hf_token:
         logging.warning(
             "HF_TOKEN is not set. The default deploy specs are all ungated, so "
@@ -1920,10 +1841,9 @@ def _launch_fresh(
 
     from botocore.exceptions import ClientError  # lazy: keep the inference path boto3-free
 
-    # A purchased Capacity Block short-circuits the Spot hunt entirely:
-    # the block fixes region, AZ, and instance type, so there is nothing
-    # to hunt. This reads the env var at call time, not at import, so the
-    # supervisor can set it per launch.
+    # A purchased Capacity Block short-circuits the Spot hunt entirely: it
+    # fixes region, AZ and instance type. Read at call time, not at import,
+    # so the supervisor can set it per launch.
     cb_id = os.getenv("EC2_CAPACITY_RESERVATION", "")
     if cb_id:
         cb_region = os.getenv("EC2_CAPACITY_RESERVATION_REGION", "")
@@ -1936,9 +1856,8 @@ def _launch_fresh(
             CapacityReservationIds=[cb_id]
         )["CapacityReservations"][0]
         if cr["State"] != "active":
-            # This matches the supervisor's drought grep, so a block that
-            # has not reached its start time is retried on the slow
-            # no-cap cadence.
+            # Worded to match the supervisor's drought grep, so a block short
+            # of its start time is retried on the slow no-cap cadence.
             raise RuntimeError(
                 f"InsufficientInstanceCapacity (capacity block {cb_id} is "
                 f"{cr['State']!r}, not active yet; starts {cr.get('StartDate')})"
@@ -1990,13 +1909,11 @@ def _launch_fresh(
         _wait_agent(state)
         return state
 
-    # This prices the whole hunt space up front (one best-effort call per
-    # region; {} on failure means the price-blind fallback). Each type's
-    # bid cap is 1.25x the median of its observed AZ prices across ALL
-    # hunted regions. That gives enough headroom that a normal-priced AZ
-    # always clears it, while the outlier AZs (2.46x intra-type
-    # spread) fail fast with SpotMaxPriceTooLow and the hunt
-    # moves on.
+    # Price the whole hunt space up front (one best-effort call per region; {}
+    # on failure = the price-blind fallback). Each type's bid cap is 1.25x the
+    # median of its observed AZ prices across ALL hunted regions: a
+    # normal-priced AZ always clears it, while outlier AZs (2.46x intra-type
+    # spread) fail fast with SpotMaxPriceTooLow and the hunt moves on.
     spot_prices: Dict[str, Dict[Tuple[str, str], float]] = {
         r: _spot_price_map(r, list(instance_types)) for r in regions
     }
@@ -2017,10 +1934,9 @@ def _launch_fresh(
                 f"range ${observed[0]:.2f}-${observed[-1]:.2f})"
             )
         else:
-            # No MaxPrice: the ceiling defaults to the ON-DEMAND price,
-            # the highest bid EC2 accepts and the highest you can ever
-            # pay for spot. This branch is reached either because the
-            # pricing lookup failed (price-blind fallback), or because
+            # No MaxPrice: the ceiling defaults to the ON-DEMAND price, the
+            # highest bid EC2 accepts. Reached either because the pricing
+            # lookup failed (price-blind fallback) or because
             # EC2_SPOT_BID_MULTIPLIER <= 0 asked for it.
             type_caps[_type] = None
             if EC2_SPOT_BID_MULTIPLIER <= 0:
@@ -2054,9 +1970,8 @@ def _launch_fresh(
             if not _offers_instance_type(region, instance_type):
                 attempts.append(f"{instance_type} @ {region}: not offered")
                 continue
-            # This tries the cheapest AZ first. Unpriced AZs keep their
-            # original order after the priced ones (inf sorts last, and
-            # the sort is stable).
+            # Cheapest AZ first; unpriced AZs keep their original order after
+            # the priced ones (inf sorts last and the sort is stable).
             region_prices = spot_prices.get(region, {})
             subnets_by_price = sorted(
                 info["subnets"],
@@ -2128,18 +2043,17 @@ def provision_spot_instance(
     """Provision (or reattach to) the experiment's EC2 spot instance.
 
     Idempotent, so re-running the cell after a kernel restart is safe. Three
-    helpers are tried in order: ``_reattach_existing_instance`` (state-file
-    reuse, re-authorizing the security group for the caller's CURRENT public IP
-    and refreshing the saved endpoint), ``_recover_tagged_instance`` (state
-    file lost, live tagged instance exists), ``_launch_fresh`` (neither -- hunt
-    capacity type-major across ``instance_types`` x ``regions`` x each region's
-    default-VPC subnets/AZs). Each argument defaults to the matching ``EC2_*``
-    constant.
+    helpers are tried in order: ``_reattach_existing_instance`` (reuse the
+    state-file box, re-authorizing the security group for the caller's CURRENT
+    public IP and refreshing the saved endpoint), ``_recover_tagged_instance``
+    (state file lost, live tagged instance exists), ``_launch_fresh`` (neither
+    -- hunt capacity type-major across ``instance_types`` x ``regions`` x each
+    region's default-VPC subnets/AZs). Each argument defaults to the matching
+    ``EC2_*`` constant.
 
     When ``EC2_CAPACITY_RESERVATION`` is set the reservation is authoritative:
-    a live instance OUTSIDE that block is TERMINATED rather than reused (reuse
-    would bill Spot on top of the already-paid block) and the launch goes into
-    the reservation.
+    a live instance OUTSIDE that block is TERMINATED rather than reused, since
+    reuse would bill Spot on top of the already-paid block.
 
     Returns
     -------
@@ -2159,11 +2073,10 @@ def provision_spot_instance(
     # 1) Reattach to the instance in the state file when it is still alive.
     state = _reattach_existing_instance(my_ip)
     if state is None:
-        # 2) A live tagged instance without a state file: this rebuilds
-        #    the state from the instance itself. Its secrets ride in its
-        #    user-data (readable via DescribeInstanceAttribute; see the
-        #    security model note up top), so losing the local file must
-        #    not strand a $30-45/h box.
+        # 2) A live tagged instance without a state file: rebuild state from
+        #    the instance's own user-data (readable via
+        #    DescribeInstanceAttribute; see "Security model" up top), so
+        #    losing the local file cannot strand a $30-45/h box.
         state = _recover_tagged_instance(my_ip)
     if state is not None:
         if not cb_id or state.get("capacity_reservation_id") == cb_id:
@@ -2199,11 +2112,10 @@ def _wait_model_ready(
     def check() -> Optional[bool]:
         nonlocal last_status, consec_failures
         # A single dropped /status must NOT abort the (up to hours-long)
-        # wait: the caller's egress NAT rotates source IPs mid-run, so
-        # one connect timeout is routine (one flap killed an arm, and its
-        # stale serve script then raced the next arm's container). Only a
-        # SOLID stretch of unreachability
-        # (~8 min at the 15s poll) counts as the box being gone.
+        # wait: the caller's egress NAT rotates source IPs mid-run, and one
+        # flap killed an arm whose stale serve script then raced the next
+        # arm's container. Only a SOLID stretch of unreachability (~8 min at
+        # the 15s poll) counts as the box being gone.
         try:
             status = _agent(state, "GET", "/status", timeout=30, connect_retries=0)
         except requests.exceptions.RequestException as exc:
@@ -2221,12 +2133,10 @@ def _wait_model_ready(
         container = status.get("container")
         serve_rc = status.get("serve_rc")
         if container in ("exited", "dead"):
-            # This includes the launcher's own output too: a container
-            # that dies pre-entrypoint (bad mount, missing adapter file,
-            # OOM-kill) leaves docker logs EMPTY, and the docker-run
-            # error then lives only in the serve script's output (an
-            # adapter arm can fail with a blank log_tail and no
-            # diagnosis).
+            # Include the launcher's own output: a container that dies
+            # pre-entrypoint (bad mount, missing adapter file, OOM-kill)
+            # leaves docker logs EMPTY, so the docker-run error lives only in
+            # the serve script's output.
             raise RuntimeError(
                 f"vLLM container for {model!r} exited during startup; docker logs tail:\n"
                 f"{status.get('log_tail', '')}\n"
@@ -2261,8 +2171,8 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
 
     Swaps the serving container (removing the previous model's), waits until
     the OpenAI endpoint is healthy and serving ``model``, then yields it. Exit
-    tears NOTHING down -- the box stays up for the next section, and the idle
-    watchdog covers the case where there is none.
+    tears NOTHING down: the box stays up for the next section, and the idle
+    watchdog covers abandonment.
 
     Parameters
     ----------
@@ -2270,9 +2180,8 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
         Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
     force : bool
         Swap even when the box is already healthy on ``model`` with the same
-        launch payload. The default fast path skips the swap entirely, so
-        re-running a section cell after an interruption costs seconds, not a
-        reload.
+        launch payload. The default fast path skips the swap, so re-running a
+        section cell after an interruption costs seconds, not a reload.
 
     Raises
     ------
@@ -2295,9 +2204,8 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     serve_payload = {
         "served_model_name": model,
         "hf_model_id": spec["hf_model_id"],
-        # This is derived from the box that actually landed, not pinned
-        # per spec: the hunt list can hand one lane boxes with different
-        # GPU counts.
+        # Derived from the box that actually landed, not pinned per spec:
+        # the hunt list can hand one lane boxes with different GPU counts.
         "tp": derive_tp(model, state.get("instance_type", ""), spec),
         "max_model_len": spec.get("max_model_len", EC2_CONTEXT_LENGTH),
         # HF_TOKEN is deliberately NOT in this payload: it was baked into
@@ -2309,16 +2217,14 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
         # _serve).
         serve_payload["adapters"] = [dict(a) for a in spec["adapters"]]
     if not force:
-        # This must decide BEFORE yielding: the yield must sit outside
-        # this try, or an exception raised by the with-body would be
-        # swallowed here, and the generator would fall through to a
-        # second serve/yield.
+        # Decide BEFORE yielding: the yield must sit outside this try, or an
+        # exception raised by the with-body would be swallowed here and the
+        # generator would fall through to a second serve/yield.
         #
-        # "Already serving" requires the recorded launch payload to match
-        # too: the served name alone cannot tell a 32k container from a
+        # "Already serving" also requires the recorded launch payload to
+        # match: the served name alone cannot tell a 32k container from a
         # 128k one, so after a spec edit a re-run must swap, not skip. No
-        # record (the state file predates this field, or another client
-        # served) means swap to be safe.
+        # record (older state file, or another client served) means swap.
         try:
             already_serving = (
                 bool(_agent(state, "GET", "/status", timeout=15).get("healthy"))
@@ -2340,17 +2246,15 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             f"instance is healthy but serves {served}, not {model!r}; "
             "did another process swap the model?"
         )
-    # This remembers exactly what this container was launched with, so
-    # the already-serving fast path above can tell config drift from a
-    # true match.
+    # Remember exactly what this container was launched with, so the
+    # already-serving fast path above tells config drift from a true match.
     state["serving"] = serve_payload
-    # A SEPARATE record from ``state["serving"]`` above. That dict exists
-    # only to short-circuit the already-serving fast path, and it mirrors the
-    # wire payload's own key names (``served_model_name`` etc.).
-    # ``last_serve`` is what server_config() reads back under stable,
-    # self-describing keys, so a spec edited mid-study (or read long
-    # after the box that served it is gone) is still visible as the argv
-    # that actually launched, not just the spec that was asked for.
+    # A SEPARATE record from ``state["serving"]`` above, which exists only to
+    # short-circuit the fast path and mirrors the wire payload's key names
+    # (``served_model_name`` etc.). ``last_serve`` is what server_config()
+    # reads back under stable, self-describing keys, so the argv that ACTUALLY
+    # launched stays visible after a mid-study spec edit, or long after the
+    # box is gone.
     state["last_serve"] = {
         "model": model,
         "hf_model_id": spec["hf_model_id"],
@@ -2363,10 +2267,9 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     _save_state(state)
     logging.info(f"serve_model: {model!r} is up at {_base_url()}")
     if state.get("s3_cache"):
-        # The weights are complete on disk: this refreshes the S3 mirror
-        # in the background (a fast no-op when S3 already has them), so
-        # the next instance pulls from S3 instead of HF. Best-effort by
-        # design.
+        # Weights are complete on disk, so refresh the S3 mirror in the
+        # background (a fast no-op when S3 already has them) and the next
+        # instance pulls from S3 instead of HF. Best-effort by design.
         try:
             _agent(
                 state,
@@ -2445,9 +2348,8 @@ def shutdown_instance(wait: bool = True) -> None:
     try:
         ec2.terminate_instances(InstanceIds=[instance_id])
     except ClientError as err:
-        # Terminated instances age out of the EC2 API entirely. "not
-        # found" means the job is already done (e.g. the watchdog beat
-        # us to it).
+        # Terminated instances age out of the EC2 API entirely, so "not
+        # found" means the job is already done (the watchdog beat us to it).
         if _error_code(err) != "InvalidInstanceID.NotFound":
             raise
         logging.info(f"shutdown_instance: {instance_id} already gone.")
@@ -2461,10 +2363,10 @@ def shutdown_instance(wait: bool = True) -> None:
             _ec2_client(region).get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
             logging.info(f"shutdown_instance: {instance_id} terminated.")
         except WaiterError:
-            # TerminateInstances already succeeded above, so the
-            # instance IS dying; p5-class teardown just outlasts
-            # botocore's 10-min waiter. Crashing here would strand the
-            # caller AFTER the only action that matters has been taken.
+            # TerminateInstances already succeeded above, so the instance IS
+            # dying; p5-class teardown just outlasts botocore's 10-min
+            # waiter, and crashing here would strand the caller AFTER the
+            # only action that matters has been taken.
             logging.warning(
                 f"shutdown_instance: {instance_id} still shutting down after the "
                 "waiter's max attempts; termination is already issued, proceeding."

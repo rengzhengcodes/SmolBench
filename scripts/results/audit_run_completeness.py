@@ -1,19 +1,19 @@
 """Audit content-level run completeness. Catches SILENT data faults.
 
-A completeness check that counts rows is not a completeness check: a row can be
-present and EMPTY (``candidate_proof: ""``, ``completion_tokens: 0``) when the
-generating box died mid-run and the driver recorded the failure as an ordinary
-per-cell ``exception`` row. Row counts, shard-merge gates and traceback counts
-all pass on that data. Assert on CONTENT.
+A check that counts rows is not a completeness check: a row can be present and
+EMPTY (``candidate_proof: ""``, ``completion_tokens: 0``) when the generating box
+died mid-run and the driver recorded the failure as an ordinary per-cell
+``exception`` row. Row counts, shard-merge gates and traceback counts all pass on
+that data. Assert on CONTENT.
 
 A cell is DEAD when no row for its key carries a non-empty candidate_proof, and
 dead cells split into two populations that must never be conflated. INFRA: no
 attempt reached the model (no surviving row with prompt_tokens > 0) and some row
-carries an infrastructure error -- LOST DATA, and exactly the set
-``runner._existing_keys()`` re-runs, so a plain relaunch regenerates these cells
-and nothing else. GENUINE: no error anywhere, the model was asked and returned
+carries an infrastructure error -- LOST DATA, exactly the set
+``runner._existing_keys()`` re-runs, so a plain relaunch regenerates these and
+nothing else. GENUINE: no error anywhere, the model was asked and returned
 nothing -- DATA, not loss; regenerating resamples until the model happens to
-answer, which inflates the numerator, so never "repair" these cells.
+answer, inflating the numerator, so never "repair" these.
 
 Exits 1 on INFRA loss (also on short lanes, missing sanity rows, or a selection
 that matched no lane) so a pipeline can gate on it. Genuine empties are reported
@@ -75,8 +75,8 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     Yields
     ------
     tuple of (str, str)
-        Lane name and its raw rows text, which is ``""`` when S3 holds no such
-        object for a lane -- itself a finding.
+        Lane name and its raw rows text, ``""`` when S3 holds no such object for
+        a lane -- itself a finding.
     """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
@@ -116,8 +116,8 @@ def audit_lane(text: str) -> Dict[str, object]:
     -------
     dict
         Counts keyed ``cells`` (distinct cell keys), ``infra`` (dead cells lost
-        to infrastructure), ``genuine`` (dead cells the model answered emptily)
-        and ``sanity_missing`` (sanity theorems with no passing verdict).
+        to infrastructure), ``genuine`` (dead cells the model answered emptily),
+        ``sanity_missing`` (sanity theorems with no passing verdict).
     """
     rows_by_key: Dict[tuple, List[dict]] = collections.defaultdict(list)
     sanity: Dict[str, bool] = {}
@@ -140,10 +140,9 @@ def audit_lane(text: str) -> Dict[str, object]:
     for key, rows in rows_by_key.items():
         if any((r.get("candidate_proof") or "").strip() for r in rows):
             continue
-        # A cell is INFRA loss only if NO attempt ever reached the model.
-        # `prompt_tokens > 0` means the server counted a prompt, so the
-        # model WAS asked, and the empty result is its answer: data, not
-        # loss.
+        # INFRA loss only if NO attempt ever reached the model:
+        # `prompt_tokens > 0` means the server counted a prompt, so the model
+        # WAS asked and the empty result is its answer -- data, not loss.
         reached_model = any(int(r.get("prompt_tokens") or 0) > 0 for r in rows)
         blob = " ".join(str(r.get("lean_error") or "") for r in rows)
         if not reached_model and INFRA_PATTERNS.search(blob):
@@ -163,12 +162,8 @@ def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, i
 
     The induction analogue of an empty cell is a MISSING seed: the arm file is
     written only when a seed completes, so a lane that died mid-seed leaves no
-    trace at all in S3. Only models with at least one gap are returned.
-
-    Parameters
-    ----------
-    models : list of str, optional
-        Restrict the report to these models; ``None`` covers every model in S3.
+    trace at all in S3. Only models with at least one gap are returned;
+    ``models`` restricts the report, ``None`` covers every model in S3.
     """
     s3 = _s3()
     seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)

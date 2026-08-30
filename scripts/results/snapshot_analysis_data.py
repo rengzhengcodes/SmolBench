@@ -40,8 +40,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUCKET = "smolbench-results-414266451290"
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
-#: Provenance documents this script copies alongside the data, so the
-#: snapshot explains itself.
+#: Provenance documents copied alongside the data, so the snapshot
+#: explains itself.
 PROVENANCE_DOCS = (
     # notebooks/README.md is the tree index; notebooks/ARCHIVE.md says where
     # the archived provenance docs live.
@@ -60,9 +60,8 @@ def _s3():
 def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
-    The two legs key the model differently -- deduction carries a ``scaling_``
-    prefix, stripped here so both legs of a model share one name -- and that
-    asymmetry is the whole reason this script exists.
+    The deduction leg carries a ``scaling_`` prefix, stripped here so both legs
+    of a model share one name.
     """
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -90,8 +89,8 @@ def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
     Parameters
     ----------
     size : int
-        Expected source size in bytes: it decides whether an already-present
-        destination object can be skipped, and is re-checked after the copy.
+        Expected source size in bytes: decides whether an already-present
+        destination object can be skipped.
 
     Returns
     -------
@@ -155,10 +154,9 @@ def main() -> int:
         logging.info("--dry-run: nothing written.")
         return 0
 
-    # Copies run CONCURRENTLY. Each copy is two S3 round trips (copy, then
-    # verify), and 55k objects serially would be about 5 hours of pure
-    # latency while moving no bytes through this host. The work is entirely
-    # network wait, so threads are the right tool.
+    # Each copy is two S3 round trips (copy, then verify), so 55k objects
+    # serially would be ~5 hours of pure latency moving no bytes through this
+    # host. The work is entirely network wait, so threads are the right tool.
     counts = collections.Counter()
     done = 0
 

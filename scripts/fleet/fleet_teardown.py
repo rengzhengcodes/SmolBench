@@ -6,19 +6,12 @@ listing itself is `fleet_status.py`, imported rather than reimplemented. The
 default is READ-ONLY: nothing is terminated and no state file deleted without
 an explicit ``--terminate``.
 
-Safety invariants, enforced in code rather than by convention:
-
-- Only instances whose ``smolbench:experiment`` tag starts with ``"scaling-"``
-  are terminated. `terminate_fleet` re-checks the prefix immediately before
-  ``terminate_instances``, so even a hand-built row list cannot escape it.
-- Only ``REPO_ROOT/.ec2_state_scaling_<lane>.json`` is ever unlinked;
-  `delete_state_files` ``.resolve()``s first, because `lane` comes from an AWS
-  tag value this script does not control.
-
-Run from the repo root::
-
-    .venv/bin/python scripts/fleet/fleet_teardown.py                    # listing
-    .venv/bin/python scripts/fleet/fleet_teardown.py --terminate [--yes]
+Two safety invariants are enforced in code rather than by convention, both
+re-checked at the point of action because `lane` comes from an AWS tag value
+this script does not control: only instances whose ``smolbench:experiment`` tag
+starts with ``"scaling-"`` are terminated (`terminate_fleet`), and only
+``REPO_ROOT/.ec2_state_scaling_<lane>.json`` is ever unlinked
+(`delete_state_files`, which ``.resolve()``s first).
 """
 
 from __future__ import annotations
@@ -38,7 +31,7 @@ STATE_FILE_GLOB = ".ec2_state_scaling_*.json"
 def _fleet_status():
     """Load ``scripts/fleet/fleet_status.py`` by file path, lazily; cached.
 
-    By path rather than a bare import, to avoid colliding with the private module
+    By path rather than a bare import: avoids colliding with the private module
     names ``tests/tooling/test_run_fleet.py`` loads these files under.
     """
     path = Path(__file__).resolve().parent / "fleet_status.py"
@@ -51,9 +44,9 @@ def _fleet_status():
 def state_file_path(lane: str) -> Path:
     """Return the UNRESOLVED ``REPO_ROOT/.ec2_state_scaling_{lane}.json`` path.
 
-    Nothing is checked here. `lane` ultimately comes from an AWS tag value this
-    script does not control, so a caller that deletes a file built from this
-    path MUST re-verify it with ``.resolve()`` first (see `delete_state_files`).
+    Nothing is checked here: `lane` comes from an AWS tag value this script does
+    not control, so a caller that deletes this path MUST ``.resolve()``-verify
+    it first (see `delete_state_files`).
     """
     return REPO_ROOT / f".ec2_state_scaling_{lane}.json"
 
@@ -64,14 +57,12 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     Parameters
     ----------
     rows : list[dict]
-        Shaped like `fleet_status.fleet_rows`'s output; must carry `region`,
-        `instance_id` and `experiment_tag`. A row whose `experiment_tag` lacks
-        the `fleet_status.SCALING_TAG_PREFIX` prefix is SKIPPED -- the last-line
-        safety re-check described in the module docstring.
+        `fleet_status.fleet_rows`-shaped; needs `region`, `instance_id` and
+        `experiment_tag`. A row lacking the `fleet_status.SCALING_TAG_PREFIX`
+        prefix is SKIPPED -- the module docstring's last-line safety re-check.
     client_factory : Any, optional
-        Maps a region to an object with ``terminate_instances(InstanceIds=...)``;
-        ``None`` builds a real boto3 client lazily per region, per this repo's
-        convention that nothing reachable at import time requires the AWS SDK.
+        Region -> object with ``terminate_instances(InstanceIds=...)``; ``None``
+        builds a boto3 client lazily per region (no AWS SDK at import time).
 
     Returns
     -------
@@ -114,8 +105,8 @@ def delete_state_files(rows: list[dict]) -> list[Path]:
     -----
     `state_file_path(row["lane"])` is ``.resolve()``d and unlinked only when its
     parent is `REPO_ROOT` (also resolved) AND its basename matches
-    `STATE_FILE_GLOB`: `lane` traces back to an AWS tag value, so a crafted
-    ``scaling-../../secrets`` tag must not walk outside the repo.
+    `STATE_FILE_GLOB`, so a crafted ``scaling-../../secrets`` tag cannot walk
+    outside the repo.
     """
     deleted: list[Path] = []
     repo_root_resolved = REPO_ROOT.resolve()
@@ -137,8 +128,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     -------
     int
         ``0`` for a read-only listing, or after a confirmed or ``--yes``-forced
-        termination (`terminate_fleet`, then `delete_state_files`); ``1`` if
-        ``--terminate`` was requested and the confirmation declined.
+        termination (`terminate_fleet`, then `delete_state_files`); ``1`` if the
+        ``--terminate`` confirmation was declined.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."

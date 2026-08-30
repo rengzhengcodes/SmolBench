@@ -1,9 +1,9 @@
 """Headless driver for the FAMILY-LADDER SCALING induction study.
 
-The quiz is held fixed (the plain ``periodic_moe`` baseline, ``n=9`` harmonics,
-unmodified) while the MODEL varies -- 7 vendor families x 3 rungs = the 21
-checkpoints in ``MODELS`` -- so accuracy reads as a function of parameter count
-within a family. Deployment facts live in
+The quiz is held fixed (the plain ``periodic_moe`` baseline, ``n=9`` harmonics)
+while the MODEL varies -- 7 vendor families x 3 rungs = the 21 checkpoints in
+``MODELS`` -- so accuracy reads as a function of parameter count within a
+family. Deployment facts live in
 ``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``; this file is the single
 source of truth for the STUDY's config, and
 ``notebooks/induction/induction_eval.ipynb`` imports every module-level name
@@ -30,7 +30,7 @@ file per lane: two lanes sharing one would have the second ``provision()``
 reattach to the first's instance and swap the served model out from under it.
 
 Lifecycle contract and COST: ``main()`` calls ``EXPERIMENT.teardown()`` only
-behind ``--teardown``, which is for STANDALONE use only -- the fleet supervisor
+behind ``--teardown``, for STANDALONE use only -- the fleet supervisor
 (``scripts/fleet/run_fleet.py``) owns instance lifecycle and reuses each lane's
 box for a later deduction-phase lane, so a teardown here would terminate an
 instance that phase is about to reattach to. ``provision()`` and ``run()`` are
@@ -52,15 +52,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-# Anchored via __file__, never cwd. This MUST land before
+# Anchored via __file__, never cwd. MUST land before
 # smolbench.evals.providers.ec2 is imported anywhere: ec2.py freezes its EC2_*
 # constants at import time (see InductionExperiment's module docstring,
-# "CRITICAL: no smolbench.evals.providers.ec2 import at module scope"). NOT
-# override=True: under the fleet, the supervisor sets up a per-lane
-# environment (INDUCTION_MODELS, INDUCTION_STATE_FILE, EC2_EXPERIMENT_TAG,
-# ...) before this file runs. keys.env populating already-set variables
-# would clobber that per-lane config with this file's own local
-# defaults.
+# CRITICAL section). NOT override=True: under the fleet the supervisor exports a
+# per-lane environment (INDUCTION_MODELS, INDUCTION_STATE_FILE,
+# EC2_EXPERIMENT_TAG, ...) before this file runs, and keys.env must not clobber
+# it with this file's local defaults.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
 
@@ -69,9 +67,9 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
 
     Sharding splits ONE model's replicates across N processes/instances,
     orthogonally to this study's one-model-per-box fan-out. Raises
-    ``SystemExit`` immediately at import if `var` is set but unparseable as
-    ``"int/int"``, or fails ``count >= 1`` / ``0 <= index < count`` -- rather
-    than silently running unsharded or crashing inside ``InductionExperiment``.
+    ``SystemExit`` at import if `var` is set but unparseable, or fails
+    ``count >= 1`` / ``0 <= index < count`` -- rather than silently running
+    unsharded or crashing inside ``InductionExperiment``.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -88,10 +86,10 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
 def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
     """Parse ``INDUCTION_FORCE_RERUN`` into the set of seeds to re-collect.
 
-    `raw` is ``""`` (off -> ``None``), ``"1"`` (every seed in `full_range`),
-    or ``"a-b"`` (that inclusive subrange, validated against `full_range`).
-    Raises ``SystemExit`` immediately at import on an unparseable value or a
-    subrange outside `full_range`, never silently as a no-op resume.
+    `raw` is ``""`` (off -> ``None``), ``"1"`` (every seed in `full_range`), or
+    ``"a-b"`` (that inclusive subrange, validated against `full_range`). Raises
+    ``SystemExit`` at import on an unparseable value or an out-of-range
+    subrange, never silently as a no-op resume.
     """
     raw = raw.strip()
     if not raw:
@@ -115,13 +113,12 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 SHARD = _parse_shard("INDUCTION_SHARD")
 
 # A shard needs its OWN AWS tag and state file -- without that, shard 1
-# reattaches to shard 0's live box and swaps the served model out from under
-# a run in progress (the exact collision the periodic_divisor driver hit
-# first). This code derives both from the lane, rather than asking every
-# caller to remember two more environment variables, which removes that
-# footgun.
+# reattaches to shard 0's live box and swaps the served model out from under a
+# run in progress (the collision the periodic_divisor driver hit first). Both
+# are derived from the lane rather than asking callers to remember two more
+# environment variables.
 #
-# This MUST execute before smolbench.evals.providers.ec2 is imported below: ec2.py
+# MUST execute before smolbench.evals.providers.ec2 is imported below: ec2.py
 # freezes its EC2_* constants from os.environ at import time, so a tag set
 # afterwards is silently ignored. Unsharded runs get an empty suffix.
 _LANE = ""
@@ -148,60 +145,51 @@ from smolbench.induction.periodic import (  # noqa: E402
 #: alias a sibling study's. See the module docstring's "Seeds" section.
 BASE_SEED: int = 0
 
-#: USER-LOCKED. Unlike every sibling driver's ``*_N_REPLICATES``
-#: environment override, this value is NOT environment-overridable: the
-#: family-ladder comparison across 21 checkpoints is only
-#: apples-to-apples if every checkpoint collects the same replicate
-#: count.
+#: USER-LOCKED. Unlike every sibling driver's ``*_N_REPLICATES`` environment
+#: override, this is NOT environment-overridable: the family-ladder comparison
+#: across 21 checkpoints is apples-to-apples only if every checkpoint collects
+#: the same replicate count.
 N_REPLICATES: int = 30
 
-#: The four amounts-of-positive-information conditions, matching
-#: periodic_moe's exactly. See the module docstring's "The four info
-#: arms" section.
+#: The four amounts-of-positive-information conditions, matching periodic_moe's
+#: exactly. See the module docstring's "The four info arms" section.
 INFO_TYPES: tuple[str, ...] = ("intens", "extens", "noise_intens", "zero")
 
-#: The served checkpoints' context window. Every EC2_DEPLOY_SPECS entry
-#: in this study's roster serves at max_model_len=131072 uniformly (see
-#: that table's roster comment). A scaling study cannot let context vary
-#: with the vendor's own YaRN generosity, or a family's ceiling would be
-#: confounded with its context budget, rather than its parameter count.
+#: The served checkpoints' context window. Every EC2_DEPLOY_SPECS entry in this
+#: study's roster serves at max_model_len=131072 uniformly. A scaling study
+#: cannot let context vary with the vendor's own YaRN generosity, or a family's
+#: ceiling is confounded with its context budget rather than its parameters.
 CONTEXT_LIMIT: int = 131_072
 
-#: Tokens withheld from the completion budget. This covers what a
-#: count() on one seed's prompt cannot see. That includes the chat
-#: template's own special/BOS tokens (count() deliberately excludes
-#: them -- see the Tokenizer protocol docstring in tokenization.py). It
-#: also includes cross-seed variation in the randomly-sampled labels,
-#: which compounds over a long extensional listing. It is sized
-#: generously (sibling studies measured this reserve in the 1,500-3,700
-#: token range on comparable listings), so the derived budget stays
-#: safe even when the seed probe below misses the single longest seed
-#: across all 30. It costs only completion headroom that would
-#: otherwise go unused.
+#: Tokens withheld from the completion budget, covering what a count() on one
+#: seed's prompt cannot see: the chat template's special/BOS tokens (count()
+#: deliberately excludes them -- see the Tokenizer protocol docstring in
+#: tokenization.py) and cross-seed variation in the randomly-sampled labels,
+#: which compounds over a long extensional listing. Sized generously -- sibling
+#: studies measured this reserve at 1,500-3,700 tokens on comparable listings --
+#: so the budget stays safe even when the probe below misses the longest of the
+#: 30 seeds. It costs only completion headroom that would go unused.
 TEMPLATE_RESERVE: int = 8_000
 
-#: Seeds sampled when measuring the worst-case prompt in
-#: completion_budget. See that function's docstring for why bracketed
-#: subsampling suffices.
+#: Seeds sampled when measuring the worst-case prompt in completion_budget; see
+#: that function's docstring for why bracketed subsampling suffices.
 PROBE_SEEDS: int = 6
 
-#: Floor below which a run is not worth starting. A completion budget
-#: below this is likely to truncate a CoT checkpoint's reasoning before
-#: it reaches the final integer. That collects empties (no completion AND
-#: no reasoning trace), not data that can be scored, marked invalid, or
-#: even diagnosed after the fact.
+#: Floor below which a run is not worth starting: a smaller budget is likely to
+#: truncate a CoT checkpoint's reasoning before the final integer, collecting
+#: empties (no completion AND no reasoning trace) rather than data that can be
+#: scored, marked invalid, or diagnosed after the fact.
 MIN_VIABLE_BUDGET: int = 48_000
 
-#: Ceiling applied AFTER the derived per-model budget below. A single
-#: plain int, NOT a per-model dict -- see completion_budget's docstring
-#: for why a cross-vendor SCALING study cannot let this vary by vendor.
+#: Ceiling applied AFTER the derived per-model budget below. A plain int, NOT a
+#: per-model dict -- see completion_budget's docstring for why a cross-vendor
+#: SCALING study cannot let this vary by vendor.
 BUDGET_CAP: int = CONTEXT_LIMIT
 
-# Byte-identical to periodic_moe's / periodic_divisor's template. The
-# prompt WORDING stays fixed across every induction study to date. So the
-# only thing that ever varies between studies is the roster (model, quiz
-# generator, or, in periodic_divisor's case, the harmonic set) that fills
-# in $positive_info / $seq_len / $label.
+# Byte-identical to periodic_moe's / periodic_divisor's template: the prompt
+# WORDING stays fixed across every induction study to date, so the only thing
+# varying between studies is the roster (model, quiz generator, or
+# periodic_divisor's harmonic set) filling in $positive_info / $seq_len / $label.
 template = string.Template(
     "You are a precise integer counter.\n"
     "\n"
@@ -221,12 +209,10 @@ template = string.Template(
 )
 
 # Spec key (smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS key, also vLLM's
-# --served-model-name) -> short analysis tag used in result directory
-# names and figure legends. This is exactly EC2_DEPLOY_SPECS's 21
-# family-ladder entries: every key except the "qwen2.5-1.5b" single-GPU
-# smoke entry. Order is the study's canonical order -- see
-# selected_models' docstring for why this matters beyond mere
-# readability.
+# --served-model-name) -> short analysis tag used in result directory names and
+# figure legends. Exactly EC2_DEPLOY_SPECS's 21 family-ladder entries: every key
+# except the "qwen2.5-1.5b" single-GPU smoke entry. Declaration order is the
+# study's canonical order -- see selected_models' docstring.
 MODELS: dict[str, str] = {
     # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (FP8) --
     "qwen3.5-27b": "qwen35_27b",
@@ -259,22 +245,19 @@ MODELS: dict[str, str] = {
 }
 
 # Per-request extra args that turn CoT ON for each of the 21 checkpoints.
-# This table is TOTAL over MODELS by construction (written out literally,
-# not built from a prefix rule). That makes the table itself the audit
-# surface against ec2.py's "Reasoning wiring" comment, and it means a
-# typo in a family prefix can never produce a silent KeyError deep inside
-# main() on a billing box. Four rules, summarized here (full rationale
-# for each is in the module docstring):
+# TOTAL over MODELS by construction (written out literally, not built from a
+# prefix rule): that makes the table itself the audit surface against ec2.py's
+# "Reasoning wiring" comment, and a typo in a family prefix can never produce a
+# silent KeyError deep inside main() on a billing box. Four rules:
 #   1. Qwen3.5 / Nemotron-3 / Gemma-4 / GLM-4.x / EXAONE / K-EXAONE:
 #      {"chat_template_kwargs": {"enable_thinking": True}}.
 #   2. DeepSeek V4-Flash / V3.1 / V4-Pro: {"chat_template_kwargs":
 #      {"thinking": True}} -- note the DIFFERENT kwarg name from rule 1.
 #   3. Ministral-3 (3B/8B/14B): {} -- its think protocol is switched on by
 #      ec2.py's injected system_prompt, not by a chat_template_kwarg.
-#   4. Gemma-4-* and EXAONE-4.0-32B in particular NEED their explicit
-#      "enable_thinking": True: both checkpoints' shipped templates default
-#      thinking OFF, so omitting the kwarg would silently serve them
-#      non-reasoning while every other checkpoint in the study reasons.
+#   4. Gemma-4-* and EXAONE-4.0-32B NEED their explicit "enable_thinking": True:
+#      both ship templates defaulting thinking OFF, so omitting the kwarg would
+#      silently serve them non-reasoning while every other checkpoint reasons.
 COT_ARGS: dict[str, dict] = {
     "qwen3.5-27b": {"chat_template_kwargs": {"enable_thinking": True}},
     "qwen3.5-122b-a10b": {"chat_template_kwargs": {"enable_thinking": True}},
@@ -304,17 +287,15 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
 
     Uses the plain ``periodic_moe`` baseline config (``n=9`` harmonics, default
-    consecutive-integer periods 1..9, lcm==2,520), unmodified: the study's
-    independent variable is the MODEL, not the quiz. `seed` drives label
-    sampling and, downstream in ``ReplicateHarness``, the per-request decoding
-    seed. `model` is the checkpoint's ``EC2_DEPLOY_SPECS``/``MODELS`` spec key,
-    required because ``noise_intens`` is padded to the matching ``extens``
-    prompt's token count under THIS model's own tokenizer
-    (``for_model(model)``); the other three arms are model-independent and stay
-    byte-identical across checkpoints. ``for_model`` is called by plain
-    module-global lookup, so ``tests/induction/test_induction_study.py`` can
-    monkeypatch it (and this function) to keep the offline suite from
-    downloading a tokenizer.
+    periods 1..9, lcm==2,520), unmodified: the study's independent variable is
+    the MODEL, not the quiz. `seed` drives label sampling and, downstream in
+    ``ReplicateHarness``, the per-request decoding seed. `model` is the
+    ``EC2_DEPLOY_SPECS``/``MODELS`` spec key, required because ``noise_intens``
+    is padded to the matching ``extens`` prompt's token count under THIS model's
+    tokenizer; the other three arms stay byte-identical across checkpoints.
+    ``for_model`` is called by plain module-global lookup, so
+    ``tests/induction/test_induction_study.py`` can monkeypatch it (and this
+    function) to keep the offline suite from downloading a tokenizer.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(template, {}, numeric_count_query_gen)
@@ -330,17 +311,16 @@ def completion_budget(model: str, seeds: range) -> int:
 
     Returns ``min(CONTEXT_LIMIT - worst - TEMPLATE_RESERVE, BUDGET_CAP)``, where
     ``worst`` is the largest prompt token count over every info type of every
-    probed seed. `seeds` is the full seed range this study will send to `model`,
-    but only ``PROBE_SEEDS`` of them are probed, always including both
-    endpoints: every structural driver of prompt length is identical across
-    seeds, only the sampled labels vary, and ``TEMPLATE_RESERVE`` covers far
-    more than that residual. Pure CPU plus a HuggingFace tokenizer fetch, so it
-    runs before anything is provisioned and billing. ``BUDGET_CAP`` is a single
-    ``int`` (== ``CONTEXT_LIMIT``), not a per-model dict -- a tighter cap on one
-    family would make its accuracy gap inseparable from "it had less room to
-    reason" -- so the ``min()`` is a documented no-op guard against a future
-    per-vendor cap. Raises ``SystemExit`` if the derived budget falls below
-    ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
+    probed seed. Only ``PROBE_SEEDS`` of `seeds` are probed, always including
+    both endpoints: every structural driver of prompt length is identical across
+    seeds, only the sampled labels vary, and ``TEMPLATE_RESERVE`` covers far more
+    than that residual. Pure CPU plus a HuggingFace tokenizer fetch, so it runs
+    before anything is provisioned and billing. ``BUDGET_CAP`` is a single ``int``
+    (== ``CONTEXT_LIMIT``), not a per-model dict -- a tighter cap on one family
+    would make its accuracy gap inseparable from "it had less room to reason" --
+    so the ``min()`` is a no-op guard against a future per-vendor cap. Raises
+    ``SystemExit`` if the budget falls below ``MIN_VIABLE_BUDGET``, which would
+    truncate CoT and collect empties.
     """
     tok = for_model(model)
     picks = sorted({seeds[0], seeds[-1],
@@ -366,11 +346,10 @@ def completion_budget(model: str, seeds: range) -> int:
     return budget
 
 
-# notebook_dir="induction" is what makes results_store.experiment_name()
-# derive this experiment's S3 log path segment as "induction". So every
-# replicate this study collects lands under S3 keys shaped
-# induction/<spec-key>/seed=<seed>/<info>--<run_ts>.yaml, distinct from
-# every sibling study's own notebook_dir-derived prefix.
+# notebook_dir="induction" makes results_store.experiment_name() derive this
+# experiment's S3 log path segment as "induction", so every replicate lands
+# under keys shaped induction/<spec-key>/seed=<seed>/<info>--<run_ts>.yaml,
+# distinct from every sibling study's own notebook_dir-derived prefix.
 EXPERIMENT = InductionExperiment(
     notebook_dir="induction",
     archetype_tags=MODELS,
@@ -380,13 +359,12 @@ EXPERIMENT = InductionExperiment(
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
     shard=SHARD,
-    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip.
-    # NOTE: reads are EARLIEST-wins (see smolbench/evals/results_store.py),
-    # so a forced re-run appends to the S3 log but does NOT supersede the
-    # original on read -- voiding data requires explicit exclusion.
-    # "1" forces the full seed range. "a-b" forces the inclusive seed
-    # subrange a..b. Combines with INDUCTION_SHARD (a shard forces only the
-    # forced seeds it owns).
+    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip. "1"
+    # forces the full seed range, "a-b" the inclusive subrange a..b; combines
+    # with INDUCTION_SHARD (a shard forces only the forced seeds it owns).
+    # Reads are EARLIEST-wins (see smolbench/evals/results_store.py), so a
+    # forced re-run appends to the S3 log but does NOT supersede the original
+    # on read -- voiding data requires explicit exclusion.
     force_seeds=_parse_force_seeds(
         os.environ.get("INDUCTION_FORCE_RERUN", ""),
         range(BASE_SEED, BASE_SEED + N_REPLICATES),
@@ -403,11 +381,10 @@ def selected_models() -> "tuple[str, ...]":
     unfiltered run deterministic.
 
     Raises ``SystemExit`` -- before any instance is provisioned -- if
-    ``INDUCTION_MODELS`` names a key not in ``MODELS``, or is SET but resolves
-    to ZERO keys (e.g. ``","``, non-empty and so past the "unset selects all"
-    branch). The empty case matters because ``main()`` provisions
-    unconditionally and never tears down, so it would leave a GPU box billing
-    with nothing driving it.
+    ``INDUCTION_MODELS`` names an unknown key, or is SET but resolves to ZERO
+    keys (e.g. ``","``, non-empty and so past the "unset selects all" branch).
+    The empty case matters because ``main()`` provisions unconditionally and
+    never tears down, so it would leave a GPU box billing with nothing to do.
     """
     wanted = os.environ.get("INDUCTION_MODELS", "").strip()
     if not wanted:
@@ -432,9 +409,9 @@ def main(argv: "list[str] | None" = None) -> None:
     """Warm tokenizers, derive budgets, provision, run, and summarize: the entry point.
 
     Makes LIVE AWS calls on every path except ``--teardown`` and a failed
-    argument parse, and never tears the instance down otherwise (see the module
-    docstring's "Lifecycle contract and COST" section). `argv` is a parameter so
-    a test or notebook cell can call this without a subprocess.
+    argument parse, and never tears the instance down otherwise -- see the
+    module docstring's "Lifecycle contract and COST" section. `argv` is a
+    parameter so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."
@@ -459,10 +436,9 @@ def main(argv: "list[str] | None" = None) -> None:
     models = selected_models()
     logging.info(f"running models: {list(models)}")
 
-    # Warm every model's tokenizer and derive its completion budget
-    # BEFORE provisioning anything. An HF tokenizer-download failure or
-    # an under-budget SystemExit must never land between a billing GPU
-    # box and the first inference request.
+    # Warm every tokenizer and derive its completion budget BEFORE provisioning
+    # anything: an HF download failure or an under-budget SystemExit must never
+    # land between a billing GPU box and the first inference request.
     seeds = range(BASE_SEED, BASE_SEED + EXPERIMENT.n_replicates)
     budgets: dict[str, int] = {}
     for model in models:
@@ -476,11 +452,9 @@ def main(argv: "list[str] | None" = None) -> None:
             extra_args={"max_completion_tokens": budgets[model], **COT_ARGS[model]},
         )
         EXPERIMENT.summarize(model)
-    # NOTE: deliberately NO EXPERIMENT.teardown() here. See the module
-    # docstring's "Lifecycle contract" section. The fleet supervisor owns
-    # instance lifecycle, and this box may be reused by the deduction
-    # phase after this process exits. A teardown here would terminate it
-    # out from under that reattachment.
+    # Deliberately NO EXPERIMENT.teardown() here -- see the module docstring's
+    # "Lifecycle contract and COST" section. This box may be reused by the
+    # deduction phase after this process exits.
     print(f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
           flush=True)
 

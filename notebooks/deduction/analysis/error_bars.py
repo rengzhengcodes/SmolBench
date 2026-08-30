@@ -6,17 +6,16 @@ pre-registered contrast's paired difference. B is chosen by MEASUREMENT:
 
 The resampling unit is a THEOREM BLOCK, not a cell (a cell is one
 ``(theorem_id, k, prompt_rung)`` triple): the cells of one theorem share a
-ground truth and a proof prefix, so whole blocks are drawn with replacement to
-keep that correlation -- the standard cluster/block bootstrap (Davison &
-Hinkley 1997, ch. 3; Field & Welsh 2007). Effective n is the block count, so
-the intervals come out wider than a naive binomial on cells; both figures are
-printed. They are BCa (Efron 1987) accelerated by a jackknife over blocks,
-shown beside percentile intervals; where the bias correction is undefined (only
-at a degenerate 0.000) the code falls back to percentile and reports the
-fallback, not a silent NaN. The PRIMARY p-value uses the same unit: a block
-SIGN-FLIP permutation test on per-theorem differences, which collapses onto
-exact McNemar at one cell per block. Cell-level McNemar stays as a labelled
-DESCRIPTIVE column; the gap between the two is clustering.
+ground truth and a proof prefix, so whole blocks are drawn with replacement --
+the standard cluster/block bootstrap (Davison & Hinkley 1997, ch. 3; Field &
+Welsh 2007). Effective n is the block count, so intervals come out wider than a
+naive binomial on cells; both figures are printed. They are BCa (Efron 1987),
+jackknifed over blocks and shown beside percentile intervals; where the bias
+correction is undefined (only at a degenerate 0.000) the code falls back to
+percentile and reports the fallback, not a silent NaN. The PRIMARY p-value uses
+the same unit: a block SIGN-FLIP permutation test on per-theorem differences,
+which collapses onto exact McNemar at one cell per block. Cell-level McNemar
+stays as a labelled DESCRIPTIVE column; the gap between the two is clustering.
 
 Denominator rule, COUNT-AS-FAILURE by default: a cell with no surviving
 measurable row in one lane scores 0 there exactly when its key is measurable in
@@ -25,9 +24,8 @@ own output". Dropping such cells instead makes denominators model-dependent
 (five lanes carry 711 cells, not 712) and rewards breaking the verifier;
 ``--no-count-as-failure`` restores that drop rule for sensitivity checks. The
 232 cells unmeasurable in EVERY lane stay excluded either way. Contrasts run on
-the 21-way paired cell set, so all rest on the same cells; pool size, per-lane
-denominators and their maximum disagreement are printed, never quoted as
-constants.
+the 21-way paired cell set; pool size, per-lane denominators and their maximum
+disagreement are printed, never quoted as constants.
 
 Row rules are NOT re-implemented here: ``lane_outcomes`` grades through
 ``power_analysis.grade_verdicts``, shared with ``load_joint_cells`` and
@@ -71,22 +69,22 @@ from power_analysis import (  # noqa: E402
 #: (0.05/21 = 2.38e-03). No rejection decision is made at the floor.
 B_SIGNFLIP = 1_000_000
 
-#: Fixed RNG seed for the permutation test. The report must be byte-reproducible
+#: Fixed RNG seed for the permutation test: the report must be byte-reproducible
 #: from the same rows. Nothing here draws from entropy.
 SIGNFLIP_SEED = 20260821
 
-#: Resample counts swept by ``--mode sweep``. Each count runs on an INDEPENDENT
-#: RNG stream. This way the drift between them measures Monte-Carlo error, not
-#: a shared seed's luck.
+#: Resample counts swept by ``--mode sweep``, each on an INDEPENDENT RNG
+#: stream, so the drift between them measures Monte-Carlo error rather than a
+#: shared seed's luck.
 B_GRID = (1_000, 5_000, 20_000, 50_000, 100_000, 200_000, 500_000)
 
 #: Resamples processed per batch. Bounds peak memory at roughly
 #: ``CHUNK * n_theorems * n_models * 4`` bytes regardless of B.
 CHUNK = 2_000
 
-#: Drift below this (in accuracy points) is smaller than anything the write-up
-#: interprets. Rates are reported to 3 decimals, so half a thousandth on an
-#: interval endpoint is invisible.
+#: Drift below this (in accuracy points) cannot change a printed figure: rates
+#: are reported to 3 decimals, so half a thousandth on an interval endpoint is
+#: invisible.
 DRIFT_TOL = 0.0005
 
 
@@ -96,8 +94,8 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Valid under ARBITRARY dependence, which this family needs: the 21 ladder
     contrasts share cells and models. The sort is STABLE because several
     contrasts sit exactly on the permutation test's ``1/(B+1)`` resolution
-    floor, and those ties must not make the rejection mask depend on the order
-    the contrasts were built in.
+    floor, and those ties must not make the rejection mask depend on contrast
+    build order.
 
     Returns
     -------
@@ -121,10 +119,10 @@ def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarra
     Returns
     -------
     succ : ndarray, shape (n_theorems, n_models)
-        Successes, columns in `models` order and rows in sorted theorem order.
+        Successes, columns in `models` order, rows in sorted theorem order.
     size : ndarray, shape (n_theorems,)
-        Cell count per block. The bootstrap resamples both together, so a
-        theorem is always drawn whole.
+        Cell count per block; resampled together with `succ`, so a theorem is
+        always drawn whole.
     """
     thms = sorted(blocks)
     succ = np.zeros((len(thms), len(models)), dtype=np.int32)
@@ -145,14 +143,12 @@ def _bca_bounds(theta_star: np.ndarray, theta_hat: float, jack: np.ndarray,
     ----------
     jack : ndarray
         Jackknife values, one per theorem block.
-    alpha : float
-        Two-sided level (0.05 for a 95% interval).
 
     Returns
     -------
     tuple of (float, float, bool)
         ``(lo, hi, used_percentile_fallback)``; the flag is True when the bias
-        correction z0 was undefined and a plain percentile interval was used.
+        correction z0 was undefined and a percentile interval was used instead.
     """
     lo_pct, hi_pct = np.percentile(theta_star, [100 * alpha / 2,
                                                 100 * (1 - alpha / 2)])
@@ -184,28 +180,22 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     ----------
     succ, size : ndarray
         From `block_matrix`.
-    seed : int
-        Fixes the resamples.
     alpha : float, optional
         Two-sided interval level.
 
     Returns
     -------
     dict
-        ``star_rate`` (the ``(B, n_models)`` resampled rate matrix, kept so
-        `diff_ci` can pair two models on the SAME theorem draws), ``jack``
-        (``(n_theorems, n_models)`` jackknife rates), ``theta_hat``
-        (full-sample rate per model), ``marginal`` (BCa and percentile
-        intervals keyed by model index) and ``alpha``.
+        ``star_rate``, ``jack``, ``theta_hat``, ``marginal`` (per model index)
+        and ``alpha``. The ``(B, n_models)`` `star_rate` matrix is retained so
+        `diff_ci` can pair two models on the SAME theorem draws.
     """
     n_thm, n_mod = succ.shape
     rng = np.random.default_rng(seed)
 
-    # The loop runs in chunks, so memory stays flat in B. The intermediate
-    # ``succ[idx]`` array has shape (chunk, n_thm, n_models). At B = 500k
-    # in one shot, that array would need about 90 GB. This is why the loop
-    # exists; it is not premature optimisation. Only the final
-    # (B, n_models) rate matrix is kept.
+    # Chunked so memory stays flat in B: the intermediate ``succ[idx]`` has
+    # shape (chunk, n_thm, n_models), which at B = 500k in one shot would
+    # need about 90 GB. Only the final (B, n_models) rate matrix is kept.
     star_rate = np.empty((B, n_mod), dtype=np.float64)
     done = 0
     while done < B:
@@ -246,14 +236,13 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
     bs : dict
         `bootstrap_stats` output.
     ja, jb : int
-        Columns of ``bs["star_rate"]`` for the baseline and the comparison
-        model.
+        Model columns: baseline and comparison, in that order.
 
     Returns
     -------
     dict
-        ``diff`` (full-sample paired difference), ``lo``/``hi`` (BCa), ``se``
-        and ``fallback``.
+        ``diff`` (full-sample paired difference), ``lo``/``hi`` (BCa), ``se``,
+        ``fallback``.
     """
     star = bs["star_rate"][:, jb] - bs["star_rate"][:, ja]
     hat = float(bs["theta_hat"][jb] - bs["theta_hat"][ja])
@@ -265,19 +254,15 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
 def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
     """Compute discordant counts and the exact McNemar p over all paired cells.
 
-    Treats each cell as independent, so it is a DESCRIPTIVE column beside the
-    PRIMARY block sign-flip test, never used for inference.
-
-    Parameters
-    ----------
-    blocks : dict
-        As built by `build_pool`.
+    Treats each cell of `build_pool`'s `blocks` as independent, so it is a
+    DESCRIPTIVE column beside the PRIMARY block sign-flip test, never used for
+    inference.
 
     Returns
     -------
     tuple
-        ``(nb, nc, p)``: cells where `a` succeeds and `b` fails, cells where
-        `b` succeeds and `a` fails, and the exact two-sided McNemar p-value.
+        ``(nb, nc, p)``: cells where `a` succeeds and `b` fails, the reverse,
+        and the exact two-sided McNemar p-value.
     """
     ia, ib = models.index(a), models.index(b)
     nb = nc = 0
@@ -296,28 +281,24 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
                      chunk: int = 2_000) -> np.ndarray:
     """Compute block sign-flip permutation p-values, one per contrast.
 
-    For contrast ``(label, a, b)`` in `contrasts`, let
-    ``D_t = successes_b(t) - successes_a(t)`` be the per-THEOREM difference.
-    The null is: within a theorem, which of the two models does better is a
-    coin flip. Block signs are then exchangeable, so
-
-        p = ( #{ |sum_t eps_t D_t| >= |sum_t D_t| } + 1 ) / (B + 1)
-
-    with eps uniform on ``{-1, +1}^n_theorems``. The ``+1``/``+1`` is the
-    standard Monte-Carlo correction keeping the test exact-valid at finite B.
-    With one cell per theorem every D_t is 0 or +-1 and the sign-flip
-    distribution IS the binomial McNemar conditions on, so this degenerates to
-    cell-level exact McNemar.
+    Sign-flips the per-THEOREM differences
+    ``D_t = successes_b(t) - successes_a(t)``: under the null, which model does
+    better within a theorem is a coin flip, so block signs are exchangeable and
+    ``p = (#{|sum eps_t D_t| >= |sum D_t|} + 1) / (B + 1)`` for eps uniform on
+    ``{-1, +1}^n_theorems``. Both ``+1``s are
+    the Monte-Carlo correction that keeps the test exact-valid at finite B.
+    With one cell per theorem the sign-flip distribution IS the binomial
+    McNemar conditions on, so this degenerates to cell-level exact McNemar.
 
     Parameters
     ----------
     succ : ndarray
         `block_matrix`'s array, columns in `models` order.
     contrasts : list
-        ``(label, a, b)`` triples. All are permuted with the SAME eps draws,
-        which costs nothing and keeps the family's dependence structure intact.
+        ``(label, a, b)`` triples, all permuted with the SAME eps draws, which
+        costs nothing and keeps the family's dependence structure intact.
     chunk : int, optional
-        Bounds peak memory.
+        Resamples per batch; bounds peak memory.
 
     Returns
     -------
@@ -336,9 +317,8 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     while done < B:
         take = min(chunk, B - done)
         eps = rng.integers(0, 2, size=(take, n_thm)).astype(np.float64) * 2 - 1
-        # The comparison uses >= with a tolerance. The observed assignment
-        # itself must always count, and these are integer sums carried in
-        # float.
+        # >= with a tolerance: the observed assignment must always count, and
+        # these are integer sums carried in float.
         count += (np.abs(eps @ diff) >= observed - 1e-9).sum(axis=0)
         done += take
     return (count + 1) / (B + 1)
@@ -350,23 +330,23 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
 
     Reads ``<rows_dir>/<model>/verified_rows.jsonl`` and, when `recovery_dir`
     is given, appends ``<recovery_dir>/<model>/recovered_rows.jsonl`` (DojoInit
-    recovery) AFTER it -- those rows share the primary schema but carry their
+    recovery) AFTER it: those rows share the primary schema but carry their
     verdict in ``recovered_verdict``, and only fill holes, never overriding a
     measured cell. Each source is screened by `reject_unverified_verdicts` on
-    its OWN verdict field before any row reaches `grade_verdicts`; otherwise a
+    its OWN verdict field before any row reaches `grade_verdicts`, or a
     generation-time ``"unverified"`` sentinel would grade as a real failure and
-    bias this lane's rate invisibly.
+    bias the lane's rate invisibly.
 
     Returns
     -------
     graded : dict
         ``(theorem_id, k, prompt_rung) -> 0/1`` under
-        ``power_analysis.grade_verdicts`` (the shared rule: the EARLIEST
-        surviving row wins, and an unmeasurable verdict is not a measurement).
+        ``power_analysis.grade_verdicts`` (the shared rule: EARLIEST surviving
+        row wins, an unmeasurable verdict is not a measurement).
     no_survivor : set
-        Cell keys that rule could not grade at all. Returned unresolved rather
-        than scored, because only a cross-lane comparison tells a
-        model-dependent fault from an unrunnable cell; `build_pool` decides.
+        Cell keys that rule could not grade. Returned unresolved rather than
+        scored: only a cross-lane comparison separates a model-dependent fault
+        from an unrunnable cell, and `build_pool` decides.
     """
     rows: dict = {}
     sources = [(rows_dir / model / "verified_rows.jsonl", "verdict")]
@@ -377,9 +357,9 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     reject_superseded(path for path, _field in sources)
     for path, field in sources:
         parsed = [json.loads(line) for line in path.read_text().splitlines() if line]
-        # Refused HERE, on this source's own field, before any row is
-        # graded. See reject_unverified_verdicts for why the field check
-        # must run per-source, not always on "verdict".
+        # Refused HERE, on this source's own field, before any row is graded
+        # -- see reject_unverified_verdicts for why the check is per-source
+        # rather than always on "verdict".
         reject_unverified_verdicts(parsed, field, path)
         for row in parsed:
             if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
@@ -402,8 +382,6 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
 
     Parameters
     ----------
-    rows_dir, recovery_dir : Path
-        Passed through to `lane_outcomes`.
     count_as_failure : bool, optional
         Score a model-dependent no-survivor cell as 0 instead of dropping it
         (the module docstring's denominator rule); default True.
@@ -413,18 +391,16 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
     tuple
         ``(models, blocks, prompt_rungs, meta)``: sorted model names; blocks as
         ``{theorem_id: {(k, prompt_rung): {model: 0 or 1}}}``; the sorted
-        distinct prompt rungs present; and `meta`, recording what the
-        denominator rule actually did (cells added, per lane, and each lane's
-        own-denominator rate) so the report can PRINT the rule's cost instead
-        of asserting it is negligible.
+        distinct prompt rungs present; and `meta`, recording what the rule
+        actually did (cells added per lane, each lane's own-denominator rate)
+        so the report can PRINT its cost instead of asserting it is negligible.
     """
     graded, nosurv = {}, {}
     for model in MODELS:
         graded[model], nosurv[model] = lane_outcomes(rows_dir, model, recovery_dir)
 
-    # A no-survivor cell is MODEL-DEPENDENT only when some other lane
-    # graded it. The fault then travelled with this model's own output,
-    # not with the theorem.
+    # A no-survivor cell is MODEL-DEPENDENT only when some other lane graded
+    # it: the fault then travelled with this model's output, not the theorem.
     measurable_somewhere = set().union(*(set(g) for g in graded.values()))
     added: dict[str, set] = {m: set() for m in MODELS}
     if count_as_failure:
@@ -441,12 +417,10 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
         }
     prompt_rungs = sorted({ck[1] for cmap in blocks.values() for ck in cmap})
 
-    # What the denominator rule COST, measured rather than asserted. Every
-    # added cell scores 0. A lane's successes stay unchanged, so the whole
-    # effect is a larger denominator. The report quotes this cost pooled
-    # over the lane, and again over the one prompt rung that absorbed the
-    # cell. The rung figure is where the cost bites hardest: a rung is
-    # about 1/4 of a lane.
+    # What the rule COST, measured rather than asserted. Successes are
+    # unchanged, so the whole effect is a larger denominator; the cost is
+    # quoted pooled over the lane and again over the one prompt rung that
+    # absorbed the cell (a rung is ~1/4 of a lane, so that is where it bites).
     cost = []
     for model in MODELS:
         for thm, k, rung in sorted(added[model]):
@@ -485,7 +459,7 @@ def load(rows_dir: Path) -> tuple:
     Raises
     ------
     SystemExit
-        If any model's row file is missing.
+        If any of those row files is missing.
     """
     files = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
     missing = [f for f in files if not f.exists()]
@@ -495,12 +469,11 @@ def load(rows_dir: Path) -> tuple:
 
 
 def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
-    """Measure Monte-Carlo drift across B, so B is chosen rather than asserted.
+    """Measure Monte-Carlo drift across `B_GRID`, so B is chosen, not asserted.
 
-    Runs `bootstrap_stats` at each B in `B_GRID`, on an INDEPENDENT RNG stream
-    per B, and prints the interval-endpoint drift against the next larger B.
-    `succ`/`size` come from `block_matrix`; `models` matches `succ`'s column
-    order.
+    Runs `bootstrap_stats` at each B on an INDEPENDENT RNG stream and prints
+    the interval-endpoint drift against the next larger B. `succ`/`size` come
+    from `block_matrix`; `models` matches `succ`'s column order.
     """
     print(f"Resample-count sweep -- {succ.shape[0]} theorem blocks, "
           f"{int(size.sum())} cells, {len(models)} models")
@@ -529,12 +502,11 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
                 meta=None, sensitivity=None) -> None:
     """Print the full report and optionally write a JSON summary.
 
-    Prints marginal pass@1 rates with BCa intervals; then every PRIMARY
+    Prints marginal pass@1 rates with BCa intervals; every PRIMARY
     (within-family) and SECONDARY (cross-family) contrast with its paired
-    difference, block sign-flip p-value, cell-level McNemar p-value and Holm/BH
-    rejection; then the design effect versus a naive binomial; then, when
-    `sensitivity` is given, the same PRIMARY test under the other denominator
-    rules.
+    difference, block sign-flip p, cell-level McNemar p and Holm/BH rejection;
+    the design effect versus a naive binomial; and, when `sensitivity` is
+    given, the same PRIMARY test under the other denominator rules.
 
     Parameters
     ----------
@@ -543,13 +515,11 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
     blocks : dict
         From `build_pool`; feeds the McNemar column.
     per_lane : dict
-        Model name -> that lane's rate over its OWN measurable denominator
+        Model -> that lane's rate over its OWN measurable denominator
         (``build_pool``'s ``meta["own_rate"]``).
-    out_json : Path or None
-        Where to write the results dict as JSON, if given.
     meta : dict, optional
-        That same denominator-rule metadata; when given, the report prints what
-        the rule did.
+        `build_pool`'s denominator-rule metadata; when given, the report prints
+        what the rule did.
     sensitivity : list, optional
         ``(label, n_cells, n_blocks, n_rejected, max_gap)`` per alternate
         denominator pool; a row with ``n_cells == 0`` is a plain message,
@@ -650,10 +620,10 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
             rows.append((label, a, b, ci, nb, nc, float(p_block[i]), p_cell))
         pv = np.array([r[6] for r in rows])          # PRIMARY inference
         pv_cell = np.array([r[7] for r in rows])     # descriptive
-        # PRIMARY gets Holm (FWER, arbitrary dependence); SECONDARY gets the
-        # pre-registered Benjamini-Hochberg FDR at q = 0.05, because it is an
-        # exploratory tier. Running BH here rather than in a throwaway script
-        # is the point: every number in the report must come out of this file.
+        # PRIMARY gets Holm (FWER, arbitrary dependence); SECONDARY, an
+        # exploratory tier, gets the pre-registered Benjamini-Hochberg FDR at
+        # q = 0.05. Both run here, not in a throwaway script: every number in
+        # the report must come out of this file.
         rej = holm(pv) if corrected else benjamini_hochberg(pv, Q_SECONDARY)
         rej_cell = holm(pv_cell) if corrected else benjamini_hochberg(pv_cell,
                                                                      Q_SECONDARY)
@@ -748,11 +718,6 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
 def main(argv=None) -> int:
     """Parse arguments, build the pool, and run the requested mode.
 
-    Returns
-    -------
-    int
-        Process exit code (0 on success).
-
     Raises
     ------
     SystemExit
@@ -790,8 +755,7 @@ def main(argv=None) -> int:
         return 0
 
     # Sensitivity pools: the same PRIMARY test under the other denominator
-    # rules. This lets the reader attribute a change to the rule, rather
-    # than guess. The script computes this here; it does not assert it.
+    # rules, so a change can be attributed to the rule rather than guessed at.
     sensitivity = []
     for caf in (True, False):
         for rec in ([None] + ([args.recovery_dir] if args.recovery_dir else [])):

@@ -1,7 +1,7 @@
 """Fetch and normalise the architecture facts for the family-ladder roster.
 
 The 21-checkpoint study (``scripts/fleet/run_fleet.py``) records how each
-checkpoint was SERVED and nothing about what it IS. This pulls every rung's own
+checkpoint was SERVED, nothing about what it IS. This pulls every rung's own
 ``config.json`` (and ``generation_config.json``) from the Hugging Face repo it
 was served from: ``config.json`` is the only artefact guaranteed to agree with
 the weights vLLM loaded, so where a model card disagrees the config wins and the
@@ -14,12 +14,12 @@ The roster is :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS` minus the
 against. No literal model list lives here: a fourth copy is a fourth thing that
 can drift.
 
-Two ``__file__``-anchored outputs: ``arch_configs_raw.json`` holds the verbatim
-payloads as the audit trail, ``arch_facts.json`` a normalised, diagram-ready
-view (``text_config`` wrappers hoisted, per-layer arrays run-length encoded into
-their repeating motif, fields grouped by attention / positional encoding / MoE /
-state space). Unrecognised keys are preserved under ``derived.unclassified``
-rather than dropped: an unfamiliar field on a 2026 architecture is a finding.
+Two ``__file__``-anchored outputs: ``arch_configs_raw.json``, the verbatim audit
+trail, and ``arch_facts.json``, a normalised diagram-ready view (``text_config``
+wrappers hoisted, per-layer arrays run-length encoded into their repeating
+motif, fields grouped by attention / positional encoding / MoE / state space).
+Unrecognised keys are kept under ``derived.unclassified`` rather than dropped:
+an unfamiliar field on a 2026 architecture is a finding.
 
 ``--check`` also cross-checks the fetched configs against
 ``tests/fixtures/roster_configs.json`` (the deploy-spec test's ground truth) on
@@ -56,12 +56,11 @@ _TIMEOUT_SECONDS = 60
 # --------------------------------------------------------------------------
 # Field groupings
 #
-# These lists drive the normalised view. They are intentionally *generous*.
-# A key that appears in only one family (``attn_output_gate``,
-# ``ssm_state_size``, ``num_kv_shared_layers``) still gets classified into
-# the group a reader would look for it in. Anything unlisted lands in
-# ``unclassified``, so a new architectural knob announces itself instead of
-# vanishing.
+# These lists drive the normalised view and are intentionally *generous*: a key
+# appearing in only one family (``attn_output_gate``, ``ssm_state_size``,
+# ``num_kv_shared_layers``) still lands in the group a reader would look for it
+# in. Anything unlisted goes to ``unclassified``, so a new architectural knob
+# announces itself instead of vanishing.
 # --------------------------------------------------------------------------
 
 _SHAPE_KEYS = (
@@ -130,9 +129,8 @@ def _fetch(repo: str, filename: str) -> Tuple[Optional[Any], Optional[str], Opti
     tuple
         ``(payload, revision, error)``: the parsed JSON or ``None``, the commit
         SHA from the ``x-repo-commit`` response header, and a failure reason
-        (``None`` on success). A missing optional file reports ``"absent"``, so
-        callers can tell "this repo ships no generation_config" apart from "the
-        network broke".
+        (``None`` on success). A 404 reports ``"absent"``, so callers can tell
+        "this repo ships no generation_config" from "the network broke".
     """
     url = f"https://huggingface.co/{repo}/resolve/main/{filename}"
     request = urllib.request.Request(url, headers={"User-Agent": "smolbench-arch-facts"})
@@ -167,8 +165,8 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     -------
     dict or None
         ``{"pattern": [...], "repeats": N}``, or ``None`` when the sequence does
-        not tile (DeepSeek's leading dense layers, Nemotron's irregular hybrid);
-        the caller then falls back to the run-length view.
+        not tile (DeepSeek's leading dense layers, Nemotron's irregular hybrid),
+        which sends the caller to the run-length view.
     """
     n = len(items)
     if n == 0:
@@ -188,7 +186,7 @@ def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     Ten of the 21 rungs ship as ``*ForConditionalGeneration`` wrappers whose
     language-model fields live in ``text_config``; the study serves them with
     ``--language-model-only``, which is exactly that inner model. Top-level keys
-    win on collision, because they describe the wrapper. The returned sibling
+    win on collision, since they describe the wrapper. The returned sibling
     names (vision, audio) let a write-up note that the served model is the text
     tower of a larger checkpoint.
     """
@@ -320,7 +318,7 @@ def cross_check(facts: Dict[str, Any]) -> List[str]:
     Returns
     -------
     list[str]
-        One human-readable line per mismatch; empty when everything agrees.
+        One line per mismatch; empty when everything agrees.
     """
     if not _FIXTURE_PATH.exists():
         return [f"fixture missing: {_FIXTURE_PATH}"]

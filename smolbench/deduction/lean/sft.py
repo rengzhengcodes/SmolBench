@@ -9,9 +9,8 @@ emit the remaining Lean 4 tactics.
 - **Decontamination.** Eval theorems are held out by ``full_name``. The
   benchmark's ``random`` and ``novel_premises`` kinds partition one theorem pool
   two *different* ways, so a ``novel_premises/test`` theorem can appear in
-  ``random/train``; the explicit name exclusion closes that leak for any
-  ``train_kind``. ``novel_premises/train`` additionally inherits that split's
-  premise-level decontamination.
+  ``random/train``; the name exclusion closes that leak for any ``train_kind``.
+  ``novel_premises/train`` additionally inherits premise-level decontamination.
 - **Context rung.** ``stepk:1`` by default (full tactic state, no premise
   hints), so training never teaches the model to exploit the eval's
   answer-conditional ``hint`` rungs.
@@ -20,8 +19,8 @@ emit the remaining Lean 4 tactics.
   parses back out. At the default ``k_strategy="last"`` the tail is the single
   final tactic, exactly the cell the headline sweep scores (``k.strategy: last``).
 
-Imports only the generation-side siblings (`corpus`, `context`, `prompt`), never
-`verify`, so it stays importable without ``lean_dojo``.
+Imports only `corpus`/`context`/`prompt`, never `verify`, so it stays importable
+without ``lean_dojo``.
 """
 
 from __future__ import annotations
@@ -34,26 +33,23 @@ from . import context, corpus, prompt
 from .context import Chain
 from .corpus import BenchmarkTheorem, Split, SplitKind
 
-#: Splits held out of training by default: everything the eval can draw
-#: from. The headline slice is ``novel_premises/test``; ``novel_premises/val``
-#: is the pilot slice. Both are excluded, so neither a pilot nor the
-#: headline run can be trained on. This holds out the *whole-split* level
-#: (every theorem in the split, via `corpus.load_split`), which is
-#: stricter than the replay-passing subset the eval actually uses, and
-#: needs no ``filter`` sidecar to compute.
+#: Splits held out of training by default -- everything the eval can draw from:
+#: ``novel_premises/test`` (headline slice) and ``novel_premises/val`` (pilot).
+#: Held out at *whole-split* level via `corpus.load_split`, stricter than the
+#: replay-passing subset the eval actually uses, and needing no ``filter``
+#: sidecar to compute.
 DEFAULT_EVAL_SPECS: tuple[tuple[SplitKind, Split], ...] = (
     ("novel_premises", "val"),
     ("novel_premises", "test"),
 )
 
-#: How to pick which step(s) ``k`` of a proof become training examples.
-#: - ``"last"`` -- only the final step (tail = one tactic); matches the
-#:   headline sweep's ``k.strategy: last`` exactly.
-#: - ``"all"`` -- every step ``0..len-1`` (tails of every length; the
-#:   richest curriculum, but ~avg-proof-length examples per theorem).
-#: - ``"sample"`` -- one uniformly-random step per theorem (seeded), a
-#:   middle ground that keeps the dataset ~one example per theorem while
-#:   exposing states from throughout the proof.
+#: Which step(s) ``k`` of a proof become training examples:
+#: - ``"last"`` -- final step only (tail = one tactic); matches the headline
+#:   sweep's ``k.strategy: last`` exactly.
+#: - ``"all"`` -- every step ``0..len-1``; richest curriculum, but
+#:   ~avg-proof-length examples per theorem.
+#: - ``"sample"`` -- one uniformly-random (seeded) step per theorem: ~one
+#:   example per theorem, from states throughout the proof.
 KStrategy = str  # Literal["last", "all", "sample"]
 
 
@@ -82,9 +78,9 @@ def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str
     Returns
     -------
     set of str
-        Union of ``full_name`` over `corpus.load_split` of each spec -- the
-        *whole* split, not `iter_replay_passing`, so the holdout needs no
-        ``filter`` sidecar and is a strict superset of what a sweep can evaluate.
+        Union over `corpus.load_split` -- the *whole* split, not
+        `iter_replay_passing`, so the holdout needs no ``filter`` sidecar and is
+        a strict superset of what a sweep can evaluate.
     """
     names: set[str] = set()
     for kind, split in eval_specs:
@@ -99,13 +95,13 @@ def tail_target(theorem: BenchmarkTheorem, k: int) -> str:
     Parameters
     ----------
     k : int
-        0-indexed step the tail starts at; ``0 <= k < len(traced_tactics)``.
+        0-indexed start step; ``0 <= k < len(traced_tactics)``.
 
     Returns
     -------
     str
-        Stripped and *unfenced*: `prompt.SYSTEM` asks for bare tactic lines, and
-        `prompt.extract_tactic_block` returns unfenced text unchanged.
+        Stripped and *unfenced*, as `prompt.SYSTEM` asks for and
+        `prompt.extract_tactic_block` parses back unchanged.
     """
     return "\n".join(t.tactic for t in theorem.traced_tactics[k:]).strip()
 
@@ -131,8 +127,8 @@ def _train_pool(
 
     ``source="with_proof"`` is every theorem with >=1 traced tactic;
     ``"replay_passing"`` needs the ``filter`` sidecar and is far smaller/slower
-    but guarantees every target is a machine-verified proof. Raises
-    ``ValueError`` on any other value.
+    but guarantees every target is a machine-verified proof. Any other value
+    raises ``ValueError``.
     """
     if source == "with_proof":
         return corpus.iter_with_proof(kind, split)
@@ -156,20 +152,18 @@ def iter_dataset(
 ) -> Iterator[SFTExample]:
     """Yield decontaminated `SFTExample`s (one per kept theorem, chosen ``k``).
 
-    Every theorem whose ``full_name`` is in `eval_holdout_names(eval_specs)` or in
-    `extra_exclude` is skipped *before* any example is emitted, so this can never
-    leak an eval theorem into training. `source` selects the pool (`_train_pool`),
-    `k_strategy` the steps (`_choose_ks`), and ``chain``/``level`` the context rung
-    passed to `context.render` (default ``stepk:1``).
+    Every theorem whose ``full_name`` is in `eval_holdout_names(eval_specs)` or
+    in `extra_exclude` is skipped *before* any example is emitted, so this can
+    never leak an eval theorem into training. ``chain``/``level`` is the context
+    rung passed to `context.render` (default ``stepk:1``).
 
     Parameters
     ----------
     seed : int
         Seeds the RNG for ``k_strategy="sample"`` only; ignored otherwise.
     stats : dict, optional
-        If given, populated in place with ``pool``, ``dropped`` (excluded
-        theorems), ``theorems`` (emitted), ``examples``, and ``excluded``
-        (holdout-set size).
+        If given, populated in place with ``pool``, ``dropped`` (excluded),
+        ``theorems`` (emitted), ``examples``, and ``excluded`` (holdout size).
     """
     exclude = eval_holdout_names(eval_specs) | set(extra_exclude)
     rng = random.Random(seed)

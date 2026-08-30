@@ -2,18 +2,17 @@
 Tokenize prompts for the model under test, to size token-matched prompts.
 
 The induction ``noise_intens`` arm pads the intensional (rule) prompt to the
-length of the extensional (listing) prompt, so an intens-vs-extens gap cannot
-be blamed on prompt length. Length means TOKENS under the tested model's OWN
+extensional (listing) prompt's length, so an intens-vs-extens gap cannot be
+blamed on prompt length. Length means TOKENS under the tested model's OWN
 tokenizer, not characters: at the periodic production config (``n=9``, seed
 1776, ``cl100k_base``) a character-matched pad ran 1.62x the extensional
-prompt's 26,279 tokens. `for_model` maps an eval model alias (a key of
-``ec2.EC2_DEPLOY_SPECS``, also vLLM's ``--served-model-name``) to that
-checkpoint's `Tokenizer`.
+prompt's 26,279 tokens. `for_model` is the entry point: it maps an eval model
+alias (also vLLM's ``--served-model-name``) to that checkpoint's `Tokenizer`.
 
 NO SILENT FALLBACKS: every constructor raises when it cannot load its
-tokenizer. A count here fixes PROMPT BYTES, so a fallback would emit a
-differently padded prompt under the same seed and break the guarantee that a
-replicate's ``rep_{seed}.yaml`` is regenerable byte-for-byte from its filename.
+tokenizer. A count fixes PROMPT BYTES, so a fallback would pad differently
+under the same seed and break byte-for-byte regeneration of a replicate from
+its ``rep_{seed}.yaml`` filename.
 """
 
 import functools
@@ -29,22 +28,21 @@ from smolbench.evals.openai_compat import METADATA_TIMEOUT_S
 class Tokenizer(Protocol):
     """Anything that can count a string's tokens for the model under test.
 
-    Structural, not nominal, so the offline test suite can drive the
-    token-matching machinery with a deterministic stub.
+    Structural, not nominal, so the offline test suite can drive token
+    matching with a deterministic stub.
     """
 
-    #: Human-readable identity of the tokenizer (repo id, encoding name,
-    #: served model...). This is only used in error messages and log
-    #: lines, so its exact format is free -- it exists so a token-match
-    #: failure names WHICH tokenizer could not reach the target.
+    #: Human-readable identity (repo id, encoding name, served model...).
+    #: Format is free: it appears only in logs and errors, so that a
+    #: token-match failure names WHICH tokenizer could not reach the target.
     name: str
 
     def count(self, text: str) -> int:
         """Return the number of tokens `text` encodes to.
 
-        Implementations MUST exclude special/BOS tokens: callers compare two
-        prompts the chat template wraps identically downstream, so an
-        inconsistently applied offset becomes an off-by-N in the match.
+        Implementations MUST exclude special/BOS tokens: the chat template wraps
+        both compared prompts identically downstream, so an inconsistent offset
+        becomes an off-by-N in the match.
         """
         ...
 
@@ -59,13 +57,11 @@ class HFTokenizer:
     def __init__(self, name: str, tokenizer: Any) -> None:
         """Wrap an already-constructed ``tokenizers.Tokenizer``.
 
-        Prefer `from_repo`; this stays public so a caller holding a
-        local-checkout or test-fixture tokenizer can adapt it without network.
+        Prefer `from_repo`; this stays public so a local-checkout or
+        test-fixture tokenizer can be adapted without network.
 
         Parameters
         ----------
-        name : str
-            Identity for logs/errors, conventionally the HF repo id.
         tokenizer : Any
             Duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
@@ -77,12 +73,12 @@ class HFTokenizer:
         """Download (once, then cached) and load `repo_id`'s tokenizer.
 
         Fetches only ``tokenizer.json`` (a few MB, not the weights) into the
-        ordinary ``~/.cache/huggingface`` hub cache; only the first call needs
-        network. Truncation and padding are disabled on load, and that is
-        load-bearing: an embedded ``truncation`` stanza is honored on every
-        ``encode`` (``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
-        ``{"max_length": 512}``, which reported a ~26,000-token induction prompt
-        as 512), and a padded batch counts tokens the model never sees.
+        usual ``~/.cache/huggingface`` cache, so only the first call needs
+        network. Disabling truncation and padding on load is load-bearing: an
+        embedded ``truncation`` stanza is honored on every ``encode``
+        (``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
+        ``{"max_length": 512}``, reporting a ~26,000-token prompt as 512), and
+        a padded batch counts tokens the model never sees.
 
         Raises
         ------
@@ -90,9 +86,8 @@ class HFTokenizer:
             ``huggingface_hub`` or ``tokenizers`` is not installed.
         RuntimeError
             The repo ships no ``tokenizer.json`` (common for quantized
-            redistributions), or the download/parse failed. The message names
-            the ``tokenizer_hf_id`` deploy-spec key that overrides which repo
-            the tokenizer comes from.
+            redistributions), or the fetch failed; the message names the
+            ``tokenizer_hf_id`` deploy-spec key that overrides the source repo.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -126,7 +121,7 @@ class TiktokenTokenizer:
     """A fixed ``tiktoken`` encoding, for tests and offline/tokenizer-free work.
 
     NOT a stand-in for the model under test: ``cl100k_base`` is nobody's
-    tokenizer among the served checkpoints. Nothing here falls back to it; a
+    tokenizer among the served checkpoints, and nothing falls back to it -- a
     caller must select it explicitly.
     """
 
@@ -156,18 +151,18 @@ class TiktokenTokenizer:
 class VLLMTokenizer:
     """Count tokens by asking a LIVE vLLM server's ``/tokenize`` endpoint.
 
-    Ground truth for what the served model sees, so the cross-check that
+    Ground truth for what the served model sees, hence the cross-check that
     `HFTokenizer` loaded the right tokenizer. NOT for the prompt-building hot
     path: sizing one pad takes several ``count`` calls per question, and an HTTP
-    round trip on a ~55 KB prompt each time would dwarf the eval.
+    round trip per call on a ~55 KB prompt would dwarf the eval.
     """
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
         """Bind to one served model on one vLLM server.
 
-        `base_url` is the OpenAI-compatible base URL (``ec2._base_url()``);
-        vLLM serves ``/tokenize`` at the SERVER root, not under ``/v1``, so a
-        trailing ``/v1`` is stripped here.
+        `base_url` is the OpenAI-compatible base URL (``ec2._base_url()``); vLLM
+        serves ``/tokenize`` at the SERVER root, not under ``/v1``, so a trailing
+        ``/v1`` is stripped here.
         """
         root = base_url.rstrip("/")
         if root.endswith("/v1"):
@@ -183,7 +178,7 @@ class VLLMTokenizer:
         Raises
         ------
         requests.HTTPError
-            The endpoint rejected the request. vLLM exposes ``/tokenize`` by
+            The endpoint rejected the request; vLLM exposes ``/tokenize`` by
             default, so a 404 means the server predates it or disabled it.
         """
         response = requests.post(
@@ -204,19 +199,16 @@ def for_model(model: str) -> Tokenizer:
     spec's ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only
     quantized repos. Memoized per alias for the life of the process.
 
+    ``ec2`` is imported INSIDE this function: its ``EC2_*`` constants are read
+    from ``os.environ`` at IMPORT time, so an eager import would freeze them for
+    a notebook importing the induction stack before ``load_dotenv(keys.env)``
+    (see ``smolbench.induction.experiment``).
+
     Raises
     ------
     KeyError
         No deploy spec names `model`; such a caller must build and pass a
         `Tokenizer` itself.
-
-    Notes
-    -----
-    ``ec2`` is imported INSIDE this function, never at module scope: its
-    ``EC2_*`` constants are captured from ``os.environ`` at IMPORT time, so an
-    eager import would freeze them for any notebook importing the induction
-    stack before its ``load_dotenv(keys.env)`` cell (see
-    ``smolbench.induction.experiment``).
     """
     from smolbench.evals.providers import ec2
 

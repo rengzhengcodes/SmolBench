@@ -1,10 +1,10 @@
 """Run a Monte Carlo study of TEST and CORRECTION choice for the induction study.
 
 Self-contained companion to the periodic-induction family-ladder scaling study
-(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every statistic below
-is simulated; this script never analytic-approximates a reported number. The
-pairwise test is byte-for-byte the repo's continuity-corrected 2x2xK CMH
-(notebooks/induction/analysis/power_analysis.py::cmh_reject), and the 2-df
+(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every statistic here
+is simulated, never analytic-approximated. The pairwise test is byte-for-byte
+the repo's continuity-corrected 2x2xK CMH
+(notebooks/induction/analysis/power_analysis.py::cmh_reject) and the 2-df
 general-association statistic mirrors that file's gcmh_reject. Results are
 checkpointed to multiplicity_sim_results.json after each part.
 
@@ -28,9 +28,9 @@ N_PRIMARY = 210
 ALPHA = 0.05
 ALPHA_BONF = ALPHA / N_PRIMARY          # 2.381e-4
 OUT = {}
-# Design: anchored on __file__, not the process cwd, so this script's output
-# lands next to it regardless of the shell's invocation directory (repo
-# convention -- see notebooks/_power_common.py's results_dir).
+# Anchored on __file__, not the cwd, so the output lands next to this script
+# whatever directory it is invoked from (repo convention -- see
+# notebooks/_power_common.py's results_dir).
 OUT_PATH = Path(__file__).resolve().parent / "multiplicity_sim_results.json"
 
 
@@ -48,9 +48,7 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
     Parameters
     ----------
     succ_a, succ_b : ndarray, shape (..., K)
-        Success counts out of `n` trials per stratum, for the two arms.
-    n : int
-        Trials per stratum; the same for both arms.
+        Success counts out of `n` trials per stratum, `n` the same for both.
 
     Returns
     -------
@@ -112,9 +110,7 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
     Parameters
     ----------
     succ : ndarray, shape (..., 3, K)
-        Success counts per (rung, stratum).
-    n : int
-        Trials per rung per stratum.
+        Success counts per (rung, stratum), `n` trials per cell.
     scores : sequence of float
         Ladder scores assigned to the 3 rungs, in rung order.
 
@@ -151,7 +147,7 @@ def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
     Returns
     -------
     ndarray
-        The p-value, 1.0 where ``b + c == 0`` (no discordant pairs).
+        The p-value; 1.0 where ``b + c == 0`` (no discordant pairs).
     """
     nd = b + c
     lo = np.minimum(b, c)
@@ -167,8 +163,8 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     Returns
     -------
     tuple of ndarray
-        ``(marks_a, marks_b)``, boolean arrays of shape
-        ``(n_sims, reps, K_HARM)`` with marginal success rates `p_a` and `p_b`.
+        ``(marks_a, marks_b)``, bool arrays of shape ``(n_sims, reps, K_HARM)``
+        with marginal success rates `p_a` and `p_b`.
     """
     z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
@@ -181,9 +177,9 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
 def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025):
     """Find the minimum detectable difference (80% power) at each ceiling.
 
-    For each baseline rate `p_a`, scans the accuracy gap `d` in `step`
-    increments and reports the smallest `d` reaching 80% power under both the
-    Bonferroni-corrected alpha and the naive alpha=0.05. Writes ``OUT["part1"]``.
+    Per baseline rate `p_a`, scans the accuracy gap `d` in `step` increments
+    for the smallest `d` reaching 80% power under both ALPHA_BONF and the naive
+    alpha=0.05. Writes ``OUT["part1"]``.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -219,11 +215,10 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
     """Measure actual Type I error under within-replicate clustering.
 
     Simulates marks with a shared per-replicate latent factor (intraclass
-    correlation `icc`) over a grid of baseline rates, iccs, and an
-    "independent" vs. "shared" latent-draw variant, reporting the realized
-    binary (phi) within-replicate correlation and the actual Type I error at
-    alpha=0.05 and at the Bonferroni alpha against the nominal 0.05 target.
-    `chunk` sets the batch size that bounds peak memory. Writes ``OUT["part3"]``.
+    correlation `icc`) over a grid of baseline rates, iccs and an "independent"
+    vs "shared" latent-draw variant, reporting the realized binary (phi)
+    within-replicate correlation and the actual Type I error at alpha=0.05 and
+    at ALPHA_BONF. `chunk` bounds peak memory. Writes ``OUT["part3"]``.
     """
     print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
     from scipy.stats import norm
@@ -281,11 +276,11 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
 def part5(rng: np.random.Generator, n_sims: int = 20000):
     """Compare the 1-df trend test against the 2-df omnibus and 3 pairwise tests.
 
-    Six rate scenarios (monotone and non-monotone, at small, mid, and ceiling
-    effect sizes), each one simulated 3-rung ladder, reporting every test's
-    rejection rate under both the pre-registered study-wide alphas and local
-    uncorrected-family alphas (which isolates test choice from correction).
-    Writes ``OUT["part5"]``.
+    Six rate scenarios (monotone and non-monotone, at small, mid and ceiling
+    effect sizes), one simulated 3-rung ladder each, reporting every test's
+    rejection rate under the pre-registered study-wide alphas and again under
+    local uncorrected-family alphas, which isolates test choice from
+    correction. Writes ``OUT["part5"]``.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     alpha_fam_trend = ALPHA / 28          # 28 one-df trend tests
@@ -337,10 +332,9 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
     Returns
     -------
     tuple of float
-        ``(power_unpaired, power_paired, phi_binary, agreement)``: the unpaired
-        CMH test's power, the exact McNemar test's power, the realized binary
-        (phi) correlation between the two arms' marks, and their raw agreement
-        rate. All at the Bonferroni alpha (`ALPHA_BONF`).
+        ``(power_unpaired, power_paired, phi_binary, agreement)`` -- the two
+        powers (both at `ALPHA_BONF`), the realized binary (phi) correlation
+        between the arms' marks, and their raw agreement rate.
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng)
@@ -361,7 +355,7 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
 def part2(rng, n_sims=20000, search_sims=8000, cap=900):
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
-    Over a grid of baseline rates, accuracy gaps, and latent correlations,
+    Over a grid of baseline rates, accuracy gaps and latent correlations,
     compares unpaired CMH against paired exact McNemar on the same matched
     marks (`_paired_powers`). Where pairing helps, searches `grid_r` (largest
     entry `cap`) with `search_sims` sims for the smallest unpaired replicate
@@ -411,8 +405,8 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=900):
 def build_rate_matrix():
     """Build a stylized 21-model x 4-info true-rate matrix for PART 4.
 
-    Stylized per the brief: a spread of true effects near ceiling and in the
-    mid-range (30 in total), with the remaining 180 contrasts exact nulls.
+    Stylized per the brief: 30 true effects spread near ceiling and in the
+    mid-range, the remaining 180 contrasts exact nulls.
 
     Returns
     -------
@@ -443,13 +437,13 @@ def apply_corrections(pv: np.ndarray, is_null: np.ndarray, m: int):
     pv : ndarray, shape (S, m)
         p-values for `m` tests, across `S` simulations.
     is_null : ndarray of bool, shape (m,)
-        Unused here; callers combine it with the returned masks to compute Type
-        I error and power.
+        Unused here; callers combine it with the returned masks to get Type I
+        error and power.
 
     Returns
     -------
     dict of str -> ndarray of bool, shape (S, m)
-        Procedure name to its per-simulation, per-test rejection mask.
+        Procedure name -> per-simulation, per-test rejection mask.
     """
     out = {}
     order = np.argsort(pv, axis=1)
@@ -489,12 +483,12 @@ def part4(rng, n_sims=4000):
 
     Compares the full 210-contrast PRIMARY family (84 ladder + 126 info) with a
     reduced 154-test family (28 one-df trend tests replacing the 84 pairwise
-    ladder contrasts), under Bonferroni, Holm, Hochberg, and BH
-    (`apply_corrections`), reporting true/false rejection counts, FWER, FDR, and
+    ladder contrasts) under Bonferroni, Holm, Hochberg and BH
+    (`apply_corrections`), reporting true/false rejection counts, FWER, FDR and
     how many of the 28 non-flat ladders each procedure flags. A third
-    "test-swap only" arm holds the family size at 210 (so alpha is unchanged)
-    while swapping in the trend test, isolating the test choice's effect from
-    the correction's. Writes ``OUT["part4"]``.
+    "test-swap only" arm holds the family size at 210 (alpha unchanged) while
+    swapping in the trend test, isolating test choice from correction. Writes
+    ``OUT["part4"]``.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()

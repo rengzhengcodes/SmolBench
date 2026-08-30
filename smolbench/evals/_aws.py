@@ -3,17 +3,17 @@ Share AWS provisioning primitives between the SageMaker and EC2 providers.
 
 Used by :mod:`smolbench.evals.providers.aws` and
 :mod:`smolbench.evals.providers.ec2`: fresh-Session clients, ``Error.Code``
-extraction, trust policies, IAM role/instance-profile creation, a poll loop,
-and a teardown sweep. There is deliberately NO shared provision -> poll ->
-teardown framework: ``aws.provision_endpoint`` is a per-model
-``@contextmanager`` that ALWAYS tears down (a SageMaker endpoint bills hourly
-until deleted), while ``ec2`` provisions one instance per experiment and tears
-down NOTHING on exit (an on-box idle watchdog plus a max-lifetime shutdown
-cover abandonment, since the instance outlives any one section).
+extraction, trust policies, IAM role/instance-profile creation, a poll loop and
+a teardown sweep. There is deliberately NO shared provision -> poll -> teardown
+framework: ``aws.provision_endpoint`` is a per-model ``@contextmanager`` that
+ALWAYS tears down (a SageMaker endpoint bills hourly until deleted), while
+``ec2`` provisions one instance per experiment and tears down NOTHING on exit
+(an on-box idle watchdog plus a max-lifetime shutdown cover abandonment, since
+the instance outlives any one section).
 
 Import boto3/botocore LAZILY inside each function that needs them: neither
-provider's inference path needs AWS credentials or the SDK, and importing
-this module must not force that dependency.
+provider's inference path needs AWS credentials or the SDK, and importing this
+module must not force that dependency.
 """
 
 import logging
@@ -32,7 +32,7 @@ def fresh_client(service: str, region: Optional[str] = None):
     Session per call picks up a rotated ``~/.aws/credentials`` (this repo's IdP
     sessions last ~12h) on the very next call, instead of raising
     ``RequestExpired``/``ExpiredToken`` until the process restarts. boto3 is
-    imported lazily, so only calling this requires it installed.
+    imported lazily, so only calling this needs it installed.
 
     Parameters
     ----------
@@ -64,9 +64,8 @@ def assume_role_trust_policy(service: str) -> Dict[str, Any]:
     Parameters
     ----------
     service : str
-        Service principal: ``"ec2.amazonaws.com"`` for ec2.py's
-        instance-profile role, ``"sagemaker.amazonaws.com"`` for aws.py's
-        execution role.
+        Service principal: ``"ec2.amazonaws.com"`` for ec2.py's instance-profile
+        role, ``"sagemaker.amazonaws.com"`` for aws.py's execution role.
     """
     return {
         "Version": "2012-10-17",
@@ -119,8 +118,6 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
     ----------
     role_name : str
         Names BOTH the IAM role and the instance profile; returned as-is.
-    bucket : str
-        S3 bucket the role is granted access to.
     propagation_sleep_s : int
         Slept before returning ONLY when the role or profile was freshly
         created, so ``RunInstances`` cannot reference an IAM object that is not
@@ -149,12 +146,12 @@ def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: in
         created = True
     except ClientError as err:
         if error_code(err) == "AccessDenied":
-            # Scoped credentials (e.g. the EC2-only operator key) cannot
-            # manage IAM at all. create_role is the first IAM call, so it
-            # fails here even when the role/profile already exist from a
-            # prior admin-credentialed run (the common case: the name is
-            # fixed). Proceed optimistically. If the profile genuinely does
-            # not exist, RunInstances fails cleanly when it references it.
+            # Scoped credentials (the EC2-only operator key) cannot manage IAM
+            # at all, and create_role is the first IAM call, so this fails even
+            # when the role/profile already exist from a prior
+            # admin-credentialed run (the common case: the name is fixed).
+            # Proceed optimistically -- if the profile genuinely does not
+            # exist, RunInstances fails cleanly when it references it.
             logging.info(
                 f"ensure_instance_profile: iam:CreateRole denied for scoped "
                 f"credentials; assuming role/profile {name!r} already exists"
@@ -259,8 +256,8 @@ def best_effort_teardown(
     steps : sequence of (str, callable)
         Label and deferred zero-argument call, attempted in order.
     log_prefix : str
-        Prefixes each log line (typically the caller's function name), so
-        interleaved teardown sites stay attributable.
+        Prefixes each log line (typically the caller's function name), keeping
+        interleaved teardown sites attributable.
     """
     for label, call in steps:
         try:
@@ -274,12 +271,11 @@ class _DeploySpecRequired(TypedDict):
     """Hold the one field every deploy spec must have; see `DeploySpec`."""
 
     #: HuggingFace repo id to deploy/serve, e.g.
-    #: ``"Qwen/Qwen2.5-1.5B-Instruct"``. Both backends consume it: SageMaker
-    #: puts it in the container's ``HF_MODEL_ID`` env var
-    #: (``aws.provision_endpoint``); EC2/vLLM passes it as the control
-    #: agent's ``hf_model_id`` payload field, which becomes vLLM's
-    #: ``--model`` flag (``ec2.serve_model`` / the control agent's ``_serve``
-    #: in ``payloads/agent.py.txt``).
+    #: ``"Qwen/Qwen2.5-1.5B-Instruct"``. SageMaker puts it in the container's
+    #: ``HF_MODEL_ID`` env var (``aws.provision_endpoint``); EC2/vLLM passes it
+    #: as the control agent's ``hf_model_id`` payload field, which becomes
+    #: vLLM's ``--model`` flag (``ec2.serve_model`` / ``_serve`` in
+    #: ``payloads/agent.py.txt``).
     hf_model_id: str
 
 
@@ -292,15 +288,13 @@ class DeploySpec(_DeploySpecRequired, total=False):
     with a documented default.
     """
 
-    #: Tensor-parallel degree. SageMaker reads it as the
-    #: ``SM_VLLM_TENSOR_PARALLEL_SIZE`` env var (``spec.get("tp", 1)``).
-    #: EC2/vLLM reads it as the control agent's ``tp`` payload field, which
-    #: becomes vLLM's ``--tensor-parallel-size`` (``spec.get("tp", 1)``).
+    #: Tensor-parallel degree, ``spec.get("tp", 1)`` in both backends:
+    #: SageMaker's ``SM_VLLM_TENSOR_PARALLEL_SIZE`` env var, EC2/vLLM's ``tp``
+    #: payload field (vLLM's ``--tensor-parallel-size``).
     tp: int
     #: SageMaker ONLY: the ``InstanceType`` for the endpoint's production
-    #: variant (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``.
-    #: SageMaker specs require this field, though it is not required across
-    #: both backends: EC2 specs have no use for it, since the shared
+    #: variant (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``,
+    #: so SageMaker specs require it. EC2 specs have no use for it: their
     #: instance type is chosen once at ``provision_spot_instance`` time, not
     #: per model.
     instance_type: str
@@ -328,13 +322,12 @@ class DeploySpec(_DeploySpecRequired, total=False):
     system_prompt: str
     #: EC2/vLLM ONLY: repo id to load this model's TOKENIZER from, when that
     #: differs from ``hf_model_id``. ``smolbench.evals.tokenization.for_model``
-    #: reads it via ``spec.get("tokenizer_hf_id")`` and falls back to
-    #: ``hf_model_id`` when absent (the normal case). This field exists
-    #: because a quantized redistribution occasionally ships weights without
-    #: a ``tokenizer.json``, while its unquantized base repo has one. The
-    #: tokenizer is identical either way, so pointing at the base repo costs
-    #: nothing and keeps token-matched prompts (the induction noise arm)
-    #: buildable for that checkpoint.
+    #: reads it via ``spec.get("tokenizer_hf_id")``, falling back to
+    #: ``hf_model_id`` (the normal case). Exists because a quantized
+    #: redistribution occasionally ships weights with no ``tokenizer.json``
+    #: while its unquantized base repo has one; the tokenizer is identical
+    #: either way, so pointing at the base repo keeps token-matched prompts
+    #: (the induction noise arm) buildable for that checkpoint.
     tokenizer_hf_id: str
     #: EC2/vLLM ONLY: LoRA adapters to stage from S3 and register with vLLM,
     #: as ``[{"name": ..., "s3": "<prefix>/<base_key>[/<sub>]", "region": ...}]``.
@@ -343,22 +336,20 @@ class DeploySpec(_DeploySpecRequired, total=False):
     adapters: list
 
 
-#: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use. Verified against the
-#: dict literal (aws.py's ``SAGEMAKER_DEPLOY_SPECS``) and every place a spec
-#: is read (``provision_endpoint``). ``hf_model_id``/``instance_type`` are
-#: read unconditionally (``spec["..."]``), so they are effectively required
-#: by any entry actually deployed. ``tp``/``env``/``image`` are read via
-#: ``.get(...)`` with documented defaults.
+#: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use. Verified against the dict
+#: literal and every place a spec is read (``provision_endpoint``).
+#: ``hf_model_id``/``instance_type`` are read unconditionally
+#: (``spec["..."]``), so any entry actually deployed needs them;
+#: ``tp``/``env``/``image`` are read via ``.get(...)`` with documented defaults.
 SAGEMAKER_SPEC_KEYS: frozenset = frozenset(
     {"hf_model_id", "tp", "instance_type", "env", "image"}
 )
 #: Keys `ec2.EC2_DEPLOY_SPECS` entries may use. Verified against the dict
-#: literal (ec2.py's ``EC2_DEPLOY_SPECS``) and every place a spec is read
-#: (``get_model_context_length``, ``serve_model``, ``_system_prompt``).
-#: ``hf_model_id`` is read unconditionally (``spec["hf_model_id"]``).
-#: ``tp``/``max_model_len``/``vllm_args``/``system_prompt`` are all read via
-#: ``.get(...)`` with documented defaults. ``tokenization.for_model``, one
-#: module over, reads ``tokenizer_hf_id`` the same way.
+#: literal and every place a spec is read (``get_model_context_length``,
+#: ``serve_model``, ``_system_prompt``). ``hf_model_id`` is read
+#: unconditionally; ``tp``/``max_model_len``/``vllm_args``/``system_prompt``
+#: via ``.get(...)`` with documented defaults, as is ``tokenizer_hf_id`` one
+#: module over in ``tokenization.for_model``.
 EC2_SPEC_KEYS: frozenset = frozenset(
     {
         "hf_model_id",

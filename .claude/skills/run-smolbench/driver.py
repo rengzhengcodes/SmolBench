@@ -3,15 +3,12 @@
 Drives the REAL production path -- quiz generation -> provider dispatch ->
 ChatClient.query/evaluate -> grading -> Marks YAML IO -- against the local
 OpenAI-compatible stub server from tests/conftest.py. Zero credentials, zero
-network, zero AWS spend.
-
-Run from the repo root with the project venv's python:
+network, zero AWS spend. Run from the repo root:
 
     timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py
 
 ``timeout`` matters: the openrouter ChatClient retries transient failures
-FOREVER with a 60s backoff, so a misbehaving stub would otherwise hang the
-driver indefinitely.
+FOREVER with a 60s backoff, so a misbehaving stub would hang the driver.
 
 Exit codes: 0 = PASS, 1 = a stage failed, 2 = environment/import problem.
 """
@@ -51,8 +48,8 @@ def main() -> None:
     stage("env", f"python {sys.version.split()[0]} at {sys.executable}")
 
     try:
-        # Reused from the offline test suite so the stub dialect has a single
-        # source of truth (needs pytest importable -- it's in the dev extra).
+        # Reused from the offline test suite so the stub dialect has one source
+        # of truth (needs pytest importable -- it's in the dev extra).
         from tests.conftest import StubServer, StubTokenizer, chat_completion
     except ImportError as err:
         print(
@@ -122,8 +119,8 @@ def main() -> None:
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:
-        # Dispatch is read at CALL time (smolbench/evals/provider.py), so
-        # setting env after import is fine -- exactly how notebooks do it.
+        # Dispatch is read at CALL time (smolbench/evals/provider.py), so env
+        # set after import still applies -- exactly how notebooks do it.
         os.environ["INFERENCE_PROVIDER"] = "openrouter"
         os.environ["OPENROUTER_BASE_URL"] = server.base_url
         os.environ["OPENROUTER_API_KEY"] = "smoke-dummy"
@@ -142,9 +139,9 @@ def main() -> None:
         stage("query", "content+reasoning channels parsed, seed=42 present in request body")
 
         # -- 6. Sequential graded evaluate (queued right/wrong/invalid) ------
-        # max_parallel=1 is REQUIRED here: StubServer.next_response pops the
-        # queue in FIFO order, so the response<->question mapping is only
-        # deterministic when questions are asked one at a time.
+        # max_parallel=1 is REQUIRED: StubServer.next_response pops the queue
+        # FIFO, so the response<->question mapping is deterministic only when
+        # questions are asked one at a time.
         server.queue_response(chat_completion(str(intens[0].answer)))  # correct
         server.queue_response(chat_completion("99"))                   # incorrect
         server.queue_response(chat_completion("no digits here"))       # invalid
