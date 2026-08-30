@@ -16,19 +16,30 @@ version = "0.1.0"
 description = "A benchmark for smol manipulation of language."
 readme = "README.md"
 
-# The checked-in pyenv for this repository is `smolbench`, currently resolving
-# to Python 3.14.3. Using >=3.14 avoids claiming support for older interpreters
-# that have not been validated in this repo.
-requires-python = ">=3.14"
+# One venv (.venv) on Python 3.12 holds every extra, including the Lean
+# verification stack: lean-dojo (the `lean` extra) pins Requires-Python <3.13
+# upstream, so the project pins the same ceiling instead of splitting into a
+# second interpreter. `.python-version` selects 3.12 for `uv sync`.
+requires-python = ">=3.12,<3.13"
 
-# These are the direct runtime dependencies observed from the repository's
-# import graph and confirmed by the `smolbench` pyenv `pip freeze`.
-# They are expressed as lower bounds at the currently installed versions,
-# meaning "known working here" rather than "minimum version ever supported".
+# Direct runtime dependencies, expressed as lower bounds at the versions
+# known to work here rather than the minimum ever supported.
 dependencies = [
-    "joblib>=1.0",
+    # 1.4 is the first release with Parallel(return_as="generator_unordered"),
+    # which smolbench.evals.openai_compat.evaluate streams results through.
+    "joblib>=1.4",
     "numpy>=2.4.3",
+    # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
+    "ordered-set>=4.1.0",
     "requests>=2.33.1",
+    # smolbench.evals.tokenization loads the tokenizer of the model under test
+    # (its `tokenizer.json` off the HF hub) so smolbench.induction can pad its
+    # noise arm to an exact TOKEN count. Core, not optional: without a
+    # tokenizer the induction benchmarks cannot build one of their three
+    # conditions. Deliberately NOT `transformers` -- one file and the Rust BPE
+    # that reads it, no modeling stack and no torch.
+    "huggingface-hub>=0.30",
+    "tokenizers>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -38,22 +49,94 @@ dev = [
     "black>=26.3.1",
     "isort>=8.0.1",
     "pylint>=4.0.5",
+    # Offline test suite under tests/ (stub-server provider round trips,
+    # golden quiz regressions, ec2 payload checks) -- no AWS creds needed.
+    "pytest>=8.0",
+    # tests/evals/test_dsv4_chat_template.py renders the inline DeepSeek-V4 serving
+    # template and byte-compares it against the vendored shipped encoding; the
+    # pin must RUN (not importorskip away).
+    "jinja2>=3.1",
 ]
 
-# The repository now includes a checked-in notebook under `notebooks/`.
-# The active `smolbench` pyenv uses VS Code/Jupyter kernel support via
-# `ipykernel`, so expose that as a separate extra without pulling in a full
-# notebook server stack that is not currently part of the environment.
+# AWS lifecycle paths: SageMaker endpoint provisioning + token minting in
+# smolbench/evals/providers/aws.py and EC2 spot provisioning in smolbench/evals/providers/ec2.py.
+# Both modules import these lazily, so plain inference through either
+# provider needs neither package; only provision/teardown/minting does. A
+# named extra keeps that dependency import-testable without dragging in
+# notebook UI tooling.
+aws = [
+    "botocore>=1.35.0",
+    "boto3>=1.43",
+    # scripts/smoke/bedrock_smoke.py mints its Bedrock bearer token with this.
+    "aws-bedrock-token-generator>=1.0",
+]
+
+# Lean theorem-proving eval (smolbench/deduction/lean/): corpus/context/prompt rendering
+# and the sweep runner need PyYAML (configs, results) and tiktoken (noise-rung
+# token matching, prompt-stats; also backs the optional
+# smolbench.evals.tokenization.TiktokenTokenizer, which the offline tests and
+# the module demos use in place of a downloaded model tokenizer);
+# verification additionally needs lean-dojo (the reason the project pins
+# python<3.13 above).
+lean = [
+    "lean-dojo>=2.0",
+    "PyYAML>=6.0.3",
+    # 0.13 is the first release shipping cp312 wheels.
+    "tiktoken>=0.13",
+]
+
+# Jupyter kernel support for the checked-in notebooks under `notebooks/`,
+# exposed as its own extra rather than pulling in a full notebook server
+# stack.
 notebook = [
     "ipykernel>=7.2.0",
+    # Runtime libraries the checked-in notebooks import directly:
+    #   - PyYAML (`import yaml`) backs Marks.dump/Marks.load result
+    #     serialization. Pinned to a version with cp312 wheels so it installs
+    #     without libyaml.
+    #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
+    "PyYAML>=6.0.3",
+    "python-dotenv>=1.0.1",
+    # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
+    "smolbench[aws]",
+    # smolbench.induction.figures plots results with matplotlib.
+    "matplotlib>=3.10.0",
+    # The analysis scripts under notebooks/{induction,deduction}/analysis/
+    # import scipy.stats for their reference distributions (induction
+    # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
+    # deduction hint_vs_noise.py: binom), and induction power_analysis.py
+    # additionally imports statsmodels for the omnibus interaction test. Both
+    # must stay declared: `uv sync` strips anything undeclared, and those
+    # scripts then fail on ModuleNotFoundError partway through a run.
+    "scipy>=1.15",
+    "statsmodels>=0.14",
 ]
 
 [tool.setuptools]
 # This project is pure Python and ships only the package source under
-# `smolbench/`.
+# `smolbench/` (plus the explicitly listed payload assets below).
 include-package-data = false
+
+[tool.setuptools.package-data]
+# Byte-exact on-instance payloads (cloud-init templates + the py3.10 control
+# agent/watchdog) shipped as data files inside the payloads subpackage.
+# setuptools auto-includes only *.py, so without this a non-editable install
+# would drop them and smolbench.evals.payloads would fail at import. The
+# non-.py extensions are deliberate: they keep black/isort/pylint and the
+# import machinery away from files whose bytes are a production contract.
+"smolbench.evals.payloads" = ["*.sh", "*.py.txt"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.
 where = ["."]
 include = ["smolbench*"]
+
+[tool.pytest.ini_options]
+# A bare `pytest` from the repo root needs the repo root on sys.path: tests
+# import `tests._paths` and, in some scripts tests, `scripts.*` namespace
+# packages, and pytest's default rootdir insertion doesn't guarantee that
+# without a tests/__init__.py (deliberately not added -- see
+# tests/README.md). `pythonpath` fixes the sys.path gap; `testpaths` is what
+# lets a bare `pytest` from the repo root collect the suite at all.
+testpaths = ["tests"]
+pythonpath = ["."]
