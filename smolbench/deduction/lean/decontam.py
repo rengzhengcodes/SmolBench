@@ -46,8 +46,7 @@ model/embedding calls. So a dataset build is reproducible byte-for-byte
 from its manifest config.
 
 Like `sft`, this module imports only generation-side siblings (`corpus`,
-`context`), never `verify`. So it runs on the main 3.14 venv; a
-decontamination run needs no Lean toolchain.
+`context`), never `verify`. A decontamination run needs no Lean toolchain.
 """
 
 from __future__ import annotations

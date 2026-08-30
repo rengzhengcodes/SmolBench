@@ -26,9 +26,8 @@ directory together.
 
 ## scripts/deduction/ -- the Lean deduction study's sharding and verification passes
 
-`lean_verify_rows.py` is the only script in this repo that must run under
-`.venv-lean` (it needs `lean_dojo`, which pins `python<3.13`; its
-`--dry-run` mode also works under `.venv`). Everything else here, and
+`lean_verify_rows.py` is the only script in this repo that needs
+`lean_dojo` (its `--dry-run` mode works without it). Everything here, and
 everywhere else under `scripts/`, runs under `.venv`.
 
 | File | What it's for |

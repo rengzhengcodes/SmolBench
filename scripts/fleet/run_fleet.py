@@ -93,7 +93,7 @@ do real network I/O and only run on the live path (see
 :func:`_print_dry_run_plan`, which prints this same caveat to the
 operator).
 
-Run (repo root, main venv)::
+Run (repo root)::
 
     .venv/bin/python scripts/fleet/run_fleet.py --dry-run
     .venv/bin/python scripts/fleet/run_fleet.py --phase induction

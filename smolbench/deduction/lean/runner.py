@@ -82,19 +82,19 @@ from .corpus import (
 from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 
 # Design: this module imports `lean3` at module top (unlike `.verify`
-# below), because `lean3` is py3.14-safe by construction -- it needs only
-# the stdlib plus `.corpus`, not lean_dojo/torch/datasets (see lean3.py's
-# own module docstring, "Design constraints"). `write_run_analysis` below
-# uses it unconditionally to compute the `l3` leak-rate column, so there is
-# no lazy-import seam to preserve here the way there is for `.verify`.
+# below), because `lean3` needs no Lean toolchain by construction -- it
+# needs only the stdlib plus `.corpus`, not lean_dojo/torch/datasets (see
+# lean3.py's own module docstring, "Design constraints"). `write_run_analysis`
+# below uses it unconditionally to compute the `l3` leak-rate column, so
+# there is no lazy-import seam to preserve here the way there is for
+# `.verify`.
 
 # Design: this module has NO top-level `from .verify import ...`. `.verify`
-# imports `lean_dojo`, which installs only in the dedicated `.venv-lean`
-# environment (see `verify.py`'s import guard). `runner` also hosts pure
-# dispatch/schema logic that the offline test suite exercises on the main
-# venv (Python 3.14, no lean_dojo), so importing `runner` must not drag in
-# that dependency. See `_default_verifier` below for the lazy import seam
-# that replaces these names at call time instead.
+# imports `lean_dojo`, which is not always installed (see `verify.py`'s
+# import guard). `runner` also hosts pure dispatch/schema logic that the
+# offline test suite exercises without `lean_dojo`, so importing `runner`
+# must not drag in that dependency. See `_default_verifier` below for the
+# lazy import seam that replaces these names at call time instead.
 
 
 def results_root() -> Path:
@@ -134,12 +134,13 @@ def _default_verifier():
     """Lazily resolve the real Lean verifier module.
 
     This function imports `smolbench.deduction.lean.verify` at call time, not at
-    module top. That module requires `lean_dojo`, so it works only under the
-    dedicated `.venv-lean` environment (see that module's import guard).
-    Callers on the main venv that need a verifier must pass one explicitly
-    (e.g. the offline test suite's `FakeVerifier`). Callers on `.venv-lean`
-    (the real `run-sweep`/`run-cell` CLI invocations) get the real module
-    from this function.
+    module top. That module requires `lean_dojo`, so it works only when that
+    package is installed (see that module's import guard). Callers without
+    `lean_dojo` that need a verifier must pass one explicitly (e.g. the
+    offline test suite's `FakeVerifier`, or `NullVerifier` for
+    generation-only sweeps). Callers with `lean_dojo` installed (the real
+    `run-sweep`/`run-cell` CLI invocations) get the real module from this
+    function.
 
     Returns
     -------
@@ -729,8 +730,9 @@ _CHAIN_ORDER = {"stepk": 0, "hint": 1}
 # the gate instead of suppressing generation. This case notably includes
 # "skipped", the only verdict `smolbench.deduction.lean.nullverify.NullVerifier`
 # can ever produce, since it never actually replays anything: a
-# generation-only sweep runs the real verification pass later, under
-# `.venv-lean`, so there is nothing yet to have positively failed. A
+# generation-only sweep runs the real verification pass later, as a
+# separate deferred step, so there is nothing yet to have positively
+# failed. A
 # membership test against this frozenset, rather than a bare `!=
 # "success"` check, is what makes that distinction possible.
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(

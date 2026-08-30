@@ -33,7 +33,7 @@ MERGE GATES (all hard failures -- nothing is written past a failed gate)
 - The canonical directory holds no pre-existing ``all_rows.jsonl``. This
   script never overwrites one.
 
-Run this script from the repo root, in the main venv, after the shard
+Run this script from the repo root, after the shard
 drivers have exited::
 
     .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 --spool

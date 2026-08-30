@@ -10,17 +10,14 @@ an LLM-eval library — "running" it means driving the real quiz → provider �
 evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zero
 credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
 `notebooks/deduction/`): a Lean 4 theorem-proving eval whose VERIFICATION path
-(lean_dojo) needs a dedicated Python 3.12 venv — generation/analysis run on
-the main venv. All paths below are relative to the repo root; all commands
-were verified in a headless Linux container.
+needs `lean_dojo`, elan, and a traced-repo cache; generation/analysis need
+none of those. Both run on the same `.venv`. All paths below are relative
+to the repo root; all commands were verified in a headless Linux container.
 
 ## Prerequisites
 
 ```bash
-uv sync --all-extras   # root .venv (Python 3.14) — the lean-dojo marker skips it here
-
-# Dedicated 3.12 venv for the Lean verification path (lean-dojo pins <3.13):
-UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 --extra lean --extra notebook --extra dev
+uv sync --all-extras   # single .venv (Python 3.12, pinned by .python-version), every extra
 ```
 
 ## Run (agent path)
@@ -31,7 +28,6 @@ UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 --extra lean --extra not
 timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + exit 0
 
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
-.venv-lean/bin/python -m pytest tests/ -q     # same suite on 3.12 (verify-guard import-OK branch)
 
 .venv/bin/python -m smolbench.induction.periodic              # quiz-generation demo
 .venv/bin/python -m smolbench.induction.chromatic | tail -25  # prints ~120 prompt blocks
@@ -75,27 +71,26 @@ server.shutdown()
 
 ## Run: smolbench.deduction.lean (theorem-proving eval)
 
-`lean_smoke.sh` handles both venv syncs and a one-time 64 MB benchmark
+`lean_smoke.sh` handles the venv sync and a one-time 64 MB benchmark
 bootstrap (Zenodo record 10929138 → `notebooks/deduction/data/leandojo_benchmark_4/`,
 gitignored). Manual driving from the repo root with
 `export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`:
 
 ```bash
-# Anywhere (main .venv works — no Lean/Dojo needed):
+# No Lean/Dojo needed:
 .venv/bin/python -m smolbench.deduction.lean.cli metadata
 .venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5
 .venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl   # + report/show/compare
 # prompt-stats also runs here but needs the replay_passing_*.jsonl sidecar
-# that only `filter` (~70 min, .venv-lean) produces.
+# that only `filter` (~70 min) produces.
 
-# Verification path (needs .venv-lean; importing smolbench.deduction.lean.verify on 3.14
-# raises an actionable ImportError):
-.venv-lean/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
-.venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
+# Verification path (needs elan + a traced-repo cache; not just an install):
+.venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
+.venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
 
 The canonical sweep driver is `notebooks/deduction/lean_eval.ipynb` (kernel:
-`.venv-lean`) — config dicts live in its cells; `run-sweep` is the headless
+`.venv`) — config dicts live in its cells; `run-sweep` is the headless
 escape hatch for the same config schema.
 
 **Credential-free END-TO-END sweep verification (fake LLM, REAL Lean):**
@@ -130,12 +125,10 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 
 ## Gotchas
 
-- System `python3` is 3.12 and the root `.venv` is 3.14 → always name the
-  interpreter explicitly: `.venv/bin/python` for everything except the Lean
-  verification path, which needs `.venv-lean/bin/python` (lean-dojo pins
-  Python <3.13; the `lean` extra's environment marker skips it on 3.14).
-  `run-sweep`, `run-cell`, `replay`, and `filter` need `.venv-lean`; every
-  other subcommand runs on either venv.
+- Always name the interpreter explicitly: `.venv/bin/python`, never a system
+  python. `run-sweep`, `run-cell`, `replay`, and `filter` additionally need
+  elan and a traced-repo cache (see below); every other subcommand needs
+  neither.
 - `uv sync` prunes packages not in the lockfile: it uninstalls the ad-hoc
   `aws-bedrock-token-generator` that `scripts/smoke/bedrock_smoke.py` needs
   (observed). Restore with `uv pip install aws-bedrock-token-generator`.
@@ -165,13 +158,11 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 
 ## Troubleshooting
 
-- `RuntimeError: Python 3.12.x is too old` from the driver → you used system
-  `python3`; rerun with `.venv/bin/python`.
+- `Python ... is not the project interpreter` from the driver → you used a
+  system python; rerun with `.venv/bin/python`.
 - `cannot import tests.conftest` (driver exit 2) → run from a synced repo:
   `uv sync --all-extras` at the root.
-- `ImportError: smolbench.deduction.lean.verify requires lean_dojo` → you ran a
-  Dojo-touching subcommand on the 3.14 venv; rerun with
-  `.venv-lean/bin/python` (build it with the UV_PROJECT_ENVIRONMENT one-liner
-  under Prerequisites).
+- `ImportError: smolbench.deduction.lean.verify requires lean_dojo` → run
+  `uv sync --all-extras`.
 - `elan not found` from `lean_smoke.sh --replay` → install elan (line above)
   or run the default Tier-0/1 smoke instead.

@@ -10,11 +10,11 @@ Members
 lean
     Lean 4 theorem-proving eval over LeanDojo Benchmark 4 / Mathlib4 -- the
     first (and currently only) deduction experiment. See
-    ``smolbench.deduction.lean`` for its module map and the main-``.venv`` vs.
-    ``.venv-lean`` environment split.
+    ``smolbench.deduction.lean`` for its module map and the
+    generation-vs-verification submodule split.
 
 This ``__init__`` deliberately carries no imports. ``smolbench.deduction.lean``
-pulls in heavy, environment-specific dependencies (``tiktoken``, ``lean_dojo``),
-so importing the category namespace must stay cheap. Import the specific
-submodule you need instead (e.g. ``import smolbench.deduction.lean.corpus``).
+pulls in heavy dependencies (``tiktoken``, ``lean_dojo``), so importing the
+category namespace must stay cheap. Import the specific submodule you need
+instead (e.g. ``import smolbench.deduction.lean.corpus``).
 """

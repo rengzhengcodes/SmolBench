@@ -2,15 +2,14 @@
 
 Run as `python -m smolbench.deduction.lean.cli <subcommand>`.
 
-Environment split: `replay`, `filter`, `run-cell`, and `run-sweep` verify
+Dependency split: `replay`, `filter`, `run-cell`, and `run-sweep` verify
 candidate and ground-truth proofs against Lean. They therefore import
-`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package.
-These four subcommands work only from the dedicated `.venv-lean`
-environment (see `verify.py`'s import guard for how to build it). Every
-other subcommand (`metadata`, `list`, `analyze`, `report`, `show`,
-`compare`, `prompt-stats`) touches only the generation/analysis modules
-(`corpus`, `context`, `prompt`, `runner`'s dispatch), and runs on this
-project's regular `.venv`.
+`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package
+(the `lean` extra, plus elan and a traced-repo cache at runtime -- see
+`verify.py`'s import guard). Every other subcommand (`metadata`, `list`,
+`analyze`, `report`, `show`, `compare`, `prompt-stats`) touches only the
+generation/analysis modules (`corpus`, `context`, `prompt`, `runner`'s
+dispatch), and needs none of that.
 
 To keep that split real, this module imports `smolbench.deduction.lean.verify`
 lazily -- inside `cmd_replay` and `cmd_filter`, the two commands here that
@@ -51,9 +50,9 @@ def cmd_metadata(_: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv (main `.venv` or `.venv-lean`; see the module
-    docstring's environment split). It propagates `corpus.metadata`'s
-    `FileNotFoundError` when the dataset has not been bootstrapped.
+    This needs no Lean toolchain (see the module docstring's dependency
+    split). It propagates `corpus.metadata`'s `FileNotFoundError` when the
+    dataset has not been bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -76,9 +75,9 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv. It prints the total matching-theorem count,
-    then up to `args.limit` lines of ``full_name``, tactic count, and
-    ``file_path``.
+    This needs no Lean toolchain. It prints the total matching-theorem
+    count, then up to `args.limit` lines of ``full_name``, tactic count,
+    and ``file_path``.
     """
     items = list(iter_with_proof(args.kind, args.split))
     print(f"# {len(items)} theorems with traced tactics in {args.kind}/{args.split}")
@@ -109,16 +108,16 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This requires `.venv-lean`: it imports `smolbench.deduction.lean.verify`
-    (see the module docstring's environment split) to open real Dojo
+    This requires `lean_dojo`: it imports `smolbench.deduction.lean.verify`
+    (see the module docstring's dependency split) to open real Dojo
     sessions. It prints one line per theorem (verdict, tactics
     applied/total, wall time) plus the first line of any error, then a
     final pass/total summary.
     """
-    # Local import: `.verify` requires `lean_dojo`, which installs only in
-    # the dedicated `.venv-lean` environment (see that module's import
-    # guard). Deferring the import to this function body, rather than the
-    # module top, keeps every OTHER subcommand importable on the main venv.
+    # Local import: `.verify` requires `lean_dojo` (see that module's
+    # import guard). Deferring the import to this function body, rather
+    # than the module top, keeps every OTHER subcommand importable without
+    # lean_dojo installed.
     from .verify import replay_ground_truth
 
     pool = list(iter_with_proof(args.kind, args.split))
@@ -177,8 +176,8 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This requires `.venv-lean`: it imports `smolbench.deduction.lean.verify`
-    (see the module docstring's environment split). It is resumable:
+    This requires `lean_dojo`: it imports `smolbench.deduction.lean.verify`
+    (see the module docstring's dependency split). It is resumable:
     without ``--fresh``, it skips theorems already recorded in the output
     JSONL (``corpus.replay_passing_path(args.kind, args.split)``), and it
     flushes each new result to disk immediately after replaying it -- an
@@ -272,9 +271,9 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This requires `.venv-lean`: it reaches `smolbench.deduction.lean.verify`
+    This requires `lean_dojo`: it reaches `smolbench.deduction.lean.verify`
     indirectly through `runner.run_cell`'s lazily-resolved default
-    verifier (see the module docstring's environment split), rather than
+    verifier (see the module docstring's dependency split), rather than
     importing it directly here. It writes one JSONL row per replicate to
     ``<results_root()>/runs/<new_run_id()>.jsonl`` (via
     `runner.write_jsonl`), and prints a per-replicate summary (verdict,
@@ -359,7 +358,7 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv -- it uses `context.render` only, with no
+    This needs no Lean toolchain -- it uses `context.render` only, with no
     Dojo session. It counts tokens with `tiktoken`'s ``cl100k_base``
     encoding directly. It has no char-based fallback here, unlike
     `context._count_tokens`: a missing `tiktoken` install surfaces as an
@@ -437,7 +436,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv -- it does pure JSONL aggregation, with no
+    This needs no Lean toolchain -- it does pure JSONL aggregation, with no
     Dojo session and no file writes. It prints, in order:
 
     - sanity-gate pass/fail counts;
@@ -685,9 +684,9 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This requires `.venv-lean`: it reaches `smolbench.deduction.lean.verify`
+    This requires `lean_dojo`: it reaches `smolbench.deduction.lean.verify`
     indirectly through `runner.sweep`'s lazily-resolved default verifier
-    (see the module docstring's environment split). All other side effects
+    (see the module docstring's dependency split). All other side effects
     (output directory layout, resumability, manifest/analysis writing)
     belong to `runner.sweep` -- see that function's docstring.
     """
@@ -720,7 +719,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv -- it does pure JSONL comparison, with no
+    This needs no Lean toolchain -- it does pure JSONL comparison, with no
     Dojo session and no file writes. See `_dump` for the shared
     regressions/improvements printer.
     """
@@ -848,7 +847,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv -- it reads only ``summary.md``/
+    This needs no Lean toolchain -- it reads only ``summary.md``/
     ``outputs/*.jsonl`` files, with no Dojo session. In listing mode (no
     `args.theorem`), it tallies each theorem's success rate by
     re-scanning its ``outputs/*.jsonl`` files directly, instead of
@@ -914,7 +913,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     Notes
     -----
-    This runs on either venv -- it delegates to
+    This needs no Lean toolchain -- it delegates to
     `runner.regenerate_run_artifacts`, which reads only `all_rows.jsonl`
     and each theorem's `meta.json`/`outputs/*.jsonl`, with no Dojo
     session. It overwrites `run_dir`'s `analysis.txt` and every
@@ -932,9 +931,9 @@ def cmd_report(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     """Build the `smolbench.deduction.lean.cli` argument parser.
 
-    See the module docstring for the `.venv-lean` vs. main-`.venv`
-    subcommand split (`replay`/`filter`/`run-cell`/`run-sweep` need
-    `.venv-lean`; everything else runs on either venv).
+    See the module docstring for the `lean_dojo` subcommand split
+    (`replay`/`filter`/`run-cell`/`run-sweep` need `lean_dojo`; everything
+    else needs no Lean toolchain).
 
     Returns
     -------

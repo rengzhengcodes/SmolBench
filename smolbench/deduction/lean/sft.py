@@ -43,8 +43,8 @@ At the default ``k_strategy="last"``, the tail is the single final
 tactic -- exactly the cell the headline sweep scores (``k.strategy: last``).
 
 This module imports only the generation-side siblings (`corpus`,
-`context`, `prompt`), never `verify`. So it stays importable on the main
-3.14 venv (no ``lean_dojo``); dataset construction needs no Lean.
+`context`, `prompt`), never `verify`. So it stays importable without
+``lean_dojo``; dataset construction needs no Lean.
 """
 
 from __future__ import annotations

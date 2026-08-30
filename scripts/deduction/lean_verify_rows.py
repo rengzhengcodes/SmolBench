@@ -4,25 +4,25 @@ Two-phase split
 ---------------
 Phase 1 runs GENERATION. It lives in ``notebooks/deduction/run_study.py``
 and ``smolbench.deduction.lean.runner`` (already built; this file does not
-touch it). Phase 1 runs on the main ``.venv`` (Python 3.14) with a
-``NullVerifier``. It calls a model, extracts a candidate tactic block, and
-writes a cell row. The row's ``verdict`` starts as the placeholder
-``"unverified"``. Phase 1 also writes a per-theorem sanity row, with
-``verdict`` set to ``"skipped"``.
+touch it). Phase 1 runs on ``.venv`` with a ``NullVerifier``. It calls a
+model, extracts a candidate tactic block, and writes a cell row. The row's
+``verdict`` starts as the placeholder ``"unverified"``. Phase 1 also writes
+a per-theorem sanity row, with ``verdict`` set to ``"skipped"``.
 
-Neither row is checked against real Lean at this stage. The reason:
-``lean_dojo`` (the real verifier's dependency) pins ``python<3.13`` and
-cannot live on the main venv (see ``smolbench/deduction/lean/verify.py``'s
-import guard).
+Neither row is checked against real Lean at this stage. Verification is a
+separate, slow, Lean-touching pass, deliberately deferred and run later
+against a downloaded ``all_rows.jsonl`` (see
+``smolbench/deduction/lean/verify.py``'s import guard for the
+``lean_dojo`` dependency itself).
 
-THIS file is phase 2. It runs on ``.venv-lean`` (Python 3.12, where
-``lean_dojo`` is installed). It downloads a run's ``all_rows.jsonl`` from
-S3, replays every recorded candidate proof against real Lean, and uploads
-``verified_rows.jsonl`` beside it. S3 fully decouples the two phases:
-generation can run anywhere with network access to a provider API;
+THIS file is phase 2. It also runs on ``.venv`` (with ``lean_dojo``
+installed via the ``lean`` extra). It downloads a run's ``all_rows.jsonl``
+from S3, replays every recorded candidate proof against real Lean, and
+uploads ``verified_rows.jsonl`` beside it. S3 fully decouples the two
+phases: generation can run anywhere with network access to a provider API;
 verification needs a box with ``elan``/Lean toolchains and the traced
 mathlib4 corpus. This is why the two phases are split this way, instead of
-requiring every generation box to also carry ``.venv-lean``.
+verifying inline during generation.
 
 **The original ``all_rows.jsonl`` object is NEVER modified or re-uploaded.**
 Every write this script makes goes to the sibling ``verified_rows.jsonl``
@@ -115,7 +115,7 @@ of a wedged wait or a corrupted cache.
 
 ``--dry-run``'s exemptions
 -----------------------------------
-:func:`require_py312`, :func:`check_workers` and the Dojo cache flock are
+:func:`require_lean_dojo`, :func:`check_workers` and the Dojo cache flock are
 ALL skipped under ``--dry-run``. Each exists only to protect real
 Dojo/Lean work (a wrong interpreter, an oversubscribed worker pool, a
 racing build cache); ``--dry-run`` lists groups and exits before ever
@@ -222,9 +222,9 @@ valid against the seeded output.
 Import-safety: two lazy seams, exactly two
 ----------------------------------------------
 This module's own test suite (and its ``--help``) must import cleanly on
-BOTH the main ``.venv`` (Python 3.14, no ``lean_dojo``) and ``.venv-lean``
-(Python 3.12). Exactly two imports are therefore deferred to call time,
-never module scope and never function-definition scope:
+``.venv`` whether or not ``lean_dojo`` (the ``lean`` extra) happens to be
+installed. Exactly two imports are therefore deferred to call time, never
+module scope and never function-definition scope:
 
 - ``smolbench.deduction.lean.verify`` (needs ``lean_dojo``) -- see
   :func:`_default_verifier`, which copies the exact seam
@@ -238,23 +238,22 @@ never module scope and never function-definition scope:
   ``botocore.exceptions.ClientError`` lazily inside :func:`download_rows`,
   the one place this file inspects an AWS error code.
 
-Everything else imports fine on both interpreters, and is therefore
-imported at this module's top level: ``smolbench.evals._aws`` (for
-:func:`_aws.error_code`) and ``smolbench.deduction.lean.corpus``
-(``BenchmarkTheorem``, ``load_split``). This mirrors
-``smolbench/deduction/lean/runner.py``, which does the same for its own
-py3.14-safe imports (``lean3``, ``.context``, ``.corpus``, ``.prompt``).
+Everything else imports fine whether or not ``lean_dojo`` is installed,
+and is therefore imported at this module's top level:
+``smolbench.evals._aws`` (for :func:`_aws.error_code`) and
+``smolbench.deduction.lean.corpus`` (``BenchmarkTheorem``, ``load_split``).
+This mirrors ``smolbench/deduction/lean/runner.py``, which does the same
+for its own ``lean_dojo``-free imports (``lean3``, ``.context``,
+``.corpus``, ``.prompt``).
 
-Run (repo root, ``.venv-lean``)::
-
-    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --dry-run
-    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_qwen*'
-    .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --theorem Nat.add_comm --workers 4
-
-The plan can also be previewed from the main venv, since ``--dry-run`` is
-exempt from the ``.venv-lean``/RAM/lock requirements above::
+Run (repo root)::
 
     .venv/bin/python scripts/deduction/lean_verify_rows.py --dry-run
+    .venv/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_qwen*'
+    .venv/bin/python scripts/deduction/lean_verify_rows.py --theorem Nat.add_comm --workers 4
+
+``--dry-run`` is exempt from the ``lean_dojo``/RAM/lock requirements above
+and works even without ``lean_dojo`` installed.
 """
 
 from __future__ import annotations
@@ -265,6 +264,7 @@ import concurrent.futures
 import contextlib
 import fnmatch
 import functools
+import importlib.util
 import itertools
 import json
 import logging
@@ -805,34 +805,21 @@ def check_workers(requested: int, meminfo_text: str) -> None:
 # ---------------------------------------------------------------------------
 # Pure: interpreter guard, Dojo-failure operator guidance
 # ---------------------------------------------------------------------------
-def require_py312() -> None:
-    """Refuse to proceed on an interpreter without ``lean_dojo`` available.
-
-    Returns
-    -------
-    None
-        Returns when ``sys.version_info < (3, 13)``. At that Python
-        version, ``lean_dojo`` -- and therefore this script's actual
-        verification work -- can be imported.
+def require_lean_dojo() -> None:
+    """Refuse to proceed in a venv without ``lean_dojo`` available.
 
     Raises
     ------
     SystemExit
-        Raised when ``sys.version_info >= (3, 13)``. The message names the
-        ``.venv-lean`` remedy and the exact ``uv sync`` command from
-        ``smolbench/deduction/lean/verify.py``'s own import-guard message.
+        Raised when ``lean_dojo`` cannot be imported (the ``lean`` extra is
+        not installed in the venv running this script).
     """
-    if sys.version_info >= (3, 13):
+    if importlib.util.find_spec("lean_dojo") is None:
         raise SystemExit(
             "lean_verify_rows: this is the deferred VERIFICATION pass and needs "
-            "'lean_dojo', which only installs under the dedicated '.venv-lean' "
-            "environment (the upstream package pins python<3.13). Re-run with "
-            "'.venv-lean/bin/python scripts/deduction/lean_verify_rows.py ...' instead of the "
-            "main venv's python. Build it once with:\n"
-            "    UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 "
-            "--extra lean --extra notebook --extra dev\n"
-            "(--dry-run works on any interpreter, including this one, if you only "
-            "need to preview the plan.)"
+            "'lean_dojo' (the `lean` extra). Install it into the project venv "
+            "with `uv sync --all-extras` and re-run via .venv/bin/python. "
+            "(--dry-run works without it if you only need to preview the plan.)"
         )
 
 
@@ -968,9 +955,9 @@ def _default_verifier():
     """Lazily resolve the real Lean verifier module.
 
     Imports `smolbench.deduction.lean.verify` at call time, not at module
-    top. That module requires `lean_dojo`, and therefore only works under
-    `.venv-lean`. This is the same seam
-    `smolbench/deduction/lean/runner.py::_default_verifier` uses.
+    top. That module requires `lean_dojo` to be installed. This is the
+    same seam `smolbench/deduction/lean/runner.py::_default_verifier`
+    uses.
 
     Returns
     -------
@@ -1615,8 +1602,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         description=(
             "Phase 2 of the two-phase Lean theorem-proving eval: replay recorded "
             "candidate proofs against real Lean and write verified_rows.jsonl "
-            "alongside each run's all_rows.jsonl in S3. Requires .venv-lean "
-            "(lean_dojo needs python<3.13) except under --dry-run."
+            "alongside each run's all_rows.jsonl in S3. Requires lean_dojo "
+            "installed (uv sync --all-extras) except under --dry-run."
         ),
     )
     parser.add_argument(
@@ -1688,10 +1675,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     Notes
     -----
     Step order (see the module docstring's ``--dry-run`` section for why
-    `require_py312`, `check_workers`, and the Dojo cache lock are ALL
+    `require_lean_dojo`, `check_workers`, and the Dojo cache lock are ALL
     skipped together under ``--dry-run``, not just the first):
 
-    1. `require_py312` (skipped under ``--dry-run``).
+    1. `require_lean_dojo` (skipped under ``--dry-run``).
     2. `check_workers` against a live read of ``/proc/meminfo`` (skipped
        under ``--dry-run``).
     3. The exclusive Dojo cache lock, held for the rest of this call
@@ -1702,7 +1689,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if not args.dry_run:
-        require_py312()
+        require_lean_dojo()
 
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
     workdir.mkdir(parents=True, exist_ok=True)

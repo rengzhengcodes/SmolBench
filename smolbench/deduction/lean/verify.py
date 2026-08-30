@@ -30,29 +30,18 @@ try:
         Theorem,
     )
 except ImportError as exc:
-    # Design: lean_dojo pins `python<3.13` (it wraps traced-repo tooling
-    # that has not caught up to newer CPython). So it cannot live in this
-    # project's main `.venv` (Python 3.14 — see pyproject.toml).
-    # Generation/analysis code (`corpus`, `context`, `prompt`, `runner`'s
-    # dispatch) must still import cleanly on the main venv; only this
-    # module — the Lean-side verifier — needs the dedicated `.venv-lean`
-    # environment. Re-raising with an actionable message here, instead of
-    # letting the bare ModuleNotFoundError propagate, means anyone who
-    # accidentally imports `smolbench.deduction.lean.verify` from the
-    # wrong interpreter gets pointed at the fix, instead of a bare "no
-    # module named lean_dojo".
+    # Only this module -- the Lean-side verifier -- needs lean_dojo; the
+    # generation/analysis modules (corpus, context, prompt, runner dispatch)
+    # import without it. Re-raise with the fix instead of a bare "no module
+    # named lean_dojo".
     raise ImportError(
-        "smolbench.deduction.lean.verify requires the 'lean_dojo' package, which is "
-        "only installable in the dedicated '.venv-lean' environment (the "
-        "upstream package pins python<3.13, incompatible with this "
-        "project's main .venv). Build it once with:\n"
-        "    UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 "
-        "--extra lean --extra notebook --extra dev\n"
+        "smolbench.deduction.lean.verify requires the 'lean_dojo' package "
+        "(the `lean` extra). Install it into the project venv with\n"
+        "    uv sync --all-extras\n"
         "and run Lean-verifying commands (replay/filter/run-cell/run-sweep) "
-        "via '.venv-lean/bin/python' instead of the main venv's python. "
-        "Generation and analysis paths (corpus/context/prompt/runner "
-        "dispatch, cli's non-verifying subcommands) work fine on the main "
-        "venv without lean_dojo."
+        "via '.venv/bin/python'. Generation and analysis paths (corpus/context/"
+        "prompt/runner dispatch, cli's non-verifying subcommands) work without "
+        "lean_dojo."
     ) from exc
 
 from .corpus import BenchmarkTheorem

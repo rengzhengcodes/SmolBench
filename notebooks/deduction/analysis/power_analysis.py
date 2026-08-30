@@ -120,14 +120,15 @@ and ``verdict``. A cell counts as a success only if ``verdict ==
 ``given_up``, ``exception``, ``replay_failed``, and the placeholder
 ``"unverified"``) is a failure.
 
-Generation (``smolbench.deduction.lean.runner``, main ``.venv``) writes
-``all_rows.jsonl`` with every cell's ``verdict`` set to the placeholder
-``"unverified"``. It never talks to real Lean (``lean_dojo`` cannot live
-on that venv; see ``smolbench/deduction/lean/verify.py``). A separate
-deferred verification pass, ``scripts/deduction/lean_verify_rows.py`` (``.venv-lean``,
-where ``lean_dojo`` IS installed), replays every candidate proof against
-real Lean and writes the sibling ``verified_rows.jsonl`` with the real
-verdicts. This script is meant to read ONLY ``verified_rows.jsonl``.
+Generation (``smolbench.deduction.lean.runner``) writes ``all_rows.jsonl``
+with every cell's ``verdict`` set to the placeholder ``"unverified"``. By
+default it never talks to real Lean (it uses ``NullVerifier``, which never
+imports ``lean_dojo``; see ``smolbench/deduction/lean/verify.py``). A
+separate deferred verification pass, ``scripts/deduction/lean_verify_rows.py``,
+run later and against a downloaded ``all_rows.jsonl``, replays every
+candidate proof against real Lean and writes the sibling
+``verified_rows.jsonl`` with the real verdicts. This script is meant to
+read ONLY ``verified_rows.jsonl``.
 If this script reads ``all_rows.jsonl``, or finds even one cell row
 whose verdict is still ``"unverified"``, every "success rate" it
 computes will silently read at or near 0.000. That reading is

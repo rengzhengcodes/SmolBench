@@ -15,7 +15,7 @@ may need the AWS SDK installed just to import it.
 `_default_client_factory` imports `boto3` lazily, only when it needs a
 real (non-injected) client.
 
-Run this script from the repo root, in the main venv::
+Run this script from the repo root::
 
     .venv/bin/python scripts/fleet/fleet_status.py
 """

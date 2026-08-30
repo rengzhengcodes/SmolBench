@@ -63,7 +63,7 @@ Design constraints
 - Stays dependency-free beyond the standard library plus `.corpus` (for
   `data_root()` only, imported lazily at call time inside `AlignMap.load` --
   see its docstring). This module imports no `lean_dojo` and no
-  torch/datasets, so it must import cleanly on the main py3.14 venv.
+  torch/datasets, so it must import cleanly without either installed.
 - Stays fully deterministic. `corrupt_tail` takes an explicit
   `random.Random` instance and never reads global random state or the
   wall clock, so a training-data build is byte-for-byte reproducible from

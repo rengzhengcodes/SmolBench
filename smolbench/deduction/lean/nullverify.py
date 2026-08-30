@@ -1,49 +1,47 @@
-"""A verifier that verifies nothing -- for generation-only sweeps on the main venv.
+"""A verifier that verifies nothing -- for generation-only sweeps that need no Lean toolchain.
 
 `smolbench.deduction.lean.runner.sweep` (and `run_cell`) never call into
 Lean directly. Every Dojo interaction goes through an injected `verifier`
 object (see `runner._default_verifier`). This lets the runner itself
-import and run on the main Python 3.14 `.venv`, where
-`smolbench.deduction.lean.verify` is not importable at all (it requires
-`lean_dojo`, which pins ``python<3.13`` -- see `verify.py`'s import
-guard). `NullVerifier` is a second concrete implementation of that same
-seam, alongside the real `smolbench.deduction.lean.verify` module and the
-offline test suite's fake verifiers. It duck-types every attribute
-`runner.py` calls on `verifier`, but every method returns an
+import and run without needing `lean_dojo`, elan, or a traced-repo cache
+(see `verify.py`'s import guard for what `smolbench.deduction.lean.verify`
+itself requires). `NullVerifier` is a second concrete implementation of
+that same seam, alongside the real `smolbench.deduction.lean.verify`
+module and the offline test suite's fake verifiers. It duck-types every
+attribute `runner.py` calls on `verifier`, but every method returns an
 "unverified"/"skipped" placeholder instead of opening a Dojo session.
 
 Two-phase workflow
 -------------------
 This exists to split a sweep into two independently-schedulable phases:
 
-1. **Generation**, on the main venv (no `lean_dojo`, no elan, no traced
-   mathlib4 checkout needed): run
-   `sweep(config, run_dir, verifier=NullVerifier())`. Every cell still
-   calls the configured model and writes a row. `verdict` is just always
-   `"unverified"` (or `"exception"`, for the same generation failures a
-   real verifier would also report as `"exception"`, since `runner.py`
-   itself constructs those, not the verifier).
-2. **Verification**, on `.venv-lean`, as a separate later pass: replay the
-   candidate tails recorded by phase 1 against the real Dojo. This module
-   does not implement that replay -- its job stops at making phase 1
-   possible without `lean_dojo` installed.
+1. **Generation** (no `lean_dojo`, no elan, no traced mathlib4 checkout
+   needed): run `sweep(config, run_dir, verifier=NullVerifier())`. Every
+   cell still calls the configured model and writes a row. `verdict` is
+   just always `"unverified"` (or `"exception"`, for the same generation
+   failures a real verifier would also report as `"exception"`, since
+   `runner.py` itself constructs those, not the verifier).
+2. **Verification**, as a separate, slow, Lean-touching pass run later
+   against a downloaded `all_rows.jsonl`: replay the candidate tails
+   recorded by phase 1 against the real Dojo. This module does not
+   implement that replay -- its job stops at making phase 1 possible
+   without `lean_dojo` installed.
 
 Why `smolbench.deduction.lean.verify` is never imported here
 --------------------------------------------------------------
 That is the entire point of this module. If `nullverify.py` imported
-`.verify` -- even lazily, even only inside a method nobody calls on the
-main venv -- Python would still need to resolve the
-`smolbench.deduction.lean.verify` module object, to define the
-function/method that references it. That resolution reruns `.verify`'s
-top-level `import lean_dojo` and raises `ImportError` on any interpreter
-without `lean_dojo` installed (see `verify.py`'s own import guard for why
-that import is unconditional there). A lazy *function-body* import only
-defers *executing* the import to call time; it does not change that
-importing `nullverify` itself must stay independent of it. So this module
-defines its own small result dataclasses (`NullReplayResult`,
-`NullProofResult`) that mirror the field names of `verify.ReplayResult` /
-`verify.ProofResult` exactly, rather than importing or subclassing the
-real ones.
+`.verify` -- even lazily, even only inside a method nobody calls --
+Python would still need to resolve the `smolbench.deduction.lean.verify`
+module object, to define the function/method that references it. That
+resolution reruns `.verify`'s top-level `import lean_dojo` and raises
+`ImportError` on any interpreter without `lean_dojo` installed (see
+`verify.py`'s own import guard for why that import is unconditional
+there). A lazy *function-body* import only defers *executing* the import
+to call time; it does not change that importing `nullverify` itself must
+stay independent of it. So this module defines its own small result
+dataclasses (`NullReplayResult`, `NullProofResult`) that mirror the field
+names of `verify.ReplayResult` / `verify.ProofResult` exactly, rather than
+importing or subclassing the real ones.
 
 Why "unverified" / "skipped" are deliberately excluded from `runner.py`'s failure set
 ----------------------------------------------------------------------------------------
@@ -56,8 +54,8 @@ module never actually replays anything, so it has no basis to claim the
 ground truth failed. If it excluded every theorem instead (because none
 of them are ever `"success"`), a generation-only sweep would produce zero
 cells.
-The real verification pass, run later under `.venv-lean`, is what
-actually answers the sanity question.
+The real verification pass, run later as a separate, slow, Lean-touching
+step, is what actually answers the sanity question.
 """
 
 from __future__ import annotations

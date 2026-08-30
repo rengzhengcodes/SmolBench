@@ -22,16 +22,16 @@ Module map:
   - `runner`, `verify`, `cli` — orchestration, Lean-side proof replay, and
     the command-line entry points.
 
-Environment split: the four modules above (`corpus`, `premises`, `context`,
-`prompt`) handle generation and analysis. They run under any Python >= 3.12,
-using this project's regular `.venv`. `verify.py` additionally needs the
-`.venv-lean` 3.12 environment, because its `lean_dojo` dependency pins
-`python<3.13` for compatibility with the traced-repo tooling it wraps.
+Dependency split: the four modules above (`corpus`, `premises`, `context`,
+`prompt`) handle generation and analysis and need no Lean toolchain. All of
+them run under this project's regular `.venv`. `verify.py` additionally
+needs `lean_dojo` (the `lean` extra, installed into that same `.venv` via
+`uv sync --all-extras`), plus elan and a traced-repo cache at runtime.
 
 This `__init__.py` deliberately carries no imports. Importing
 `smolbench.deduction.lean` must stay dependency-light. `context.py` pulls in
 `tiktoken` (for token-budget accounting), and `verify.py` pulls in
-`lean_dojo` (a heavy, `.venv-lean`-only dependency). Neither should load
-merely because a caller wrote `import smolbench.deduction.lean`. Import the
+`lean_dojo` (a heavy, optional dependency). Neither should load merely
+because a caller wrote `import smolbench.deduction.lean`. Import the
 specific submodule you need instead (e.g. `import smolbench.deduction.lean.corpus`).
 """

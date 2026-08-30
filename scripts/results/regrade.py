@@ -61,7 +61,7 @@ guard block at the top of `main` for the implementation, and see the
 printed message for the exact recovery sequence (sync down, unset the
 env var, re-run).
 
-Run this script from the repo root, in the main venv:
+Run this script from the repo root:
     .venv/bin/python scripts/results/regrade.py                     # report only
     .venv/bin/python scripts/results/regrade.py --study induction
     .venv/bin/python scripts/results/regrade.py --write

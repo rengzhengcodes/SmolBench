@@ -16,13 +16,11 @@ version = "0.1.0"
 description = "A benchmark for smol manipulation of language."
 readme = "README.md"
 
-# The main development venv (.venv) runs Python 3.14. The floor is 3.12 --
-# claimed solely so the Lean theorem-proving verification path can share this
-# package: lean-dojo (the `lean` extra) pins Requires-Python <3.13 upstream,
-# so smolbench.deduction.lean.verify runs from a dedicated 3.12 venv (.venv-lean; see
-# notebooks/deduction/README.md). All smolbench code is validated on both 3.12 and
-# 3.14 by the offline test suite.
-requires-python = ">=3.12"
+# One venv (.venv) on Python 3.12 holds every extra, including the Lean
+# verification stack: lean-dojo (the `lean` extra) pins Requires-Python <3.13
+# upstream, so the project pins the same ceiling instead of splitting into a
+# second interpreter. `.python-version` selects 3.12 for `uv sync`.
+requires-python = ">=3.12,<3.13"
 
 # Direct runtime dependencies, expressed as lower bounds at the versions
 # known to work here rather than the minimum ever supported.
@@ -54,7 +52,7 @@ dev = [
     "pytest>=8.0",
     # tests/evals/test_dsv4_chat_template.py renders the inline DeepSeek-V4 serving
     # template and byte-compares it against the vendored shipped encoding; the
-    # pin must RUN (not importorskip away) in both venvs.
+    # pin must RUN (not importorskip away).
     "jinja2>=3.1",
 ]
 
@@ -74,15 +72,12 @@ aws = [
 # token matching, prompt-stats; also backs the optional
 # smolbench.evals.tokenization.TiktokenTokenizer, which the offline tests and
 # the module demos use in place of a downloaded model tokenizer);
-# verification additionally needs lean-dojo,
-# which pins Requires-Python <3.13 upstream -- the environment marker lets
-# `uv sync --all-extras` succeed on the 3.14 main venv (generation/analysis
-# modules import cleanly there) while the dedicated 3.12 venv (.venv-lean)
-# gets the full verification stack.
+# verification additionally needs lean-dojo (the reason the project pins
+# python<3.13 above).
 lean = [
-    "lean-dojo>=2.0; python_version < '3.13'",
+    "lean-dojo>=2.0",
     "PyYAML>=6.0.3",
-    # 0.13 is the first release shipping both cp312 and cp314 wheels.
+    # 0.13 is the first release shipping cp312 wheels.
     "tiktoken>=0.13",
 ]
 
@@ -93,15 +88,14 @@ notebook = [
     "ipykernel>=7.2.0",
     # Runtime libraries the checked-in notebooks import directly:
     #   - PyYAML (`import yaml`) backs Marks.dump/Marks.load result
-    #     serialization. Pinned to a version with cp314 wheels so it installs
+    #     serialization. Pinned to a version with cp312 wheels so it installs
     #     without libyaml.
     #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
     "PyYAML>=6.0.3",
     "python-dotenv>=1.0.1",
     # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
     "smolbench[aws]",
-    # smolbench.induction.figures plots results with matplotlib; pinned to a
-    # cp314-wheel release.
+    # smolbench.induction.figures plots results with matplotlib.
     "matplotlib>=3.10.0",
     # The two power-analysis scripts (notebooks/{induction,deduction}/analysis/
     # power_analysis.py) import scipy.stats for the CMH chi-square / Welch t

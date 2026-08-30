@@ -225,30 +225,31 @@ spool from S3 just to check.
 
 ## Generation -> verification split
 
-Lean verification is deliberately deferred to a separate pass, because the
-two halves need incompatible Python environments:
+Lean verification is deliberately deferred to a separate pass: it is a
+separate, slow, Lean-touching step that runs later against a downloaded
+`all_rows.jsonl`, so generation boxes never need `lean_dojo`, elan, or the
+Dojo cache.
 
-- **Phase 1 (generation)** runs on the main `.venv` (Python 3.14).
-  `notebooks/deduction/run_study.py` calls a model, extracts a candidate
-  tactic block, and writes each cell row with `verdict == "unverified"`
-  (a placeholder -- nothing has been checked against Lean yet) and each
-  per-theorem sanity row with `verdict == "skipped"`. This venv cannot
-  import the real verifier at all: `smolbench.deduction.lean.verify`
-  requires `lean_dojo`, which pins `python<3.13`.
-- **Phase 2 (verification)** runs on the dedicated `.venv-lean` (Python
-  3.12, which has `lean_dojo` installed) via `scripts/deduction/lean_verify_rows.py`.
-  It downloads a run's `all_rows.jsonl` from S3, replays every recorded
-  candidate proof against a real Dojo session, and uploads
-  `verified_rows.jsonl` beside it -- **the original `all_rows.jsonl` is
-  never modified or re-uploaded**; every write goes to the sibling
-  `verified_rows.jsonl` key so a verification bug can never corrupt or
-  lose a candidate proof that already cost real inference spend to
-  collect. Typical invocation (see that script's own module docstring and
-  `--help` for the full flag set):
+- **Phase 1 (generation)** runs on `.venv`. `notebooks/deduction/run_study.py`
+  calls a model, extracts a candidate tactic block, and writes each cell row
+  with `verdict == "unverified"` (a placeholder -- nothing has been checked
+  against Lean yet) and each per-theorem sanity row with `verdict ==
+  "skipped"`. By default it uses `NullVerifier` (`LEAN_VERIFY=defer`), which
+  never imports `smolbench.deduction.lean.verify` or its `lean_dojo`
+  dependency, so generation boxes don't need Lean, elan, or the Dojo cache.
+- **Phase 2 (verification)** also runs on `.venv`, via
+  `scripts/deduction/lean_verify_rows.py`. It downloads a run's
+  `all_rows.jsonl` from S3, replays every recorded candidate proof against a
+  real Dojo session, and uploads `verified_rows.jsonl` beside it --
+  **the original `all_rows.jsonl` is never modified or re-uploaded**; every
+  write goes to the sibling `verified_rows.jsonl` key so a verification bug
+  can never corrupt or lose a candidate proof that already cost real
+  inference spend to collect. Typical invocation (see that script's own
+  module docstring and `--help` for the full flag set):
 
   ```
-  .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --dry-run
-  .venv-lean/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
+  .venv/bin/python scripts/deduction/lean_verify_rows.py --dry-run
+  .venv/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
   ```
 
 ### Two traps in phase 2, both of which fail SILENTLY
@@ -344,11 +345,11 @@ study's code, notebooks, and documentation.
   `random` split is present in the bootstrapped dataset and loadable via
   `corpus.load_split("random", ...)`, but no sweep this study runs draws
   from it.
-- **Live Dojo interaction from the main venv.** Everything in this
+- **Live Dojo interaction during generation.** Everything in this
   study's generation phase (`run_study.py`, and by extension
-  `lean_eval.ipynb`'s cells) runs on the main `.venv` and therefore never
-  imports `smolbench.deduction.lean.verify` or opens a real Dojo session --
-  see "Generation -> verification split" above.
+  `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore
+  never imports `smolbench.deduction.lean.verify` or opens a real Dojo
+  session -- see "Generation -> verification split" above.
 
 ## Results and data
 

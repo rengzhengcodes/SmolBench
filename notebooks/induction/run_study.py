@@ -162,7 +162,7 @@ fleet provisions up to 21 DISTINCT instances concurrently. Either way
 this is real GPU spend: verify ``INDUCTION_MODELS`` before invoking
 outside the fleet.
 
-Run (repo root, main venv):
+Run (repo root):
     .venv/bin/python notebooks/induction/run_study.py
 """
 

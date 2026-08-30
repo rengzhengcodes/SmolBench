@@ -66,8 +66,7 @@ This step is required, not optional. Under
 ``@dataclass`` -- :class:`VerifyResult` is one -- resolves each string
 through ``sys.modules[cls.__module__]``. For an unregistered module,
 that lookup returns ``None``, and ``dataclasses._is_type`` raises
-``AttributeError: 'NoneType' object has no attribute '__dict__'`` on
-both Python 3.12 and 3.14.
+``AttributeError: 'NoneType' object has no attribute '__dict__'``.
 """
 from __future__ import annotations
 

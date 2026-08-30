@@ -5,7 +5,7 @@ ChatClient.query/evaluate -> grading -> Marks YAML IO -- against the local
 OpenAI-compatible stub server from tests/conftest.py. Zero credentials, zero
 network, zero AWS spend.
 
-Run from the repo root (the venv python, NOT system python3, which is 3.12):
+Run from the repo root with the project venv's python:
 
     timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py
 
@@ -44,16 +44,16 @@ def check(cond: bool, msg: str) -> None:
 def main() -> None:
     # -- 1. Environment guard ------------------------------------------------
     check(
-        sys.version_info >= (3, 14),
-        f"Python {sys.version.split()[0]} is too old; smolbench requires >=3.14. "
-        f"Run via {REPO_ROOT}/.venv/bin/python (after `uv sync --all-extras`).",
+        sys.version_info[:2] == (3, 12),
+        f"Python {sys.version.split()[0]} is not the project interpreter; smolbench "
+        f"pins 3.12. Run via {REPO_ROOT}/.venv/bin/python (after `uv sync --all-extras`).",
     )
     stage("env", f"python {sys.version.split()[0]} at {sys.executable}")
 
     try:
         # Reused from the offline test suite so the stub dialect has a single
         # source of truth (needs pytest importable -- it's in the dev extra).
-        from tests.conftest import StubServer, chat_completion
+        from tests.conftest import StubServer, StubTokenizer, chat_completion
     except ImportError as err:
         print(
             f"FAIL: cannot import tests.conftest ({err}).\n"
@@ -88,11 +88,11 @@ def main() -> None:
     )
     periodic_cfg = PeriodicConfig(n=3, labels=["fizz", "buzz", "gerbil"], seed=42)
     periodic_prompter = Prompter(periodic_template, {}, numeric_count_query_gen)
-    intens, extens, noise_intens = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter)
+    intens, extens, noise_intens = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter, tokenizer=StubTokenizer())
     check(len(intens) == len(extens) == len(noise_intens) == 3, "expected 3 questions per periodic quiz")
     # seq_len = lcm(1..3) = 6, so counts are 6//1, 6//2, 6//3.
     check([q.answer for q in intens] == [6, 3, 2], f"periodic answers {[q.answer for q in intens]} != [6, 3, 2]")
-    intens2, _, _ = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter)
+    intens2, _, _ = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter, tokenizer=StubTokenizer())
     check(tuple(intens) == tuple(intens2), "periodic generation is not seed-deterministic")
     stage("periodic", f"{len(intens)} Numeric questions, answers {[q.answer for q in intens]}, seed-stable")
 
@@ -109,11 +109,11 @@ def main() -> None:
     chromatic_prompter = Prompter(
         chromatic_template, {"role": "Twislax", "parade": "Gildane"}, succession_query_gen
     )
-    chrom_intens, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter)
+    chrom_intens, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter, tokenizer=StubTokenizer())
     n_true = sum(1 for q in chrom_intens if q.answer is True)
     n_false = sum(1 for q in chrom_intens if q.answer is False)
     check(n_true >= 1 and n_true == n_false, f"expected balanced ToF polarity, got {n_true}T/{n_false}F")
-    chrom_intens2, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter)
+    chrom_intens2, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter, tokenizer=StubTokenizer())
     check(tuple(chrom_intens) == tuple(chrom_intens2), "chromatic generation is not seed-deterministic")
     stage("chromatic", f"{len(chrom_intens)} ToF questions ({n_true} True / {n_false} False), seed-stable")
 

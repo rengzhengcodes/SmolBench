@@ -3,10 +3,9 @@
 # folded into the main package from the old standalone lean/ project).
 #
 # Default run is credential-free and Lean-free: check the generation/analysis
-# modules import on the MAIN 3.14 venv, sync the dedicated 3.12 verification
-# venv (.venv-lean; lean-dojo pins Python <3.13), bootstrap the LeanDojo
-# Benchmark 4 JSON from Zenodo (64 MB, one-time), then drive the `metadata`
-# and `list` CLI subcommands against real benchmark data.
+# modules import without touching lean_dojo, sync the .venv, bootstrap the
+# LeanDojo Benchmark 4 JSON from Zenodo (64 MB, one-time), then drive the
+# `metadata` and `list` CLI subcommands against real benchmark data.
 #
 #   bash .claude/skills/run-smolbench/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
 #   bash .claude/skills/run-smolbench/lean_smoke.sh --replay   # + one Dojo ground-truth replay
@@ -31,16 +30,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
 # uv-managed Python needs the system CA bundle (see notebooks/deduction/README.md).
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Tier 0: the generation/analysis side of smolbench.deduction.lean must import on the
-# main venv (3.14, no lean_dojo) — only verify.py is allowed to need 3.12.
+# Tier 0: the generation/analysis side of smolbench.deduction.lean must import
+# without needing lean_dojo — only verify.py is allowed to need it.
 .venv/bin/python -c "import smolbench.deduction.lean.runner, smolbench.deduction.lean.cli" \
-    || { echo "FAIL: smolbench.deduction.lean.{runner,cli} must import on the main .venv" >&2; exit 1; }
-echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly on the main 3.14 venv)."
+    || { echo "FAIL: smolbench.deduction.lean.{runner,cli} must import on .venv" >&2; exit 1; }
+echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly without touching lean_dojo)."
 
-# Dedicated 3.12 venv for the verification path. UV_PROJECT_ENVIRONMENT keeps
-# the root .venv untouched; the environment marker on lean-dojo makes this
-# same sync command valid for both interpreters.
-UV_PROJECT_ENVIRONMENT=.venv-lean uv sync -q --python 3.12 --extra lean --extra notebook --extra dev
+uv sync -q --all-extras
 
 DATA=notebooks/deduction/data/leandojo_benchmark_4
 if [ ! -f "$DATA/metadata.json" ]; then
@@ -52,11 +48,11 @@ if [ ! -f "$DATA/metadata.json" ]; then
     rm notebooks/deduction/data/leandojo_benchmark_4.tar.gz
 fi
 
-metadata_out=$(.venv-lean/bin/python -m smolbench.deduction.lean.cli metadata)
+metadata_out=$(.venv/bin/python -m smolbench.deduction.lean.cli metadata)
 echo "$metadata_out"
 grep -q "LeanDojo Benchmark 4" <<<"$metadata_out" || { echo "FAIL: unexpected metadata" >&2; exit 1; }
 
-list_out=$(.venv-lean/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5)
+list_out=$(.venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5)
 echo "$list_out"
 grep -q "theorems with traced tactics in random/test" <<<"$list_out" || { echo "FAIL: unexpected list output" >&2; exit 1; }
 
@@ -73,7 +69,7 @@ need_elan() {
 
 if [ "${1:-}" = "--replay" ]; then
     need_elan
-    .venv-lean/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
+    .venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
     echo "PASS — smolbench.deduction.lean replay smoke (Dojo ground-truth replay succeeded)."
 fi
 
@@ -85,12 +81,12 @@ if [ "${1:-}" = "--e2e" ]; then
     trap '[ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
 
     # Stub servers pick their own ports and print them as one JSON line.
-    .venv-lean/bin/python "$SKILL/stub_llm.py" "$WORK/reqlog.jsonl" > "$WORK/ports.json" &
+    .venv/bin/python "$SKILL/stub_llm.py" "$WORK/reqlog.jsonl" > "$WORK/ports.json" &
     STUB_PID=$!
     for _ in $(seq 50); do [ -s "$WORK/ports.json" ] && break; sleep 0.1; done
     [ -s "$WORK/ports.json" ] || { echo "FAIL: stub_llm.py never printed its ports" >&2; exit 1; }
-    PI_PORT=$(.venv-lean/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["pi"])' "$WORK/ports.json")
-    OR_PORT=$(.venv-lean/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["or"])' "$WORK/ports.json")
+    PI_PORT=$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["pi"])' "$WORK/ports.json")
+    OR_PORT=$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["or"])' "$WORK/ports.json")
 
     # Lagrange.eval_nodal_at_node: 2 traced tactics, replays in ~7 s warm.
     cat > "$WORK/sweep.yaml" <<'YAML'
@@ -128,11 +124,11 @@ YAML
         SMOLBENCH_LEAN_RESULTS="$WORK/results" \
         PRIME_INTELLECT_BASE_URL="http://127.0.0.1:$PI_PORT/v1" PRIME_INTELLECT_API_KEY=dummy \
         OPENROUTER_BASE_URL="http://127.0.0.1:$OR_PORT/v1" OPENROUTER_API_KEY=dummy \
-        .venv-lean/bin/python -m smolbench.deduction.lean.cli run-sweep --config "$WORK/sweep.yaml"
+        .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config "$WORK/sweep.yaml"
     }
     run_sweep
 
-    .venv-lean/bin/python - "$WORK/results/runs/e2e_stub_smoke/all_rows.jsonl" <<'PY'
+    .venv/bin/python - "$WORK/results/runs/e2e_stub_smoke/all_rows.jsonl" <<'PY'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
 sanity = [r for r in rows if r.get("kind") == "sanity"]

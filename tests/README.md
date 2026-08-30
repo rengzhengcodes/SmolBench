@@ -2,12 +2,8 @@
 
 ## Running
 
-Both interpreters must stay green (the repo ships two venvs because
-`lean_dojo` only installs on Python 3.12):
-
 ```
 .venv/bin/python -m pytest tests/ -q
-.venv-lean/bin/python -m pytest tests/ -q
 ```
 
 A bare `pytest` from the repo root also works: `pyproject.toml` sets

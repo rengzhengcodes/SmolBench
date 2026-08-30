@@ -214,12 +214,7 @@ def test_ram_cap_and_s3_path_mapping():
     assert "//" not in key and not key.startswith("/")
 
 
-def test_verify_import_guard():
-    """On >=3.13 the verify module must refuse to import (lean_dojo pins python<3.13)."""
+def test_verify_imports_with_lean_dojo():
+    pytest.importorskip("lean_dojo")
     sys.modules.pop("smolbench.deduction.lean.verify", None)
-    if sys.version_info >= (3, 13):
-        with pytest.raises(ImportError):
-            import smolbench.deduction.lean.verify  # noqa: F401
-    else:
-        pytest.importorskip("lean_dojo")
-        import smolbench.deduction.lean.verify  # noqa: F401
+    import smolbench.deduction.lean.verify  # noqa: F401

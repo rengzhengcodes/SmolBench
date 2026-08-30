@@ -110,16 +110,17 @@ VERIFIER SELECTION (``LEAN_VERIFY``, default ``"defer"``)
 ``runner.sweep`` never touches Lean directly. Every Dojo interaction goes
 through an injected ``verifier`` object (see
 ``smolbench.deduction.lean.nullverify``'s module docstring, "Two-phase
-workflow"). This driver runs on the MAIN venv (Python 3.14), which cannot
-import ``smolbench.deduction.lean.verify`` at all -- that module requires
-``lean_dojo``, which pins ``python<3.13``. So by default
-(``LEAN_VERIFY=defer``) this driver passes a ``NullVerifier()`` and
-produces GENERATION-ONLY rows (every cell's verdict is ``"unverified"``).
-A separate, later pass under ``.venv-lean`` replays and verifies those
-candidate proof tails against the real Dojo. ``LEAN_VERIFY=real`` exists
-for completeness, so this same file can, in principle, drive a real
-verifying sweep. It is reachable only under ``.venv-lean`` itself -- see
-``select_verifier``'s docstring for the exact guard and error message.
+workflow"). By default (``LEAN_VERIFY=defer``) this driver passes a
+``NullVerifier()``, which never imports ``smolbench.deduction.lean.verify``
+or its ``lean_dojo`` dependency, and produces GENERATION-ONLY rows (every
+cell's verdict is ``"unverified"``). A separate, later pass,
+``scripts/deduction/lean_verify_rows.py``, replays and verifies those
+candidate proof tails against the real Dojo -- a deliberately separate,
+slow, Lean-touching step run against a downloaded ``all_rows.jsonl``, so
+generation boxes never need ``lean_dojo``, elan, or the Dojo cache.
+``LEAN_VERIFY=real`` exists for completeness, so this same file can, in
+principle, drive a real verifying sweep. See ``select_verifier``'s
+docstring for the exact guard and error message.
 
 LIFECYCLE (``main``)
 ---------------------
@@ -213,7 +214,7 @@ Environment
 ``LEAN_VERIFY``
     Optional, default ``"defer"``. See "VERIFIER SELECTION" above.
 
-Run (repo root, main venv)::
+Run (repo root)::
 
     LEAN_MODEL=glm-4.7 .venv/bin/python notebooks/deduction/run_study.py
     LEAN_MODEL=glm-4.7 .venv/bin/python notebooks/deduction/run_study.py --teardown
@@ -416,12 +417,12 @@ _induction_spec = importlib.util.spec_from_file_location(
     "deduction_induction_run_study", _INDUCTION_RUN_STUDY_PATH
 )
 _induction = importlib.util.module_from_spec(_induction_spec)
-# MUST register in sys.modules BEFORE exec_module. On Python 3.14, a
-# @dataclass decorator applied inside a module object not yet present in
-# sys.modules raises `AttributeError: 'NoneType' object has no attribute
-# '__dict__'` (some dataclass-machinery introspection resolves the
-# defining module by looking it up in sys.modules by name). Without this
-# line, the loaded module hits that same error at its first @dataclass.
+# MUST register in sys.modules BEFORE exec_module. A @dataclass decorator
+# applied inside a module object not yet present in sys.modules raises
+# `AttributeError: 'NoneType' object has no attribute '__dict__'` (some
+# dataclass-machinery introspection resolves the defining module by
+# looking it up in sys.modules by name). Without this line, the loaded
+# module hits that same error at its first @dataclass.
 sys.modules[_induction_spec.name] = _induction
 _induction_spec.loader.exec_module(_induction)  # runs that file's own load_dotenv(...) etc.
 
@@ -660,55 +661,37 @@ def select_verifier() -> Any:
         then recorded as ``"unverified"``, instead of replayed against a
         real Dojo session -- see the module docstring's "VERIFIER
         SELECTION" section for why this is the normal path for THIS
-        driver (the main venv cannot import the real verifier at all).
-        The ``smolbench.deduction.lean.verify`` MODULE object (not an
-        instance -- ``runner.sweep`` calls its functions directly, e.g.
+        driver. The ``smolbench.deduction.lean.verify`` MODULE object (not
+        an instance -- ``runner.sweep`` calls its functions directly, e.g.
         ``verifier.try_tail(...)``) when ``LEAN_VERIFY`` is exactly
-        ``"real"`` AND the interpreter is below Python 3.13. In practice
-        that means the dedicated ``.venv-lean`` environment, pinned to
-        Python 3.12 (see ``pyproject.toml``).
+        ``"real"``.
 
     Raises
     ------
+    ImportError
+        ``LEAN_VERIFY="real"`` when ``lean_dojo`` is not installed:
+        ``verify.py`` unconditionally imports it at its own module top
+        level and re-raises with the fix (``uv sync --all-extras``).
     SystemExit
-        - ``LEAN_VERIFY="real"`` under Python >= 3.13: ``verify.py``
-          requires ``lean_dojo``, which pins ``python<3.13`` and is only
-          installable in the dedicated ``.venv-lean`` environment (Python
-          3.12). This function checks the version BEFORE attempting the
-          import, instead of letting ``verify.py``'s own ``ImportError``
-          propagate, so the message can name this driver's actual normal
-          path: run with ``LEAN_VERIFY=defer`` (generation only), then
-          verify separately, later, under ``.venv-lean`` via
-          ``scripts/deduction/lean_verify_rows.py``.
-        - Any other value: the message names the two valid values
-          (``"defer"``, ``"real"``).
+        Any other value: the message names the two valid values
+        (``"defer"``, ``"real"``).
 
     Notes
     -----
     The ``from smolbench.deduction.lean import verify`` import lives
-    INSIDE this function's ``"real"`` branch, not at module scope.
-    A module-scope import here would make importing THIS file itself
-    fail under Python 3.14 (the main venv this driver normally runs on),
-    because ``verify.py`` unconditionally imports ``lean_dojo`` at its own
-    module top level. The version guard above runs BEFORE this function
-    attempts that import, so a 3.14 interpreter never reaches the import
-    line at all.
+    INSIDE this function's ``"real"`` branch, not at module scope, because
+    ``verify.py`` needs ``lean_dojo`` at its own module top level, and its
+    ``ImportError`` names the fix if it is missing. A module-scope import
+    here would make importing THIS file itself fail whenever ``lean_dojo``
+    is absent, even for callers that only ever pass ``LEAN_VERIFY=defer``.
     """
     choice = os.environ.get("LEAN_VERIFY", "defer").strip() or "defer"
     if choice == "defer":
         return NullVerifier()
     if choice == "real":
-        if sys.version_info >= (3, 13):
-            raise SystemExit(
-                "LEAN_VERIFY=real requires the 'lean_dojo' package, which pins "
-                "python<3.13 and is only installable in the dedicated "
-                ".venv-lean environment (Python 3.12); this interpreter is "
-                f"{sys.version_info.major}.{sys.version_info.minor}. The normal "
-                "path for this driver is LEAN_VERIFY=defer (generation only, "
-                "the default) followed by a separate verification pass under "
-                ".venv-lean via scripts/deduction/lean_verify_rows.py."
-            )
-        from smolbench.deduction.lean import verify  # local: only reachable under .venv-lean
+        # Local import: verify.py needs lean_dojo (the `lean` extra) at its own
+        # module top level, and its ImportError names the fix if it is missing.
+        from smolbench.deduction.lean import verify
 
         return verify
     raise SystemExit(f"LEAN_VERIFY={choice!r} is not valid; expected 'defer' or 'real'.")

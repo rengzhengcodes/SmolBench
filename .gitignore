@@ -95,11 +95,10 @@ ipython_config.py
 #Pipfile.lock
 
 # UV
-#   uv.lock IS committed: the two-venv split (.venv on 3.14, .venv-lean on
-#   3.12 with the lean extra's marker-guarded lean-dojo) depends on a single
-#   universal lockfile resolving identically for both interpreters, so the
-#   pins (lean-dojo, tiktoken, ray, ...) must be reproducible from a fresh
-#   clone.
+#   uv.lock IS committed: the project resolves to a single Python 3.12
+#   .venv (pinned by .python-version, since lean-dojo pins
+#   Requires-Python <3.13) holding every extra, so the pins (lean-dojo,
+#   tiktoken, ray, ...) must be reproducible from a fresh clone.
 #uv.lock
 
 # poetry
@@ -140,9 +139,6 @@ celerybeat.pid
 .env
 .envrc
 .venv
-# Dedicated Python 3.12 venv for the Lean verification path (lean-dojo pins
-# Requires-Python <3.13).
-.venv-lean/
 env/
 venv/
 ENV/

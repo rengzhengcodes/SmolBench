@@ -34,7 +34,7 @@ convention
   access, naming an instance ``scaling-../../secrets``) cannot walk
   this path outside the repo root, or delete an unrelated state file.
 
-Run this script from the repo root, in the main venv::
+Run this script from the repo root::
 
     .venv/bin/python scripts/fleet/fleet_teardown.py                 # read-only listing
     .venv/bin/python scripts/fleet/fleet_teardown.py --terminate      # prompts, then kills

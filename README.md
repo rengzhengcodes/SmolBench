@@ -84,20 +84,16 @@ tests/                     the offline pytest suite (see tests/README.md), zero 
 
 ## Install
 
-SmolBench uses `uv` for dependency management. Install the main
-environment (`.venv`, Python 3.14) with:
+SmolBench uses `uv` for dependency management. Install the environment
+(`.venv`, Python 3.12, pinned by `.python-version` because `lean-dojo`
+pins `Requires-Python <3.13`) with:
 
 ```bash
 uv sync --all-extras
 ```
 
-The Lean verification path depends on `lean-dojo`, which pins
-`Requires-Python <3.13` upstream, so it needs its own Python 3.12
-environment (`.venv-lean`):
-
-```bash
-UV_PROJECT_ENVIRONMENT=.venv-lean uv sync --python 3.12 --extra lean --extra notebook --extra dev
-```
+This builds a single `.venv` holding every extra, including the Lean
+verification path's `lean-dojo` dependency.
 
 `pyproject.toml` declares four optional extras: `dev` (pytest, linters),
 `aws` (boto3/botocore, for the EC2 and SageMaker/Bedrock providers),
@@ -110,7 +106,6 @@ requires only Python 3.12+, `joblib`, `numpy`, `ordered-set`, `requests`,
 
 ```bash
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
-.venv-lean/bin/python -m pytest tests/ -q     # same suite on Python 3.12
 ```
 
 The suite needs no AWS credentials or network access: it drives the real
