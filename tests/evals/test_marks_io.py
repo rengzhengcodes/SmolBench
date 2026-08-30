@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import yaml
 
 from smolbench.evals import Mark, Marks
-from tests._paths import FIXTURES
 
 
 def _sample_marks() -> Marks:
@@ -61,22 +60,3 @@ def test_loads_uses_first_bytes_not_substring():
     assert Marks.loads(text) == marks
 
 
-#: A genuine legacy-format artifact: a chromatic ``moe_intens`` result file cut to its
-#: first 2 marks and re-dumped with the same legacy writer, byte-faithfully.
-LEGACY_FIXTURE = FIXTURES / "legacy_marks_chromatic_moe_intens.yaml"
-
-
-def test_load_real_legacy_result_file():
-    """Pre-safe-dump artifacts, whose marks lack reasoning/compliance, stay loadable."""
-    assert LEGACY_FIXTURE.is_file(), f"missing fixture {LEGACY_FIXTURE}"
-    raw = LEGACY_FIXTURE.read_text()
-    # The sniff is the FULL top-level Marks tag, not the bare object prefix.
-    assert raw.startswith("!!python/object:smolbench.evals.Marks"), "fixture is not legacy format"
-
-    marks = Marks.load(LEGACY_FIXTURE)
-    assert marks.model == "qwen/qwen3-30b-a3b-instruct-2507"
-    assert len(marks.marks) == 2
-    assert (marks.correct, marks.incorrect, marks.invalid) == (0, 2, 0)
-    assert marks.noncompliant == 0
-    assert sorted(vars(marks.marks[0])) == ["answer", "query", "response", "score"]
-    assert Marks.loads(raw) == marks

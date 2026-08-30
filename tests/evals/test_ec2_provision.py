@@ -267,7 +267,9 @@ _RAISE = object()
         (_RAISE, "ministral-3-14b", {}, None),
         (None, "gemma-4-12b", {}, _NO_BOX),
         (_OTHER_STATE, "ministral-3-14b", {}, _MISMATCH),
-        (_S5_STATE, "ministral-3-14b", {"EC2_STREAM_COMPLETIONS": "true"},
+        # "true" is a valid spelling since _flag learned the common booleans;
+        # "maybe" stays malformed and must degrade only the stream field.
+        (_S5_STATE, "ministral-3-14b", {"EC2_STREAM_COMPLETIONS": "maybe"},
          {"stream": None, "vllm_args": ["--seed", "0"], "vllm_version": _VER}),
     ],
 )

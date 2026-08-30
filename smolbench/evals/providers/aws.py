@@ -107,8 +107,9 @@ def _body_model(model: str) -> str:
     routes by URL, so the field is nominally free -- but a custom container may
     400 on ``""``, so its served id is resolved once via ``list_models``
     (cached in ``_SERVED_MODELS``), falling back to ``""``. A FAILED lookup is
-    NOT cached: a transient error while the endpoint is still warming would
-    otherwise pin ``""`` for the rest of the process.
+    NOT cached, and neither is an empty listing: a transient error -- or a
+    warming endpoint answering 200 with no models yet -- would otherwise pin
+    ``""`` for the rest of the process.
     """
     body_model_override = os.getenv("AWS_INFERENCE_BODY_MODEL")
     if body_model_override is not None:
@@ -120,7 +121,9 @@ def _body_model(model: str) -> str:
             served = list_models(model)
         except requests.exceptions.RequestException:
             return ""  # not cached; retried on the next request
-        _SERVED_MODELS[model] = served[0] if served else ""
+        if not served:
+            return ""  # not cached either; the endpoint may still be warming
+        _SERVED_MODELS[model] = served[0]
     return _SERVED_MODELS[model]
 
 

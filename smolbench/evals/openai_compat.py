@@ -344,8 +344,20 @@ class ChatClient:
     on_unreachable: Optional[Callable[[Exception], None]] = None
 
     def _flag(self, suffix: str) -> bool:
-        """Read boolean env flag ``{env_prefix}_{suffix}`` at call time."""
-        return bool(int(os.getenv(f"{self.env_prefix}_{suffix}", "0")))
+        """Read boolean env flag ``{env_prefix}_{suffix}`` at call time.
+
+        Accepts the common boolean spellings; anything else raises naming the
+        variable, instead of a bare ``int()`` ValueError deep in the hot path.
+        """
+        var = f"{self.env_prefix}_{suffix}"
+        raw = os.getenv(var, "0").strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+        if raw in ("", "0", "false", "no", "off"):
+            return False
+        raise ValueError(
+            f"{var}={raw!r} is not a boolean flag (use 1/0/true/false/yes/no/on/off)"
+        )
 
     def _default_max_parallel(self) -> int:
         return int(os.getenv(f"{self.env_prefix}_MAX_PARALLEL_REQUESTS", "8"))
@@ -379,10 +391,12 @@ class ChatClient:
             thinking on"; see ``EC2_DEPLOY_SPECS``) this must layer onto,
             never shadow.
         context_length : int, optional
-            Token-budget guard: raises ``ValueError`` when the response reports
-            ``usage.total_tokens`` above it, and is skipped by a response that
-            omits ``usage``. Pass ``get_model_context_length(model)``; the
-            default 0 fails any usage-reporting response.
+            Token-budget guard: logs a WARNING when the response reports
+            ``usage.total_tokens`` above it, and when the response omits
+            ``usage`` so the guard cannot be enforced. Soft and post-hoc by
+            design -- the generation is already billed, so an overrun returns
+            for grading rather than aborting a pooled ``evaluate()``. Pass
+            ``get_model_context_length(model)``.
         extra_args : dict, optional
             Merged into the request body (e.g. ``max_completion_tokens``,
             ``reasoning_effort``), BEFORE ``seed`` and the streaming keys, so
@@ -408,8 +422,6 @@ class ChatClient:
         RuntimeError
             ``max_connection_failures`` consecutive connection-level failures
             tripped first; takes precedence over ``max_retries``.
-        ValueError
-            ``usage.total_tokens`` above ``context_length``.
         """
         sys_prompt = self.system_prompt(model)
         messages: List[Dict[str, str]] = []
@@ -531,10 +543,22 @@ class ChatClient:
                     reasoning, _, content = content.partition("</think>")
                     reasoning = reasoning.removeprefix("<think>").strip()
                     content = content.lstrip()
-                # Only guard when a token count was actually reported.
-                if total_tokens is not None and total_tokens > context_length:
-                    raise ValueError(f"Response:\n{body}\n was {total_tokens} > {context_length}")
-                if self._flag("INFO"):
+                # Post-hoc token guard, soft by design: one over-budget (or
+                # usage-less) response must not abort a pooled evaluate()
+                # whose other generations are already paid for -- warn loudly
+                # and return the response for grading instead of raising.
+                if total_tokens is None:
+                    if context_length:
+                        logging.warning(
+                            f"{self.name}: response omitted usage.total_tokens; "
+                            f"context-length guard ({context_length}) unenforceable -- "
+                            f"a window-truncated response would grade as a wrong answer"
+                        )
+                elif total_tokens > context_length:
+                    logging.warning(
+                        f"Response:\n{body}\n was {total_tokens} > {context_length}"
+                    )
+                elif self._flag("INFO"):
                     logging.info(f"Response:\n{body}\n was {total_tokens} <= {context_length}")
                 return ChatResult(
                     content=content,

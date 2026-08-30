@@ -44,21 +44,28 @@ def _extra_headers(model: str) -> Dict[str, str]:
 
 
 @functools.lru_cache(maxsize=None)
-def get_model_context_length(model: str) -> int:
-    """Get `model`'s context window from Prime Intellect.
-
-    A model's window is constant, so the lookup is cached, keyed on `model`
-    alone; see the OpenRouter twin of this function for the rationale and for
-    what that key omits.
-    """
+def _cached_context_length(model: str, base_url: str) -> int:
     response: Dict[str, Any] = metadata_get(
-        f"{_base_url()}/models/{model}",
+        f"{base_url}/models/{model}",
         os.getenv("PRIME_INTELLECT_API_KEY", ""),
         check_status=False,  # unchecked -- see metadata_get's check_status doc
     )
 
     ctx: int = response["context_length"]
     return ctx
+
+
+def get_model_context_length(model: str) -> int:
+    """Get `model`'s context window from Prime Intellect.
+
+    Cached keyed on ``(model, base URL)``; see the OpenRouter twin of this
+    function for the rationale.
+    """
+    return _cached_context_length(model, _base_url())
+
+
+#: Test hook: the offline suite's autouse fixture clears the cache between tests.
+get_model_context_length.cache_clear = _cached_context_length.cache_clear
 
 
 _CLIENT = ChatClient(

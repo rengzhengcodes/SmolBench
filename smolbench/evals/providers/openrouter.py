@@ -33,17 +33,9 @@ def _connection(model: str) -> Tuple[str, str]:
 
 
 @functools.lru_cache(maxsize=None)
-def get_model_context_length(model: str) -> int:
-    """Get `model`'s context window from its OpenRouter endpoint listing.
-
-    A model's window is constant, so the lookup is cached: evaluate() calls it
-    once per replicate, and re-fetching one integer would cost a round trip
-    plus a fresh chance to trip a 429. The cache key is `model` ALONE, so
-    ``OPENROUTER_BASE_URL`` is assumed fixed for the process (the offline
-    suite's autouse fixture clears the cache between tests instead).
-    """
+def _cached_context_length(model: str, base_url: str) -> int:
     response: Dict[str, Any] = metadata_get(
-        f"{_base_url()}/models/{model}/endpoints",
+        f"{base_url}/models/{model}/endpoints",
         os.getenv("OPENROUTER_API_KEY", ""),
         check_status=False,  # unchecked -- see metadata_get's check_status doc
     )
@@ -51,6 +43,22 @@ def get_model_context_length(model: str) -> int:
     # pick the first available endpoint
     ctx: int = response["data"]["endpoints"][0]["context_length"]
     return ctx
+
+
+def get_model_context_length(model: str) -> int:
+    """Get `model`'s context window from its OpenRouter endpoint listing.
+
+    A model's window is constant, so the lookup is cached: evaluate() calls it
+    once per replicate, and re-fetching one integer would cost a round trip
+    plus a fresh chance to trip a 429. The cache key is ``(model, base URL)``,
+    so an ``OPENROUTER_BASE_URL`` change mid-process (offline stub -> live
+    endpoint) is picked up rather than served a stale window.
+    """
+    return _cached_context_length(model, _base_url())
+
+
+#: Test hook: the offline suite's autouse fixture clears the cache between tests.
+get_model_context_length.cache_clear = _cached_context_length.cache_clear
 
 
 _CLIENT = ChatClient(

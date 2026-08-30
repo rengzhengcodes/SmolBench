@@ -233,9 +233,11 @@ notebooks/deduction/data/leandojo_benchmark_4/
 # dirs pruned after upload; never committed.
 notebooks/*/results/
 
-# Claude files -- except .claude/skills/, which holds committed agent
-# tooling (run skills + their drivers).
-.claude/*
+# Claude files at ANY depth (a claude session run from a subdirectory
+# creates a nested .claude/ with local settings) -- except the repo-root
+# .claude/skills/, which holds committed agent tooling (run skills + their
+# drivers).
+**/.claude/*
 !.claude/skills/
 CLAUDE.md
 

@@ -45,16 +45,14 @@ def _body(content, finish_reason=None, model=None, **kwargs):
     (_body("<think>step by step</think>\n7", "length", usage=CAP), ("7", "step by step") + TAIL),
     (_body(None, "length", reasoning_content="cap hit", usage=CAP), ("", "cap hit") + TAIL),
     (_body(None, "length", reasoning="legacy key", usage=CAP), ("", "legacy key") + TAIL),
-    # Usage above the model's window is an error, not a silent truncation.
-    (_body("7", usage={"total_tokens": 999}), ValueError),
+    # Usage above the model's window is a loud warning, not an abort: the
+    # generation is already billed, so a pooled evaluate() must keep it.
+    (_body("7", usage={"total_tokens": 999}),
+     ("7", None, 0, 0, 0, 999, "qwen2.5-1.5b", None)),
 ])
 def test_complete_chat_result_fields(ec2_env, monkeypatch, body, expected):
     """Channels split, usage/model/finish_reason, null content, guard -- streamed and not alike."""
     ec2_env.queue_response(body)
-    if expected is ValueError:
-        with pytest.raises(ValueError):
-            ec2.complete("p", "qwen2.5-1.5b", **CALL)
-        return
     plain = ec2.complete("p", "qwen2.5-1.5b", **CALL)
     assert "stream" not in ec2_env.requests[-1]["body"]
     assert (plain.content, plain.reasoning, plain.prompt_tokens, plain.completion_tokens,

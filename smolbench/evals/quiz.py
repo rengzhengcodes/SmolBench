@@ -6,6 +6,7 @@ recording one graded quiz. ``Marks`` round-trips through YAML, as a file or an
 S3 object body; ``smolbench.evals.results_store`` owns that store.
 """
 
+import os
 import re
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field
@@ -184,9 +185,16 @@ class Marks:
         return yaml.safe_dump(asdict(self), default_flow_style=False, indent=4)
 
     def dump(self, path) -> None:
-        """Write `dumps()`'s document to `path` (opened for text write)."""
-        with open(path, "w") as file:
+        """Write `dumps()`'s document to `path` atomically (tmp + ``os.replace``).
+
+        Resume-skips gate on bare file presence (``ResultsStore.exists``), so
+        a file that exists must never be a torn write: an interrupted dump
+        would otherwise be skipped as already-collected forever.
+        """
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as file:
             file.write(self.dumps())
+        os.replace(tmp, path)
 
     @classmethod
     def loads(cls, text: str) -> "Marks":

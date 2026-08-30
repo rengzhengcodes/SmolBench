@@ -61,7 +61,7 @@ from smolbench.evals import _aws
 from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
 from smolbench.evals.payloads import pack_user_data, render_user_data
-from smolbench.evals.results_store import repo_root
+from smolbench.evals.results_store import parse_s3_uri, repo_root
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order, tried TYPE-MAJOR: each type across every region
@@ -1292,6 +1292,10 @@ def _recover_state_from_instance(
         "vllm_api_key": env["VLLM_API_KEY"],
         "idle_timeout_min": int(env.get("IDLE_TIMEOUT_MIN") or EC2_IDLE_TIMEOUT_MIN),
         "s3_cache": env.get("S3_CACHE_URI", EC2_S3_MODEL_CACHE),
+        # From DescribeInstances, not the user-data env: without it a
+        # recovered in-block instance would be misread as outside the
+        # capacity block and terminated on the next provision.
+        "capacity_reservation_id": instance.get("CapacityReservationId"),
         "launched_at": launch_time.strftime("%Y-%m-%dT%H:%M:%SZ") if launch_time else "?",
     }
 
@@ -1803,7 +1807,10 @@ def _launch_fresh(
         )
     iam_profile: Optional[str] = None
     if EC2_S3_MODEL_CACHE:
-        bucket = EC2_S3_MODEL_CACHE.split("://", 1)[1].split("/", 1)[0]
+        try:
+            bucket = parse_s3_uri(EC2_S3_MODEL_CACHE)[0]
+        except ValueError as err:
+            raise ValueError(f"EC2_S3_MODEL_CACHE: {err}") from None
         _ensure_bucket(bucket, EC2_S3_CACHE_REGION)
         iam_profile = _ensure_instance_profile(bucket)
         logging.info(
@@ -2096,7 +2103,10 @@ def _wait_model_ready(
         # the 15s poll (longer, since each miss also burns its own timeout).
         try:
             status = _agent(state, "GET", "/status", timeout=30, connect_retries=0)
-        except requests.exceptions.RequestException as exc:
+        except (requests.exceptions.RequestException, RuntimeError) as exc:
+            # RuntimeError too: _agent raises it for any non-2xx reply, and a
+            # transient 500/503 must count as a miss like a dropped
+            # connection, not abort the wait (same pair _wait_agent catches).
             consec_failures += 1
             if consec_failures >= 20:
                 raise RuntimeError(
