@@ -1,218 +1,44 @@
 """Per-lane driver for the DEDUCTION side of the family-ladder scaling study.
 
-WHAT THIS IS
-------------
-``notebooks/induction/run_study.py`` documents a 21-checkpoint family-ladder
-scaling study (``MODELS``: 7 vendor families x 3 rungs each). It runs ONE
-MODEL PER BOX under a fleet supervisor (``scripts/fleet/run_fleet.py``). That file
-covers the INDUCTION phase. THIS file is the matching DEDUCTION-phase
-driver. One invocation serves exactly ONE checkpoint on one EC2 box. It
-runs one ``smolbench.deduction.lean.runner.sweep`` (a Lean4 theorem-proving
-sweep) against that checkpoint. The fleet supervisor launches up to 21 of
-these as subprocesses, one per lane. Each lane normally REATTACHES to the
-same box its induction phase already provisioned. It reuses the same
-``EC2_EXPERIMENT_TAG`` and the same EC2 state file (see
-``scripts/fleet/run_fleet.py``'s ``lane_env``). This avoids provisioning a second
-instance per model.
+One invocation serves exactly ONE checkpoint on one EC2 box and runs one
+``smolbench.deduction.lean.runner.sweep`` against it. The fleet supervisor
+(``scripts/fleet/run_fleet.py``) launches up to 21 of these, one per lane; each
+reattaches to the box its induction phase already provisioned by reusing that
+phase's ``EC2_EXPERIMENT_TAG`` and state file. ``MODELS``/``COT_ARGS`` are
+loaded BY FILE PATH from ``notebooks/induction/run_study.py`` (the roster's
+single source of truth), never via ``import run_study``: both trees ship a
+module of that name.
 
-This file does not redeclare ``MODELS`` (spec key -> short analysis tag) or
-``COT_ARGS`` (spec key -> per-request reasoning-toggle kwargs). It imports
-both by file path from ``notebooks/induction/run_study.py``, the single
-source of truth for this study's roster. See "MODULE IMPORT ORDER" below
-for how and why.
+IMPORT ORDER IS LOAD-BEARING. ``smolbench.evals.providers.ec2`` freezes
+``EC2_EXPERIMENT_TAG``, ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES`` and
+``EC2_REGIONS`` into module constants at import time, so this file's
+``os.environ.setdefault`` calls (values from ``lane_env_defaults``) must land
+before that module is first imported -- including transitively, via the
+induction module's own ``load_dotenv`` (which has no ``override=True``, so it
+can never beat a value already set). Get the order wrong and nothing raises:
+this lane's tag, state file and vLLM image silently drift, and two lanes swap
+served checkpoints on a live billing box. ``setdefault``, never assignment, is
+what lets a fleet-exported value win. Import also raises ``SystemExit`` when
+``EC2_EXPERIMENT_TAG`` does not name this lane's model, because lanes sharing a
+tag adopt each other's instance and generate rows under the wrong model.
 
-MODULE IMPORT ORDER (load-bearing -- read this before editing anything else)
-------------------------------------------------------------------------------
-This file's top-level statements MUST execute in the order below. This
-order is the single most important property of this file. If you get it
-wrong, the file raises no exception. Instead, this lane's EC2 tag, state
-file, and vLLM image silently drift onto whatever value a
-fleet-supervisor export, an unrelated ``keys.env``, or
-``smolbench.evals.providers.ec2``'s own hardcoded defaults happen to set. You
-discover this drift only later, on a live billing box, when you notice two
-lanes swapped their served checkpoints.
+``main`` validates ``LEAN_MODEL`` and ``LEAN_VERIFY`` BEFORE any AWS call (fail
+fast before billing), then provisions (idempotent -- reattaches), serves,
+sweeps, spools to S3 once at the end, and tears down only under ``--teardown``,
+from a ``finally``. ``--teardown`` is for STANDALONE runs; under the fleet the
+supervisor owns instance lifecycle. COST: provisioning and serving make live
+AWS calls, billed for as long as the box stays up.
 
-  1. Stdlib imports only (``argparse``, ``copy``, ``importlib.util``,
-     ``logging``, ``os``, ``sys``, ``pathlib.Path``, ``typing.Any``).
-  2. Compute ``REPO_ROOT`` and the S3-spool constants (pure arithmetic, no
-     environment or filesystem side effects).
-  3. Define ``lane_env_defaults`` (a pure function). It has no side effects
-     on its own, but step 4 calls it, so it must exist first.
-  4. Read the RAW ``LEAN_MODEL`` and ``LEAN_STATE_FILE`` strings from
-     ``os.environ``. Do NOT validate ``LEAN_MODEL`` against ``MODELS``
-     yet -- ``MODELS`` is not loaded until step 6. For every ``(name,
-     value)`` pair ``lane_env_defaults`` derives from those raw strings,
-     call ``os.environ.setdefault(name, value)``. Use ``setdefault``,
-     NEVER a bare assignment, for all four variables. This way, a value
-     the fleet supervisor already exported into this subprocess's
-     environment always wins over this file's own default.
-  5. THEN, and only then, import ``smolbench.evals.providers.ec2`` (transitively, via
-     loading ``notebooks/induction/run_study.py`` in step 6 below) and
-     anything else that reads ``EC2_*`` environment variables at MODULE
-     SCOPE.
-  6. Load ``notebooks/induction/run_study.py`` by file path (never a bare
-     ``import run_study`` -- see the docstring of the loader block below for
-     why), and bind ``MODELS`` / ``COT_ARGS`` from it.
-  7. Import ``smolbench.evals.providers.ec2``, ``smolbench.deduction.lean.runner``,
-     and ``smolbench.deduction.lean.nullverify`` (``# noqa: E402`` on all
-     three, matching ``notebooks/induction/run_study.py``'s own late-import
-     style for the same reason).
-
-WHY THIS ORDER IS CORRECT
--------------------------
-
-  * ``smolbench/evals/providers/ec2.py`` reads ``EC2_EXPERIMENT_TAG``,
-    ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES``, and ``EC2_REGIONS`` via
-    ``os.getenv(...)`` at MODULE SCOPE, and freezes each into a plain
-    module constant. Python caches module imports in ``sys.modules``, so
-    once this process imports that module once, those four values stay
-    fixed for the rest of the process. An ``os.environ`` write after that
-    import has NO effect on them, however you spell it. So our own
-    ``setdefault`` calls (step 4) matter only if they land before the
-    FIRST import of ``smolbench.evals.providers.ec2`` anywhere in this process
-    (step 7, and transitively step 6 -- see below).
-  * Step 6 loads ``notebooks/induction/run_study.py``. That module's own
-    top-level code calls ``load_dotenv(.../induction/keys.env)`` as a side
-    effect (see that file's own module docstring). This call pulls in
-    ``smolbench.induction.experiment``, which imports
-    ``smolbench.evals.providers.ec2``. So step 6 is ALSO the first point that
-    imports ``ec2.py``. Steps 4 and 6 must stay in this order.
-  * That ``load_dotenv`` call does NOT pass ``override=True``. So it can only fill in
-    variables that are CURRENTLY UNSET in ``os.environ`` -- it can never
-    overwrite a value already present. This is why "our setdefault first,
-    then load that module" is enough: whatever ``keys.env`` does or does
-    not set is irrelevant to variables we already set ourselves before
-    that module loads.
-  * This file does not rely on, or hardcode, WHICH specific ``EC2_*`` keys
-    ``notebooks/induction/keys.env`` sets. A sibling study owns that file,
-    and its contents can and do change over time (run ``grep '^EC2_'
-    notebooks/induction/keys.env`` for the CURRENT answer). The ordering
-    above is correct no matter what that file currently contains, because
-    it follows from the two mechanisms above (import-time freezing plus a
-    non-overriding ``load_dotenv``), not from any one snapshot of that
-    file's keys.
-
-SWEEP CONFIG (USER-LOCKED)
----------------------------
-``build_config`` returns a fixed sweep configuration: seed, decoding params,
-the theorem pool selector, and the four rungs. This configuration is
-identical for all 21 checkpoints, except for ``model``, ``display_name``,
-and ``extra_params`` (which vary per checkpoint) and ``run_name`` (which
-varies per lane). Holding everything else fixed lets a next-tactic
-success-rate difference between two checkpoints point to the model, not to
-a changed sweep. See ``build_config``'s own docstring for the exact keys
-and values, and for why they must never be renamed or re-derived here --
-this driver adapts nothing; ``runner.sweep`` already accepts every key
-verbatim.
-
-VERIFIER SELECTION (``LEAN_VERIFY``, default ``"defer"``)
--------------------------------------------------------------
-``runner.sweep`` never touches Lean directly. Every Dojo interaction goes
-through an injected ``verifier`` object (see
-``smolbench.deduction.lean.nullverify``'s module docstring, "Two-phase
-workflow"). By default (``LEAN_VERIFY=defer``) this driver passes a
-``NullVerifier()``, which never imports ``smolbench.deduction.lean.verify``
-or its ``lean_dojo`` dependency, and produces GENERATION-ONLY rows (every
-cell's verdict is ``"unverified"``). A separate, later pass,
-``scripts/deduction/lean_verify_rows.py``, replays and verifies those
-candidate proof tails against the real Dojo -- a deliberately separate,
-slow, Lean-touching step run against a downloaded ``all_rows.jsonl``, so
-generation boxes never need ``lean_dojo``, elan, or the Dojo cache.
-``LEAN_VERIFY=real`` exists for completeness, so this same file can, in
-principle, drive a real verifying sweep. See ``select_verifier``'s
-docstring for the exact guard and error message.
-
-LIFECYCLE (``main``)
----------------------
-1. Resolve the lane's model key from ``LEAN_MODEL`` (``selected_model``).
-   Raises ``SystemExit`` if it is unset or unknown.
-2. Build this lane's sweep config and compute its run directory.
-3. Resolve the verifier (``select_verifier``). Do this BEFORE provisioning,
-   so a bad ``LEAN_VERIFY`` value aborts before any EC2 spend. This matches
-   the "fail fast before billing" pattern used throughout this study's
-   tooling (see e.g. ``notebooks/induction/run_study.py``'s
-   ``completion_budget`` and ``scripts/fleet/run_fleet.py``'s ``preflight``, both
-   of which run entirely before ``provision_spot_instance``).
-4. Call ``ec2.provision_spot_instance()`` with NO arguments. Its behavior
-   depends entirely on the ``EC2_INSTANCE_TYPES``/``EC2_REGIONS`` frozen
-   module constants (set from this process's environment, per the ordering
-   above). This call is idempotent: it reattaches to a live instance
-   recorded under this lane's state file / experiment tag, instead of
-   launching a second one. This is exactly how a deduction lane reattaches
-   to the box its own induction phase already provisioned.
-5. Enter ``with ec2.serve_model(key):``. If ``--force-rerun`` was passed,
-   first archive any existing ``all_rows.jsonl`` in the run directory to a
-   timestamped ``_SUPERSEDED`` file (see ``main``'s own code for why).
-   Then call ``n = runner.sweep(config, run_dir,
-   resume=not args.force_rerun, verifier=...)``.
-6. Unless ``--no-s3`` was passed, spool the run directory to S3
-   (``spool_to_s3``).
-7. If ``--teardown`` was passed, call ``ec2.shutdown_instance()``. This
-   runs in a ``finally`` block, so it still fires if the sweep raised.
-   WITHOUT the flag (the default), nothing is torn down: under the fleet,
-   the supervisor owns instance lifecycle end-to-end, and shuts the box
-   down itself once it has finished with this lane (see
-   ``scripts/fleet/run_fleet.py``'s module docstring, "Phases and the
-   reuse-then-shutdown lifecycle"). ``--teardown`` exists purely for
-   STANDALONE use: a solo smoke test of this file with nothing else
-   depending on the box.
-
-S3 SPOOL (``spool_to_s3``) -- END-OF-RUN ONLY
---------------------------------------------------------------------------
-``spool_to_s3`` is called exactly ONCE, after ``runner.sweep`` returns:
-``runner.sweep`` exposes no progress hook. So every replicate this lane
-collects sits on local disk for the full sweep and reaches S3 only at the
-end, and a crash mid-sweep leaves it unspooled. A RELAUNCH of the same lane
-still picks up where the crash left off, via ``runner.sweep``'s own on-disk
-``all_rows.jsonl``/``resume`` mechanism, independent of spooling.
-
-Cost warning
-------------
-``ec2.provision_spot_instance()`` and ``ec2.serve_model()`` make LIVE AWS
-calls against a self-provisioned (or reattached) EC2 spot instance. AWS
-bills for the whole time it stays up. Running this file standalone
-(``LEAN_MODEL`` set by hand, no fleet) provisions or reattaches to exactly
-one box for exactly one checkpoint. Running it under the fleet does this
-up to 21 times concurrently, one subprocess per lane. Either way, this is
-real GPU spend. Verify ``LEAN_MODEL`` before you invoke this file outside
-the fleet, and verify ``LEAN_STATE_FILE`` too if you care about reattaching
-versus launching fresh.
-
-Environment
------------
-``LEAN_MODEL``
-    Required. A single spec key from ``MODELS`` (e.g. ``"glm-4.7"``): the
-    ONE checkpoint this invocation serves and sweeps against.
-``LEAN_STATE_FILE``
-    Optional. A bare filename or absolute path for this lane's EC2 state
-    file. When unset (the default), this driver derives
-    ``.ec2_state_scaling_<LEAN_MODEL>.json`` under ``REPO_ROOT``. The fleet
-    supervisor passes a bare filename here (see ``scripts/fleet/run_fleet.py``'s
-    ``Lane.state_file``), specifically so this driver reattaches to the box
-    its own induction phase already provisioned: both phases resolve the
-    SAME bare filename against the SAME repo root.
-``LEAN_RUN_NAME``
-    Optional. Overrides ``build_config``'s ``run_name`` (default
-    ``f"scaling_{LEAN_MODEL}"``). Read at ``build_config`` call time, not
-    at import time.
-``LEAN_SHARD``
-    Optional. A stride string ``"i/n"`` (e.g. ``"0/4"``) that splits this
-    study's theorem pool across concurrent shard processes. Read at
-    ``build_config`` call time. When set, ``build_config`` adds a
-    ``"shard"`` key to the returned config's ``theorems`` dict, and the
-    default ``run_name`` gains a ``_shard<i>of<n>`` suffix (an explicit
-    ``LEAN_RUN_NAME`` still wins verbatim). See ``build_config``'s own
-    docstring for the exact mechanics.
-``LEAN_CELL_WHITELIST``
-    Optional. A path to a cell-whitelist file. Read at ``build_config``
-    call time. When set, ``build_config`` adds a ``"cell_whitelist"`` key
-    to the returned config (the path plus a content hash), and
-    ``runner.sweep`` reads this same variable itself to restrict which
-    cells it generates. See ``build_config``'s own docstring, "LEAN_CELL_WHITELIST
-    sidecar stamp" note, for why the config carries a hash and not just
-    the path.
-``LEAN_VERIFY``
-    Optional, default ``"defer"``. See "VERIFIER SELECTION" above.
+Environment: ``LEAN_MODEL`` (required; one key of ``MODELS``);
+``LEAN_STATE_FILE`` (optional EC2 state file, default
+``.ec2_state_scaling_<LEAN_MODEL>.json`` -- a bare or relative name resolves
+against ``REPO_ROOT``, which is how both phases find the same box);
+``LEAN_RUN_NAME``, ``LEAN_SHARD``, ``LEAN_CELL_WHITELIST`` (optional, read at
+``build_config`` call time rather than at import); ``LEAN_VERIFY`` --
+``"defer"`` (the default) passes a ``NullVerifier`` that never imports
+``lean_dojo`` and records every verdict ``"unverified"``, leaving real checking
+to the later pass ``scripts/deduction/lean_verify_rows.py``, while ``"real"``
+verifies inline.
 
 Run (repo root)::
 
@@ -261,71 +87,26 @@ def lane_env_defaults(
 ) -> dict[str, str]:
     """Derive this lane's four ``EC2_*``/``SMOLBENCH_LEAN_RESULTS`` defaults.
 
-    A PURE function. It reads only its own arguments, performs no
-    filesystem or environment I/O, and returns a brand-new ``dict`` on
-    every call. It stays pure on purpose: only the caller (this module's
-    own top-level code) ever touches ``os.environ``, and tests can
-    exercise the derivation logic with no process-environment dependency
-    at all.
+    Pure: reads only its arguments, does no filesystem or environment I/O, and
+    returns a fresh dict, so this module's top-level code stays the only thing
+    that touches ``os.environ`` -- installing each value with
+    ``os.environ.setdefault``, before the first import of
+    ``smolbench.evals.providers.ec2``. It does NOT validate `key` against
+    ``MODELS``; that table is not loaded yet when this is called (see the
+    module docstring's import-order note).
 
-    Parameters
-    ----------
-    key : str
-        Spec key for the checkpoint this lane serves (e.g. ``"glm-4.7"``).
-        This function does NOT validate it against ``MODELS``. See the
-        module docstring's "MODULE IMPORT ORDER" section for why
-        validation waits for ``selected_model``, called later, after
-        ``MODELS`` loads.
-    repo_root : Path
-        Repo root to anchor the derived state-file and results paths
-        against. Callers pass ``REPO_ROOT`` in production; tests may pass
-        anything.
-    state_file : str or None, optional
-        Override for the EC2 state-file location. ``None`` (the default)
-        derives ``repo_root / f".ec2_state_scaling_{key}.json"``. A
-        relative or bare string (e.g. the fleet supervisor's
-        ``.ec2_state_scaling_<key>.json``) resolves AGAINST `repo_root`,
-        not the process's cwd. This lets this lane reattach to the exact
-        box its induction phase provisioned: both phases anchor the same
-        bare filename to the same repo root. An absolute string is used
-        verbatim.
-
-    Returns
-    -------
-    dict[str, str]
-        Exactly four keys:
-
-        - ``"EC2_EXPERIMENT_TAG"``: ``f"scaling-{key}"``.
-        - ``"EC2_STATE_FILE"``: absolute path string, derived as described
-          above.
-        - ``"EC2_VLLM_IMAGE"``: digest-pinned (see
-          ``smolbench.evals.providers.ec2.EC2_VLLM_IMAGE``'s own comment for the
-          provenance). This driver reattaches to a box already serving
-          under that same image during the induction phase, so using any
-          other image here would risk a mid-study image swap.
-        - ``"SMOLBENCH_LEAN_RESULTS"``: ``str(repo_root / "notebooks" /
-          "deduction" / "results")``. This function sets it EXPLICITLY,
-          rather than leave it to ``runner.results_root()``'s own
-          independent default (which happens to compute the same path via
-          a different anchor, ``smolbench.__file__``). This keeps this
-          file's output location decoupled from how the ``smolbench``
-          package happens to be installed in a given environment.
-
-    Notes
-    -----
-    This module's own top-level code installs every value here into
-    ``os.environ`` via ``os.environ.setdefault`` (never a bare assignment).
-    See the module docstring's "MODULE IMPORT ORDER" section for why it
-    uses ``setdefault`` specifically, and why the four resulting
-    ``os.environ`` writes must land before the first import of
-    ``smolbench.evals.providers.ec2``.
-
-    Examples
-    --------
-    >>> sorted(lane_env_defaults("glm-4.7", repo_root=Path("/repo")))
-    ['EC2_EXPERIMENT_TAG', 'EC2_STATE_FILE', 'EC2_VLLM_IMAGE', 'SMOLBENCH_LEAN_RESULTS']
-    >>> lane_env_defaults("glm-4.7", repo_root=Path("/repo"))["EC2_EXPERIMENT_TAG"]
-    'scaling-glm-4.7'
+    Returns exactly ``EC2_EXPERIMENT_TAG`` (``f"scaling-{key}"``),
+    ``EC2_STATE_FILE`` (absolute path), ``EC2_VLLM_IMAGE`` (digest-pinned; must
+    match the image the induction phase already serves under, or reattaching
+    swaps images mid-study) and ``SMOLBENCH_LEAN_RESULTS``
+    (``repo_root/notebooks/deduction/results``, set explicitly so output
+    location does not depend on how ``smolbench`` happens to be installed).
+    `state_file` of ``None`` derives
+    ``repo_root / f".ec2_state_scaling_{key}.json"``; a bare or relative string
+    resolves against `repo_root`, NOT the process cwd -- both study phases
+    anchor the same bare name to the same root, which is how this lane
+    reattaches to the box induction provisioned; an absolute string is used
+    verbatim.
     """
     if state_file is None:
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"
@@ -448,24 +229,10 @@ from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 def selected_model() -> str:
     """Resolve and validate this lane's model key from ``LEAN_MODEL``.
 
-    This is the deferred-validation counterpart to the raw, unvalidated
-    read at module-import time (``_RAW_LEAN_MODEL``). By the time this
-    function runs, ``MODELS`` is guaranteed to be loaded. So the check
-    that could not happen at import time (see the module docstring's
-    "MODULE IMPORT ORDER" section) happens here instead.
-
-    Returns
-    -------
-    str
-        The validated spec key, a member of ``MODELS``.
-
-    Raises
-    ------
-    SystemExit
-        If ``LEAN_MODEL`` is unset or empty, or if it does not name a key
-        of ``MODELS``. Both messages list every valid key (sorted). This
-        makes the failure actionable without opening this file to look up
-        the roster.
+    Deferred counterpart to the raw, unvalidated import-time read: ``MODELS``
+    is guaranteed loaded by the time this runs. Raises ``SystemExit``, listing
+    every valid key, if ``LEAN_MODEL`` is unset, empty, or not a key of
+    ``MODELS``.
     """
     key = os.environ.get("LEAN_MODEL", "").strip()
     valid = ", ".join(sorted(MODELS))
@@ -482,94 +249,34 @@ def selected_model() -> str:
 def build_config(key: str) -> dict:
     """Build this lane's ``runner.sweep`` configuration.
 
-    USER-LOCKED values. By design, every key below is identical across all
-    21 checkpoints in this study, except ``run_name`` and the per-model
-    ``models[0]`` entry. Holding the sweep fixed, and varying only the
-    served model, is what lets a next-tactic success-rate difference
-    between two checkpoints point to the model, not to a changed sweep.
-    This function does not rename, adapt, or re-derive any key from
-    ``runner.sweep``'s defaults: ``runner.sweep`` already accepts every one
-    of them verbatim (see its own docstring's "Config keys" section).
+    USER-LOCKED: every key is identical across all 21 checkpoints except
+    ``run_name`` and the single ``models[0]`` entry, which is what lets a
+    next-tactic success-rate difference point to the model rather than to a
+    changed sweep. Nothing is renamed or re-derived here; ``runner.sweep``
+    accepts every key verbatim. Callers must validate `key` first (e.g. via
+    ``selected_model()``): ``COT_ARGS`` is total over ``MODELS``, so any other
+    key raises a bare ``KeyError`` here.
 
-    Parameters
-    ----------
-    key : str
-        Spec key for the checkpoint this lane serves. Callers must
-        validate it first (e.g. via ``selected_model()``): ``COT_ARGS[key]``
-        raises a plain ``KeyError`` for a key outside ``MODELS``, since
-        ``COT_ARGS`` is TOTAL over ``MODELS`` by construction (see
-        ``notebooks/induction/run_study.py``'s own docstring). This
-        function does not re-check that invariant.
-
-    Returns
-    -------
-    dict
-        A sweep config with 16 keys: ``run_name``, ``seed``,
-        ``temperature``, ``max_tokens``, ``request_timeout``,
-        ``max_retries``, ``dojo_timeout``, ``concurrent_gen``,
-        ``skip_trivial``, ``k``, ``n_replicates``, ``theorems``, ``rungs``,
-        ``theorem_workers``, ``max_concurrency``, ``models``. ``theorems``
-        contains the five keys ``source``, ``kind``, ``split``, ``limit``,
-        ``seed`` (the ``replay_passing``/``novel_premises``/``val`` pool,
-        300 of its 805 theorems, itself seeded 0). It also has a sixth
-        key, ``shard``, present ONLY when ``LEAN_SHARD`` is set in the
-        environment at call time (see the comment above the ``theorems``
-        assignment in this function's body for the sharding mechanics).
-        ``models`` is a single-element list; its ``extra_params`` is a
-        DEEP COPY of ``COT_ARGS[key]`` (see Notes), so it is always equal
-        to, but never the same object as, ``COT_ARGS[key]``. A seventeenth
-        key, ``cell_whitelist``, is present ONLY when
-        ``LEAN_CELL_WHITELIST`` is set in the environment at call time
-        (see the "LEAN_CELL_WHITELIST sidecar stamp" note below). With it
-        unset, the returned dict's top-level key set is unchanged from
-        before this parameter existed.
+    Returns 16 keys, including a ``theorems`` block selecting 300 of the
+    ``replay_passing``/``novel_premises``/``val`` pool's theorems at seed 0, and
+    a ``models[0]["extra_params"]`` that is a DEEP copy of ``COT_ARGS[key]`` so
+    a caller mutating it in place cannot corrupt that shared, nested table for
+    other lanes. Two further keys are conditional on the environment:
+    ``theorems["shard"]`` when ``LEAN_SHARD`` is set, and top-level
+    ``cell_whitelist`` (the path plus a ``runner.hash_cell_keys`` fingerprint of
+    its sorted content, so the run's ``manifest.json`` records which whitelist
+    was in effect even if the file is later edited) when
+    ``LEAN_CELL_WHITELIST`` is set.
 
     Notes
     -----
-    Pure, except for three environment reads at CALL time, never cached
-    and never read at import time: ``LEAN_SHARD``, ``LEAN_RUN_NAME``, and
-    ``LEAN_CELL_WHITELIST``. A caller may set any of them any time before
-    calling this function.
-
-    ``LEAN_SHARD`` (a stride string, e.g. ``"0/4"``), when set, adds a
-    ``shard`` key to the ``theorems`` dict and appends a
-    ``_shard<i>of<n>`` suffix to the DEFAULT ``run_name`` (see the comment
-    above the ``theorems`` assignment in this function's body for why). An
-    explicit ``LEAN_RUN_NAME`` still wins verbatim over that suffix.
-
-    ``LEAN_RUN_NAME``, when unset or empty, falls back to
-    ``f"scaling_{key}"`` (plus the shard suffix above, when present) --
-    matching ``scripts/fleet/run_fleet.py``'s ``Lane`` naming convention for
-    ``scaling_<model>`` run directories.
-
-    Also reads ``LEAN_CELL_WHITELIST`` at CALL time and, when set,
-    additionally performs FILE I/O (``runner.load_cell_whitelist`` reads
-    and parses that path). This function is no longer pure in that
-    branch, and can raise `ValueError` (propagated from
-    `load_cell_whitelist`) before any AWS call -- matching this driver's
-    established "fail fast before billing" pattern (see the module
-    docstring's LIFECYCLE step 3).
-
-    This function builds ``extra_params`` with
-    ``copy.deepcopy(COT_ARGS[key])`` rather than reuse it by reference.
-    ``COT_ARGS`` is a shared, imported table (see ``MODELS``/``COT_ARGS``
-    above). If a caller mutates the returned config's ``extra_params`` in
-    place (e.g. to layer on an ad hoc per-request override before calling
-    ``runner.sweep``), that mutation must never corrupt the shared table
-    for every OTHER lane still building a config in this same process. A
-    shallow copy would not be enough here, because ``COT_ARGS`` values are
-    themselves nested dicts (e.g.
-    ``{"chat_template_kwargs": {"enable_thinking": True}}``).
-
-    Examples
-    --------
-    >>> cfg = build_config("glm-4.7")
-    >>> cfg["rungs"]
-    ['stepk:1', 'hint:2', 'noise:3', 'hint:3']
-    >>> cfg["models"][0]["extra_params"] == COT_ARGS["glm-4.7"]
-    True
-    >>> cfg["models"][0]["extra_params"] is COT_ARGS["glm-4.7"]
-    False
+    ``LEAN_SHARD``, ``LEAN_RUN_NAME`` and ``LEAN_CELL_WHITELIST`` are read at
+    CALL time, never at import and never cached. ``run_name`` defaults to
+    ``f"scaling_{key}"`` plus a ``_shard<i>of<n>`` suffix when sharding
+    (matching ``scripts/fleet/run_fleet.py``'s ``Lane`` naming); an explicit
+    ``LEAN_RUN_NAME`` wins verbatim. With ``LEAN_CELL_WHITELIST`` set the
+    function also does file I/O and can raise ``ValueError`` from
+    ``runner.load_cell_whitelist`` -- before any AWS call.
     """
     # Optional theorem-stride shard ("i/n", passed through to
     # runner._select_theorems). The shard key is CONDITIONALLY present.
@@ -653,37 +360,15 @@ def build_config(key: str) -> dict:
 def select_verifier() -> Any:
     """Resolve the verifier object to hand to ``runner.sweep``, from ``LEAN_VERIFY``.
 
-    Returns
-    -------
-    Any
-        ``NullVerifier()`` when ``LEAN_VERIFY`` is unset, empty, or
-        ``"defer"`` (the default). Every cell's proof-checking verdict is
-        then recorded as ``"unverified"``, instead of replayed against a
-        real Dojo session -- see the module docstring's "VERIFIER
-        SELECTION" section for why this is the normal path for THIS
-        driver. The ``smolbench.deduction.lean.verify`` MODULE object (not
-        an instance -- ``runner.sweep`` calls its functions directly, e.g.
-        ``verifier.try_tail(...)``) when ``LEAN_VERIFY`` is exactly
-        ``"real"``.
-
-    Raises
-    ------
-    ImportError
-        ``LEAN_VERIFY="real"`` when ``lean_dojo`` is not installed:
-        ``verify.py`` unconditionally imports it at its own module top
-        level and re-raises with the fix (``uv sync --all-extras``).
-    SystemExit
-        Any other value: the message names the two valid values
-        (``"defer"``, ``"real"``).
-
-    Notes
-    -----
-    The ``from smolbench.deduction.lean import verify`` import lives
-    INSIDE this function's ``"real"`` branch, not at module scope, because
-    ``verify.py`` needs ``lean_dojo`` at its own module top level, and its
-    ``ImportError`` names the fix if it is missing. A module-scope import
-    here would make importing THIS file itself fail whenever ``lean_dojo``
-    is absent, even for callers that only ever pass ``LEAN_VERIFY=defer``.
+    Returns ``NullVerifier()`` when ``LEAN_VERIFY`` is unset, empty or
+    ``"defer"`` (the default; every cell's verdict is then recorded
+    ``"unverified"`` rather than replayed against a real Dojo), or the
+    ``smolbench.deduction.lean.verify`` MODULE object -- not an instance, since
+    ``runner.sweep`` calls its functions directly -- when it is exactly
+    ``"real"``. That import lives inside the ``"real"`` branch so importing this
+    file never requires ``lean_dojo``; ``"real"`` without it raises
+    ``ImportError`` naming the fix (``uv sync --all-extras``). Any other value
+    raises ``SystemExit``.
     """
     choice = os.environ.get("LEAN_VERIFY", "defer").strip() or "defer"
     if choice == "defer":
@@ -700,103 +385,37 @@ def select_verifier() -> Any:
 def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     """Upload one lane's run directory to S3, verify it, then prune local disk.
 
-    END-OF-RUN ONLY: this function runs exactly once, after
-    ``runner.sweep`` has already returned (see ``main``). ``runner.sweep``'s
-    full signature and documented config-key list expose no progress hook
-    and no per-cell callback. It is one blocking call from start to
-    finish. So this file cannot implement an incremental, every-N-cells
-    sync without adding such a hook to
-    ``smolbench/deduction/lean/runner.py`` itself -- out of scope here,
-    since this file must not touch that module. This is a documented
-    limitation, not an oversight. A crash mid-sweep means whatever
-    ``all_rows.jsonl`` already holds on local disk stays there, unspooled,
-    until a relaunch of this same lane reaches this call again.
+    END-OF-RUN ONLY: called exactly once, after ``runner.sweep`` returns
+    (`run_dir` is that sweep's output directory,
+    ``runner.results_root() / "runs" / run_name``). ``sweep`` exposes no
+    progress hook, so incremental syncing is impossible without changing that
+    module; a crash mid-sweep leaves the rows on local disk, unspooled, until a
+    relaunch of this lane reaches this call again.
 
-    Parameters
-    ----------
-    run_dir : Path
-        The sweep's output directory (``runner.results_root() / "runs" /
-        run_name``).
-    key : str
-        Spec key for the checkpoint this run belongs to. Used to build
-        the S3 destination prefix, ``f"{SPOOL_PREFIX}/scaling_{key}/"``.
-        This function builds the prefix from `key`, not from
-        ``run_dir.name``, on purpose. The two normally agree
-        (``build_config``'s default ``run_name`` IS ``f"scaling_{key}"``),
-        but ``LEAN_RUN_NAME`` can override ``run_name`` independently. The
-        S3 layout must stay keyed on the MODEL, regardless of what a
-        caller named the run directory.
-    client : Any, optional
-        A boto3 S3 client exposing ``upload_file`` and ``head_object``.
-        ``None`` (the default) makes this function lazily import ``boto3``
-        INSIDE itself, and build a real client against `SPOOL_REGION`.
-        boto3 is never imported at module scope, so importing this file
-        needs no AWS SDK at all (this mirrors ``smolbench.evals.providers.ec2``'s
-        own lazy-import convention, and ``scripts/fleet/run_fleet.py``'s
-        ``sync_deduction_spool``, which follows the same pattern). This
-        parameter exists so tests can inject a fake client with no network
-        access.
+    Two-phase, and the ordering is load-bearing: upload and verify EVERY file
+    (in sorted, deterministic order) before pruning ANY, so a failure part-way
+    through cannot already have deleted files whose uploads are unconfirmed.
+    Pruning keeps ``run_dir / "manifest.json"`` (so a later resume recognises
+    the run without re-downloading the spool), then removes now-empty
+    subdirectories deepest-first, swallowing ``OSError`` on each ``rmdir()``;
+    ``run_dir`` itself is never removed.
 
-    Returns
-    -------
-    int
-        Number of files uploaded (and verified). Returns ``0``, with
-        nothing uploaded or pruned, when `run_dir` is not a directory.
-        This is NOT an error: a lane whose sweep produced nothing yet, or
-        whose run directory a prior call already spooled and pruned,
-        simply has nothing to sync.
+    The destination prefix ``f"{SPOOL_PREFIX}/scaling_{key}/"`` is built from
+    `key`, NOT from ``run_dir.name``: the S3 layout stays keyed on the MODEL
+    even when ``LEAN_RUN_NAME`` renamed the run directory. `client` is a boto3
+    S3 client exposing ``upload_file`` and ``head_object``; ``None`` lazily
+    imports boto3 and builds one against `SPOOL_REGION` (boto3 directly rather
+    than the ``aws`` CLI, which is not a declared dependency of this repo), so
+    importing this file needs no AWS SDK and tests can inject a fake.
 
-    Raises
-    ------
-    RuntimeError
-        If ANY upload fails verification: either ``head_object`` itself
-        raised (network error, access denied, object briefly not yet
-        consistent), or its ``"ContentLength"`` does not match the local
-        file's size. The message names the offending S3 key and, when
-        available, both the local and remote sizes (see Notes for the one
-        case where a "remote size" does not exist to report). This
-        function raises BEFORE any pruning: a failed verification must
-        never delete local data, so on this path every file uploaded so
-        far (verified or not) stays in place on disk, exactly as it was
-        before this call.
-
-    Notes
-    -----
-    Two-phase: upload-verify-ALL, then prune-ANY. This function collects
-    the file list once, sorts it for deterministic ordering, then uploads
-    and verifies every file in that fixed order. Pruning begins only
-    after every single file has passed verification. This ordering is
-    what makes the "do NOT prune anything on a failed verification"
-    guarantee correct. If pruning were interleaved with upload and
-    verify, a failure on file 10 of 20 would already have deleted files
-    1-9 from local disk, with no guarantee those uploads were themselves
-    still intact in the bucket.
-
-    This resolves one message-wording ambiguity conservatively. The spec
-    for this function says a RuntimeError on "any mismatch or exception"
-    must name "the key and both sizes". For an actual SIZE MISMATCH, both
-    sizes are always available, and this function reports both. For an
-    EXCEPTION raised by ``head_object`` itself (e.g. the object briefly
-    not found, a throttled call, a permissions error), there IS no
-    "remote size" to report, because nothing was successfully retrieved.
-    In that case this function reports the key, the local size, and the
-    underlying exception's own message in place of a nonexistent remote
-    size -- the closest available reading of "both sizes" when only one
-    exists.
-
-    Pruning deletes every uploaded file EXCEPT ``run_dir / "manifest.json"``
-    (the run's config/run-id record, written by ``runner.sweep`` -- see
-    that function's "Output layout" docstring section). It then removes
-    every now-empty subdirectory, deepest-first (by path-segment count,
-    so it only attempts a parent once every child under it is already
-    clear). It swallows ``OSError`` on each ``rmdir()``: a non-empty
-    directory (e.g. one holding a file this function does not manage) is
-    simply left alone. ``run_dir`` itself is never removed, since it
-    keeps ``manifest.json``.
-
-    This function uses boto3's ``upload_file``/``head_object`` directly,
-    not the ``aws`` CLI: the CLI is not a declared dependency of this
-    repo, while boto3 already is.
+    Returns the number of files uploaded and verified: ``0``, with nothing
+    uploaded or pruned, when `run_dir` is not a directory -- not an error, since
+    a lane that produced nothing yet, or whose directory an earlier call already
+    spooled and pruned, has nothing to sync. Raises ``RuntimeError`` if any
+    upload fails verification (``head_object`` itself raised, or its
+    ``"ContentLength"`` differs from the local file size) BEFORE any pruning, so
+    local data is left exactly as it was; the message names the S3 key and both
+    sizes.
     """
     if not run_dir.is_dir():
         logging.info(f"spool_to_s3[{key}]: no run directory at {run_dir}; nothing to sync.")
@@ -862,35 +481,17 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
 def main(argv: list[str] | None = None) -> None:
     """Entry point: resolve the lane, provision/serve/sweep, spool, maybe teardown.
 
-    Parameters
-    ----------
-    argv : list[str] or None, optional
-        Command-line arguments to parse, or ``None`` (the default) to
-        parse ``sys.argv`` as ``argparse`` normally would. This is a
-        parameter so tests and notebook cells can call this function
-        directly, without going through a subprocess.
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    SystemExit
-        From argument parsing itself, from ``selected_model()`` (unset or
-        unknown ``LEAN_MODEL``), or from ``select_verifier()`` (invalid or
-        unsupported ``LEAN_VERIFY``). This function checks all three
-        BEFORE any AWS call, so a configuration mistake never lands on a
-        billing box.
-
-    Notes
-    -----
-    This function makes live AWS calls (``ec2.provision_spot_instance()``,
-    ``ec2.serve_model()``, and, with ``--teardown``,
-    ``ec2.shutdown_instance()``) on every path except a failing argument
-    parse or an early ``SystemExit`` from
-    ``selected_model``/``select_verifier``. See the module docstring's
-    "Cost warning" section.
+    ``SystemExit`` comes from argument parsing, from ``selected_model()``
+    (unset or unknown ``LEAN_MODEL``) or from ``select_verifier()`` (invalid
+    ``LEAN_VERIFY``) -- all three run BEFORE any AWS call, so a configuration
+    mistake never lands on a billing box. Past those checks, every path makes
+    live, billable AWS calls (``ec2.provision_spot_instance()``,
+    ``ec2.serve_model()``, and ``ec2.shutdown_instance()`` under
+    ``--teardown``). The sweep runs with ``resume=not --force-rerun``, so a
+    relaunched lane picks up from the on-disk ``all_rows.jsonl`` whether or not
+    the crashed attempt ever reached the S3 spool. `argv` is a parameter so
+    tests and notebook cells can call this directly instead of through a
+    subprocess.
     """
     parser = argparse.ArgumentParser(
         description=(

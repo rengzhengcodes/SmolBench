@@ -1,42 +1,28 @@
 """Audit content-level run completeness. Catches SILENT data faults.
 
-WHY THIS EXISTS
----------------
-**A completeness check that counts rows is not a completeness check.** A
-row can be present and EMPTY (``candidate_proof: ""``,
-``completion_tokens: 0``) when the generating box died mid-run and the
-driver recorded the failure as an ordinary per-cell ``exception`` row.
-Row counts, shard-merge gates and traceback counts all pass on that data.
-The presence of a key proves an attempt was made, not that data came
-back. Assert on CONTENT.
+A completeness check that counts rows is not a completeness check: a row can be
+present and EMPTY (``candidate_proof: ""``, ``completion_tokens: 0``) when the
+generating box died mid-run and the driver recorded the failure as an ordinary
+per-cell ``exception`` row. Row counts, shard-merge gates and traceback counts
+all pass on that data. Assert on CONTENT.
 
-WHAT COUNTS AS A FAULT
-----------------------
-A cell is DEAD when no row for its key carries a non-empty
-candidate_proof. Dead cells split into two populations. Do NOT conflate
-them:
+A cell is DEAD when no row for its key carries a non-empty candidate_proof. Dead
+cells split into two populations that must never be conflated:
 
-  INFRA   Some row carries an infrastructure error (spot interruption,
-          idle watchdog, unreachable endpoint, a connection or timeout
-          error). This is LOST DATA, and you can recover it by
-          re-running. ``runner._existing_keys()`` re-runs a cell when
-          all its surviving rows are empty AND the cell also owns an
-          ``exception`` row, so a plain relaunch regenerates exactly
-          these cells.
+  INFRA   No attempt reached the model (no surviving row with prompt_tokens > 0)
+          and some row carries an infrastructure error. This is LOST DATA, and
+          exactly the set ``runner._existing_keys()`` re-runs, so a plain
+          relaunch regenerates these cells and nothing else.
 
-  GENUINE No error anywhere: the model was asked and returned nothing.
-          This is DATA, not loss. A regeneration of these cells would
-          fabricate results by resampling until the model happens to
-          answer. Never "repair" these cells.
+  GENUINE No error anywhere: the model was asked and returned nothing. This is
+          DATA, not loss. Regenerating it resamples until the model happens to
+          answer, which inflates the numerator. Never "repair" these cells.
 
-This script exits with status 1 when INFRA loss exists, so a pipeline can
-gate on it. It reports genuine empties, but never fails the run over them.
+Exits 1 on INFRA loss (also on short lanes, missing sanity rows, or a selection
+that matched no lane) so a pipeline can gate on it. Genuine empties are reported
+but never fail the run.
 
-USAGE
-    scripts/results/audit_run_completeness.py                  # all lanes, from S3
-    scripts/results/audit_run_completeness.py --lane gemma-4-31b
-    scripts/results/audit_run_completeness.py --local          # audit local run dirs
-    scripts/results/audit_run_completeness.py --induction      # seed coverage too
+    scripts/results/audit_run_completeness.py [--lane L] [--local] [--induction]
 
     # Programmatic, per lane:
     #   sys.path.insert(0, "scripts/results"); from audit_run_completeness import audit_lane
@@ -81,20 +67,11 @@ def _s3():
 
 
 def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
-    """Yield (lane_name, all_rows_text) for every deduction lane.
+    """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
-    Parameters
-    ----------
-    local : bool
-        If ``True``, read local run directories. If ``False``, read
-        every lane's ``all_rows.jsonl`` from S3.
-
-    Yields
-    ------
-    tuple[str, str]
-        ``(lane_name, all_rows_text)``. ``all_rows_text`` is the raw
-        text of the lane's ``all_rows.jsonl``, or ``""`` if S3 has no
-        object for that lane.
+    Reads local run directories when `local`, otherwise each lane's
+    ``all_rows.jsonl`` from S3. The text is ``""`` when S3 holds no such object
+    for a lane, which is itself a finding.
     """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
@@ -125,19 +102,10 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
 def audit_lane(text: str) -> Dict[str, object]:
     """Classify one lane's cells into ok, infra-dead, or genuine-empty.
 
-    Parameters
-    ----------
-    text : str
-        Raw text of the lane's ``all_rows.jsonl``, as returned by
-        `iter_deduction_lanes`.
-
-    Returns
-    -------
-    dict
-        Keys: ``cells`` (distinct cell-key count), ``infra`` (dead cells
-        classified as infrastructure loss), ``genuine`` (dead cells
-        classified as genuine empty completions), and ``sanity_missing``
-        (sanity theorems with no passing verdict in any row).
+    `text` is the raw ``all_rows.jsonl`` yielded by `iter_deduction_lanes`.
+    Returns counts keyed ``cells`` (distinct cell keys), ``infra`` (dead cells
+    lost to infrastructure), ``genuine`` (dead cells the model answered emptily)
+    and ``sanity_missing`` (sanity theorems with no passing verdict in any row).
     """
     rows_by_key: Dict[tuple, List[dict]] = collections.defaultdict(list)
     sanity: Dict[str, bool] = {}
@@ -179,24 +147,12 @@ def audit_lane(text: str) -> Dict[str, object]:
 
 
 def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, int]]:
-    """Report induction (model, arm) pairs that are missing seeds.
+    """Report induction ``(model, arm)`` pairs missing seeds, as ``{model: {arm: n}}``.
 
-    The induction analogue of an empty cell is a MISSING seed. The arm
-    file is written only when a seed completes, so a lane that died
-    mid-seed leaves no trace at all in S3. This is silent in a different
-    way than deduction's empty rows.
-
-    Parameters
-    ----------
-    models : list[str] or None, optional
-        If given, report only these model names. If ``None`` (the
-        default), report every model found in S3.
-
-    Returns
-    -------
-    dict[str, dict[str, int]]
-        Maps each model with at least one gap to a dict of
-        ``{arm: missing_seed_count}``.
+    The induction analogue of an empty cell is a MISSING seed: the arm file is
+    written only when a seed completes, so a lane that died mid-seed leaves no
+    trace at all in S3. Only models with at least one gap are returned; `models`
+    restricts the report, and ``None`` covers every model found in S3.
     """
     s3 = _s3()
     seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)

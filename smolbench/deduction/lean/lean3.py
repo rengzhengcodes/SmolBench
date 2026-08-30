@@ -1,80 +1,31 @@
 """Detect and inject Lean 3 syntax and lemma-name relics.
 
-Two Lean-3-ism failure modes show up in generated tactic blocks, and
-survive SFT/LoRA training as a small residue. The first is
-**Lean 3 tactic syntax**: `refl` instead of `rfl`, `existsi` instead of
-`use`, comma-terminated `begin...end` blocks, `λ x, e` binders instead of
-`fun x ↦ e` / `λ x ↦ e`, and trailing commas after tactics. The second is
-**mathlib3 lemma names** that the mathlib4 port renamed or restructured
-(`supr_le` -> `iSup_le`, `iso.inv_comp_eq` -> `Iso.inv_comp_eq`).
+Two Lean-3-isms survive SFT/LoRA training as a small residue: Lean 3
+*syntax* (`refl` for `rfl`, `existsi` for `use`, `begin...end`, `λ x, e`
+binders, trailing commas) and *mathlib3 lemma names* the mathlib4 port
+renamed (`supr_le` -> `iSup_le`). `find_relics`/`has_relics` detect them
+(the analyzer's `l3` leak-rate column, dataset QC); `corrupt_tail` injects
+them to build repair-SFT rows -- corrupted tail as the "previous attempt",
+clean tail as the target (see `build_repair_user`).
 
-This module is the shared detector and corrupter for both jobs:
+**Shared-vocabulary invariant: anything the corrupter can inject, the
+detector must catch.** `corrupt_tail` enforces it mechanically, returning
+`None` when `find_relics` does not corroborate the relics it injected, so
+no repair row carries an "error" the model gets no signal for.
 
-- **Detection** (`find_relics` / `has_relics`). The run analyzer calls this
-  to compute an `l3` leak-rate column over a model's generated tactic
-  blocks. Dataset-QC tooling calls it to check that a training corpus is
-  clean.
-- **Corruption** (`corrupt_tail`). The auxiliary SFT dataset builder calls
-  this to turn a clean, ground-truth Lean 4 tactic tail into a
-  Lean-3-flavored "previous attempt", paired with the clean tail as the
-  target. This teaches a model the *repair* move (see `build_repair_user`),
-  instead of showing it only clean Lean 4 during training.
+`lean3-name` detection and the `rename` transform need the Lean3<->Lean4
+`#align` map, which `AlignMap.load` reads from a gzipped-JSON asset at
+``corpus.data_root().parent / ALIGN_ASSET_NAME`` -- BESIDE the wholesale
+gitignored benchmark download, per `corpus.replay_passing_path`'s
+committed-sidecar layout. Every public function takes ``align=None``,
+which disables exactly that rule and that transform and never raises.
 
-Shared-vocabulary invariant
-----------------------------
-Detection and corruption are two faces of one rule set. They must never
-drift apart: **anything the corrupter can inject, the detector must
-catch.** This is not just a documentation promise. `corrupt_tail`
-mechanically enforces it as a post-condition: `find_relics(corrupted,
-align)` must return at least one relic, or the corruption attempt is
-discarded and the function returns `None`. A corruption transform that
-silently produced an undetectable relic would poison the repair dataset
-with a row whose "error" the model never gets a signal for, so this check
-is not optional. Each of the five corruption transforms below is named
-after the Lean4->Lean3 syntactic *inverse* of one detection rule
-(`rfl->refl` undoes the `refl` rule's fix, `use->existsi` undoes the
-`existsi` rule's fix, and so on). This naming keeps the two sides in
-lockstep by construction, not merely by convention.
-
-The `#align` asset and graceful degradation
---------------------------------------------
-Lemma-name detection (`lean3-name`) and the `rename` corruption transform
-both need a Lean3<->Lean4 name map. The map loads from a small
-gzip-compressed JSON asset (`ALIGN_ASSET_NAME`), resolved by default BESIDE
-the benchmark dataset directory (``corpus.data_root().parent``). This
-matches the committed-sidecar layout `corpus.replay_passing_path`
-documents: small committed artifacts live next to the wholesale-gitignored
-``leandojo_benchmark_4/`` download, never inside it. The asset is mined from the traced mathlib4 snapshot's `#align` directives
-(mathlib4's compatibility shims recording each declaration's mathlib3
-name). This module consumes it through `AlignMap`; it does not build or
-validate it.
-
-Every public function in this module accepts `align: AlignMap | None =
-None` and degrades gracefully when `align` is absent. `align=None`
-disables the name-map-dependent rule (`lean3-name` in `find_relics`) and
-transform (`rename` in `corrupt_tail`) without raising an error. The
-parse-level-only detection and corruption (Lean 3 *syntax*, not lemma
-names) still work in full. This lets a caller that has not yet
-bootstrapped the align asset, or that runs in an environment without
-`notebooks/deduction/data/`, still get useful signal.
-
-Design constraints
--------------------
-- Stays dependency-free beyond the standard library plus `.corpus` (for
-  `data_root()` only, imported lazily at call time inside `AlignMap.load` --
-  see its docstring). This module imports no `lean_dojo` and no
-  torch/datasets, so it must import cleanly without either installed.
-- Stays fully deterministic. `corrupt_tail` takes an explicit
-  `random.Random` instance and never reads global random state or the
-  wall clock, so a training-data build is byte-for-byte reproducible from
-  its seed.
-- Tracks bracket depth (across ``⟨⟩ () [] {}``) **cumulatively across
-  lines**, not reset per line, as several rules require. An unclosed
-  ``⟨`` several lines up correctly suppresses a trailing-comma flag
-  several lines later (e.g. a multi-line ``refine ⟨foo,\\n  bar⟩``). The
-  scanner does not skip string-literal contents: Lean tactic strings
-  essentially never contain the bracket/comma characters this module
-  cares about. This is a deliberate limitation, not an oversight.
+Stdlib plus `.corpus` only (no `lean_dojo`, no torch). `corrupt_tail` is
+deterministic: it takes an explicit `random.Random` and reads no global or
+wall-clock state, so a build is byte-reproducible from its seed. Bracket
+depth (``⟨⟩ () [] {}``) accumulates **cumulatively across lines**, never
+reset per line, so an unclosed ``⟨`` suppresses a trailing-comma flag
+several lines later; string-literal contents are deliberately not skipped.
 """
 
 from __future__ import annotations
@@ -99,27 +50,14 @@ ALIGN_ASSET_NAME = "lean3_align.json.gz"
 class Relic:
     """One Lean 3 relic found by `find_relics`, or claimed by `corrupt_tail`.
 
-    Parameters
-    ----------
-    kind : str
-        One of ``"refl"``, ``"existsi"``, ``"binder-comma"``,
-        ``"trailing-comma"``, ``"begin-end"``, ``"lean3-name"`` -- see the
-        module-level detection rules in `find_relics`.
-    text : str
-        The offending token or line snippet that triggered the flag. The
-        exact shape depends on `kind`: a bare tactic keyword for
-        ``"refl"``/``"existsi"``, the stripped line for
-        ``"begin-end"``/``"trailing-comma"``, the token itself for
-        ``"lean3-name"``, and the binder-through-comma snippet for
-        ``"binder-comma"``.
-    fix : str or None
-        The known Lean 4 replacement: ``"rfl"``, ``"use"``, the aligned
-        Lean 4 name, or the line with its trailing comma removed. This is
-        ``None`` when no single-token fix applies (``"begin-end"``,
-        ``"binder-comma"``). A Lean3-style binder comma's fix needs to
-        know which arrow to insert, so this module does not guess it.
-    line : int
-        0-indexed line number within the scanned text.
+    `kind` is one of ``refl``, ``existsi``, ``binder-comma``,
+    ``trailing-comma``, ``begin-end``, ``lean3-name``. `text` is the
+    offending token (``refl``/``existsi``/``lean3-name``) or stripped line
+    (``begin-end``/``trailing-comma``, or the binder-through-comma snippet).
+    `fix` is the Lean 4 replacement, ``None`` where no single-token fix
+    applies: ``begin-end``, and ``binder-comma`` (whose fix would mean
+    guessing which arrow to insert). `line` is 0-indexed within the scanned
+    text.
     """
 
     kind: str
@@ -136,32 +74,16 @@ class Relic:
 class AlignMap:
     """A Lean3<->Lean4 declaration-name map, with suffix-based fuzzy lookup.
 
-    mathlib4's `#align` directives record, for many declarations, the exact
-    mathlib3 name the Lean4 declaration replaces. In the wild, names are
-    frequently referenced via a shorter, unqualified or partially-qualified
-    form -- e.g. ``iso.inv_comp_eq``
-    instead of the full ``category_theory.iso.inv_comp_eq``. Exact string
-    matching alone misses most real occurrences, so this class adds
-    conservative suffix matching: a query resolves via a dotted suffix only
-    when that suffix is unique across the whole map. An ambiguous partial
-    name, one that could refer to two different declarations, never
-    silently picks one.
+    mathlib4's `#align` directives record the mathlib3 name each Lean4
+    declaration replaces. Real references are usually partially qualified
+    (``iso.inv_comp_eq`` for ``category_theory.iso.inv_comp_eq``), so lookup
+    also resolves a dotted suffix -- but only one that is unique across the
+    whole map; an ambiguous partial name never silently picks a candidate.
 
-    Parameters
-    ----------
-    lean3_to_lean4 : dict of str -> str
-        Mapping from full mathlib3 declaration name to its mathlib4
-        replacement name. The constructor copies this dict, so the
-        instance owns its own copy; mutating the caller's dict afterward
-        has no effect on this `AlignMap`.
-
-    Notes
-    -----
-    All lookup indexes (suffix buckets, the Lean4 suffix set, and
-    `reverse_unique`) are built once here, not recomputed per lookup.
-    `find_relics` and `corrupt_tail` call `lookup_lean3`, `is_lean4_name`,
-    and `reverse_unique` once per candidate token in a scan, so this
-    matters at dataset-build scale.
+    The constructor copies `lean3_to_lean4` and builds every lookup index
+    (suffix buckets, the Lean4 suffix set, `reverse_unique`) once, since
+    scans call `lookup_lean3` / `is_lean4_name` / `reverse_unique` once per
+    candidate token at dataset-build scale.
     """
 
     def __init__(self, lean3_to_lean4: dict[str, str]) -> None:
@@ -207,54 +129,23 @@ class AlignMap:
 
     @classmethod
     def from_pairs(cls, pairs: dict[str, str]) -> AlignMap:
-        """Build an `AlignMap` directly from a ``{lean3: lean4}`` dict.
-
-        This is a convenience constructor for tests and small fixtures. It
-        behaves identically to ``AlignMap(pairs)``, spelled out for
-        readability at call sites.
-
-        Parameters
-        ----------
-        pairs : dict of str -> str
-            Lean3 name -> Lean4 name pairs.
-
-        Returns
-        -------
-        AlignMap
-        """
+        """Alias of the constructor, spelled out for test/fixture call sites."""
         return cls(pairs)
 
     @classmethod
     def load(cls, path: Path | None = None) -> AlignMap | None:
         """Load the align map from its gzip-compressed JSON asset.
 
-        Parameters
-        ----------
-        path : Path, optional
-            Explicit asset path. When omitted (the default), this resolves
-            to ``corpus.data_root().parent / ALIGN_ASSET_NAME`` -- BESIDE
-            the gitignored benchmark dataset dir, not inside it. This
-            matches the committed-sidecar layout of
-            `corpus.replay_passing_path`: the asset is a small committed
-            artifact, while ``data_root()`` itself is the wholesale
-            gitignored ~700 MB download. `load` calls `corpus.data_root()`
-            here, at call time, not cached at import time. A caller
-            (including a test) that repoints the ``SMOLBENCH_LEAN_DATA``
-            environment variable before calling `load` gets the
-            freshly-resolved path.
+        Returns ``None`` when the file does not exist. Absence is not an error:
+        every other function here accepts ``align=None`` and degrades to
+        parse-level-only detection/corruption.
 
-        Returns
-        -------
-        AlignMap or None
-            The loaded map, or ``None`` if the asset file does not exist.
-            Absence is not an error: every other function in this module
-            accepts ``align=None`` and degrades to parse-level-only
-            detection/corruption (see the module docstring). A caller that
-            has not bootstrapped the align asset yet still gets useful
-            behavior instead of an exception.
+        `path` defaults to ``corpus.data_root().parent / ALIGN_ASSET_NAME`` --
+        beside the gitignored ~700 MB benchmark download, not inside it.
+        `corpus.data_root()` is resolved here at call time, not cached at import,
+        so a caller (or test) that repoints ``SMOLBENCH_LEAN_DATA`` first gets
+        the fresh path.
 
-        Notes
-        -----
         Asset format: gzip-compressed UTF-8 JSON,
         ``{"lean3_to_lean4": {<lean3 name>: <lean4 name>, ...}}``.
         """
@@ -269,29 +160,12 @@ class AlignMap:
     def lookup_lean3(self, token: str) -> str | None:
         """Resolve a candidate identifier token to its Lean4 name, if known.
 
-        Parameters
-        ----------
-        token : str
-            A candidate identifier (see `find_relics`'s ``lean3-name`` rule
-            for the token-extraction contract this is meant to be called
-            with -- typically already stripped of trailing ``.``/``,``).
-
-        Returns
-        -------
-        str or None
-            `token`'s Lean4 replacement, resolved in this order:
-
-            1. Exact match against a Lean3 key.
-            2. `token`'s last two dotted components match a suffix bucket
-               with exactly one candidate lean3 name. This check runs
-               before the 1-component bucket, since a 2-component match is
-               more specific.
-            3. `token`'s last dotted component matches a suffix bucket
-               with exactly one candidate.
-
-            Returns ``None`` if none of the above resolve, including the
-            case where a suffix bucket exists but is ambiguous (2 or more
-            candidates).
+        Order: exact Lean3 key; then `token`'s last two dotted components
+        against a suffix bucket holding exactly one lean3 name (checked first,
+        being more specific); then its last component likewise. ``None`` if
+        nothing resolves, including when a matching bucket is ambiguous (>= 2
+        candidates). `token` is expected already trimmed of trailing ``.``/``,``
+        (see `_iter_candidate_tokens`).
         """
         exact = self.lean3_to_lean4.get(token)
         if exact is not None:
@@ -305,41 +179,21 @@ class AlignMap:
         return None
 
     def is_lean4_name(self, token: str) -> bool:
-        """True if `token` is exactly a known Lean4 name, or a suffix of one.
+        """True if `token` is a known Lean4 name, or a dotted suffix of one.
 
-        This method is the CLEAN guard in `find_relics`'s ``lean3-name``
-        rule: a token that already resolves via `lookup_lean3` should
-        still not get flagged if it is itself already valid Lean 4. This
-        is defense in depth. With a well-formed align map, this branch
-        should be unreachable, since a Lean4 name should not
-        simultaneously collide with a Lean3 suffix bucket. The guard costs
-        nothing to run, and the spec calls for it explicitly.
-
-        Parameters
-        ----------
-        token : str
-            Candidate identifier token.
-
-        Returns
-        -------
-        bool
-            ``True`` iff `token` equals some Lean4 name in the map exactly,
-            or equals a component-boundary dotted suffix of one.
+        The CLEAN guard in `find_relics`' ``lean3-name`` rule: a token that
+        resolves via `lookup_lean3` is still not flagged when it is itself
+        already valid Lean 4. Defense in depth -- with a well-formed align map
+        this branch should be unreachable.
         """
         return token in self._lean4_suffixes
 
     @property
     def reverse_unique(self) -> dict[str, str]:
-        """Lean4 name -> Lean3 name, restricted to unique inverses.
+        """Lean4 -> Lean3 name, restricted to Lean4 names with one preimage.
 
-        Returns
-        -------
-        dict of str -> str
-            The entries of `lean3_to_lean4` inverted, keeping only Lean4
-            names with exactly one Lean3 preimage (see `__init__` for why
-            an ambiguous inverse is dropped). The `rename` corruption
-            transform uses this to pick a Lean3 spelling to inject that is
-            unambiguously "the" corresponding Lean3 name.
+        Ambiguous inverses are dropped (see `__init__`), so the `rename`
+        transform always injects an unambiguously corresponding Lean3 spelling.
         """
         return self._reverse_unique
 
@@ -402,42 +256,27 @@ _REFL_HEAD_MARKERS = (";", "<;>", "·", "{")  # ';' '<;>' '·' '{'
 def _is_head_position(line_prefix: str) -> bool:
     """True if text following `line_prefix` sits in tactic-head position.
 
-    This is the single source of the "tactic-head position" predicate.
-    `find_relics`'s rule 2 (detecting the Lean 3 `refl` tactic) and the
-    `rfl->refl` corruption transform (`_head_rfl_matches`) both use it. A
-    token sits in head position when everything before it on its line is
-    empty, or ends with one of `_REFL_HEAD_MARKERS`. One shared predicate
-    for both detector and corrupter makes an injected `refl` relic
-    re-detectable by construction (the shared-vocabulary invariant). A
-    `rfl` rewritten in term position (`exact rfl`) would produce `exact
-    refl`, which rule 2 deliberately does NOT flag, so the transform must
-    not target it either.
+    Head position = everything before the token on its line is empty, or
+    ends with a `_REFL_HEAD_MARKERS` combinator. Single source of the
+    predicate for both `find_relics`' rule 2 and the `rfl->refl` transform
+    (`_head_rfl_matches`), which makes an injected `refl` re-detectable by
+    construction. A term-position `rfl` (`exact rfl`) must not be targeted,
+    since rule 2 deliberately does not flag `exact refl`.
     """
     p = line_prefix.rstrip()
     return p == "" or p.endswith(_REFL_HEAD_MARKERS)
 
 
 def _iter_candidate_tokens(text: str) -> list[tuple[re.Match, str]]:
-    """Extract lean3-name candidate tokens from `text`.
+    """Extract lean3-name candidate ``(match, token)`` pairs from `text`.
 
-    Parameters
-    ----------
-    text : str
-        Line (or larger span) of Lean tactic text.
-
-    Returns
-    -------
-    list of (re.Match, str)
-        One ``(match, token)`` pair per candidate. `token` is the raw
-        regex match with a trailing ``.``/``,`` stripped, since that is
-        sentence or list punctuation, not part of the identifier. The list
-        keeps only tokens of length >= 3 that contain a ``_`` or ``.`` --
-        a short, plain identifier (`x`, `hx`, `n`) is never a lemma name,
-        and would otherwise dominate false-positive matches. The
-        `re.Match` gives the ORIGINAL (untrimmed) span. A caller that
-        needs the token's own span should use ``match.start()`` and
-        ``match.start() + len(token)`` (the trimmed length), not
-        ``match.end()``.
+    `token` is the raw match with a trailing ``.``/``,`` stripped (sentence
+    or list punctuation, not part of the identifier). Only tokens of length
+    >= 3 containing a ``_`` or ``.`` are kept: a short plain identifier
+    (`x`, `hx`, `n`) is never a lemma name and would dominate false
+    positives. The `re.Match` spans the ORIGINAL, untrimmed token, so a
+    caller needing the token's own span must use ``match.start()`` and
+    ``match.start() + len(token)``, not ``match.end()``.
     """
     out: list[tuple[re.Match, str]] = []
     for m in _CANDIDATE_RE.finditer(text):
@@ -451,32 +290,19 @@ def _iter_candidate_tokens(text: str) -> list[tuple[re.Match, str]]:
 def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
     """Scan `text[start:]` for the binder's own comma or arrow.
 
-    This function implements the shared "scan forward from the binder AT
-    THE BINDER'S OWN bracket depth" rule. Both `find_relics`'s
-    ``binder-comma`` detection and the `binder` corruption transform use
-    it. Depth is tracked *relative* to `start` (the position immediately
-    after the `fun`/`λ` keyword). A comma nested one level deeper than
-    the binder does not count -- e.g. in `fun ⟨a, b⟩ ↦ e`, the comma
-    nests inside the just-opened `⟨`.
-
-    Parameters
-    ----------
-    text : str
-        Full text being scanned, not just one line. A binder near a
-        line's end could, in principle, have its arrow or comma on the
-        next line, and bracket depth is cumulative across lines
-        throughout this module.
-    start : int
-        Absolute index to start scanning from (typically
-        ``binder_match.end()``).
+    Shared by `find_relics`' ``binder-comma`` rule and the `binder`
+    transform. Depth is tracked *relative* to `start` (immediately past the
+    `fun`/`λ` keyword), so a comma nested one level deeper does not count --
+    in `fun ⟨a, b⟩ ↦ e` the comma is inside the just-opened `⟨`. `text` is
+    the whole text, not one line, since a binder's arrow or comma may fall
+    on the next line.
 
     Returns
     -------
     (str, int, int) or None
         ``("comma", i, i + 1)`` for the first depth-0 ``,``, or
         ``("arrow", i, j)`` for the first ``↦`` (``j = i + 1``) or ``=>``
-        (``j = i + 2``), whichever comes first in scan order. Returns
-        ``None`` if neither appears before the end of `text`.
+        (``j = i + 2``), whichever comes first; ``None`` if neither appears.
     """
     depth = 0
     i = start
@@ -502,44 +328,24 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
 def find_relics(text: str, align: AlignMap | None = None) -> list[Relic]:
     """Scan `text` for Lean 3 syntax and, optionally, mathlib3 lemma names.
 
-    This function applies six detection rules (see the inline comments
-    below for each). Every rule is precision-guarded against real Lean 4
-    constructs that superficially resemble a Lean 3 relic, and validated
-    against the cases pinned in ``tests/deduction/test_lean_lean3.py`` (the
-    exact CLEAN/FLAGGED cases this was built against).
+    Applies six rules (see the inline comments), each precision-guarded
+    against Lean 4 constructs that merely resemble a relic, and pinned by
+    ``tests/deduction/test_lean_lean3.py``. Pure function: O(n) for the
+    parse-level rules, plus one `AlignMap.lookup_lean3` and one
+    `AlignMap.is_lean4_name` call per candidate token for the name rule.
 
-    Parameters
-    ----------
-    text : str
-        Tactic-block text to scan (typically one model generation's
-        extracted tactic lines, or a training-data tail). This may be
-        multi-line text; bracket depth is tracked cumulatively across the
-        whole text, not reset per line.
-    align : AlignMap, optional
-        Lean3->Lean4 name map. When ``None``, `find_relics` skips the
-        ``lean3-name`` rule entirely (graceful degradation -- see the
-        module docstring). The other five rules are parse-level and
-        always run.
+    `text` may be multi-line; bracket depth accumulates across the whole
+    text, never reset per line. With ``align=None`` the ``lean3-name`` rule
+    is skipped entirely and the other five still run.
 
     Returns
     -------
     list of Relic
-        One `Relic` per distinct ``(kind, text, line)`` triple found, in
-        scan order. The five parse-level rules run line by line, top to
-        bottom, in rule order. ``binder-comma`` is the exception: it runs
-        as a separate pass over the whole text, since a binder's arrow or
-        comma can in principle follow a line break. Duplicate ``(kind,
-        text, line)`` triples collapse to a single `Relic` -- e.g. two
-        `refl` tactics on one line report as one relic.
-
-    Notes
-    -----
-    This is a pure function; it does not mutate `text` or `align`. The
-    parse-level rules run in O(n) time in the length of `text`. The
-    ``lean3-name`` rule additionally makes one `AlignMap.lookup_lean3` and
-    one `AlignMap.is_lean4_name` call per candidate token (each O(1) on
-    average, via the suffix-bucket indexes `AlignMap.__init__` builds
-    once).
+        One per distinct ``(kind, text, line)`` triple, in scan order -- so
+        two `refl` tactics on one line report as one relic. The five
+        parse-level rules run line by line, top to bottom, in rule order;
+        ``binder-comma`` is a separate whole-text pass, since a binder's
+        arrow or comma can follow a line break.
     """
     relics: list[Relic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -611,24 +417,7 @@ def find_relics(text: str, align: AlignMap | None = None) -> list[Relic]:
 
 
 def has_relics(text: str, align: AlignMap | None = None) -> bool:
-    """True if `find_relics` would report at least one relic.
-
-    Parameters
-    ----------
-    text : str
-        Text to scan; see `find_relics`.
-    align : AlignMap, optional
-        See `find_relics`.
-
-    Returns
-    -------
-    bool
-        ``bool(find_relics(text, align))``. This is a readable convenience
-        for a QC call site that only needs a yes/no answer (the analyzer's
-        `l3` leak-rate column, or a dataset cleanliness assertion) without
-        building the full relic list itself. It is a thin wrapper, not a
-        short-circuited scan: `find_relics` still runs to completion.
-    """
+    """``bool(find_relics(text, align))`` -- a full scan, not short-circuited."""
     return bool(find_relics(text, align))
 
 
@@ -640,11 +429,8 @@ def has_relics(text: str, align: AlignMap | None = None) -> bool:
 def _rename_lookup(tok: str, reverse_unique: dict[str, str]) -> str | None:
     """`tok`'s longest dotted suffix (itself included) keying `reverse_unique`.
 
-    This function checks suffixes longest-first: `tok` itself, then its
-    last ``n-1`` components, and so on. A token with extra outer namespace
-    qualification beyond what the align map recorded still resolves via
-    its more specific (longer) suffix, in preference to a shorter, less
-    specific one.
+    Longest-first, so a token carrying extra outer namespace qualification
+    still resolves via its more specific suffix.
     """
     parts = tok.split(".")
     for i in range(len(parts)):
@@ -658,29 +444,19 @@ def _rename_lookup(tok: str, reverse_unique: dict[str, str]) -> str | None:
 def _rename_candidates(
     text: str, align: AlignMap | None
 ) -> list[tuple[re.Match, str, str]]:
-    """Renamable ``(match, token, truncated_lean3_spelling)`` candidates in `text`.
+    """Renamable ``(match, token, truncated_lean3_spelling)`` triples in `text`.
 
-    A candidate survives only if its truncated Lean3 spelling (the
-    replacement `_apply_rename` would actually write -- see that
-    docstring for the truncation rule) is itself DETECTABLE by
-    `find_relics`'s rule 6. This function checks rule 6's exact predicate
-    chain:
-
-    - The spelling must differ from the original token. About 8k of
-      mathlib4's `#align` pairs are identity spellings (``#align inv_inv
-      inv_inv``), for which a "rename" would be a byte-level no-op that
-      still claimed a lean3-name relic.
-    - The spelling must pass `_iter_candidate_tokens`'s token-shape filter
-      (length >= 3, contains ``_`` or ``.``), or rule 6 never even
-      tokenizes it.
-    - `align.lookup_lean3` must resolve it, and `align.is_lean4_name`
-      must reject it -- rule 6's own flag condition. A bare snake_case
-      name that is also a valid Lean4 suffix (``inv_comp_eq``) fails the
-      second check, and this function correctly excludes it too.
-
-    Without this filter, the corrupter could inject a relic the detector
-    can never corroborate, poisoning `synth_error` with a claim like
-    ``unknown identifier 'inv_inv'`` about a perfectly valid Lean 4 name.
+    A candidate survives only if the spelling `_apply_rename` would actually
+    write is itself flaggable by `find_relics`' rule 6, checked against rule
+    6's own predicate chain: it must differ from the original token (~8k
+    ``#align`` pairs are identity spellings like ``#align inv_inv inv_inv``,
+    where a "rename" is a byte-level no-op); it must pass
+    `_iter_candidate_tokens`' shape filter (len >= 3, contains ``_`` or
+    ``.``); and `align.lookup_lean3` must resolve it while
+    `align.is_lean4_name` rejects it, which excludes a bare name that is
+    also a valid Lean4 suffix (``inv_comp_eq``). Without this the corrupter
+    could inject a relic the detector never corroborates, making
+    `synth_error` claim ``unknown identifier 'inv_inv'`` about valid Lean 4.
     """
     if align is None:
         return []
@@ -715,14 +491,11 @@ def _apply_rename(
 ) -> tuple[str, list[Relic]] | None:
     """`rename`: replace one seeded-chosen Lean4 name with its Lean3 spelling.
 
-    The replacement is the matched `reverse_unique` Lean3 name, TRUNCATED
-    to the same number of dotted components as the original token. For
-    example, a 2-component token that resolves to the 3-component lean3
-    name ``category_theory.iso.inv_comp_eq`` gets replaced with the last 2
-    components, ``iso.inv_comp_eq`` -- never the full name. This mimics
-    how a partially-qualified Lean4 reference would look if mathlib3 used
-    the same qualification, instead of inventing an implausible
-    fully-qualified Lean3 name out of a short Lean4 token.
+    The replacement is the `reverse_unique` Lean3 name TRUNCATED to the
+    token's own number of dotted components -- a 2-component token resolving
+    to ``category_theory.iso.inv_comp_eq`` becomes ``iso.inv_comp_eq`` --
+    mimicking a partially-qualified mathlib3 reference instead of inventing
+    an implausible fully-qualified name.
     """
     candidates = _rename_candidates(text, align)
     if not candidates:
@@ -747,10 +520,8 @@ def _apply_rename(
 def _head_rfl_matches(text: str) -> list[re.Match]:
     """`rfl` tokens in tactic-head position -- the only corruptible ones.
 
-    This function shares `_is_head_position` with `find_relics`'s rule 2.
-    A `rfl` in term position (`exact rfl`, `⟨rfl, h⟩`) rewritten to `refl`
-    would NOT be re-detected, since rule 2 only flags tactic-head `refl`,
-    so the transform must not target it.
+    Shares `_is_head_position` with rule 2: a term-position `rfl` (`exact
+    rfl`, `⟨rfl, h⟩`) rewritten to `refl` would not be re-detected.
     """
     out = []
     for m in _RFL_RE.finditer(text):
@@ -780,20 +551,12 @@ def _apply_rfl(
 def _first_binder_arrow(text: str) -> tuple[re.Match, int, int] | None:
     """First depth-0 `fun`/`λ` binder whose forward scan hits an arrow first.
 
-    "Depth-0" here means the binder keyword's own cumulative bracket
-    depth, not the forward-scan-relative depth `_binder_forward_scan`
-    uses. The `binder` transform only corrupts a *top-level* binder,
-    matching the spec's "first depth-0 fun/λ". A binder already followed
-    by a comma before any arrow is already a `binder-comma` relic, so it
-    is not a target for this transform: it has nothing left to corrupt.
-    This function skips such a binder by treating `_binder_forward_scan`
-    returning `"comma"` as no match.
-
-    Returns
-    -------
-    (re.Match, int, int) or None
-        ``(binder_match, arrow_start, arrow_end)`` for the first
-        qualifying binder, or ``None`` if none exists.
+    "Depth-0" is the binder keyword's own cumulative bracket depth, not
+    `_binder_forward_scan`'s relative depth: the `binder` transform corrupts
+    only a top-level binder. A binder already followed by a comma before any
+    arrow is already a `binder-comma` relic with nothing left to corrupt, so
+    a ``"comma"`` scan result counts as no match. Returns ``(binder_match,
+    arrow_start, arrow_end)``, or ``None`` if no binder qualifies.
     """
     for m in _BINDER_RE.finditer(text):
         # The text here is proof-tail-sized (a handful of lines), so
@@ -818,11 +581,10 @@ def _apply_binder(
 ) -> tuple[str, list[Relic]] | None:
     """`binder`: rewrite `fun`->`λ` and the binder's own arrow -> `,`.
 
-    The only mandatory change is removing the arrow: that is what makes
-    the binder a `binder-comma` relic. This function also rewrites `fun`
-    to `λ`, because Lean 3 has no `fun` keyword at all. A corrupted `fun
-    x, e` would be a syntax the detector correctly flags, but one Lean 3
-    itself never produced. `λ x, e` is more faithful to real Lean 3.
+    Removing the arrow is the mandatory part -- that is what makes it a
+    `binder-comma` relic. `fun` also becomes `λ` because Lean 3 has no `fun`
+    keyword, so `fun x, e` would be a syntax the detector flags but Lean 3
+    never produced.
     """
     found = _first_binder_arrow(text)
     if found is None:
@@ -841,9 +603,8 @@ def _apply_binder(
 def _trailing_eligible_lines(text: str) -> list[int]:
     """0-indexed lines of `text` eligible for the `trailing` transform.
 
-    A line is eligible when it is non-blank, its cumulative bracket depth
-    is 0 at line end, and it does not already end in a comma (there is
-    nothing new to corrupt there).
+    Eligible = non-blank, cumulative bracket depth 0 at line end, and not
+    already comma-terminated.
     """
     lines = text.split("\n")
     depth = 0
@@ -866,11 +627,9 @@ def _apply_trailing(
 ) -> tuple[str, list[Relic]] | None:
     """`trailing`: append `,` to a seeded non-empty subset of eligible lines.
 
-    The other four transforms each touch exactly one location. This one
-    can inject multiple relics in a single application. A random
-    non-empty subset, rather than always every eligible line, mimics a
-    model that drops commas inconsistently rather than uniformly across
-    an entire proof.
+    The only transform that can inject several relics at once. A random
+    subset, rather than every eligible line, mimics a model dropping commas
+    inconsistently rather than uniformly.
     """
     eligible = _trailing_eligible_lines(text)
     if not eligible:
@@ -933,78 +692,32 @@ def corrupt_tail(
 ) -> tuple[str, list[Relic]] | None:
     """Inject a seeded mix of Lean 3 relics into a clean Lean 4 tactic tail.
 
-    This function picks a seeded random subset of the five corruption
-    transforms (`rename`, `rfl->refl`, `binder`, `trailing`,
-    `use->existsi` -- see their individual docstrings), applies them in
-    sequence, then checks the shared-vocabulary post-condition before it
-    returns.
+    Computes which of the five transforms (`rename`, `rfl->refl`, `binder`,
+    `trailing`, `use->existsi`) apply to `tail`, draws ``n = rng.randint(1,
+    min(3, len(applicable)))``, shuffles the applicable names (seeded), and
+    applies the first `n` against the *evolving* text -- re-checking
+    applicability immediately before each, since an earlier transform can
+    consume what a later one needed, and skipping any that no longer applies
+    or whose application is a no-op.
 
-    Parameters
-    ----------
-    tail : str
-        Clean, ground-truth Lean 4 tactic text to corrupt, assumed
-        Lean-3-relic-free -- typically an SFT dataset's target tail.
-    rng : random.Random
-        Source of randomness. `corrupt_tail` reads no other random or
-        global state, so an identical `(tail, rng-state, align)` always
-        produces identical output. A caller gets reproducibility by
-        constructing a fresh `random.Random(seed)` per call, or per row.
-    align : AlignMap, optional
-        Lean3<->Lean4 name map. When ``None``, the `rename` transform is
-        never applicable, since it needs `AlignMap.reverse_unique`. The
-        other four transforms are unaffected.
+    Deterministic given ``(tail, rng-state, align)``: `rng` is the only
+    randomness source, so a fresh `random.Random(seed)` per row is
+    reproducible. `tail` is assumed Lean-3-relic-free. With ``align=None``
+    the `rename` transform is never applicable (it needs
+    `AlignMap.reverse_unique`); the other four are unaffected.
 
     Returns
     -------
     (str, list of Relic) or None
-        ``(corrupted, injected)``, where `corrupted` is `tail` with 1 to 3
-        transforms applied, and `injected` lists the `Relic` objects the
-        applied transforms claim to have introduced. A fresh
-        `find_relics(corrupted, align)` call CORROBORATES this list: it
-        drops any claimed relic whose `kind` the detector does not
-        re-report on the final text. This makes ``{r.kind for r in
-        injected}`` a subset of the detector's kinds BY CONSTRUCTION (the
-        shared-vocabulary invariant, enforced structurally rather than
-        assumed). This function returns ``None`` in any of these cases:
-
-        - No transform is applicable to `tail` at all.
-        - Every applicable transform, once actually attempted, turns out
-          to make no change (an earlier transform in the same pass can
-          consume the only occurrence a later one needed).
-        - The post-condition fails: `find_relics(corrupted, align)` comes
-          back empty, or corroboration drops EVERY claimed relic. Either
-          case would leave downstream `synth_error` with nothing truthful
-          to say.
-        - `corrupted == tail` (a degenerate no-op).
-
-    Notes
-    -----
-    Algorithm: first, compute which of the five transforms are applicable
-    to `tail` as given. If none are, return `None` immediately.
-    Otherwise, draw ``n = rng.randint(1, min(3, len(applicable)))``,
-    shuffle the applicable names (seeded), and apply the first `n` of
-    them, in that order, against the *evolving* text. This function
-    re-checks each transform for applicability against the current text
-    immediately before it runs, since an already-applied transform may
-    have consumed what a later one needed, and skips the transform if it
-    is no longer applicable or its own application is a no-op.
-    `injected` accumulates the `Relic` object(s) each transform that
-    *did* apply reports for itself. Each transform's relic construction
-    mirrors `find_relics`'s own field semantics exactly (see, e.g.,
-    `_apply_rename`'s `.fix` recomputation).
-
-    The final post-condition then CORROBORATES the claims: it re-runs
-    `find_relics` on the corrupted text and keeps only the injected
-    relics whose kind the detector actually re-reports. A transform whose
-    claimed relic ends up undetectable, e.g. degraded by a later
-    transform in the same pass, or by a bookkeeping bug in a future
-    transform, gets silently dropped from `injected` instead of leaking a
-    phantom claim into `synth_error`/repair-row metadata. With the
-    per-transform detectability gates (`_head_rfl_matches`,
-    `_rename_candidates`'s filter) in place, this drop should never fire
-    in practice; it is the structural backstop.
-
-    `corrupt_tail` is fully deterministic given `(tail, rng, align)`.
+        ``(corrupted, injected)``. The post-condition re-runs
+        `find_relics(corrupted, align)` and keeps only injected relics whose
+        kind the detector re-reports, making ``{r.kind for r in injected}``
+        a subset of the detected kinds BY CONSTRUCTION (the shared-vocabulary
+        invariant) so no phantom claim leaks into `synth_error` /
+        repair-row metadata. ``None`` when no transform is applicable, when
+        every attempted transform turns out to be a no-op, when
+        ``corrupted == tail``, or when the post-condition leaves `injected`
+        empty.
     """
     applicable_names = [
         name for name, (is_applicable, _apply) in _TRANSFORMS.items() if is_applicable(tail, align)
@@ -1055,34 +768,18 @@ def corrupt_tail(
 def synth_error(relics: list[Relic]) -> str:
     """Synthesize a Lean-compiler-shaped error message for a relic list.
 
-    Only the FIRST relic decides the message. A real Lean compiler stops
-    at, and reports, the first error it hits, so a multi-relic corrupted
-    tail would, in reality, only ever surface one message to a repair
-    loop at a time. The message shapes mimic the cases pinned in
-    `tests/deduction/test_lean_lean3.py`, not the full fidelity of Lean's
-    real diagnostics.
+    Only the FIRST relic decides the message: a real compiler stops at and
+    reports its first error, so a multi-relic tail would only ever surface
+    one message to a repair loop. Shapes mimic the cases pinned in
+    ``tests/deduction/test_lean_lean3.py``, not Lean's real diagnostics.
 
-    Parameters
-    ----------
-    relics : list of Relic
-        Relics to synthesize a message for, in scan/injection order
-        (typically the return of `find_relics` or `corrupt_tail`'s
-        `injected` list). Must be non-empty.
+    - ``"unknown identifier '{text}'"`` for a `lean3-name` first relic.
+    - ``"<stdin>:1:1: unknown tactic"`` for `refl` / `existsi` / `begin-end`.
+    - ``"<stdin>:1:1: unexpected token ','; expected command"`` for
+      `binder-comma` / `trailing-comma`.
 
-    Returns
-    -------
-    str
-        - ``"unknown identifier '{text}'"`` for a `lean3-name` first relic.
-        - ``"<stdin>:1:1: unknown tactic"`` for `refl` / `existsi` /
-          `begin-end`.
-        - ``"<stdin>:1:1: unexpected token ','; expected command"`` for
-          `binder-comma` / `trailing-comma`.
-
-    Raises
-    ------
-    ValueError
-        If `relics` is empty, or its first element's `kind` is not one of
-        the six kinds `find_relics` produces.
+    Raises ``ValueError`` if `relics` is empty, or its first element's
+    `kind` is not one of the six kinds `find_relics` produces.
     """
     if not relics:
         raise ValueError("synth_error requires at least one relic")
@@ -1113,34 +810,12 @@ _REPAIR_INSTRUCTIONS = (
 def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     """Append a previous-attempt repair block to a user turn.
 
-    This function builds the exact coordination template the
-    repair-dataset builder and repair-loop runner consume: the original
-    user turn, followed by the previous (Lean-3-tainted) attempt in a
-    fenced code block, an optional Lean-error block, and a fixed
-    instruction to output corrected Lean 4 tactics (or the attempt
-    unchanged, if it was already valid).
-
-    Parameters
-    ----------
-    user : str
-        The original user turn (e.g. `prompt.build_user_prompt`'s output).
-    attempt : str
-        The previous, possibly Lean-3-tainted, tactic-block attempt.
-    error : str, optional
-        A Lean compiler error message for `attempt` (typically
-        `synth_error`'s output, or a real Lean error from a replay). When
-        ``None``, the output includes no error block.
-
-    Returns
-    -------
-    str
-        ``user``, a blank line, ``"## Previous attempt"``, the fenced
-        ```lean`` block containing `attempt`, then, only when `error` is
-        given, a fenced error block, then `_REPAIR_INSTRUCTIONS`. This is
-        a coordination constant: its exact byte layout matters to every
-        downstream consumer, so this function deliberately does not
-        expose extra parameters to modify it (whitespace, heading text,
-        and so on are all fixed).
+    Returns `user`, a blank line, ``"## Previous attempt"``, the fenced
+    ```lean`` block holding `attempt`, then -- only when `error` is given
+    (typically `synth_error`'s output, or a real replay error) -- a fenced
+    error block, then `_REPAIR_INSTRUCTIONS`. The exact byte layout is a
+    coordination contract the repair-dataset builder and repair-loop runner
+    format against, so this deliberately exposes no parameters to vary it.
     """
     error_block = f"Lean reported:\n```\n{error}\n```\n\n" if error is not None else ""
     return (

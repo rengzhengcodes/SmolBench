@@ -1,46 +1,34 @@
 """KV-cache sizing for the family-ladder roster.
 
-A naive figure that assumes every layer holds full-context KV is wrong for
-a third of the roster. Three attention mechanisms shrink KV by 4-25x versus
-that figure. A fourth mechanism, tp replication, grows it instead:
+A naive figure that assumes every layer holds full-context KV is wrong for a
+third of the roster: three attention mechanisms shrink KV by 4-25x, and a
+fourth, tp replication, grows it. Per layer and per token of effective context,
+at BF16 (2 bytes):
 
-* **sliding/local layers** cache only ``min(ctx, sliding_window)`` tokens
-  (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` pattern at
-  window 4096).
-* **linear-attention layers** hold constant state, not ctx-proportional KV
+* **full attention**: ``2 * n_kv * head_dim * 2`` bytes.
+* **sliding/local layers**: the same, but over ``min(ctx, sliding_window)``
+  tokens (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` at 4096).
+* **linear-attention layers**: ~0 -- constant state, not ctx-proportional KV
   (Qwen3.5-27B: 48 of 64 layers).
-* **MLA** caches one ``kv_lora_rank + qk_rope_head_dim`` latent per token,
-  not ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
+* **MLA**: ``(kv_lora_rank + qk_rope_head_dim) * 2``, one latent per token
+  instead of ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
 * vLLM **replicates KV heads when tp > num_key_value_heads**, multiplying
-  KV by ``max(1, tp / n_kv)`` for non-MLA models. DeepSeek-V4's single KV
-  head at tp=8 is 8x its tp=1 figure.
+  non-MLA KV by ``max(1, tp / n_kv)``. DeepSeek-V4's single KV head at tp=8 is
+  8x its tp=1 figure.
 
-Per layer, BF16 (2 bytes), per token of effective context::
-
-    full attention:    2 * n_kv * head_dim * 2
-    sliding/local:     2 * n_kv * head_dim * 2      (ctx capped at window)
-    linear_attention:  ~0
-    MLA:               (kv_lora_rank + qk_rope_head_dim) * 2
-
-The layer mix comes from the config. It uses ``layer_types`` (a list) when
-present. Otherwise it uses ``sliding_window_pattern`` (a cycling string like
-``"LLLG"``, where ``L`` means local/sliding and ``G`` means global/full). If
-neither field is present, every layer counts as full attention. A bare
-``sliding_window`` value without either mix field is deliberately NOT
-applied. DeepSeek-V4 carries ``sliding_window=128`` for its CSA/HCA sparse
-scheme yet keeps full-length KV.
+The layer mix comes from the config: ``layer_types`` (a list) when present,
+otherwise ``sliding_window_pattern`` (a cycling string, ``L`` local / ``G``
+global), otherwise every layer counts as full attention. A bare
+``sliding_window`` value with neither mix field is deliberately NOT applied --
+DeepSeek-V4 carries ``sliding_window=128`` for its CSA/HCA sparse scheme yet
+keeps full-length KV.
 
 For replication-study box sizing, budget ``weights + 2.0 x KV@131k`` against
-``0.90 x total VRAM`` (about 8 concurrent requests). A box sized for a
-single sequence goes negative at real concurrency. Weight sizes come from
-checkpoint shard totals, not this tool.
-
-Usage
------
-``.venv/bin/python scripts/arch/kv_budget.py [--ctx 131072]``
-
-Prints one row per roster model: the naive all-full figure, the corrected
-tp=1 figure, and the corrected figure at the deploy spec's tp.
+``0.90 x total VRAM`` (about 8 concurrent requests); a box sized for a single
+sequence goes negative at real concurrency. Weight sizes come from checkpoint
+shard totals, not this tool. ``.venv/bin/python scripts/arch/kv_budget.py
+[--ctx 131072]`` prints one row per roster model: the naive figure against the
+corrected one at tp=1 and at the deploy spec's tp.
 """
 
 from __future__ import annotations
@@ -99,26 +87,12 @@ def _layer_mix(cfg: Dict[str, Any]) -> list:
 
 
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
-    """Compute total KV-cache bytes for one sequence of `ctx` tokens.
+    """Total KV-cache bytes for one sequence of `ctx` tokens, over all layers and tp shards.
 
-    Parameters
-    ----------
-    cfg : Dict[str, Any]
-        The (text) config block for one checkpoint.
-    ctx : int
-        Sequence length in tokens.
-    tp : int
-        Tensor-parallel degree. KV heads replicate when ``tp > n_kv`` for
-        non-MLA models, which multiplies total KV by ``tp / n_kv``.
-    naive : bool
-        When True, assume every layer holds full-context GQA KV (the
-        uncorrected figure), for the comparison column.
-
-    Returns
-    -------
-    int
-        KV bytes across all layers and all tp shards. Replication makes the
-        total exceed the tp=1 figure; it never shrinks the total.
+    `cfg` is the (text) config block for one checkpoint. For non-MLA models KV
+    heads replicate when ``tp > n_kv``, multiplying the total by ``tp / n_kv``;
+    replication never shrinks it. `naive` assumes every layer holds full-context
+    GQA KV -- the uncorrected comparison column.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

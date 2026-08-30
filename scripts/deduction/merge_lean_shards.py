@@ -1,40 +1,28 @@
 """Merge a sharded deduction lane's run directories into the canonical run.
 
-WHY THIS EXISTS
----------------
-``notebooks/deduction/run_study.py`` can run one lane as N theorem-stride
-shards (``LEAN_SHARD=i/n``; see the ``shard`` key of
-``runner._select_theorems``), so a lane finishes N times faster on N boxes.
-Each shard writes its own NON-canonical run directory
-(``runs/scaling_<key>_shard<i>of<n>``) and launches with ``--no-s3``. Shard
-directories must never reach the canonical S3 prefix, because its sole
-``all_rows.jsonl`` is the exact object the verification pass
-(``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script folds
-the completed shards back into ONE canonical run directory
-(``runs/scaling_<key>``). It gates the fold on row uniqueness and expected
-totals, regenerates ``analysis.txt``, and, if you pass ``--spool``, spools
-the canonical directory to S3 (this reuses the driver's own verified
-two-phase ``spool_to_s3``). This script prunes the shard directories only
-after a verified spool. This follows the standing rule: no run data
-accumulates on the local host.
+``notebooks/deduction/run_study.py`` can run one lane as N theorem-stride shards
+(``LEAN_SHARD=i/n``; see ``runner._select_theorems``'s ``shard`` key), each
+writing its own NON-canonical dir ``runs/scaling_<key>_shard<i>of<n>`` under
+``--no-s3``. Shard dirs must never reach the canonical S3 prefix, because its
+sole ``all_rows.jsonl`` is the exact object the verification pass
+(``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script
+folds the completed shards into one canonical ``runs/scaling_<key>``,
+regenerates ``analysis.txt`` and, under ``--spool``, uploads via the driver's
+own verified two-phase ``spool_to_s3`` and only then prunes the shard dirs (no
+run data accumulates on the local host).
 
-MERGE GATES (all hard failures -- nothing is written past a failed gate)
------------------------------------------------------------------------
-- Every shard directory exists and holds ``all_rows.jsonl`` and
-  ``manifest.json``.
-- No duplicate cell key (model, theorem_id, k, rung, replicate_idx), and no
-  duplicate sanity theorem, across shards. Theorem-stride shards are
-  disjoint by construction, so a duplicate means a mis-sharded or
-  double-run lane.
-- Merged totals equal ``--expect-cells``/``--expect-sanity`` (defaults 944
-  and 300: the model-independent full-lane counts for this study's fixed
-  theorem set and rungs).
-- No ``theorems/`` path collides between shards.
-- The canonical directory holds no pre-existing ``all_rows.jsonl``. This
-  script never overwrites one.
+Merge gates -- all hard failures; nothing is written past a failed gate: every
+shard dir exists with ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell
+key (model, theorem_id, k, rung, replicate_idx) and no duplicate sanity theorem
+across shards (theorem-stride shards are disjoint by construction, so a duplicate
+means a mis-sharded or double-run lane); merged totals equal
+``--expect-cells``/``--expect-sanity``, default 944/300, the model-independent
+full-lane counts for this study's fixed 300-theorem set and 4 rungs
+(``skip_trivial`` depends only on theorem structure); no ``theorems/`` path
+collides between shards; and the canonical dir has no pre-existing
+``all_rows.jsonl``, which is never overwritten.
 
-Run this script from the repo root, after the shard
-drivers have exited::
+Run from the repo root after the shard drivers have exited::
 
     .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 --spool
 """
@@ -79,35 +67,16 @@ def merge_shards(
 ) -> Path:
     """Fold ``n`` shard run directories into the canonical ``scaling_<key>`` directory.
 
-    Parameters
-    ----------
-    key : str
-        Spec key of the lane, for example ``"ministral-3-14b"``.
-    n : int
-        Number of shards to merge.
-    runs_root : Path
-        Directory that holds both the shard run directories and the
-        canonical run directory.
-    expect_cells : int or None
-        Expected merged cell-row count. If not ``None``, this function
-        raises ``SystemExit`` when the merged count does not match.
-    expect_sanity : int or None
-        Expected merged sanity-row count. If not ``None``, this function
-        raises ``SystemExit`` when the merged count does not match.
-
-    Returns
-    -------
-    Path
-        The canonical run directory.
+    `runs_root` holds both the shard run dirs and the canonical run dir;
+    `expect_cells` and `expect_sanity` are the merged row-count gates, and
+    ``None`` disables either. Returns the canonical run directory.
 
     Raises
     ------
     SystemExit
-        On any failed gate (see the module docstring's MERGE GATES
-        section). On failure, this function leaves the canonical
-        directory absent or partially written, but never touches the
-        shard directories. Only ``main`` prunes shard data, and only
-        after a verified S3 spool.
+        On any failed gate (see the module docstring). On failure the canonical
+        dir is left absent or partially written, but the shard dirs are never
+        touched: only ``main`` prunes them, and only after a verified S3 spool.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]

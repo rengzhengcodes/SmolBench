@@ -1,51 +1,31 @@
 """Fetch and normalise the architecture facts for the family-ladder roster.
 
-The 21-checkpoint family-ladder study (see ``scripts/fleet/run_fleet.py``) records
-how each checkpoint was *served*: tensor parallelism, context window,
-reasoning wiring. It records nothing about what each checkpoint *is*. This
-script closes that gap. It pulls every rung's own ``config.json`` (and
-``generation_config.json``) straight from the Hugging Face repo it was
-served from, so downstream write-ups quote the checkpoint instead of a
-recollection of the checkpoint.
+The 21-checkpoint study (``scripts/fleet/run_fleet.py``) records how each
+checkpoint was SERVED and nothing about what it IS. This pulls every rung's own
+``config.json`` (and ``generation_config.json``) from the Hugging Face repo it
+was served from, so write-ups quote the checkpoint rather than a recollection of
+it. ``config.json`` is the only artefact guaranteed to agree with the weights
+vLLM loaded; where a model card disagrees, the config wins and the disagreement
+is itself a finding. Every record carries the resolved commit SHA (the
+``x-repo-commit`` response header) and a UTC fetch timestamp, so a later reader
+can tell a stale note from a moved checkpoint.
 
-Ground truth, and why it is fetched rather than transcribed
------------------------------------------------------------
-``config.json`` is the only artefact guaranteed to agree with the weights
-vLLM loaded. Model cards, blog posts, and papers describe a family; the
-config describes the *rung*. Where the two disagree, the config wins, and
-the disagreement is itself worth reporting. Every record therefore carries
-the resolved commit SHA (Hugging Face's ``x-repo-commit`` response header)
-and a UTC fetch timestamp. A later reader can then tell a stale note from a
-moved checkpoint.
+The roster is :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS` minus the
+``qwen2.5-1.5b`` smoke entry -- the same subset ``run_fleet`` pins its tiers
+against. No literal model list lives here: a fourth copy is a fourth thing that
+can drift.
 
-Roster: a single source of truth
---------------------------------
-The roster comes from :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS`, the same
-table the fleet serves from, minus the ``qwen2.5-1.5b`` smoke entry. This is
-exactly the subset ``scripts/fleet/run_fleet.py`` already pins its tiers against.
-This file deliberately holds no literal copy of the model list: a fourth
-copy of the roster is a fourth thing that can silently drift out of sync.
-
-Outputs (both written next to this file, ``__file__``-anchored)
----------------------------------------------------------------
-``arch_configs_raw.json``
-    The verbatim payloads, untouched. This is the audit trail.
-``arch_facts.json``
-    A normalised, diagram-ready view. This script hoists nested
-    ``text_config`` wrappers, run-length encodes long per-layer arrays into
-    the repeating motif a block diagram actually draws, and groups the
-    attention / positional-encoding / MoE / state-space fields. It preserves
-    any config key it does not recognise under ``derived.unclassified``
-    rather than dropping it: an unfamiliar field on a 2026 architecture is a
-    finding, not noise.
-
-Usage
------
-``.venv/bin/python scripts/arch/fetch_arch_facts.py [--check]``
+Two outputs are written next to this file (``__file__``-anchored):
+``arch_configs_raw.json`` holds the verbatim payloads as the audit trail, and
+``arch_facts.json`` a normalised, diagram-ready view -- nested ``text_config``
+wrappers hoisted, long per-layer arrays run-length encoded into their repeating
+motif, fields grouped by attention / positional encoding / MoE / state space.
+Any unrecognised key is preserved under ``derived.unclassified`` rather than
+dropped: an unfamiliar field on a 2026 architecture is a finding, not noise.
 
 ``--check`` also cross-checks the fetched configs against
-``tests/fixtures/roster_configs.json`` (the deploy-spec test's own ground
-truth) on the four fields both hold. It exits non-zero on any mismatch.
+``tests/fixtures/roster_configs.json`` (the deploy-spec test's ground truth) on
+the four fields both hold, and exits non-zero on any mismatch or fetch failure.
 """
 
 from __future__ import annotations
@@ -147,25 +127,11 @@ _IGNORED_KEYS = frozenset({
 def _fetch(repo: str, filename: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
     """Fetch one JSON file from a Hugging Face repo's main revision.
 
-    Parameters
-    ----------
-    repo : str
-        ``org/name`` Hugging Face repo id.
-    filename : str
-        File to resolve, e.g. ``"config.json"``.
-
-    Returns
-    -------
-    payload : dict or None
-        The parsed JSON, or ``None`` if the file does not exist (404) or the
-        fetch failed.
-    revision : str or None
-        The resolved commit SHA from the ``x-repo-commit`` response header.
-    error : str or None
-        Human-readable failure reason, or ``None`` on success. A missing
-        optional file reports ``"absent"``, not an error string. This lets
-        callers tell "this repo ships no generation_config" apart from "the
-        network broke".
+    Returns ``(payload, revision, error)``: the parsed JSON or ``None``, the
+    commit SHA from the ``x-repo-commit`` response header, and a failure reason
+    (``None`` on success). A missing optional file reports ``"absent"``, so
+    callers can tell "this repo ships no generation_config" apart from "the
+    network broke".
     """
     url = f"https://huggingface.co/{repo}/resolve/main/{filename}"
     request = urllib.request.Request(url, headers={"User-Agent": "smolbench-arch-facts"})
@@ -193,17 +159,10 @@ def _rle(items: List[Any]) -> List[Dict[str, Any]]:
 def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     """Find the shortest repeating motif that tiles ``items`` exactly.
 
-    A block diagram draws the *repeating unit* and an ``x N`` multiplier, not
-    61 individual layers. This finds that unit when one exists.
-
-    Returns
-    -------
-    dict or None
-        ``{"pattern": [...], "repeats": N}`` for the shortest exact tiling.
-        Returns ``None`` when the sequence does not tile, for example
-        DeepSeek's three leading dense layers followed by MoE layers, or
-        Nemotron's irregular hybrid pattern. The caller then falls back to
-        the run-length view.
+    A block diagram draws the repeating unit and an ``x N`` multiplier, not 61
+    individual layers. Returns ``{"pattern": [...], "repeats": N}``, or ``None``
+    when the sequence does not tile (DeepSeek's leading dense layers, Nemotron's
+    irregular hybrid); the caller then falls back to the run-length view.
     """
     n = len(items)
     if n == 0:
@@ -218,15 +177,14 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
 
 
 def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
-    """Hoist a multimodal wrapper's ``text_config`` to the top level.
+    """Hoist a multimodal wrapper's ``text_config`` up, returning it and any sibling towers.
 
-    Ten of the 21 rungs ship as ``*ForConditionalGeneration`` wrappers. Their
-    language-model fields live one level down, in ``text_config``. The study
-    serves them with ``--language-model-only``, which is exactly that inner
-    model. Top-level keys win on collision, because they describe the
-    wrapper. This function also returns the names of any sibling towers
-    (vision, audio), so the write-up can note that the served model is the
-    text tower of a larger checkpoint.
+    Ten of the 21 rungs ship as ``*ForConditionalGeneration`` wrappers whose
+    language-model fields live in ``text_config``; the study serves them with
+    ``--language-model-only``, which is exactly that inner model. Top-level keys
+    win on collision, because they describe the wrapper. The returned sibling
+    names (vision, audio) let a write-up note that the served model is the text
+    tower of a larger checkpoint.
     """
     text_config = config.get("text_config")
     if not isinstance(text_config, dict):
@@ -272,10 +230,9 @@ def _classify(config: Dict[str, Any]) -> Dict[str, Any]:
 def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
     """Derive the drawable layer sequence: run-length runs plus a motif.
 
-    Two families encode their layer sequence differently: ``layer_types`` (a
-    list, used by Qwen3.5 / Gemma-4 / GLM / EXAONE-4.x) versus
-    ``hybrid_override_pattern`` (a character string, used by Nemotron-3).
-    This function normalises both to the same list-of-strings shape.
+    Normalises the two encodings to one list of strings: ``layer_types`` (a
+    list; Qwen3.5 / Gemma-4 / GLM / EXAONE-4.x) and ``hybrid_override_pattern``
+    (a character string; Nemotron-3).
     """
     view: Dict[str, Any] = {}
     layer_types = config.get("layer_types")
@@ -350,16 +307,10 @@ def collect() -> Dict[str, Any]:
 
 
 def cross_check(facts: Dict[str, Any]) -> List[str]:
-    """Compare fetched configs against the deploy-spec test's own fixture.
+    """Compare fetched configs against ``tests/fixtures/roster_configs.json``.
 
-    A mismatch against ``tests/fixtures/roster_configs.json`` means the
-    upstream checkpoint moved under the study. This function reports that
-    instead of quietly absorbing it.
-
-    Returns
-    -------
-    list of str
-        One human-readable line per mismatch. Empty when everything agrees.
+    A mismatch means the upstream checkpoint moved under the study. Returns one
+    human-readable line per mismatch, empty when everything agrees.
     """
     if not _FIXTURE_PATH.exists():
         return [f"fixture missing: {_FIXTURE_PATH}"]

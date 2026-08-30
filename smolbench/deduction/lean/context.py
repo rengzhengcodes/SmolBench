@@ -1,17 +1,15 @@
-"""Render context rungs along the `stepk` and `hint` chains.
+"""Render context rungs along the `stepk`, `hint`, and `noise` chains.
 
-This module renders two chains:
+- `stepk:0..2` adds progressively more *step-k* information with no
+  answer-conditional content; cumulative (`stepk:n` includes `stepk:0..n-1`).
+- `hint:0..4` adds progressively more *answer-conditional* detail about the
+  premises the *true* next tactic uses; cumulative, and every hint rung
+  includes `stepk:2` as its baseline.
+- `noise:N` is `hint:(N-1)` whitespace-padded to `hint:N`'s exact token
+  count — the length control for the hint chain.
 
-- `stepk:0..2` gives progressively more *step-k* information, with no
-  answer-conditional content. It is cumulative: `stepk:n` includes
-  `stepk:0..n-1`.
-- `hint:0..4` gives progressively more *answer-conditional* detail about
-  the premises the *true* next tactic uses. It is cumulative within the
-  chain, and every hint rung includes `stepk:2` as its baseline.
-
-`stepk:0..2` and `hint:0` build from a `BenchmarkTheorem` alone. `hint:1..4`
-need a premise-body lookup against the premise corpus (see `.premises`),
-and are fully implemented, not stubbed.
+`stepk:*` and `hint:0` build from a `BenchmarkTheorem` alone; `hint:1+` needs
+a premise-body lookup against the premise corpus (see `.premises`).
 """
 
 from __future__ import annotations
@@ -57,14 +55,8 @@ _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 def split_state(state_pp: str) -> tuple[str, str]:
     """Return `(hypotheses, goals)` from a Lean tactic-state pretty-print.
 
-    A state pp typically looks like:
-        F : Type u_1
-        ...
-        hs : s ⊆ range ↑m
-        ⊢ s / t ⊆ range ↑m
-    `goals` is the substring starting at the first line that begins with
-    `⊢ `. A multi-goal state (a `case ... ⊢ ...` block) keeps its `case
-    ...` header attached to the goal block.
+    `goals` starts at the first `⊢` line, with any preceding `case ...`
+    headers attached. A state with no `⊢` line yields `(state_pp, "")`.
     """
     lines = state_pp.splitlines()
     for i, line in enumerate(lines):
@@ -89,12 +81,10 @@ def extract_goal_only(state_pp: str) -> str:
 
 @dataclass(frozen=True)
 class RenderedContext:
-    """The rendered text for one (chain, level) context rung, plus its label.
+    """One rendered (chain, level) context rung.
 
-    `render` returns this. Prompt assembly
-    (``smolbench.deduction.lean.prompt.build_user_prompt``) consumes the
-    text, and every result row records `label` as the cell's ``rung`` (see
-    ``smolbench.deduction.lean.runner.run_cell``).
+    Returned by `render`; `prompt.build_user_prompt` consumes `text`, and every
+    result row records `label` as the cell's ``rung``.
     """
 
     #: Which chain this rung belongs to.
@@ -109,20 +99,9 @@ class RenderedContext:
     def label(self) -> str:
         """This rung's canonical ``"<chain>:<level>"`` identifier, e.g. ``"hint:2"``.
 
-        Returns
-        -------
-        str
-            ``f"{self.chain}:{self.level}"``. This exact format is the
-            wire contract every other module in this package uses to
-            parse a rung:
-
-            - `cli.py`'s ``--rung`` flag splits on ``":"``
-              (``chain_str, _, level_str = args.rung.partition(":")``);
-            - `runner.py` does the same (``rung.split(":", 1)``) when
-              it reconstructs ``(chain, level)`` from a sweep config's
-              ``rungs`` list; and
-            - ``runner.slug_rung`` replaces the ``":"`` with ``"-"``
-              for filesystem-safe output paths.
+        The single ``":"`` is a wire contract: `cli.py`'s ``--rung`` and
+        `runner.py`'s sweep-config ``rungs`` split on it to recover
+        ``(chain, level)``; `runner.slug_rung` swaps it for ``"-"`` in paths.
         """
         return f"{self.chain}:{self.level}"
 
@@ -165,41 +144,13 @@ _HINT2_3_TOKEN_CAP = 50_000  # token budget for transitive closure rendering
 
 
 def _count_tokens(s: str) -> int:
-    """Token count of `s` under this module's harness tokenizer.
+    """Token count of `s`: `tiktoken` ``cl100k_base``, else ``len(s) // 4``.
 
-    Parameters
-    ----------
-    s : str
-        Text to measure.
-
-    Returns
-    -------
-    int
-        The `tiktoken` ``cl100k_base`` encoding length of `s`, when
-        `tiktoken` is importable and encoding succeeds. Otherwise, returns
-        ``len(s) // 4``, a rough ~4-characters-per-token estimate for
-        English prose.
-
-    Notes
-    -----
-    The char-based fallback is intentionally rough, and callers differ in
-    how much that roughness matters. `_render_hint_parts`'s hint:3+
-    truncation loop, and `is_trivial_rung`'s noise-triviality check, only
-    need a consistent-enough estimate to size a budget or decide whether a
-    rung added content -- an approximation is fine there.
-
-    `_render_noise_parts`'s exact-token-match padding is different: it
-    needs `_count_tokens` to be the harness's single source of truth for
-    "how many tokens is this text". `token_matched_noise_prompt` verifies
-    its pad against exactly this function (via `_TokenCounter`) and
-    nothing else; there is no second, more precise counter it falls back
-    to. `cl100k_base` is not necessarily the tokenizer of whichever model
-    is actually being prompted, so even the `tiktoken` path is already an
-    approximation of that model's real token count. The char-based
-    fallback only widens that approximation for the rare case where
-    `tiktoken` is unavailable or errors, rather than raising an error and
-    aborting context rendering entirely. See `_TokenCounter` for how this
-    function is exposed as an exact-match target where that matters.
+    The module's only token counter, and already an approximation of the
+    prompted model's own tokenizer. Approximate suffices for
+    `_render_hint_parts`'s hint:3+ budget and `is_trivial_rung`, but the
+    char-based fallback makes `_render_noise_parts`'s exact-token padding
+    unsatisfiable — that function raises rather than mispadding.
     """
     try:
         import tiktoken
@@ -209,17 +160,12 @@ def _count_tokens(s: str) -> int:
 
 
 class _TokenCounter:
-    """Adapts `_count_tokens` to the small `Tokenizer`-like interface
-    `smolbench.induction._common`'s token-matching search expects: a
-    `count(str) -> int` method, plus a `name` attribute. That module uses
-    `name` only in its own error messages (see `choose_whitespace_unit` /
-    `token_matched_noise_prompt`). This is a deliberately minimal, ad hoc
-    adapter, not an import of
-    `smolbench.evals.tokenization.Tokenizer`. The interface is duck-typed
-    (`typing.Protocol` there), so no import is needed to satisfy it, and
-    this module must not acquire a dependency on `smolbench.evals` (see
-    `_render_noise_parts`'s Notes for why the whole
-    `smolbench.induction._common` import stays lazy).
+    """Adapt `_count_tokens` to the `count()`/`name` interface
+    `smolbench.induction._common`'s token-matching search expects.
+
+    Ad hoc rather than `smolbench.evals.tokenization.Tokenizer`: that is a
+    duck-typed `Protocol`, and this module must not depend on
+    `smolbench.evals` (see `_render_noise_parts`'s Notes).
     """
 
     #: Identifies which counter is in play, in
@@ -234,108 +180,40 @@ class _TokenCounter:
 
 
 def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
-    """`noise:N` = `hint:(N-1)` baseline + whitespace padded to `hint:N`'s exact token count.
+    """`noise:N` = `hint:(N-1)` whitespace-padded to `hint:N`'s exact token count.
 
-    `noise:N` isolates the marginal *content* `hint:N` adds over
-    `hint:(N-1)`. It renders the SAME `hint:(N-1)` baseline text, then
-    pads it with whitespace until its token count exactly equals
-    `hint:N`'s. Comparing a model's `hint:N` performance against its
-    `noise:N` performance then isolates the effect of that content,
-    because prompt length is no longer a confound: both rungs use the
-    exact same number of tokens, and the padding carries no information a
-    model could use.
-
-    Parameters
-    ----------
-    theorem : BenchmarkTheorem
-        Theorem being evaluated.
-    k : int
-        0-indexed proof step; forwarded to `_render_hint_parts`.
-    level : int
-        Noise level `N`; must be `>= 1` (see Raises). The baseline padded is
-        `hint:(level - 1)`; the target token count matched is `hint:level`'s.
-
-    Returns
-    -------
-    list of str
-        `_render_hint_parts(theorem, k, level - 1)`'s parts, unchanged
-        except that the LAST part has a whitespace pad appended to its
-        end. This function never appends a new list element; see Notes
-        for why. When the baseline is already exactly as long as the
-        target, i.e. the rung is trivial (see `is_trivial_rung`), this
-        function returns the parts completely unchanged, with no pad.
+    The length control for the hint chain: both rungs then cost identical
+    tokens, so only `hint:N`'s marginal *content* differs. Returns
+    `_render_hint_parts(theorem, k, level - 1)`'s parts with the pad appended
+    to the LAST part's text, never as a new list element — `render()` joins
+    parts with ``"\\n\\n"``, and a new element would add a separator the token
+    search never measured. When the baseline already matches the target (a
+    trivial rung, see `is_trivial_rung`) the parts come back unchanged;
+    `render()` still calls this under ``skip_trivial: false``, so that case
+    must not raise.
 
     Raises
     ------
     ValueError
-        Raised in four cases. First, if `level < 1`: no noise counterpart
-        is defined for the `hint:0`/`stepk:2` baseline, since there is
-        nothing to pad against. Second, if the `hint:(level - 1)`
-        baseline is somehow LONGER, in tokens, than the `hint:level`
-        target it must be padded to match. Appending whitespace can only
-        grow a rendering, never shrink one, so this contract is
-        unsatisfiable. In practice this should never fire, since
-        `hint:level`'s content is a strict superset of `hint:(level -
-        1)`'s, but the function guards against it rather than silently
-        under-padding and reintroducing the length confound. Third, if
-        `choose_whitespace_unit` cannot find a whitespace unit that costs
-        ~1 token per repetition under `_count_tokens`. This notably
-        happens whenever `tiktoken` is unavailable and `_count_tokens`
-        has fallen back to its ``len(s) // 4`` estimate, since an *exact*
-        token match cannot be built against an approximate counter (see
-        `_count_tokens`'s Notes). Fourth, if the padding search itself
-        cannot land on the exact target token count
-        (`token_matched_noise_prompt`'s own `ValueError`), or if this
-        function's own post-hoc verification of the result disagrees with
-        the target (belt-and-braces -- see Notes).
+        If `level < 1` (the `hint:0`/`stepk:2` baseline has no noise
+        counterpart); if the `hint:(level - 1)` baseline is LONGER than the
+        `hint:level` target, since whitespace can only grow a rendering and
+        silently under-padding would reintroduce the length confound; if
+        `choose_whitespace_unit` finds no unit costing ~1 token per repetition,
+        which is what happens once `_count_tokens` falls back to
+        ``len(s) // 4``; or if the search — or this function's own post-hoc
+        re-check of it — misses the target.
 
     Notes
     -----
-    Design: this function reuses
-    `smolbench.induction._common.token_matched_noise_prompt` (the
-    periodic/chromatic induction benchmarks' own exact-token-count
-    whitespace-pad search), rather than reimplementing it. Both problems
-    are identical: "grow this text with content-free padding until it
-    hits an exact token count under a given tokenizer." A second,
-    independently written bisection search would only give that logic a
-    second place to subtly drift from the first. The import is LAZY
-    (inside this function, not at module top). `smolbench.induction.
-    _common` pulls in `numpy`, `ordered_set`, and `smolbench.evals`, none
-    of which any other caller of this (`context`) module needs, and
-    `runner.py` imports `context` at module level. An eager import here
-    would make every `runner`/`cli` invocation pay that cost even when no
-    noise rung is ever rendered.
-
-    The pad is appended to `base_parts[-1]` (the last existing part),
-    rather than appended as a new part in the returned list. This detail
-    is load-bearing: `render()` joins whatever parts this function
-    returns with `"\\n\\n"`, so a new trailing part would silently insert
-    an extra `"\\n\\n"` separator that the token search below never
-    measured or accounted for. That would make the "exact token count"
-    guarantee off by the separator's own token cost. Appending directly to
-    the final part's text is what makes the final rendered string exactly
-    `base_text + pad` -- precisely what `token_matched_noise_prompt`
-    measured and verified.
-
-    The pad is pure whitespace, not placeholder prose. Prose is itself
-    informational content the paired `hint:N` rung does not have, and a
-    markdown section header announcing the padding's own presence is
-    unmatched content in its own right. Whitespace carries nothing a
-    model could read as signal, and the match is exact, not merely
-    "close" -- both properties this experiment's noise arm requires to
-    be a clean length control (see `smolbench.induction._common` for the
-    same argument on the induction noise arm).
-
-    This function never trusts `token_matched_noise_prompt`'s return
-    value blindly, even though that function already verifies its own
-    result internally. That function has one documented escape hatch: it
-    returns the *unpadded* render, with a logged warning, when the
-    unpadded text is already at or past the target (see that function's
-    docstring). This function's own `base_tokens > target_tokens` /
-    `base_tokens == target_tokens` pre-checks make that escape hatch
-    unreachable in practice. "Should be unreachable" is not the same
-    guarantee as "is checked", so this function re-verifies the result's
-    token count here regardless, before it returns.
+    The pad search is `smolbench.induction._common.token_matched_noise_prompt`,
+    reused so the two benchmarks' padding cannot drift apart. Its import is
+    LAZY because that module pulls in `numpy`, `ordered_set` and
+    `smolbench.evals`, and `runner.py` imports this module at top level. The
+    pad is pure whitespace: prose or a header would be unmatched content the
+    paired `hint:N` rung lacks. The result is re-verified here because the
+    helper has an escape hatch (return the unpadded render with a warning) that
+    this function's pre-checks are believed to make unreachable.
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
@@ -392,11 +270,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
 
 
 def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
-    """`hint:0..level` with `stepk:2` baseline.
-
-    Supports `level` 0..9 (see `_MAX_LEVEL`'s comment for the full
-    range). The currently used, sweep-tested range is 0..4.
-    """
+    """`hint:0..level` on a `stepk:2` baseline; `level` 0..9, sweep-tested 0..4."""
     parts = _render_stepk_parts(theorem, k, 2)
 
     tt = theorem.traced_tactics[k]
@@ -487,25 +361,11 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
 
 
 def validate(chain: Chain, level: int) -> None:
-    """Validate that `(chain, level)` names an in-range rung.
+    """Raise `ValueError` unless `(chain, level)` names an in-range rung.
 
-    Parameters
-    ----------
-    chain : Chain
-        Chain name to validate.
-    level : int
-        Level to validate against `chain`'s bound in `_MAX_LEVEL`.
-
-    Raises
-    ------
-    ValueError
-        Raised if `chain` is not one of `_MAX_LEVEL`'s keys (``"stepk"``,
-        ``"hint"``, ``"noise"``), or if `level` is outside
-        ``[0, _MAX_LEVEL[chain]]``. This function does not check
-        chain-specific constraints narrower than `_MAX_LEVEL`. For
-        example, `chain == "noise"` with `level == 0` passes here, but
-        `_render_noise_parts` rejects it later (see `render`'s
-        ``Raises`` section).
+    Range-checks against `_MAX_LEVEL` only; narrower per-chain constraints are
+    not applied, so ``noise:0`` passes here and `_render_noise_parts` rejects
+    it later.
     """
     if chain not in _MAX_LEVEL:
         raise ValueError(f"unknown chain: {chain!r}")
@@ -517,48 +377,14 @@ def validate(chain: Chain, level: int) -> None:
 def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> RenderedContext:
     """Render context at proof step `k` of `theorem` for the given (chain, level).
 
-    Parameters
-    ----------
-    theorem : BenchmarkTheorem
-        Theorem being proved.
-    k : int
-        The 0-indexed step about to be proved. The rendered context
-        describes the state immediately before
-        ``theorem.traced_tactics[k]``, and the LLM is expected to produce
-        a tail starting at that tactic. Must satisfy ``0 <= k <
-        len(theorem.traced_tactics)``.
-    chain : Chain
-        Which context chain to render (``"stepk"``, ``"hint"``, or
-        ``"noise"``).
-    level : int
-        Level within `chain`; checked against `_MAX_LEVEL` via `validate`.
+    `k` is the 0-indexed step about to be proved: the context describes the
+    state immediately before ``theorem.traced_tactics[k]``, and the model is
+    expected to produce the tail starting at that tactic. `text` is the
+    chain-specific parts joined with blank lines.
 
-    Returns
-    -------
-    RenderedContext
-        `chain`/`level` echoed back, plus `RenderedContext.text`: the
-        chain-specific parts (from `_render_stepk_parts`,
-        `_render_hint_parts`, or `_render_noise_parts`), joined with
-        blank lines.
-
-    Raises
-    ------
-    ValueError
-        Raised in three cases: if `k` is outside ``[0,
-        len(theorem.traced_tactics))``; if `(chain, level)` fails
-        `validate` (an unknown `chain`, or `level` outside
-        `_MAX_LEVEL`'s bound); or, when `chain == "noise"`, propagated
-        from `_render_noise_parts`. That function's own ``Raises``
-        section documents the noise-specific cases in full. Notably:
-
-        - `level < 1` (``validate`` alone does not reject ``noise:0``,
-          since there is no noise counterpart for the
-          `hint:0`/`stepk:2` baseline it would pad);
-        - the `hint:(level - 1)` baseline somehow being LONGER, in
-          tokens, than the `hint:level` target it must be padded to
-          match; and
-        - the exact-token-match search itself failing (no whitespace
-          unit found, or the search unable to land on the target).
+    Raises `ValueError` if `k` is outside ``[0, len(theorem.traced_tactics))``,
+    if `(chain, level)` fails `validate`, or — for ``noise`` — from
+    `_render_noise_parts` (notably ``noise:0``, which `validate` allows).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")
@@ -594,51 +420,21 @@ IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
 def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> bool:
     """True iff this rung adds no informational content beyond the previous rung.
 
-    This function flags a cell whose rung-up is a no-op, so a caller can
-    skip it:
-      - `stepk:1`, when the tactic state has no hypotheses (same as
-        stepk:0).
-      - `stepk:2`, when k=0 (no prior tactics; only adds theorem
-        identity).
-      - `hint:0`, when no premises are recorded for the next tactic.
-      - `hint:1`, when the corpus has no record for any of the true
-        premises.
-      - `hint:2`, when no premise's body differs from its signature.
-      - `hint:3`+, when the per-premise dependency closure
-        (``premises.premise_dep_closure``) at the requested hop depth is
-        empty.
-      - `noise:N`, when the matching `hint:N` rung is itself trivial, or
-        when `hint:N`'s rendering adds no tokens beyond `hint:(N-1)`'s
-        (nothing to pad).
+    Skipping these cells keeps per-rung pass rates apples-to-apples: every
+    counted cell saw a real context expansion. Trivial when:
 
-    A caller that skips these cells saves LLM tokens, and keeps per-rung
-    pass rates a clean apples-to-apples comparison: every counted cell saw
-    a real context expansion over the previous rung.
+      - `stepk:1` and the tactic state has no hypotheses (same as stepk:0);
+      - `hint:*` and no premises are recorded for the next tactic;
+      - `hint:1` and the corpus has no record for any true premise;
+      - `hint:2` and no premise's body differs from its signature;
+      - `hint:3+` and the dependency closure at that hop depth is empty;
+      - `noise:N` and `hint:N` is itself trivial, or adds no tokens over
+        `hint:(N-1)` (nothing to pad).
 
-    Parameters
-    ----------
-    theorem : BenchmarkTheorem
-        Theorem being evaluated.
-    k : int
-        0-indexed proof step under consideration.
-    chain : Chain
-        Chain the rung belongs to.
-    level : int
-        Level within `chain`.
-
-    Returns
-    -------
-    bool
-        True if `(chain, level)` is trivial at this `(theorem, k)`, per
-        the chain-specific rules above. False for any `chain` this
-        function does not recognize, and for `k` outside ``[0,
-        len(theorem.traced_tactics))``. This is a defensive default
-        rather than a raised error: the only caller
-        (`smolbench.deduction.lean.runner.sweep`, gated by
-        ``skip_trivial``) always calls this with a `k` it has already
-        validated for other purposes. "Never trivial" is the safe
-        default in case that assumption is ever violated, since it means
-        a cell still runs rather than being silently dropped.
+    `stepk:0` and `stepk:2` are never trivial (stepk:2 adds theorem identity
+    even at k=0). An unrecognized `chain` or out-of-range `k` returns False
+    rather than raising, so the cell still runs instead of being silently
+    dropped. Only caller is `runner.sweep`, gated by ``skip_trivial``.
     """
     if not 0 <= k < len(theorem.traced_tactics):
         return False

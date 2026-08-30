@@ -1,46 +1,19 @@
-"""Deduction analogue of the induction `extens` vs `noise_intens` contrast.
+"""Deduction leg of the "information or just length?" question: hint:3 vs noise:3.
 
-Both legs ask the same basic question: does the model do better because the
-context carries INFORMATION, or merely because the context is longer? The two
-legs vary DIFFERENT things to test this question. The scope note below states
-exactly what this leg varies, before you read any comparison.
+The two rungs are byte-identical through the goal, tactic state, proof so far,
+and the premises used by the next tactic; hint:3 then ends with a trailing 1-hop
+TRANSITIVE premise-closure block that noise:3 replaces with padding of the same
+token count. So this leg asks only whether 1-hop transitive background helps ON
+TOP OF an already-complete direct-premise context. It is NOT the deduction
+analogue of the induction extens-vs-noise contrast, which swaps the encoding of
+the whole evidence set; results do not carry between legs.
 
-  induction:  `extens`  (fully enumerated position -> label listing)
-              vs `noise_intens` (the compact rule, whitespace-padded to exactly
-              the same TOKEN count under the model's own tokenizer)
-
-  deduction:  `hint:3` vs `noise:3` -- see the scope note below
-
-Both contrasts hold the context size fixed and vary only its content. So a
-significant `hint:3` > `noise:3` result shows the model uses the hint's
-content, not just its bulk.
-
-Scope of the deduction arm -- narrower than the induction one
--------------------------------------------------------------
-`hint:3` and `noise:3` are byte-identical through the
-current goal, the full tactic state, the proof so far, and the premises used
-in the next tactic, including their signatures and full source. The two rungs
-differ in ONE block only. `hint:3` ends with a trailing 1-hop TRANSITIVE
-premise-closure block. `noise:3` replaces that block with padding of the same
-token count. So this leg asks one narrow question: does 1-hop transitive
-background help, ON TOP OF an already-complete direct-premise context? It
-does NOT ask whether the context carries information at all. This is NOT the
-deduction analogue of the induction extens-vs-noise contrast: that contrast
-swaps the ENCODING of the whole evidence set. The two legs manipulate
-different things, so their results do not carry over between legs.
-
-Pairing: this leg matches cells on ``(theorem_id, k)`` WITHIN one model. So
-each model acts as its own control, and the two rungs compare identical
-theorems at identical prefix depth. Exact McNemar is the right test HERE, and it stays
-the primary test. This differs from the two family-ladder families, which
-need a cluster test: this contrast contributes exactly ONE
-cell per theorem per model, so the pairs are truly independent. No cluster
-correction applies here.
-
-Multiplicity: this leg uses Holm-Bonferroni over the 21 models at FWER 0.05,
-matching the directive for the induction leg. Holm stays valid under
-arbitrary dependence, which this family needs, because the 21 tests share
-one theorem set.
+Cells are paired on (theorem_id, k) WITHIN one model, so each model is its own
+control and contributes exactly ONE cell per theorem: the pairs are independent,
+exact McNemar is the primary test, and NO cluster correction applies here
+(unlike the family-ladder contrasts). Multiplicity is Holm-Bonferroni over the
+21 models at FWER 0.05, valid under the arbitrary dependence induced by the
+shared theorem set.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
@@ -74,40 +47,20 @@ RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 
 
 def load_rungs(path: Path, model: str) -> dict:
-    """Map each ``(theorem_id, k)`` cell to its rung outcomes.
+    """Map each ``(theorem_id, k)`` cell of one model's ``verified_rows.jsonl``
+    to its `RUNG_INFO` / `RUNG_NOISE` outcomes (``1`` success, ``0`` real failure).
 
-    Read one model's row file and group its replicate-0 cell rows by
-    ``(theorem_id, k)``. Each cell maps a rung label (`RUNG_INFO` or
-    `RUNG_NOISE`) to a 0/1 outcome, taken from the earliest surviving row
-    for that cell and rung.
+    Reads only ``kind == "cell"``, ``replicate_idx == 0`` rows in those two rungs,
+    grading them through ``power_analysis.grade_verdicts`` (the single
+    implementation of this study's row rules). The EARLIEST measurable row for a
+    cell+rung wins -- a later retry is an independent draw, and last-wins would
+    report pass@N as pass@1. A cell with no measurable row stays ABSENT, never
+    scored 0. `model` is unused.
 
-    This function reads rows through ``power_analysis.grade_verdicts``, the
-    single implementation of this study's two row rules. The FIRST row
-    whose verdict is a measurement wins: a later retry is an independent
-    draw, and a last-wins rule would report pass@N as pass@1. A cell with
-    no measurable row stays ABSENT, not scored 0.
-
-    This function calls `reject_unverified_verdicts` at INGESTION, before
-    the rung filter below. That call refuses any row that still carries the
-    generation-time ``"unverified"`` sentinel in its ``"verdict"`` field. An
-    ungraded row may sit in a rung this comparison does not even read. Even
-    so, it shows that the verification pass on this file did not finish.
-    Without this check, such a row could hide in an unrelated rung and go
-    unnoticed.
-
-    Parameters
-    ----------
-    path : Path
-        Path to one model's ``verified_rows.jsonl`` row file.
-    model : str
-        Model name. This function does not read it.
-
-    Returns
-    -------
-    dict
-        A ``defaultdict(dict)`` keyed by ``(theorem_id, k)``. Each value maps
-        a rung label (`RUNG_INFO` or `RUNG_NOISE`) to its graded outcome
-        (``1`` for success, ``0`` for a real failure).
+    `reject_unverified_verdicts` runs at INGESTION, before the rung filter, so an
+    ungraded row sitting in a rung this comparison never reads still raises (it
+    proves the verification pass on this file did not finish). It and
+    `reject_superseded` raise ``SystemExit``.
     """
     reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
@@ -131,39 +84,14 @@ def load_rungs(path: Path, model: str) -> dict:
 
 
 def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
-    """Find the smallest pi whose exact power reaches `target`.
+    """Smallest pi >= 0.5 whose exact power reaches `target` at this rejection region.
 
-    Use bisection to find the smallest pi >= 0.5 whose exact power, at the
-    given rejection region, reaches `target`.
-
-    The rejection region is ``{b <= k_crit} U {b >= n_disc - k_crit}``. This
-    is the two-sided exact-McNemar region at threshold `k_crit`.
-    Under a true discordant-favour probability pi, the count b follows a
-    Binomial(n_disc, pi) distribution. So exact power has a CLOSED FORM, and
-    this function uses deterministic bisection instead of simulation. It
-    needs no seed, carries no Monte Carlo error, and returns the same number
-    on every run.
-
-    Parameters
-    ----------
-    n_disc : int
-        Total discordant pair count (``b + c`` in the McNemar table).
-    k_crit : int
-        Rejection threshold. The region rejects when ``b <= k_crit`` or
-        ``b >= n_disc - k_crit``.
-    target : float, default 0.80
-        Target power level to reach or exceed.
-
-    Returns
-    -------
-    float
-        The smallest pi in ``[0.5, 1.0]`` whose exact binomial power, at
-        this rejection region, reaches at least `target`.
-
-    Notes
-    -----
-    Runs a fixed 200-step bisection over ``[0.5, 1.0]``. The loop count is
-    fixed, so the function needs no convergence check.
+    The region is the two-sided exact-McNemar one, ``{b <= k_crit} U {b >= n_disc -
+    k_crit}`` for a discordant total `n_disc` (``b + c``); under a true
+    discordant-favour probability pi the count b is Binomial(`n_disc`, pi), so power
+    has a CLOSED FORM. This runs a fixed 200-step bisection over ``[0.5, 1.0]`` on
+    it (hence no convergence check): no seed, no Monte Carlo error, same number on
+    every run.
     """
     lo, hi = 0.5, 1.0
     for _ in range(200):

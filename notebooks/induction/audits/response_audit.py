@@ -1,45 +1,27 @@
-"""Run a response-level audit of the induction results tree.
+"""Response-level audit of the induction results tree.
 
-For each condition, this script measures what the stored RAW responses
-actually contain: how many are empty, how many scored correct, how many
-contain their own correct answer anywhere in the text, and the longest
-response. Use it to tell a genuine low-accuracy result apart from a
-broken lane.
+Per condition, counts what the stored RAW responses contain: empty, scored
+correct, containing their own correct answer anywhere in the text, and the
+longest response. Tells a genuine low-accuracy result apart from a broken lane.
 
-Two traps this script exists to avoid
---------------------------------------
-1. ``response`` is a YAML BLOCK SCALAR. A line-oriented regex over the
-   file silently truncates it at the first line that looks like a new
-   key, which understates empty counts and overstates answer hits. Any
-   pass over ``response`` text must use a real parser.
+Two traps this script exists to avoid:
 
-   The results YAMLs carry ``!!python/object:`` tags, which
-   ``yaml.safe_load`` refuses. But ``yaml.unsafe_load`` CONSTRUCTS
-   arbitrary objects from repository-generated files, which the repo
-   convention (see ``notebooks/_power_common.py``) declines to do. The
-   loader below takes the third option: it maps every unknown tag to a
-   plain dict/list/str. This is safe, and correct on block scalars.
-
-2. The per-harmonic correct answer is NOT ``lcm(1..k)``. The queries are
-   COUNTS over one full 2520-position sequence, so harmonic k's answer
-   is 2520 // k = (2520, 1260, 840, 630, 504, 420, 360, 315, 280),
-   identical for every seed, since only the label assignment varies with
-   the seed. lcm would instead produce ``scored > answer_in_response``,
-   which is arithmetically impossible. The assertion below turns that
-   mistake into an error, instead of a plausible-looking table.
+1. ``response`` is a YAML BLOCK SCALAR, so a line-oriented regex silently
+   truncates it at the first line that looks like a new key, understating empty
+   counts and overstating answer hits. The results YAMLs carry
+   ``!!python/object:`` tags that ``yaml.safe_load`` refuses and
+   ``yaml.unsafe_load`` would CONSTRUCT; `TagIgnoringLoader` takes the third
+   option and maps every unknown tag to plain dict/list/str.
+2. The per-harmonic correct answer is ``2520 // k``, NOT ``lcm(1..k)``: the
+   queries are COUNTS over one full 2520-position sequence, identical for every
+   seed since only the label assignment varies. lcm would produce the
+   arithmetically impossible ``scored > answer_in_response``; `audit`'s
+   assertions turn that into an error rather than a plausible-looking table.
    ``EXPECTED_ANSWERS`` is verified against a lane at acc 1.000.
 
-Interpreting ``ans_in_resp``
------------------------------
-The gap between ``scored`` and ``ans_in_resp`` is only informative when
-the condition's violation profile is NOT dominated by
-``multiple-values``. A response that rambles through a long list of
-integers contains the correct one by construction. So for a
-multiple-values-dominated lane (min3_8b noise: 181 vs 58) the metric is
-near-vacuous, and does NOT indicate recoverable signal. Where the
-profile is empty- or collapse-dominated (glm_flash 39 vs 33, glm_air 176
-vs 164), the small gap genuinely does show the parser is recovering what
-is there.
+The ``scored`` vs ``ans_in_resp`` gap is near-vacuous when a condition's
+violation profile is dominated by ``multiple-values``: a rambling list of
+integers contains the correct answer by construction.
 
 Run:
     uv run --no-project --with pyyaml python notebooks/induction/audits/response_audit.py
@@ -69,10 +51,10 @@ DEFAULT_CONDITIONS = (
 
 
 class TagIgnoringLoader(yaml.SafeLoader):
-    """SafeLoader that maps unknown tags to plain data instead of refusing them.
+    """SafeLoader mapping unknown tags to plain data instead of refusing them.
 
-    Unlike ``yaml.unsafe_load`` this never calls a constructor found in the
-    file, so it is safe on repository-generated YAML -- see trap 1 above.
+    Never calls a constructor found in the file, unlike ``yaml.unsafe_load``, so it
+    is safe on repository-generated YAML -- see trap 1 in the module docstring.
     """
 
 
@@ -91,30 +73,19 @@ TagIgnoringLoader.add_multi_constructor(
 
 
 def audit(condition: str) -> dict:
-    """Compute per-condition response-level counts.
+    """Count response-level outcomes for one results subdirectory of `RESULTS`.
 
-    Parameters
-    ----------
-    condition : str
-        Name of the results subdirectory to audit (for example,
-        ``"glm_air_noise_intens"``), under `RESULTS`.
-
-    Returns
-    -------
-    dict
-        Keys ``condition``, ``marks``, ``empty``, ``scored``,
-        ``ans_in_resp``, ``longest``. See `main`'s printed table header
-        for what each count means.
+    Returns ``{condition, marks, empty, scored, ans_in_resp, longest}``; `main`'s
+    table header names what each count means.
 
     Raises
     ------
     SystemExit
         If `condition`'s results directory does not exist.
     AssertionError
-        If a mark's `answer` disagrees with `EXPECTED_ANSWERS` (trap 2 in
-        the module docstring), or if `scored` exceeds `ans_in_resp`
-        (which is arithmetically impossible and signals a wrong
-        `EXPECTED_ANSWERS`).
+        If a mark's `answer` disagrees with `EXPECTED_ANSWERS` (trap 2), or if
+        `scored` exceeds `ans_in_resp` -- arithmetically impossible, and a signal
+        that `EXPECTED_ANSWERS` is wrong for this quiz config.
     """
     cdir = RESULTS / condition
     if not cdir.is_dir():
@@ -158,13 +129,7 @@ def audit(condition: str) -> dict:
 
 
 def main(conditions=DEFAULT_CONDITIONS) -> None:
-    """Print a response-level audit table for `conditions`.
-
-    Parameters
-    ----------
-    conditions : tuple of str, default DEFAULT_CONDITIONS
-        Condition names to audit, in print order.
-    """
+    """Print the response-level audit table for `conditions`, in the given order."""
     print(
         f"{'condition':26s} {'marks':>6s} {'empty':>6s} {'scored':>7s} "
         f"{'ans_in_resp':>12s} {'longest':>9s}"

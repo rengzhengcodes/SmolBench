@@ -1,59 +1,28 @@
 """
-Share the replicated-evaluation harness used by the eval notebooks.
+Replicated-evaluation harness shared by the eval notebooks.
 
-This module addresses each (archetype, info type, seed) replicate with a
-``smolbench.evals.results_store.ReplicateAddress``, and persists it
-through a ``ResultsStore`` IMMEDIATELY after it is graded. So a spot
-interruption or kernel restart loses at most one replicate's work. A
-rerun skips an already-persisted replicate, which makes the notebooks'
-archetype cells idempotent and resumable. See
-``smolbench.evals.results_store`` for the full env contract
-(``SMOLBENCH_RESULTS_S3`` / ``SMOLBENCH_RESULTS_S3_REGION``), the S3
-append-only log's key layout, and the local-fallback/hermeticity rules.
-Every method below talks only to the ``ResultsStore`` interface -- never
-to a path or an S3 key directly -- so this module itself carries no
-backend-specific logic.
+Each (archetype, info type, seed) replicate is addressed by a
+``results_store.ReplicateAddress`` and persisted IMMEDIATELY after grading, so
+an interruption loses at most one replicate and a rerun skips already-persisted
+ones. Only the ``ResultsStore`` interface is used here, never a path or S3 key;
+see ``smolbench.evals.results_store`` for store resolution and the
+``SMOLBENCH_RESULTS_S3`` / ``SMOLBENCH_RESULTS_S3_REGION`` env contract.
 
-Where a replicate actually lands is a ``ResultsStore`` decision. This
-resolves once per harness, lazily, the first time ``self.store`` is
-accessed -- see that cached property's docstring:
+- ``LocalResultsStore``: ``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml``,
+  overwritten in place on a rerun; the shape every analysis script reads.
+- ``S3ResultsStore``: an APPEND-ONLY log under
+  ``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``; a rerun ADDS an
+  object, and every read resolves the EARLIEST logged run per (model, seed,
+  info). ``sync_down()`` converts it back to the local layout.
 
-- ``LocalResultsStore``: on local disk, at
-  ``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml``. This is
-  the offline-test default, and still the shape every analysis
-  script/notebook reads. ONE FILE PER REPLICATE: a rerun overwrites it
-  in place.
-- ``S3ResultsStore``: an APPEND-ONLY LOG under
-  ``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``. A rerun
-  ADDS a new timestamped object rather than overwriting anything. Every
-  read (``summarize``, ``cot_chain_lengths``) resolves the EARLIEST
-  logged run per (model, seed, info).
-  ``ReplicateHarness.sync_down()`` translates this log back into the
-  local layout above, for the local-reading analysis tooling.
+A seed's outstanding info types are pooled into ONE ``evaluate()`` call to keep
+the GPU saturated; evaluate() preserves input order, so the marks slice back
+per info type by question count, each persisted under one shared ``run_ts``.
 
-A seed's outstanding info types are pooled into ONE evaluate() call, so
-the GPU stays saturated across them instead of draining to zero between
-separate per-info barriers. evaluate() preserves input order, so the
-returned marks slice back to each info type by its question count, and
-each is still persisted to its own address -- resume-skip semantics are
-unaffected. All info types collected in one seed's pooled call share a
-SINGLE ``run_ts`` (captured once per seed, before the pooled call -- see
-``run_replicates``'s docstring). They represent one evaluation event
-that happened to cover several info types at once.
-
-A study's driver holds only its experiment config and templates; this
-harness holds the replication mechanics.
-
-``make_quizzes`` is keyed on (seed, model), not on seed alone. The
-induction benchmarks' ``noise_intens`` arm is a length control, padded to
-an exact TOKEN count under the tokenizer of the model being tested, so
-that one arm's prompts are model-specific. The ``intens``/``extens``
-arms stay byte-identical across models, so a cross-model comparison is
-still a paired comparison on identical prompts wherever it matters.
-
-Callers construct a ``smolbench.induction.experiment.InductionExperiment``,
-which bundles a ``ReplicateHarness`` with the EC2 lifecycle that serves
-the models under test. See that module for the caller-facing API.
+``make_quizzes`` is keyed on (seed, model) because the induction
+``noise_intens`` arm is padded to an exact TOKEN count under the tested model's
+own tokenizer; the ``intens``/``extens`` arms stay byte-identical across
+models, keeping cross-model comparisons paired on identical prompts.
 """
 
 import functools
@@ -72,8 +41,7 @@ from smolbench.evals.results_store import ReplicateAddress, ResultsStore, resolv
 @dataclass(frozen=True)
 class ReplicateHarness:
     """One experiment's replication setup: a store-backed results layout
-    (local disk or S3 -- see the module docstring and ``store`` below) plus a
-    quiz factory."""
+    (local disk or S3 -- see the module docstring) plus a quiz factory."""
 
     #: Directory holding the per-condition replicate dirs. When ``store``
     #: resolves to an ``S3ResultsStore``, this is instead the anchor this
@@ -131,99 +99,34 @@ class ReplicateHarness:
     def store(self) -> ResultsStore:
         """Return the ``ResultsStore`` backing this harness's replicates.
 
-        Design: ``functools.cached_property`` works on a frozen dataclass,
-        even though ``@dataclass(frozen=True)`` overrides ``__setattr__``
-        to raise ``FrozenInstanceError``. ``cached_property.__get__``
-        writes the computed value directly into ``instance.__dict__`` on
-        first access. It bypasses ``__setattr__`` entirely, rather than
-        calling it -- a frozen dataclass instance still has this dict,
-        since ``frozen=True`` alone does not add ``__slots__``. This is
-        the same trick ``InductionExperiment.harness`` uses on top of
-        this class; see that property's docstring for the fuller version
-        of the rationale.
-
-        This cached property also has a second, load-bearing effect
-        here, distinct from the "build it once" benefit: it makes
-        ``SMOLBENCH_RESULTS_S3`` / ``SMOLBENCH_RESULTS_S3_REGION`` get
-        read ONCE, at this property's first access, rather than once per
-        replicate. A notebook's actual cell order calls
-        ``load_dotenv(keys.env)`` before it ever touches a harness
-        method. So that one resolution sees the fully-configured
-        environment, and every subsequent ``exists``/``dump_marks``/
-        ``load_marks``/``list_seeds`` call, across this harness
-        instance's whole lifetime, consistently goes to the same store --
-        rather than re-resolving (and re-reading possibly-since-mutated
-        env vars) on every single call.
-
-        Returns
-        -------
-        ResultsStore
-            ``resolve_store(self.results_dir, self.prefix)`` -- a
-            ``LocalResultsStore`` or ``S3ResultsStore``, depending on the
-            environment at first access. See that function's docstring
-            for the full resolution order, including the repo-anchor
-            hermeticity fallback that keeps the offline test suite on
-            the local store unconditionally.
+        ``resolve_store(self.results_dir, self.prefix)`` (see it for the
+        resolution order, including the repo-anchor fallback that pins the
+        offline test suite to the local store), resolved from the environment
+        at FIRST access. The caching is load-bearing: the env vars are then
+        read once, after a notebook's ``load_dotenv(keys.env)`` cell, so every
+        later call reaches the same store. ``cached_property`` works on a
+        frozen dataclass because it writes straight into ``instance.__dict__``,
+        bypassing ``__setattr__``.
         """
         return resolve_store(self.results_dir, self.prefix)
 
     def _address(self, model: Optional[str], tag: str, info: str, seed: int) -> ReplicateAddress:
         """Build one replicate's store address.
 
-        This is a thin, single-purpose wrapper around ``ReplicateAddress``.
-        Every call site below builds one the same way, so the
-        field/keyword mapping lives in exactly one place, rather than
-        being repeated at every call site.
-
-        Parameters
-        ----------
-        model : str or None
-            Forwarded verbatim. ``None`` is valid: see
-            ``ReplicateAddress.model``'s docstring for the tag-only-read
-            case (``cot_chain_lengths`` when no configured model carries
-            the requested tag).
-        tag : str
-            Archetype tag.
-        info : str
-            Info type.
-        seed : int
-            Replicate seed.
-
-        Returns
-        -------
-        ReplicateAddress
+        ``model=None`` is the valid tag-only-read case (see
+        ``ReplicateAddress.model``), used by ``cot_chain_lengths`` when no
+        configured model carries the requested tag.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
     def has_outstanding(self, model: str) -> bool:
-        """Return whether any replicate for `model` still needs evaluation.
+        """Return whether any (info type, seed) for `model` still needs evaluation.
 
-        This lets a caller skip SERVING a model it has no work for. That
-        matters on a resumed run: swapping vLLM to a finished archetype
-        means pulling and loading its checkpoint -- hundreds of GB for
-        the large models -- only to discover every replicate is already
-        stored. This check is cheap to ask: it is the same
-        ``store.exists`` check ``run_replicates`` makes, and it consults
-        the store each time, so it stays correct as replicates land.
-        Against an S3-backed store, this costs one listing request per
-        (info type, seed) checked -- on the order of seconds, even for a
-        3-arm, 30-replicate model (about 90 requests), against a serve
-        step that pulls hundreds of GB of model weights onto the
-        instance.
-
-        Parameters
-        ----------
-        model : str
-            Model id. Must be a key of ``archetype_tags``, as for
-            ``run_replicates``.
-
-        Returns
-        -------
-        bool
-            True when at least one (info type, seed) has no stored
-            replicate yet. Against ``S3ResultsStore``, ANY logged run of
-            a given (info type, seed) counts as "not outstanding" -- see
-            ``ResultsStore.exists``.
+        Lets a caller skip SERVING a model it has no work for. `model` must be
+        a key of ``archetype_tags``. The store is consulted on every call
+        (against S3, one listing request per (info type, seed)); ANY logged S3
+        run counts as "not outstanding", and a seed in ``force_seeds`` always
+        counts as outstanding.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -243,33 +146,17 @@ class ReplicateHarness:
         request_timeout: Optional[int] = None,
         server_config: Optional[Mapping] = None,
     ) -> None:
-        """Run every outstanding replicate, across every info type, for model.
+        """Run every outstanding replicate, across every info type, for `model`.
 
-        This forwards only the tuning kwargs the caller passes. So a
-        decode/moe archetype keeps evaluate()'s defaults, while cot gets
-        its wide-parallel / long-timeout settings uniformly across info
-        types and replicates. The long timeout must cover the longest
-        chain on attempt 1, or a long-CoT request gets censored --
-        producing non-deterministic, top-truncated output.
-
-        When given, `server_config` is stamped onto every ``Marks`` this
-        call dumps (``Marks.server_config``), so each stored replicate
-        self-describes the serving stack that generated it -- instance
-        type, GPUs, tp, image (see ``ec2.server_config``). None (the
-        default) leaves the field None.
-
-        Notes
-        -----
-        This method captures ``run_ts = utcnow()`` ONCE PER SEED
-        ITERATION, before that seed's pooled ``evaluate()`` call. It
-        passes the SAME value to every ``dump_marks`` call made for that
-        seed's outstanding info types. So one seed's whole collection
-        event -- however many info types it happened to cover -- gets
-        stamped with one timestamp in the S3 log, rather than each info
-        type getting its own. A separate timestamp per info type would
-        make one evaluation event look like several unrelated ones once
-        logged. (``LocalResultsStore.dump_marks`` ignores ``run_ts``
-        entirely, so this only matters for an S3-backed store.)
+        Only the tuning kwargs actually passed are forwarded, so an archetype
+        that passes none keeps ``evaluate()``'s defaults. A CoT archetype's
+        long `request_timeout` must cover the longest chain on attempt 1, or
+        the request is censored into non-deterministic, top-truncated output.
+        `server_config` is stamped onto every dumped ``Marks``, so a stored
+        replicate self-describes its serving stack (see ``ec2.server_config``).
+        ``run_ts`` is captured ONCE PER SEED, before that seed's pooled
+        ``evaluate()``, so one collection event gets one timestamp in the S3
+        log (``LocalResultsStore`` ignores ``run_ts``).
         """
         tag: str = self.archetype_tags[model]
         # Logged unconditionally, before the resume-skip loop, so a direct
@@ -329,13 +216,9 @@ class ReplicateHarness:
     def summarize(self, model: str) -> None:
         """Print per-info-type totals, over every DISTINCT SEED with a stored replicate.
 
-        Against an S3-backed store, "stored" means "has at least one
-        logged run". The totals are computed from the EARLIEST logged run
-        of each such seed; later re-collections are never read -- see
-        ``ResultsStore.list_seeds``/``ResultsStore.load_marks``. The
-        printed line's replicate count is ``len(seeds)``: the number of
-        DISTINCT seeds with a stored replicate, never the number of
-        underlying log objects (a re-collected seed still counts once).
+        Against S3, "stored" means "has at least one logged run"; totals come
+        from the EARLIEST logged run of each seed, and the printed replicate
+        count is the number of distinct seeds, not of log objects.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
@@ -357,35 +240,16 @@ class ReplicateHarness:
     def cot_chain_lengths(self, tag: str = "cot") -> None:
         """Print reasoning-chain word-count stats from the stored CoT replicates.
 
-        Word count is a reliable proxy for token count (about 1.3
-        tokens/word for Llama-style tokenizers). A top-truncated
-        distribution here flags a too-tight CoT request_timeout (see
-        run_replicates).
+        Word count proxies token count (about 1.3 tokens/word for Llama-style
+        tokenizers); a top-truncated distribution flags a too-tight CoT
+        ``request_timeout`` (see ``run_replicates``).
 
-        Notes
-        -----
-        `tag` is a TAG, not a model -- but the S3 log is keyed by model
-        (see ``ReplicateAddress.model``). This method reverse-looks-up
-        `tag` through ``archetype_tags`` to the FIRST model whose tag
-        equals it (``None`` when no configured model does), and uses
-        that single model for every address it builds.
-
-        First-match is the right resolution here, not an arbitrary
-        shortcut. The LOCAL layout has no per-model dimension at all:
-        every model sharing one `tag` already reads and writes the SAME
-        ``{prefix}{tag}_{info}/rep_{seed}.yaml`` directory, so a
-        local-store run of this method has only ever read that one
-        directory, regardless of how many models share the tag. Picking
-        the first matching model for the S3 case preserves that same
-        "one directory/log, tag-scoped" behavior, instead of introducing
-        a new "which model's log wins" ambiguity that the local store
-        never had to answer. When NO model carries `tag` (an existing
-        test calls this with no model configured at all), the resolved
-        model is ``None`` -- which ``S3ResultsStore.exists`` handles by
-        returning ``False`` unconditionally. So this method's
-        ``if not self.store.exists(addr): continue`` guard skips every
-        (seed, info) cleanly, rather than ever calling ``load_marks``
-        with a ``None`` model.
+        `tag` is a TAG, not a model, but the S3 log is keyed by model, so it is
+        reverse-looked-up through ``archetype_tags`` to the FIRST model
+        carrying it (models sharing a tag already share one local
+        ``{prefix}{tag}_{info}/`` directory). With NO such model the address
+        model is ``None``, ``S3ResultsStore.exists`` returns False, and every
+        (seed, info) is skipped instead of loaded.
         """
         model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
         lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}
@@ -413,31 +277,19 @@ class ReplicateHarness:
     def sync_down(self) -> int:
         """Pull this harness's S3-backed replicate log into the local layout.
 
-        This is a thin delegate to
-        ``smolbench.evals.results_store.sync_down(self.results_dir,
-        self.archetype_tags, self.prefix)`` -- the PRIMARY way to bring
-        an S3-backed experiment's results onto local disk for the
-        local-reading analysis tooling (``notebooks/*/analysis/power_analysis.py``,
-        the figure scripts), because this harness is the only place the
-        model -> tag mapping (``archetype_tags``) already lives. The
-        module-level CLI (``python -m smolbench.evals.results_store``)
-        exists purely for out-of-notebook use, where that mapping has to
-        be re-typed by hand.
-
-        Returns
-        -------
-        int
-            The number of objects downloaded; see
-            ``smolbench.evals.results_store.sync_down``.
+        Thin delegate to ``results_store.sync_down``, and the PRIMARY way to
+        feed the local-reading analysis tooling, because the model -> tag
+        mapping it needs already lives here (``python -m
+        smolbench.evals.results_store`` is the CLI equivalent, where that
+        mapping must be re-typed by hand). Returns the number of objects
+        downloaded.
 
         Raises
         ------
         RuntimeError
-            ``self.store`` does not resolve to an S3-backed store -- see
-            the module function's docstring for the two possible reasons.
+            ``self.store`` is not S3-backed.
         ValueError
-            The resolved S3 log prefix is empty, or a listed entry's
-            local destination resolves outside ``results_dir`` -- see
-            the module function's docstring.
+            The resolved S3 log prefix is empty, or a listed entry's local
+            destination resolves outside ``results_dir``.
         """
         return results_store.sync_down(self.results_dir, self.archetype_tags, self.prefix)

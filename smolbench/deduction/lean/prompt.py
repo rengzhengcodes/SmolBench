@@ -29,56 +29,20 @@ _FENCE_RE = __import__("re").compile(
 
 
 def extract_tactic_block(text: str) -> str:
-    """Pull the Lean tactics out of an LLM response.
+    """Pull the Lean tactics out of an LLM response, stripped.
 
-    Applies four steps in order: strip a leading ``<think>`` block, then
-    prefer the last fenced code block, then fall back to a single
-    surrounding fence, then fall back to the stripped text as-is.
+    Four steps in order: (0) strip a leading ``<think>`` block through its first
+    ``</think>``; (1) return the LAST fenced ```` ```lean ```` (or unlabelled)
+    block, since models that reason first put the answer last; (2) else strip a
+    single surrounding fence; (3) else return the stripped text as-is.
 
-    Parameters
-    ----------
-    text : str
-        Raw text of the model's response.
-
-    Returns
-    -------
-    str
-        The extracted tactic text, stripped of surrounding whitespace.
-        Returns ``""`` for a response that opens with an unclosed
-        ``<think>`` block (see Notes).
-
-    Notes
-    -----
-    Step 0 handles a leading ``<think>`` reasoning block. If the (stripped)
-    response opens with ``<think>``, this strips through the FIRST
-    ``</think>`` tag, plus any whitespace right after it, and continues
-    extracting from the remainder using steps 1-3 below.
-
-    An UNCLOSED think block (starts with ``<think>`` but has no matching
-    ``</think>`` at all) means the completion was cut off mid-reasoning —
-    for example, it hit the max-tokens budget before the model reached an
-    answer. Such a block has no recoverable tactic text. This function
-    returns ``""`` for it, rather than scoring the raw reasoning ramble as
-    a proof attempt. The LeanDojo replay would fail on it regardless, and
-    letting it through would pollute ``lean_error`` stats with parse noise
-    instead of giving a clean "no answer" signal.
-
-    `smolbench/evals/openai_compat.py` (~line 551) already splits
-    ``content`` on the first ``</think>`` client-side, when the server
-    returns reasoning and answer concatenated in one string. In practice,
-    step 0 here is belt-and-suspenders for text that reaches the extractor
-    with the think blob still attached — for example, a provider that
-    does not route through that client, or a future regression there. See
-    that module's docstring for the primary split point.
-
-    Step 1: if the response contains one or more ```` ```lean ... ``` ````
-    (or unlabelled) fenced blocks, this returns the LAST one. Models that
-    prefix tactics with reasoning typically put the answer last.
-
-    Step 2: otherwise, this falls back to stripping a single surrounding
-    fence (legacy behavior).
-
-    Step 3: otherwise, this returns the stripped text as-is.
+    Returns ``""`` when the response opens with an UNCLOSED ``<think>`` block: the
+    completion was truncated mid-reasoning with no recoverable tactic text, and
+    scoring it would pollute ``lean_error`` stats with parse noise instead of a
+    clean "no answer" signal. `smolbench/evals/openai_compat.py` is the primary
+    ``</think>`` split point (client-side, when a server concatenates reasoning and
+    answer); step 0 here is belt-and-suspenders for text that still arrives with the
+    think blob attached.
     """
     s = text.strip()
     if s.startswith("<think>"):
@@ -103,28 +67,5 @@ def extract_tactic_block(text: str) -> str:
 
 
 def build_user_prompt(rendered: RenderedContext) -> str:
-    """Assemble the user-turn prompt text for one LLM call.
-
-    Parameters
-    ----------
-    rendered : RenderedContext
-        The rendered context block for one (theorem, k, rung) triple, as
-        produced by `smolbench.deduction.lean.context.render`.
-
-    Returns
-    -------
-    str
-        `rendered.text` followed by a blank line and `INSTRUCTION`.
-
-    Notes
-    -----
-    The system half of the old two-message list now travels separately,
-    as the calling `ChatClient`'s per-call `system=` argument (see
-    `SYSTEM` above). It is not part of this function's return value.
-
-    The old Anthropic `cache_breakpoint=True` hints are gone along with
-    the hand-rolled `Message` type they were attached to. OpenRouter's
-    Anthropic-backed models auto-cache stable prompt prefixes without an
-    explicit breakpoint.
-    """
+    """The user turn: `rendered.text` (one (theorem, k, rung) triple) plus `INSTRUCTION`."""
     return rendered.text + "\n\n" + INSTRUCTION

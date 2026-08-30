@@ -1,11 +1,10 @@
-"""Define the shared data types used by the eval harness.
+"""Shared data types used by the eval harness.
 
-This module holds the question/answer structs a quiz is built from
-(``QnA``, ``ToF``, ``Numeric``), the ``Quiz`` type alias, and the
-``Mark``/``Marks`` dataclasses that record one graded quiz. ``Marks``
-also serializes to and loads from YAML, so a graded quiz round-trips
-through a file or an S3 object. See ``smolbench.evals.results_store``
-for the store that reads and writes this format.
+The question/answer structs a quiz is built from (``QnA``, ``ToF``,
+``Numeric``), the ``Quiz`` alias, and the ``Mark``/``Marks`` dataclasses
+recording one graded quiz. ``Marks`` round-trips through YAML (a file or an S3
+object body); see ``smolbench.evals.results_store`` for the store that reads
+and writes this format.
 """
 
 import re
@@ -29,34 +28,13 @@ class QnA:
     def condition(ans: str) -> Answer:
         """Convert a raw model response to this question's answer type.
 
-        The base implementation returns `ans` unchanged. A subclass
-        overrides this to parse and validate the raw response text.
-
-        Parameters
-        ----------
-        ans : str
-            Raw model response text.
-
-        Returns
-        -------
-        Answer
-            `ans`, unchanged.
+        The base implementation returns `ans` unchanged; a subclass overrides
+        it to parse and validate the raw response text.
         """
         return ans
 
     def score(self, ans: Answer) -> bool:
-        """Return whether `ans` matches this question's ground truth.
-
-        Parameters
-        ----------
-        ans : Answer
-            A conditioned answer, normally the output of `condition`.
-
-        Returns
-        -------
-        bool
-            True when `ans` equals ``self.answer``.
-        """
+        """Return whether `ans` (normally `condition`'s output) equals the truth."""
         return ans == self.answer
 
 
@@ -72,24 +50,12 @@ class ToF(QnA):
 
     @staticmethod
     def condition(ans: str) -> bool:
-        """Convert a raw model response to a bool.
+        """Convert a raw model response to a bool, case-insensitively and after
+        stripping every non-letter character.
 
-        Parameters
-        ----------
-        ans : str
-            Raw model response text.
-
-        Returns
-        -------
-        bool
-            True for "true", False for "false" (case-insensitive, after
-            every non-letter character is stripped).
-
-        Raises
-        ------
-        ValueError
-            `ans` does not reduce to "true" or "false" once the
-            non-letter characters are stripped.
+        Raises ``ValueError`` unless the remainder is exactly "true"/"false" --
+        so ``"Answer: False"`` raises. The lenient recovery path is
+        ``smolbench.evals.parsing.parse_tof``.
         """
         # Strip everything but letters, so wrapping punctuation or markup
         # (e.g. "**True**") does not block the match below.
@@ -113,22 +79,11 @@ class Numeric(QnA):
 
     @staticmethod
     def condition(ans: str) -> int:
-        """Extract the first integer in a raw model response.
+        """Extract the FIRST integer in a raw model response; raises
+        ``ValueError`` when there is none.
 
-        Parameters
-        ----------
-        ans : str
-            Raw model response text.
-
-        Returns
-        -------
-        int
-            The first integer substring found in `ans`.
-
-        Raises
-        ------
-        ValueError
-            `ans` contains no integer.
+        First-match scores an operand when the model shows its working;
+        ``smolbench.evals.parsing.parse_numeric`` is the robust path.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -202,11 +157,9 @@ class Marks:
     def noncompliant(self) -> int:
         """Count the marks whose response broke the prompt's output contract.
 
-        This count is independent of ``correct``/``incorrect``/``invalid``:
-        a response can be graded correct and still have broken the format.
-        That population matters when a condition (the induction
-        ``noise_intens`` arm, for example) is suspected of degrading
-        instruction following rather than reasoning.
+        Independent of ``correct``/``incorrect``/``invalid``: a response can be
+        graded correct and still have broken the format. That population is
+        what separates degraded instruction following from degraded reasoning.
         """
         return sum(1 for m in self.marks if m.compliance is not None)
 
@@ -230,52 +183,20 @@ class Marks:
     # Path-based callers use ``dump``/``load``.
 
     def dumps(self) -> str:
-        """Serialize this result to a plain-mapping YAML string.
-
-        Returns
-        -------
-        str
-            A ``yaml.safe_load``-able document.
-
-        Notes
-        -----
-        With no ``stream`` argument, ``yaml.safe_dump`` RETURNS the
-        document as a str, instead of writing it somewhere. That is what a
-        caller with no filesystem path needs (for example, an S3
-        ``put_object`` body).
-        """
+        """Return this result as a ``yaml.safe_load``-able plain-mapping document."""
         import yaml
 
         return yaml.safe_dump(asdict(self), default_flow_style=False, indent=4)
 
     def dump(self, path) -> None:
-        """Serialize this result to `path` as plain-mapping YAML.
-
-        Thin wrapper around `dumps`. Writing `path` gives the same bytes
-        `dumps` returns.
-
-        Parameters
-        ----------
-        path : path-like
-            Destination file. Opened for text write.
-        """
+        """Write `dumps()`'s document to `path` (opened for text write)."""
         with open(path, "w") as file:
             file.write(self.dumps())
 
     @classmethod
     def loads(cls, text: str) -> "Marks":
-        """Load a result document from `text`.
-
-        Parameters
-        ----------
-        text : str
-            A document written by `dumps`/`dump`, or by the legacy
-            ``yaml.dump(marks)`` format (``!!python/object`` tags).
-
-        Returns
-        -------
-        Marks
-        """
+        """Load a document written by `dumps`/`dump`, or by the legacy
+        ``yaml.dump(marks)`` format (``!!python/object`` tags)."""
         import yaml
 
         # A legacy file always opens with the top-level Marks tag. Testing
@@ -301,21 +222,7 @@ class Marks:
 
     @classmethod
     def load(cls, path) -> "Marks":
-        """Load a result file written by `dump`, or by the legacy format.
-
-        Thin wrapper around `loads`. Reads `path`'s full text, then
-        delegates.
-
-        Parameters
-        ----------
-        path : path-like
-            File written by `dump`, or by the legacy
-            ``yaml.dump(marks)`` format (``!!python/object`` tags).
-
-        Returns
-        -------
-        Marks
-        """
+        """Read `path`'s full text and delegate to `loads`."""
         with open(path) as file:
             text = file.read()
         return cls.loads(text)

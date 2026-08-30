@@ -1,55 +1,28 @@
 """Run the eval loop: theorem × step k × context rung × N replicates.
 
-The loop writes one output directory per theorem.
+Two entry points, both used by `cli.py`: `run_cell(...)` yields rows for one
+(theorem, k, chain, level) cell, opening its own Dojo session per call;
+`sweep(config, run_dir)` runs a YAML-described sweep, sharing one Dojo session
+across every rung/model/replicate at a given (theorem, k).
 
-The module exposes two entry points:
-  - `run_cell(...)` — yields rows for one (theorem, k, chain, level) cell.
-    It opens its own Dojo session per call. The `run-cell` CLI subcommand
-    uses it (`python -m smolbench.deduction.lean.cli run-cell`).
-  - `sweep(config, run_dir)` — runs a YAML-described sweep. It writes
-    per-theorem output directories and reuses one Dojo session across all
-    rungs/models/replicates that share a (theorem, k). The `run-sweep` CLI
-    subcommand uses it (`python -m smolbench.deduction.lean.cli run-sweep`).
-
-Generation dispatch: both entry points resolve a `smolbench.evals` provider
-module (`smolbench.evals.provider.provider_module`) per model config. Each
-then calls the shared `ChatClient.complete` (see `smolbench.evals.openai_compat`)
-instead of a bespoke per-model client. The relevant config keys are all
-optional and default as follows:
-  - `models[i].provider` — provider name resolved via `provider_module`
-    (e.g. "primeintellect", "openrouter", "aws", "ec2"). The runner resolves
-    this explicitly per model, bypassing the `INFERENCE_PROVIDER` env var,
-    so one sweep can mix providers across its model lineup — see
-    `_provider_for`.
-  - `seed` (default 1776) — base decoding seed. Each replicate's actual seed
-    is `seed + replicate_idx` (see `sweep`'s "Seed threading" note below).
-  - `request_timeout` (default 1800) — per-request read-timeout override,
-    forwarded to every `complete()` call. The `ChatClient` default (120s)
-    would truncate long chain-of-thought generations mid-stream.
-  - `max_retries` (default 4) — caps retryable failures (HTTP 429/5xx,
-    connection errors) per `complete()` call. Without a cap, a wedged
-    endpoint could spin forever inside an open Dojo session.
-
-Results root: `results_root()` resolves the sweep/run-cell output root. Set
-the `SMOLBENCH_LEAN_RESULTS` environment variable to override it. Otherwise
-the root anchors to this file's own location (repo-root-relative, never
-cwd-relative) — see `results_root`'s docstring and `corpus.data_root` for
-the mirrored pattern.
+Generation goes through `ChatClient.complete` on a provider module resolved by
+`models[i].provider` per entry (`_provider_for`), NOT the `INFERENCE_PROVIDER`
+env var, so one sweep can mix providers. Other optional config keys: `seed`
+(default 1776; replicate `i` uses `seed + i`); `request_timeout` (default 1800s,
+since `ChatClient`'s 120s default truncates long CoT mid-stream); `max_retries`
+(default 4, so a wedged endpoint cannot spin forever inside an open Dojo
+session). `SMOLBENCH_LEAN_RESULTS` overrides the output root (`results_root()`).
 
 Output layout (`run_dir`):
 
-    <run_dir>/
-        manifest.json        config + run_id + start/finish timestamps
-        all_rows.jsonl       source of truth, append-only across resumes
-        analysis.txt         `analyze` output, regenerated at end of sweep
-        theorems/
-            <theorem_slug>/
-                meta.json    full_name, file_path, k, ground_truth, premises
-                prompts/
-                    <rung-slug>.md      rendered prompt per rung
-                outputs/
-                    <rung-slug>__<model-slug>.jsonl   one row per replicate
-                summary.md   human-readable rollup, regenerated at end
+    manifest.json        config + run_id + start/finish timestamps
+    all_rows.jsonl       source of truth, append-only across resumes
+    analysis.txt         `analyze` output, regenerated at end of sweep
+    theorems/<theorem_slug>/
+        meta.json        full_name, file_path, k, ground_truth, premises
+        prompts/<rung-slug>.md                    rendered prompt per rung
+        outputs/<rung-slug>__<model-slug>.jsonl   one row per replicate
+        summary.md       human-readable rollup, regenerated at end
 """
 
 from __future__ import annotations
@@ -98,31 +71,11 @@ from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 
 
 def results_root() -> Path:
-    """Resolve the root directory for sweep/run-cell output.
+    """Root directory for sweep/run-cell output; may not exist yet (writers create it).
 
-    Resolution order:
-      1. The ``SMOLBENCH_LEAN_RESULTS`` environment variable, if set.
-      2. ``notebooks/deduction/results`` under the repo root.
-
-    The function anchors the root to the installed ``smolbench`` package
-    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root).
-    It never uses the cwd, and never counts ``parents`` up from this file's
-    own path -- this mirrors the pattern `corpus.data_root()` uses. Callers
-    (CLI invocations, notebook kernels, test runners) can run from any
-    working directory, so a cwd-relative default would resolve to the
-    wrong place depending on who calls it.
-
-    The function reads the environment variable at CALL time, not import
-    time. Tests may therefore set ``SMOLBENCH_LEAN_RESULTS`` (e.g. to a
-    ``tmp_path``) any time before calling this function or any function
-    that calls it.
-
-    Returns
-    -------
-    Path
-        The results root directory. This path may not exist yet; callers
-        that write under it create parent directories as needed (see
-        `sweep`).
+    ``SMOLBENCH_LEAN_RESULTS`` if set, else ``notebooks/deduction/results``
+    anchored to the installed ``smolbench`` package, never cwd-relative
+    (mirrors `corpus.data_root`). The env var is read at CALL time.
     """
     override = os.getenv("SMOLBENCH_LEAN_RESULTS")
     if override:
@@ -131,30 +84,12 @@ def results_root() -> Path:
 
 
 def _default_verifier():
-    """Lazily resolve the real Lean verifier module.
+    """Import `.verify` at call time and return it; raises `ImportError` without `lean_dojo`.
 
-    This function imports `smolbench.deduction.lean.verify` at call time, not at
-    module top. That module requires `lean_dojo`, so it works only when that
-    package is installed (see that module's import guard). Callers without
-    `lean_dojo` that need a verifier must pass one explicitly (e.g. the
-    offline test suite's `FakeVerifier`, or `NullVerifier` for
-    generation-only sweeps). Callers with `lean_dojo` installed (the real
-    `run-sweep`/`run-cell` CLI invocations) get the real module from this
-    function.
-
-    Returns
-    -------
-    ModuleType
-        The `smolbench.deduction.lean.verify` module. It exposes
-        `open_at_step`, `try_tail`, `replay_ground_truth`,
-        `verify_proof_tail`, and `ProofResult`.
-
-    Raises
-    ------
-    ImportError
-        `smolbench.deduction.lean.verify` raises this when `lean_dojo` is not
-        installed in the current interpreter (see that module's guard for
-        the actionable remedy message).
+    The verifier protocol is `open_at_step`, `try_tail`, `replay_ground_truth`,
+    `verify_proof_tail`, `ProofResult`. The lazy import keeps `runner` usable
+    without `lean_dojo`; such callers must pass a verifier explicitly (the test
+    suite's `FakeVerifier`, or `NullVerifier` for generation-only sweeps).
     """
     from smolbench.deduction.lean import verify
     return verify
@@ -202,48 +137,21 @@ def run_cell(
     max_retries: int = 4,
     verifier=None,
 ) -> Iterable[dict]:
-    """Yield one result row per replicate for a single (theorem, k, chain, level) cell.
+    """Yield one JSONL-serializable row per replicate for one (theorem, k, chain, level) cell.
 
-    Parameters
-    ----------
-    provider : str
-        Provider name, resolved via `smolbench.evals.provider.provider_module`
-        (e.g. "primeintellect", "openrouter", "aws", "ec2"). See the
-        module docstring's "Generation dispatch" note.
-    model : str
-        Provider-specific model id.
-    theorem, k, chain, level : see `smolbench.deduction.lean.context.render`.
-    n_replicates : int
-        Number of independent generations to run against the same rendered
-        prompt.
-    temperature : float, default 0.7
-        Sampling temperature, forwarded as `extra_args["temperature"]`.
-    max_tokens : int, default 4096
-        Output token cap, forwarded as `extra_args["max_tokens"]`.
-    dojo_timeout : int, default 600
-        Seconds allowed for the Dojo session (prefix replay plus tail
-        check).
-    seed : int, default 1776
-        Base decoding seed. Replicate `i`'s actual seed is `seed + i` — see
-        `sweep`'s "Seed threading" design note for why replicates (not
-        theorem/rung/model) form the seed-varying replication axis.
-    request_timeout : int, default 1800
-        Per-request read-timeout override, forwarded to `complete()`. The
-        `ChatClient` default (120s) would truncate long CoT generations.
-    max_retries : int, default 4
-        Retryable-failure cap, forwarded to `complete()`.
-    verifier : ModuleType or None
-        Verifier module that exposes `verify_proof_tail`. `None` (the
-        default) lazily resolves the real `smolbench.deduction.lean.verify`
-        module via `_default_verifier()` — see that function's docstring.
-        Tests pass a fake here to run on interpreters without `lean_dojo`.
+    Rows share `_execute_one_cell`'s schema. `theorem`/`k`/`chain`/`level` are
+    as in `context.render`; `provider` names a
+    `smolbench.evals.provider.provider_module` (e.g. "primeintellect",
+    "openrouter", "aws", "ec2"). `dojo_timeout` is seconds for the Dojo session
+    (prefix replay plus tail check). `seed` is the base decoding seed and
+    replicate `i` uses `seed + i`, so the replicate index — not
+    theorem/rung/model — is the seed-varying replication axis. `verifier` must
+    expose `verify_proof_tail`; `None` resolves `_default_verifier()`, and
+    tests pass a fake to run without `lean_dojo`.
 
-    Yields
-    ------
-    dict
-        One JSONL-serializable row per replicate. See `_execute_one_cell`'s
-        row schema for the same keys — both paths share the same wire
-        format.
+    Unlike `sweep`, this wraps `complete()` in no try/except: it is single-shot
+    and non-resuming, so generation failures propagate rather than becoming
+    exception rows.
     """
     if verifier is None:
         verifier = _default_verifier()
@@ -347,21 +255,9 @@ def _select_theorems(
 ) -> list[BenchmarkTheorem]:
     """Resolve a config `theorems` block into a concrete BenchmarkTheorem list.
 
-    Parameters
-    ----------
-    spec : dict
-        The sweep config's `theorems` block (see the various keys read
-        below).
-    cell_whitelist : frozenset[tuple] or None, optional
-        When given, this narrows the returned pool to exactly the theorems
-        that own at least one cell key in this set (see
-        `load_cell_whitelist` for the key shape). `None` (the default)
-        applies no extra filtering. Callers pass this explicitly
-        rather than reading it from `spec`, unlike `shard` below: the
-        whitelist is env-gated (`LEAN_CELL_WHITELIST`, loaded once by
-        `sweep`), not a sweep-config field, because it names specific
-        (model, theorem, k, rung, replicate_idx) cells instead of
-        describing how to build the theorem pool.
+    `cell_whitelist`, when given, narrows the pool to theorems owning at least
+    one of its cell keys. It is a parameter rather than a `spec` field because
+    it is env-gated (`LEAN_CELL_WHITELIST`, loaded once by `sweep`).
     """
     source = spec.get("source", "replay_passing")
     kind = spec.get("kind", "random")
@@ -454,45 +350,16 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     """Load and validate a `LEAN_CELL_WHITELIST` JSON file into a key set.
 
-    Parameters
-    ----------
-    path_str : str
-        Filesystem path to a JSON file. The file must contain a list of
-        cell keys, each an exactly-5-element JSON array
-        ``[model, theorem, k, rung, replicate_idx]``. This matches
-        `_row_key`'s argument order and tuple shape exactly, so a key built
-        here compares equal to a key `sweep` computes internally for the
-        same cell.
+    The file must be a JSON list of exactly-5-element arrays
+    ``[model, theorem, k, rung, replicate_idx]`` — `_row_key`'s order and
+    shape, so keys built here compare equal to `sweep`'s. Duplicates collapse
+    and source order is not preserved.
 
-    Returns
-    -------
-    frozenset[tuple]
-        One `_row_key`-shaped tuple per entry, deduplicated (a repeated
-        entry in the file collapses to one set member, the same as a
-        Python `set` does with any input). The result does not preserve
-        the source file's order -- callers that need a canonical order
-        should sort the result (see `hash_cell_keys`).
-
-    Raises
-    ------
-    ValueError
-        This function raises `ValueError` when: the path does not exist or
-        cannot be read; the file is not valid JSON; the JSON is not a
-        list; or the list contains an entry that is not a 5-element
-        list/tuple. Every message names `path_str`, so the operator can
-        find the offending `LEAN_CELL_WHITELIST` value without re-deriving
-        it. The function deliberately raises `ValueError` in every case,
-        rather than letting the underlying `OSError`/`json.JSONDecodeError`
-        propagate bare, so every failure mode raises the SAME exception
-        type. The call site (`sweep`) can then let it propagate unhandled
-        and still present one consistent, actionable failure class instead
-        of three.
-
-    Notes
-    -----
-    A missing file or malformed JSON must abort the sweep before it
-    generates a single cell; it must never silently degrade into a full,
-    expensive re-run of the whole lane.
+    Every failure (unreadable path, invalid JSON, non-list JSON, malformed
+    entry) raises `ValueError` naming `path_str`, collapsing three exception
+    types into one actionable class: a missing or malformed file must abort the
+    sweep before it generates a cell, never degrade into a full, expensive
+    re-run.
     """
     path = Path(path_str)
     try:
@@ -528,42 +395,15 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
 
 
 def hash_cell_keys(keys: Iterable[tuple]) -> str:
-    """Fingerprint a set of cell keys, independent of on-disk order or type.
+    """Lowercase hex SHA-256 of a canonical JSON encoding of `keys`.
 
-    Callers use this to record "this exact set of cells" in a manifest
-    sidecar without embedding the (potentially large) key list itself
-    twice: `sweep`'s own `manifest.json` already carries the whitelist
-    PATH (see `notebooks/deduction/run_study.py`'s `build_config`, which
-    stamps a conditional `cell_whitelist: {"path": ..., "sha256": ...}`
-    config entry exactly here).
-
-    Parameters
-    ----------
-    keys : Iterable[tuple]
-        Cell keys shaped like `_row_key`'s return value. Any JSON-
-        serializable 5-element sequence in that same order also works,
-        e.g. the plain lists `load_cell_whitelist` reads from disk.
-
-    Returns
-    -------
-    str
-        Lowercase hex SHA-256 digest of a canonical JSON encoding of
-        `keys`. The function SORTS `keys` first (tuple/list comparison is
-        well-defined here, since every key shares the same per-position
-        types: str, str, int, str, int) and converts each key to a plain
-        list before serialization. JSON has no tuple type, so a tuple and
-        an equal-valued list must hash identically. Otherwise this
-        function's own two callers, which build keys via two different
-        code paths, could fingerprint the SAME cell set to two different
-        digests.
-
-    Notes
-    -----
-    This fingerprint is not cryptographically sensitive -- it detects "did
-    the whitelist file change", not a security boundary. The function uses
-    SHA-256 anyway, rather than a faster non-cryptographic hash, simply
-    because SHA-256 is already in the standard library and its collision
-    resistance is more than sufficient for a file this small.
+    `keys` are `_row_key`-shaped or any equal-valued 5-element sequences (e.g.
+    the plain lists `load_cell_whitelist` reads from disk); they are SORTED and
+    coerced to lists first, so a tuple and an equal list fingerprint
+    identically — the two callers build keys by different code paths and must
+    agree on the digest for the same cell set. Stamps "this exact set of cells"
+    into a manifest sidecar (see `notebooks/deduction/run_study.py`'s
+    `build_config`). Change-detection only, not a security boundary.
     """
     canonical = json.dumps(
         sorted(list(key) for key in keys), separators=(",", ":")
@@ -574,35 +414,21 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
     """Read existing JSONL rows; return cell keys for cells that must NOT re-run.
 
-    The function decides PER CELL, not per row. Each decision turns on ONE
-    question: **did a request for this cell ever complete a round trip?**
-    The evidence is ``prompt_tokens > 0`` -- the server counted a prompt,
-    so the model was asked, and whatever came back is its answer.
+    Decides PER CELL on one question: did a request for this cell ever complete
+    a round trip? Only SURVIVING (non-``exception``) rows count as evidence — a
+    cell whose only record is an exception re-runs even when that row carries
+    proof text, since the exception may have come from the VERIFIER and left
+    the proof unchecked. Among survivors: any with non-empty
+    ``candidate_proof`` skips the cell; else any with ``prompt_tokens > 0``
+    also skips it (the model was asked and returned nothing extractable — that
+    is DATA); else nothing was ever measured (spot interruption, idle watchdog,
+    unreachable endpoint, transient API error) and the cell re-runs.
 
-    Only SURVIVING (non-``exception``) rows count as evidence:
-
-    * **a surviving row has content** -- this is a proof. Skip the cell.
-    * **a surviving row has ``prompt_tokens > 0`` but no content** -- the
-      model was asked and returned nothing extractable. **That is DATA.**
-      Skip the cell.
-    * **neither** -- no attempt both reached the model and survived (a spot
-      interruption, an idle watchdog, an unreachable endpoint, a transient
-      API error). Nothing was ever measured. Re-run the cell.
-
-    The check restricts to survivors on purpose: a cell whose ONLY record is
-    an ``exception`` re-runs even when that row carries proof text, because
-    an exception can come from the VERIFIER, leaving a proof that was never
-    checked.
-
-    A cell that was asked and answered emptily must NOT re-run. Generation
-    is not deterministic across server processes, so each retry is an
-    independent draw; re-running an empty answer until it happens to emit a
-    proof turns a failure into a success and inflates pass@1. Truncation is
-    a property of the draw, not of the cell, so "it burned the whole token
-    budget" is not grounds to retry either. ``prompt_tokens`` states the
-    distinction with no tuned constant, and is the same signal
-    `scripts/results/audit_run_completeness.py` uses to separate
-    infrastructure loss from genuine empty output.
+    Re-running an asked-and-empty cell would resample it until it happened to
+    emit a proof, inflating pass@1: generation is not deterministic across
+    server processes, so each retry is an independent draw. ``prompt_tokens``
+    draws the line with no tuned constant, and is the same signal
+    `scripts/results/audit_run_completeness.py` uses.
     """
     if not jsonl_path.exists():
         return set()
@@ -635,10 +461,9 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
 def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     """Map theorem name to its recorded sanity verdict from the JSONL (last wins).
 
-    The function returns verdicts, not just names, so a resumed sweep can
-    re-apply the sanity gate's early return. A theorem whose ground truth
-    failed to replay must stay excluded on resume. It must not fall
-    through to cell generation just because its gate row already exists.
+    Verdicts, not just names, so a resumed sweep can RE-APPLY the gate: a
+    theorem whose ground truth failed to replay must stay excluded, not fall
+    through to cell generation just because its gate row exists.
     """
     if not jsonl_path.exists():
         return {}
@@ -763,13 +588,12 @@ RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
 
 
 def reject_superseded_rows(paths) -> None:
-    """Refuse retired row artifacts, loudly and by name.
+    """Raise `ValueError` naming any path whose FILE NAME carries a `RETIRED_MARKERS` marker.
 
-    This function raises ``ValueError`` naming every offending path whose
-    FILE NAME carries any of `RETIRED_MARKERS`. It raises loudly instead of
-    skipping with a warning on purpose: these files parse perfectly and
-    their rows are well-formed, so ingesting one yields a complete,
-    plausible, and WRONG summary instead of a crash.
+    Raises rather than warning-and-skipping because these files parse perfectly,
+    so ingesting one yields a complete, plausible, WRONG summary instead of a
+    crash. Also logs, since the sweep's per-theorem worker swallows exceptions
+    into a one-line THEOREM-WORKER-FAIL.
     """
     bad = [str(p) for p in paths
            if any(m in Path(p).name for m in RETIRED_MARKERS)]
@@ -881,51 +705,20 @@ def write_theorem_summary(theorem_dir: Path) -> None:
 
 
 def write_run_analysis(run_dir: Path) -> None:
-    """Read all_rows.jsonl; dump a (rung, model) pass-rate table to analysis.txt.
+    """Read all_rows.jsonl; overwrite `run_dir`'s analysis.txt with a (rung, model) table.
 
-    Parameters
-    ----------
-    run_dir : Path
-        Sweep output directory that contains ``all_rows.jsonl`` (see the
-        module docstring's Output layout). The function regenerates
-        ``analysis.txt`` wholesale on every call -- it does not merge with
-        a prior ``analysis.txt``.
+    Regenerates wholesale (never merges with a prior analysis.txt); a no-op
+    when ``all_rows.jsonl`` does not exist. Columns per cell: pass/N, rate,
+    verdict breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``), ``l3``,
+    then average prompt/completion tokens and wall time.
 
-    Returns
-    -------
-    None
-        The function writes ``run_dir / "analysis.txt"`` as a side effect.
-        It is a no-op (it returns without writing anything) if
-        ``all_rows.jsonl`` does not exist yet.
-
-    Notes
-    -----
-    Table columns per (rung, model) cell: pass/N, rate, verdict-breakdown
-    counts (``lerr``/``incp``/``gvup``/``rplf``/``exc``), ``l3``, then
-    average prompt/completion tokens and wall time.
-
-    ``l3`` counts CELLS whose ``candidate_proof`` contains at least one
-    Lean 3 relic (`smolbench.deduction.lean.lean3.find_relics`), regardless
-    of verdict. A *successful* verification with a relic present is
-    essentially impossible -- Lean would reject Lean 3 syntax and lemma
-    names outright, except for a trailing-comma-free name coincidence -- so
-    in practice ``l3`` is a subset of the failure counts already in the
-    row. It is the measurable endpoint that the anti-Lean3-leakage training
-    intervention (corruption/repair SFT rows, see `lean3.corrupt_tail`)
-    aims to drive toward zero. This function tracks `l3` here so a
-    run-over-run comparison does not require a hand re-scan of every
-    ``candidate_proof``.
-
-    Name-level relic detection (the ``lean3-name`` rule in `find_relics`,
-    e.g. ``supr_le`` maps to ``iSup_le``) additionally requires the
-    ``lean3_align.json.gz`` asset (`lean3.AlignMap.load`). When that asset
-    has not been built yet, `l3` gracefully degrades to parse-level-only
-    detection (Lean 3 tactic *syntax* -- ``refl``, ``existsi``, stray
-    binder/trailing commas, ``begin``/``end``). The function then writes a
-    marker line into ``analysis.txt`` immediately after the table header,
-    so a reader (human or machine) of an older run knows name-level relics
-    were never counted, instead of silently under-reporting `l3` with no
-    indication why.
+    ``l3`` counts CELLS whose ``candidate_proof`` holds at least one Lean 3
+    relic (`lean3.find_relics`), regardless of verdict; it is the measurable
+    endpoint the anti-Lean3-leakage SFT intervention (`lean3.corrupt_tail`)
+    aims to drive to zero. Name-level detection also needs the
+    ``lean3_align.json.gz`` asset (`lean3.AlignMap.load`); without it ``l3``
+    degrades to parse-level syntax relics only, and a marker line goes after
+    the table header so an old run is not mistaken for leak-free.
     """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
@@ -1082,12 +875,10 @@ def _run_cells_at_step(
 ) -> tuple[int, int, int]:
     """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped).
 
-    `cell_whitelist` (see `sweep`'s docstring and `load_cell_whitelist`):
-    `None` (the default) applies no extra filtering. When given, a
-    cell whose row key is NOT a member gets skipped exactly like an
-    already-`done_keys` cell (counted in the same `n_skipped` return
-    value). This function does not distinguish the two reasons for
-    skipping, since both mean "do not generate this cell this call".
+    `cell_whitelist=None` applies no extra filtering; otherwise a cell whose
+    row key is not a member is skipped exactly like an already-`done_keys` one
+    and counted in the same `n_skipped`, the two reasons being indistinguishable
+    here (see `sweep` and `load_cell_whitelist`).
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
@@ -1178,11 +969,8 @@ def _run_cells_at_step_concurrent(
     then verify each on the shared Dojo session as the API responses arrive.
 
     Verify still serializes on the single Lean server, since Dojo is
-    single-threaded. Gen -- the dominant cost at ~1.3-3s/cell versus
-    ~0.4s/verify -- fans out.
-
-    `cell_whitelist`: see `_run_cells_at_step`'s matching parameter -- same
-    contract, same default.
+    single-threaded; gen -- the dominant cost at ~1.3-3s/cell versus
+    ~0.4s/verify -- fans out. `cell_whitelist` is as in `_run_cells_at_step`.
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
@@ -1471,15 +1259,11 @@ def _execute_one_cell(
 def _provider_for(mc: dict):
     """Resolve the provider module for one model-config entry.
 
-    Design: this function resolves `provider_module(mc["provider"])`
-    EXPLICITLY, rather than going through the env-dispatched
-    `smolbench.evals.provider.complete` (which reads `INFERENCE_PROVIDER`).
-    A sweep's model lineup can mix providers across entries in
-    `config["models"]` (e.g. one model served via `primeintellect`, another
-    via `ec2`). A single process-wide env var cannot express "this model
-    via X, that one via Y" at the same time, so each model config must
-    resolve its own provider independently. Unknown provider names
-    propagate `provider_module`'s `ValueError` unchanged.
+    Resolves `mc["provider"]` explicitly rather than via the env-dispatched
+    `smolbench.evals.provider.complete`, because a single process-wide
+    `INFERENCE_PROVIDER` cannot express a lineup that mixes providers across
+    `config["models"]`. Unknown names propagate `provider_module`'s
+    `ValueError` unchanged.
     """
     return provider_module(mc["provider"])
 
@@ -1487,15 +1271,12 @@ def _provider_for(mc: dict):
 def _ctx_len_for(mc: dict, mod) -> int:
     """Resolve a model's context window, tolerating catalog-lookup failures.
 
-    Best-effort guard: a transient failure that fetches the context length
-    (a catalog request timing out, an unlisted model id) must not abort
-    the whole sweep. A huge fallback context length (`10**9`) means
-    `complete()`'s token-usage guard simply never fires for this model. A
-    *genuine* overflow then surfaces later as a `ValueError` from that
-    guard. The existing per-cell exception handling already catches that
-    error and records it as a resumable exception row -- so the fallback
-    trades a hard abort for a soft, retryable failure mode instead of
-    silently hiding real problems.
+    A timed-out catalog request or unlisted model id must not abort the whole
+    sweep, so lookup failure falls back to `10**9`: `complete()`'s token-usage
+    guard then never fires for this model, and a genuine overflow surfaces
+    later as that guard's `ValueError`, which per-cell exception handling
+    records as a resumable exception row. Trades a hard abort for a soft,
+    retryable failure rather than hiding the problem.
     """
     try:
         return mod.get_model_context_length(mc["model"])
@@ -1509,77 +1290,34 @@ def _ctx_len_for(mc: dict, mod) -> int:
 
 
 def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) -> int:
-    """Run a sweep described by `config`. Write per-theorem dirs under `run_dir`.
+    """Run a sweep described by `config`; write per-theorem dirs under `run_dir`.
 
-    Loop ordering: theorem, then k, then rung, then model, then replicate.
-    The sweep resumes by skipping cells whose row key (model, theorem, k,
-    rung, replicate_idx) already exists in all_rows.jsonl. Per (theorem,
-    k), it opens ONE Dojo session, shared across all rungs/models/replicates
-    that branch from it. Per theorem, it runs ONE separate sanity-gate Dojo
-    session that re-runs the full ground-truth proof.
+    Loops theorem, then k, then rung, then model, then replicate. Per
+    (theorem, k) it opens ONE Dojo session, shared by every rung/model/replicate
+    branching from it; per theorem it opens ONE further sanity-gate session that
+    re-runs the full ground-truth proof. `resume` skips cells already recorded
+    in `all_rows.jsonl` under their row key (model, theorem, k, rung,
+    replicate_idx) -- see `_existing_keys` for what counts as recorded.
+    `verifier=None` lazily resolves the real verifier via `_default_verifier()`;
+    tests pass a fake to exercise the whole dispatch/schema/resume path without
+    `lean_dojo`. Returns the number of cell rows written this call, excluding
+    skipped and sanity rows.
 
-    ``LEAN_CELL_WHITELIST`` (env, optional): a path to a JSON file that
-    lists specific cell keys (see `load_cell_whitelist`). When set, this
-    call runs ONLY cells whose row key is in that whitelist. It skips
-    every other cell exactly like an already-`resume`d one (see
-    `_run_cells_at_step`/`_run_cells_at_step_concurrent`'s `cell_whitelist`
-    parameter), and it drops every theorem that owns NO whitelisted cell
-    from the pool entirely, before its sanity gate would even run (see
-    `_select_theorems`'s `cell_whitelist` parameter). A theorem that DOES
-    own at least one whitelisted cell still gets its full, unconditional
-    sanity-gate replay -- the whitelist narrows WHICH cells generate, not
-    whether a surviving theorem's ground truth gets re-checked. The env
-    var, left unset (the default), applies no extra filtering. A missing
-    file or malformed JSON raises `ValueError` here, before this function
-    even selects a theorem. See `load_cell_whitelist`'s Notes for why
-    silently falling through to an unfiltered (full-lane) run would be a
-    real, costly mistake for this env var's intended caller. This lets an
-    exact small cell sample be regenerated from an otherwise large lane,
-    without re-running the rest of it.
+    `config` keys: `theorems`, `rungs`, `models`, `k`, `n_replicates`,
+    `temperature`, `max_tokens`, `dojo_timeout`, `concurrent_gen`,
+    `max_concurrency`, `skip_trivial`, `theorem_workers`, plus the generation
+    defaults documented in the module docstring (`seed`, `request_timeout`,
+    `max_retries`, `models[i].provider`).
 
-    Config keys (all optional; sane defaults below — see the module
-    docstring's "Generation dispatch" section for the rationale behind
-    each):
-      - `seed` (default 1776) — base decoding seed. Each replicate's actual
-        seed is `seed + replicate_idx`. The replicate index is the
-        replication axis, so this seed is independent of
-        theorem/k/rung/model -- cross-model comparisons at a given cell
-        stay seed-paired.
-      - `request_timeout` (default 1800) — per-request read-timeout
-        override, forwarded to every `complete()` call.
-      - `max_retries` (default 4) — retryable-failure cap, forwarded to
-        every `complete()` call, so a sweep never spins forever inside an
-        open Dojo session against a wedged endpoint.
-      - `models[i].provider` — resolved per model via `provider_module`,
-        NOT the `INFERENCE_PROVIDER` env var, so one sweep can mix
-        providers across its model lineup (see `_provider_for`).
-
-    Parameters
-    ----------
-    config : dict
-        Sweep configuration; see the keys above plus `theorems`, `rungs`,
-        `models`, `k`, `n_replicates`, `temperature`, `max_tokens`,
-        `dojo_timeout`, `concurrent_gen`, `max_concurrency`,
-        `skip_trivial`, `theorem_workers`.
-    run_dir : Path
-        Output directory; see the module docstring's "Output layout".
-    resume : bool, default True
-        When True, this skips cells already recorded in `all_rows.jsonl`
-        (excluding rows whose verdict is `exception`, which always
-        re-run).
-    verifier : ModuleType or None
-        Verifier module that exposes `open_at_step`, `try_tail`,
-        `replay_ground_truth`, `verify_proof_tail`, and `ProofResult`.
-        `None` (the default) lazily resolves the real
-        `smolbench.deduction.lean.verify` module via `_default_verifier()`
-        -- tests pass a fake here to run the whole sweep
-        dispatch/schema/resume logic on interpreters without `lean_dojo`.
-
-    Returns
-    -------
-    int
-        Total number of cell rows written this call. This excludes skipped
-        and sanity rows.
+    ``LEAN_CELL_WHITELIST`` (env, optional) points at a JSON file of cell keys
+    (see `load_cell_whitelist`). When set, ONLY those cells generate: every
+    other cell is skipped exactly like an already-resumed one, and theorems
+    owning NO whitelisted cell are dropped from the pool before their sanity
+    gate would even run. A theorem that does own one still gets its full,
+    unconditional ground-truth replay -- the whitelist narrows WHICH cells
+    generate, not whether a surviving theorem is re-checked. Unset applies no
+    filtering; a missing or malformed file raises `ValueError` here, before any
+    theorem is selected, rather than degrading into a costly full-lane run.
     """
     if verifier is None:
         verifier = _default_verifier()

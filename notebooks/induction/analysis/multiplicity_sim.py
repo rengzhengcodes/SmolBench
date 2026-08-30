@@ -1,15 +1,15 @@
 """Run a Monte Carlo study of TEST and CORRECTION choice for the induction study.
 
-Standalone Monte Carlo for the periodic-induction family-ladder
-scaling study (21 models x 4 info arms, R=30 replicates x 9 harmonics).
-It is self-contained. Run it with:
-  uv run --no-project --with numpy --with scipy python multiplicity_sim.py
+Self-contained companion to the periodic-induction family-ladder scaling study
+(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every statistic below
+is simulated; this script never analytic-approximates a reported number. The
+pairwise test is byte-for-byte the repo's continuity-corrected 2x2xK CMH
+(notebooks/induction/analysis/power_analysis.py::cmh_reject), and the 2-df
+general-association statistic mirrors that file's gcmh_reject. Results are
+checkpointed to multiplicity_sim_results.json after each part.
 
-Every statistic below is simulated. This script never analytic-approximates
-a reported number. The pairwise test is byte-for-byte the repo's
-continuity-corrected 2x2xK CMH
-(notebooks/induction/analysis/power_analysis.py::cmh_reject). The 2-df
-general-association statistic mirrors that file's gcmh_reject.
+Run it with:
+  uv run --no-project --with numpy --with scipy python multiplicity_sim.py
 """
 
 from __future__ import annotations
@@ -35,15 +35,7 @@ OUT_PATH = Path(__file__).resolve().parent / "multiplicity_sim_results.json"
 
 
 def dump(tag: str) -> None:
-    """Write the accumulated `OUT` results to a checkpoint JSON file.
-
-    Parameters
-    ----------
-    tag : str
-        Label for the part that just finished (for example, ``"part1"``).
-        Printed to the log after the write, so a long run's progress
-        stays visible.
-    """
+    """Write the accumulated `OUT` results to the checkpoint JSON, logging `tag`."""
     with open(OUT_PATH, "w") as fh:
         json.dump(OUT, fh, indent=2, default=float)
     print(f"[checkpoint written after {tag}]", flush=True)
@@ -53,18 +45,9 @@ def dump(tag: str) -> None:
 def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
     """Compute the repo's continuity-corrected 2x2xK CMH statistic (chi2, df=1).
 
-    Parameters
-    ----------
-    succ_a, succ_b : ndarray, shape (..., K)
-        Success counts out of `n` per stratum, for each of the two
-        compared arms.
-    n : int
-        Trials per stratum, the same for both arms.
-
-    Returns
-    -------
-    ndarray, shape (...)
-        The chi-squared statistic, one value per leading batch index.
+    `succ_a` and `succ_b` are (..., K) success counts out of `n` trials per
+    stratum, `n` the same for both arms; returns one statistic per leading
+    batch index.
     """
     big_n = 2 * n
     m1 = succ_a + succ_b
@@ -79,41 +62,16 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
 
 
 def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
-    """Compute the two-sided CMH p-value from `cmh_stat`.
-
-    Parameters
-    ----------
-    succ_a, succ_b : ndarray, shape (..., K)
-        Success counts out of `n` per stratum, for each of the two
-        compared arms.
-    n : int
-        Trials per stratum, the same for both arms.
-
-    Returns
-    -------
-    ndarray, shape (...)
-        The chi-squared (df=1) survival-function p-value.
-    """
+    """Compute the two-sided chi2 (df=1) p-value for `cmh_stat`."""
     return chi2.sf(cmh_stat(succ_a, succ_b, n), df=1)
 
 
 def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
-    """Compute the generalized CMH "general association" statistic, 3 rungs.
+    """Compute the generalized CMH "general association" statistic, 3 rungs (chi2, df=2).
 
-    This is a 2-df test: df = R - 1 = 2 for 3 rungs.
-
-    Parameters
-    ----------
-    succ : ndarray, shape (..., 3, K)
-        Per-rung success counts out of `n` per stratum.
-    n : int
-        Trials per rung per stratum, the same for every rung and
-        stratum.
-
-    Returns
-    -------
-    ndarray, shape (...)
-        The chi-squared (df=2) statistic.
+    `succ` is (..., 3, K) success counts, `n` trials per rung per stratum --
+    identical for every rung and stratum, the equal-n precondition behind the
+    covariance collapse documented on ``power_analysis.gcmh_reject``.
     """
     n_rungs = succ.shape[-2]
     total_n = float(n_rungs * n)
@@ -133,20 +91,8 @@ def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
 def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
     """Compute the 1-df CMH correlation (linear trend) statistic.
 
-    Parameters
-    ----------
-    succ : ndarray, shape (..., 3, K)
-        Per-rung success counts out of `n` per stratum.
-    n : int
-        Trials per rung per stratum, the same for every rung and
-        stratum.
-    scores : tuple of float, default (1.0, 2.0, 3.0)
-        Ladder scores assigned to the 3 rungs, in rung order.
-
-    Returns
-    -------
-    ndarray, shape (...)
-        The chi-squared (df=1) trend statistic.
+    `succ` is (..., 3, K) success counts, `n` trials per rung per stratum;
+    `scores` are the ladder scores assigned to the 3 rungs, in rung order.
     """
     x = np.asarray(scores)
     n_rungs = succ.shape[-2]
@@ -168,17 +114,8 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
 def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
     """Compute the two-sided exact conditional (binomial) McNemar p-value.
 
-    Parameters
-    ----------
-    b, c : ndarray
-        Counts of the two discordant-pair types: `b` is A-succeeds/B-fails,
-        `c` is A-fails/B-succeeds.
-
-    Returns
-    -------
-    ndarray
-        The two-sided exact McNemar p-value. Returns 1.0 where
-        ``b + c == 0`` (no discordant pairs).
+    `b` counts A-succeeds/B-fails pairs and `c` the reverse; returns 1.0 where
+    ``b + c == 0`` (no discordant pairs).
     """
     nd = b + c
     lo = np.minimum(b, c)
@@ -189,26 +126,10 @@ def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
 
 def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
                  rng: np.random.Generator):
-    """Simulate matched marks from a latent bivariate normal (tetrachoric rho).
+    """Simulate matched marks from a latent bivariate normal (tetrachoric `rho`).
 
-    Parameters
-    ----------
-    p_a, p_b : float
-        Marginal success rates for arms A and B.
-    rho : float
-        Latent correlation between the two arms (tetrachoric rho).
-    n_sims : int
-        Number of Monte Carlo simulations.
-    reps : int
-        Number of matched replicate pairs per simulation.
-    rng : numpy.random.Generator
-        Source of randomness.
-
-    Returns
-    -------
-    tuple of ndarray
-        ``(marks_a, marks_b)``, each a boolean array of shape
-        ``(n_sims, reps, K_HARM)``.
+    Returns ``(marks_a, marks_b)``, boolean arrays of shape
+    ``(n_sims, reps, K_HARM)`` with marginal success rates `p_a` and `p_b`.
     """
     z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
@@ -221,19 +142,9 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
 def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025):
     """Find the minimum detectable difference (80% power) at each ceiling.
 
-    For each baseline rate `p_a`, this scans the accuracy gap `d` in
-    steps of `step` and reports the smallest `d` reaching 80% power,
-    under both the Bonferroni-corrected alpha and the naive alpha=0.05.
-    Writes results to ``OUT["part1"]``.
-
-    Parameters
-    ----------
-    rng : numpy.random.Generator
-        Source of randomness for the simulated binomial draws.
-    n_sims : int, default 20000
-        Number of Monte Carlo simulations per grid point.
-    step : float, default 0.0025
-        Step size for the scanned accuracy gap `d`.
+    For each baseline rate `p_a`, scans the accuracy gap `d` in `step`
+    increments and reports the smallest `d` reaching 80% power under both the
+    Bonferroni-corrected alpha and the naive alpha=0.05. Writes ``OUT["part1"]``.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -268,21 +179,12 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025):
 def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
     """Measure actual Type I error under within-replicate clustering.
 
-    Simulates marks with a shared per-replicate latent factor (an
-    intraclass correlation `icc`), for a grid of baseline rates,
-    correlations, and an "independent" vs. "shared" latent-draw variant.
-    Reports the realized binary (phi) within-replicate correlation and
-    the actual Type I error at both alpha=0.05 and the Bonferroni alpha,
-    against the nominal 0.05 target. Writes results to ``OUT["part3"]``.
-
-    Parameters
-    ----------
-    rng : numpy.random.Generator
-        Source of randomness for the simulated draws.
-    n_sims : int, default 200000
-        Total number of Monte Carlo simulations per grid point.
-    chunk : int, default 20000
-        Simulations processed per batch, to bound peak memory.
+    Simulates marks with a shared per-replicate latent factor (intraclass
+    correlation `icc`) over a grid of baseline rates, iccs, and an
+    "independent" vs. "shared" latent-draw variant, reporting the realized
+    binary (phi) within-replicate correlation and the actual Type I error at
+    alpha=0.05 and at the Bonferroni alpha against the nominal 0.05 target.
+    `chunk` sets the batch size that bounds peak memory. Writes ``OUT["part3"]``.
     """
     print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
     from scipy.stats import norm
@@ -340,18 +242,11 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
 def part5(rng: np.random.Generator, n_sims: int = 20000):
     """Compare the 1-df trend test against the 2-df omnibus and 3 pairwise tests.
 
-    For 6 rate scenarios (monotone and non-monotone, at small, mid, and
-    ceiling effect sizes), simulates one 3-rung ladder and reports each
-    test's rejection rate under both study-wide (pre-registered,
-    corrected) and local (uncorrected-family, alpha=0.05) alphas. Writes
-    results to ``OUT["part5"]``.
-
-    Parameters
-    ----------
-    rng : numpy.random.Generator
-        Source of randomness for the simulated binomial draws.
-    n_sims : int, default 20000
-        Number of Monte Carlo simulations per scenario.
+    Six rate scenarios (monotone and non-monotone, at small, mid, and ceiling
+    effect sizes), each one simulated 3-rung ladder, reporting every test's
+    rejection rate under both the pre-registered study-wide alphas and local
+    uncorrected-family alphas (which isolates test choice from correction).
+    Writes ``OUT["part5"]``.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     alpha_fam_trend = ALPHA / 28          # 28 one-df trend tests
@@ -397,29 +292,16 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
 def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
     """Compute unpaired-CMH and paired-McNemar power on the SAME simulated marks.
 
-    Parameters
-    ----------
-    p_a : float
-        Arm A's success rate.
-    delta : float
-        Accuracy gap; arm B's rate is ``p_a - delta``.
-    rho : float
-        Latent correlation between the two arms' marks (tetrachoric rho).
-    reps : int
-        Number of matched replicate pairs per simulation.
-    n_sims : int
-        Number of Monte Carlo simulations.
-    rng : numpy.random.Generator
-        Source of randomness.
+    Arm B's rate is ``p_a - delta``; `rho` is the latent (tetrachoric)
+    correlation between the arms' marks.
 
     Returns
     -------
     tuple of float
-        ``(power_unpaired, power_paired, phi_binary, agreement)``: the
-        unpaired CMH test's power, the exact McNemar test's power, the
-        realized binary (phi) correlation between the two arms' marks,
-        and their raw agreement rate. All computed on the SAME simulated
-        marks, at the Bonferroni alpha (``ALPHA_BONF``).
+        ``(power_unpaired, power_paired, phi_binary, agreement)``: the unpaired
+        CMH test's power, the exact McNemar test's power, the realized binary
+        (phi) correlation between the two arms' marks, and their raw agreement
+        rate. All at the Bonferroni alpha (`ALPHA_BONF`).
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng)
@@ -440,25 +322,12 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
 def part2(rng, n_sims=20000, search_sims=8000, cap=900):
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
-    For a grid of baseline rates, accuracy gaps, and latent correlations,
-    compares the unpaired CMH test's power against the paired exact
-    McNemar test's power on the same matched marks (via
-    `_paired_powers`). Where pairing helps, searches `grid_r` for the
-    smallest unpaired replicate count `R` that matches the paired test's
-    power at `R_DEFAULT`. Also reports null-calibration Type I error for
-    both tests at `R_DEFAULT`. Writes results to ``OUT["part2"]``.
-
-    Parameters
-    ----------
-    rng : numpy.random.Generator
-        Source of randomness for the simulated draws.
-    n_sims : int, default 20000
-        Number of Monte Carlo simulations per grid point.
-    search_sims : int, default 8000
-        Number of simulations used while searching `grid_r` for the
-        equivalent unpaired `R`.
-    cap : int, default 900
-        Largest replicate count considered in `grid_r`.
+    Over a grid of baseline rates, accuracy gaps, and latent correlations,
+    compares unpaired CMH against paired exact McNemar on the same matched
+    marks (`_paired_powers`). Where pairing helps, searches `grid_r` (largest
+    entry `cap`) with `search_sims` sims for the smallest unpaired replicate
+    count matching the paired test's power at `R_DEFAULT`. Also reports
+    null-calibration Type I error for both tests. Writes ``OUT["part2"]``.
     """
     print("\n=== PART 2: pairing gain (matched items) ===", flush=True)
     rows = []
@@ -503,9 +372,8 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=900):
 def build_rate_matrix():
     """Build a stylized 21-model x 4-info true-rate matrix for PART 4.
 
-    The matrix covers 21 models (7 families x 3 rungs) x 4 infos. It is
-    stylized per the brief: a spread of true effects near ceiling and in
-    the mid-range, with the rest set to exact nulls.
+    Stylized per the brief: a spread of true effects near ceiling and in the
+    mid-range (30 in total), with the remaining 180 contrasts exact nulls.
 
     Returns
     -------
@@ -529,24 +397,20 @@ def build_rate_matrix():
 
 
 def apply_corrections(pv: np.ndarray, is_null: np.ndarray, m: int):
-    """Apply Bonferroni, Holm, Hochberg, and BH to a batch of p-value families.
+    """Apply Bonferroni, Holm, Hochberg, and BH(q=0.05) to a batch of p-value families.
 
     Parameters
     ----------
     pv : ndarray, shape (S, m)
         p-values for `m` tests, across `S` simulations.
     is_null : ndarray of bool, shape (m,)
-        True where a test's null hypothesis holds (unused directly here;
-        callers combine it with the returned rejection masks to compute
-        Type I error and power).
-    m : int
-        Number of tests in the family.
+        Unused here; callers combine it with the returned masks to compute Type
+        I error and power.
 
     Returns
     -------
     dict of str -> ndarray of bool, shape (S, m)
-        Maps each procedure name ("Bonferroni", "Holm", "Hochberg",
-        "BH(q=0.05)") to its per-simulation, per-test rejection mask.
+        Procedure name to its per-simulation, per-test rejection mask.
     """
     out = {}
     order = np.argsort(pv, axis=1)
@@ -584,23 +448,14 @@ def apply_corrections(pv: np.ndarray, is_null: np.ndarray, m: int):
 def part4(rng, n_sims=4000):
     """Measure the cost of multiplicity correction against `build_rate_matrix`'s truth.
 
-    Builds the full 210-contrast PRIMARY family (84 ladder + 126 info
-    contrasts) and a reduced 154-test family (28 one-df trend tests, in
-    place of the 84 pairwise ladder contrasts, plus the same 126 info
-    contrasts). Applies Bonferroni, Holm, Hochberg, and BH to both
-    families (via `apply_corrections`), and reports true/false rejection
-    counts, FWER, FDR, and how many of the 28 non-flat ladders each
-    procedure flags. A third "test-swap only" arm holds the family size
-    at 210 (so alpha is unchanged) while swapping the pairwise ladder
-    test for the trend test, isolating the test choice's effect from the
-    correction's effect. Writes results to ``OUT["part4"]``.
-
-    Parameters
-    ----------
-    rng : numpy.random.Generator
-        Source of randomness for the simulated binomial draws.
-    n_sims : int, default 4000
-        Number of Monte Carlo simulations.
+    Compares the full 210-contrast PRIMARY family (84 ladder + 126 info) with a
+    reduced 154-test family (28 one-df trend tests replacing the 84 pairwise
+    ladder contrasts), under Bonferroni, Holm, Hochberg, and BH
+    (`apply_corrections`), reporting true/false rejection counts, FWER, FDR, and
+    how many of the 28 non-flat ladders each procedure flags. A third
+    "test-swap only" arm holds the family size at 210 (so alpha is unchanged)
+    while swapping in the trend test, isolating the test choice's effect from
+    the correction's. Writes ``OUT["part4"]``.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()
@@ -701,11 +556,9 @@ def part4(rng, n_sims=4000):
 
 
 def main():
-    """Run PARTs 1, 3, 5, 2, and 4 in sequence, checkpointing after each.
+    """Run PARTs 1, 3, 5, 2, 4 in that order (not PART-number order), checkpointing each.
 
     Each part uses its own fixed RNG seed, so a re-run is reproducible.
-    Note that the run order (1, 3, 5, 2, 4) does not match the PART
-    numbering order.
     """
     t0 = time.time()
     part1(np.random.default_rng(1)); dump("part1")

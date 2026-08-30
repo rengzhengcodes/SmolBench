@@ -1,22 +1,14 @@
-"""Provide command-line entry points.
+"""Command-line entry points: `python -m smolbench.deduction.lean.cli <subcommand>`.
 
-Run as `python -m smolbench.deduction.lean.cli <subcommand>`.
+Dependency split: `replay`, `filter`, `run-cell`, and `run-sweep` verify proofs
+against Lean and so need `smolbench.deduction.lean.verify`, which requires
+`lean_dojo` (the `lean` extra, plus elan and a traced-repo cache at runtime).
+`metadata`, `list`, `analyze`, `report`, `show`, `compare`, and `prompt-stats`
+need none of that.
 
-Dependency split: `replay`, `filter`, `run-cell`, and `run-sweep` verify
-candidate and ground-truth proofs against Lean. They therefore import
-`smolbench.deduction.lean.verify`, which requires the `lean_dojo` package
-(the `lean` extra, plus elan and a traced-repo cache at runtime -- see
-`verify.py`'s import guard). Every other subcommand (`metadata`, `list`,
-`analyze`, `report`, `show`, `compare`, `prompt-stats`) touches only the
-generation/analysis modules (`corpus`, `context`, `prompt`, `runner`'s
-dispatch), and needs none of that.
-
-To keep that split real, this module imports `smolbench.deduction.lean.verify`
-lazily -- inside `cmd_replay` and `cmd_filter`, the two commands here that
-call it directly -- rather than at module top. `run-cell` and `run-sweep`
-do not import it directly at all; they reach it indirectly through
-`runner.run_cell`/`runner.sweep`, which resolve the real verifier lazily
-via `runner._default_verifier()`.
+To keep the split real, `.verify` is imported lazily inside `cmd_replay` and
+`cmd_filter` rather than at module top; `run-cell`/`run-sweep` never import it
+directly, reaching it through `runner._default_verifier()`.
 """
 
 from __future__ import annotations
@@ -36,48 +28,20 @@ from .runner import (
 
 
 def cmd_metadata(_: argparse.Namespace) -> int:
-    """Print the benchmark's `metadata.json` as indented JSON.
+    """Print the benchmark's `metadata.json` as indented JSON; always returns 0.
 
-    Parameters
-    ----------
-    _ : argparse.Namespace
-        Unused -- the `metadata` subcommand takes no flags.
-
-    Returns
-    -------
-    int
-        Always 0.
-
-    Notes
-    -----
-    This needs no Lean toolchain (see the module docstring's dependency
-    split). It propagates `corpus.metadata`'s `FileNotFoundError` when the
-    dataset has not been bootstrapped.
+    Propagates `corpus.metadata`'s `FileNotFoundError` when the dataset has not
+    been bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """List theorems with traced tactics in a ``(kind, split)`` slice.
+    """List theorems with traced tactics in a ``(kind, split)`` slice; returns 0.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--kind``, ``--split`` (both forwarded to
-        `corpus.iter_with_proof`), and ``--limit`` (caps how many theorems
-        this prints individually; the reported total count is unaffected).
-
-    Returns
-    -------
-    int
-        Always 0.
-
-    Notes
-    -----
-    This needs no Lean toolchain. It prints the total matching-theorem
-    count, then up to `args.limit` lines of ``full_name``, tactic count,
-    and ``file_path``.
+    ``--limit`` caps only how many are PRINTED; the reported total is the full
+    matching count.
     """
     items = list(iter_with_proof(args.kind, args.split))
     print(f"# {len(items)} theorems with traced tactics in {args.kind}/{args.split}")
@@ -89,30 +53,11 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     """Replay ground-truth tactics through Dojo for a sample of theorems.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--kind``/``--split`` (theorem pool), ``--full-name``
-        (replay exactly this theorem instead of sampling), ``--seed``
-        (sampling RNG), ``-n`` (sample size, used only when ``--full-name``
-        is unset), ``--max-tactics`` (candidate-pool filter when sampling),
-        and ``--timeout`` (per-theorem Dojo timeout, forwarded to
-        `verify.replay_ground_truth`).
-
-    Returns
-    -------
-    int
-        2 when ``--full-name`` was given but no matching theorem exists in
-        the pool; 0 when every replayed theorem's verdict is ``"success"``;
-        1 otherwise.
-
-    Notes
-    -----
-    This requires `lean_dojo`: it imports `smolbench.deduction.lean.verify`
-    (see the module docstring's dependency split) to open real Dojo
-    sessions. It prints one line per theorem (verdict, tactics
-    applied/total, wall time) plus the first line of any error, then a
-    final pass/total summary.
+    Requires `lean_dojo` (opens real Dojo sessions). ``--full-name`` replays
+    exactly that theorem instead of sampling ``-n`` from the ``--max-tactics``
+    filtered pool under ``--seed``; ``--timeout`` is per-theorem seconds.
+    Returns 2 when ``--full-name`` matches no theorem, 0 when every replay
+    verdict is ``"success"``, else 1.
     """
     # Local import: `.verify` requires `lean_dojo` (see that module's
     # import guard). Deferring the import to this function body, rather
@@ -160,30 +105,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_filter(args: argparse.Namespace) -> int:
     """Replay every theorem with traced tactics; persist a passing list to JSONL.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--kind``/``--split`` (theorem pool, and the output
-        sidecar's name via `corpus.replay_passing_path`), ``--limit``
-        (caps pool size; 0 = no cap), ``--timeout`` (per-theorem Dojo
-        timeout), and ``--fresh`` (delete any existing sidecar and start
-        over instead of resuming).
-
-    Returns
-    -------
-    int
-        Always 0.
-
-    Notes
-    -----
-    This requires `lean_dojo`: it imports `smolbench.deduction.lean.verify`
-    (see the module docstring's dependency split). It is resumable:
-    without ``--fresh``, it skips theorems already recorded in the output
-    JSONL (``corpus.replay_passing_path(args.kind, args.split)``), and it
-    flushes each new result to disk immediately after replaying it -- an
-    interrupted run loses at most the in-flight theorem. It prints one
-    progress line per theorem, plus a final pass/fail/total summary and
-    the output path.
+    Requires `lean_dojo`. Appends to `corpus.replay_passing_path(kind, split)`,
+    flushing after each theorem, and resumes by skipping theorems already
+    recorded there, so an interrupt loses at most the in-flight theorem.
+    ``--fresh`` deletes the sidecar and starts over; ``--limit 0`` means no cap.
+    Always returns 0.
     """
     # Local import: see `cmd_replay`'s comment above `.verify`'s import.
     from .verify import replay_ground_truth
@@ -250,34 +176,15 @@ def cmd_filter(args: argparse.Namespace) -> int:
 def cmd_run_cell(args: argparse.Namespace) -> int:
     """Run one (theorem, k, rung) cell with N replicates and write a JSONL row file.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--full-name`` (theorem lookup within ``--kind``/
-        ``--split``), ``--k`` (proof step; ``-1`` means the last step,
-        ``len(traced_tactics) - 1``), ``--rung`` (parsed as
-        ``<chain>:<level>`` and validated via `context.validate`),
-        ``--n-replicates``, ``--provider``, ``--model``, ``--temperature``,
-        ``--max-tokens``, ``--timeout`` (Dojo timeout), and ``--seed``
-        (base decoding seed forwarded to `runner.run_cell`, whose replicate
-        ``i`` uses ``seed + i``).
+    Requires `lean_dojo`, reached through `runner.run_cell`'s lazily-resolved
+    default verifier. ``--k -1`` means the last step; ``--rung`` is
+    ``<chain>:<level>``, validated via `context.validate`; ``--seed`` is the
+    base decoding seed, with replicate ``i`` using ``seed + i``. Writes one row
+    per replicate to ``<results_root()>/runs/<new_run_id()>.jsonl``.
 
-    Returns
-    -------
-    int
-        2 when ``--full-name`` matches no theorem in the pool, or when
-        ``--rung`` is malformed or fails `context.validate`; 0 when every
-        replicate's verdict is ``"success"``; 1 otherwise.
-
-    Notes
-    -----
-    This requires `lean_dojo`: it reaches `smolbench.deduction.lean.verify`
-    indirectly through `runner.run_cell`'s lazily-resolved default
-    verifier (see the module docstring's dependency split), rather than
-    importing it directly here. It writes one JSONL row per replicate to
-    ``<results_root()>/runs/<new_run_id()>.jsonl`` (via
-    `runner.write_jsonl`), and prints a per-replicate summary (verdict,
-    token counts, timings, and a short candidate-proof preview).
+    Returns 2 when ``--full-name`` matches no theorem or ``--rung`` is
+    malformed/out of range, 0 when every replicate verdict is ``"success"``,
+    else 1.
     """
     pool = list(iter_with_proof(args.kind, args.split))
     matches = [t for t in pool if t.full_name == args.full_name]
@@ -340,32 +247,13 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 def cmd_prompt_stats(args: argparse.Namespace) -> int:
     """Render prompts for each (theorem, k=last, rung) and report token stats.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--kind``/``--split`` (theorem pool, via
-        `corpus.iter_replay_passing` -- only replay-passing theorems are
-        used), ``--max-tactics`` (pool filter), ``--limit``/``--seed``
-        (random sub-sample of the pool), and ``--rungs`` (comma-separated
-        ``chain:level`` list; defaults to every entry of
-        `context.IMPLEMENTED_RUNGS`).
-
-    Returns
-    -------
-    int
-        1 when the theorem pool is empty after filtering/sampling; 0
-        otherwise.
-
-    Notes
-    -----
-    This needs no Lean toolchain -- it uses `context.render` only, with no
-    Dojo session. It counts tokens with `tiktoken`'s ``cl100k_base``
-    encoding directly. It has no char-based fallback here, unlike
-    `context._count_tokens`: a missing `tiktoken` install surfaces as an
-    ordinary `ImportError`. A `render` call that raises any exception
-    counts as a render error and gets skipped, instead of aborting the
-    whole report. It prints a per-rung table of min/median/mean/p95/max
-    token counts.
+    No Lean toolchain needed. The pool is replay-passing theorems only
+    (`corpus.iter_replay_passing`), filtered by ``--max-tactics`` and
+    sub-sampled by ``--limit``/``--seed``; ``--rungs`` defaults to
+    `context.IMPLEMENTED_RUNGS`. Tokens are counted with `tiktoken`
+    ``cl100k_base`` with NO char-based fallback, unlike `context._count_tokens`
+    — a missing `tiktoken` surfaces as `ImportError`. A `render` exception is
+    counted as a render error and skipped. Returns 1 on an empty pool, else 0.
     """
     import statistics as stats
     import tiktoken
@@ -422,38 +310,18 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``path`` (positional): path to a sweep's ``all_rows.jsonl``
-        (or any JSONL file sharing the same row schema).
+    Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file
+    with the same row schema): no Lean toolchain, no Dojo session, no writes.
+    Its ``trunc`` column counts rows that opened a ``<think>`` block without
+    closing it, or died in the reasoning channel. A pass@N table follows only
+    when some cell recorded more than one replicate; a cell passes if ANY
+    replicate verified, and N is the max replicate count seen IN THE DATA (not
+    the sweep config), so it stays correct for sweeps that mix replicate counts.
 
-    Returns
-    -------
-    int
-        1 when `path` contains no cell rows (only sanity rows, or the file
-        is empty); 0 otherwise.
-
-    Notes
-    -----
-    This needs no Lean toolchain -- it does pure JSONL aggregation, with no
-    Dojo session and no file writes. It prints, in order:
-
-    - sanity-gate pass/fail counts;
-    - an ASCII bar chart of success rate per (model, rung);
-    - a detailed per-(rung, model) verdict-breakdown table (with a
-      ``trunc`` column -- rows whose ``raw_response``/``content``
-      opened a ``<think>`` block it never closed; always 0 for models
-      that never emit one); and
-    - per-model token/success totals.
-
-    When the sweep recorded more than one replicate for at least one
-    (model, rung, theorem_id, k) cell, two more tables follow: a pass@N
-    table, broken down per (rung, model), and its per-model rollup. A cell
-    counts as a pass@N pass if ANY of its replicates verified; N is the
-    max replicate count seen across all cells. Sweeps with exactly one
-    replicate per cell everywhere (the common, non-replicated case) omit
-    both tables.
+    Returns 1 when `path` has no cell rows, else 0. `path` is user-supplied and
+    unfiltered, so it is checked against `runner.reject_superseded_rows` first —
+    a retired file's rows parse cleanly and would aggregate into a complete,
+    plausible, wrong summary.
     """
     from collections import defaultdict
 
@@ -662,33 +530,13 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_run_sweep(args: argparse.Namespace) -> int:
-    """Run a YAML-described sweep with resumability.
+    """Run a YAML-described sweep with resumability; requires `lean_dojo`.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``--config`` (path to the sweep YAML, parsed with
-        `yaml.safe_load` and passed to `runner.sweep` as `config`),
-        ``--out`` (output run dir; defaults to
-        ``results_root() / "runs" / run_name``, where `run_name` is
-        ``config["run_name"]`` or a freshly generated
-        `runner.new_run_id()`), and ``--fresh`` (disables resume --
-        `runner.sweep`'s `resume` parameter is passed ``not args.fresh``).
-
-    Returns
-    -------
-    int
-        0 when `runner.sweep` returns a non-negative row count -- in
-        practice always, since `sweep` has no path that returns a negative
-        count; 1 otherwise.
-
-    Notes
-    -----
-    This requires `lean_dojo`: it reaches `smolbench.deduction.lean.verify`
-    indirectly through `runner.sweep`'s lazily-resolved default verifier
-    (see the module docstring's dependency split). All other side effects
-    (output directory layout, resumability, manifest/analysis writing)
-    belong to `runner.sweep` -- see that function's docstring.
+    ``--config`` is `yaml.safe_load`ed into `runner.sweep`'s `config`; ``--out``
+    defaults to ``results_root()/runs/<config["run_name"] or new_run_id()>``;
+    ``--fresh`` passes ``resume=False``. All side effects (output layout,
+    resume, manifest/analysis writing) belong to `runner.sweep`. Returns 0 in
+    practice — `sweep` never returns a negative count.
     """
     import yaml
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -701,27 +549,10 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     """For one model, compare two rungs cell-by-cell on a run dir.
 
-    Reports regressions (rung_a ✓, rung_b ✘) and improvements (rung_a ✘,
-    rung_b ✓), plus per-theorem candidate snippets and lean_error first lines.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``run_dir`` (positional; must contain ``all_rows.jsonl``),
-        ``model``, ``rung_a``, ``rung_b`` (positional filters), ``--replicate``
-        (which replicate index to compare when a cell has more than one), and
-        ``--regressions-only`` (suppress the improvements section).
-
-    Returns
-    -------
-    int
-        2 when ``<run_dir>/all_rows.jsonl`` does not exist; 0 otherwise.
-
-    Notes
-    -----
-    This needs no Lean toolchain -- it does pure JSONL comparison, with no
-    Dojo session and no file writes. See `_dump` for the shared
-    regressions/improvements printer.
+    Pure JSONL comparison over ``<run_dir>/all_rows.jsonl``: no Lean toolchain,
+    no writes. Reports regressions (rung_a ✓ → rung_b ✘) and improvements
+    (unless ``--regressions-only``), comparing only replicate index
+    ``--replicate``. Returns 2 when ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     all_rows = run_dir / "all_rows.jsonl"
@@ -782,28 +613,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
         print(f"  only-{args.rung_b}-present: {only_b}  (likely trivial-skipped at {args.rung_a})")
 
     def _dump(label: str, items: list[tuple[str, dict, dict]]) -> None:
-        """Print one labeled section of `cmd_compare`'s regressions/improvements.
+        """Print one labeled section of ``(theorem_id, row_a, row_b)`` triples.
 
-        Parameters
-        ----------
-        label : str
-            Section heading (e.g. ``"REGRESSIONS — ..."``).
-        items : list of (str, dict, dict)
-            ``(theorem_id, rung_a_row, rung_b_row)`` triples, as
-            accumulated by the enclosing `cmd_compare` call.
-
-        Returns
-        -------
-        None
-            This prints directly to stdout. It is a no-op (no output, not
-            even the heading) when `items` is empty.
-
-        Notes
-        -----
-        For each item, this prints the theorem id, step `k`, the
-        prompt-token delta between the two rungs, the (truncated)
-        ground-truth tail, and each rung's verdict plus a truncated
-        candidate proof and first `lean_error` line.
+        Prints nothing at all, not even `label`, when `items` is empty.
         """
         if not items:
             return
@@ -830,28 +642,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_show(args: argparse.Namespace) -> int:
     """Print a theorem's summary.md, or list theorems with pass counts.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``run_dir`` (positional; must contain a ``theorems/``
-        directory) and ``theorem`` (optional positional full_name; when
-        omitted, every theorem under `run_dir` is listed with pass counts
-        instead of one being printed in full).
-
-    Returns
-    -------
-    int
-        2 when ``<run_dir>/theorems`` does not exist; 1 when
-        `args.theorem` was given but no matching ``summary.md`` exists; 0
-        otherwise.
-
-    Notes
-    -----
-    This needs no Lean toolchain -- it reads only ``summary.md``/
-    ``outputs/*.jsonl`` files, with no Dojo session. In listing mode (no
-    `args.theorem`), it tallies each theorem's success rate by
-    re-scanning its ``outputs/*.jsonl`` files directly, instead of
-    reading its (possibly stale) `summary.md`.
+    Reads only ``summary.md``/``outputs/*.jsonl``; no Lean toolchain. Listing
+    mode (no ``theorem`` argument) tallies rates by re-scanning each theorem's
+    ``outputs/*.jsonl`` rather than its possibly-stale `summary.md`. Returns 2
+    when ``<run_dir>/theorems`` is missing, 1 when a named theorem has no
+    ``summary.md``, else 0.
     """
     from .runner import slug_theorem
     run_dir = Path(args.run_dir)
@@ -901,23 +696,10 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_report(args: argparse.Namespace) -> int:
     """Regenerate analysis.txt + per-theorem summary.md from a run dir's durable artifacts.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Consumes ``run_dir`` (positional; must contain ``all_rows.jsonl``).
-
-    Returns
-    -------
-    int
-        2 when ``<run_dir>/all_rows.jsonl`` does not exist; 0 otherwise.
-
-    Notes
-    -----
-    This needs no Lean toolchain -- it delegates to
-    `runner.regenerate_run_artifacts`, which reads only `all_rows.jsonl`
-    and each theorem's `meta.json`/`outputs/*.jsonl`, with no Dojo
-    session. It overwrites `run_dir`'s `analysis.txt` and every
-    `theorems/*/summary.md` in place.
+    Delegates to `runner.regenerate_run_artifacts`, which reads only
+    `all_rows.jsonl` and each theorem's `meta.json`/`outputs/*.jsonl` (no Lean
+    toolchain) and OVERWRITES `analysis.txt` and every `theorems/*/summary.md`
+    in place. Returns 2 when ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "all_rows.jsonl").exists():
@@ -929,21 +711,10 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the `smolbench.deduction.lean.cli` argument parser.
+    """Build the CLI parser: one required subcommand (``dest="cmd"``).
 
-    See the module docstring for the `lean_dojo` subcommand split
-    (`replay`/`filter`/`run-cell`/`run-sweep` need `lean_dojo`; everything
-    else needs no Lean toolchain).
-
-    Returns
-    -------
-    argparse.ArgumentParser
-        Parser with one required subcommand (``dest="cmd"``): `metadata`,
-        `list`, `replay`, `filter`, `run-cell`, `run-sweep`, `analyze`,
-        `report`, `show`, `compare`, `prompt-stats`. Each subparser sets
-        its own `func` default to the matching `cmd_*` handler, so `main`
-        dispatches via ``args.func(args)``, with no separate
-        subcommand-name switch.
+    Each subparser sets a `func` default pointing at its `cmd_*` handler, so
+    `main` dispatches via ``args.func(args)`` with no name switch.
     """
     p = argparse.ArgumentParser(prog="python -m smolbench.deduction.lean.cli")
     sub = p.add_subparsers(required=True, dest="cmd")
@@ -1042,26 +813,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for ``python -m smolbench.deduction.lean.cli <subcommand> ...``.
+    """Parse `argv` (`None` = ``sys.argv[1:]``) and return the subcommand's exit code.
 
-    Parameters
-    ----------
-    argv : list of str or None, default None
-        Argument vector to parse (excluding the program name); `None`
-        parses `sys.argv[1:]` (`argparse`'s default behavior).
-
-    Returns
-    -------
-    int
-        The dispatched subcommand's own exit code -- see the corresponding
-        `cmd_*` function's ``Returns`` section.
-
-    Notes
-    -----
-    `argparse` calls `sys.exit` on a missing or unknown subcommand,
-    ``-h``/``--help``, or malformed arguments. This is standard `argparse`
-    CLI behavior, and it triggers before this function's own body ever
-    runs.
+    `argparse` calls `sys.exit` on ``-h``, a missing/unknown subcommand, or
+    malformed arguments, before this function returns.
     """
     args = build_parser().parse_args(argv)
     return args.func(args)

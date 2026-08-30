@@ -3,14 +3,11 @@
 `corpus.jsonl` has one record per Lean source file in the traced repo:
     {path, imports: [paths], premises: [{full_name, code, start, end, kind}]}
 
-This module exposes three layers of premise data:
-
-- `signature(p)` — the prefix of `code` before the first top-level `:=`.
-- `body(p)` — the corpus's `code` field (signature-only for theorems,
-  includes `:= body` for `def`s).
-- `body_with_proof(p)` — slices the source file from the premise's `start`
-  to the next top-level declaration. This captures the proof body for
-  theorems too.
+Three layers of premise text: `signature(p)` (the prefix of `code` before
+the first top-level `:=`), `body(p)` (the corpus's `code` field:
+signature-only for theorems, `:= body` included for `def`s), and
+`body_with_proof(p)` (slices the source file from the premise's `start` to
+the next top-level declaration, so theorem proof bodies are captured too).
 """
 
 from __future__ import annotations
@@ -28,13 +25,11 @@ from .corpus import data_root
 class Premise:
     """One premise (theorem/def/instance/etc.) declared in the traced repo.
 
-    Built from one entry of a `corpus.jsonl` record's ``premises`` list
-    (see `_index`). This is distinct from
-    ``smolbench.deduction.lean.corpus.TracedTactic.premises`` -- the
-    lighter, per-reference dicts recorded inline in a proof step.
-    ``full_name`` is the join key between the two: `context.py`'s
-    hint-chain rendering looks each `TracedTactic.premises` entry up in
-    this class's index via `lookup`.
+    Built from one entry of a `corpus.jsonl` record's ``premises`` list. Distinct
+    from the lighter per-reference dicts in
+    ``smolbench.deduction.lean.corpus.TracedTactic.premises``; ``full_name`` is the
+    join key between the two, which `context.py`'s hint-chain rendering resolves via
+    `lookup`.
     """
 
     #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``), unique
@@ -97,46 +92,23 @@ def _index() -> dict[str, Premise]:
 
 
 def lookup(full_name: str) -> Premise | None:
-    """Look up a premise by its fully-qualified name.
+    """Look up a premise by fully-qualified name; None when absent.
 
-    Parameters
-    ----------
-    full_name : str
-        Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
-
-    Returns
-    -------
-    Premise or None
-        The indexed `Premise`, or None if `full_name` is not present in
-        the corpus index (e.g. declared outside the traced repo, or
-        dropped as a duplicate by `_index`'s collision handling). Every
-        caller in this module and in `context.py` treats a None result as
-        "premise unavailable" rather than an error condition. For
-        example, ``context._render_hint_parts`` renders a "(not found in
-        premise corpus)" placeholder instead of raising.
+    Absent means declared outside the traced repo, or dropped as a duplicate by
+    `_index`'s collision handling. Every caller here and in `context.py` treats None
+    as "premise unavailable" rather than an error -- ``context._render_hint_parts``
+    renders a "(not found in premise corpus)" placeholder instead of raising.
     """
     return _index().get(full_name)
 
 
 def signature(p: Premise) -> str:
-    """Get the premise signature: the code prefix before the first top-level `:=`.
+    """The premise signature: `p.code` up to the first top-level `:=`, rstripped.
 
-    Parameters
-    ----------
-    p : Premise
-        Premise to extract the signature from.
-
-    Returns
-    -------
-    str
-        `p.code` up to (excluding) the first top-level `:=`, with
-        trailing whitespace stripped. "Top-level" means outside any `[]`,
-        `()`, or `{}` brackets. Lean attribute syntax like
-        `@[to_additive (attr := simp) "..."]` puts a `:=` inside the
-        attribute, so a naive split would chop the declaration in half.
-        Many mathlib theorems have no `:=` at all in `code` (the corpus
-        slice ends at the type signature); this returns the full `code`
-        for those.
+    "Top-level" means outside any ``[]``, ``()`` or ``{}``: Lean attribute syntax
+    like ``@[to_additive (attr := simp) "..."]`` puts a ``:=`` inside the attribute,
+    so a naive split would chop the declaration in half. Many mathlib theorems have
+    no ``:=`` in `code` at all; those return the full `code`.
     """
     s = p.code
     depth = 0
@@ -154,18 +126,8 @@ def signature(p: Premise) -> str:
 
 
 def body(p: Premise) -> str:
-    """Get the premise source as captured in `corpus.jsonl`.
-
-    Parameters
-    ----------
-    p : Premise
-        Premise to read.
-
-    Returns
-    -------
-    str
-        `p.code`: signature-only for theorems, signature plus ``:= body``
-        for defs.
+    """The premise source as captured in `corpus.jsonl` (`p.code`): signature-only
+    for theorems, signature plus ``:= body`` for defs.
     """
     return p.code
 
@@ -201,20 +163,7 @@ def _traced_root() -> Path:
 
 
 def _resolve_source(file_path: str) -> Path | None:
-    """Resolve a corpus file_path to an absolute path on disk.
-
-    Parameters
-    ----------
-    file_path : str
-        Either `Mathlib/...` (lives directly under the traced mathlib4
-        root) or `.lake/packages/.../*.lean` (lives under
-        `<traced_root>/.lake/packages`).
-
-    Returns
-    -------
-    Path or None
-        The resolved absolute path, or None if it does not exist on disk.
-    """
+    """Resolve a corpus `file_path` against the traced repo root; None if absent."""
     root = _traced_root()
     if file_path.startswith(".lake/"):
         candidate = root / file_path
@@ -227,25 +176,12 @@ def _resolve_source(file_path: str) -> Path | None:
 def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: int = 200) -> str:
     """Slice the full declaration (statement + proof body) from a source file.
 
-    Parameters
-    ----------
-    file_path : str
-        Corpus-relative path to the source file (see `_resolve_source`).
-    start_line : int
-        1-indexed line where the declaration starts (matches the corpus).
-    end_line : int
-        1-indexed line where the declaration's recorded span ends.
-    max_lines : int, default 200
-        Maximum number of lines to read from `start_line`.
-
-    Returns
-    -------
-    str
-        The slice, with trailing whitespace stripped, or `""` if the
-        source file is not found. This function reads from `start_line`
-        and stops at the first of: the next line at column 0 matching a
-        top-level keyword (theorem/def/...), `max_lines` lines consumed,
-        or end of file.
+    Reads `file_path` (corpus-relative, via `_resolve_source`) from
+    1-indexed `start_line`, and stops at the first of: the next line at
+    column 0 matching a top-level keyword (theorem/def/...), searching
+    from 1-indexed `end_line` onward; `max_lines` lines consumed; or end
+    of file. Returns the slice with trailing whitespace stripped, or `""`
+    if the source file is not found.
     """
     src = _resolve_source(file_path)
     if src is None:
@@ -264,19 +200,8 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
 
 
 def body_with_proof(p: Premise) -> str:
-    """Slice the full declaration, including any proof body, from the source file.
-
-    Parameters
-    ----------
-    p : Premise
-        Premise to slice.
-
-    Returns
-    -------
-    str
-        The sliced declaration, via `slice_full_decl`. Falls back to
-        `body(p)` (the corpus `code` field) if the source file is not
-        accessible.
+    """The full declaration including any proof body, via `slice_full_decl`;
+    falls back to `body(p)` if the source file is not accessible.
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
@@ -321,14 +246,9 @@ _LEAN_NOISE = frozenset({
 def _short_name_index() -> dict[str, list[str]]:
     """Map each premise's last-dot segment to the list of full_names sharing it.
 
-    Returns
-    -------
-    dict of str to list of str
-        Short name -> `full_name`s that share it. Lean 4 / mathlib uses
-        heavy namespacing. References in proof bodies are sometimes fully
-        qualified (`Set.subset_def`) and sometimes just the short name
-        (after `open Set`). This index lets `referenced_premises` match
-        the short-name form.
+    Proof bodies reference premises both fully qualified
+    (``Set.subset_def``) and by bare short name (after ``open Set``); this
+    index lets `referenced_premises` match the latter.
     """
     out: dict[str, list[str]] = {}
     for full in _index().keys():
@@ -339,24 +259,13 @@ def _short_name_index() -> dict[str, list[str]]:
 
 @lru_cache(maxsize=4096)
 def referenced_premises(full_name: str) -> tuple[Premise, ...]:
-    """Find premises referenced by name in `full_name`'s body.
+    """Find premises referenced by name in `full_name`'s body (proof plus signature).
 
-    Parameters
-    ----------
-    full_name : str
-        Fully-qualified name of the premise whose body to scan.
-
-    Returns
-    -------
-    tuple of Premise
-        Premises referenced in the body (proof plus signature) of
-        `full_name`. This function tokenizes the body, then looks up
-        each identifier-like token in the premise index, by exact
-        full-name match or by short-name match (only when unambiguous).
-        It filters out Lean keywords, common tactics, and very common
-        short identifiers (see `_LEAN_NOISE`). The result is a tuple, so
-        it stays hashable and lru-cacheable. Returns an empty tuple if
-        `full_name` is not found, or has no recognizable references.
+    Resolves each identifier-like token against the premise index by exact full-name
+    match, or by short-name match when unambiguous, filtering out Lean keywords,
+    common tactics and very common short identifiers (`_LEAN_NOISE`). Returns a
+    tuple so the result stays hashable and lru-cacheable; empty if `full_name` is
+    not found or has no recognizable references.
     """
     p = lookup(full_name)
     if p is None:
@@ -390,52 +299,20 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 def premise_dep_closure(
     seeds: list[Premise], depth: int, max_premises: int = 500,
 ) -> list[Premise]:
-    """Run a BFS over per-premise references, to depth `depth`.
+    """Run a BFS over per-premise references from `seeds`, to depth `depth`.
 
-    This finds premises reachable from `seeds` within `depth` hops, in
-    BFS order (closest first). It excludes the seeds themselves, and caps
-    the result at `max_premises` to keep prompts bounded; truncation
-    drops the deepest discoveries first.
+    `seeds` are typically a tactic's true premises, resolved via `lookup`;
+    they are excluded from the result. ``depth <= 0``, or an empty `seeds`,
+    short-circuits to ``[]`` without calling `referenced_premises` at all.
+    `max_premises` caps the result to keep prompts bounded: the BFS returns
+    as soon as ``len(out) >= max_premises`` -- mid-hop, and even
+    mid-frontier-item, without finishing the premise being expanded or the
+    rest of that hop's frontier.
 
-    Parameters
-    ----------
-    seeds : list of Premise
-        Starting premises. Typically the true premises used in a tactic,
-        already resolved via `lookup`. The BFS walks outward from each
-        seed's per-premise reference graph (`referenced_premises`).
-    depth : int
-        Number of BFS hops to expand. `depth <= 0`, or an empty `seeds`,
-        short-circuits to an empty list, without calling
-        `referenced_premises` at all.
-    max_premises : int, default 500
-        Hard cap on the number of premises returned. The BFS returns as
-        soon as `len(out) >= max_premises` is reached -- mid-hop, and
-        even mid-frontier-item if needed. It does not finish the
-        remaining references of the premise it is currently expanding,
-        or the rest of that hop's frontier.
-
-    Returns
-    -------
-    list of Premise
-        Premises reachable from `seeds`, in BFS order: every hop-``n``
-        premise precedes every hop-``(n+1)`` premise. Within a hop, order
-        follows frontier-iteration order, then per-premise reference
-        order. Excludes `seeds` themselves, and any premise already
-        discovered at a shallower hop. A `visited` set dedupes across
-        hops, so a premise referenced by multiple frontier premises
-        appears once, at its first-discovered hop.
-
-    Notes
-    -----
-    Discovery order is strictly hop-major, so truncating the output at
-    `max_premises` always drops the deepest (least-relevant) tail of that
-    order first. A hop-1 premise already appended to `out` is never
-    displaced by, or dropped in favor of, a hop-2 discovery.
-
-    Each hop's cost is bounded by `referenced_premises`'s own
-    ``lru_cache(maxsize=4096)``. Repeated calls that share seeds across
-    different (theorem, k) cells reuse prior tokenization/lookup work,
-    instead of repeating it.
+    Returns the premises reachable from `seeds` in strictly hop-major BFS
+    order (within a hop: frontier order, then per-premise reference order),
+    deduped across hops at their first-discovered hop -- so the
+    `max_premises` cut always drops the deepest, least-relevant tail.
     """
     if depth <= 0 or not seeds:
         return []

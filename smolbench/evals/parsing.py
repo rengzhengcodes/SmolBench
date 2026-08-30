@@ -1,46 +1,24 @@
 """Separate "wrong" from "wrongly formatted" when extracting an answer.
 
-Why this exists
-----------------
-The eval prompts give an explicit output contract. Chromatic's contract is
+The eval prompts carry an explicit output contract ("exactly one of True/False
+and nothing else" for chromatic, "exactly one integer and nothing else" for the
+periodic studies). The strict graders in ``smolbench.evals.quiz`` conflate a
+wrong answer with a right answer in the wrong format, in both directions:
+``ToF.condition`` raises on ``"Answer: False"``, while ``Numeric.condition``
+takes the FIRST integer, silently scoring ``"2520 // 8 = 315\\n\\n315"`` as 2520.
 
-    Return exactly one of these two strings and nothing else:
-    True
-    False
+This module extracts the answer robustly and reports the contract violation
+SEPARATELY (see the label constants below), so an analysis can ask "how often
+was the model right?" and "how often did it obey the instructions?"
+independently. That split is load-bearing for the induction benchmarks: the
+token-matched whitespace pad of the ``noise_intens`` arm, meant to control only
+for LENGTH, measurably degrades instruction following too.
 
-and the periodic studies' contract is "Return exactly one integer and
-nothing else." The original graders enforced that contract by *parsing
-strictly*. Strict parsing conflated two very different events:
-
-* the model got the question wrong, and
-* the model got the question right but ignored the output contract.
-
-Both events landed in the same bucket. ``ToF.condition`` strips
-non-alphabetic characters and demands the remainder be exactly
-``true``/``false``. So ``"Answer: False"`` becomes ``"AnswerFalse"`` and
-raises -- an invalid mark, which counts as a failure. ``Numeric.condition``
-failed the opposite way: it takes the FIRST integer anywhere. So
-``"2520 // 8 = 315\\n\\n315"`` is scored as 2520, the operand rather than
-the result -- a mark that looks validly graded and is simply wrong.
-
-This module extracts the answer robustly, and reports the contract
-violation separately. An analysis can then ask "how often was the model
-right?" and "how often did it obey the instructions?" as two different
-questions. That distinction is load-bearing for the induction benchmarks:
-the token-matched whitespace pad in the ``noise_intens`` arm measurably
-degrades instruction following. An arm meant only to
-control for LENGTH was also silently penalizing format compliance.
-
-Recovery is deliberately conservative
----------------------------------------
-Mining a verdict from anywhere in a response fires on reasoning chains
-TRUNCATED by the completion budget, inventing verdicts out of unfinished
-reasoning. So a long response is only mined when it ENDS in a verdict;
-otherwise it stays unparseable and gets the `TRUNCATED` label.
-
-Repetition collapse gets its own label for the same reason: it is not a
-parsing problem. A model that spends its whole budget emitting one repeated
-token produced no answer for any parser to recover.
+Recovery is deliberately conservative: mining a verdict from anywhere in a
+response would invent verdicts out of chains cut off by the completion budget,
+so a long response is mined only when it ENDS in a verdict and otherwise gets
+the `TRUNCATED` label. Repetition collapse gets its own `DEGENERATE` label for
+the same reason -- calling it a parse failure would misattribute the finding.
 """
 
 import ast
@@ -136,18 +114,9 @@ _TERMINAL_INT = re.compile(
 
 @dataclass(frozen=True)
 class ParseResult:
-    """One response's extracted answer, plus its contract compliance.
-
-    Attributes
-    ----------
-    value : Answer or None
-        The extracted answer, or None when this module could extract
-        nothing.
-    violation : str or None
-        None when the response obeyed the output contract exactly.
-        Otherwise, one of this module's labels, naming how the response
-        broke the contract.
-    """
+    """One response's extracted answer (None when nothing could be extracted)
+    plus its contract compliance: ``violation`` is None when the response obeyed
+    the output contract exactly, otherwise one of this module's labels."""
 
     value: Optional[Answer]
     violation: Optional[str]
@@ -166,30 +135,16 @@ class ParseResult:
 def is_degenerate(text: str) -> bool:
     """Return whether `text` is repetition collapse rather than an answer.
 
-    This check is structural, not pattern-based. A long stretch drawn
-    from a tiny alphabet is degenerate, whatever character it happens to
-    repeat.
-
-    Three shapes have been observed live, all under the whitespace-padded
-    noise arm:
-
-    * Collapse from the start. Nemotron-Ultra-253B emitted 24,576
-      characters of "0", the whole completion budget, with nothing else.
-    * Collapse after a real beginning. Olmo-3.1-32B-Think started
-      reasoning, then broke down into about 16,400 repeated U+2010
-      hyphens until the budget ran out.
-    * Collapse onto a PHRASE rather than a character. Llama-4-Maverick
-      looped ``"## Step 1\\n\\n"`` for the whole budget. Its alphabet is
-      wide (letters, digits, punctuation), so a character-level test sees
-      nothing wrong, and the response gets mislabeled as a mere
-      formatting problem.
-
-    The second shape is why this function checks the tail separately.
-    The third shape is why it checks words as well as characters. Getting
-    this wrong is not cosmetic: labeling a collapse `TRUNCATED` blames
-    the completion budget, and labeling it `MULTIPLE_VALUES` blames the
-    parser, when the real finding is that the condition breaks the model
-    outright.
+    The check is structural, not pattern-based: a long stretch drawn from a tiny
+    alphabet is degenerate whatever it repeats. Three shapes seen live, all
+    under the whitespace-padded noise arm, motivate the three tests: collapse
+    from the start (Nemotron-Ultra-253B: 24,576 characters of "0"), collapse
+    after a real beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens after
+    genuine reasoning -- hence the TAIL check), and collapse onto a PHRASE with
+    a wide character alphabet (Llama-4-Maverick looping
+    ``"## Step 1\\n\\n"`` -- hence the WORD checks). Misclassifying these is not
+    cosmetic: `TRUNCATED` blames the completion budget and `MULTIPLE_VALUES`
+    blames the parser, when the finding is that the condition breaks the model.
     """
     stripped = text.strip()
     if not stripped:
@@ -230,25 +185,12 @@ _ARITHMETIC_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod
 
 
 def _eval_arithmetic(text: str) -> Optional[int]:
-    """Evaluate a bare arithmetic expression, or return None.
+    """Evaluate a bare arithmetic expression (``"2520/2"`` -> 1260), or None.
 
-    A model sometimes answers a counting question with the calculation
-    rather than its result -- ``"2520/2"`` when 1260 was asked for. Both
-    naive extraction rules mis-grade that case: the first integer is the
-    numerator, the last is the divisor, and neither is the answer the
-    model actually gave.
-
-    This function walks a validated AST, instead of calling ``eval``. It
-    honors only numeric literals and the operators in
-    `_ARITHMETIC_BINOPS`, so nothing here can execute arbitrary code, even
-    if a response is hostile.
-
-    Returns
-    -------
-    Optional[int]
-        The value, when the expression is well-formed and integral
-        (2520/2 is 1260.0, which counts). None otherwise, including for a
-        division by zero or a non-integral result.
+    Walks a validated AST instead of calling ``eval``, honoring only numeric
+    literals and `_ARITHMETIC_BINOPS`, so a hostile response cannot execute
+    code. Returns None for a malformed expression, division by zero, or a
+    non-integral result (2520/2 = 1260.0 counts as integral).
     """
     if not _ARITHMETIC_ONLY.fullmatch(text) or not any(c.isdigit() for c in text):
         return None
@@ -290,14 +232,12 @@ def _eval_arithmetic(text: str) -> Optional[int]:
 
 
 def _safe_int(digits: str) -> Optional[int]:
-    """Convert `digits` to int, or return None when it is absurdly long.
+    """Convert `digits` to int, or return None past `_MAX_ANSWER_DIGITS`.
 
-    This function guards two things at once. Python refuses int/str
-    conversion beyond 4,300 digits and raises ValueError, so an unguarded
-    ``int()`` in the grading path would crash rather than produce a bad
-    grade. That crash took a live run down once, when a model emitted a
-    20,379-digit run. A number that long is also not a plausible answer:
-    these quizzes count occurrences, bounded by lcm(1..9) = 2520.
+    Python raises ValueError on int/str conversion beyond 4,300 digits, so an
+    unguarded ``int()`` crashes grading -- it took a live run down when a model
+    emitted a 20,379-digit run. No such number is a plausible answer: these
+    quizzes count occurrences, bounded by lcm(1..9) = 2520.
     """
     stripped = digits.lstrip("-")
     if len(stripped) > _MAX_ANSWER_DIGITS:
@@ -316,9 +256,9 @@ def _preamble(text: str) -> Optional[str]:
 def parse_tof(text: str) -> ParseResult:
     """Extract a True/False verdict, and classify contract compliance.
 
-    The contract is "return exactly one of these two strings and nothing
-    else". So anything beyond a bare ``True``/``False`` is a violation,
-    even when this function can still recover the verdict.
+    The contract is "return exactly one of these two strings and nothing else",
+    so anything beyond a bare ``True``/``False`` is a violation even when the
+    verdict is still recovered.
     """
     if not text or not text.strip():
         return ParseResult(None, EMPTY)
@@ -371,10 +311,9 @@ def parse_tof(text: str) -> ParseResult:
 def parse_numeric(text: str) -> ParseResult:
     """Extract an integer answer, and classify contract compliance.
 
-    The contract is "return exactly one integer and nothing else". So
-    prose, markup, or a worked calculation around the number are all
-    violations. The worked-calculation case is the dangerous one: picking
-    the first integer would score an operand.
+    The contract is "return exactly one integer and nothing else", so prose,
+    markup, or a worked calculation around the number are all violations. The
+    worked calculation is the dangerous case: the first integer is an operand.
     """
     if not text or not text.strip():
         return ParseResult(None, EMPTY)
@@ -429,9 +368,8 @@ def parse_numeric(text: str) -> ParseResult:
 def parse_for(question: QnA, text: str) -> ParseResult:
     """Parse `text` with the extractor matching `question`'s answer type.
 
-    For any QnA subclass this module does not special-case, this
-    function falls back to the question's own strict ``condition``,
-    instead of being silently mis-parsed.
+    A QnA subclass this module does not special-case falls back to the
+    question's own strict ``condition`` rather than being mis-parsed.
     """
     if isinstance(question, ToF):
         return parse_tof(text)

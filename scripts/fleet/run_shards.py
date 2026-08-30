@@ -1,48 +1,32 @@
 """Babysit direct (supervisor-less) ``run_study.py`` shard fleets.
 
-``scripts/fleet/run_fleet.py`` supervises one-model-per-box lanes. Some
-runs instead launch ``notebooks/induction/run_study.py`` DIRECTLY, one
-process per ``INDUCTION_SHARD``. A direct process that dies (spot reclaim,
-a capacity-exhausted hunt, a crash) stays dead. This script closes that gap
-for ONE shard group:
+Some induction runs launch ``notebooks/induction/run_study.py`` DIRECTLY, one
+process per ``INDUCTION_SHARD``, instead of the one-model-per-box lanes
+``run_fleet.py`` supervises -- and such a process stays dead once it dies. This
+script supervises ONE shard group: it ADOPTS already-running shards (matched on
+``INDUCTION_MODELS``/``INDUCTION_SHARD`` in ``/proc/<pid>/environ``) rather than
+double-launching them, so it is safe to start mid-run; it relaunches a dead
+shard on the hand-launch environment recipe, so the relaunch REATTACHES to a
+still-live box through its state file, or provisions a fresh one; it HALTS a
+shard that dies within ``FAST_CRASH_SECONDS`` of launch ``MAX_FAST_CRASHES``
+times in a row, except for capacity-exhausted hunts (``CAPACITY_MARKER``),
+which retry indefinitely on a longer backoff; and on a shard's clean exit it
+terminates that shard's instance through its state file, since direct runs do
+no teardown of their own and the box would otherwise idle about 30 minutes
+until the on-box watchdog fires. It exits once every shard is complete or
+halted, non-zero if any halted.
 
-* This script **adopts** already-running shard processes, matched by
-  ``INDUCTION_MODELS`` and ``INDUCTION_SHARD`` in ``/proc/<pid>/environ``,
-  instead of double-launching them. You can safely start this script while
-  a hand-launched fleet is mid-run.
-* This script relaunches a dead shard with a 60 s backoff. It reuses the
-  exact environment recipe of the hand launches, so a relaunch REATTACHES
-  to a still-live box through the state file, or provisions a fresh box
-  if the old box is gone.
-* This script classifies a shard as HALTED if it dies within
-  ``FAST_CRASH_SECONDS`` of launch three times in a row. This is a crash
-  loop no relaunch will fix (for example, a SystemExit from a bad
-  environment). This script then stops relaunching that shard, and
-  reports the halt loudly.
-* On a shard's clean completion (exit 0), this script terminates that
-  shard's instance through its state file. Direct runs deliberately do no
-  teardown of their own (the "fleet-owned" lifecycle contract), so
-  without this step, every finished box would idle for about 30 minutes
-  until the on-box watchdog fires.
-* This script exits once every shard is complete or halted. It returns a
-  non-zero exit code if any shard halted.
-
-Credentials and config: this script inherits its environment. Launch it
-from a shell that has sourced ``notebooks/induction/keys.env`` and
-``notebooks/ec2-operator.env``, exactly like the hand launches. This
-script adds per-shard variables to each child process on top of that.
-
-Usage (one invocation per shard group, detached)::
+Launch it from a shell that has sourced ``notebooks/induction/keys.env`` and
+``notebooks/ec2-operator.env``: children inherit this process's environment,
+with only per-shard variables layered on top. ``--count 1 --no-shard``
+supervises a single unsharded run, and then needs explicit ``--tag`` and
+``--state-file``, there being no shard suffix to derive them from::
 
     setsid nohup .venv/bin/python -u scripts/fleet/run_shards.py \\
         --model gemma-4-12b --count 3 --force-rerun 1 \\
         --types g7.12xlarge --regions us-east-2,us-west-2,us-east-1 \\
         --request-timeout 10800 \\
         >> notebooks/induction/results/fleet_logs/shards_gemma-4-12b.log 2>&1 &
-
-Pass ``--count 1 --no-shard`` to supervise a single unsharded run. In that
-case you must pass ``--tag`` and ``--state-file`` explicitly, because there
-is no shard suffix to derive them from.
 """
 
 from __future__ import annotations
@@ -81,25 +65,11 @@ CAPACITY_BACKOFF_SECONDS = 300
 def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
     """Build the complete child environment for shard `index`.
 
-    This function mirrors the hand-launch recipe byte-for-byte: it starts
-    from the inherited base environment (keys.env plus operator
-    credentials, sourced by the launching shell), and layers per-shard
-    variables on top. For sharded groups, the driver itself derives the
-    per-shard tag and state-file suffix from ``INDUCTION_SHARD``. So
-    passing the same base ``EC2_EXPERIMENT_TAG`` yields the same tags as
-    the hand launches. This is what makes adoption and reattach seamless.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed CLI options.
-    index : int
-        Shard index in ``0..count-1``.
-
-    Returns
-    -------
-    Dict[str, str]
-        Environment for the child process.
+    Mirrors the hand-launch recipe: the inherited base environment (keys.env
+    plus operator credentials) plus per-shard variables. Passing the same base
+    ``EC2_EXPERIMENT_TAG`` yields the same tags as the hand launches -- the
+    driver derives the per-shard tag and state-file suffix from
+    ``INDUCTION_SHARD`` -- which is what makes adoption and reattach seamless.
     """
     env = dict(os.environ)
     env["INDUCTION_MODELS"] = args.model
@@ -119,25 +89,12 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 
 
 def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
-    """Find the PID of a live ``run_study.py`` process for (`model`, `shard`).
+    """Return the PID of a live ``run_study.py`` process for (`model`, `shard`), or None.
 
-    This function matches through ``/proc/<pid>/environ``:
-    ``INDUCTION_MODELS`` must equal `model`, and ``INDUCTION_SHARD`` must
-    equal `shard` (or be absent when `shard` is ``None``). The first match
-    wins. The launch discipline guarantees at most one process per (model,
-    shard).
-
-    Parameters
-    ----------
-    model : str
-        Spec key (e.g. ``"gemma-4-12b"``).
-    shard : Optional[str]
-        ``"i/n"`` selector, or ``None`` for an unsharded run.
-
-    Returns
-    -------
-    Optional[int]
-        A live PID, or ``None``.
+    Matches through ``/proc/<pid>/environ``: ``INDUCTION_MODELS`` equal to
+    `model` and ``INDUCTION_SHARD`` equal to `shard` (``"i/n"``, or ``None`` for
+    an unsharded run). First match wins; the launch discipline guarantees at
+    most one process per (model, shard).
     """
     try:
         pids = subprocess.run(
@@ -161,23 +118,11 @@ def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
 
 
 def state_file_for(args: argparse.Namespace, index: int) -> Path:
-    """Return the shard's EC2 state file path, anchored at the repo root.
+    """Return shard `index`'s EC2 state file path, anchored at the repo root.
 
     Sharded runs derive ``.ec2_state_induction-<model>-s<i>of<n>.json``
-    (this mirrors ``run_study``'s ``_LANE`` suffix). Unsharded runs use
+    (mirroring ``run_study``'s ``_LANE`` suffix); unsharded runs use
     ``--state-file`` verbatim.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed CLI options.
-    index : int
-        Shard index in ``0..count-1``.
-
-    Returns
-    -------
-    Path
-        The state file path.
     """
     if args.no_shard:
         return REPO / args.state_file
@@ -185,19 +130,11 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
 
 
 def terminate_shard_box(args: argparse.Namespace, index: int) -> None:
-    """Make a best-effort attempt to terminate a completed shard's instance.
+    """Best-effort terminate of completed shard `index`'s instance, via its state file.
 
-    Direct runs do no teardown, by contract. This function reclaims the
-    box the moment its shard finishes, instead of waiting about 30
-    minutes for the on-box idle watchdog. This function logs and
-    swallows any failure; the watchdog is the backstop.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed CLI options.
-    index : int
-        Shard index in ``0..count-1``.
+    Direct runs do no teardown by contract, so this reclaims the box at once
+    instead of waiting about 30 minutes for the on-box idle watchdog. Any
+    failure is logged and swallowed; that watchdog is the backstop.
     """
     path = state_file_for(args, index)
     try:

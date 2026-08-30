@@ -1,50 +1,28 @@
 """Build a decontaminated Lean 4 SFT dataset from LeanDojo Benchmark 4.
 
-This module turns the benchmark's *traced tactics* into supervised
-fine-tuning pairs. These pairs LoRA-tune a model on the exact task the
-``smolbench.deduction.lean`` eval scores: given the proof state at step
-``k`` of a theorem, emit the remaining Lean 4 tactics.
+Turns traced tactics into supervised fine-tuning pairs for the exact task the
+``smolbench.deduction.lean`` eval scores: given the proof state at step ``k``,
+emit the remaining Lean 4 tactics.
 
-Two properties make the dataset a faithful, honest training signal:
+- **Prompt-format parity.** ``system``/``user`` are built with the *same*
+  `prompt` / `context` code the eval runner uses -- no train/serve prompt skew.
+- **Decontamination.** Eval theorems are held out by ``full_name``. The
+  benchmark's ``random`` and ``novel_premises`` kinds partition one theorem pool
+  two *different* ways, so a ``novel_premises/test`` theorem can appear in
+  ``random/train``; the explicit name exclusion closes that leak for any
+  ``train_kind``. Training on ``novel_premises/train`` additionally inherits
+  that split's premise-level decontamination.
+- **Context rung.** ``stepk:1`` by default (full tactic state, no premise
+  hints), so training never teaches the model to exploit the eval's
+  answer-conditional ``hint`` rungs.
+- **Target.** The ground-truth tail as raw newline-separated lines, *no code
+  fence* -- what `prompt.SYSTEM` asks for and `prompt.extract_tactic_block`
+  parses back out. At the default ``k_strategy="last"`` the tail is the single
+  final tactic, exactly the cell the headline sweep scores (``k.strategy:
+  last``).
 
-- **Prompt-format parity with the eval.** Each example's ``system`` /
-  ``user`` text is built with the *same* `smolbench.deduction.lean.prompt`
-  / `smolbench.deduction.lean.context` code the runner uses at eval time
-  (`prompt.SYSTEM`, `prompt.build_user_prompt`, `context.render`). So the
-  LoRA sees the identical wire format it will be evaluated under -- no
-  train/serve prompt skew.
-- **Decontamination.** Every theorem used in the eval is held out of the
-  training pool by ``full_name`` (see `iter_dataset`). The benchmark's
-  ``random`` and ``novel_premises`` kinds are two *different*
-  partitionings of the same theorem pool, so a ``novel_premises/test``
-  theorem can appear in ``random/train``. The explicit ``full_name``
-  exclusion here removes that leak, regardless of which ``train_kind`` is
-  used. A run trained on ``novel_premises/train`` also inherits that
-  split's premise-level decontamination (test premises are
-  under-represented in its train split).
-
-Context rung
-------------
-Examples render at ``stepk:1`` by default: the full tactic state (goal +
-hypotheses), with *no* premise hints. This is the canonical
-state-to-tactic formulation used by neural theorem provers. It
-deliberately avoids teaching the model to exploit the eval's
-answer-conditional ``hint`` rungs, which leak the true premises. The eval
-then measures how *added* context (the ``hint``/``noise`` rungs) moves a
-model that was only ever trained on the bare state.
-
-Target
-------
-The assistant target is the ground-truth *tail*: the tactics from step
-``k`` to the end of the proof, rendered as raw newline-separated tactic
-lines (no code fence). This matches what `prompt.SYSTEM` instructs the
-model to produce, and what `prompt.extract_tactic_block` parses back out.
-At the default ``k_strategy="last"``, the tail is the single final
-tactic -- exactly the cell the headline sweep scores (``k.strategy: last``).
-
-This module imports only the generation-side siblings (`corpus`,
-`context`, `prompt`), never `verify`. So it stays importable without
-``lean_dojo``; dataset construction needs no Lean.
+Imports only the generation-side siblings (`corpus`, `context`, `prompt`), never
+`verify`, so it stays importable without ``lean_dojo``.
 """
 
 from __future__ import annotations
@@ -100,22 +78,10 @@ class SFTExample:
 
 
 def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str]:
-    """Collect every theorem ``full_name`` in the given eval splits.
+    """Union of ``full_name`` over `corpus.load_split` of each eval spec.
 
-    Parameters
-    ----------
-    eval_specs : iterable of (kind, split)
-        The ``(SplitKind, Split)`` pairs whose theorems must be held out of
-        training -- typically `DEFAULT_EVAL_SPECS`.
-
-    Returns
-    -------
-    set of str
-        The union of ``full_name`` over `corpus.load_split(kind, split)` for
-        each pair. Uses `load_split` (the whole split), not
-        `iter_replay_passing`, so the holdout is independent of whether the
-        ``filter`` sidecar has been generated yet, and strictly a superset
-        of the theorems any sweep can evaluate.
+    Uses the *whole* split, not `iter_replay_passing`, so the holdout needs no
+    ``filter`` sidecar and is a strict superset of what any sweep can evaluate.
     """
     names: set[str] = set()
     for kind, split in eval_specs:
@@ -127,20 +93,9 @@ def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str
 def tail_target(theorem: BenchmarkTheorem, k: int) -> str:
     """The ground-truth tail from step ``k`` as raw newline-joined tactics.
 
-    Parameters
-    ----------
-    theorem : BenchmarkTheorem
-        Source theorem.
-    k : int
-        0-indexed step the tail starts at; ``0 <= k < len(traced_tactics)``.
-
-    Returns
-    -------
-    str
-        ``"\\n".join(t.tactic for t in theorem.traced_tactics[k:])``,
-        stripped. No code fence: `prompt.SYSTEM` tells the model to emit
-        bare tactic lines, and `prompt.extract_tactic_block` returns the
-        stripped text unchanged when no fence is present.
+    `k` is 0-indexed with ``0 <= k < len(traced_tactics)``. The result is stripped
+    and unfenced: `prompt.SYSTEM` asks for bare tactic lines, and
+    `prompt.extract_tactic_block` returns unfenced text unchanged.
     """
     return "\n".join(t.tactic for t in theorem.traced_tactics[k:]).strip()
 
@@ -164,12 +119,10 @@ def _train_pool(
 ) -> Iterator[BenchmarkTheorem]:
     """Yield the training-theorem pool for ``(kind, split)``.
 
-    ``source="with_proof"`` (default) uses `corpus.iter_with_proof`: every
-    theorem LeanDojo traced at least one tactic for. ``source="replay_passing"``
-    uses `corpus.iter_replay_passing`, restricted to theorems whose
-    recorded ground truth actually replays in Dojo. This needs the
-    ``filter`` sidecar, and is far smaller and slower to produce, but it
-    guarantees each target is a machine-verified valid proof.
+    ``source="with_proof"`` is every theorem with >=1 traced tactic;
+    ``"replay_passing"`` needs the ``filter`` sidecar and is far smaller/slower but
+    guarantees every target is a machine-verified proof. Raises ``ValueError`` on
+    any other value.
     """
     if source == "with_proof":
         return corpus.iter_with_proof(kind, split)
@@ -191,43 +144,22 @@ def iter_dataset(
     seed: int = 1776,
     stats: Optional[dict] = None,
 ) -> Iterator[SFTExample]:
-    """Yield decontaminated `SFTExample`s from the training pool.
+    """Yield decontaminated `SFTExample`s (one per kept theorem, chosen ``k``).
 
-    Every theorem whose ``full_name`` is in the eval holdout
-    (`eval_holdout_names(eval_specs)`) or in `extra_exclude` is skipped
-    *before* any example is emitted, so the generator can never leak an
-    eval theorem into training.
+    Every theorem whose ``full_name`` is in `eval_holdout_names(eval_specs)` or in
+    `extra_exclude` is skipped *before* any example is emitted, so this can never
+    leak an eval theorem into training. `source` selects the pool (`_train_pool`),
+    `k_strategy` the steps (`_choose_ks`), and ``chain``/``level`` the context rung
+    passed to `context.render` (default ``stepk:1``).
 
     Parameters
     ----------
-    train_kind, train_split : SplitKind, Split
-        Which benchmark slice supplies training theorems. Default
-        ``novel_premises/train`` -- see the module docstring for why the
-        ``novel_premises`` kind is preferred.
-    eval_specs : iterable of (kind, split)
-        Splits to hold out; default `DEFAULT_EVAL_SPECS`.
-    extra_exclude : iterable of str
-        Additional ``full_name``s to hold out (e.g. an explicit pilot set),
-        unioned with the eval holdout.
-    source : {"with_proof", "replay_passing"}
-        Training-pool source; see `_train_pool`.
-    k_strategy : {"last", "all", "sample"}
-        Which proof steps become examples; see `KStrategy`.
-    chain, level : Chain, int
-        Context rung to render. Default ``stepk:1`` (full tactic state, no
-        hints). Forwarded to `context.render`.
     seed : int
-        Seeds the RNG used by ``k_strategy="sample"`` (ignored otherwise);
-        makes dataset construction reproducible.
+        Seeds the RNG for ``k_strategy="sample"`` only; ignored otherwise.
     stats : dict, optional
-        If given, populated in place with run counters:
-        ``pool``, ``dropped`` (excluded theorems), ``theorems`` (emitted),
-        ``examples``, and ``excluded`` (holdout-set size).
-
-    Yields
-    ------
-    SFTExample
-        One per (kept theorem, chosen ``k``).
+        If given, populated in place with ``pool``, ``dropped`` (excluded
+        theorems), ``theorems`` (emitted), ``examples``, and ``excluded``
+        (holdout-set size).
     """
     exclude = eval_holdout_names(eval_specs) | set(extra_exclude)
     rng = random.Random(seed)

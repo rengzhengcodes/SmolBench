@@ -1,96 +1,35 @@
 """Audit that all 21 deduction lanes ran the SAME pinned theorems.
 
-WHY THIS EXISTS
----------------
-The family-ladder deduction study compares 21 model checkpoints against
-each other. Every cross-model claim it makes -- ladder contrasts, paired
-McNemar tests, the block bootstrap -- assumes the lanes are *paired*:
-that model A and model B were asked the same questions. Nothing in the
-pipeline enforced that. `notebooks/deduction/run_study.py`'s
-`build_config` draws the theorem pool with
-``random.Random(0).sample(iter_replay_passing(...), 300)``, so the pinned
-set is only as stable as (a) the 805-theorem
-``replay_passing_novel_premises_val.jsonl`` sidecar and (b) the ordering
-of ``novel_premises/val.json``. Both are external data. Neither is in the
-repo any more -- the 2026-08-25 archive moved them to S3 -- so a clean
-clone cannot even *name* the 300 theorems the study ran, let alone check
-them.
+Every cross-model claim of the family-ladder deduction study (ladder contrasts,
+paired McNemar, block bootstrap) assumes the lanes are PAIRED; nothing in the
+pipeline enforced that. Five checks run weakest to strongest, and each can pass
+while the next fails: (1) a byte-identical ``theorems`` block and base ``seed``
+across the lanes' as-run ``manifest.json``, which proves how they were launched,
+not what came back; (2) the same 300 ``theorems/<slug>/`` prefixes in every
+spool; (3) the same 944 ``(theorem, rung)`` output cells, since a lane can hold
+all 300 theorems and still be missing rungs; (4) ``prompts/<rung>.md``
+byte-equal across lanes, compared by S3 ETag (MD5, so no download) -- the
+strongest gate, since equal bytes prove the same theorem at the same step ``k``
+under the same rendered context, and catch a model-dependent ``noise:N``
+padding, which is token-matched and could legitimately differ per tokenizer; and
+(5) other runs sharing this ``theorems`` block staying inside the pinned 944 --
+the additive ``dojoinit_recovery_2026-08-18`` and the deliberately-not-folded
+``flip*`` process-nondeterminism runs -- since a cell outside the pin would mean
+the draw was not deterministic.
 
-This script closes that gap two ways. It reproduces the pin from its
-documented derivation, and -- independently -- it reads back what the 21
-lanes ACTUALLY ran from the S3 spool and diffs those sets against each
-other. The second check is the load-bearing one: config equality proves
-intent, not outcome.
+Layers 4-5 must slug theorem names as `runner.slug_theorem` does, or ~18 phantom
+out-of-set cells per lane are reported. A pass means the lanes were ASKED the
+same questions, not that their surviving data is identical: the published
+analysis ran on smaller pools (707 / 828 / 833), an axis that belongs to
+``scripts/results/audit_run_completeness.py``. Nor does it vouch for the corpus
+(mathlib4 at commit ``fe4454af``, traced 2024-03-24, predates every roster
+model's knowledge cutoff -- see ``notebooks/deduction/README.md``).
 
-WHAT IT CHECKS, WEAKEST TO STRONGEST
-------------------------------------
-Each layer can pass while the next one fails, which is exactly why all
-five run:
-
-1. **Config** -- every lane's as-run ``manifest.json`` carries a
-   byte-identical ``theorems`` block and base ``seed``. Proves the lanes
-   were *launched* the same. Says nothing about what came back.
-2. **Theorem sets** -- the ``theorems/<slug>/`` prefixes in each lane's
-   spool are the same 300. Proves the same theorems were reached.
-3. **Cell keys** -- the ``(theorem, rung)`` output files are the same 944
-   in every lane. A lane can hold all 300 theorems and still be missing
-   rungs.
-4. **Prompt bytes** -- the ``prompts/<rung>.md`` objects are byte-identical
-   across lanes, compared by S3 ETag (MD5, no download). This is the
-   strongest available pairing gate: identical bytes prove the same
-   theorem AT THE SAME STEP ``k`` under the same rendered context, which
-   set equality alone does not. It also catches a model-dependent
-   ``noise:N`` padding, since that rung is token-matched and *could*
-   legitimately differ per tokenizer.
-5. **Side-run containment** -- every other run under ``deduction/runs/``
-   sharing this study's ``theorems`` block stays inside the pinned 944-cell
-   set rather than extending it. Two kinds exist, and they feed different
-   pools: ``dojoinit_recovery_2026-08-18`` is ADDITIVE (its rows were folded
-   into the headline analysis), while ``flip_``/``flip2_nemotron-3-nano-4b``
-   are the process-nondeterminism (flip-rate) measurement and are
-   deliberately NOT folded into headlines. Both are checked, because a
-   side-run reaching a theorem outside the pin would mean the draw was not
-   deterministic, whichever pool it feeds.
-
-Layer 4 needs one wrinkle to be correct: on-disk theorem directories are
-slugged by `runner.slug_theorem` (``[^a-zA-Z0-9._-] -> _``), so
-``List.get?_set_eq`` and ``Int.mul_div_assoc'`` become
-``List.get__set_eq`` and ``Int.mul_div_assoc_``. Comparing raw
-``theorem_id`` values from the recovery rows against directory names
-without slugging reports ~18 phantom out-of-set cells per lane. This
-script slugs both sides.
-
-WHAT IT DELIBERATELY DOES NOT CHECK
------------------------------------
-**Whether the ANALYZED subsets match.** This script proves the 21 lanes
-were *asked* the identical 944 questions. It does not prove their
-surviving data is identical. A cell can be present and DEAD (empty
-``candidate_proof``), and the published analysis ran on smaller pools
-(707 / 828 / 833 cells) precisely because dead cells and verdict
-filtering shrink 944 unevenly. Nothing here shows dead cells fall in the
-same places across lanes -- that is a different axis, owned by
-``scripts/results/audit_run_completeness.py`` and by the study's explicit
-dual-pool reporting. Do not read a pass here as "the analysis was
-paired"; read it as "the questions were".
-
-**Whether the theorems are appropriate content for these models.** They
-are not: see ``notebooks/deduction/README.md``, "Corpus date vs. model
-cutoffs". Every theorem is
-from mathlib4 at commit ``fe4454af`` (traced 2024-03-24) and every model
-on the roster has a knowledge cutoff after that date. Pinning and recency
-are independent properties; this script measures only the first.
-
-USAGE
------
-    python scripts/results/audit_lean_pinning.py                # S3 audit (layers 1-5)
-    python scripts/results/audit_lean_pinning.py --reproduce    # + rederive the pin from corpus data
-    python scripts/results/audit_lean_pinning.py --emit-manifest OUT.json
-
-``--reproduce`` needs the LeanDojo split and the replay sidecar; point
-``--val-json`` / ``--replay-jsonl`` at local copies or S3 URLs under
-``archives/2026-08-25/``. Credentials come from the ambient AWS
-environment (the ``smolbench-llm-operator`` key is sufficient: this
-script only reads).
+This script only reads, with credentials from the ambient AWS environment.
+``--reproduce`` additionally rederives the pin, and needs the LeanDojo split and
+805-theorem replay sidecar that the 2026-08-25 archive moved out of the repo:
+point ``--val-json`` / ``--replay-jsonl`` at local copies or S3 URLs under
+``archives/2026-08-25/``.
 """
 
 from __future__ import annotations
@@ -138,8 +77,8 @@ EXPECTED_CELLS = 944
 def slug_theorem(name: str) -> str:
     """Filesystem-safe theorem name; mirrors `runner.slug_theorem` exactly.
 
-    Duplicated (not imported) for the same reason ``LANES`` is: this audit
-    must not inherit a bug from the module under audit. The two are pinned
+    Duplicated rather than imported, for the same reason ``LANES`` is: this
+    audit must not inherit a bug from the module under audit. The two are pinned
     together by ``tests/deduction/test_lean_pinning_audit.py``.
     """
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
@@ -163,17 +102,12 @@ def fetch_manifests(s3) -> dict[str, dict]:
 def fetch_spool_index(s3) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
     """List each lane's output-cell keys and prompt ETags in one pass.
 
-    Returns
-    -------
-    cells : dict[str, set[str]]
-        Lane -> ``{"<theorem-slug>|<rung-slug>"}`` for every ``outputs/``
-        object. Presence only; content is gated by `prompts` and by
-        ``scripts/results/audit_run_completeness.py``.
-    prompts : dict[str, dict[str, str]]
-        Lane -> cell key -> S3 ETag of the rendered ``prompts/<rung>.md``.
-        ETag is the object MD5 for these (small, single-part) uploads, so
-        equality across lanes is byte equality without downloading ~19 MB
-        x 21 of spool.
+    Returns ``(cells, prompts)``, both keyed by lane: cell keys are
+    ``"<theorem-slug>|<rung-slug>"`` for every ``outputs/`` object (presence
+    only, content gated elsewhere), and `prompts` maps each to the ETag of its
+    ``prompts/<rung>.md``. Those are small single-part uploads, so the ETag is
+    the object MD5 and cross-lane equality is byte equality without downloading
+    ~19 MB x 21 of spool.
     """
     cells: dict[str, set[str]] = {}
     prompts: dict[str, dict[str, str]] = {}
@@ -215,9 +149,8 @@ def fetch_recovery(s3) -> dict[str, set[str]]:
 def fetch_flip_cells(s3) -> dict[str, set[str]]:
     """Cell keys reached by the flip-rate side-runs, per run name.
 
-    These spool in the same ``theorems/<slug>/outputs/`` layout as a
-    normal lane, so this reuses the layer-2/3 listing shape rather than
-    the recovery run's flat ``recovered_rows.jsonl``.
+    These spool in the normal ``theorems/<slug>/outputs/`` layout, not the recovery
+    run's flat ``recovered_rows.jsonl``.
     """
     out: dict[str, set[str]] = {}
     for run, _lane in FLIP_RUNS:
@@ -235,12 +168,12 @@ def fetch_flip_cells(s3) -> dict[str, set[str]]:
 def reproduce_pin(val_json: Path, replay_jsonl: Path) -> list[str]:
     """Re-derive the pinned 300 from the documented recipe.
 
-    Mirrors `runner._select_theorems` for this study's spec: take the
-    ``novel_premises``/``val`` split, keep the theorems whose ground-truth
-    proof replays (``verdict == "success"`` in the sidecar) IN SPLIT
-    ORDER, then ``random.Random(0).sample(pool, 300)``. Split order is
-    load-bearing -- ``rng.sample`` is order-sensitive, so a re-sorted pool
-    yields a different 300 under the same seed.
+    Mirrors `runner._select_theorems` for this study's spec: from the
+    ``novel_premises``/``val`` split keep, IN SPLIT ORDER, the theorems whose
+    ground-truth proof replays (``verdict == "success"`` in the sidecar), then
+    ``random.Random(0).sample(pool, 300)``. Split order is load-bearing:
+    ``rng.sample`` is order-sensitive, so a re-sorted pool yields a different 300
+    under the same seed.
     """
     val = json.loads(val_json.read_text())
     passing = {

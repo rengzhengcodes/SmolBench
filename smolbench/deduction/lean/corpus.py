@@ -1,29 +1,16 @@
-"""Load LeanDojo Benchmark 4 splits and the premise corpus.
+"""Load LeanDojo Benchmark 4 splits (per-theorem tactic traces).
 
-`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a
-snapshot of mathlib4 (commit ``fe4454af``, March 2024), traced by
-`LeanDojo <https://leandojo.org>`_. It provides two things: every
-theorem's tactic-by-tactic proof state transitions (this module), and a
-corpus of every premise (theorem/def/etc.) declared in the traced repo,
-with source position and containing file
-(``smolbench.deduction.lean.premises``). See
-``notebooks/deduction/README.md`` for the full dataset description, pool
-sizes, and bootstrap instructions.
+`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a mathlib4
+snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; the parallel
+corpus of every premise declared in that repo lives in
+``smolbench.deduction.lean.premises``. See ``notebooks/deduction/README.md``
+for pool sizes and bootstrap instructions.
 
-Two independent axes select which slice of the benchmark to load. Every
-loader in this module threads both through as ``(kind, split)``:
-
-- ``SplitKind`` (``kind``) -- ``"random"`` (an i.i.d. train/val/test
-  split) or ``"novel_premises"`` (val/test theorems chosen so their
-  premises are under-represented in train -- the harder generalization
-  slice).
-- ``Split`` (``split``) -- ``"train"``, ``"val"``, or ``"test"`` within a
-  ``kind``.
-
-The dataset itself is not shipped in this repo (it is a ~700 MB external
-download). Every loader here raises ``FileNotFoundError`` with an
-actionable remedy when the expected file is missing, rather than failing
-with a bare "file not found".
+Loaders are keyed by ``(kind, split)``: ``kind`` is ``"random"`` (i.i.d.) or
+``"novel_premises"`` (val/test theorems whose premises are under-represented
+in train -- the harder generalization slice); ``split`` is ``"train"``,
+``"val"`` or ``"test"``. The ~700 MB dataset is not shipped here; loaders
+raise ``FileNotFoundError`` naming the remedy when a file is missing.
 """
 
 from __future__ import annotations
@@ -39,38 +26,14 @@ import smolbench
 
 
 def data_root() -> Path:
-    """Get the root directory of the LeanDojo Benchmark 4 dataset.
+    """Root of the LeanDojo Benchmark 4 dataset; not guaranteed to exist.
 
-    Resolution order:
-      1. The ``SMOLBENCH_LEAN_DATA`` environment variable, if set.
-      2. ``notebooks/deduction/data/leandojo_benchmark_4`` under the repo root.
-
-    The default is anchored to the installed ``smolbench`` package
-    (``Path(smolbench.__file__).resolve().parents[1]`` is the repo root),
-    not to the current working directory. This anchors off the top-level
-    package, instead of counting ``parents`` up from *this* file, which
-    keeps the resolution correct no matter how deeply this module is
-    nested. This mirrors the repo-anchoring pattern used for
-    ``_DEFAULT_STATE_FILE`` in
-    ``smolbench/evals/providers/ec2.py`` and ``repo_root()`` in
-    ``smolbench/induction/experiment.py``. Notebook
-    kernels and test runners invoke this module from arbitrary cwds
-    (temp dirs included), so a cwd-relative default would silently
-    resolve to the wrong place, or nowhere at all, depending on who
-    imports the module.
-
-    This reads the env var at *call* time, not import time. So callers
-    (including tests) may set ``SMOLBENCH_LEAN_DATA`` at any point before
-    calling this function, or before calling `reset_caches` to drop any
-    memoized results computed under a stale value.
-
-    Returns
-    -------
-    Path
-        Directory containing ``metadata.json``, ``corpus.jsonl``, and the
-        ``random``/``novel_premises`` split subdirectories. Not
-        guaranteed to exist; callers that read files under it raise on a
-        missing path.
+    ``SMOLBENCH_LEAN_DATA`` if set, else
+    ``notebooks/deduction/data/leandojo_benchmark_4`` anchored off the
+    installed ``smolbench`` package rather than cwd (importers run from
+    arbitrary directories). The env var is read at *call* time, so callers
+    may set it late; call `reset_caches` afterwards to drop results memoized
+    under a stale value.
     """
     override = os.getenv("SMOLBENCH_LEAN_DATA")
     if override:
@@ -90,11 +53,7 @@ SplitKind = Literal["random", "novel_premises"]
 
 @dataclass(frozen=True)
 class TracedTactic:
-    """One tactic application recorded during LeanDojo's trace of a proof.
-
-    Corresponds to one entry of a benchmark JSON record's ``traced_tactics``
-    list (see ``_from_json``).
-    """
+    """One tactic application from LeanDojo's trace: one ``traced_tactics`` entry."""
 
     #: The tactic text as written in the proof (e.g. ``"simp"``,
     #: ``"exact Mini.premiseA h"``).
@@ -154,15 +113,8 @@ class BenchmarkTheorem:
     def has_proof(self) -> bool:
         """True if LeanDojo recorded at least one traced tactic step.
 
-        Theorems with an empty `traced_tactics` are typically term-mode
-        proofs or otherwise untraceable by LeanDojo's tactic-mode tracer
-        (see ``notebooks/deduction/README.md``'s "What's not in scope"); such
-        theorems are excluded by `iter_with_proof`.
-
-        Returns
-        -------
-        bool
-            ``len(self.traced_tactics) > 0``.
+        Empty usually means a term-mode or otherwise untraceable proof;
+        `iter_with_proof` skips those theorems.
         """
         return len(self.traced_tactics) > 0
 
@@ -170,30 +122,9 @@ class BenchmarkTheorem:
 def _from_json(rec: dict) -> BenchmarkTheorem:
     """Parse one raw split-file JSON record into a `BenchmarkTheorem`.
 
-    Parameters
-    ----------
-    rec : dict
-        One element of a ``<kind>/<split>.json`` array, in the LeanDojo
-        Benchmark 4 schema: ``url``, ``commit``, ``file_path``,
-        ``full_name``, ``start``, ``end``, and ``traced_tactics`` (each with
-        ``tactic``, ``annotated_tactic``, ``state_before``, ``state_after``).
-
-    Returns
-    -------
-    BenchmarkTheorem
-        The parsed theorem, with each ``traced_tactics`` entry converted to
-        a `TracedTactic`.
-
-    Notes
-    -----
-    Premise-extraction contract: each raw tactic's ``annotated_tactic`` is
-    nominally a ``[annotated_text, premises]`` pair. But some records give
-    only ``[annotated_text]`` (length 1, no premises element at all),
-    rather than an explicit ``[annotated_text, []]``. This function reads
-    ``annotated[1] if len(annotated) > 1 else []``, which normalizes both
-    no-premise shapes -- a missing second element, or an explicit empty
-    list -- to ``TracedTactic.premises == []``. So no caller downstream
-    needs to length-check ``annotated_tactic`` itself.
+    A raw tactic's ``annotated_tactic`` is nominally an ``[text, premises]``
+    pair but some records give only ``[text]``; that and an explicit empty
+    list both normalize to ``TracedTactic.premises == []``.
     """
     tts = []
     for tt in rec["traced_tactics"]:
@@ -219,43 +150,18 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
 
 @lru_cache(maxsize=8)
 def load_split(kind: SplitKind = "random", split: Split = "val") -> list[BenchmarkTheorem]:
-    """Load and parse one ``<kind>/<split>.json`` benchmark split file.
+    """Every theorem in ``<data_root()>/<kind>/<split>.json``, in file order.
 
-    Parameters
-    ----------
-    kind : {"random", "novel_premises"}, default "random"
-        Which split axis to load (see the module docstring).
-    split : {"train", "val", "test"}, default "val"
-        Which train/val/test partition of `kind` to load.
-
-    Returns
-    -------
-    list of BenchmarkTheorem
-        Every theorem record in ``<data_root()>/<kind>/<split>.json``,
-        parsed via `_from_json`, in file order.
+    Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations). The
+    cache key does NOT include `data_root`'s current value, so repointing
+    ``SMOLBENCH_LEAN_DATA`` mid-process keeps serving theorems from whichever
+    root was active first; call `reset_caches` to force a re-read.
 
     Raises
     ------
     FileNotFoundError
-        If ``<data_root()>/<kind>/<split>.json`` does not exist -- the
-        dataset has not been bootstrapped yet. See ``notebooks/deduction/
-        README.md``'s "Data bootstrap" section for the Zenodo download and
-        unpack steps. (Distinct from `iter_replay_passing`'s
-        ``FileNotFoundError``, which reports a missing `filter`-generated
-        sidecar rather than a missing raw split file.)
-
-    Notes
-    -----
-    This memoizes per ``(kind, split)`` argument pair, via
-    `functools.lru_cache` (``maxsize=8`` comfortably covers all 6
-    combinations, plus slack). The cache key does NOT include
-    `data_root`'s current return value. So repointing
-    ``SMOLBENCH_LEAN_DATA`` mid-process (as tests do, via
-    ``monkeypatch.setenv``) keeps returning theorems loaded from whichever
-    root was active the first time a given ``(kind, split)`` pair was
-    requested. Call `reset_caches` after changing the environment
-    variable, to force this loader (and the other memoized loaders it
-    clears) to re-read from disk.
+        Split file missing -- the dataset is not bootstrapped; see
+        ``notebooks/deduction/README.md``'s "Data bootstrap".
     """
     path = data_root() / kind / f"{split}.json"
     raw = json.loads(path.read_text())
@@ -263,21 +169,9 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
 
 
 def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
-    """Yield theorems in ``(kind, split)`` that LeanDojo successfully traced.
+    """Yield ``load_split(kind, split)``'s traced theorems, in file order.
 
-    Parameters
-    ----------
-    kind : {"random", "novel_premises"}, default "random"
-        Forwarded to `load_split`.
-    split : {"train", "val", "test"}, default "val"
-        Forwarded to `load_split`.
-
-    Yields
-    ------
-    BenchmarkTheorem
-        Each theorem from ``load_split(kind, split)`` whose `has_proof` is
-        True, in file order; untraced (typically term-mode) theorems are
-        skipped.
+    Skips theorems whose `has_proof` is False (typically term-mode).
     """
     for t in load_split(kind, split):
         if t.has_proof:
@@ -287,18 +181,9 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
 def metadata() -> dict:
     """Load the benchmark's top-level ``metadata.json``.
 
-    Returns
-    -------
-    dict
-        Parsed JSON with keys including ``dataset_name``, ``creation_time``,
-        ``from_repo`` (``{url, commit}``), and ``leandojo_version``.
-
-    Raises
-    ------
-    FileNotFoundError
-        If ``<data_root()>/metadata.json`` does not exist (dataset not
-        bootstrapped -- see `load_split`'s ``Raises`` section for the
-        remedy).
+    Keys include ``dataset_name``, ``creation_time``, ``from_repo``
+    (``{url, commit}``) and ``leandojo_version``. Raises
+    ``FileNotFoundError`` if the dataset is not bootstrapped.
     """
     return json.loads((data_root() / "metadata.json").read_text())
 
@@ -306,56 +191,24 @@ def metadata() -> dict:
 def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     """Path to the `filter`-generated replay-passing sidecar for ``(kind, split)``.
 
-    Parameters
-    ----------
-    kind : SplitKind
-        Split kind the sidecar covers.
-    split : Split
-        Split partition the sidecar covers.
-
-    Returns
-    -------
-    Path
-        ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl``. Not
-        guaranteed to exist -- see `iter_replay_passing`'s precondition.
-
-    Notes
-    -----
-    Design: this path anchors on ``data_root().parent`` (the ``data/``
-    directory that contains ``leandojo_benchmark_4/``), not on
-    `data_root` itself. This matches the pre-move layout, where
-    ``replay_passing_*.jsonl`` sidecars sat alongside the
-    ``leandojo_benchmark_4/`` directory rather than inside it. It also
-    keeps these small, committed sidecars out of the large,
-    wholesale-gitignored dataset directory (see ``notebooks/deduction/
-    README.md``'s "Data bootstrap": the sidecars are committed once
-    generated, unlike the raw ~700 MB dataset download).
+    ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl`` -- beside the
+    dataset directory, so these small committed sidecars stay out of the
+    wholesale-gitignored ~700 MB download. Not guaranteed to exist.
     """
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
 
 def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
-    """Yield theorems whose ground-truth replay was recorded as `success`.
+    """Yield theorems recorded ``verdict == "success"`` in the replay sidecar.
 
-    Parameters
-    ----------
-    kind : {"random", "novel_premises"}, default "random"
-        Forwarded to `load_split` and `replay_passing_path`.
-    split : {"train", "val", "test"}, default "val"
-        Forwarded to `load_split` and `replay_passing_path`.
-
-    Yields
-    ------
-    BenchmarkTheorem
-        Each theorem from ``load_split(kind, split)`` whose ``full_name``
-        appears with ``verdict == "success"`` in
-        `data/replay_passing_<kind>_<split>.jsonl`.
+    Membership comes from `replay_passing_path`; yielded in `load_split` file
+    order.
 
     Raises
     ------
     FileNotFoundError
-        If the sidecar file does not exist. Produce it first with
-        `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
+        Sidecar missing; produce it with `python -m
+        smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():
@@ -377,28 +230,10 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
 def reset_caches() -> None:
     """Clear every `functools.lru_cache` in `corpus` and `premises`.
 
-    `data_root()` re-reads `SMOLBENCH_LEAN_DATA` on every call. But the
-    lru_cache-memoized loaders in this module (`load_split`), and in
-    `smolbench.deduction.lean.premises` (`_index`, `_traced_root`,
-    `slice_full_decl`, `_short_name_index`,
-    `referenced_premises`), key their results only on their own
-    arguments, not on the current `data_root()` value. A test that
-    repoints `SMOLBENCH_LEAN_DATA` to a fixture directory mid-run would
-    otherwise keep seeing theorems/premises loaded from whatever root was
-    active the first time each cache was populated. Call this after
-    changing `SMOLBENCH_LEAN_DATA` (directly or via
-    `monkeypatch.setenv`), to force every cache to re-read from disk on
-    next use.
-
-    Notes
-    -----
-    This function imports `smolbench.deduction.lean.premises` inside its
-    own body, not at module level, because `premises` imports `data_root`
-    from `corpus` (this module). A top-level `from . import premises`
-    here would create an import cycle (`corpus` -> `premises` ->
-    `corpus`) that fails at package-import time. This function defers the
-    import to call time, which sidesteps that: by the time anything calls
-    `reset_caches()`, both modules are already fully initialized.
+    Those loaders key only on their own arguments, never on `data_root()`, so
+    call this after repointing ``SMOLBENCH_LEAN_DATA`` to force a re-read.
+    `premises` is imported inside the body because it imports `data_root` from
+    here; a top-level import would be a cycle that fails at package import.
     """
     load_split.cache_clear()
 

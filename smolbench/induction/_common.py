@@ -1,20 +1,16 @@
 """Share generation machinery between the induction benchmarks (periodic, chromatic).
 
-The two benchmarks must stay CALIBRATED with each other. The noise-padding
+The two benchmarks must stay CALIBRATED with each other: the noise-padding
 ablation is only comparable across evals when the noise profile is
-identical. The random-label sampler must map a fresh seed to the same fresh
-label set in both benchmarks. This module holds that machinery once, so it
-enforces the calibration for both benchmarks.
+identical, and a given seed must map to the same label set in both. This
+module holds that machinery once.
 
 The noise pad is WHITESPACE, sized in TOKENS (see
-:func:`token_matched_noise_prompt`). It is not random characters sized in
-characters. Characters were the wrong unit: models consume tokens, and
-random alphanumerics tokenize far worse than structured text. A
-character-matched pad silently over-padded the control arm: 42,639 tokens
-against a 26,279-token extensional target at the periodic production config,
-1.62x the length it was supposed to match. The pad now measures against the
-tokenizer of the model under test and verifies that it hits the target
-exactly. See `smolbench.evals.tokenization`.
+:func:`token_matched_noise_prompt`), measured against the tokenizer of the
+model under test and verified to hit the target exactly. Characters are the
+wrong unit: models consume tokens, and a character-matched pad over-pads the
+control arm (~1.6x at the periodic production config). See
+`smolbench.evals.tokenization`.
 """
 
 import logging
@@ -34,11 +30,10 @@ class Prompter:
 
     Contract: ``template`` MUST reference ``$positive_info`` (filled with the
     intensional, extensional, or noise-padded context) plus every key that
-    ``query_gen`` and ``substitution`` produce. The render step uses
-    ``string.Template.safe_substitute``, which does not raise an error for
-    an unmatched or misspelled placeholder. It SILENTLY leaves that
-    placeholder verbatim in the prompt instead. Validate templates against
-    a sample query before an expensive run.
+    ``query_gen`` and ``substitution`` produce. Rendering uses
+    ``string.Template.safe_substitute``, which SILENTLY leaves an unmatched
+    or misspelled placeholder verbatim in the prompt instead of raising, so
+    validate templates against a sample query before an expensive run.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
@@ -56,18 +51,7 @@ class Prompter:
 
     @property
     def resolved_extens_template(self) -> string.Template:
-        """Return the template to use for the extensional prompt.
-
-        Return ``extens_template`` when the caller sets one. Otherwise fall
-        back to ``template``. Both benchmarks need this same fallback, so it
-        lives once on the shared ``Prompter`` instead of being reimplemented
-        at each call site.
-
-        Returns
-        -------
-        string.Template
-            ``self.extens_template`` if not None, else ``self.template``.
-        """
+        """Return ``extens_template`` if the caller set one, else ``template``."""
         return self.extens_template or self.template
 
 
@@ -76,41 +60,13 @@ def build_substitution(
 ) -> Dict[str, str]:
     """Merge a query's substitutions with the prompter's, plus positive_info.
 
-    Every rendered prompt (intensional, extensional, or noise-padded
-    intensional) builds from the same three substitution sources. Only
-    ``positive_info`` differs between the three renderings. This function is
-    the one place that merge happens, so all three renderings, in both
-    benchmarks, apply the same precedence.
-
-    Parameters
-    ----------
-    query : Dict[str, str]
-        The per-query substitution dict that a ``query_gen`` yields (e.g.
-        ``{"color": ..., "year": ...}``).
-    prompter : Prompter
-        Supplies the static ``substitution`` dict merged into every query.
-    positive_info : str
-        The generated context (intensional, extensional, or noise-padded
-        intensional) for this particular rendering.
-
-    Returns
-    -------
-    Dict[str, str]
-        A new dict that combines all three sources. This function does not
-        mutate ``query``, ``prompter.substitution``, or ``positive_info``,
-        and the result shares no memory with the inputs. Callers may mutate
-        the returned dict further, as chromatic's extensional renderer does
-        when it adds ``query_years``. On a key collision, precedence follows
-        dict-union's left-to-right rule in merge order (``query``, then
-        ``prompter.substitution``, then ``positive_info``): ``positive_info``
-        always wins, and ``prompter.substitution`` wins over a same-named key
-        in ``query``.
-
-    Notes
-    -----
-    This is pure dict composition. It consumes no RNG, so callers may call
-    it any number of times per query without affecting reproducibility or
-    RNG call order.
+    The one place that merge happens, so all three renderings (intensional,
+    extensional, noise-padded), in both benchmarks, apply the same
+    precedence: dict-union left-to-right over ``query``, then
+    ``prompter.substitution``, then ``positive_info``, so ``positive_info``
+    always wins a collision. The result is a new dict sharing no memory with
+    the inputs, so callers may mutate it further (chromatic's extensional
+    renderer adds ``query_years``). Pure dict composition; consumes no RNG.
     """
     return query | prompter.substitution | {"positive_info": positive_info}
 
@@ -122,30 +78,12 @@ def context_renderer(
 ) -> Callable[[str], str]:
     """Build one query's ``context -> rendered prompt`` function.
 
-    :func:`token_matched_noise_prompt` searches for a pad length by
-    repeatedly rendering candidate contexts into the full prompt. It needs
-    the rendering for ONE query as a reusable callable. This function binds
-    ``query`` here, in a function scope, which also keeps the closure's
-    capture unambiguous; it avoids closing over a loop variable at the call
-    site.
-
-    Parameters
-    ----------
-    prompter : Prompter
-        Supplies the template and the static substitutions.
-    query : Dict[str, str]
-        The single query's substitution dict.
-    template : string.Template, optional
-        Template override (e.g. ``prompter.resolved_extens_template``).
-        Defaults to ``prompter.template``, which is what the intensional
-        and noise-padded arms both render with.
-
-    Returns
-    -------
-    Callable[[str], str]
-        A ``context -> prompt`` function. It is deterministic and free of
-        side effects, so the caller may call it as many times as its search
-        needs.
+    :func:`token_matched_noise_prompt` needs the rendering for ONE query as a
+    reusable callable; binding ``query`` in a function scope also avoids
+    closing over a loop variable at the call site. ``template`` defaults to
+    ``prompter.template`` (what the intensional and noise-padded arms render
+    with). The returned callable is deterministic and side-effect free, so
+    the search may call it as many times as it needs.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -163,27 +101,10 @@ def random_unique_strings(
 ) -> OrderedSet[str]:
     """Generate ``n`` unique random strings of length ``length`` over ``charset``.
 
-    This function samples strings as integers in ``[0, base**length)``
-    without replacement, then base-expands each integer into a string. This
-    keeps uniqueness exact, at a cost of ``O(n * length)`` regardless of how
-    densely the space is sampled.
-
-    Parameters
-    ----------
-    n : int
-        Number of strings to generate.
-    length : int
-        Length of each string.
-    rng : numpy.random.Generator
-        The RNG to use.
-    charset : Collection[str]
-        Character set to draw from. Callers must exclude any separator in
-        use downstream.
-
-    Returns
-    -------
-    OrderedSet[str]
-        ``n`` unique strings.
+    Samples integers in ``[0, base**length)`` without replacement and
+    base-expands each, so uniqueness is exact at a cost of ``O(n * length)``
+    regardless of how densely the space is sampled. ``charset`` must exclude
+    any separator in use downstream.
 
     Raises
     ------
@@ -229,45 +150,15 @@ def random_labels(
 ) -> Tuple[str, ...]:
     """Auto-generate ``count`` unique random labels for a benchmark config.
 
-    This is a thin, documented wrapper around :func:`random_unique_strings`.
-    It derives the label length from ``count`` and ``charset`` the same way
-    for every benchmark, plus an optional caller-supplied floor. Both
-    ``PeriodicConfig`` and ``ChromaticIntervalsConfig`` go through this
-    single function to auto-generate labels or colors from an integer count.
-    This is what keeps their label-length formulas calibrated with each
-    other.
-
-    Parameters
-    ----------
-    count : int
-        Number of unique labels to generate.
-    seed : int
-        RNG seed. This function constructs a fresh
-        ``np.random.default_rng(seed)`` internally, so the same seed always
-        yields the same label set.
-    charset : Collection[str]
-        Character set to draw labels from.
-    min_length : int, default 0
-        Lower bound on the generated label length, applied after the
-        ``LABEL_LENGTH_SAFETY_FACTOR`` scaling below. The default of 0 sets
-        no floor beyond what the length formula itself produces (chromatic's
-        behavior). Pass, for example, 2 for a benchmark that also requires
-        multi-character labels regardless of how small ``count`` is
-        (periodic's behavior): this keeps single-character labels from ever
-        being auto-generated, even when 1-2 labels would technically fit.
-
-    Returns
-    -------
-    Tuple[str, ...]
-        ``count`` unique labels, in the order that
-        :func:`random_unique_strings` produces.
-
-    Notes
-    -----
-    Label length is
-    ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``.
-    RNG call order: exactly one ``np.random.default_rng`` construction,
-    followed by one ``random_unique_strings`` call.
+    Both ``PeriodicConfig`` and ``ChromaticIntervalsConfig`` derive labels
+    here, which is what keeps their label-length formulas calibrated with
+    each other. Length is
+    ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``;
+    ``min_length=0`` (the default) adds no floor beyond that formula
+    (chromatic), while periodic passes 2 so single-character labels are never
+    auto-generated. RNG call order: one fresh ``np.random.default_rng(seed)``
+    construction, then one :func:`random_unique_strings` call, so the same
+    seed always yields the same label set.
     """
     length: int = max(
         min_length,
@@ -332,18 +223,11 @@ _MAX_MATCH_ITERATIONS: int = 32
 def choose_whitespace_unit(tokenizer) -> str:
     """Pick a whitespace pad atom that costs ~1 token per repetition.
 
-    The token-matched noise pad repeats one whitespace unit. This only works
-    when repeating the unit grows the token count roughly linearly. Whether
-    a given unit does depends entirely on the tokenizer's merge table, and
-    the induction benchmarks now run against whatever tokenizer the model
-    under test uses. So this function probes empirically. It does not
-    hard-code a unit that happened to work on the encodings tested by hand.
-
-    Parameters
-    ----------
-    tokenizer : Tokenizer
-        Any :class:`~smolbench.evals.tokenization.Tokenizer` (anything with
-        ``count(str) -> int``).
+    Whether a unit repeats linearly depends entirely on the tokenizer's merge
+    table, and these benchmarks run against whatever tokenizer the model under
+    test uses, so the choice is probed empirically rather than hard-coded.
+    ``tokenizer`` is any :class:`~smolbench.evals.tokenization.Tokenizer`
+    (anything with ``count(str) -> int``).
 
     Returns
     -------
@@ -355,10 +239,9 @@ def choose_whitespace_unit(tokenizer) -> str:
     Raises
     ------
     ValueError
-        If no candidate qualifies. A loud failure here is better than a pad
-        that silently saturates: a unit that compresses to nothing would
-        leave the "length control" arm shorter than the arm it controls for.
-        That is the exact confound this machinery exists to remove.
+        If no candidate qualifies. A loud failure beats a pad that silently
+        saturates, which would leave the "length control" arm shorter than
+        the arm it controls for -- the exact confound this machinery removes.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -383,76 +266,39 @@ def token_matched_noise_prompt(
 ) -> str:
     """Render `context` padded with whitespace to hit an exact token count.
 
-    This is the noise-padded ("length control") arm of both induction
-    benchmarks. ``render`` turns a context into the FULLY substituted
-    prompt, so the search measures the real thing: template, query, and
-    context together, not the context block alone. That matters because the
-    arms being length-matched do not share a template: chromatic renders its
-    extensional prompt from ``extens_template`` with an extra
-    ``$query_years`` block. Contexts of equal token count would then still
-    produce prompts of unequal token count.
+    The noise-padded ("length control") arm of both induction benchmarks.
+    ``render`` (``context -> fully substituted prompt``) is called repeatedly,
+    so it must be cheap and DETERMINISTIC: a varying render would make the
+    measured count describe some other prompt. Matching the whole RENDERED
+    prompt, per query rather than once per config, is required because the
+    query text differs in length per prompt and chromatic's extensional arm
+    renders from a different template (an extra ``$query_years`` block), so
+    equal-token CONTEXTS would still give unequal-token PROMPTS. The pad is
+    APPENDED, keeping the rules at the top of the prompt where the unpadded
+    intensional arm puts them. `target_tokens` is in practice
+    ``tokenizer.count(extens)`` for the matching extensional prompt, and
+    `tokenizer` must be the model under test's
+    (``tokenization.for_model(model)``) or the control silently de-calibrates
+    by however much the two disagree. `unit` defaults to
+    :func:`choose_whitespace_unit`'s pick; pass it explicitly to skip the
+    probe when padding many prompts with the same tokenizer.
 
-    This match happens per query, not once per config, for the same reason:
-    the query text substituted into each prompt differs in length. Only a
-    per-prompt search can make every noise prompt exactly as long as its
-    extensional counterpart.
+    Returns ``render(context + pad)``, verified (never assumed) to be EXACTLY
+    `target_tokens` tokens. The one exception is an unreachable target -- the
+    unpadded prompt is already at least that long, and appending cannot
+    shrink it -- which returns the unpadded render and logs a warning; in
+    practice it never fires, the extensional context being far longer than
+    the intensional rules.
 
-    Parameters
-    ----------
-    render : Callable[[str], str]
-        ``context -> rendered prompt``. This function calls ``render``
-        repeatedly (a handful of times), so it should be a cheap string
-        substitution, and it must be deterministic. A render that varies
-        between calls would make the measured count describe a prompt other
-        than the one returned.
-    context : str
-        The intensional context to pad. The pad is appended to it, so the
-        rules the model needs stay at the top of the prompt, exactly where
-        the unpadded intensional arm puts them.
-    target_tokens : int
-        The token count to hit. In practice this is
-        ``tokenizer.count(extens)`` for the matching extensional prompt.
-    tokenizer : Tokenizer
-        The :class:`~smolbench.evals.tokenization.Tokenizer` that defines
-        "token". Use the tokenizer of the model under test
-        (``tokenization.for_model(model)``). A different one silently
-        de-calibrates the control by however much the two disagree.
-    unit : str, optional
-        Whitespace atom to repeat. Defaults to `choose_whitespace_unit`'s
-        pick for this tokenizer. Pass one explicitly to skip the probe when
-        padding many prompts with the same tokenizer.
-
-    Returns
-    -------
-    str
-        ``render(context + pad)``. Its token count under `tokenizer` equals
-        `target_tokens` EXACTLY; this function verifies that before
-        returning, it never just assumes it. The one exception is an
-        unreachable target (see the Notes section), where this function
-        returns the unpadded render.
+    Consumes no RNG and takes no seed, so a given (context, target,
+    tokenizer) always yields the same prompt and a replicate stays
+    regenerable from its seed alone.
 
     Raises
     ------
     ValueError
-        If the search cannot land on `target_tokens`. A close-but-inexact
-        prompt is not an option to return: the whole point of the arm is
-        that its length is not a confound, and an unverified pad would
-        reintroduce the confound invisibly.
-
-    Notes
-    -----
-    Unreachable target: when the unpadded prompt is ALREADY at least
-    `target_tokens` long, no amount of appending can shrink it. This
-    function then returns the unpadded render and logs a warning. This
-    mirrors the ``max(0, ...)`` floor of the character-matched
-    implementation this function replaces. In practice it never fires: the
-    extensional context is orders of magnitude longer than the intensional
-    rules.
-
-    Determinism: whitespace padding needs no randomness. Unlike the
-    random-character pad it replaces, this function consumes no RNG and
-    takes no seed. A given (context, target, tokenizer) always yields the
-    same prompt, which keeps a replicate regenerable from its seed alone.
+        If the search cannot land on `target_tokens`; a close-but-inexact
+        prompt would reintroduce the length confound invisibly.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)
@@ -519,20 +365,10 @@ def quizzes_from_prompts(
 ) -> Tuple[Quiz, Quiz, Quiz]:
     """Wrap (intens, extens, noise_intens, answer) tuples into three quizzes.
 
-    Parameters
-    ----------
-    prompts : Iterable[Tuple[str, str, str, Answer]]
-        The benchmark's prompt generator output, one tuple per query.
-    qna_cls : type[QnA]
-        The question type to wrap each prompt in (``ToF`` for True/False
-        answers, ``Numeric`` for integers). The class's ``__post_init__``
-        validates that the answers actually match.
-
-    Returns
-    -------
-    Tuple[Quiz, Quiz, Quiz]
-        The intensional Quiz, extensional Quiz, and noise-padded
-        intensional Quiz, in that order.
+    Returns the intensional, extensional, and noise-padded intensional Quiz,
+    in that order. ``qna_cls`` is the question type (``ToF`` for True/False,
+    ``Numeric`` for integers); its ``__post_init__`` validates that the
+    answers actually match.
     """
     intens_quiz: list = []
     extens_quiz: list = []

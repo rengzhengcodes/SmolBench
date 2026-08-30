@@ -1,52 +1,31 @@
 """Split an UNSHARDED deduction run's outputs into pre-seeded shard run dirs.
 
-WHY THIS EXISTS
----------------
-You can reshard a deduction lane launched unsharded MID-FLIGHT, to finish
-it faster. Kill the driver, then split what it already banked into n
-theorem-stride shard run directories
-(``runs/scaling_<key>_shard<i>of<n>``). Then relaunch n shard drivers
-(``LEAN_SHARD=i/n``); each driver's resume mechanism skips every
-pre-seeded cell and generates only what is missing.
-``scripts/deduction/merge_lean_shards.py`` later folds the completed shards back
-into the canonical run. This script computes the shard assignment by
-calling ``runner._select_theorems`` with the run's own theorems spec plus
-``shard: "i/n"``. This is the EXACT code path the relaunched shards
-execute, so the split can never disagree with the shards about which
-theorem belongs where.
+Reshards a mid-flight lane so it finishes faster: kill the driver, split what it
+already banked into n theorem-stride shard dirs
+(``runs/scaling_<key>_shard<i>of<n>``), then relaunch n drivers with
+``LEAN_SHARD=i/n`` -- each one's resume skips the pre-seeded cells and generates
+only what is missing. ``scripts/deduction/merge_lean_shards.py`` folds them back
+into the canonical run. Shard assignment goes through
+``runner._select_theorems`` with ``shard: "i/n"``, the exact code path the
+relaunched shards use, so split and shards can never disagree about ownership.
 
-SAFETY PROPERTIES
------------------
-- This script READS the source run directory; it never mutates or deletes
-  it. It copies rows into shard files, and copies (not moves)
-  ``theorems/`` subtrees. The caller must rename the source out of the
-  canonical path first (see the runbook below), and must delete it only
-  after the eventual merge's verified S3 spool. This follows the same
-  never-prune-before-verify rule as the spool.
-- Every row must partition into exactly one shard. This script aborts
-  BEFORE it writes any shard directory if it finds a cell or sanity row
-  whose theorem_id maps to no shard, an unknown ``kind``, or a duplicate
-  cell key. It tolerates and reports a torn FINAL line (from a SIGKILL
-  mid-write): that cell simply regenerates on resume. It aborts on a torn
-  middle line, because that is corruption, not a torn tail.
-- ``server_config.yaml`` and ``manifest.json`` both go to shard 0, as
-  ``server_config.yaml`` and ``manifest_prelude.json``. Shard 0 relaunches
-  against the ORIGINAL box, through the original state file, so this
-  keeps the sidecar chain as one box's history. ``manifest_prelude.json``
-  holds the provenance of the unsharded phase; the shard's own sweep
-  writes a fresh ``manifest.json``. At merge time, copy the prelude into
-  the canonical directory before you spool.
+The source dir is only READ (rows copied out, ``theorems/`` subtrees copied not
+moved); the caller renames it out of the canonical path first and deletes it only
+after the merge's verified S3 spool. Every row must land in exactly one shard, so
+the script aborts BEFORE writing any shard dir on an unmapped ``theorem_id``, an
+unknown ``kind``, a duplicate cell key, or a torn MIDDLE line (corruption), while
+a torn FINAL line (SIGKILL mid-write) is dropped with a warning and regenerates
+on resume. ``server_config.yaml`` and ``manifest.json`` go to shard 0 (the latter
+as ``manifest_prelude.json``, the unsharded phase's provenance; the shard's own
+sweep writes a fresh ``manifest.json``), because shard 0 relaunches against the
+ORIGINAL box through the original state file, keeping the sidecar chain as one
+box's history -- copy the prelude into the canonical dir before spooling.
 
-Runbook (mid-flight reshard)::
-
-    kill -9 <driver-pid>                       # NOT SIGINT/SIGTERM: the
-                                               # --teardown finally block must
-                                               # never run against the live box
-    mv results/runs/scaling_<key> results/runs/scaling_<key>_presplit
-    .venv/bin/python scripts/deduction/split_lean_run_into_shards.py <key> --n 4 \
-        --source results/runs/scaling_<key>_presplit
-    # then relaunch one driver per shard with LEAN_SHARD=i/n, within 30 min
-    # of the kill (the idle watchdog) for shard 0
+Runbook: ``kill -9`` the driver -- NOT SIGINT/SIGTERM, whose ``--teardown``
+finally block must never run against the live box -- rename
+``runs/scaling_<key>`` aside, run this script against that copy, then relaunch
+one driver per shard with ``LEAN_SHARD=i/n``, within 30 minutes of the kill
+(shard 0's idle watchdog).
 """
 
 import argparse
@@ -81,38 +60,17 @@ def split_run(
 ) -> list[Path]:
     """Partition `source`'s rows and theorem artifacts into n shard directories.
 
-    This function validates everything on in-memory structures before it
-    creates the first shard directory, so a failed gate leaves the tree
-    untouched. Past its gates, this function only writes files; it applies
-    no further logic.
-
-    Parameters
-    ----------
-    key : str
-        Spec key of the lane, for example ``"gemma-4-12b"``.
-    n : int
-        Number of shards to split into.
-    source : Path
-        The unsharded source run directory to read from.
-    runs_root : Path
-        Directory under which this function creates the shard run
-        directories.
-    theorems_spec : dict
-        The run's theorems spec, without a ``shard`` key. This function
-        adds ``shard: "i/n"`` itself, for each shard i, before it calls
-        ``runner._select_theorems``.
-
-    Returns
-    -------
-    list[Path]
-        The shard directory paths, in shard order.
+    Every gate runs on in-memory structures before the first shard directory is
+    created, so a failed gate leaves the tree untouched. `theorems_spec` must NOT
+    carry a ``shard`` key: this function adds ``shard: "i/n"`` per shard before
+    calling ``runner._select_theorems``. Returns the shard directory paths in
+    shard order.
 
     Raises
     ------
     SystemExit
-        On any failed gate (see the module docstring's SAFETY PROPERTIES
-        section), or if `source` has no ``all_rows.jsonl``, or if a target
-        shard directory already exists.
+        On any failed gate (see the module docstring), or if `source` has no
+        ``all_rows.jsonl``, or if a target shard directory already exists.
     """
     from smolbench.deduction.lean import runner  # heavy import chain; local
 

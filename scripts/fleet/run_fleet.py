@@ -1,97 +1,37 @@
 """21-lane EC2 fleet supervisor for the family-ladder scaling study.
 
-``notebooks/induction/run_study.py`` (see its own module docstring, "ONE
-MODEL PER BOX, driven by a fleet") is built to launch 21 different ways,
-once per checkpoint. Each launch pins ``INDUCTION_MODELS`` to a single
-spec key and ``INDUCTION_STATE_FILE`` to a lane-private EC2 state file.
-THIS file does the launching. It owns the roster (mapped onto four
-cost/capacity TIERS, A through D), the per-lane environment, and the
-subprocess lifecycle (launch, log, monitor, restart, halt). It also
-owns the optional deduction phase on the SAME reused box, and the
-final S3 spool sync plus shutdown.
+``notebooks/induction/run_study.py`` is launched once per checkpoint, each run
+pinning ``INDUCTION_MODELS`` to one spec key and ``INDUCTION_STATE_FILE`` to a
+lane-private EC2 state file. This file owns the roster (mapped onto four
+cost/capacity TIERS A-D, which fix a lane's instance types, regions and
+wall-clock budget), the per-lane environment, the subprocess lifecycle, the
+optional deduction phase on the SAME reused box, and the final S3 spool sync
+plus shutdown.
 
-Why tiers
----------
-21 spot instances are not 21 identical bids. A ``g6e.4xlarge`` (single
-L40S) and a ``p5e.48xlarge`` (8x H200) have wildly different capacity,
-cost, and provisioning-tail characteristics. The roster is grouped
-into four tiers (``TIER_MEMBERS``). That lets this file launch cheap,
-fast lanes first and hold the expensive, scarce ones behind a gate
-(see below). It also applies a capacity-appropriate wall-clock budget
-(``TIER_BUDGET_HOURS``) per lane, without hand-tuning 21 separate
-numbers.
-
-Launch order and the family gate
----------------------------------
-1. Tier D launches first, staggered ``LAUNCH_STAGGER_SECONDS`` apart. It
-   has the longest provisioning tail and the scarcest capacity
-   (``p6-b200.48xlarge``).
-2. Tier A launches next, staggered. It is the cheapest tier and the
-   fastest to prove out.
-3. FAMILY GATE (skippable with ``--no-gate``): tiers B and C wait until
-   EVERY model in ``GATE_MODELS`` has logged a healthy serve
-   (``is_serve_healthy``). ``GATE_MODELS`` names three tier-A
-   checkpoints, one per *reasoning-toggle style* in the roster. The
-   whole roster serves under the digest-pinned ``FLEET_IMAGE``, and that
-   build has only ever served two roster models, so this gate turns a
-   21-way bet on one image into a cheap 3-way bet on single-GPU boxes:
-   if ``gemma-4-e2b`` cannot serve, ``gemma-4-31b`` will not either.
-   That failure is cheap to discover on a ``g6e.4xlarge`` -- a rounding
-   error -- next to discovering it on six freshly provisioned
-   ``p6-b200.48xlarge`` instances.
-4. Tiers B and C launch, staggered.
-
-Restart policy
----------------
-:func:`classify_exit` classifies every lane's exit as ``"reclaim"`` (the
-box is just gone -- a spot interruption or a capacity-hunt failure) or
-``"crash"`` (the process itself failed on a live box). Reclaims get
-UNLIMITED retries; there is no reason to give up on a study lane because
-AWS reclaimed a spot instance. Crashes get ``MAX_CRASH_RELAUNCHES`` (2)
-retries, then the lane HALTS while the rest of the fleet keeps running.
-The distinction matters: getting the classifier backwards either
-abandons a lane on a routine interruption, or burns money relaunching a
-lane that will always crash the same way.
-
-CoT-ON assertion
------------------
-Every checkpoint in this study serves with reasoning/thinking mode ON
-(see ``run_study.COT_ARGS``). :func:`reasoning_fraction` measures,
-directly from ``Mark.reasoning``, what fraction of a lane's first landed
-replicate actually reasoned. Below ``COT_MIN_FRACTION`` (90%), the lane
-HALTS loudly instead of quietly filling 30 replicates of non-reasoning
-output. Silently bad data is worse than no data, because nothing else in
-this pipeline can tell the two apart after the fact.
-
-Phases and the reuse-then-shutdown lifecycle
-----------------------------------------------
-``--phase induction`` (the default) runs ONLY the induction driver per
-lane, and on the normal path never shuts the box down. A later
-``--phase deduction`` invocation may reattach to the SAME instance (same
-``EC2_EXPERIMENT_TAG``, same state file; see :func:`lane_env`).
-``--phase deduction`` runs ONLY the deduction driver, then on a
-successful exit spools its results to S3
-(:func:`sync_deduction_spool`) and shuts the instance down. ``--phase
-both`` chains induction then deduction on one lane and shuts down after
-deduction's spool sync. Under ``--phase induction`` alone, this script
-prints an explicit reminder that ``scripts/fleet/fleet_teardown.py
---terminate`` is how the boxes get reclaimed -- nothing tears them down
-automatically.
-
-Cost warning
-------------
-A full, ungated launch provisions up to 21 DISTINCT EC2 spot instances
-concurrently, spanning single-GPU ``g6e.4xlarge`` up to 8xB200
-``p6-b200.48xlarge`` boxes. Each one bills for the time it stays up.
-``--lanes`` and ``--dry-run`` exist so an operator can rehearse a
-launch first: plan, command, full per-lane environment, no subprocess,
-no AWS call. ``--dry-run`` proves the lane WIRING is correct; it does
-NOT prove the lanes will actually START. It deliberately skips
-`preflight` (the per-lane HuggingFace tokenizer warm-up and
-completion-budget derivation) and the nightly-image digest lookup. Both
-do real network I/O and only run on the live path (see
-:func:`_print_dry_run_plan`, which prints this same caveat to the
-operator).
+- Launch order: tier D first (longest provisioning tail, scarcest capacity),
+  then tier A, staggered ``LAUNCH_STAGGER_SECONDS``. The FAMILY GATE
+  (``--no-gate`` skips it) holds tiers B and C until every ``GATE_MODELS``
+  lane logs a healthy serve (`is_serve_healthy`) -- three tier-A checkpoints,
+  one per reasoning-toggle style. The whole roster serves under one
+  digest-pinned ``FLEET_IMAGE``, so the gate turns a 21-way bet on that image
+  into a cheap 3-way bet on single-GPU boxes.
+- Restart policy: :func:`classify_exit` calls a non-zero exit ``"reclaim"``
+  (unlimited retries) or ``"crash"`` (``MAX_CRASH_RELAUNCHES`` retries, then
+  the lane HALTS while the fleet continues).
+- CoT-ON: every checkpoint serves with reasoning ON, so
+  :func:`reasoning_fraction` HALTS any lane whose first landed replicate falls
+  below ``COT_MIN_FRACTION``; silently non-thinking data is worse than none,
+  and nothing downstream can tell the two apart afterwards.
+- Phases: ``--phase induction`` (default) never shuts a box down; a later
+  ``--phase deduction`` may reattach to the SAME instance (same tag and state
+  file, :func:`lane_env`), then on success spools to S3
+  (:func:`sync_deduction_spool`) and shuts down; ``--phase both`` chains them.
+  Only ``scripts/fleet/fleet_teardown.py --terminate`` reclaims boxes an
+  induction-only run leaves up.
+- COST: an ungated launch provisions up to 21 DISTINCT spot instances at once,
+  ``g6e.4xlarge`` up to 8xB200 ``p6-b200.48xlarge``, each billing while up.
+  ``--dry-run`` rehearses the WIRING only: it skips `preflight` and the image
+  digest lookup (real network I/O), so it does NOT prove the lanes will start.
 
 Run (repo root)::
 
@@ -250,26 +190,14 @@ DESCRIBE_EVERY_N_TICKS = 5
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Lane:
-    """One study checkpoint's fleet identity: which spec, tag, and tier.
+    """One study checkpoint's fleet identity: spec key, analysis tag, tier.
 
-    Everything else a lane needs -- instance types, regions, its EC2
-    experiment tag, its state-file name, its wall-clock budget -- is
-    DERIVED from these three fields, through the read-only properties
-    below, rather than stored redundantly. A change to
-    ``TIER_INSTANCE_TYPES["C"]``, for example, updates every tier-C
-    lane's plan, with no risk of a stale per-lane copy.
-
-    Parameters
-    ----------
-    key : str
-        Spec key -- an ``EC2_DEPLOY_SPECS`` / ``run_study.MODELS`` key, and
-        also vLLM's ``--served-model-name``.
-    tag : str
-        Short analysis tag (``run_study.MODELS[key]``), used in result
-        directory names and figure legends.
-    tier : str
-        One of ``"A"``, ``"B"``, ``"C"``, ``"D"`` -- a key of
-        ``TIER_INSTANCE_TYPES`` / ``TIER_BUDGET_HOURS``.
+    `key` is an ``EC2_DEPLOY_SPECS`` / ``run_study.MODELS`` key and also vLLM's
+    ``--served-model-name``; `tag` is ``run_study.MODELS[key]``, used in result
+    directory names and figure legends; `tier` is ``"A"``-``"D"``. Everything
+    else a lane needs is DERIVED from these three by the properties below, so a
+    change to, say, ``TIER_INSTANCE_TYPES["C"]`` cannot leave a stale per-lane
+    copy.
     """
 
     key: str
@@ -285,8 +213,8 @@ class Lane:
     def regions(self) -> str:
         """Comma-separated AWS regions this lane may provision in.
 
-        ``TIER_REGIONS`` overrides for tier D (p6-b200 capacity). Every
-        other tier uses ``DEFAULT_REGIONS``.
+        ``TIER_REGIONS`` overrides tier D; every other tier uses
+        ``DEFAULT_REGIONS``.
         """
         return TIER_REGIONS.get(self.tier, DEFAULT_REGIONS)
 
@@ -307,39 +235,17 @@ class Lane:
 
 
 def _drift_guard() -> None:
-    """Verify that ``TIER_MEMBERS`` agrees with both external sources of truth.
+    """Verify, at IMPORT time, that ``TIER_MEMBERS`` agrees with both sources of truth.
 
-    Raises
-    ------
-    SystemExit
-        This function raises explicitly; it never relies on a bare
-        ``assert``. Python strips ``assert`` under ``python -O``, and a
-        roster drift is exactly the kind of mistake that must fail
-        loudly in EVERY invocation mode, not only when the interpreter
-        happens to run unoptimized. This function checks two
-        conditions, either of which raises, and names the symmetric
-        difference so the fix is obvious without re-deriving the three
-        sets by hand:
+    ``TIER_MEMBERS`` is HAND-WRITTEN and must match ``run_study.MODELS`` and
+    ``set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"}``. A rung added there but
+    forgotten here would silently never run -- 20 of 21 ladders shipped with no
+    error, discovered only at analysis time. Running at import time means even
+    ``--dry-run`` or a bare import catches the drift.
 
-        - The four tiers are NOT pairwise disjoint (a spec key listed
-          twice).
-        - ``set(TIER_MEMBERS values)`` does not equal EXACTLY
-          ``set(run_study.MODELS)`` and EXACTLY
-          ``set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"}``.
-
-    Notes
-    -----
-    Why this matters: ``EC2_DEPLOY_SPECS`` and ``run_study.MODELS`` are
-    each, independently, someone else's single source of truth (deploy
-    facts and study config respectively). ``TIER_MEMBERS`` above is a
-    HAND-WRITTEN table that has to agree with both. A rung added to
-    ``EC2_DEPLOY_SPECS``/``MODELS`` but forgotten here would silently
-    never run: the study would quietly ship 20 of 21 ladders with no
-    error anywhere, discovered only much later at analysis time, when a
-    family's curve is missing a point. Because this check runs at
-    IMPORT time, rather than only inside ``main()``, even a
-    ``--dry-run`` or a bare ``import run_fleet`` catches the drift
-    immediately.
+    Raises ``SystemExit`` (explicitly, never via ``assert``, which ``python -O``
+    strips) when tiers are not pairwise disjoint, or the flattened roster
+    differs from either source of truth; the message names the difference.
     """
     flat = [key for keys in TIER_MEMBERS.values() for key in keys]
     flat_set = set(flat)
@@ -417,60 +323,26 @@ def lane_env(
 ) -> dict[str, str]:
     """Build one lane's complete subprocess environment.
 
-    This is a PURE function: it never mutates `base_env` or
-    ``os.environ``, and always returns a brand-new ``dict``. That is a
-    correctness requirement, not a style choice. With up to 21 lanes
-    launched from one parent process, mutating ``os.environ`` -- the
-    "obvious" implementation -- would make lane N+1 inherit lane N's
-    ``EC2_EXPERIMENT_TAG``/``INDUCTION_STATE_FILE``, unless every
-    single key this function sets were also explicitly popped
-    afterward. One missed key, and two lanes reattach to ONE EC2
-    instance, each swapping the served checkpoint out from under the
-    other mid-run. Because this function returns a fresh mapping per
-    call, that failure mode is structurally impossible: nothing this
-    function does can be observed by any other call to it.
+    PURE: never mutates `base_env` (``None`` reads ``os.environ``) and always
+    returns a NEW ``dict``. That is a correctness requirement -- with 21 lanes
+    launched from one parent, mutating ``os.environ`` would let lane N+1 inherit
+    lane N's ``EC2_EXPERIMENT_TAG``/``INDUCTION_STATE_FILE``, and two lanes
+    would then reattach to ONE instance, swapping the served checkpoint out
+    from under each other.
 
-    Parameters
-    ----------
-    lane : Lane
-        The lane to build an environment for.
-    phase : str
-        One of ``"induction"``, ``"deduction"``, ``"shutdown"``. Only
-        ``"deduction"`` adds the ``LEAN_*`` variables (see Returns).
-    base_env : Mapping[str, str] or None, optional
-        The environment to read ``PASSTHROUGH_ENV`` values from. ``None``
-        (the default) reads ``os.environ`` -- passing an explicit mapping
-        (as the test suite does) keeps this function testable without
-        touching the real process environment at all.
-
-    Returns
-    -------
-    dict[str, str]
-        A NEW ``dict`` containing:
-
-        - Every key of ``PASSTHROUGH_ENV`` present in `base_env`, verbatim
-          (a key `base_env` lacks is simply absent from the result -- no
-          invented defaults).
-        - Unconditionally: ``INFERENCE_PROVIDER``, ``EC2_EXPERIMENT_TAG``,
-          ``INDUCTION_STATE_FILE``, ``INDUCTION_MODELS``,
-          ``EC2_INSTANCE_TYPES``, ``EC2_REGIONS``, ``EC2_VLLM_IMAGE``,
-          ``EC2_MAX_LIFETIME_MIN``, ``EC2_REQUEST_TIMEOUT_SECONDS``.
-        - When `phase` is ``"deduction"`` only: ``LEAN_MODEL``,
-          ``LEAN_STATE_FILE`` (the SAME value as ``INDUCTION_STATE_FILE`` --
-          the reattach contract: the deduction driver reattaches to the box
-          the induction phase already provisioned, rather than provisioning
-          a second one), and ``LEAN_RUN_NAME``.
-
-        For `phase` ``"induction"`` or ``"shutdown"``, no key starting with
-        ``LEAN_`` is present. Every value is a plain ``str``.
-
-    Notes
-    -----
-    ``LEAN_RUN_NAME`` is load-bearing: it is what lets
-    :func:`sync_deduction_spool` find the run directory at
-    ``notebooks/deduction/results/runs/scaling_<key>/``, the
-    ``scaling_<model>`` convention ``notebooks/deduction/run_study.py``
-    also defaults to.
+    The result holds every ``PASSTHROUGH_ENV`` key present in `base_env`,
+    verbatim (a missing key stays absent -- no invented defaults), plus
+    ``INFERENCE_PROVIDER``, ``EC2_EXPERIMENT_TAG``, ``INDUCTION_STATE_FILE``,
+    ``INDUCTION_MODELS``, ``EC2_INSTANCE_TYPES``, ``EC2_REGIONS``,
+    ``EC2_VLLM_IMAGE``, ``EC2_MAX_LIFETIME_MIN``,
+    ``EC2_REQUEST_TIMEOUT_SECONDS``; every value is a ``str``. `phase` is
+    ``"induction"``, ``"deduction"`` or ``"shutdown"``, and only
+    ``"deduction"`` adds ``LEAN_MODEL``, ``LEAN_STATE_FILE`` (the SAME value as
+    ``INDUCTION_STATE_FILE`` -- the reattach contract) and ``LEAN_RUN_NAME``,
+    which is what lets :func:`sync_deduction_spool` find
+    ``notebooks/deduction/results/runs/scaling_<key>/`` -- the
+    ``scaling_<model>`` convention ``notebooks/deduction/run_study.py`` also
+    defaults to.
     """
     if base_env is None:
         import os
@@ -527,30 +399,13 @@ _SHUTDOWN_SNIPPET = (
 
 
 def lane_command(lane: Lane, phase: str) -> list[str]:
-    """Build the subprocess argv for one lane's phase.
+    """Build the subprocess argv for one lane's `phase`.
 
-    Parameters
-    ----------
-    lane : Lane
-        The lane to build a command for.
-    phase : str
-        One of ``"induction"``, ``"deduction"``, ``"shutdown"``.
-
-    Returns
-    -------
-    list[str]
-        - ``"induction"``: ``[VENV_PYTHON, notebooks/induction/run_study.py]``.
-        - ``"deduction"``: ``[VENV_PYTHON, notebooks/deduction/run_study.py]``.
-        - ``"shutdown"``: ``[VENV_PYTHON, "-c", <snippet>]``, where the
-          snippet imports ``smolbench.evals.providers.ec2`` and calls
-          ``shutdown_instance()`` -- run under ``lane_env(lane, "shutdown")``
-          so ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS
-          lane's box (see `_SHUTDOWN_SNIPPET`'s comment).
-
-    Raises
-    ------
-    ValueError
-        `phase` is not one of the three known phases.
+    ``"induction"``/``"deduction"`` give `VENV_PYTHON` plus that study's
+    ``run_study.py``; ``"shutdown"`` gives ``VENV_PYTHON -c``
+    `_SHUTDOWN_SNIPPET`, which must run under ``lane_env(lane, "shutdown")`` so
+    ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS lane's box. Any
+    other `phase` raises ``ValueError``.
     """
     if phase == "induction":
         return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "induction" / "run_study.py")]
@@ -575,21 +430,12 @@ SERVE_HEALTHY_RE = re.compile(r"serve_model: '.+?' is up at http://\S+")
 
 
 def is_serve_healthy(line: str) -> bool:
-    """Check whether `line` is the "checkpoint is live and healthy" log line.
+    """Check whether `line` is ``ec2.py``'s "checkpoint is live and healthy" log line.
 
-    Parameters
-    ----------
-    line : str
-        One line of a lane's log file (may carry a logging-format prefix,
-        e.g. ``"INFO:root:"``).
-
-    Returns
-    -------
-    bool
-        True iff `line` matches ``ec2.py``'s
-        ``serve_model: '<model>' is up at http://<ip>:8000/v1`` shape.
-        False for the earlier ``serve_model: requesting '<model>' ...`` line
-        (and for everything else).
+    True iff `line` (which may carry a logging prefix) matches ``serve_model:
+    '<model>' is up at http://<ip>:8000/v1``; False for the earlier
+    ``serve_model: requesting '<model>' ...`` line, the one the family gate is
+    waiting to stop seeing.
     """
     return SERVE_HEALTHY_RE.search(line) is not None
 
@@ -626,38 +472,19 @@ RECLAIM_PATTERNS: tuple[re.Pattern, ...] = tuple(
 def classify_exit(log_tail: str, instance_present: bool) -> str:
     """Classify a lane's non-zero exit as a spot reclaim or a real crash.
 
-    Parameters
-    ----------
-    log_tail : str
-        The last ~40 lines of the lane's log file at the moment its process
-        was observed to have exited.
-    instance_present : bool
-        Whether this lane's ``scaling-<key>``-tagged instance was seen in
-        the most recent ``describe_instances`` sweep.
+    `log_tail` is the lane's last ~40 log lines at the moment the exit was
+    observed; `instance_present` says whether its ``scaling-<key>`` instance
+    appeared in the most recent ``describe_instances`` sweep. Returns
+    ``"reclaim"`` when the instance is absent or `log_tail` matches
+    ``RECLAIM_PATTERNS``; ``"crash"`` otherwise, INCLUDING an empty tail with
+    the instance still present -- a process that exited with no output while
+    its box is alive is not a reclaim signature.
 
-    Returns
-    -------
-    str
-        ``"reclaim"`` when `instance_present` is False (the box itself
-        is simply gone) OR `log_tail` matches one of
-        ``RECLAIM_PATTERNS`` (a capacity/quota failure, or the
-        actionable "endpoint unreachable" error -- see that constant's
-        comment for what it deliberately excludes). ``"crash"``
-        otherwise, INCLUDING an empty tail with the instance still
-        present. A process that exited with no output at all, while
-        its box is confirmed alive, is not a reclaim signature.
-
-    Notes
-    -----
-    The monitor loop implements the restart policy that consumes this
-    classification; this docstring records it here since this function
-    is what decides it. ``"reclaim"`` -> relaunch, UNLIMITED retries
-    (a spot interruption is routine and not the lane's fault).
-    ``"crash"`` -> relaunch up to ``MAX_CRASH_RELAUNCHES`` (2) times,
-    then HALT that lane while the rest of the fleet continues. A
-    backwards classifier either abandons a lane on a routine
-    interruption, or burns money relaunching a lane that will always
-    fail the same way.
+    The monitor loop relaunches a ``"reclaim"`` with UNLIMITED retries (a spot
+    interruption is routine and not the lane's fault) and a ``"crash"`` up to
+    ``MAX_CRASH_RELAUNCHES`` times before HALTING that lane, so a backwards
+    verdict either abandons a lane on a routine interruption or burns money
+    relaunching one that will always fail the same way.
     """
     if not instance_present:
         return "reclaim"
@@ -676,68 +503,40 @@ def reasoning_fraction(
     seed: Optional[int] = None,
     infos: Optional[Sequence[str]] = None,
 ) -> Optional[float]:
-    """Measure the fraction of a model's landed marks that carry a reasoning trace.
-
-    This is a DIRECT measurement, not a proxy. ``Mark.reasoning`` (see
-    ``smolbench/evals/__init__.py``) is persisted per mark, so this
-    function reads exactly what the served checkpoint returned. There
-    is no need to infer "was CoT on" from response length or latency.
+    """Measure the fraction of a model's landed marks that carry reasoning evidence.
 
     Parameters
     ----------
     store : Any
-        A duck-typed ``ResultsStore``-shaped object exposing
-        ``exists(addr)`` and ``load_marks(addr)`` (see
-        ``smolbench.evals.results_store.ResultsStore``). The caller
-        injects this rather than this function resolving it internally,
-        so this function is testable with a plain fake and no S3. See
-        :func:`build_results_store` for the real backend production
-        uses.
-    model : str
-        Spec key -- becomes ``ReplicateAddress.model``.
+        Duck-typed ``ResultsStore`` (``exists``/``load_marks``), injected so
+        this is testable with a fake and no S3; production passes
+        :func:`build_results_store`.
     tag : str
-        Analysis tag -- becomes ``ReplicateAddress.tag`` (unused by the S3
-        backend, but required by the address shape).
+        Analysis tag -- unused by the S3 backend, required by
+        ``ReplicateAddress``.
     seed : int or None, optional
-        Replicate seed to inspect. ``None`` (the default) uses
-        ``run_study.BASE_SEED`` -- the CoT-ON check runs against the FIRST
-        replicate a lane collects, per the module docstring.
+        ``None`` uses ``run_study.BASE_SEED``, the FIRST replicate a lane
+        collects.
     infos : Sequence[str] or None, optional
-        Info types to pool across. ``None`` (the default) uses
-        ``run_study.INFO_TYPES`` (all four arms).
+        Info arms to pool; ``None`` uses ``run_study.INFO_TYPES`` (all four).
 
     Returns
     -------
     float or None
-        ``None`` when NO info arm has landed yet for (`model`, `seed`);
-        there is nothing to judge in that case. Otherwise the fraction
-        of pooled marks showing REASONING EVIDENCE: a non-empty
-        ``Mark.reasoning``, or a ``Mark.response`` longer than
-        ``COT_CONTENT_REASONING_MIN_CHARS``.
+        ``None`` when no arm has landed yet for (`model`, `seed`). Otherwise
+        the fraction of pooled marks with a non-empty ``Mark.reasoning`` OR a
+        ``Mark.response`` longer than ``COT_CONTENT_REASONING_MIN_CHARS`` -- a
+        DIRECT read of persisted state, not a length/latency proxy.
 
     Notes
     -----
-    Why response length counts: models whose thinking rides a SOFT
-    protocol reason on essentially every mark, but only sometimes wrap
-    it in their think markup. Ministral's [THINK] system-prompt
-    protocol and EXAONE's ``enable_thinking`` produce "Alright, let's
-    tackle this step by step..." chains in plain ``response`` content
-    on 40-60% of marks. The reasoning parsers, and the client-side
-    ``</think>`` split, rightly leave those chains unsplit. That IS
-    chain-of-thought; only the channel differs. The quiz's output
-    contract is "return exactly one integer and nothing else", so a
-    TRULY non-thinking mark is a few characters. Any response beyond
-    ``COT_CONTENT_REASONING_MIN_CHARS`` is a reasoning chain in
-    content, not a compliant bare answer. A lane whose toggle is
-    genuinely broken -- bare integers everywhere, empty reasoning
-    channel -- still fails this check.
-
-    Silently non-thinking data is worse than no data at all. A lane
-    that quietly collects 30 replicates of non-reasoning output looks,
-    on disk, identical to a successful run; nothing downstream can tell
-    the two apart after the fact. Below ``COT_MIN_FRACTION``, the
-    monitor loop halts the lane loudly, right after its first
-    replicate, rather than let that happen.
+    Why response length counts: models on a SOFT thinking protocol (Ministral's
+    [THINK] system prompt, EXAONE's ``enable_thinking``) reason on nearly every
+    mark but wrap only some in think markup, so 40-60% of marks carry the chain
+    in plain ``response`` content, which the parsers rightly leave unsplit. The
+    quiz contract is "exactly one integer and nothing else", so a longer
+    response is a reasoning chain, while a genuinely dead toggle -- bare
+    integers, empty reasoning channel -- still fails the check.
     """
     if seed is None:
         seed = run_study.BASE_SEED
@@ -762,20 +561,11 @@ def reasoning_fraction(
 
 
 def build_results_store() -> Any:
-    """Build the real ``ResultsStore`` for production ``reasoning_fraction`` calls.
+    """Build the production ``ResultsStore`` for this study's results directory.
 
-    This is a thin wrapper over
-    ``resolve_store(run_study.EXPERIMENT.results_dir)``. It stays
-    separate from :func:`reasoning_fraction` itself, which takes
-    `store` as a parameter, purely so that function stays testable
-    with a fake store and no S3 or local-filesystem dependency at all.
-
-    Returns
-    -------
-    smolbench.evals.results_store.ResultsStore
-        Whichever backend ``resolve_store`` selects for this study's
-        results directory: S3-backed when ``SMOLBENCH_RESULTS_S3`` is
-        set, local otherwise (see that function's own docstring).
+    ``resolve_store`` picks the backend: S3-backed when ``SMOLBENCH_RESULTS_S3``
+    is set, local otherwise. Kept separate from :func:`reasoning_fraction` so
+    that function stays testable with a fake and no S3 or filesystem.
     """
     return resolve_store(run_study.EXPERIMENT.results_dir)
 
@@ -786,52 +576,18 @@ def build_results_store() -> Any:
 def preflight(lanes: Sequence[Lane]) -> dict[str, int]:
     """Warm every lane's tokenizer and derive its completion budget.
 
-    This function calls ``run_study.completion_budget(lane.key,
-    seeds)`` for every lane in `lanes`, BEFORE this script launches a
-    single subprocess, and therefore before it provisions any EC2
-    instance.
+    Calls ``run_study.completion_budget(lane.key, seeds)`` per lane BEFORE any
+    subprocess or EC2 provisioning -- pure CPU plus HuggingFace downloads, on a
+    machine that is not yet billing -- so a tokenizer-fetch failure or an
+    under-budget verdict cannot surface between a live GPU box and its first
+    inference request. Returns spec key -> completion-token budget, only when
+    EVERY lane succeeded.
 
-    Parameters
-    ----------
-    lanes : Sequence[Lane]
-        The lanes about to be launched.
-
-    Returns
-    -------
-    dict[str, int]
-        Spec key -> derived completion-token budget, for every lane in
-        `lanes`. This function returns this dict only when EVERY lane
-        succeeded (see Raises).
-
-    Raises
-    ------
-    SystemExit
-        ANY lane failed: either a genuine exception (for example, a
-        HuggingFace tokenizer fetch failure), or
-        ``run_study.completion_budget``'s own ``SystemExit`` when the
-        derived budget falls below ``run_study.MIN_VIABLE_BUDGET``.
-        This function COLLECTS both kinds across every lane, instead of
-        raising on the first failure, so a single pre-flight pass
-        reports every broken lane at once. It prints a table of
-        ``lane / exception type / message`` before it raises.
-
-    Notes
-    -----
-    This work is pure CPU plus HuggingFace tokenizer downloads. It
-    costs only wall clock on a machine that is not yet billing
-    anything. This runs BEFORE ``EXPERIMENT.provision()``, which this
-    function never calls. That ordering means a tokenizer-fetch
-    failure or an under-budget verdict can never land in the far more
-    expensive position of "between a live, billing GPU box and the
-    first inference request".
-
-    ``except (Exception, SystemExit)`` below is intentional, not a bare
-    ``except:``. ``run_study.completion_budget`` itself raises
-    ``SystemExit``, not a plain ``Exception``, on the budget-floor
-    failure, and ``SystemExit`` does not subclass ``Exception``. A
-    plain ``except Exception`` would let that specific, very-plausible
-    failure mode escape this loop's "collect, don't abort on the first
-    one" contract.
+    Raises ``SystemExit`` if any lane failed, whether by a genuine exception or
+    ``completion_budget``'s own ``SystemExit`` for a budget below
+    ``run_study.MIN_VIABLE_BUDGET``. Both kinds are COLLECTED across all lanes
+    (hence ``except (Exception, SystemExit)``: ``SystemExit`` is not an
+    ``Exception``) and printed as one table.
     """
     budgets: dict[str, int] = {}
     failures: list[tuple[str, str, str]] = []
@@ -858,28 +614,14 @@ def preflight(lanes: Sequence[Lane]) -> dict[str, int]:
 def fleet_image_digest() -> Optional[str]:
     """Look up a best-effort ``docker manifest inspect`` digest for ``FLEET_IMAGE``.
 
-    ``FLEET_IMAGE`` is digest-pinned, so this is a resolvability sanity
-    check, not a record of what a moving tag points at. NOTE:
-    for a multi-arch image, this function returns a PER-ARCHITECTURE
-    manifest digest (the parser falls back to
-    ``manifests[0].digest`` on a manifest list), not the index digest
-    embedded in the ref. Do not expect the two to match.
-
-    Returns
-    -------
-    str or None
-        The manifest's content digest, or ``None`` when ``docker`` is
-        not on ``PATH``, the inspect call fails (network, auth, rate
-        limit), or the returned JSON carries no digest field in a
-        shape this function recognises. Every ``None`` path logs why
-        at INFO level.
-
-    Notes
-    -----
-    This function is purely informational: the run banner records its
-    result, so the launch image is written down somewhere durable (lane
-    logs, stdout). This function never raises; a digest-lookup failure
-    must never block a launch.
+    Purely informational -- the run banner records it so the launch image is
+    written down durably. ``FLEET_IMAGE`` is already digest-pinned, so this is
+    a resolvability check; for a multi-arch image it returns a PER-ARCHITECTURE
+    digest (falling back to ``manifests[0].digest``), which will NOT match the
+    index digest in the ref. Returns ``None`` (always logged at INFO) when
+    ``docker`` is missing, the inspect call fails, or the JSON has no
+    recognisable digest field. Never raises: a digest lookup must not block a
+    launch.
     """
     if shutil.which("docker") is None:
         logging.info("fleet_image_digest: docker not found on PATH; skipping digest lookup.")
@@ -981,47 +723,18 @@ SPOOL_REGION = "us-west-2"
 def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
     """Upload one lane's local deduction spool to S3, then prune it.
 
-    Parameters
-    ----------
-    lane : Lane
-        The lane whose deduction results this function should spool.
-    client : Any, optional
-        A boto3 S3 client, exposing ``upload_file``. ``None`` (the
-        default) builds a real one lazily -- see Notes. Callers can
-        inject a fake client for testing without AWS.
+    Source ``notebooks/deduction/results/runs/scaling_<key>/`` (repo-root
+    anchored) -> ``s3://smolbench-results-414266451290/deduction/runs/
+    scaling_<key>/<relative path>`` in ``us-west-2``, via boto3 ``upload_file``
+    (imported inside this function, so importing ``run_fleet`` needs no AWS
+    SDK). Pass `client` to inject a fake and test without AWS.
 
-    Returns
-    -------
-    int
-        Number of files uploaded. ``0``, with nothing uploaded or
-        deleted, when the source directory does not exist. This is NOT
-        an error: a lane that never produced deduction output has
-        nothing to spool.
-
-    Notes
-    -----
-    Source: ``notebooks/deduction/results/runs/scaling_<key>/``
-    (repo-root anchored). Destination:
-    ``s3://smolbench-results-414266451290/
-    deduction/runs/scaling_<key>/<relative path>``, region
-    ``us-west-2``.
-
-    This function uses boto3's ``upload_file`` directly, rather than
-    shelling out to the ``aws`` CLI. The CLI is not a declared
-    dependency of this repo, while boto3 already is (see
-    ``smolbench.evals.providers.ec2``'s own lazy-import convention, which this
-    function follows: it imports boto3 INSIDE this function, not at
-    module scope, so importing ``run_fleet`` needs no AWS SDK at all).
-
-    After every file uploads successfully, this function PRUNES the
-    local spool: it deletes every uploaded file and removes every
-    now-empty subdirectory, EXCEPT ``manifest.json`` at the run
-    directory's root, which it always keeps. ``manifest.json`` is the
-    run's config/run-id record (see
-    ``smolbench.deduction.lean.runner``'s "Output layout" docstring
-    section). It stays behind so a LATER resume of this run can
-    recognise it already exists, without re-downloading the whole
-    spool from S3 first just to check.
+    Once every file uploads, the local spool is PRUNED: uploaded files deleted
+    and now-empty subdirectories removed, EXCEPT ``manifest.json`` at the run
+    root -- the run's config/run-id record, kept so a later resume recognises
+    the run without re-downloading the spool. Returns the number of files
+    uploaded; ``0``, with nothing uploaded or deleted, when the source
+    directory does not exist (not an error).
     """
     source = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs" / f"scaling_{lane.key}"
     if not source.is_dir():
@@ -1071,16 +784,12 @@ def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
 
 @functools.lru_cache(maxsize=1)
 def _fleet_status_module():
-    """Lazily load ``scripts/fleet/fleet_status.py`` by file path; cache after the first call.
+    """Lazily load ``scripts/fleet/fleet_status.py`` by file path; cached after the first call.
 
-    This function loads the file by path, the same convention `run_study`
-    above uses, rather than `sys.path` plus a bare `import
-    fleet_status`. That avoids any risk of colliding with how
-    ``tests/tooling/test_run_fleet.py`` loads the very same file under its own
-    private module name. This load is deferred, not a module-scope
-    import, so importing `run_fleet` itself does nothing beyond
-    building `LANES` and running its drift guard. This helper runs
-    only from inside the live monitor loop, never at import time.
+    By path, like `run_study` above, to avoid colliding with how
+    ``tests/tooling/test_run_fleet.py`` loads the same file under a private
+    module name. Deferred, so importing `run_fleet` does nothing beyond
+    building `LANES` and its drift guard.
     """
     path = Path(__file__).resolve().parent / "fleet_status.py"
     spec = importlib.util.spec_from_file_location("run_fleet_fleet_status_dep", path)
@@ -1091,11 +800,7 @@ def _fleet_status_module():
 
 @dataclass
 class _LaneRun:
-    """Mutable per-lane runtime state, tracked across monitor-loop ticks.
-
-    Carries a lane's subprocess handle, its position in its phase
-    sequence, and its restart/halt bookkeeping between ticks.
-    """
+    """Mutable per-lane runtime state -- subprocess handle, phase position, restart/halt bookkeeping -- carried across monitor-loop ticks."""
 
     lane: Lane
     #: Ordered subprocess phases this invocation runs for this lane, e.g.
@@ -1121,25 +826,11 @@ class _LaneRun:
 def _phase_sequence(phase: str) -> tuple[str, ...]:
     """Map a ``--phase`` CLI value onto the ordered subprocess phases each lane runs.
 
-    Parameters
-    ----------
-    phase : str
-        One of ``"induction"``, ``"deduction"``, ``"both"``.
-
-    Returns
-    -------
-    tuple[str, ...]
-        ``("induction",)``, ``("deduction",)``, or ``("induction",
-        "deduction")`` respectively. A lane's instance shuts down (see
-        `_advance_finished`) only once its LAST scheduled phase here
-        exits successfully AND that phase was ``"deduction"``. By
-        design, an induction-only invocation never shuts its boxes
-        down (see the module docstring's "Phases" section).
-
-    Raises
-    ------
-    ValueError
-        `phase` is not one of the three recognised values.
+    ``"induction"`` / ``"deduction"`` / ``"both"`` give ``("induction",)``,
+    ``("deduction",)``, ``("induction", "deduction")``; anything else raises
+    ``ValueError``. A lane's instance shuts down (`_advance_finished`) only once
+    its LAST scheduled phase exits successfully AND that phase was
+    ``"deduction"``, so an induction-only invocation never shuts its boxes down.
     """
     if phase == "induction":
         return ("induction",)
@@ -1161,36 +852,14 @@ def _monitor_tick(
 ) -> Optional[set]:
     """Run one polling pass over every lane: refresh presence, print the table, alert.
 
-    Parameters
-    ----------
-    runs : dict[str, _LaneRun]
-        Every lane currently under supervision.
-    log_dir : Path
-        Directory holding ``<key>.log`` for each lane.
-    tick : int
-        1-based tick counter (used to decide whether this tick also
-        refreshes `present_lanes`).
-    present_lanes : set[str] or None
-        The set of lane keys seen in the most recent
-        ``describe_instances`` sweep, or ``None`` if none has run yet.
-
-    Returns
-    -------
-    set[str] or None
-        The (possibly refreshed) `present_lanes`, for the caller to
-        thread into the next tick.
-
-    Notes
-    -----
-    The describe sweep runs on tick 1, so the fleet table has SOME
-    instance data from the very first tick, rather than waiting a full
-    ``DESCRIBE_EVERY_N_TICKS`` ticks. It then runs every
-    ``DESCRIBE_EVERY_N_TICKS``-th tick after that. The sweep is
-    read-only and reuses ``fleet_status.fleet_rows`` instead of
-    duplicating its boto3 call. This function logs and SKIPS a failed
-    describe (one bad region, a throttled call), leaving
-    `present_lanes` at its last-known value, rather than treating
-    "could not check" as "everything is gone".
+    `tick` is 1-based; `present_lanes` is the lane-key set from the last
+    ``describe_instances`` sweep (``None`` if none has run yet), and the
+    possibly refreshed set is returned for the next tick. The sweep runs on
+    tick 1 -- so the table has instance data immediately -- and every
+    ``DESCRIBE_EVERY_N_TICKS``-th tick after, reusing read-only
+    ``fleet_status.fleet_rows``. A failed sweep is logged and SKIPPED, leaving
+    `present_lanes` at its last-known value, rather than reading "could not
+    check" as "everything is gone".
     """
     if tick == 1 or tick % DESCRIBE_EVERY_N_TICKS == 0:
         try:
@@ -1230,11 +899,9 @@ def _apply_restart_policy(
 ) -> None:
     """Relaunch or halt every lane whose subprocess exited non-zero this tick.
 
-    This function calls `classify_exit` on the lane's last ~40 log
-    lines and on whether its tag appeared in the latest describe
-    sweep. See `classify_exit`'s docstring for the restart policy it
-    enforces: unlimited retries for a "reclaim", up to
-    `MAX_CRASH_RELAUNCHES` for a "crash", then a halt.
+    Classifies with `classify_exit` and enforces that verdict's policy:
+    unlimited retries for a reclaim, `MAX_CRASH_RELAUNCHES` for a crash, then a
+    halt.
     """
     for key, run in runs.items():
         if run.halted or run.done or run.proc is None:
@@ -1277,13 +944,8 @@ def _apply_restart_policy(
 def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = build_results_store) -> None:
     """Run the CoT-ON assertion once per lane; halt any lane below `COT_MIN_FRACTION`.
 
-    Parameters
-    ----------
-    runs : dict[str, _LaneRun]
-        Every lane currently under supervision.
-    store_factory : Callable[[], Any], optional
-        Builds the ``ResultsStore`` to check against. Defaults to
-        `build_results_store`; overridable for tests.
+    `store_factory` builds the ``ResultsStore`` to check against; overridable
+    for tests.
     """
     for key, run in runs.items():
         if run.cot_checked or run.halted or run.done or run.current_phase != "induction":
@@ -1368,14 +1030,11 @@ def _run_fleet(
 ) -> None:
     """Launch and supervise every lane in `lanes` to completion or halt.
 
-    This function implements the module docstring's "Launch order and
-    the family gate" and "Monitor loop" sections: tier D first, then
-    tier A, both staggered. Then, unless `gate` is False or no gate
-    model is among `lanes`, a blocking wait for every ``GATE_MODELS``
-    lane to report a healthy serve. That wait itself runs full monitor
-    ticks, so it still catches and retries or halts a crash in a gate
-    lane promptly. Then tiers B and C launch, staggered, followed by a
-    monitor loop that runs until every lane is halted or done.
+    Tier D, then tier A, staggered. Then, unless `gate` is False or no
+    ``GATE_MODELS`` lane is selected, a blocking wait for every gate lane to
+    report a healthy serve -- that wait runs full monitor ticks, so a crash in a
+    gate lane is still retried or halted promptly. Then tiers B and C,
+    staggered, and a monitor loop until every lane is halted or done.
     """
     runs = {key: _LaneRun(lane=lane, phases=phase_sequence) for key, lane in lanes.items()}
 
@@ -1465,10 +1124,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _selected_lanes(raw: str) -> dict[str, Lane]:
     """Resolve ``--lanes`` into a ``{key: Lane}`` map, in ``LANES`` declaration order.
 
-    Raises
-    ------
-    SystemExit
-        `raw` names a key that is not in `LANES`.
+    Raises ``SystemExit`` if `raw` names a key that is not in `LANES`.
     """
     if not raw.strip():
         return dict(LANES)
@@ -1502,14 +1158,8 @@ _DRY_RUN_NOTICE = (
 def _print_dry_run_plan(lanes: dict[str, Lane], phase_name: str) -> None:
     """Print, per lane, its tier, every scheduled phase's command, and full env.
 
-    Notes
-    -----
-    This function prints `_DRY_RUN_NOTICE` immediately under the
-    header. This preview deliberately never calls
-    `preflight`/`fleet_image_digest` (both do real network I/O; see
-    the module docstring's "Cost warning" section), so the output says
-    so explicitly, rather than letting a clean dry run read as "the
-    live launch will also succeed".
+    Prints `_DRY_RUN_NOTICE` immediately under the header, since this preview
+    never calls `preflight`/`fleet_image_digest` (both do real network I/O).
     """
     phases = _phase_sequence(phase_name)
     print(f"run_fleet DRY RUN -- phase={phase_name!r}, {len(lanes)} lane(s) selected\n")
@@ -1532,25 +1182,10 @@ def _print_dry_run_plan(lanes: dict[str, Lane], phase_name: str) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     """Parse args, then print the dry-run plan or launch the fleet live.
 
-    Parameters
-    ----------
-    argv : list[str] or None, optional
-        Arguments to parse; ``None`` parses ``sys.argv[1:]``.
-
-    Returns
-    -------
-    int
-        ``0`` on completion of a dry run, or after the live fleet
-        reaches an all-terminal state. Some lanes may still be
-        individually halted; see the printed summary and each lane's
-        log for details.
-
-    Notes
-    -----
-    ``--dry-run`` performs NO pre-flight (tokenizer warm-up), NO
-    ``docker manifest inspect``, and launches no subprocess. It only
-    resolves the lane selection and prints what a live launch WOULD do
-    -- itself pure, local computation (`lane_command`/`lane_env`).
+    Returns ``0`` after a dry run, or once the live fleet is all-terminal --
+    individual lanes may still be halted; see the printed summary and lane
+    logs. ``--dry-run`` is pure local computation: no preflight, no ``docker
+    manifest inspect``, no subprocess.
     """
     args = _build_arg_parser().parse_args(argv)
     lanes = _selected_lanes(args.lanes)

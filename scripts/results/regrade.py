@@ -1,70 +1,31 @@
 """Re-grade collected replicates with the compliance-aware parser.
 
-Why this is needed
-------------------
-``smolbench.evals.parsing`` recovers an answer that is correct but wrongly
-formatted, and records HOW the response broke the prompt's output
-contract, instead of scoring it as a plain failure. A results tree can
-hold replicates graded under an older, stricter convention, which would
-make an arm collected today incomparable with the arm it should be
-contrasted against.
+Every mark stores its raw ``response``, so ``smolbench.evals.parsing`` can
+re-score a whole results tree with no model, no GPU and no re-run -- use this to
+bring arms graded under an older, stricter convention onto one convention, so
+they stay comparable. Per condition it reports before/after accuracy and changed
+verdicts, invalid marks recovered, and NONCOMPLIANCE: how often the model broke
+the output contract regardless of correctness, which separates degraded
+instruction following from degraded reasoning.
 
-Every mark stores its raw ``response``, so the fix needs no model, no GPU,
-and no re-run. This script re-parses what is already on disk, so every arm
-ends up under one convention.
+Dry run by default; ``--write`` rewrites the YAMLs in place. There is NO git
+safety net: ``.gitignore`` excludes ``notebooks/*/results/``, so no result YAML
+is tracked and ``git checkout`` recovers nothing. Only a re-fetch undoes a bad
+``--write`` (``InductionExperiment.harness.sync_down()``) -- and that same call
+silently DISCARDS a good one.
 
-What it reports
----------------
-Per condition, before vs after:
+S3-backed results guard: this script edits ``rep_*.yaml`` on the LOCAL
+filesystem only, while ``smolbench.evals.results_store.sync_down`` is a one-way
+S3-to-local mirror that OVERWRITES the local tree, so a local-only regrade is
+clobbered back to the stale S3 copy on the next sync -- invisibly, since a score
+flip preserves byte length. Before touching a single file, and regardless of
+``--write`` (a dry run's tallies off a non-authoritative local tree mislead just
+as badly), `main` resolves every study it would touch via `_s3_backed_studies`
+and returns nonzero if any is an ``S3ResultsStore``; the printed message gives
+the recovery sequence.
 
-* accuracy, and how many marks change verdict;
-* invalid count: how many unreadable marks the parser recovers;
-* NONCOMPLIANCE: how often the model disobeyed the output contract,
-  regardless of whether it got the answer right. This number shows
-  whether a condition degrades instruction following rather than
-  reasoning.
-
-This script runs as a dry run by default. ``--write`` rewrites the YAMLs
-in place. There is NO git safety net: ``.gitignore`` ignores
-``notebooks/*/results/`` for every study, so git tracks no result YAML,
-and ``git checkout`` recovers nothing. You can recover a bad
-``--write`` pass ONLY by re-fetching the results: for S3-backed studies,
-through ``InductionExperiment.harness.sync_down()``. That same sync_down
-call also silently DISCARDS a good pass; see the guard below.
-
-S3-backed results guard
-------------------------
-This script edits ``rep_*.yaml`` files directly on the LOCAL filesystem.
-It does not know that ``smolbench.evals.results_store`` (S3-backed
-results) exists. That is fine as long as a study's results live only
-locally, but it becomes actively dangerous once ``SMOLBENCH_RESULTS_S3``
-is in play. ``smolbench.evals.results_store.sync_down`` is a ONE-WAY
-mirror, S3 to local only: it never uploads, and it OVERWRITES whatever is
-already in the local tree. A local-only edit this script makes
-(``--write``) never reaches S3, so the very next ``sync_down`` silently
-clobbers it back to the stale, pre-regrade S3 copy. This is not a loud
-failure: a regrade's typical edit is a score flip (for example ``1 ->
-0``), which preserves the file's byte length, so nothing about file size
-or presence would tip the operator off that the regrade was ever lost.
-
-Before it does ANY work, this script checks every study it would touch
-(respecting ``--study``) through
-``smolbench.evals.results_store.resolve_store``. It REFUSES outright if
-any of them resolves to an ``S3ResultsStore``: it prints which studies are
-S3-backed and returns a nonzero exit code, without reading or writing a
-single file. This refusal fires regardless of ``--write``. A dry run is
-not safe either: with an S3-backed store, the local tree is not
-authoritative. A dry run's before/after tallies, computed from an
-absent or stale local tree, would mislead the operator at exactly the
-moment they decide whether to write. See `_s3_backed_studies` and the
-guard block at the top of `main` for the implementation, and see the
-printed message for the exact recovery sequence (sync down, unset the
-env var, re-run).
-
-Run this script from the repo root:
-    .venv/bin/python scripts/results/regrade.py                     # report only
-    .venv/bin/python scripts/results/regrade.py --study induction
-    .venv/bin/python scripts/results/regrade.py --write
+Run from the repo root:
+    .venv/bin/python scripts/results/regrade.py [--study induction] [--write]
 """
 
 import argparse
@@ -90,45 +51,15 @@ STUDIES = {
 
 
 def _s3_backed_studies(studies) -> List:
-    """Return which of ``studies`` resolve to an S3-backed results store.
+    """Return ``(study, tree, store.describe())`` for each S3-backed study in `studies`.
 
-    Parameters
-    ----------
-    studies : iterable of str
-        Study names (keys of `STUDIES`) that a run would touch. `main`
-        already computes this same set from ``--study`` (or from every
-        study, when ``--study`` is absent).
-
-    Returns
-    -------
-    list of (str, pathlib.Path, str)
-        One ``(study, tree, description)`` tuple per offending study.
-        ``tree`` is ``REPO / STUDIES[study]``, the exact path `main` would
-        read or write. ``description`` is that tree's resolved store's
-        ``describe()`` value (for example
-        ``"s3://smolbench-results-.../notebooks/..."``). This list is
-        empty when every study in ``studies`` resolves locally, which is
-        the common case whenever ``SMOLBENCH_RESULTS_S3`` is unset.
-
-    Notes
-    -----
-    This function imports ``smolbench.evals.results_store`` lazily, inside
-    the function body. This matches this repo's house convention: a
-    module does not need to depend on the AWS SDK merely by being
-    imported. ``resolve_store`` itself only *might* need boto3, to build
-    a client, but never at the point this function calls it, because
-    deciding WHICH store class a directory maps to needs no network I/O
-    at all.
-
-    ``REPO / STUDIES[study]`` is always repo-anchored: both ``REPO`` here
-    and ``results_store.repo_root()`` reduce to the same checkout root.
-    So in practice, whenever ``SMOLBENCH_RESULTS_S3`` is set at all, EVERY
-    study in ``studies`` resolves to ``S3ResultsStore``. There is no
-    "some local, some S3" split for this script's own trees: only "the
-    env var is set" or "it isn't". This function still checks each study
-    individually, instead of short-circuiting on the env var, so the
-    printed refusal names every offending tree by its own resolved
-    ``describe()`` value, not by a guess.
+    `studies` are `STUDIES` keys; `tree` is ``REPO / STUDIES[study]``, the exact
+    directory `main` would read or write. The list is empty whenever every study
+    resolves locally, which is the case whenever ``SMOLBENCH_RESULTS_S3`` is
+    unset. Studies are resolved one at a time rather than short-circuiting on
+    that env var, so the printed refusal names each offending tree by its own
+    ``describe()`` value. ``results_store`` is imported lazily, per this repo's
+    house convention that importing a module must not require the AWS SDK.
     """
     from smolbench.evals.results_store import S3ResultsStore, resolve_store
 
@@ -142,26 +73,16 @@ def _s3_backed_studies(studies) -> List:
 
 
 def regrade_file(path: Path, parse) -> Dict:
-    """Re-parse one replicate file with `parse`.
-
-    Parameters
-    ----------
-    path : Path
-        Path to a ``rep_*.yaml`` replicate file.
-    parse : callable
-        Response parser to apply to each mark's raw ``response``, for
-        example ``parse_numeric`` or ``parse_tof``.
+    """Re-parse one ``rep_*.yaml`` replicate with `parse` (e.g. `parse_numeric`).
 
     Returns
     -------
     dict
-        A summary with these keys: ``marks`` (the new `Marks` object,
-        with the re-parsed score and compliance recorded on each mark),
-        ``n`` (mark count), ``before_correct``, ``before_invalid``,
-        ``changed`` (marks whose verdict changed), ``recovered`` (marks
-        that changed from invalid to a real verdict), ``broke`` (marks
-        that changed from a real verdict to invalid), and ``violations``
-        (a `Counter` of output-contract violations).
+        ``marks`` (a new `Marks` carrying the re-parsed score and compliance per
+        mark), ``n``, ``before_correct``, ``before_invalid``, ``changed``
+        (verdict changed), ``recovered`` (invalid -> real verdict), ``broke``
+        (real verdict -> invalid), and ``violations`` (a `Counter` of
+        output-contract violations).
     """
     marks = Marks.load(path)
     new_marks = []
@@ -199,12 +120,9 @@ def regrade_file(path: Path, parse) -> Dict:
 def main() -> int:
     """Re-grade every requested study and return a process exit code.
 
-    Returns
-    -------
-    int
-        ``0`` on success. ``1`` if any requested study is S3-backed (see
-        the module docstring's S3-backed results guard), or if any mark
-        regressed from a real verdict to invalid during regrading.
+    Returns ``1`` if any requested study is S3-backed (see the module
+    docstring's guard) or if any mark regressed from a real verdict to invalid;
+    ``0`` otherwise.
     """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")

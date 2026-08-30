@@ -1,17 +1,10 @@
 """Publish an analysis-ready snapshot of the family-ladder study to S3.
 
-WHY THIS EXISTS
----------------
-Every byte of this study already lives in S3; nothing lives only on the
-operating host. But it lives in the layout the RUNNERS wanted, which is
-not the layout an analyst wants:
-
-    induction/<model>/seed=<s>/<arm>--<ts>.yaml     # keyed by model already
-    deduction/runs/scaling_<model>/...              # 'runs/', and a 'scaling_' prefix
-
-So the two legs of the same model do not sit under a common name, and the
-deduction leg sits one level deeper. This script publishes a snapshot
-keyed the way analysis reads it: leg, then model.
+Every byte already lives in S3, but in the layout the RUNNERS wanted
+(``induction/<model>/seed=<s>/<arm>--<ts>.yaml`` versus
+``deduction/runs/scaling_<model>/...``), so the two legs of one model do not sit
+under a common name and deduction sits a level deeper. This republishes them
+keyed the way analysis reads them, leg then model:
 
     <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
     <dest>/deduction/<model>/verified_rows.jsonl    # the analysis input
@@ -21,31 +14,19 @@ keyed the way analysis reads it: leg, then model.
     <dest>/provenance/*.md                          # how to read the data
     <dest>/MANIFEST.json                            # what was copied, with byte counts
 
-A SNAPSHOT, NOT A MOVE
-----------------------
-This script never modifies or deletes a source object. The study bucket
-is an append-only experiment log, and it stays exactly as it is; this
-script only ever writes under `--dest`. You can safely re-run this
-script: it skips an object already present at the destination with a
-matching size, so an interrupted run resumes.
-
-Copies run SERVER-SIDE (`copy_object` with ``TaggingDirective="REPLACE"``;
-the plain default reads the source's tags, which needs
+A SNAPSHOT, NOT A MOVE: no source object is ever modified or deleted (the study
+bucket is an append-only experiment log); everything is written under
+``--dest``. Re-runs resume, skipping any destination object already present at a
+matching size. Copies run SERVER-SIDE, so the ~4.5 GB across ~55k objects never
+transits this host, using ``copy_object`` with ``TaggingDirective="REPLACE"``
+because the plain default reads the source's tags, needing
 ``s3:GetObjectTagging``, a permission the scoped operator key deliberately
-lacks). So the ~4.5 GB across ~55k objects never transits the host. This
-script verifies every copy's size against its source before it counts
-the copy.
+lacks. Every copy's size is verified against its source before it is counted.
 
-SUPERSEDED FILES ARE INCLUDED ON PURPOSE
-----------------------------------------
-This script also copies files named ``*_SUPERSEDED-*``, ``*_STALE-*``,
-and ``*_BROKEN-*``. They are the repair audit trail: an analyst who wants
-to check what changed needs them, and their names say plainly that they
-are not the current data.
+``*_SUPERSEDED-*``, ``*_STALE-*`` and ``*_BROKEN-*`` files are copied on purpose:
+they are the repair audit trail, and their names say they are not current data.
 
-USAGE
-    scripts/results/snapshot_analysis_data.py --dry-run
-    scripts/results/snapshot_analysis_data.py --dest analysis/2026-08-16
+    scripts/results/snapshot_analysis_data.py [--dry-run] [--dest analysis/2026-08-16]
 """
 
 import argparse
@@ -79,22 +60,11 @@ def _s3():
 
 
 def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
-    """Return (leg, model, source_key, size) for every study object.
+    """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
-    The source keys the two legs differently, so this function recovers
-    the model name differently for each. This asymmetry is the whole
-    reason this script exists.
-
-    Parameters
-    ----------
-    client : Any
-        A boto3 S3 client.
-
-    Returns
-    -------
-    list[tuple[str, str, str, int]]
-        One ``(leg, model, source_key, size)`` tuple per study object,
-        excluding objects matched by `SKIP_SUBSTRINGS`.
+    The two legs key the model differently (deduction carries a ``scaling_``
+    prefix, stripped here so both legs of a model share one name). That asymmetry
+    is the whole reason this script exists.
     """
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -117,31 +87,12 @@ def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
 
 
 def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
-    """Copy one object server-side, and verify its size.
+    """Copy one object server-side within `BUCKET`, and verify its size.
 
-    Parameters
-    ----------
-    client : Any
-        A boto3 S3 client.
-    src_key : str
-        Source object key, within `BUCKET`.
-    dest_key : str
-        Destination object key, within `BUCKET`.
-    size : int
-        Expected object size in bytes, used both to decide whether to
-        skip an already-present destination object and to verify the
-        copy afterward.
-
-    Returns
-    -------
-    str
-        ``"skipped"`` if a destination object of the same size already
-        exists, otherwise ``"copied"``.
-
-    Raises
-    ------
-    RuntimeError
-        If the copied object's size does not match `size`.
+    `size` is the expected source size in bytes: it decides whether an
+    already-present destination object can be skipped, and it is re-checked
+    after the copy. Returns ``"skipped"`` or ``"copied"``; raises `RuntimeError`
+    if the copied object's size does not match.
     """
     try:
         head = client.head_object(Bucket=BUCKET, Key=dest_key)

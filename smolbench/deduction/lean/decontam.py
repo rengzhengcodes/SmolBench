@@ -1,52 +1,31 @@
 """Content-level decontamination of Lean 4 SFT data against the eval holdout.
 
-`smolbench.deduction.lean.sft` holds eval theorems out of training **by
-``full_name``**. This is sufficient within LeanDojo Benchmark 4's own
-splits (the ``random`` and ``novel_premises`` kinds partition one shared
-theorem pool), but it is blind to two leak channels:
-
-1. **Same statement, different name.** Mathlib contains duplicate lemmas.
-   An external corpus (autoformalized or machine-generated) shares no
-   naming with mathlib at all, so a restatement of an eval theorem passes
-   a name-based holdout untouched.
-2. **Answer-content overlap without the theorem.** The eval's context
-   rungs expose, per theorem, its goal states at every step ``k``, its
-   tactic prefix, and its ground-truth tactic tail
-   (see ``notebooks/deduction/README.md``). Mathlib-derived synthetic
-   corpora (e.g. LeanNavigator's state-graph traversal) can reproduce
-   exactly those states and tactic chains inside *other* theorems.
-
-This module closes both leaks. `HoldoutIndex` fingerprints every eval
-theorem's statement, per-step goal states, and tactic chains.
-`HoldoutIndex.check` reports which (if any) of those keys a candidate
-training example hits.
+`sft`'s ``full_name`` holdout is blind to two leak channels: a *restatement* of
+an eval theorem under another name (mathlib has duplicate lemmas; an
+autoformalized corpus shares no naming at all), and answer-content overlap
+without the theorem -- mathlib-derived synthetic corpora (e.g. LeanNavigator)
+reproduce an eval theorem's states and tactic chains inside *other* theorems.
+`HoldoutIndex` fingerprints every eval theorem; `HoldoutIndex.check` reports
+which keys a candidate row hits.
 
 Key families
 ------------
-- **K1 name** -- ``full_name`` set (the existing `sft.eval_holdout_names`
-  behavior, kept for rows that carry a declaration name).
-- **K2 statement** -- normalized step-0 ``state_before`` (full text and
-  goal-only variant), matched exactly *and* by MinHash/LSH near-duplicate
-  (catches alpha-renamed restatements).
-- **K3 goal state** -- exact hash of the normalized ``state_before`` of
-  **every** proof step of every eval theorem (sweeps stratify ``k``, so
-  every step is answer-conditional, not just step 0).
-- **K4 tactic chain** -- (a) the full normalized tactic chain, and any
-  3-consecutive-tactic window of it, for eval proofs with >= 3 tactics;
-  (b) ``(state, next-tactic)`` pairs, the exact answer unit of the
-  headline ``k=last`` cells. Chains of 1-2 tactics are deliberately NOT
-  chain-indexed. Single tactics (``simp``) and short generic runs
-  (``intro h`` + ``simp``) are ubiquitous idioms whose match reveals no
-  answer. The pair key covers them *with* their state, which is the part
-  that makes them answer-conditional.
+- **K1 name** -- ``full_name`` set (as `sft.eval_holdout_names`).
+- **K2 statement** -- normalized step-0 ``state_before``, exact *and*
+  MinHash/LSH near-duplicate (catches alpha-renamed restatements).
+- **K3 state** -- normalized ``state_before`` of *every* proof step, since
+  sweeps stratify ``k`` so every step is answer-conditional (what each rung
+  exposes: ``notebooks/deduction/README.md``).
+- **K4 tactic chain** -- (a) full chain plus every 3-tactic window, only for
+  proofs with >= 3 tactics; (b) ``(state, next-tactic)`` pairs, the answer unit
+  of the headline ``k=last`` cells. 1-2-tactic chains are deliberately NOT
+  chain-indexed: ``simp`` and ``intro h``+``simp`` are ubiquitous idioms
+  revealing no answer, and the pair key covers them *with* the state that makes
+  them answer-conditional.
 
-Everything here is deterministic. Normalization is pure text processing,
-the MinHash permutations are seeded, and this module makes no
-model/embedding calls. So a dataset build is reproducible byte-for-byte
-from its manifest config.
-
-Like `sft`, this module imports only generation-side siblings (`corpus`,
-`context`), never `verify`. A decontamination run needs no Lean toolchain.
+Fully deterministic (pure text normalization, seeded MinHash, no model calls),
+so a build is byte-reproducible from its manifest config. Like `sft`, imports
+only generation-side siblings, never `verify`: no Lean toolchain needed.
 """
 
 from __future__ import annotations
@@ -89,29 +68,12 @@ _UNIVERSE_RE = re.compile(r"\bu_\d+\b")  # universe params u_1 -> u
 def normalize_text(s: str) -> str:
     """Canonicalize Lean text for fingerprinting.
 
-    Steps, in order:
-
-    1. Unicode NFC (so composed/decomposed forms of e.g. ``ℕ`` collide).
-    2. Collapse incidental per-elaboration counters that carry no semantic
-       meaning but differ between two traces of the same goal:
-       metavariables (``?m.248692`` -> ``?m``), inaccessible-hypothesis
-       autoname suffixes (``inst✝⁶`` -> ``inst✝``), and fresh universe
-       parameters (``u_1`` -> ``u``). See `_METAVAR_RE` et al. for why.
-    3. Collapse every whitespace run -- including newlines, so multi-line
-       goal states and one-line renderings of the same state collide --
-       to a single space, then strip.
-
-    Parameters
-    ----------
-    s : str
-        Raw statement / goal-state / tactic text.
-
-    Returns
-    -------
-    str
-        The normalized form used by every exact-match key in this module.
-        Applied identically to index and query sides, so the collapses
-        above can only *add* matches, never desynchronize the two.
+    In order: (1) Unicode NFC; (2) collapse the per-elaboration counters that differ
+    between two traces of one goal -- ``?m.248692`` -> ``?m``, ``inst✝⁶`` ->
+    ``inst✝``, ``u_1`` -> ``u``; (3) collapse every whitespace run *including
+    newlines* to one space, then strip, so multi-line and one-line renderings of a
+    state collide. Applied identically to the index and query sides, so the
+    collapses can only *add* matches.
     """
     s = unicodedata.normalize("NFC", s)
     s = _METAVAR_RE.sub("?m", s)
@@ -121,23 +83,12 @@ def normalize_text(s: str) -> str:
 
 
 def state_variants(state_pp: str) -> list[str]:
-    """Normalized matchable variants of a pretty-printed tactic state.
+    """One or two normalized variants of a pretty-printed tactic state.
 
-    Returns the normalized full state and, when it differs, the normalized
-    goal-only block (`context.extract_goal_only` -- what ``stepk:0``
-    renders). Indexing/checking both means a hypotheses-stripped copy of an
-    eval state still collides with the eval's ``stepk:0`` rung content.
-
-    Parameters
-    ----------
-    state_pp : str
-        A Lean tactic-state pretty-print (or a bare goal expression).
-
-    Returns
-    -------
-    list of str
-        One or two normalized strings, full form first. Empty strings are
-        dropped.
+    Full form first, empties dropped: the full state and, when it differs, the
+    goal-only block (`context.extract_goal_only`, what ``stepk:0`` renders) -- so a
+    hypotheses-stripped copy of an eval state still collides with the eval's
+    ``stepk:0`` rung content.
     """
     full = normalize_text(state_pp)
     goal = normalize_text(extract_goal_only(state_pp))
@@ -202,11 +153,9 @@ _PERMS = _perm_params()
 def _shingles(text: str) -> frozenset[int]:
     """Hashed character `_SHINGLE_N`-gram shingle set of normalized `text`.
 
-    Each shingle is reduced to a 64-bit ``blake2b`` integer, which stays
-    stable across processes and Python versions, unlike built-in
-    ``hash``. The MinHash permutations then act on these integers. Texts
-    shorter than the shingle width contribute their whole text as a
-    single shingle.
+    Shingles are 64-bit ``blake2b`` integers, stable across processes and
+    Python versions unlike built-in ``hash``. Text shorter than the
+    shingle width contributes itself as one shingle.
     """
     if len(text) <= _SHINGLE_N:
         grams = [text] if text else []
@@ -254,11 +203,9 @@ class Hit:
 
 @dataclass
 class HoldoutIndex:
-    """Content fingerprints of every eval-holdout theorem.
-
-    Build with `HoldoutIndex.build`; query with `check`. All lookup
-    structures map back to the eval theorem's ``full_name`` so a `Hit`
-    can name its source.
+    """Content fingerprints of every eval-holdout theorem: build with `build`,
+    query with `check`. Every lookup structure maps back to the eval theorem's
+    ``full_name``, so a `Hit` can name its source.
     """
 
     #: K1: eval theorem names.
@@ -290,20 +237,9 @@ class HoldoutIndex:
     ) -> "HoldoutIndex":
         """Index every theorem of the given eval splits.
 
-        Parameters
-        ----------
-        eval_specs : iterable of (kind, split)
-            Splits whose theorems' content must never appear in training;
-            default `sft.DEFAULT_EVAL_SPECS` (``novel_premises`` val+test).
-            Loaded via `corpus.load_split` -- the *whole* split, matching
-            `sft.eval_holdout_names`' stricter-than-replay-passing stance.
-
-        Returns
-        -------
-        HoldoutIndex
-            The populated index. Theorems without traced tactics still
-            contribute their name (K1); they have no recorded states or
-            tactics to index.
+        `eval_specs` is loaded via `corpus.load_split` -- the *whole* split, matching
+        `sft.eval_holdout_names`' stricter-than-replay-passing stance. Theorems without
+        traced tactics contribute their name (K1) only.
         """
         idx = cls()
         for kind, split in eval_specs:
@@ -378,33 +314,12 @@ class HoldoutIndex:
     ) -> list[Hit]:
         """Check one candidate training example against every key family.
 
-        Callers pass whichever facets their corpus row has; any facet may
-        be omitted. A row should be **dropped** iff the returned list is
-        non-empty.
+        Callers pass whichever facets their row has; any may be omitted. A row should be
+        **dropped** iff the returned list is non-empty (one `Hit` per matched family).
 
-        Parameters
-        ----------
-        name : str, optional
-            The row's declaration name, if it has one (K1).
-        statement : str, optional
-            The row's theorem statement / initial goal text (K2: exact and
-            near-dup; also checked against K3, since a "statement" of a
-            state-shaped corpus row may be a mid-proof eval state).
-        states : iterable of str
-            Any goal states embedded in the row -- e.g. the rendered
-            ``stepk`` state of a state->tactic example (K3; exact only).
-        tactics : sequence of str
-            The row's target tactic lines, in order (K4a: full-chain match
-            for >= 3 tactics, plus every 3-consecutive window).
-        pairs : iterable of (str, str)
-            ``(state, tactic)`` pairs the row teaches -- for state-shaped
-            rows, the state with the first target tactic (K4b).
-
-        Returns
-        -------
-        list of Hit
-            Every key match found (deduplicated per family), empty when
-            the row is clean.
+        Facet -> family: `name` K1; `statement` K2 exact + near-dup, and also K3, since
+        a state-shaped row's "statement" may be a mid-proof eval state; `states` K3
+        exact only; `tactics` (in order) K4a; `pairs` K4b.
         """
         hits: list[Hit] = []
         if name is not None and name in self.names:
@@ -460,23 +375,11 @@ class HoldoutIndex:
     def count_name_mentions(self, text: str) -> int:
         """Count eval-theorem names appearing *inside* `text` (report-only).
 
-        A synthetic proof that merely *invokes* an eval theorem as a
-        premise (``exact Nat.add_comm ...``) reveals the eval theorem's
-        existence, which pretraining on mathlib already does, but not its
-        proof. So such rows are **not** dropped; builders report this
-        count in their manifest for transparency instead.
-
-        Parameters
-        ----------
-        text : str
-            Any row text (statement + proof).
-
-        Returns
-        -------
-        int
-            Number of (non-overlapping) holdout-name occurrences, matched
-            with identifier boundaries so ``Nat.add_comm`` does not fire
-            inside ``Nat.add_comm'`` or ``Foo.Nat.add_comm``.
+        A row that merely *invokes* an eval theorem (``exact Nat.add_comm ...``) reveals
+        its existence -- which mathlib pretraining already does -- but not its proof, so
+        it is **not** dropped; builders report this count in their manifest instead.
+        Occurrences are non-overlapping and identifier-bounded, so ``Nat.add_comm`` does
+        not fire inside ``Nat.add_comm'`` or ``Foo.Nat.add_comm``.
         """
         if self._name_re is None:
             # Longest-first so a name that prefixes another (Foo.bar vs
@@ -491,14 +394,7 @@ class HoldoutIndex:
         return len(self._name_re.findall(text))
 
     def stats(self) -> dict:
-        """Sizes of every key family, for manifests.
-
-        Returns
-        -------
-        dict
-            ``{"names", "statements", "states", "chains", "tactic_ngrams",
-            "pairs"}`` -> entry counts.
-        """
+        """Entry counts per key family, for manifests."""
         return {
             "names": len(self.names),
             "statements": len(self.statements),

@@ -1,44 +1,31 @@
 """
 Share one OpenAI-compatible Chat Completions client across every provider.
 
-All smolbench inference providers (OpenRouter, Prime Intellect, AWS
-Bedrock/SageMaker, self-provisioned EC2 vLLM) speak the same
-``/chat/completions`` dialect. They differ only in how the endpoint is
-resolved and authenticated, and in a handful of policy knobs (timeouts,
-retry backoff, connection-failure escalation). Each provider module builds
-one :class:`ChatClient` and re-exports its bound ``query``/``complete``/
-``evaluate`` as the module-level functions that ``smolbench.evals.provider``
-dispatches to. This way a fix or feature added here reaches every provider
-at once. ``complete`` returns the full :class:`ChatResult` (content,
-reasoning, token usage, server-reported model id, finish reason);
-``query`` is a thin wrapper that narrows that down to the ``(content,
-reasoning)`` 2-tuple every existing caller (provider modules, ``evaluate``,
-the notebooks) relies on. New callers that need usage or a bounded
-``max_retries`` (e.g. a Lean sweep runner) should call ``complete``
-directly instead.
+Every provider (OpenRouter, Prime Intellect, AWS Bedrock/SageMaker, EC2 vLLM)
+speaks the same ``/chat/completions`` dialect and differs only in endpoint
+resolution, auth, and a few policy knobs. Each builds one :class:`ChatClient`
+and re-exports its bound ``query``/``complete``/``evaluate`` as the functions
+``smolbench.evals.provider`` dispatches to, so providers stay substitutable
+behind ``INFERENCE_PROVIDER``. ``complete`` returns the full
+:class:`ChatResult`; ``query`` narrows it to the ``(content, reasoning)``
+2-tuple. Callers needing usage or a bounded ``max_retries`` (e.g. a Lean
+sweep runner) should call ``complete``.
 
-This module unifies response handling as the superset of what the
-providers had grown separately, so no provider loses behavior:
+Response handling is the SUPERSET of what the providers had grown separately:
 
-- It reads the reasoning channel from ``message.reasoning_content`` first
-  (vLLM/Bedrock/SageMaker) and falls back to ``message.reasoning``
+- The reasoning channel is read from ``message.reasoning_content``
+  (vLLM/Bedrock/SageMaker) first, falling back to ``message.reasoning``
   (OpenRouter/Prime Intellect).
-- When no server-side reasoning channel is present, but the content carries
-  a plain-text ``<think>...</think>`` block (models whose tokenizers have
-  no think token ids, e.g. Nemotron-Ultra and Olmo-Think -- see the
-  ``EC2_DEPLOY_SPECS`` notes in ``smolbench.evals.providers.ec2``), it splits the
-  block out client-side, so scoring sees only the answer.
+- With no server-side channel, a plain-text ``<think>...</think>`` block is
+  split out client-side so scoring sees only the answer (models whose
+  tokenizers lack think token ids, e.g. Nemotron-Ultra and Olmo-Think; see
+  the ``EC2_DEPLOY_SPECS`` notes in ``smolbench.evals.providers.ec2``).
 - The ``usage.total_tokens`` context guard fires only when the server
   actually reports usage (some SageMaker containers omit it).
-- Timeouts are a ``(connect, read)`` pair: a short connect timeout fails
-  fast on a dead endpoint, while a long read timeout lets slow chain-of-
-  thought generations finish on attempt 1, instead of surviving only via
-  the retry lottery (which would censor the CoT-length distribution from
-  the top).
-
-Per-call tuning (``max_parallel``, ``request_timeout``, ``show_progress``)
-is therefore available under EVERY provider, keeping providers substitutable
-behind ``INFERENCE_PROVIDER``.
+- Timeouts are a ``(connect, read)`` pair: a short connect fails fast on a
+  dead endpoint, while a long read lets slow CoT generations finish on
+  attempt 1 instead of surviving only via the retry lottery, which would
+  censor the CoT-length distribution from the top.
 """
 
 import json
@@ -67,74 +54,19 @@ METADATA_TIMEOUT_S: int = 120
 def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
     """Perform one bearer-authenticated metadata GET and return its parsed JSON body.
 
-    This function performs the shared GET/auth/timeout mechanics behind
-    OpenRouter's and Prime Intellect's ``get_model_context_length`` (a GET
-    against ``/models/{model}/endpoints`` or ``/models/{model}``), and AWS's
-    and EC2's ``list_models`` (a GET against ``/models``). Each call site
-    keeps its own URL construction, ``lru_cache`` (where applicable), and
-    JSON post-processing.
+    Shared by the providers' ``get_model_context_length`` and ``list_models``
+    lookups; callers build the URL, resolve the key, and do all
+    shape-specific post-processing. This function never interprets the body.
 
-    Parameters
-    ----------
-    url : str
-        Fully-resolved request URL. Callers build this themselves, since
-        each provider's path shape differs (OpenRouter's
-        ``/models/{model}/endpoints``, Prime Intellect's ``/models/{model}``,
-        AWS/EC2's flat ``/models``).
-    api_key : str
-        Bearer token sent as ``Authorization: Bearer {api_key}``. Callers
-        resolve this themselves (an env var, a state file, a minted
-        short-lived token, ...); this function only shapes the header.
-    check_status : bool
-        When True, this function calls ``response.raise_for_status()``
-        before parsing, raising ``requests.exceptions.HTTPError`` on a
-        4xx/5xx response. This is today's ``list_models`` behavior (AWS,
-        EC2). When False, it parses the body as JSON regardless of status
-        code. This is today's ``get_model_context_length`` behavior
-        (OpenRouter, Prime Intellect). This parameter is required (no
-        default): every call site has an opinion here, and a
-        silently-wrong default would be the kind of behavior change this
-        extraction must not introduce. See the FIDELITY note.
-    timeout : float, optional
-        Read timeout in seconds, forwarded to ``requests.get`` as a scalar
-        (no separate connect timeout; metadata calls are small, fast
-        lookups, unlike chat completions; see ``METADATA_TIMEOUT_S``).
-        Defaults to ``METADATA_TIMEOUT_S``. Pass an explicit value only if a
-        call site's timeout genuinely diverges from that shared default.
-
-    Returns
-    -------
-    Any
-        ``response.json()``: the parsed JSON body, whatever shape the
-        endpoint returns (a bare list, a dict with a top-level ``"data"``
-        key, ...). Callers perform their own shape-specific post-processing
-        (e.g. ``response["data"]["endpoints"][0]["context_length"]`` vs
-        ``[m["id"] for m in response["data"]]``); this function does not
-        interpret the body at all.
-
-    Raises
-    ------
-    requests.exceptions.HTTPError
-        Only when ``check_status`` is True and the response status is a
-        4xx/5xx.
-    requests.exceptions.RequestException
-        A connection-level failure (timeout, DNS failure, connection reset),
-        regardless of ``check_status``.
-    requests.exceptions.JSONDecodeError
-        The response body is not valid JSON. This is reachable even when
-        ``check_status`` is True, if the server returns a 2xx with a
-        non-JSON body. When ``check_status`` is True and the status is an
-        error, ``raise_for_status()`` raises first, and ``.json()`` is
-        never reached.
-
-    Notes
-    -----
-    FIDELITY: the two context-length lookups (OpenRouter, Prime Intellect)
-    deliberately do NOT check status before parsing; an error body flows
-    into the caller's shape-specific indexing and raises there. The two
-    ``list_models`` call sites (AWS, EC2) DO check. ``check_status`` has no
-    default so this split can never be silently unified -- do not collapse
-    it.
+    ``check_status`` is keyword-only with NO default so the split can never be
+    silently unified -- do not collapse it. True calls ``raise_for_status()``
+    before parsing (``list_models``: AWS, EC2), raising ``HTTPError`` on
+    4xx/5xx; False parses regardless of status (``get_model_context_length``:
+    OpenRouter, Prime Intellect, where an error body instead raises in the
+    caller's own indexing). ``timeout`` is a scalar read timeout -- metadata
+    calls are small and fast, unlike chat completions. A connection-level
+    failure raises ``RequestException`` either way, and a non-JSON body raises
+    ``JSONDecodeError`` even on a 2xx.
     """
     response = requests.get(
         url=url,
@@ -149,20 +81,9 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
 def is_retryable_request_error(err: requests.exceptions.RequestException) -> bool:
     """Return whether a chat-completions request error should be retried.
 
-    HTTP 429 (throttled) and 5xx (transient server trouble) are retryable,
-    as is any non-HTTP request failure (connection reset, timeout, DNS).
-    Other HTTP codes (4xx auth/validation errors) are permanent and get
-    re-raised.
-
-    Parameters
-    ----------
-    err : requests.exceptions.RequestException
-        The request failure to classify.
-
-    Returns
-    -------
-    bool
-        True if the caller should retry the request.
+    HTTP 429 (throttled) and 5xx (transient) are retryable, as is any
+    non-HTTP failure (connection reset, timeout, DNS). Other 4xx
+    (auth/validation) are permanent.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -175,44 +96,21 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
 def collect_stream(response: requests.Response) -> Dict[str, Any]:
     """Reassemble an SSE completion stream into a NON-streamed response body.
 
-    A non-streaming completion is silent on the wire for the whole
-    generation, and a long-quiet socket can be dropped in transit: the
-    request goes out and nothing ever comes back, until the read timeout.
-    The loss is selective by generation LENGTH -- short responses in the
-    same batch arrive normally. SSE keeps bytes flowing, so the flow is
-    never idle.
+    A non-streaming completion is silent on the wire for the whole generation,
+    and a long-quiet socket can be dropped in transit -- a loss selective by
+    generation LENGTH, since short responses in the same batch arrive
+    normally. SSE keeps bytes flowing. The result is rebuilt into exactly the
+    non-streamed shape so that NO downstream parsing (usage accounting, the
+    ``content is None`` guard, the ``</think>`` split, logging hooks) forks on
+    transport; streamed runs stay comparable with non-streamed ones. Sampling
+    is server-side and untouched.
 
-    This function reassembles the stream into the non-streamed shape,
-    rather than returning its own shape, because everything downstream
-    (usage accounting, the ``content is None`` guard, the plain-text
-    ``</think>`` split, the verbose-logging hooks) is parsing logic already
-    exercised across every provider in this repo. A body shaped exactly
-    like the non-streamed one means NONE of that logic forks on the
-    transport, so the two paths cannot drift, and a streamed run stays
-    comparable with a non-streamed one. Transport is the only thing that
-    changes; sampling happens server-side and stays untouched.
-
-    Parameters
-    ----------
-    response : requests.Response
-        An open streamed response from ``requests.post(..., stream=True)``.
-
-    Returns
-    -------
-    dict
-        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":
-        {...}, "model": ...}``: the same shape a non-streamed request
-        returns. ``reasoning_content`` is present only if the server sent
-        reasoning deltas, matching the non-streamed body (whose key is
-        likewise absent when there is no reasoning channel).
-
-    Notes
-    -----
-    The request needs ``stream_options: {"include_usage": true}`` for
-    ``usage`` to arrive. Without it, the final chunk carries no counters
-    and the returned ``usage`` is empty. Downstream code tolerates this (it
-    reads usage through ``.get`` chains), but it loses the token counts the
-    study records.
+    ``response`` must be an open ``requests.post(..., stream=True)`` response.
+    Returns ``{"choices": [{"message": {...}, "finish_reason": ...}],
+    "usage": {...}, "model": ...}``, with ``reasoning_content`` present only
+    if the server sent reasoning deltas. ``usage`` arrives only if the request
+    sent ``stream_options: {"include_usage": true}``; otherwise it is empty
+    (tolerated downstream, but the study loses its token counts).
     """
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
@@ -281,43 +179,21 @@ def _no_extra_headers(model: str) -> Dict[str, str]:
 
 def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
           log_invalid: bool = False) -> Marks:
-    """Grade raw (content, reasoning) responses against a quiz.
+    """Grade raw ``(content, reasoning)`` responses, one per question in quiz order.
 
-    Each response goes through ``smolbench.evals.parsing.parse_for``, which
-    returns both the extracted answer and a label for how the response
-    disobeyed the prompt's output contract (None when it obeyed exactly).
-    This function records those two results independently: ``score`` says
-    whether the model was RIGHT, ``compliance`` says whether it followed
-    the FORMAT.
-
-    That separation is the point. A right answer in the wrong shape
-    (``"Answer: False"`` when the prompt demanded a bare ``False``) would
-    otherwise be indistinguishable from a wrong answer. This matters for the
-    induction ``noise_intens`` arm, which controls for prompt LENGTH only,
-    but whose whitespace padding measurably degrades instruction following.
-
-    A response that genuinely yields no answer -- empty, repetition
-    collapse, or a reasoning chain truncated before any verdict -- still
-    scores None. Recovery is deliberately conservative about long
-    responses; see ``smolbench.evals.parsing``.
-
-    Parameters
-    ----------
-    quiz : Quiz
-        The questions, in the order they were asked.
-    responses : List[Tuple[str, Optional[str]]]
-        One ``(content, reasoning)`` pair per question, in quiz order.
-    model : str
-        Model identifier recorded on the returned ``Marks``.
-    log_invalid : bool, optional
-        When True, this function logs unparseable responses at INFO level.
-        Default False.
-
-    Returns
-    -------
-    Marks
-        One ``Mark`` per question (score 1 correct / 0 wrong / None
-        invalid), each carrying its ``compliance`` label.
+    ``smolbench.evals.parsing.parse_for`` yields both the extracted answer and
+    a label for how the response disobeyed the prompt's output contract (None
+    when it obeyed), and the two are recorded INDEPENDENTLY on each ``Mark``:
+    ``score`` (1 correct / 0 wrong / None invalid) says whether the model was
+    right, ``compliance`` whether it followed the format. Without that split,
+    a right answer in the wrong shape (``"Answer: False"`` where a bare
+    ``False`` was demanded) is indistinguishable from a wrong one -- which
+    matters for the induction ``noise_intens`` arm, whose whitespace padding
+    controls prompt LENGTH but measurably degrades instruction following. A
+    response yielding no answer at all (empty, repetition collapse, truncated
+    chain) scores None; recovery is deliberately conservative about long
+    responses (see ``smolbench.evals.parsing``). ``log_invalid`` logs
+    unparseable responses at INFO.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -361,24 +237,9 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
 def _render_progress(done: int, total: int, model: str, width: int = 30) -> None:
     """Render a single-line "N/total prompted" bar (no tqdm dependency).
 
-    This function is driven by joblib's as-completed generator, so the bar
-    advances as each prompt's response actually lands, not merely as tasks
-    are dispatched. It emits a trailing newline once the run is complete.
-
-    Parameters
-    ----------
-    done : int
-        Number of prompts completed so far.
-    total : int
-        Total number of prompts in the quiz.
-    model : str
-        Model identifier, printed as the bar's line prefix.
-    width : int, optional
-        Bar width in characters. Default 30.
-
-    Returns
-    -------
-    None
+    Driven by joblib's as-completed generator, so the bar advances as
+    responses land, not as tasks dispatch. Emits a trailing newline once
+    ``done >= total``.
     """
     filled: int = width if total == 0 else int(width * done / total)
     bar: str = "#" * filled + "-" * (width - filled)
@@ -391,19 +252,12 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
 class ChatResult:
     """Hold the full per-call response from :meth:`ChatClient.complete`.
 
-    This class is a superset of the ``(content, reasoning)`` 2-tuple
-    :meth:`ChatClient.query` returns: it adds token usage, the
-    model id the server actually reports, and the finish reason. It exists
-    so callers that need more than content/reasoning -- e.g. a Lean
-    theorem-proving sweep runner that budgets retries against token usage
-    inside an open verification session -- don't have to change
-    ``query()``'s signature or return type (see ``ChatClient.query``).
-
-    Every field is populated DEFENSIVELY from the response body (``.get``
-    chains in ``ChatClient.complete``). Some servers (certain SageMaker
-    containers) omit ``usage`` entirely, and not every server echoes
-    ``model``/``finish_reason``. Absence is therefore a documented,
-    non-exceptional case here, rather than a ``KeyError``.
+    A superset of the ``(content, reasoning)`` 2-tuple
+    :meth:`ChatClient.query` returns, for callers needing usage, the reported
+    model id, or the finish reason. Every field is populated DEFENSIVELY via
+    ``.get`` chains: some SageMaker containers omit ``usage`` entirely and not
+    every server echoes ``model``/``finish_reason``, so absence is
+    non-exceptional, never a ``KeyError``.
     """
 
     #: The message content. Empty string on the server's null-content path
@@ -438,11 +292,10 @@ class ChatResult:
 class ChatClient:
     """Represent one OpenAI-compatible chat-completions endpoint family.
 
-    Providers configure the deltas; the retry loop, response parsing, and
-    parallel evaluation live here once. All ``Callable`` fields are plain
-    functions resolved at CALL time, never import time, so environment
-    changes (a re-provisioned EC2 instance, a refreshed SageMaker token)
-    take effect without re-importing anything.
+    Providers configure the deltas; the retry loop, response parsing and
+    parallel evaluation live here once. All ``Callable`` fields are resolved
+    at CALL time, never import time, so environment changes (a re-provisioned
+    EC2 instance, a refreshed SageMaker token) take effect without re-import.
     """
 
     #: Human-readable provider name, used as the log-line prefix.
@@ -512,84 +365,54 @@ class ChatClient:
     ) -> ChatResult:
         """Query ``model`` once, and return the full response as a ``ChatResult``.
 
-        This method holds the message assembly, retry loop,
-        ``<think>``-splitting, usage guard, and logging. ``query()`` is a
-        thin wrapper narrowing the ``ChatResult`` to the ``(content,
-        reasoning)`` 2-tuple; callers that need token usage, the
-        server-reported model id, or a bounded retry count should call this
-        method directly.
+        Holds the message assembly, retry loop, ``<think>``-splitting, usage
+        guard and logging; ``query()`` is a thin wrapper narrowing the result
+        to ``(content, reasoning)``.
 
         Parameters
         ----------
-        prompt : str
-            The user message posed to the LLM.
-        model : str
-            Provider-specific model id.
         seed : int
             Decoding seed, sent with every request. This repo's rule is
-            seeded, reproducible generations; never drop this to dodge an
-            error.
+            seeded, reproducible generations; never drop it to dodge an error.
         system : str, optional
-            Per-call system prompt. Design: the message order is
-            ``[provider system_prompt(model) (if any), system (if given),
-            user prompt]``. The provider-level prompt goes FIRST, because it
-            carries deploy-spec toggles that must survive a per-call system
-            message unshadowed (e.g. Nemotron's "detailed thinking on" CoT
-            toggle; see ``EC2_DEPLOY_SPECS``). The per-call ``system`` is
-            additive context layered after it, never replacing it. The user
-            prompt is always last.
+            Extra per-call system message. Message order is ``[provider
+            system_prompt(model), system, user prompt]``: the provider-level
+            prompt goes FIRST because it carries deploy-spec toggles (e.g.
+            Nemotron's "detailed thinking on"; see ``EC2_DEPLOY_SPECS``) that
+            a per-call system message must layer onto, never shadow.
         context_length : int, optional
-            Token-budget guard: this method raises ``ValueError`` when the
-            response reports ``usage.total_tokens`` above this value. Pass
-            ``get_model_context_length(model)``. The default 0 fails any
-            usage-reporting response, so direct callers must supply it.
+            Token-budget guard: raises ``ValueError`` when the response
+            reports ``usage.total_tokens`` above this value. Pass
+            ``get_model_context_length(model)``; the default 0 fails any
+            usage-reporting response, so direct callers must supply one.
         extra_args : dict, optional
-            Extra key/values merged into the request body (e.g.
-            ``max_completion_tokens``, ``reasoning_effort``).
+            Merged into the request body (e.g. ``max_completion_tokens``,
+            ``reasoning_effort``).
         request_timeout : int, optional
-            Per-request read timeout in seconds; falls back to the client's
-            ``read_timeout_s``. Raise it for long CoT generations, so they
-            complete on attempt 1.
+            Per-request read timeout in seconds, overriding the client's
+            ``read_timeout_s``. Raise it so long CoT generations complete on
+            attempt 1.
         max_retries : int, optional
-            Caps retryable failures (HTTP 429/5xx, or connection-level
-            errors) at N. The Nth retryable failure re-raises the last error
-            instead of sleeping again. None (default) retries retryable
-            errors indefinitely.
-            Non-retryable errors (4xx other than 429) always raise
-            immediately on first occurrence, regardless of this cap. The
-            existing ``max_connection_failures``/``on_unreachable``
-            escalation is unchanged and takes precedence when it trips
-            first; this cap is only consulted afterward. When THIS cap
-            exhausts first on a connection-level failure (a retry budget
-            smaller than ``max_connection_failures``, e.g. the Lean sweep's
-            4 vs EC2's 10), the ``on_unreachable`` diagnosis hook still
-            fires before the re-raise. This way a self-managed endpoint
-            that vanishes is diagnosed (spot reclaim, caller-IP drift)
-            rather than surfaced as a generic connection error. This
-            parameter is intended for callers (e.g. a Lean verification
-            sweep) that must bound how long a single query can spin against
-            a wedged endpoint.
-
-        Returns
-        -------
-        ChatResult
-            The message content, reasoning channel, token usage
-            (defensively defaulted when the server omits ``usage``), the
-            model id the server reports (or the requested one), and the
-            finish reason.
+            Caps retryable failures (HTTP 429/5xx or connection-level) at N;
+            the Nth re-raises the last error instead of sleeping again. None
+            (default) retries them indefinitely, while non-retryable errors
+            (4xx other than 429) always raise on first occurrence regardless.
+            ``max_connection_failures``/``on_unreachable`` takes precedence
+            when it trips first; when THIS cap exhausts first on a
+            connection-level failure (a smaller retry budget, e.g. the Lean
+            sweep's 4 vs EC2's 10), ``on_unreachable`` still fires before the
+            re-raise, so a vanished self-managed endpoint is diagnosed (spot
+            reclaim, caller-IP drift) rather than surfaced as a generic
+            connection error.
 
         Raises
         ------
-        requests.exceptions.HTTPError
-            A non-retryable HTTP error (4xx other than 429), or a retryable
-            one (429/5xx) once ``max_retries`` is exhausted.
         requests.exceptions.RequestException
-            A non-HTTP connection-level failure, once ``max_retries`` is
-            exhausted (or immediately if not retryable).
+            A non-retryable HTTP error (4xx other than 429), or any retryable
+            HTTP/connection failure once ``max_retries`` is exhausted.
         RuntimeError
-            ``max_connection_failures`` consecutive connection-level
-            failures tripped first (see the field's docs); this takes
-            precedence over ``max_retries``.
+            ``max_connection_failures`` consecutive connection-level failures
+            tripped first; this takes precedence over ``max_retries``.
         ValueError
             The response reports ``usage.total_tokens`` above
             ``context_length``.
@@ -807,19 +630,12 @@ class ChatClient:
         system: Optional[str] = None,
         max_retries: Optional[int] = None,
     ) -> Tuple[str, Optional[str]]:
-        """Query ``model`` once, retrying transient failures indefinitely.
+        """Query ``model`` once, returning only ``(content, reasoning)``.
 
-        This method is a thin wrapper over ``complete()``, narrowing its
-        result to ``(content, reasoning)``. See ``complete()`` for the full
-        parameter docs and the additional ``ChatResult`` fields this
-        wrapper discards.
-
-        Returns
-        -------
-        Tuple[str, Optional[str]]
-            ``(content, reasoning)``: the message content, and the model's
-            separate reasoning channel (or client-side-split ``<think>``
-            block), or None when absent.
+        A thin wrapper over ``complete()`` -- see it for the parameter docs
+        and the ``ChatResult`` fields this discards. ``reasoning`` is the
+        server's separate channel or the client-side-split ``<think>`` block,
+        None when absent.
         """
         result = self.complete(
             prompt,
@@ -834,22 +650,10 @@ class ChatClient:
         return result.content, result.reasoning
 
     def _indexed_query(self, index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
-        """Tag ``query()``'s result with its quiz index.
+        """Tag ``query()``'s result with the question's quiz position ``index``.
 
-        Results stream back out of order (``return_as="generator_unordered"``).
-        The index lets ``evaluate`` restore quiz order before scoring.
-
-        Parameters
-        ----------
-        index : int
-            The question's position in the quiz.
-        *args, **kwargs
-            Forwarded to ``query()``.
-
-        Returns
-        -------
-        Tuple[int, Tuple[str, Optional[str]]]
-            ``(index, query_result)``.
+        Results stream back out of order (``return_as="generator_unordered"``),
+        so the index lets ``evaluate`` restore quiz order before scoring.
         """
         return index, self.query(*args, **kwargs)
 
@@ -865,38 +669,18 @@ class ChatClient:
     ) -> Marks:
         """Evaluate ``model`` on one quiz (a sequence of ``QnA`` questions).
 
-        This method queries all questions in parallel threads with the
-        shared decoding ``seed``, streams completions into a live progress
-        bar, then grades them in quiz order.
+        Queries every question in parallel threads under the shared decoding
+        ``seed``, streams completions into a live "N/total prompted" bar
+        (``show_progress``, default True), then grades them back in quiz
+        order: one ``Mark`` per question, ``score`` 1/0/None (None = the
+        response could not be conditioned into an ``Answer``).
 
-        Parameters
-        ----------
-        quiz : Quiz
-            The questions to pose (ONE quiz; each element is a ``QnA``).
-        model : str
-            Provider-specific model id.
-        seed : int
-            Decoding seed shared by every request in the quiz.
-        extra_args : dict, optional
-            Extra request-body key/values, forwarded to every ``query``.
-        max_parallel : int, optional
-            Fan-out cap; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS``
-            (8). CoT runs may lower it and raise ``request_timeout``, so the
-            longest chain finishes on attempt 1. Otherwise long generations
-            time out under contention, and the measured CoT-length
-            distribution gets censored from the top.
-        request_timeout : int, optional
-            Per-request read-timeout override, forwarded to every ``query``.
-        show_progress : bool, optional
-            When True (default), prints a live "N/total prompted" bar as
-            responses land.
-
-        Returns
-        -------
-        Marks
-            One ``Mark`` per question. Each ``Mark.score`` is 1/0 for
-            correct/incorrect and None when the response could not be
-            conditioned into an ``Answer``.
+        ``max_parallel`` defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS``
+        (8). CoT runs may lower it and raise ``request_timeout``, so the
+        longest chain finishes on attempt 1; otherwise long generations time
+        out under contention and the measured CoT-length distribution gets
+        censored from the top. ``extra_args``/``request_timeout`` are
+        forwarded to every ``query``.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)

@@ -1,58 +1,28 @@
-"""Run a Holm and Hochberg significance report over the PRIMARY contrast family.
+"""Holm and Hochberg significance report over the PRIMARY contrast family.
 
-This applies both step-down Holm (1979) and step-up Hochberg (1988) at
-FWER = 0.05 to the 210 pre-registered PRIMARY contrasts. It reports
-which results are significant, in which direction, and where the two
-procedures disagree.
+Applies step-down Holm (1979) and step-up Hochberg (1988) at FWER = 0.05 to the
+210 pre-registered PRIMARY contrasts: which are significant, in which direction,
+and where the two procedures disagree.
 
-Test choice
------------
-The independent unit in this design is the REPLICATE SEED. A seed
-draws one label alphabet and one answer vector, and the 9 harmonic
-items inside it share them. So a seed on which a model's arm collapses
-contributes up to 9 correlated discordances, not 9 pieces of evidence.
-The PRIMARY inference is therefore the EXACT seed-level sign-flip
-randomization test (``paired_analysis.signflip_exact_p``): it
-enumerates all 2^30 sign assignments of the 30 per-seed differences by
-DP, and reads off P(|T*| >= |T_obs|). This test is exact, deterministic
-(no resampling seed), and reduces to exact McNemar when every cluster
-is a singleton. It is also unimprovable within its family:
-studentizing is a provable no-op, because sum_s d_s^2 is sign-flip
-invariant.
+PRIMARY test: the exact seed-level sign-flip randomization test
+(``paired_analysis.signflip_exact_p``). The independent unit is the REPLICATE
+SEED -- one label alphabet and one answer vector shared by its 9 harmonic items
+-- so a seed on which an arm collapses contributes up to 9 correlated
+discordances, not 9 pieces of evidence. It enumerates all 2^30 sign assignments
+of the 30 per-seed differences by DP: exact, deterministic (no resampling seed),
+equal to exact McNemar when every cluster is a singleton, and unimprovable
+within its family (studentizing is a no-op, since sum_s d_s^2 is sign-flip
+invariant). Item-level McNemar and the unpaired harmonic-stratified CMH stay as
+labelled DESCRIPTIVE columns; the gap to the cluster p is the design effect.
 
-Item-level exact McNemar and the unpaired harmonic-stratified CMH that
-``power_analysis.py`` plans are both retained as DESCRIPTIVE columns,
-clearly labelled. The gap between them and the cluster p is the design
-effect.
-
-Procedure choice
-----------------
-Holm controls FWER under ARBITRARY dependence, and is uniformly more
-powerful than single-step Bonferroni. Hochberg is uniformly more
-powerful than Holm, but it requires Simes-type positive dependence
-(MTP2, Sarkar 1998), which is NOT verified for this contrast structure:
-210 statistics sharing models, seeds, and harmonics. So Hochberg is
-reported as a sensitivity check, not as the headline. Where it rejects
-strictly more than Holm, those extra rejections rest on an unverified
-assumption.
-
-Reporting discipline
---------------------
-Every contrast lands in exactly one of two buckets, and nothing is
-hidden:
-
-  * FINDINGS -- the 126 contrasts between two informative arms.
-  * ZERO-ARM CONTROLS -- 63 arm-vs-floor positive controls (an arm
-    against the chance baseline, significant by construction; their
-    FAILURE is the signal) and 21 zero-vs-zero ladder contrasts, null
-    by construction.
-
-Alongside that, ONE compliance criterion applies SYMMETRICALLY to all
-four arms of all 21 lanes: any cell at or above 25% non-compliance with
-the output contract earns a ``[COLLAPSE ...]`` mechanism annotation on
-every contrast it touches, carrying the measured rate and the dominant
-failure mode. The annotation states what the mechanism may be; it does
-not remove the contrast from the record.
+Holm holds under ARBITRARY dependence and is the headline; Hochberg needs
+Simes-type positive dependence (MTP2, Sarkar 1998), NOT verified for 210
+statistics sharing models, seeds and harmonics, so it is a sensitivity check
+only. Nothing is excluded: every contrast lands in FINDINGS (126 informative-arm
+pairs) or ZERO-ARM CONTROLS (63 arm-vs-floor positive controls, significant by
+construction -- their FAILURE is the signal -- plus 21 null-by-construction
+zero-vs-zero ladder contrasts). Cells at or above COLLAPSE_THRESHOLD
+non-compliance are annotated by ONE symmetric criterion, never removed.
 
 Run:
     uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/significance_report.py
@@ -93,30 +63,15 @@ TOTAL_COLLAPSE = 0.95
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Compute Hochberg (1988) step-up rejections at familywise level `alpha`.
+    """Hochberg (1988) step-up rejections at familywise level `alpha`.
 
-    This uses the same critical values as Holm, but steps UP from the
-    largest p-value: let k = max{i : p_(i) <= alpha / (m - i + 1)}, and
-    reject the k smallest. It is uniformly at least as powerful as Holm,
-    but valid only under Simes-type positive dependence, not arbitrary
-    dependence.
+    Same critical values as Holm but stepping UP from the largest p: reject the k
+    smallest, k = max{i : p_(i) <= alpha / (m - i + 1)}. Uniformly at least as
+    powerful as Holm, but valid only under Simes-type positive dependence.
 
-    The sort is stable, for the same reason as ``paired_analysis.holm``:
-    the cluster test has a hard resolution floor at 2/2^30, and several
-    contrasts sit exactly on it. The rejection set must not depend on
-    contrast build order.
-
-    Parameters
-    ----------
-    pvals : ndarray
-        p-values for the tests in one family.
-    alpha : float, default ALPHA
-        Family-wise significance threshold.
-
-    Returns
-    -------
-    ndarray of bool
-        Rejection mask, same shape as `pvals`.
+    The sort is stable, for the same reason as ``paired_analysis.holm``: the cluster
+    test has a hard resolution floor at 2/2^30 and several contrasts sit exactly on
+    it, so the rejection set must not depend on contrast build order.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -130,26 +85,19 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
 
 def compliance_census() -> dict:
-    """Measure non-compliance per (model, info) cell.
+    """Measure non-compliance per ``(model, info)`` cell, over all 84 cells.
 
-    ``compliance: null`` marks a completion that obeyed the output
-    contract. Anything else names HOW it failed (``empty``,
-    ``multiple-values``, ``degenerate-repetition``, ``prefixed``,
-    ``unparseable``, ``markup``, ``truncated``, ``verbose``). This
-    function counts the modes, not just the nulls, which costs nothing
-    on the same pass. It is what makes the collapse census a
-    description of a mechanism, instead of a bare rate.
+    ``compliance: null`` marks a completion that obeyed the output contract; any
+    other value names HOW it failed (``empty``, ``multiple-values``,
+    ``degenerate-repetition``, ``prefixed``, ``unparseable``, ``markup``,
+    ``truncated``, ``verbose``). Counting the modes, not just the nulls, is what
+    makes the census describe a mechanism instead of a bare rate; which cells get
+    annotated is a threshold decision made downstream, so the criterion stays
+    visible and symmetric.
 
-    This function computes the census for ALL 84 cells. Which of them
-    get annotated is a threshold decision made downstream, so the
-    criterion stays visible and symmetric.
-
-    Returns
-    -------
-    dict of (str, str) -> dict
-        Maps each ``(model, info)`` cell to a dict with keys ``rate``
-        (non-compliance share), ``n`` (mark count), and ``modes`` (a
-        `collections.Counter` of non-null compliance-failure labels).
+    Returns each cell to ``rate`` (non-compliance share), ``n`` (mark count) and
+    ``modes`` (a `collections.Counter` of non-null labels). Cells with no marks are
+    omitted.
     """
     rx = re.compile(r"^\s*compliance:\s*(\S+)", re.M)
     out = {}
@@ -168,25 +116,12 @@ def compliance_census() -> dict:
 
 
 def collapse_note(key, census: dict) -> str:
-    """Build a one-line mechanism annotation for a cell.
+    """One-line mechanism annotation for a cell; ``""`` below `COLLAPSE_THRESHOLD`.
 
-    This carries the measured rate AND the dominant failure mode.
-    "99.6% multiple-values" and "28.5% empty" are different results, and
-    flattening them to a single COLLAPSE label would erase the
-    distinction the census exists to make.
-
-    Parameters
-    ----------
-    key : (str, str)
-        The ``(model, info)`` cell to annotate.
-    census : dict
-        `compliance_census`'s return value.
-
-    Returns
-    -------
-    str
-        The annotation, or ``""`` if the cell is under
-        `COLLAPSE_THRESHOLD` or missing from `census`.
+    Carries the measured rate AND the dominant failure mode: "99.6%
+    multiple-values" and "28.5% empty" are different results, and a bare COLLAPSE
+    label would erase the distinction the census exists to make. Also ``""`` when
+    the cell is missing from `census` (`compliance_census`'s output).
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -197,24 +132,13 @@ def collapse_note(key, census: dict) -> str:
 
 
 def classify(label: str, key_a, key_b) -> str:
-    """Bucket a contrast for reporting.
+    """Bucket a contrast from its two ``(model, info)`` keys.
 
-    Parameters
-    ----------
-    label : str
-        The contrast's label. Not read by this function's current
-        logic; callers pass it uniformly regardless.
-    key_a, key_b : (str, str)
-        The two ``(model, info)`` condition keys being compared.
-
-    Returns
-    -------
-    str
-        ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
-        informative arm against the chance baseline: a positive
-        control), or ``"zero-vs-zero"`` (a ladder contrast between two
-        baseline arms: null by construction). The last two are jointly
-        the zero-arm controls.
+    Returns ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
+    informative arm against the chance baseline: a positive control), or
+    ``"zero-vs-zero"`` (a ladder contrast between two baseline arms, null by
+    construction); the last two are jointly the zero-arm controls. `label` is not
+    read by the current logic; callers pass it uniformly.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -225,22 +149,12 @@ def classify(label: str, key_a, key_b) -> str:
 
 
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
-    """Print the Holm step-down around where it stopped.
+    """Print the Holm step-down around where it stopped (rank / p / own threshold).
 
-    A count on its own hides how close the decision was. The two ranks
-    on either side of the boundary show whether the family is
-    comfortably separated, or resting on a single contrast.
-
-    Parameters
-    ----------
-    pvals : ndarray
-        p-values for the PRIMARY family, in `rows` order.
-    rows : list of dict
-        Per-contrast result dicts, each with a ``"label"`` key.
-    m : int
-        Family size.
-    n_rej : int
-        Number of Holm rejections, the boundary to print around.
+    A count on its own hides how close the decision was; the two ranks either side
+    of the boundary show whether the family is comfortably separated or resting on a
+    single contrast. `pvals` is in `rows` order, `m` is the family size, `n_rej` the
+    Holm rejection count.
     """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")
@@ -254,22 +168,11 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
 def main() -> None:
     """Run the significance report and print it.
 
-    Report layout (see the module docstring for the methodology behind
-    each section):
-      1. Family size, replicate depth, and the PRIMARY test statement.
-      2. Rejection counts for seed sign-flip, item McNemar, and
-         unpaired CMH, under Holm, Hochberg, and Bonferroni.
-      3. Rejections split by LADDER vs INFO-ARM contrast.
-      4. Contrasts whose rejection status changes under the cluster
-         correction vs the item-level p, and Holm-vs-Hochberg
-         disagreements.
-      5. The Holm step-down boundary.
-      6. The COLLAPSE CENSUS: padding-robustness compliance, per cell.
-      7. SIGNIFICANT FINDINGS, split into LADDER and INFO-ARM contrasts,
-         each tagged with any COLLAPSE annotation.
-      8. ZERO-ARM CONTROLS: arm-vs-floor and zero-vs-zero contrasts.
-      9. What is NOT significant, including ceiling pairs and the
-         cluster test's resolution floor.
+    Nine sections, from the family size and PRIMARY test statement through the
+    rejection counts, the cluster-vs-item and Holm-vs-Hochberg disagreements, the
+    Holm step-down boundary, the collapse census, the significant findings, the
+    zero-arm controls, and what is NOT significant. Methodology is in the module
+    docstring.
     """
     correct, valid = load_marks()
     contrasts = build_primary_contrasts()
