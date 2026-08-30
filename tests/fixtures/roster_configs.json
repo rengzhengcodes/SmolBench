@@ -1,0 +1,212 @@
+{
+ "deepseek-v3.1": {
+  "architecture": "DeepseekV3ForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 163840,
+  "native_max_len": 163840,
+  "num_attention_heads": 128,
+  "num_key_value_heads": 128,
+  "repo": "deepseek-ai/DeepSeek-V3.1"
+ },
+ "deepseek-v4-flash": {
+  "architecture": "DeepseekV4ForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 1048576,
+  "native_max_len": 1048576,
+  "num_attention_heads": 64,
+  "num_key_value_heads": 1,
+  "repo": "deepseek-ai/DeepSeek-V4-Flash"
+ },
+ "deepseek-v4-pro": {
+  "architecture": "DeepseekV4ForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 1048576,
+  "native_max_len": 1048576,
+  "num_attention_heads": 128,
+  "num_key_value_heads": 1,
+  "repo": "deepseek-ai/DeepSeek-V4-Pro"
+ },
+ "exaone-4.0-32b": {
+  "architecture": "Exaone4ForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 131072,
+  "native_max_len": 131072,
+  "num_attention_heads": 40,
+  "num_key_value_heads": 8,
+  "repo": "LGAI-EXAONE/EXAONE-4.0-32B"
+ },
+ "exaone-4.5-33b": {
+  "architecture": "Exaone4_5_ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 40,
+  "num_key_value_heads": 8,
+  "repo": "LGAI-EXAONE/EXAONE-4.5-33B"
+ },
+ "gemma-4-12b": {
+  "architecture": "Gemma4UnifiedForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 16,
+  "num_key_value_heads": 8,
+  "repo": "google/gemma-4-12B-it"
+ },
+ "gemma-4-31b": {
+  "architecture": "Gemma4ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 16,
+  "repo": "google/gemma-4-31B-it"
+ },
+ "gemma-4-e2b": {
+  "architecture": "Gemma4ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 131072,
+  "native_max_len": 131072,
+  "num_attention_heads": 8,
+  "num_key_value_heads": 1,
+  "repo": "google/gemma-4-E2B-it"
+ },
+ "glm-4.5-air": {
+  "architecture": "Glm4MoeForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 131072,
+  "native_max_len": 131072,
+  "num_attention_heads": 96,
+  "num_key_value_heads": 8,
+  "repo": "zai-org/GLM-4.5-Air"
+ },
+ "glm-4.7": {
+  "architecture": "Glm4MoeForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 202752,
+  "native_max_len": 202752,
+  "num_attention_heads": 96,
+  "num_key_value_heads": 8,
+  "repo": "zai-org/GLM-4.7"
+ },
+ "glm-4.7-flash": {
+  "architecture": "Glm4MoeLiteForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 202752,
+  "native_max_len": 202752,
+  "num_attention_heads": 20,
+  "num_key_value_heads": 20,
+  "repo": "zai-org/GLM-4.7-Flash"
+ },
+ "k-exaone-236b-a23b": {
+  "architecture": "ExaoneMoeForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 64,
+  "num_key_value_heads": 8,
+  "repo": "LGAI-EXAONE/K-EXAONE-236B-A23B"
+ },
+ "ministral-3-14b": {
+  "architecture": "Mistral3ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8,
+  "repo": "mistralai/Ministral-3-14B-Reasoning-2512"
+ },
+ "ministral-3-3b": {
+  "architecture": "Mistral3ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8,
+  "repo": "mistralai/Ministral-3-3B-Reasoning-2512"
+ },
+ "ministral-3-8b": {
+  "architecture": "Mistral3ForConditionalGeneration",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8,
+  "repo": "mistralai/Ministral-3-8B-Reasoning-2512"
+ },
+ "nemotron-3-nano-30b-a3b": {
+  "architecture": "NemotronHForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 2,
+  "repo": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+ },
+ "nemotron-3-nano-4b": {
+  "architecture": "NemotronHForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 40,
+  "num_key_value_heads": 8,
+  "repo": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+ },
+ "nemotron-3-super-120b-a12b": {
+  "architecture": "NemotronHForCausalLM",
+  "linear_num_key_heads": null,
+  "linear_num_value_heads": null,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 2,
+  "repo": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
+ },
+ "qwen3.5-122b-a10b": {
+  "architecture": "Qwen3_5MoeForConditionalGeneration",
+  "linear_num_key_heads": 16,
+  "linear_num_value_heads": 64,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 2,
+  "repo": "Qwen/Qwen3.5-122B-A10B"
+ },
+ "qwen3.5-27b": {
+  "architecture": "Qwen3_5ForConditionalGeneration",
+  "linear_num_key_heads": 16,
+  "linear_num_value_heads": 48,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 24,
+  "num_key_value_heads": 4,
+  "repo": "Qwen/Qwen3.5-27B"
+ },
+ "qwen3.5-397b-a17b": {
+  "architecture": "Qwen3_5MoeForConditionalGeneration",
+  "linear_num_key_heads": 16,
+  "linear_num_value_heads": 64,
+  "max_position_embeddings": 262144,
+  "native_max_len": 262144,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 2,
+  "repo": "Qwen/Qwen3.5-397B-A17B-FP8"
+ }
+}
