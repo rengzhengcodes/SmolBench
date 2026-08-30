@@ -395,24 +395,34 @@ def require_lean_interact() -> None:
         )
 
 
+def require_mathlib_root() -> None:
+    """Exit before any work if ``SMOLBENCH_MATHLIB_ROOT`` does not resolve.
+
+    Without it every session open fails and every cell would be recorded as
+    ``replay_failed`` -- a configuration error masquerading as 944 broken
+    ground truths.
+    """
+    from smolbench.deduction.lean.replbackend import mathlib_root  # lazy: import-safe module
+    try:
+        mathlib_root()
+    except RuntimeError as exc:
+        raise SystemExit(f"lean_verify_rows: {exc}") from exc
+
+
 def dojo_failure_hint(exc: BaseException) -> str:
-    """Build operator guidance for a Dojo-init-class failure: `exc`'s text plus the
-    cache-pull/``elan``/corrupt-cache remedies (``verify.py`` has already retried 3x).
+    """Build operator guidance for a session-open-class failure: `exc`'s text plus
+    the toolchain/checkout remedies (``replbackend`` has already retried server
+    start and imports).
     """
     return (
-        f"Dojo failed to open: {type(exc).__name__}: {exc}\n"
-        "This is usually infrastructure, not a broken candidate proof. "
-        "verify.py's _open_dojo_with_retry already retried 3x with backoff "
-        "(5s / 15s / 45s) before this surfaced. The FIRST Dojo call on a fresh "
-        f"host pulls a ~2.4 GB traced corpus from LeanDojo's S3 cache into "
-        f"{DOJO_CACHE_DIR} (credential-free; cold ~2-4 min, warm ~10s) -- confirm "
-        "'elan' is installed (curl -sSf "
-        "https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | "
-        "sh -s -- -y --default-toolchain none) and that a prior pull actually "
-        f"completed. If the cache looks corrupt or partial, remove {DOJO_CACHE_DIR} "
-        "entirely and let the next run refetch it from scratch. See "
-        ".claude/skills/run-smolbench/SKILL.md for the documented cache-pull "
-        "timings."
+        f"Lean REPL session failed to open: {type(exc).__name__}: {exc}\n"
+        "This is usually infrastructure, not a broken candidate proof. Confirm "
+        "SMOLBENCH_MATHLIB_ROOT points at a mathlib4 checkout at the corpus commit "
+        "whose oleans are built (`lake exe cache get` inside it), that 'elan' is "
+        "installed (curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y "
+        "--default-toolchain none) and on PATH, and that the lean-interact REPL for "
+        "that toolchain built (first use compiles it; see "
+        ".claude/skills/run-smolbench/SKILL.md)."
     )
 
 
@@ -918,7 +928,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         description=(
             "Phase 2 of the two-phase Lean theorem-proving eval: replay recorded "
             "candidate proofs against real Lean and write verified_rows.jsonl "
-            "alongside each run's all_rows.jsonl in S3. Requires lean_dojo "
+            "alongside each run's all_rows.jsonl in S3. Requires lean_interact "
             "installed (uv sync --all-extras) except under --dry-run."
         ),
     )
@@ -999,6 +1009,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if not args.dry_run:
         require_lean_interact()
+        require_mathlib_root()
 
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
     workdir.mkdir(parents=True, exist_ok=True)

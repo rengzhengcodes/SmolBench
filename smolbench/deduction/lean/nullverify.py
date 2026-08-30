@@ -2,9 +2,10 @@
 
 `runner.sweep` / `runner.run_cell` reach Lean only through an injected
 `verifier`, so ``sweep(config, run_dir, verifier=NullVerifier())`` runs phase 1
--- call the model, write every row -- with no `lean_dojo`, elan, or traced
-mathlib4 checkout. Phase 2 (replaying the recorded tails against a real Dojo)
-is a separate pass, not implemented here.
+-- call the model, write every row -- with no `lean_interact`, no elan, and no
+built mathlib4 checkout for ``SMOLBENCH_MATHLIB_ROOT`` to point at. Phase 2
+(replaying the recorded tails against a real Lean REPL session) is a separate
+pass, not implemented here.
 
 Never import `smolbench.deduction.lean.verify` here, even lazily inside a method
 body: that module's unconditional top-level ``import lean_interact`` raises
@@ -73,7 +74,7 @@ class NullProofResult:
 
 
 class NullVerifier:
-    """A verifier seam implementation that never touches Lean or `lean_dojo`.
+    """A verifier seam implementation that never touches Lean or `lean_interact`.
 
     Duck-types the surface `runner` calls on an injected `verifier`. The real
     `verify` is a module of top-level functions where these are instance
@@ -108,6 +109,11 @@ class NullVerifier:
         self, bt: BenchmarkTheorem, k: int, timeout: int = 600
     ) -> Iterator[tuple[None, None]]:
         """Yield ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
+
+        (The real `verify.open_at_step` now yields a
+        `replbackend.ReplSession` as that first element, not a LeanDojo
+        ``Dojo``; the parameter name is kept because `runner.py` calls
+        `try_tail` positionally.)
 
         Unlike `verify.open_at_step`, never raises `ValueError` for out-of-range
         `k` -- there is no prefix to replay. The `contextmanager` wrapping exists

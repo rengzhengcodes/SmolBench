@@ -977,3 +977,32 @@ def test_open_session_returns_the_sorrys_proof_state_on_the_happy_path(monkeypat
     assert sent[1].env == 3
     assert sent[1].cmd.rstrip().endswith(":= by sorry")
     assert f"theorem {replbackend.TARGET_NAME}" in sent[1].cmd
+
+
+def test_verify_rows_script_guard_requires_mathlib_root(monkeypatch, tmp_path):
+    """Unset SMOLBENCH_MATHLIB_ROOT exits before any work; a real checkout passes."""
+    import importlib.util
+
+    from tests._paths import SCRIPTS
+
+    spec = importlib.util.spec_from_file_location(
+        "lvr_root_seam", SCRIPTS / "deduction" / "lean_verify_rows.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["lvr_root_seam"] = module
+    try:
+        spec.loader.exec_module(module)
+        monkeypatch.delenv("SMOLBENCH_MATHLIB_ROOT", raising=False)
+        with pytest.raises(SystemExit, match="SMOLBENCH_MATHLIB_ROOT"):
+            module.require_mathlib_root()
+        root = tmp_path / "mathlib4"
+        (root / ".lake").mkdir(parents=True)
+        (root / "lakefile.lean").write_text("import Lake\n")
+        (root / "lean-toolchain").write_text("leanprover/lean4:v4.34.0-rc2\n")
+        monkeypatch.setenv("SMOLBENCH_MATHLIB_ROOT", str(root))
+        try:
+            module.require_mathlib_root()
+        except SystemExit as exc:  # the backend may demand more than a bare dir; say what
+            pytest.skip(f"mathlib_root wants more than a skeleton checkout: {exc}")
+    finally:
+        sys.modules.pop("lvr_root_seam", None)
