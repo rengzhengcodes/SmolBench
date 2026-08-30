@@ -1,0 +1,119 @@
+[
+ {
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "2ca39e62989124794bd8405bb2e60805f63d37bc",
+  "file_path": "Mini/A.lean",
+  "full_name": "Mini.theoremA",
+  "start": [
+   1,
+   1
+  ],
+  "end": [
+   5,
+   40
+  ],
+  "traced_tactics": [
+   {
+    "tactic": "intro h",
+    "annotated_tactic": [
+     "intro h",
+     []
+    ],
+    "state_before": "n : \u2115\nhn : n > 0\n\u22a2 P n \u2192 Q n",
+    "state_after": "n : \u2115\nhn : n > 0\nh : P n\n\u22a2 Q n"
+   },
+   {
+    "tactic": "simp",
+    "annotated_tactic": [
+     "simp",
+     []
+    ],
+    "state_before": "n : \u2115\nh : P n\n\u22a2 Q n",
+    "state_after": "n : \u2115\nh : P n\n\u22a2 R n"
+   },
+   {
+    "tactic": "exact Mini.premiseA h (Mini.premiseB n)",
+    "annotated_tactic": [
+     "exact <a>Mini.premiseA</a> h (<a>Mini.premiseB</a> n)",
+     [
+      {
+       "full_name": "Mini.premiseA",
+       "def_path": "Mini/Prem.lean",
+       "def_pos": [
+        10,
+        9
+       ],
+       "def_end_pos": [
+        10,
+        22
+       ]
+      },
+      {
+       "full_name": "Mini.premiseB",
+       "def_path": "Mini/Prem.lean",
+       "def_pos": [
+        15,
+        5
+       ],
+       "def_end_pos": [
+        15,
+        18
+       ]
+      }
+     ]
+    ],
+    "state_before": "n : \u2115\nh : P n\n\u22a2 R n",
+    "state_after": "no goals"
+   }
+  ],
+  "postcutoff": true
+ },
+ {
+  "url": "https://github.com/leanprover-community/mathlib4",
+  "commit": "2ca39e62989124794bd8405bb2e60805f63d37bc",
+  "file_path": "Mini/B.lean",
+  "full_name": "Mini.theoremB",
+  "start": [
+   1,
+   1
+  ],
+  "end": [
+   2,
+   20
+  ],
+  "traced_tactics": [
+   {
+    "tactic": "rfl",
+    "annotated_tactic": [
+     "rfl",
+     []
+    ],
+    "state_before": "\u22a2 1 + 1 = 2",
+    "state_after": "no goals"
+   },
+   {
+    "tactic": "exact Mini.premiseA h",
+    "annotated_tactic": [
+     "exact <a>Mini.premiseA</a> h",
+     [
+      {
+       "full_name": "Mini.premiseA",
+       "def_path": "Mini/Prem.lean",
+       "def_pos": [
+        10,
+        9
+       ],
+       "def_end_pos": [
+        10,
+        22
+       ]
+      }
+     ]
+    ],
+    "state_before": "n : \u2115\nh : P n\n\u22a2 R n",
+    "state_after": "no goals"
+   }
+  ],
+  "postcutoff": true
+ }
+]

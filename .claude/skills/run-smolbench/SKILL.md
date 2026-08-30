@@ -10,8 +10,8 @@ an LLM-eval library — "running" it means driving the real quiz → provider �
 evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zero
 credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
 `notebooks/deduction/`): a Lean 4 theorem-proving eval whose VERIFICATION path
-needs `lean_dojo`, elan, and a traced-repo cache; generation/analysis need
-none of those. Both run on the same `.venv`. All paths below are relative
+needs `lean-interact`, elan, and a BUILT mathlib4 checkout named by
+`SMOLBENCH_MATHLIB_ROOT`; generation/analysis need none of those. Both run on the same `.venv`. All paths below are relative
 to the repo root; all commands were verified in a headless Linux container.
 
 ## Prerequisites
@@ -33,7 +33,7 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 .venv/bin/python -m smolbench.induction.chromatic | tail -25  # prints ~120 prompt blocks
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
-bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real Dojo replay (see below)
+bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real REPL replay (see below)
 bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~30 s warm)
 ```
 
@@ -80,14 +80,15 @@ gitignored). Manual driving from the repo root with
 `export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`:
 
 ```bash
-# No Lean/Dojo needed:
+# No Lean/REPL needed:
 .venv/bin/python -m smolbench.deduction.lean.cli metadata
 .venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5
 .venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl   # + report/show/compare
 # prompt-stats also runs here but needs the replay_passing_*.jsonl sidecar
 # that only `filter` (~70 min) produces.
 
-# Verification path (needs elan + a traced-repo cache; not just an install):
+# Verification path (needs elan + a built mathlib4 checkout; not just an install):
+export SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4   # built with elan/lake
 .venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
 .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
@@ -108,10 +109,11 @@ sanity gate passes, real Lean returns `success` for the true tail and
 `lean_error` for the bogus one, rows AND wire requests carry `seed`,
 per-model provider dispatch holds, and an identical rerun resume-skips both
 cells. Results/reqlog go to a mktemp dir via `SMOLBENCH_LEAN_RESULTS` —
-keep stub runs out of the committed results tree if you adapt it. ~30 s
-warm; like `--replay` it needs elan (first Dojo call pulls the ~2.4 GB
-traced corpus from S3 to `~/.cache/lean_dojo/`, creds-free; cold ~2–4 min,
-warm ~10 s).
+keep stub runs out of the committed results tree if you adapt it. Like
+`--replay` it needs elan plus `SMOLBENCH_MATHLIB_ROOT` pointing at a BUILT
+mathlib4 checkout; there is no traced-corpus download any more. The timings
+quoted above were measured under the retired LeanDojo backend and have not
+been re-measured against the REPL backend — treat them as stale.
 Real-model `run-cell`/`run-sweep` need a provider key
 (`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
 user-opt-in only; `filter` (~70 min/split) produces the
@@ -132,8 +134,8 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 
 - Always name the interpreter explicitly: `.venv/bin/python`, never a system
   python. `run-sweep`, `run-cell`, `replay`, and `filter` additionally need
-  elan and a traced-repo cache (see below); every other subcommand needs
-  neither.
+  elan and a built mathlib4 checkout named by `SMOLBENCH_MATHLIB_ROOT` (see
+  below); every other subcommand needs neither.
 - `uv sync` prunes packages not in the lockfile: it uninstalls the ad-hoc
   `aws-bedrock-token-generator` that `scripts/smoke/bedrock_smoke.py` needs
   (observed). Restore with `uv pip install aws-bedrock-token-generator`.
@@ -142,7 +144,7 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 - The shared `ChatClient` retries 429/5xx/connection errors **forever**
   (60 s backoff) under openrouter — always wrap unattended runs in `timeout`.
   Lean sweeps are exempt: the runner passes `max_retries` (config key,
-  default 4) so a wedged endpoint can't hang an open Dojo session.
+  default 4) so a wedged endpoint can't hang an open REPL session.
 - `StubServer.next_response` pops FIFO: queued-response↔question mapping is
   only deterministic with `max_parallel=1`; for parallel fan-out set a
   uniform `server.default_response` instead.
@@ -154,12 +156,17 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 - `notebooks/*/results*/` are huge generated trees (~80 M lines of YAML for
   the induction experiments; JSONL with full raw responses for lean) — never
   grep/glob them blindly.
-- `GITHUB_ACCESS_TOKEN` is optional for `replay` (corpus comes from S3
-  anonymously — verified); heavier LeanDojo use may still hit anonymous
-  GitHub rate limits.
-- elan is enough for Dojo: install with
-  `curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`
-  (Dojo fetches its own pinned toolchain).
+- `GITHUB_ACCESS_TOKEN` is not needed by `replay` under the REPL backend,
+  which reads a local checkout and fetches nothing. It remains relevant to
+  LeanDojo corpus TRACING and premise slicing, which can still hit anonymous
+  GitHub rate limits. (The old "corpus comes from S3 anonymously — verified"
+  rationale described the retired traced-corpus pull and no longer applies.)
+- elan alone is NOT enough any more. Install it with
+  `curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`,
+  then also clone and BUILD mathlib4 (`lake exe cache get && lake build`) and
+  point `SMOLBENCH_MATHLIB_ROOT` at that checkout. `lean-interact` starts the
+  REPL inside that project, so the checkout's own `lean-toolchain` is what
+  elan provisions.
 
 ## Troubleshooting
 
@@ -167,7 +174,14 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
   system python; rerun with `.venv/bin/python`.
 - `cannot import tests.conftest` (driver exit 2) → run from a synced repo:
   `uv sync --all-extras` at the root.
-- `ImportError: smolbench.deduction.lean.verify requires lean_dojo` → run
-  `uv sync --all-extras`.
+- `ImportError: smolbench.deduction.lean.verify requires the 'lean_interact'
+  package (the lean extra)` → run `uv sync --all-extras`.
+- `no mathlib4 checkout configured: set SMOLBENCH_MATHLIB_ROOT ...` — from the
+  verifier; or `FAIL: SMOLBENCH_MATHLIB_ROOT is not set` from
+  `lean_smoke.sh --replay`. Export it, pointing at a mathlib4 checkout built with
+  elan/lake. In a `lean_verify_rows.py` pass this text lands in the `lean_error`
+  column under verdict `replay_failed` on cell rows (and `exception` on sanity
+  rows) — match on the message, not the verdict; see
+  `notebooks/deduction/README.md`, "Two traps in phase 2".
 - `elan not found` from `lean_smoke.sh --replay` → install elan (line above)
   or run the default Tier-0/1 smoke instead.

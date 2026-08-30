@@ -21,20 +21,24 @@ value win. Import also raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is not
 exactly ``f"scaling-{LEAN_MODEL}"`` (see the GUARD below).
 
 LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
-and build the sweep config; (3) resolve ``LEAN_VERIFY`` -- steps 1-3 run BEFORE
-any AWS call, so a configuration mistake never lands on a billing box; (4)
-provision (idempotent: reattaches); (5) serve the checkpoint; (6) sweep, then
-spool to S3 once at the end; (7) tear down, from a ``finally`` and only under
-``--teardown``, which is for STANDALONE runs (under the fleet the supervisor
-owns instance lifecycle). COST: steps 4-6 make live AWS calls, billed for as
-long as the box stays up.
+and build the sweep config -- this ALSO validates the corpus (see
+``build_config``'s post-cutoff gate) before any AWS call; (3) resolve
+``LEAN_VERIFY`` -- steps 1-3 run BEFORE any AWS call, so a configuration
+mistake never lands on a billing box; (4) provision (idempotent: reattaches);
+(5) serve the checkpoint; (6) sweep, then spool to S3 once at the end; (7)
+tear down, from a ``finally`` and only under ``--teardown``, which is for
+STANDALONE runs (under the fleet the supervisor owns instance lifecycle).
+COST: steps 4-6 make live AWS calls, billed for as long as the box stays up.
 
 Environment: ``LEAN_MODEL`` (required; one key of ``MODELS``);
 ``LEAN_STATE_FILE`` (optional EC2 state file, default
 ``.ec2_state_scaling_<LEAN_MODEL>.json`` -- a bare or relative name resolves
 against ``REPO_ROOT``, which is how both phases find the same box);
 ``LEAN_RUN_NAME``, ``LEAN_SHARD`` (requires ``--no-s3``), ``LEAN_CELL_WHITELIST``
-(optional, read at ``build_config`` call time, not at import); ``LEAN_VERIFY`` -- ``"defer"`` (the
+(optional, read at ``build_config`` call time, not at import); ``LEAN_CORPUS_KIND``
+(default ``"random"``) and ``LEAN_CORPUS_SPLIT`` (default ``"val"``), also read
+at ``build_config`` call time, select the split family within the active
+post-cutoff corpus; ``LEAN_VERIFY`` -- ``"defer"`` (the
 default) records every verdict ``"unverified"``, leaving real checking to the
 later ``scripts/deduction/lean_verify_rows.py`` pass, while ``"real"`` verifies
 inline (see :func:`select_verifier`).
@@ -70,10 +74,19 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 #: from ``run_fleet``, so this file does not depend on that off-limits module.
 SPOOL_BUCKET: str = "smolbench-results-414266451290"
 SPOOL_REGION: str = "us-west-2"
-#: Same value as ``run_fleet.sync_deduction_spool``'s ``"deduction/runs"``
-#: destination prefix, chosen independently: this file owns its spool contract
-#: end to end (upload-verify-prune) rather than delegating to that script.
-SPOOL_PREFIX: str = "deduction/runs"
+#: The destination key prefix comes from ``runner.spool_prefix()``, resolved
+#: at CALL time inside ``spool_to_s3`` and the GUARD in ``main`` below -- not
+#: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override (or the
+#: legacy-prefix refusal) takes effect per-invocation rather than at import.
+
+#: DeepSeek-V4-Flash/V4-Pro's release date, the LATEST release date recorded
+#: for any checkpoint on this study's 21-model roster (`MODELS`, below). A
+#: release date bounds a model's knowledge cutoff from above (a checkpoint
+#: cannot have been trained on data published after it shipped), so it is the
+#: conservative floor for a post-cutoff corpus's `target_date`: any corpus
+#: targeting an earlier date risks some roster checkpoint having seen its
+#: "post-cutoff" theorems. See `build_config`'s corpus gate.
+ROSTER_LATEST_RELEASE: str = "2026-04-24"
 
 
 def lane_env_defaults(
@@ -201,7 +214,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # notebooks/induction/run_study.py.
 # ---------------------------------------------------------------------------
 from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.deduction.lean import runner  # noqa: E402
+from smolbench.deduction.lean import corpus, runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
 
@@ -234,27 +247,92 @@ def build_config(key: str) -> dict:
     `key` first (e.g. ``selected_model()``): ``COT_ARGS`` is total over
     ``MODELS``, so any other key raises a bare ``KeyError``.
 
+    Performs corpus I/O (via `corpus.postcutoff_metadata`) and can
+    ``SystemExit`` -- see the "Post-cutoff corpus gate" paragraph below. This
+    makes `build_config` no longer a pure function of `key` and the
+    environment already documented for the pre-existing knobs; it is still
+    called BEFORE any AWS call (module docstring, LIFECYCLE step 2).
+
+    Post-cutoff corpus gate
+    ------------------------
+    Run at CALL time, not at import (importing this file must stay free of
+    corpus I/O), and BEFORE the config dict is built:
+
+    1. ``corpus.postcutoff_metadata()`` is None for an ordinary, pre-cutoff
+       corpus (e.g. the original 2024-03-24 LeanDojo Benchmark 4 snapshot) --
+       ``SystemExit``, naming `corpus.data_root()` and the corpus's traced
+       commit (``corpus.metadata()["from_repo"]["commit"]``), pointing at
+       ``scripts/deduction/build_postcutoff_corpus.py`` (Package B) as the fix.
+    2. Otherwise the block's ``target_date`` is compared against
+       `ROSTER_LATEST_RELEASE` with a plain string ``>=`` -- correct for ISO
+       ``YYYY-MM-DD`` dates, where lexicographic order matches chronological
+       order. Equality PASSES: a corpus targeted at exactly the roster's
+       latest release date is compliant. A target date EARLIER than
+       `ROSTER_LATEST_RELEASE` means some roster checkpoint may have already
+       seen the corpus's "post-cutoff" theorems during training --
+       ``SystemExit``, naming both dates.
+
     Returns
     -------
     dict
-        16 keys, including a ``theorems`` block selecting 300 of the
-        ``replay_passing``/``novel_premises``/``val`` pool's theorems at seed 0,
-        and a ``models[0]["extra_params"]`` that DEEP-copies ``COT_ARGS[key]``,
-        so a caller's in-place mutation cannot corrupt that shared nested table
-        for other lanes. Two further keys are conditional: ``theorems["shard"]``
+        16 keys, including a ``theorems`` block selecting up to 300 of the
+        active post-cutoff corpus's ``replay_passing``/``<LEAN_CORPUS_KIND>``/
+        ``<LEAN_CORPUS_SPLIT>`` pool's theorems at seed 0, with
+        ``require_postcutoff: True`` so `runner._select_theorems` re-checks the
+        corpus and every selected theorem at sweep time. A
+        ``models[0]["extra_params"]`` DEEP-copies ``COT_ARGS[key]``, so a
+        caller's in-place mutation cannot corrupt that shared nested table for
+        other lanes. Two further keys are conditional: ``theorems["shard"]``
         under ``LEAN_SHARD`` and top-level ``cell_whitelist`` under
         ``LEAN_CELL_WHITELIST``.
 
     Notes
     -----
-    ``LEAN_SHARD``, ``LEAN_RUN_NAME`` and ``LEAN_CELL_WHITELIST`` are read at
-    CALL time, never at import and never cached. ``run_name`` defaults to
+    ``LEAN_SHARD``, ``LEAN_RUN_NAME``, ``LEAN_CELL_WHITELIST``,
+    ``LEAN_CORPUS_KIND`` and ``LEAN_CORPUS_SPLIT`` are all read at CALL time,
+    never at import and never cached. ``run_name`` defaults to
     ``f"scaling_{key}"`` plus a ``_shard<i>of<n>`` suffix when sharding (matching
     ``scripts/fleet/run_fleet.py``'s ``Lane`` naming); an explicit
     ``LEAN_RUN_NAME`` wins verbatim. With ``LEAN_CELL_WHITELIST`` set this also
     does file I/O and can raise ``ValueError`` from
     ``runner.load_cell_whitelist`` -- before any AWS call.
+
+    Raises
+    ------
+    SystemExit
+        The active corpus is not post-cutoff, or its ``target_date`` is
+        earlier than `ROSTER_LATEST_RELEASE` -- see "Post-cutoff corpus gate"
+        above.
+    ValueError
+        Propagated from ``runner.load_cell_whitelist`` under
+        ``LEAN_CELL_WHITELIST``.
     """
+    # --- Post-cutoff corpus gate -- see the docstring above. Runs BEFORE the
+    # config dict below is built, and before any AWS call anywhere in this
+    # driver's lifecycle (module docstring, LIFECYCLE step 2).
+    block = corpus.postcutoff_metadata()
+    if block is None:
+        raise SystemExit(
+            f"{corpus.data_root()} (traced at commit "
+            f"{corpus.metadata()['from_repo']['commit']}) is not a post-cutoff "
+            "corpus. This study will not run on a pre-cutoff corpus -- every "
+            "roster checkpoint's knowledge cutoff postdates the original "
+            "LeanDojo Benchmark 4 snapshot, so its theorems are not a valid "
+            "held-out set. Build a post-cutoff corpus with "
+            "scripts/deduction/build_postcutoff_corpus.py (Package B) and "
+            "point SMOLBENCH_LEAN_DATA at it."
+        )
+    # Plain string comparison is correct here: ISO YYYY-MM-DD dates sort
+    # lexicographically in chronological order, so this needs no date parsing.
+    if not (block["target_date"] >= ROSTER_LATEST_RELEASE):
+        raise SystemExit(
+            f"corpus target_date={block['target_date']!r} is earlier than "
+            f"ROSTER_LATEST_RELEASE={ROSTER_LATEST_RELEASE!r}: a target date "
+            "before the roster's latest release means some checkpoint may "
+            "have already seen the corpus's \"post-cutoff\" theorems during "
+            "training."
+        )
+
     # Optional theorem-stride shard ("i/n", passed to runner._select_theorems).
     # The key is CONDITIONALLY present, so an unsharded theorems block stays
     # byte-identical to the study config. Sharding also suffixes the DEFAULT
@@ -267,12 +345,20 @@ def build_config(key: str) -> dict:
     if shard:
         shard_suffix = "_shard" + shard.replace("/", "of")
     run_name = os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}{shard_suffix}"
+    # kind/split default to "random"/"val" -- the new post-cutoff corpus has a
+    # single `random` split family, unlike LeanDojo Benchmark 4's `random`/
+    # `novel_premises` pair, but LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT stay
+    # overridable for whatever split families the built corpus ends up with.
+    # require_postcutoff makes runner._select_theorems re-enforce the same
+    # gate this function already ran, at the point the pool is actually
+    # sampled (see that function's docstring for why both checks exist).
     theorems: dict[str, Any] = {
         "source": "replay_passing",
-        "kind": "novel_premises",
-        "split": "val",
+        "kind": os.environ.get("LEAN_CORPUS_KIND", "random").strip() or "random",
+        "split": os.environ.get("LEAN_CORPUS_SPLIT", "val").strip() or "val",
         "limit": 300,
         "seed": 0,
+        "require_postcutoff": True,
     }
     if shard:
         theorems["shard"] = shard
@@ -366,9 +452,9 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     ----------
     key : str
         Model spec key. The destination prefix
-        ``f"{SPOOL_PREFIX}/scaling_{key}/"`` is built from this, NOT from
-        ``run_dir.name``, so the S3 layout stays keyed on the MODEL even when
-        ``LEAN_RUN_NAME`` renamed the run directory.
+        ``f"{runner.spool_prefix()}/scaling_{key}/"`` is built from this, NOT
+        from ``run_dir.name``, so the S3 layout stays keyed on the MODEL even
+        when ``LEAN_RUN_NAME`` renamed the run directory.
     client : Any, optional
         S3 client with ``upload_file`` and ``head_object``; ``None`` lazily
         builds a boto3 one against `SPOOL_REGION`, so importing this file needs
@@ -397,7 +483,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
 
         client = boto3.client("s3", region_name=SPOOL_REGION)
 
-    dest_prefix = f"{SPOOL_PREFIX}/scaling_{key}/"
+    dest_prefix = f"{runner.spool_prefix()}/scaling_{key}/"
     files = sorted(p for p in run_dir.rglob("*") if p.is_file())
 
     # Phase 1: upload + verify EVERY file before deleting anything -- see the
@@ -502,22 +588,27 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     key = selected_model()
+    # This line is the corpus gate (build_config's "Post-cutoff corpus gate")
+    # for EVERY path through main, including --no-s3 and --force-rerun: it
+    # runs before provisioning, serving or any other AWS call below.
     config = build_config(key)
     run_dir = runner.results_root() / "runs" / config["run_name"]
 
     # GUARD -- sharded lanes must not spool. `spool_to_s3`'s destination prefix
     # is keyed on the MODEL, so every shard of a lane would upload its PARTIAL
-    # all_rows.jsonl over the canonical `deduction/runs/scaling_<key>/` object
-    # that scripts/deduction/lean_verify_rows.py and the analysis read: last
-    # writer wins and the lane silently reports one shard's cells as the whole
-    # run. Shards stay local until scripts/deduction/merge_lean_shards.py folds
-    # them into the canonical run and spools that. Read off the config (which
-    # owns the LEAN_SHARD read) rather than the environment a second time.
+    # all_rows.jsonl over the canonical `{runner.spool_prefix()}/scaling_<key>/`
+    # object that scripts/deduction/lean_verify_rows.py and the analysis read:
+    # last writer wins and the lane silently reports one shard's cells as the
+    # whole run. Shards stay local until scripts/deduction/merge_lean_shards.py
+    # folds them into the canonical run and spools that. Read off the config
+    # (which owns the LEAN_SHARD read) rather than the environment a second
+    # time.
     if config["theorems"].get("shard") and not args.no_s3:
         raise SystemExit(
             f"LEAN_SHARD={config['theorems']['shard']!r} requires --no-s3: a shard "
-            f"would overwrite the canonical s3://{SPOOL_BUCKET}/{SPOOL_PREFIX}/"
-            f"scaling_{key}/ objects with its partial rows.\n"
+            f"would overwrite the canonical "
+            f"s3://{SPOOL_BUCKET}/{runner.spool_prefix()}/scaling_{key}/ objects "
+            "with its partial rows.\n"
             "Fix: re-run this shard with --no-s3, then merge and spool with "
             "`scripts/deduction/merge_lean_shards.py <key> --n <n> --spool`."
         )

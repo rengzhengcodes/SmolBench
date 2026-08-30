@@ -9,6 +9,12 @@ Loaders are keyed by ``(kind, split)``; ``kind="novel_premises"`` is the harder
 generalization slice (val/test theorems whose premises are under-represented in
 train), ``"random"`` is i.i.d. The ~700 MB dataset is not shipped here; loaders
 raise ``FileNotFoundError`` naming the remedy when a file is missing.
+
+Loaders also accept a *post-cutoff* corpus: one traced at a recent mathlib4
+commit and restricted, by declaration-name set difference against an older
+commit, to theorems provably absent from that older snapshot. Such a corpus
+carries an extra ``postcutoff`` block in `metadata()` and a per-row
+``"postcutoff": true`` flag; see `postcutoff_metadata`.
 """
 
 from __future__ import annotations
@@ -95,6 +101,14 @@ class BenchmarkTheorem:
     #: The theorem's tactic-by-tactic trace, in proof order. Empty for
     #: theorems LeanDojo could not trace (see `has_proof`).
     traced_tactics: list[TracedTactic]
+    #: True when this theorem's declaration NAME is absent from the corpus's
+    #: `postcutoff` metadata block's ``old_commit`` trace -- i.e. it is
+    #: provably post-cutoff by name-set difference, not by any date heuristic.
+    #: Defaults False (no other field here has a default) so the ordinary
+    #: 2024-03-24 benchmark, whose rows carry no ``postcutoff`` key, still
+    #: parses. Must stay the LAST field: `BenchmarkTheorem` is frozen and every
+    #: other field is required.
+    postcutoff: bool = False
 
     @property
     def has_proof(self) -> bool:
@@ -130,6 +144,9 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
         start=tuple(rec["start"]),
         end=tuple(rec["end"]),
         traced_tactics=tts,
+        # A row that omits the key predates the post-cutoff contract (or
+        # simply isn't post-cutoff); treat that as False, not an error.
+        postcutoff=bool(rec.get("postcutoff", False)),
     )
 
 
@@ -188,6 +205,64 @@ def metadata() -> dict:
             "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
         )
     return json.loads(path.read_text())
+
+
+def postcutoff_metadata() -> dict | None:
+    """The `metadata()`'s ``postcutoff`` block, or None when absent.
+
+    Reads through `metadata()` on every call rather than caching separately --
+    `metadata()` itself is deliberately uncached (several callers repoint
+    ``SMOLBENCH_LEAN_DATA`` mid-process and rely on a fresh read), and adding a
+    cache here would let a stale block survive a root switch.
+
+    Returns
+    -------
+    dict | None
+        The block verbatim (``method``, ``new_commit``, ``new_commit_date``,
+        ``old_commit``, ``old_commit_date``, ``target_date``, ``n_new_decls``,
+        ``n_old_decls``, ``n_postcutoff_decls``), or None for an ordinary
+        (non-post-cutoff) corpus.
+
+    Raises
+    ------
+    FileNotFoundError
+        Propagated from `metadata()`: dataset not bootstrapped.
+    ValueError
+        The block is present but `metadata()`'s ``from_repo.commit`` disagrees
+        with the block's ``new_commit`` -- a corpus traced at one commit cannot
+        be a name-set difference computed at another, so the file is
+        internally incoherent and must not be trusted silently.
+    """
+    meta = metadata()
+    block = meta.get("postcutoff")
+    if block is None:
+        return None
+    traced_commit = meta["from_repo"]["commit"]
+    if traced_commit != block["new_commit"]:
+        raise ValueError(
+            f"{data_root() / 'metadata.json'} is incoherent: from_repo.commit="
+            f"{traced_commit!r} but postcutoff.new_commit={block['new_commit']!r} "
+            "-- a corpus traced at one commit cannot be a name-set difference "
+            "computed at another"
+        )
+    return block
+
+
+def is_postcutoff_corpus() -> bool:
+    """True if the current corpus carries a `postcutoff_metadata` block.
+
+    Note this can still raise: an incoherent corpus (see `postcutoff_metadata`'s
+    ``Raises``) must not silently report False, so this function propagates
+    `postcutoff_metadata`'s `ValueError` rather than swallowing it.
+
+    Raises
+    ------
+    FileNotFoundError
+        Propagated from `postcutoff_metadata`.
+    ValueError
+        Propagated from `postcutoff_metadata`.
+    """
+    return postcutoff_metadata() is not None
 
 
 def replay_passing_path(kind: SplitKind, split: Split) -> Path:

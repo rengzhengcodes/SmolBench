@@ -36,11 +36,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 BUCKET = "smolbench-results-414266451290"
-DEDUCTION_PREFIX = "deduction/runs/"
 INDUCTION_PREFIX = "induction/"
 
-#: Expected per-lane cell count for this study (4 rungs x 236 theorem-slots).
-EXPECTED_CELLS = 944
 #: Expected induction seeds per (model, arm): base_seed=0, R=30.
 EXPECTED_SEEDS = 30
 
@@ -63,7 +60,9 @@ def _s3():
     return boto3.client("s3")
 
 
-def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
+def iter_deduction_lanes(
+    local: bool, *, deduction_prefix: Optional[str] = None
+) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
     Parameters
@@ -71,6 +70,15 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     local : bool
         Read local run directories instead of each lane's ``all_rows.jsonl``
         from S3.
+    deduction_prefix : str, optional
+        S3 key prefix the lanes spool under, WITH a trailing "/". ``None``
+        (the default) resolves it lazily via `runner.spool_prefix()` -- a key
+        prefix is CONFIGURATION, not audited logic, so importing the single
+        source of truth for it here is not a hazard; `main` already resolves
+        this once (also via a lazy import) and passes it down explicitly,
+        this default only backstops a direct caller that omits it. Ignored
+        when `local` is set, so a local audit never needs S3 credentials or a
+        resolvable prefix.
 
     Yields
     ------
@@ -87,16 +95,20 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
             if rows.exists():
                 yield d.name, rows.read_text(errors="replace")
         return
+    if deduction_prefix is None:
+        from smolbench.deduction.lean.runner import spool_prefix
+
+        deduction_prefix = spool_prefix() + "/"
     s3 = _s3()
     pages = s3.get_paginator("list_objects_v2").paginate(
-        Bucket=BUCKET, Prefix=DEDUCTION_PREFIX, Delimiter="/"
+        Bucket=BUCKET, Prefix=deduction_prefix, Delimiter="/"
     )
     for page in pages:
         for p in page.get("CommonPrefixes", []):
             lane = p["Prefix"].split("/")[-2]
             try:
                 body = s3.get_object(
-                    Bucket=BUCKET, Key=f"{DEDUCTION_PREFIX}{lane}/all_rows.jsonl"
+                    Bucket=BUCKET, Key=f"{deduction_prefix}{lane}/all_rows.jsonl"
                 )["Body"].read()
             except Exception:  # noqa: BLE001 -- a lane with no rows is itself a finding
                 yield lane, ""
@@ -185,21 +197,44 @@ def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, i
 
 
 def main() -> int:
+    # Lazy import, at the TOP of main(): the expected-cells default below is
+    # CONFIGURATION (the study's pinned shape), read from the single source
+    # of truth in `runner` rather than duplicated here as a local constant.
+    # It is a plain int and cannot raise, so using it straight as an argparse
+    # default is safe -- unlike `runner.spool_prefix()` below, which is
+    # resolved only AFTER parse_args (see that call site's comment).
+    from smolbench.deduction.lean import runner
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--lane", default="", help="Audit one lane (substring match).")
     ap.add_argument("--local", action="store_true", help="Audit local run dirs, not S3.")
     ap.add_argument("--induction", action="store_true", help="Also audit induction seed coverage.")
     ap.add_argument(
-        "--expect-cells", type=int, default=EXPECTED_CELLS,
-        help=f"Cells expected per lane (default {EXPECTED_CELLS}).",
+        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
+        help="Cells expected per lane (default: %(default)s).",
+    )
+    ap.add_argument(
+        "--spool-prefix", default=None,
+        help="S3 key prefix the deduction lanes spooled under (default: the "
+             "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
+             "deduction_postcutoff/runs if unset). The published pre-cutoff "
+             "study lives at deduction/runs; pass that explicitly to audit "
+             "it (no env opt-in needed on this read-only path).",
     )
     args = ap.parse_args()
+
+    # Resolved AFTER parse_args, not at import or parser-build time: a
+    # module-level `spool_prefix()` call, or an eagerly-evaluated argparse
+    # default, would make `LEAN_SPOOL_PREFIX=deduction/runs --help` explode
+    # (see `iter_deduction_lanes`'s docstring for the same lazy-import
+    # rationale).
+    deduction_prefix = (args.spool_prefix or runner.spool_prefix()) + "/"
 
     print(f"{'lane':38s} {'cells':>6s} {'INFRA':>6s} {'genuine':>8s} {'status':>8s}")
     total_infra = total_genuine = 0
     audited = 0
     failures: List[str] = []
-    for lane, text in iter_deduction_lanes(args.local):
+    for lane, text in iter_deduction_lanes(args.local, deduction_prefix=deduction_prefix):
         if lane in NON_DATA_LANES or (args.lane and args.lane not in lane):
             continue
         audited += 1

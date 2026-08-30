@@ -163,6 +163,15 @@ def split_run(
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Lazy import, at the TOP of main(): `--limit`'s default below is
+    # CONFIGURATION (the OLD study's pinned pool size), read from the single
+    # source of truth in `runner` rather than duplicated here as a literal.
+    # It is a plain int and cannot raise, so using it straight as an argparse
+    # default is safe. `split_run` does its own separate lazy import of
+    # `runner` (see its "heavy import chain" comment) for the selection code
+    # path itself; this one is only for the default below.
+    from smolbench.deduction.lean import runner
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("key", help="spec key of the lane (e.g. gemma-4-12b)")
     parser.add_argument("--n", type=int, required=True, help="number of shards")
@@ -170,16 +179,26 @@ def main(argv: list[str] | None = None) -> None:
         "--source", type=Path, required=True,
         help="the unsharded run dir (rename it OUT of runs/scaling_<key> first)",
     )
+    parser.add_argument(
+        "--limit", type=int, default=runner.EXPECTED_THEOREMS,
+        help="theorems_spec['limit'] for the re-shard (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
-    # The study's user-locked theorems spec; must match the shards' own config
-    # (notebooks/deduction/run_study.py build_config) or split and shards
-    # disagree about theorem ownership.
+    # This dict reproduces the OLD (pre-cutoff) study's user-locked theorems
+    # spec -- re-sharding THAT study's runs is what this script exists for.
+    # ``notebooks/deduction/run_study.py``'s ``build_config`` no longer
+    # produces this spec: its ``kind`` now defaults to ``"random"`` (env
+    # ``LEAN_CORPUS_KIND``) and it carries ``require_postcutoff: True``. A
+    # re-shard of a POST-cutoff lane must pass a ``theorems_spec`` matching
+    # that lane's own ``build_config`` output instead -- source/kind/split/seed
+    # here are fixed to the old study and are not overridable from the CLI;
+    # only `limit` (the one axis the post-cutoff pool may differ on) is.
     theorems_spec = {
         "source": "replay_passing",
         "kind": "novel_premises",
         "split": "val",
-        "limit": 300,
+        "limit": args.limit,
         "seed": 0,
     }
     split_run(

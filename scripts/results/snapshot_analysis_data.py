@@ -2,8 +2,11 @@
 
 Every byte already lives in S3, but in the layout the RUNNERS wanted
 (``induction/<model>/seed=<s>/<arm>--<ts>.yaml`` versus
-``deduction/runs/scaling_<model>/...``), so a model's two legs sit under
-different names, deduction a level deeper. Republished as analysis reads them:
+``<deduction-prefix>/scaling_<model>/...``, where ``<deduction-prefix>``
+defaults to the re-collection's `runner.spool_prefix()` and is overridable via
+``--spool-prefix`` -- the published pre-cutoff study lives at
+``deduction/runs``), so a model's two legs sit under different names,
+deduction a level deeper. Republished as analysis reads them:
 
     <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
     <dest>/deduction/<model>/verified_rows.jsonl    # the analysis input
@@ -31,7 +34,7 @@ import concurrent.futures
 import json
 import logging
 import pathlib
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -53,15 +56,33 @@ def _s3():
     return boto3.client("s3")
 
 
-def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
+def iter_source_keys(
+    client, *, deduction_prefix: Optional[str] = None
+) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
     The deduction leg carries a ``scaling_`` prefix, stripped here so both legs
     of a model share one name.
+
+    Parameters
+    ----------
+    deduction_prefix : str, optional
+        S3 key prefix the deduction leg lives under, WITH a trailing "/".
+        ``None`` (the default) resolves it lazily via `runner.spool_prefix()`
+        -- a key prefix is CONFIGURATION, not audited logic, so importing the
+        single source of truth for it here is not a hazard; `main` always
+        resolves it once (also via a lazy import) and passes it down
+        explicitly, so a caller reading the published pre-cutoff study passes
+        ``"deduction/runs/"`` explicitly. This default only backstops a
+        direct caller that omits it.
     """
+    if deduction_prefix is None:
+        from smolbench.deduction.lean.runner import spool_prefix
+
+        deduction_prefix = spool_prefix() + "/"
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
-    for prefix, leg in (("induction/", "induction"), ("deduction/runs/", "deduction")):
+    for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
@@ -123,11 +144,26 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=32,
                     help="concurrent copies; the work is pure network wait (default 32)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--spool-prefix", default=None,
+        help="S3 key prefix the deduction leg spooled under (default: the "
+             "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
+             "deduction_postcutoff/runs if unset). The published pre-cutoff "
+             "study lives at deduction/runs; pass that explicitly to "
+             "snapshot it (no env opt-in needed on this read-only path).",
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+    # Resolved AFTER parse_args, not at import or parser-build time -- a
+    # module-level `spool_prefix()` call, or an eagerly-evaluated argparse
+    # default, would make `LEAN_SPOOL_PREFIX=deduction/runs --help` explode.
+    from smolbench.deduction.lean.runner import spool_prefix
+
+    deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
+
     client = _s3()
-    rows = iter_source_keys(client)
+    rows = iter_source_keys(client, deduction_prefix=deduction_prefix)
     per_model: Dict[Tuple[str, str], Dict[str, int]] = collections.defaultdict(
         lambda: {"objects": 0, "bytes": 0}
     )
@@ -156,7 +192,7 @@ def main() -> int:
 
     def _one(item):
         leg, model, key, size = item
-        prefix = "induction/" if leg == "induction" else "deduction/runs/"
+        prefix = "induction/" if leg == "induction" else deduction_prefix
         tail = key[len(prefix):].split("/", 1)[1]
         return copy_one(client, key, f"{args.dest}/{leg}/{model}/{tail}", size)
 

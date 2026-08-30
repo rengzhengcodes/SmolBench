@@ -79,6 +79,14 @@ aws = [
 # verification additionally needs lean-dojo (the reason the project pins
 # python<3.13 above).
 lean = [
+    # The verifier's REPL backend: `lean-interact` wraps
+    # leanprover-community/repl (MIT) and tracks current Lean, including
+    # v4.33/v4.34, which is what `smolbench.deduction.lean.replbackend` drives.
+    "lean-interact>=0.11.5",
+    # `lean-dojo` stays ONLY because corpus tracing and premise slicing still
+    # use it (its v1 `Dojo` interaction layer is deprecated and cannot drive
+    # Lean >= v4.20, so it is no longer imported by the verifier). Drop it once
+    # the corpus package lands.
     "lean-dojo>=2.0",
     "PyYAML>=6.0.3",
     # 0.13 is the first release shipping cp312 wheels.

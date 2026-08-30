@@ -35,12 +35,6 @@ logging.basicConfig(level=logging.INFO)
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
-#: Model-independent full-lane row counts for this study's fixed 300-theorem set
-#: and 4 rungs; they do not vary by model because skip_trivial depends only on
-#: theorem structure.
-EXPECT_CELLS: int = 944
-EXPECT_SANITY: int = 300
-
 
 def _cell_key(row: dict) -> tuple:
     # Duplicated verbatim in scripts/deduction/split_lean_run_into_shards.py
@@ -205,11 +199,26 @@ def merge_shards(
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Lazy import, at the TOP of main(): the --expect-* defaults below are
+    # CONFIGURATION (the study's pinned shape), read from the single source
+    # of truth in `runner` rather than duplicated here as local constants.
+    # `main()` already imports `runner` unconditionally further down (for
+    # `write_run_analysis`), so pulling the import up front adds no new
+    # requirement -- this script's boxes-without-smolbench constraint binds
+    # only on `_cell_key` (see its comment), not on `main()`.
+    from smolbench.deduction.lean import runner
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("key", help="spec key of the lane (e.g. ministral-3-14b)")
     parser.add_argument("--n", type=int, required=True, help="number of shards")
-    parser.add_argument("--expect-cells", type=int, default=EXPECT_CELLS)
-    parser.add_argument("--expect-sanity", type=int, default=EXPECT_SANITY)
+    parser.add_argument(
+        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
+        help="expected merged cell count (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--expect-sanity", type=int, default=runner.EXPECTED_SANITY_ROWS,
+        help="expected merged sanity-row count (default: %(default)s)",
+    )
     parser.add_argument(
         "--no-expect", action="store_true",
         help="skip the merged-total gates (uniqueness gates always apply)",
@@ -230,8 +239,8 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     # Per-shard analysis.txt files are partial and were not copied; regenerate.
-    from smolbench.deduction.lean import runner  # late: heavy import chain
-
+    # (`runner` was already imported at the top of this function, for the
+    # --expect-* argparse defaults above.)
     runner.write_run_analysis(canonical)
 
     if args.spool:

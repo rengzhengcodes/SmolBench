@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-# Smoke driver for the smolbench.deduction.lean harness (LeanDojo theorem-proving eval,
-# folded into the main package from the old standalone lean/ project).
+# Smoke driver for the smolbench.deduction.lean harness (Lean 4 theorem-proving
+# eval, folded into the main package from the old standalone lean/ project).
 #
 # Default run is credential-free and Lean-free: check the generation/analysis
-# modules import without touching lean_dojo, sync the .venv, bootstrap the
+# modules import without pulling in lean_interact, sync the .venv, bootstrap the
 # LeanDojo Benchmark 4 JSON from Zenodo (64 MB, one-time), then drive the
 # `metadata` and `list` CLI subcommands against real benchmark data.
 #
 #   bash .claude/skills/run-smolbench/lean_smoke.sh            # Tier 0+1 (~seconds after bootstrap)
-#   bash .claude/skills/run-smolbench/lean_smoke.sh --replay   # + one Dojo ground-truth replay
+#   bash .claude/skills/run-smolbench/lean_smoke.sh --replay   # + one REPL ground-truth replay
 #   bash .claude/skills/run-smolbench/lean_smoke.sh --e2e      # + FULL run-sweep: fake LLMs, REAL Lean
 #
-# --replay and --e2e additionally need elan on PATH and, on first use, pull
-# the ~2.4 GB traced corpus from LeanDojo's S3 cache into ~/.cache/lean_dojo/
-# (creds-free; verified working WITHOUT GITHUB_ACCESS_TOKEN for this path).
-# Budget ~5 min cold / ~3 min warm (--replay); ~1 min warm (--e2e).
+# --replay and --e2e additionally need elan on PATH and SMOLBENCH_MATHLIB_ROOT
+# pointing at a mathlib4 checkout that has been BUILT with elan/lake. The
+# verifier now drives leanprover-community/repl through the lean-interact
+# package and reads that local checkout; there is no traced-corpus download
+# from LeanDojo's S3 any more. Both tiers refuse to start without the variable.
+# The old cold/warm budgets were measured under the retired LeanDojo backend
+# and have not been re-measured here.
 #
 # --e2e is the credential-free END-TO-END sweep check: it starts two local
 # OpenAI-compatible stub LLMs (stub_llm.py — one returns the theorem's true
 # ground-truth tail, one a bogus tactic), points the primeintellect and
-# openrouter providers at them, and drives `run-sweep` on one warm-cached
-# theorem. Real Dojo verification must yield success for the good stub and
-# lean_error for the bad one; a second identical run must resume-skip both
-# cells. Results/logs go to a mktemp dir — never the committed results tree.
+# openrouter providers at them, and drives `run-sweep` on one theorem. Real
+# Lean verification must yield success for the good stub and lean_error for
+# the bad one; a second identical run must resume-skip both cells.
+# Results/logs go to a mktemp dir — never the committed results tree.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
@@ -31,10 +34,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Tier 0: the generation/analysis side of smolbench.deduction.lean must import
-# without needing lean_dojo — only verify.py is allowed to need it.
-.venv/bin/python -c "import smolbench.deduction.lean.runner, smolbench.deduction.lean.cli" \
-    || { echo "FAIL: smolbench.deduction.lean.{runner,cli} must import on .venv" >&2; exit 1; }
-echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly without touching lean_dojo)."
+# without needing lean_interact — only verify.py is allowed to need it. The
+# assertion is on sys.modules, not on the import succeeding: lean_interact IS
+# installed in this .venv, so a bare import would pass even if runner/cli had
+# grown a hard dependency on the Lean backend.
+.venv/bin/python -c "import smolbench.deduction.lean.runner, smolbench.deduction.lean.cli, sys; assert 'lean_interact' not in sys.modules, 'runner/cli pulled in lean_interact'" \
+    || { echo "FAIL: smolbench.deduction.lean.{runner,cli} must import on .venv without lean_interact" >&2; exit 1; }
+echo "PASS — Tier 0 (smolbench.deduction.lean imports cleanly without pulling in lean_interact)."
 
 uv sync -q --all-extras
 
@@ -67,14 +73,35 @@ need_elan() {
     }
 }
 
+# The REPL backend runs inside a BUILT mathlib4 checkout named by
+# SMOLBENCH_MATHLIB_ROOT. Refuse up front rather than starting a tier that
+# cannot succeed: without it every group is reported as `exception`, slowly,
+# after the session-open backoff has been spent on each one. Only "set and
+# non-empty" is checked here — replbackend.mathlib_root does the real
+# validation (directory exists, contains lean-toolchain) and its message is
+# more specific than anything this script could produce. The `:-` is required:
+# this script runs under `set -u`.
+need_mathlib_root() {
+    [ -n "${SMOLBENCH_MATHLIB_ROOT:-}" ] || {
+        echo "FAIL: SMOLBENCH_MATHLIB_ROOT is not set. Lean verification drives" >&2
+        echo "  leanprover-community/repl (via the lean-interact package) inside a" >&2
+        echo "  mathlib4 checkout built with elan/lake. Point the variable at one:" >&2
+        echo "    export SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4" >&2
+        echo "  Or run the default (no-argument) Tier-0/1 smoke, which needs no Lean." >&2
+        exit 1
+    }
+}
+
 if [ "${1:-}" = "--replay" ]; then
     need_elan
+    need_mathlib_root
     .venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
-    echo "PASS — smolbench.deduction.lean replay smoke (Dojo ground-truth replay succeeded)."
+    echo "PASS — smolbench.deduction.lean replay smoke (REPL ground-truth replay succeeded)."
 fi
 
 if [ "${1:-}" = "--e2e" ]; then
     need_elan
+    need_mathlib_root
     SKILL=.claude/skills/run-smolbench
     WORK=$(mktemp -d)
     STUB_PID=""

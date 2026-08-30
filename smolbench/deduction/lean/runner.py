@@ -46,6 +46,8 @@ from . import lean3
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
 from .corpus import (
     BenchmarkTheorem,
+    data_root,
+    is_postcutoff_corpus,
     iter_replay_passing,
     iter_with_proof,
     load_split,
@@ -248,6 +250,30 @@ def new_run_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
+def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
+    """Raise unless every theorem in `pool` carries `BenchmarkTheorem.postcutoff`.
+
+    Factored out of `_select_theorems` so its two call sites -- the raw pool,
+    before any sampling/sharding, and the final selection, after -- share one
+    definition and cannot drift apart.
+
+    Raises
+    ------
+    ValueError
+        Names up to the first 5 offending theorems (by `full_name`) plus a
+        total count, so a large bad pool doesn't dump thousands of names.
+    """
+    bad = [t.full_name for t in pool if not t.postcutoff]
+    if not bad:
+        return
+    shown = ", ".join(bad[:5])
+    suffix = f", and {len(bad) - 5} more" if len(bad) > 5 else ""
+    raise ValueError(
+        f"theorems.require_postcutoff: {len(bad)} theorem(s) are not flagged "
+        f"postcutoff: {shown}{suffix}"
+    )
+
+
 def _select_theorems(
     spec: dict, *, cell_whitelist: frozenset[tuple] | None = None
 ) -> list[BenchmarkTheorem]:
@@ -256,13 +282,50 @@ def _select_theorems(
     `cell_whitelist`, when given, narrows the pool to theorems owning at least
     one of its cell keys; it is a parameter rather than a `spec` field because
     `sweep` loads it once from ``LEAN_CELL_WHITELIST``.
+
+    Parameters
+    ----------
+    spec : dict
+        ``source`` (default ``"replay_passing"``), ``kind`` (default
+        ``"random"``), ``split`` (default ``"val"``), ``max_tactics``,
+        ``limit``, ``seed``, optional ``shard`` (``"i/n"``), and
+        ``require_postcutoff`` (bool, default False). When
+        `require_postcutoff` is truthy, the selection is refused unless the
+        active corpus (`smolbench.deduction.lean.corpus.is_postcutoff_corpus`)
+        is a post-cutoff corpus AND every selected `BenchmarkTheorem.postcutoff`
+        is True; absent or False, this key never fires and every pre-existing
+        caller is unaffected.
+
+    Raises
+    ------
+    ValueError
+        `source` is not one of ``replay_passing``/``with_proof``/``explicit``;
+        or `spec["shard"]` is present but not a valid ``"i/n"`` stride; or
+        `require_postcutoff` is truthy and either (1) the corpus is not a
+        post-cutoff corpus, or (2) the pool or final selection contains a
+        theorem not flagged `postcutoff`.
     """
+    require_postcutoff = bool(spec.get("require_postcutoff", False))
     source = spec.get("source", "replay_passing")
     kind = spec.get("kind", "random")
     split = spec.get("split", "val")
     max_tactics = int(spec.get("max_tactics", 0))
     limit = int(spec.get("limit", 0))
     seed = int(spec.get("seed", 0))
+
+    # Design: this corpus-level check runs BEFORE the pool is even loaded --
+    # deliberately redundant with the per-theorem check below, but cheaper to
+    # explain: the old single-snapshot LeanDojo Benchmark 4 has no post-cutoff
+    # tail at all, so no sampling, seed or split change over it can ever
+    # produce a compliant item. Naming `data_root()` tells the caller exactly
+    # which corpus was refused.
+    if require_postcutoff and not is_postcutoff_corpus():
+        raise ValueError(
+            f"theorems.require_postcutoff is set but {data_root()} is not a "
+            "post-cutoff corpus -- the old single-snapshot LeanDojo Benchmark 4 "
+            "has no post-cutoff tail, so no sampling, seed or split change over "
+            "it can produce a compliant selection"
+        )
 
     if source == "replay_passing":
         pool = list(iter_replay_passing(kind, split))
@@ -273,6 +336,14 @@ def _select_theorems(
         pool = [t for t in load_split(kind, split) if t.full_name in names]
     else:
         raise ValueError(f"unknown theorems.source: {source!r}")
+
+    # Design: checked on the raw POOL, before sampling/sharding/whitelisting.
+    # `random.Random(seed).sample` below is order- and population-sensitive,
+    # so a pool containing even one pre-cutoff row must be rejected outright
+    # -- otherwise whether the draw happens to miss the bad row(s) would
+    # silently decide compliance.
+    if require_postcutoff:
+        _require_all_postcutoff(pool)
 
     if max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= max_tactics]
@@ -306,6 +377,14 @@ def _select_theorems(
     if cell_whitelist is not None:
         whitelisted_theorems = {key[1] for key in cell_whitelist}
         pool = [t for t in pool if t.full_name in whitelisted_theorems]
+
+    if require_postcutoff:
+        # Belt-and-braces: `pool` here is always a SUBSET of the pool already
+        # checked above (shard/whitelist only ever remove rows), so this can
+        # only ever agree with that earlier check. It stays because this is
+        # the list actually handed to `sweep` -- a future filter inserted
+        # between the two checks above would otherwise slip through unguarded.
+        _require_all_postcutoff(pool)
 
     return pool
 
@@ -562,6 +641,71 @@ SUPERSEDED_MARKER = "SUPERSEDED"
 #: BROKEN anchor on ``_MARKER-`` so ordinary words in basenames cannot trip
 #: the guard.
 RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
+
+#: The re-collection's S3 key prefix. The OLD published study lives under
+#: `deduction/runs` and must never be written again -- see `spool_prefix`.
+DEDUCTION_SPOOL_PREFIX: str = "deduction_postcutoff/runs"
+#: The published pre-cutoff study's prefix. Named only so `spool_prefix` can
+#: refuse it; analysis of that study passes it explicitly on a reader's
+#: --spool-prefix flag.
+LEGACY_SPOOL_PREFIX: str = "deduction/runs"
+
+#: The OLD published study's pinned shape: 300 theorems x 4 rungs, unevenly
+#: rendered (not every theorem/rung pair yields a cell) -> 944 cells; one
+#: sanity row per theorem. Kept as the DEFAULT for the audit/merge/split
+#: scripts so today's behaviour is unchanged -- asserted rather than
+#: discovered, so a shrunken spool fails loudly instead of quietly
+#: re-baselining. The post-cutoff pool may differ in size, so every consumer
+#: of these numbers also takes a CLI override rather than importing them
+#: unconditionally.
+EXPECTED_THEOREMS: int = 300
+EXPECTED_CELLS: int = 944
+EXPECTED_SANITY_ROWS: int = 300
+
+
+def spool_prefix() -> str:
+    """Resolve the S3 key prefix writers/readers use for deduction spool runs.
+
+    Reads `LEAN_SPOOL_PREFIX` from the environment on every call -- never
+    cached, never resolved at import time -- so that a caller can flip the
+    prefix between invocations within one process (tests do exactly this).
+    An empty or unset value falls back to `DEDUCTION_SPOOL_PREFIX`, the
+    re-collection's prefix.
+
+    The resolved value is stripped of surrounding whitespace and any
+    trailing "/", so callers may append their own "/" without risking a
+    doubled separator.
+
+    Returns
+    -------
+    str
+        The normalized prefix, never ending in "/".
+
+    Raises
+    ------
+    ValueError
+        If the resolved prefix equals `LEGACY_SPOOL_PREFIX` (the published
+        pre-cutoff study's location) and `LEAN_ALLOW_LEGACY_PREFIX` is not
+        set to `"1"`. Writing to the legacy prefix again would silently
+        overwrite the published, unrecoverable record in the append-only
+        results bucket -- so this is a hard refusal, not a warning, with an
+        explicit escape hatch for the one legitimate case (a reader
+        explicitly analysing the old study still goes through the
+        `--spool-prefix` flag on that path, not this env var).
+    """
+    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
+    resolved = raw.rstrip("/") if raw else DEDUCTION_SPOOL_PREFIX
+    if resolved == LEGACY_SPOOL_PREFIX:
+        if os.environ.get("LEAN_ALLOW_LEGACY_PREFIX") != "1":
+            raise ValueError(
+                f"refusing to resolve spool_prefix() to the published "
+                f"pre-cutoff study's prefix ({LEGACY_SPOOL_PREFIX!r}) -- "
+                "writing there again would silently overwrite the "
+                "unrecoverable published record in the append-only results "
+                "bucket. Set LEAN_ALLOW_LEGACY_PREFIX=1 to override, or "
+                "(for read-only analysis) pass --spool-prefix explicitly."
+            )
+    return resolved
 
 
 def reject_superseded_rows(paths) -> None:

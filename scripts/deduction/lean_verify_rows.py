@@ -13,7 +13,7 @@ already cost inference spend.
 Contracts, each enforced where documented:
 
 - unit of work = a ``(theorem_id, k)`` group: ``verify.open_at_step`` replays the
-  prefix ``0..k-1`` once into one Dojo session shared by every rung/model/replicate
+  prefix ``0..k-1`` once into one REPL session shared by every rung/model/replicate
   at that pair (:func:`group_unverified`);
 - ``verified_rows.jsonl`` keeps ``all_rows.jsonl``'s row order EXACTLY; new rows are
   APPENDED, never inserted, so indices computed against ``all_rows.jsonl`` stay valid
@@ -29,7 +29,7 @@ Contracts, each enforced where documented:
 - one exclusive flock on a dedicated file in :data:`DOJO_CACHE_DIR` is held for the
   whole multi-run loop, since concurrent passes race on the shared traced-repo cache
   (:func:`_dojo_cache_lock`);
-- ``lean_dojo`` and ``boto3``/``botocore`` import lazily: the module imports without
+- ``lean_interact`` and ``boto3``/``botocore`` import lazily: the module imports without
   either, and ``--dry-run`` needs neither Lean nor the lock.
 """
 
@@ -55,6 +55,7 @@ from typing import Any, Iterator, Mapping, Optional
 import fcntl  # POSIX-only; every host this script runs on is Linux (EC2 / dev boxes).
 
 from smolbench.deduction.lean.corpus import BenchmarkTheorem, load_split
+from smolbench.deduction.lean.runner import spool_prefix
 from smolbench.evals import _aws
 
 logging.basicConfig(level=logging.INFO)
@@ -65,7 +66,13 @@ _error_code = _aws.error_code
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DEFAULT_S3_PREFIX: str = "s3://smolbench-results-414266451290/deduction/runs"
+#: Same bucket every other deduction spool writer/reader in this study uses.
+#: The key prefix is NOT bundled in here: it comes from
+#: `smolbench.deduction.lean.runner.spool_prefix()`, resolved at ARGPARSE
+#: time (inside `main`, after `parse_args`), never at import or parser-build
+#: time -- see that function's docstring for why (the legacy-prefix refusal
+#: must stay escapable via an explicit `--s3-prefix`).
+SPOOL_BUCKET: str = "smolbench-results-414266451290"
 DEFAULT_RUNS_GLOB: str = "scaling_*"
 S3_REGION: str = "us-west-2"
 ROWS_FILENAME: str = "all_rows.jsonl"
@@ -375,13 +382,19 @@ def check_workers(requested: int, meminfo_text: str) -> None:
 # ---------------------------------------------------------------------------
 # Pure: interpreter guard, Dojo-failure operator guidance
 # ---------------------------------------------------------------------------
+# NOTE: the name `require_lean_dojo` is retained deliberately even though the
+# package it now checks for is `lean_interact`: its only call site lives in
+# `main()`, which is owned elsewhere, and renaming here would force an edit
+# there. Rename it when that file is next opened.
 def require_lean_dojo() -> None:
-    """Raise ``SystemExit`` if ``lean_dojo`` (the ``lean`` extra) is not importable."""
-    if importlib.util.find_spec("lean_dojo") is None:
+    """Raise ``SystemExit`` if ``lean_interact`` (the ``lean`` extra) is not importable."""
+    if importlib.util.find_spec("lean_interact") is None:
         raise SystemExit(
             "lean_verify_rows: this is the deferred VERIFICATION pass and needs "
-            "'lean_dojo' (the `lean` extra). Install it into the project venv "
+            "'lean_interact' (the `lean` extra). Install it into the project venv "
             "with `uv sync --all-extras` and re-run via .venv/bin/python. "
+            "The pass also needs SMOLBENCH_MATHLIB_ROOT pointing at a mathlib4 "
+            "checkout that has been built with elan/lake. "
             "(--dry-run works without it if you only need to preview the plan.)"
         )
 
@@ -456,7 +469,7 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
 def _default_verifier():
     """Lazily import the real verifier ``smolbench.deduction.lean.verify``.
 
-    Deferred because it needs `lean_dojo` (same seam as ``runner._default_verifier``);
+    Deferred because it needs `lean_interact` (same seam as ``runner._default_verifier``);
     its `ImportError` propagates when the ``lean`` extra is absent.
     """
     from smolbench.deduction.lean import verify
@@ -914,8 +927,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--s3-prefix", default=DEFAULT_S3_PREFIX,
-        help=f"s3://bucket/key-prefix under which every run lives (default: {DEFAULT_S3_PREFIX})",
+        "--s3-prefix", default=None,
+        help=(
+            "s3://bucket/key-prefix under which every run lives (default: "
+            f"s3://{SPOOL_BUCKET}/<LEAN_SPOOL_PREFIX or deduction_postcutoff/runs>"
+            " -- resolved at parse time, not parser-build time, via "
+            "smolbench.deduction.lean.runner.spool_prefix(); pass this flag "
+            "explicitly to point at the published pre-cutoff study, "
+            f"s3://{SPOOL_BUCKET}/deduction/runs)"
+        ),
     )
     parser.add_argument(
         "--runs", default=DEFAULT_RUNS_GLOB,
@@ -976,6 +996,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+    # Resolved HERE, after parse_args -- not as the argparse default -- so that
+    # `LEAN_SPOOL_PREFIX=deduction/runs --help` never raises (a legacy-prefix
+    # refusal must stay escapable by passing `--s3-prefix` explicitly).
+    s3_prefix = args.s3_prefix or f"s3://{SPOOL_BUCKET}/{spool_prefix()}"
 
     if not args.dry_run:
         require_lean_dojo()
@@ -983,7 +1007,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
     workdir.mkdir(parents=True, exist_ok=True)
 
-    bucket, key_prefix = parse_s3_uri(args.s3_prefix)
+    bucket, key_prefix = parse_s3_uri(s3_prefix)
     client = _build_s3_client()
     runs = list_runs(client, bucket, key_prefix, args.runs)
     if not runs:

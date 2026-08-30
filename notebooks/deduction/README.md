@@ -66,7 +66,7 @@ The traced corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/`
   LeanDojo depends on (CMark.lean, LeanInk, ProofWidgets4, aesop, ...).
 
 Alongside `leandojo_benchmark_4/`, two sidecars record which theorems'
-GROUND-TRUTH proofs actually replay successfully against a live Dojo
+GROUND-TRUTH proofs actually replay successfully against a live Lean
 session: `replay_passing_novel_premises_val.jsonl` and
 `replay_passing_novel_premises_test.jsonl`. These are produced by
 `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`
@@ -143,31 +143,51 @@ than 944 because dead cells and verdict filtering shrink it unevenly. Use
 
 ### Corpus date vs. model cutoffs
 
-`metadata.json` records the trace as mathlib4 at commit `fe4454af`, with
-`creation_time` 2024-03-24. Every theorem record in every split carries that
-one commit, so the benchmark is a single snapshot, not a date range.
+`metadata.json` records the trace as mathlib4 at commit `fe4454af`,
+`creation_time` 2024-03-24 -- one snapshot, not a date range. Every roster
+checkpoint's cutoff postdates it, so 0 of the benchmark's 300 theorems
+qualify as post-cutoff by construction, and no sampling, seed, or split
+change over this single-commit snapshot can produce one.
 
-Every checkpoint on the roster postdates it. The earliest pretraining cutoff
-documented for any of them is September 2024 (`nemotron-3-nano-4b`, which is
-a Nemotron-2-generation descendant rather than a Nemotron-3 pretrain); Gemma
-4 is January 2025, and the other two Nemotron-3 rungs are June 2025. The
-remaining 15 checkpoints publish no cutoff, but their release dates run from
-2025-07 to 2026-04.
+Neither of the study's two holdout mechanisms is a substitute for a
+post-cutoff tail, and neither should be cited as if it were one: `decontam.py`
+guards a synthetic SFT corpus against reproducing eval theorems, and
+`novel_premises` selects theorems under-represented in the benchmark's own
+train split -- both operate entirely within that same 2024-03-24 snapshot.
 
-So no theorem in this study postdates any model's cutoff, and no sampling,
-seed, or split change over this benchmark can produce one -- a single-commit
-snapshot has no post-cutoff tail to filter for. This study measures
-next-tactic success on mathematics the models had likely seen during
-pretraining, together with its ground-truth proofs. It is not a held-out
-generalization measurement, and cross-family comparisons inherit whatever
-differences exist in how much mathlib4 each vendor ingested.
+**What the code now enforces.** A re-collection is underway on a NEW mathlib4
+snapshot, restricted by declaration-name set difference against the old
+`fe4454af` trace to theorems provably absent from it -- see
+`scripts/deduction/build_postcutoff_corpus.py` for how that corpus is built;
+this section only covers what consumes it. Such a corpus's `metadata.json`
+carries an extra `postcutoff` block (`method`, `old_commit`,
+`old_commit_date`, `new_commit`, `new_commit_date`, `target_date`,
+`n_old_decls`, `n_new_decls`, `n_postcutoff_decls`), and every theorem row it
+emits carries a per-row `postcutoff` boolean flag.
+`smolbench.deduction.lean.corpus.is_postcutoff_corpus()` (backed by
+`corpus.postcutoff_metadata()`) reports whether the ACTIVE corpus
+(`SMOLBENCH_LEAN_DATA`, or the default LeanDojo Benchmark 4 location) carries
+that block, and raises rather than silently reporting False if the block's
+`new_commit` disagrees with the corpus's own traced commit -- an incoherent
+corpus must not be trusted.
 
-Neither of the study's two holdout mechanisms changes this, and neither
-should be cited as if it did. `decontam.py` guards a synthetic SFT corpus
-against reproducing eval theorems; `novel_premises` selects theorems whose
-premises are under-represented in the benchmark's own train split. The first
-addresses a corpus this repo builds, the second is benchmark-internal
-generalization within the same 2024-03-24 snapshot.
+The runner enforces this at the point theorems are actually selected:
+`smolbench.deduction.lean.runner._select_theorems` accepts a
+`theorems.require_postcutoff` config key which, when true, refuses to select
+from a corpus that is not `is_postcutoff_corpus()`, and separately refuses
+any pool or final selection containing a theorem whose `postcutoff` flag is
+unset -- both checks raise `ValueError` rather than silently proceeding.
+`notebooks/deduction/run_study.py`'s `build_config` runs a second, earlier
+gate, BEFORE any AWS call: it requires `corpus.postcutoff_metadata()` to be
+non-`None` (else `SystemExit`, naming the corpus root and its traced commit)
+and requires the block's `target_date` to be `>=` `ROSTER_LATEST_RELEASE`
+(`"2026-04-24"`, the latest release date on the 21-model roster -- a
+checkpoint cannot have trained on data published after it shipped, so this
+is the conservative floor a post-cutoff corpus's target date must clear).
+`build_config` then sets `theorems.require_postcutoff: True` in the sweep
+config it hands to `runner.sweep`, so `_select_theorems` re-checks the same
+corpus and every selected theorem at sweep time, independent of the earlier
+gate.
 
 ## What the eval exposes per theorem
 
@@ -203,7 +223,16 @@ tactic chain).
 Every lane's results are spooled to S3, never accumulated locally for the
 long term. Bucket `smolbench-results-414266451290`, region `us-west-2`,
 key layout `deduction/runs/scaling_<spec-key>/<relative path>` (e.g.
-`deduction/runs/scaling_glm-4.7/all_rows.jsonl`).
+`deduction/runs/scaling_glm-4.7/all_rows.jsonl`) -- but that prefix is the
+PUBLISHED pre-cutoff study's location and must never be written again. New
+runs against the post-cutoff corpus spool under
+`deduction_postcutoff/runs/scaling_<spec-key>/<relative path>` instead
+(`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
+by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`);
+`spool_prefix()` refuses to resolve back to `deduction/runs` unless
+`LEAN_ALLOW_LEGACY_PREFIX=1` is set, since overwriting it would silently
+destroy the unrecoverable published record. `deduction/runs` itself is
+retained read-only, for analysis of the published study only.
 
 `run_study.py`'s `spool_to_s3` runs exactly once, after the sweep returns:
 it uploads every file under the run directory, verifies each upload
@@ -219,20 +248,57 @@ spool from S3 just to check.
 
 Lean verification is deliberately deferred to a separate pass: it is a
 separate, slow, Lean-touching step that runs later against a downloaded
-`all_rows.jsonl`, so generation boxes never need `lean_dojo`, elan, or the
-Dojo cache.
+`all_rows.jsonl`, so generation boxes never need `lean-interact`, elan, or a
+built mathlib4 checkout.
+
+The verification backend is the PyPI package `lean-interact`, which drives a
+[`leanprover-community/repl`](https://github.com/leanprover-community/repl)
+session (`smolbench.deduction.lean.replbackend`). It is not LeanDojo's `Dojo`:
+LeanDojo v1's interaction layer is deprecated and cannot drive Lean >= v4.20,
+while the post-cutoff corpus is mathlib4 at Lean v4.34.0-rc2, so `Dojo` cannot
+reach it at all.
+
+Verification therefore needs three things on the box that runs phase 2:
+`elan` on `PATH`, a mathlib4 checkout that has actually been BUILT with
+`elan`/`lake`, and `SMOLBENCH_MATHLIB_ROOT` set to that checkout:
+
+```
+SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4 \
+  .venv/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
+```
+
+The variable is read at CALL time (`replbackend.mathlib_root`), never cached at
+import, so setting it late still takes effect. Verification no longer needs the
+`~/.cache/lean_dojo/` traced-corpus download at all. That cache is NOT obsolete
+repo-wide, though: `smolbench.deduction.lean.premises`'s source slicing still
+resolves `~/.cache/lean_dojo/leanprover-community-mathlib4-<commit>/mathlib4`
+(`premises._traced_root`) to render hint/noise context, and `lean-dojo` remains
+a declared dependency of the `lean` extra for corpus tracing and premise
+slicing. Only VERIFICATION has stopped depending on it.
+
+**Limitation, stated plainly: the elaboration environment is import-only.**
+`replbackend.open_session` builds the environment for a theorem's statement with
+a single `import <Module>` of the theorem's own module. That restores the
+module's *imports* but NOT its file-level `open` / `variable` / `namespace`
+scope, nor any `local notation`. A statement that depends on such scope fails to
+elaborate and is reported as `exception` (or `replay_failed` when it happens
+under a prefix replay -- and phase 2's cell rows always show `replay_failed`
+regardless; see trap 1 below). Re-elaborating the whole file prefix up to the
+declaration would be correct but much more expensive; the spec chose cost. See
+`replbackend.py`'s module docstring, which also records that no part of the REPL
+interaction has been exercised against a real Lean toolchain.
 
 - **Phase 1 (generation)** runs on `.venv`. `notebooks/deduction/run_study.py`
   calls a model, extracts a candidate tactic block, and writes each cell row
   with `verdict == "unverified"` (a placeholder -- nothing has been checked
   against Lean yet) and each per-theorem sanity row with `verdict ==
   "skipped"`. By default it uses `NullVerifier` (`LEAN_VERIFY=defer`), which
-  never imports `smolbench.deduction.lean.verify` or its `lean_dojo`
+  never imports `smolbench.deduction.lean.verify` or its `lean_interact`
   dependency.
 - **Phase 2 (verification)** also runs on `.venv`, via
   `scripts/deduction/lean_verify_rows.py`. It downloads a run's
   `all_rows.jsonl` from S3, replays every recorded candidate proof against a
-  real Dojo session, and uploads `verified_rows.jsonl` beside it --
+  real REPL session, and uploads `verified_rows.jsonl` beside it --
   **the original `all_rows.jsonl` is never modified or re-uploaded**; every
   write goes to the sibling `verified_rows.jsonl` key so a verification bug
   can never corrupt or lose a candidate proof that already cost real
@@ -246,17 +312,53 @@ Dojo cache.
 
 ### Two traps in phase 2, both of which fail SILENTLY
 
-**1. `elan` must be on `PATH`, or every group "verifies" as `replay_failed`.**
-Under a non-login shell (`ssh cmd`, SSM `AWS-RunShellScript`, cron) `/root/.elan/bin`
-is absent from `PATH`, `lean_dojo` cannot spawn Lean, and every Dojo open fails with
-`ExceptionPexpect: The command was not found`. The pass does not crash -- it marks
-group after group `replay_failed` at high speed and uploads them as if they were
-findings. Tells: no `repl`/`lake` processes, one Python process pinned at ~100% CPU
-(not the worker count), and implausible throughput. Always:
+**1. `SMOLBENCH_MATHLIB_ROOT` and `elan` must both be right, or the whole pass
+"verifies" nothing.**
 
-```
-export PATH=/root/.elan/bin:$PATH
-```
+- **`SMOLBENCH_MATHLIB_ROOT` unset (or pointing at a directory that is missing,
+  or has no `lean-toolchain`)** stops every session before a Lean process is
+  even started, with a message naming `SMOLBENCH_MATHLIB_ROOT` verbatim -- grep
+  the `lean_error` column for that string, it is the fastest positive
+  identification of this trap.
+
+  **The verdict differs by row kind, and the cell rows are misleading.** At the
+  `smolbench.deduction.lean.verify` boundary this is deliberately an
+  `exception`, never a `replay_failed`: `replay_failed` means "the RECORDED
+  ground-truth prefix does not replay", a claim about the CORPUS, and a
+  forgotten environment variable must not condemn all 300 ground-truth proofs.
+  `replbackend.open_session` translates `mathlib_root`'s `RuntimeError` into a
+  `ReplError`, which is deliberately NOT a `RuntimeError` subclass, so
+  `verify.verify_proof_tail`'s `except RuntimeError` clause cannot catch it
+  (pinned by `tests/deduction/test_lean_repl_verifier.py`). The per-theorem
+  SANITY rows, which go through `verify.replay_ground_truth`, therefore land on
+  `exception` as intended.
+
+  The per-cell rows do NOT. `lean_verify_rows.py` drives a group through
+  `verify.open_at_step` directly, and its group-level handler records
+  `verdict == "replay_failed"` for every failure that is not a `RuntimeError`
+  whose message begins `prefix tactic ` -- so the `ReplError` carrying the
+  `SMOLBENCH_MATHLIB_ROOT` message is flattened into `replay_failed` with
+  `dojo_failure_hint`'s text attached. That hint text is itself stale (it still
+  talks about a LeanDojo traced-corpus pull and advises deleting
+  `~/.cache/lean_dojo`, neither of which is relevant to this backend). Both are
+  known follow-ups. Until they are fixed: **read the sanity rows, not the cell
+  rows, to tell a misconfigured box from a genuinely unreplayable corpus.**
+- **`elan` missing from `PATH`** fails later, when the REPL process itself is
+  started, and only after `open_session`'s retry backoff has been spent on each
+  group -- so the tell is a pass that is slow AND barren rather than fast and
+  barren. It reaches the same group-level handler, so it too lands on
+  `replay_failed` for cell rows. (Exactly which exception `lean-interact` raises
+  for a missing `elan` has not been observed: no box in this project's CI has a
+  Lean toolchain.) Under a non-login shell (`ssh cmd`, SSM
+  `AWS-RunShellScript`, cron) `/root/.elan/bin` is absent from `PATH`. Always:
+
+  ```
+  export PATH=/root/.elan/bin:$PATH
+  ```
+
+Other tells of a broken pass, independent of which of the two it is: no `repl`
+or `lake` processes alive, one Python process pinned at ~100% CPU (rather than
+the worker count), and implausible throughput.
 
 **2. Resume is keyed on GROUPS, not on the proofs inside them.** If phase 1
 regenerated a lane after it was verified, every `(theorem_id, k)` group still looks
@@ -266,8 +368,14 @@ Use `--no-resume` for any regenerated lane, and archive the superseded file firs
 Compare `all_rows.jsonl`'s LastModified against `verified_rows.jsonl`'s to find them.
 
 **Gate on the verdicts, not on the exit status.** A healthy pass writes a mix of
-`success` / `lean_error` with `verify_ms > 0`; a broken one writes `replay_failed`
-almost everywhere with a Dojo-open error attached.
+`success` / `lean_error` with `verify_ms > 0`. A broken one writes
+`replay_failed` almost everywhere with `verify_ms == 0` and a REPL-open error
+attached -- read that error rather than the verdict, per trap 1: one naming
+`SMOLBENCH_MATHLIB_ROOT` is a misconfigured box, one quoting Lean's own messages
+about an unresolved identifier or notation is most likely the import-only
+environment limitation described in "Generation -> verification split", and only
+one shaped `prefix tactic ... -> ...` is a genuine ground-truth replay failure.
+Cross-check against the sanity rows, whose verdicts are not flattened.
 
 **Analysing `all_rows.jsonl` before phase 2 has run shows all-zero success
 rates.** That is an artifact of every cell still carrying the `unverified`
@@ -337,10 +445,10 @@ study's code, notebooks, and documentation.
   `random` split is present in the bootstrapped dataset and loadable via
   `corpus.load_split("random", ...)`, but no sweep this study runs draws
   from it.
-- **Live Dojo interaction during generation.** Everything in this
+- **Live REPL interaction during generation.** Everything in this
   study's generation phase (`run_study.py`, and by extension
   `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore
-  never imports `smolbench.deduction.lean.verify` or opens a real Dojo
+  never imports `smolbench.deduction.lean.verify` or opens a real REPL
   session -- see "Generation -> verification split" above.
 
 ## Results and data

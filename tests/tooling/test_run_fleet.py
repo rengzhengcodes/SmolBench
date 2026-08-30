@@ -176,3 +176,20 @@ def test_shard_env_and_state_file(monkeypatch):
     assert no_shard["INDUCTION_FORCE_RERUN"] == "0-11"
     assert shards.state_file_for(_args(), 2).name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
     assert shards.state_file_for(solo, 0).name == ".ec2_state_x.json"
+
+
+def test_sync_deduction_spool_writes_under_the_new_prefix(monkeypatch, tmp_path):
+    """The published pre-cutoff study lives under `deduction/runs`; never write there."""
+    src = tmp_path / "notebooks" / "deduction" / "results" / "runs" / "scaling_glm-4.7"
+    src.mkdir(parents=True)
+    (src / "manifest.json").write_text("{}")
+    (src / "all_rows.jsonl").write_text('{"kind": "cell"}\n')
+    monkeypatch.setattr(fleet, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
+    uploads = []
+    client = SimpleNamespace(upload_file=lambda f, b, k: uploads.append((b, k)))
+    assert fleet.sync_deduction_spool(SimpleNamespace(key="glm-4.7"), client=client) == 2
+    assert {k for _b, k in uploads} == {
+        "deduction_postcutoff/runs/scaling_glm-4.7/manifest.json",
+        "deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl"}
+    assert all(b == fleet.SPOOL_BUCKET for b, _k in uploads)

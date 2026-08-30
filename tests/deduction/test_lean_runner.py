@@ -4,6 +4,8 @@ two local OpenAI-compatible stub servers; a proof verifies iff it holds MARKER.
 
 import gzip
 import json
+import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -18,7 +20,7 @@ import smolbench.deduction.lean.lean3 as lean3
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
 from conftest import StubServer, chat_completion
-from tests._paths import LEAN_MINI as FIXTURE
+from tests._paths import LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOFF
 
 M1 = "mini/pi-model-a"       # provider: primeintellect
 M2 = "mini/or-model-b"       # provider: openrouter
@@ -552,3 +554,72 @@ def test_nullverify_sweep_generates_all_theorems(sweep_ctx):
     assert all(r["seed"] == cfg["seed"] + r["replicate_idx"] for r in cells)
     assert (len(_chat_posts(sweep_ctx.pi)) + len(_chat_posts(sweep_ctx.orr))
             == EXPECTED_CELLS)
+
+
+# ---------------------------------------------------------------------------
+# theorems.require_postcutoff (A2): the corpus gate inside `_select_theorems`
+# ---------------------------------------------------------------------------
+
+#: Selects the fixture's whole 2-theorem pool, in file order, with no sampling.
+PC_BASE = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
+
+
+def _repoint(monkeypatch, root):
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(root))
+    corpus.reset_caches()
+
+
+def _demote_one_row(tmp_path, name="Mini.theoremB"):
+    """Copy the post-cutoff fixture, flipping one row back to ``postcutoff: false``."""
+    root = tmp_path / "mixed_corpus"
+    shutil.copytree(POSTCUTOFF, root)
+    path = root / "random" / "val.json"
+    rows = json.loads(path.read_text())
+    hit = [r for r in rows if r["full_name"] == name]
+    assert hit, f"{name} not in the fixture"
+    hit[0]["postcutoff"] = False
+    path.write_text(json.dumps(rows, indent=1))
+    return root
+
+
+def test_require_postcutoff_accepts_a_postcutoff_corpus(monkeypatch, tmp_path):
+    _repoint(monkeypatch, POSTCUTOFF)
+    names = [t.full_name
+             for t in runner._select_theorems({**PC_BASE, "require_postcutoff": True})]
+    assert names == ["Mini.theoremA", "Mini.theoremB"]
+    corpus.reset_caches()
+
+
+def test_require_postcutoff_rejects_the_old_corpus_naming_it(monkeypatch):
+    """The 2024-03-24 benchmark has no post-cutoff tail; the refusal names the corpus."""
+    _repoint(monkeypatch, FIXTURE)
+    with pytest.raises(ValueError, match=re.escape(str(FIXTURE))):
+        runner._select_theorems({**PC_BASE, "require_postcutoff": True})
+    corpus.reset_caches()
+
+
+def test_require_postcutoff_is_opt_in(monkeypatch):
+    """Absent or False, the gate never fires -- the old corpus still selects."""
+    _repoint(monkeypatch, FIXTURE)
+    assert len(runner._select_theorems(PC_BASE)) == 2
+    assert len(runner._select_theorems({**PC_BASE, "require_postcutoff": False})) == 2
+    corpus.reset_caches()
+
+
+def test_require_postcutoff_rejects_a_pre_cutoff_row(monkeypatch, tmp_path):
+    """Corpus-level metadata is not enough: every selected row must carry the flag."""
+    _repoint(monkeypatch, _demote_one_row(tmp_path))
+    assert corpus.is_postcutoff_corpus() is True
+    with pytest.raises(ValueError, match="Mini.theoremB"):
+        runner._select_theorems({**PC_BASE, "require_postcutoff": True})
+    corpus.reset_caches()
+
+
+def test_require_postcutoff_checks_the_pool_before_sampling(monkeypatch, tmp_path):
+    """`shard: "0/2"` drops the offending row, so only a PRE-sample check catches it."""
+    _repoint(monkeypatch, _demote_one_row(tmp_path))
+    sharded = {**PC_BASE, "shard": "0/2"}
+    assert [t.full_name for t in runner._select_theorems(sharded)] == ["Mini.theoremA"]
+    with pytest.raises(ValueError, match="Mini.theoremB"):
+        runner._select_theorems({**sharded, "require_postcutoff": True})
+    corpus.reset_caches()

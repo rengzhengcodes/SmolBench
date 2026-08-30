@@ -18,7 +18,9 @@ DATA SOURCE -- LOUD WARNING: read ``verified_rows.jsonl`` (written by
 its verdicts are all the ``"unverified"`` placeholder, so every rate would read at or near
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
 the loud stderr banner `load_joint_cells` prints instead of falling back silently. Inputs
-are ``--s3`` (``s3://smolbench-results-414266451290/deduction/runs/scaling_*/``) or
+are ``--s3`` (``s3://smolbench-results-414266451290/<spool-prefix>/scaling_*/``, where
+``<spool-prefix>`` defaults to the re-collection's prefix and is overridable via
+``--spool-prefix`` -- the published pre-cutoff study lives at ``deduction/runs``) or
 ``--results-dir`` (local ``runs/scaling_*/verified_rows.jsonl``):
 
     .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
@@ -119,7 +121,53 @@ ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 # S3 layout (see the module docstring's DATA SOURCE section).
 S3_BUCKET = "smolbench-results-414266451290"
 S3_REGION = "us-west-2"
-S3_PREFIX = "deduction/runs/"
+
+#: The re-collection's S3 key prefix, duplicated from
+#: `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`/`LEGACY_SPOOL_PREFIX`
+#: rather than imported: this file runs under
+#: ``uv run --no-project --with numpy --with scipy``, an environment with no
+#: smolbench installed (the same constraint `SUPERSEDED_MARKER`, below,
+#: duplicates a runner.py literal for). Kept in step by
+#: ``tests/deduction/test_spool_prefix.py``.
+_DEDUCTION_SPOOL_PREFIX = "deduction_postcutoff/runs"
+_LEGACY_SPOOL_PREFIX = "deduction/runs"
+
+
+def _spool_prefix() -> str:
+    """Resolve the deduction spool prefix; duplicates `runner.spool_prefix()`.
+
+    Not a module constant, and NEVER called at import time or as an argparse
+    default: `main` resolves it once, after `parse_args`, so
+    ``LEAN_SPOOL_PREFIX=deduction/runs --help`` never raises (and so that
+    `tests/tooling/test_analysis_stats.py`, which imports this file via
+    ``importlib`` -- executing module scope -- never triggers the refusal
+    below just by importing).
+
+    Returns
+    -------
+    str
+        The normalized prefix (env override, or `_DEDUCTION_SPOOL_PREFIX`),
+        never ending in "/".
+
+    Raises
+    ------
+    ValueError
+        If the resolved prefix is the published pre-cutoff study's
+        `_LEGACY_SPOOL_PREFIX` and ``LEAN_ALLOW_LEGACY_PREFIX`` is not
+        ``"1"`` -- see `runner.spool_prefix`'s docstring for the full
+        rationale (this duplicates its behavior, not just its literals).
+    """
+    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
+    resolved = raw.rstrip("/") if raw else _DEDUCTION_SPOOL_PREFIX
+    if resolved == _LEGACY_SPOOL_PREFIX and os.environ.get("LEAN_ALLOW_LEGACY_PREFIX") != "1":
+        raise ValueError(
+            f"refusing to resolve the deduction spool prefix to the published "
+            f"pre-cutoff study's prefix ({_LEGACY_SPOOL_PREFIX!r}) -- writing/reading "
+            "there again risks silently conflating it with the re-collection. Set "
+            "LEAN_ALLOW_LEGACY_PREFIX=1 to override, or pass --spool-prefix explicitly."
+        )
+    return resolved
+
 
 RESULTS_DIR = results_dir(__file__, up=1)
 
@@ -1056,22 +1104,31 @@ def _print_tier_report(
 # --------------------------------------------------------------------------- #
 # S3 loading.
 # --------------------------------------------------------------------------- #
-def _download_s3_rows(tmp_dir: Path) -> list:
+def _download_s3_rows(tmp_dir: Path, *, deduction_prefix: str) -> list:
     """Download this study's ``scaling_*`` run row files from S3 into `tmp_dir`.
 
-    Lists ``s3://S3_BUCKET/S3_PREFIX`` with ``Delimiter="/"``, keeps ``scaling_*`` run
-    prefixes, and per run writes ``verified_rows.jsonl`` or, failing that,
-    ``all_rows.jsonl`` (which makes `load_joint_cells` fire `_warn_unverified`) into
-    its own subdirectory of `tmp_dir`. Returns one path per downloaded run, silently
-    omitting runs with neither object; any ``ClientError`` other than 404/NoSuchKey
-    propagates. ``boto3``/``botocore`` are imported LAZILY so the local
-    ``--results-dir`` path and every pure function stay usable without boto3.
+    Lists ``s3://S3_BUCKET/<deduction_prefix>`` with ``Delimiter="/"``, keeps
+    ``scaling_*`` run prefixes, and per run writes ``verified_rows.jsonl`` or,
+    failing that, ``all_rows.jsonl`` (which makes `load_joint_cells` fire
+    `_warn_unverified`) into its own subdirectory of `tmp_dir`. Returns one
+    path per downloaded run, silently omitting runs with neither object; any
+    ``ClientError`` other than 404/NoSuchKey propagates. ``boto3``/``botocore``
+    are imported LAZILY so the local ``--results-dir`` path and every pure
+    function stay usable without boto3.
+
+    Parameters
+    ----------
+    deduction_prefix : str
+        S3 key prefix to list under, WITH a trailing "/". `main` resolves
+        this via `spool_prefix()` / ``--spool-prefix`` and passes it in --
+        never a module constant, so a late ``LEAN_SPOOL_PREFIX`` override (or
+        the legacy-prefix refusal) takes effect per-invocation.
     """
     import boto3  # lazy: keep the local-analysis path boto3-free
     from botocore.exceptions import ClientError
 
     client = boto3.client("s3", region_name=S3_REGION)
-    resp = client.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PREFIX, Delimiter="/")
+    resp = client.list_objects_v2(Bucket=S3_BUCKET, Prefix=deduction_prefix, Delimiter="/")
     run_prefixes = sorted(
         cp["Prefix"]
         for cp in resp.get("CommonPrefixes", [])
@@ -1111,10 +1168,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--s3",
         action="store_true",
         help=(
-            f"Download this study's run files from s3://{S3_BUCKET}/{S3_PREFIX} "
+            f"Download this study's run files from s3://{S3_BUCKET}/<spool-prefix> "
             "into a temp dir and analyze those (preferring verified_rows.jsonl, "
             "falling back to all_rows.jsonl per run -- see the module docstring's "
-            "LOUD WARNING). Overrides --results-dir."
+            "LOUD WARNING). Overrides --results-dir. <spool-prefix> is set by "
+            "--spool-prefix, below."
+        ),
+    )
+    p.add_argument(
+        "--spool-prefix",
+        default=None,
+        help=(
+            "S3 key prefix the deduction lanes spooled under (default: the "
+            "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
+            "deduction_postcutoff/runs if unset). The published pre-cutoff "
+            "study lives at deduction/runs; pass that explicitly to analyze "
+            "it (no env opt-in needed on this read-only path). Resolved "
+            "after argument parsing, not here, so LEAN_SPOOL_PREFIX="
+            "deduction/runs never breaks --help. Ignored unless --s3 is passed."
         ),
     )
     p.add_argument(
@@ -1168,16 +1239,21 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.s3:
+        # Resolved HERE, after parse_args -- not a module constant, not an
+        # argparse default -- so LEAN_SPOOL_PREFIX=deduction/runs never
+        # breaks --help (see `_spool_prefix`'s and `_download_s3_rows`'s
+        # docstrings).
+        deduction_prefix = (args.spool_prefix or _spool_prefix()) + "/"
         tmp_dir = Path(tempfile.mkdtemp(prefix="smolbench_deduction_power_"))
         print(
-            f"Downloading run files from s3://{S3_BUCKET}/{S3_PREFIX} into "
+            f"Downloading run files from s3://{S3_BUCKET}/{deduction_prefix} into "
             f"{tmp_dir} ...",
             file=sys.stderr,
         )
-        row_files = _download_s3_rows(tmp_dir)
+        row_files = _download_s3_rows(tmp_dir, deduction_prefix=deduction_prefix)
         if not row_files:
             print(
-                f"No run files found under s3://{S3_BUCKET}/{S3_PREFIX} -- "
+                f"No run files found under s3://{S3_BUCKET}/{deduction_prefix} -- "
                 f"nothing to analyze.",
                 file=sys.stderr,
             )

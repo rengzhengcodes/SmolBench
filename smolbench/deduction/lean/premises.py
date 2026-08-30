@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from .corpus import data_root
+from .corpus import data_root, metadata
 
 
 @dataclass(frozen=True)
@@ -137,17 +137,45 @@ _TOP_LEVEL_RE = re.compile(
 
 @lru_cache(maxsize=1)
 def _traced_root() -> Path | None:
-    """The cached, traced mathlib4 repo under ``~/.cache/lean_dojo``, or None.
+    """The cached, traced mathlib4 repo matching the *current corpus's* commit, or None.
 
-    ``None``, never an exception: the traced repo is an OPTIONAL enrichment --
-    it upgrades `body_with_proof` from the corpus's stored `Premise.code` to the
-    full source slice -- so a machine without `lean_dojo`'s cache (CI, an
-    analysis box) must still render every rung.
+    A box that has traced mathlib4 twice (e.g. the 2024-03-24 snapshot and a
+    post-cutoff commit) has two directories matching
+    ``leanprover-community-mathlib4-*/mathlib4`` under ``~/.cache/lean_dojo``.
+    Picking the first in sorted order -- the previous behavior -- would slice
+    premise source text out of whichever repo happens to sort first, silently
+    rendering prompts from the wrong mathlib4. Instead this selects the cache
+    directory whose parent name is exactly
+    ``leanprover-community-mathlib4-<commit>``, where ``<commit>`` is
+    `corpus.metadata()`'s ``from_repo.commit``. Like `corpus.load_split`, this
+    function is memoized on no arguments, so it keeps serving the commit that
+    was current when it was first called until `corpus.reset_caches` runs --
+    repointing ``SMOLBENCH_LEAN_DATA`` mid-process does not retarget it on its
+    own.
+
+    ``None``, never an exception, in three cases: the traced repo is an
+    OPTIONAL enrichment -- it upgrades `body_with_proof` from the corpus's
+    stored `Premise.code` to the full source slice -- so a machine without
+    `lean_dojo`'s cache (CI, an analysis box), or without a bootstrapped
+    corpus at all, must still render every rung.
+
+    - No corpus is bootstrapped (`corpus.metadata` raises `FileNotFoundError`):
+      there is no commit to match on.
+    - `metadata()`'s JSON lacks ``from_repo`` or ``from_repo.commit``
+      (`KeyError`): same reason.
+    - No cache directory matches the resolved commit (including when
+      ``~/.cache/lean_dojo`` doesn't exist at all).
+
+    The first two are caught narrowly -- `FileNotFoundError` and `KeyError`
+    only, never a bare ``except`` -- so any other failure still surfaces.
     """
+    try:
+        commit = metadata()["from_repo"]["commit"]
+    except (FileNotFoundError, KeyError):
+        return None
     cache = Path.home() / ".cache" / "lean_dojo"
-    for d in sorted(cache.glob("leanprover-community-mathlib4-*/mathlib4")):
-        return d
-    return None
+    candidate = cache / f"leanprover-community-mathlib4-{commit}" / "mathlib4"
+    return candidate if candidate.is_dir() else None
 
 
 def _resolve_source(file_path: str) -> Path | None:

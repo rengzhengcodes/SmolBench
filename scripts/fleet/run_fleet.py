@@ -688,23 +688,34 @@ def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
     Notes
     -----
     ``notebooks/deduction/results/runs/scaling_<key>/`` (repo-root anchored) ->
-    ``s3://smolbench-results-414266451290/deduction/runs/scaling_<key>/<rel>``
-    in ``us-west-2``. Once every file uploads the local spool is PRUNED
-    (uploaded files deleted, now-empty subdirectories removed) EXCEPT
-    ``manifest.json`` at the run root -- the config/run-id record, kept so a
-    later resume recognises the run.
+    ``s3://smolbench-results-414266451290/<runner.spool_prefix()>/scaling_<key>/<rel>``
+    in ``us-west-2``. The destination prefix is resolved via
+    ``smolbench.deduction.lean.runner.spool_prefix()`` at CALL time (imported
+    lazily below, matching this function's existing ``boto3`` lazy import),
+    never a module constant here -- it defaults to the re-collection's prefix
+    and refuses the published pre-cutoff study's ``deduction/runs`` unless
+    ``LEAN_ALLOW_LEGACY_PREFIX=1`` is set, so this writer cannot silently
+    overwrite that unrecoverable record. Once every file uploads the local
+    spool is PRUNED (uploaded files deleted, now-empty subdirectories removed)
+    EXCEPT ``manifest.json`` at the run root -- the config/run-id record, kept
+    so a later resume recognises the run.
     """
     source = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs" / f"scaling_{lane.key}"
     if not source.is_dir():
         logging.info(f"sync_deduction_spool[{lane.key}]: no spool at {source}; nothing to sync.")
         return 0
 
+    # Lazy import: `smolbench.deduction.lean.runner` pulls in `tiktoken` (via
+    # `.context`), which this fleet supervisor otherwise never needs -- match
+    # the file's existing lazy-`boto3` pattern just below.
+    from smolbench.deduction.lean.runner import spool_prefix
+
     if client is None:
         import boto3  # lazy -- see docstring
 
         client = boto3.client("s3", region_name=SPOOL_REGION)
 
-    dest_prefix = f"deduction/runs/scaling_{lane.key}/"
+    dest_prefix = f"{spool_prefix()}/scaling_{lane.key}/"
     files = sorted(p for p in source.rglob("*") if p.is_file())
     for path in files:
         rel = path.relative_to(source).as_posix()

@@ -15,5 +15,10 @@ TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
 FIXTURES = TESTS_DIR / "fixtures"
 LEAN_MINI = FIXTURES / "lean_mini"
+#: Same shape as `LEAN_MINI` plus the `postcutoff` metadata block and
+#: per-row ``"postcutoff": true`` flags -- the corpus shape
+#: `smolbench.deduction.lean.corpus.is_postcutoff_corpus` accepts and the
+#: deduction driver requires.
+LEAN_MINI_POSTCUTOFF = FIXTURES / "lean_mini_postcutoff"
 SCRIPTS = REPO_ROOT / "scripts"
 NOTEBOOKS = REPO_ROOT / "notebooks"

@@ -7,8 +7,9 @@ mathlib4 checkout. Phase 2 (replaying the recorded tails against a real Dojo)
 is a separate pass, not implemented here.
 
 Never import `smolbench.deduction.lean.verify` here, even lazily inside a method
-body: that module's unconditional top-level ``import lean_dojo`` raises
-`ImportError` wherever `lean_dojo` is absent. Hence the local mirror dataclasses.
+body: that module's unconditional top-level ``import lean_interact`` raises
+`ImportError` wherever `lean_interact` is absent. Hence the local mirror
+dataclasses.
 
 ``"skipped"``, the only verdict `replay_ground_truth` produces, is deliberately
 absent from `runner.SANITY_FAILURE_VERDICTS`: this module never replays, so it

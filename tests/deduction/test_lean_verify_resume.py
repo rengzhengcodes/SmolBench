@@ -214,7 +214,67 @@ def test_ram_cap_and_s3_path_mapping():
     assert "//" not in key and not key.startswith("/")
 
 
-def test_verify_imports_with_lean_dojo():
-    pytest.importorskip("lean_dojo")
-    sys.modules.pop("smolbench.deduction.lean.verify", None)
-    import smolbench.deduction.lean.verify  # noqa: F401
+def test_verify_imports_with_its_lean_backend():
+    """A cold import of the verifier needs `lean_interact`, not `lean_dojo`.
+
+    The verifier's backend was swapped to `lean_interact` (which drives
+    leanprover-community/repl); `lean_dojo` is still a declared dependency, but
+    only for corpus tracing and premise slicing, so importorskipping on it here
+    would pin a relationship that no longer exists.
+
+    The pop is restored on the way out: re-executing the module binds a NEW
+    object onto the `smolbench.deduction.lean` package, and leaving that in
+    place makes `runner._default_verifier()` return something no longer
+    identical to another module's imported `verify` -- an order-dependent
+    failure. See tests/deduction/test_lean_repl_verifier.py, which pins that
+    identity.
+    """
+    pytest.importorskip("lean_interact")
+    from smolbench.deduction import lean as lean_pkg
+
+    saved = sys.modules.pop("smolbench.deduction.lean.verify", None)
+    try:
+        import smolbench.deduction.lean.verify  # noqa: F401
+    finally:
+        if saved is not None:
+            sys.modules["smolbench.deduction.lean.verify"] = saved
+            lean_pkg.verify = saved
+
+
+def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
+    """The `--s3-prefix` DEFAULT is built after parsing; nothing else exercises it.
+
+    `--help` proves the parser builds and every other test passes a prefix
+    explicitly, so a missing or misordered resolution line would only surface on
+    a live run -- as `parse_s3_uri(None)` crashing, or worse, a wrong
+    bucket/prefix split writing `verified_rows.jsonl` to the wrong key.
+    """
+    from smolbench.deduction.lean.runner import DEDUCTION_SPOOL_PREFIX
+
+    monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
+    monkeypatch.delenv("LEAN_ALLOW_LEGACY_PREFIX", raising=False)
+    args = lvr._build_arg_parser().parse_args([])
+    assert args.s3_prefix is None, "the default must NOT be resolved at parser-build time"
+
+    # Drive main() itself, intercepting at list_runs, so this proves main
+    # RESOLVES the default -- not merely that the expression would be correct.
+    seen = {}
+
+    def _list_runs(client, bucket, key_prefix, pattern):
+        seen.update(bucket=bucket, key_prefix=key_prefix)
+        return []
+
+    monkeypatch.setattr(lvr, "_build_s3_client", lambda: object())
+    monkeypatch.setattr(lvr, "list_runs", _list_runs)
+    assert lvr.main(["--dry-run", "--workdir", str(tmp_path)]) == 0
+    assert seen == {"bucket": lvr.SPOOL_BUCKET, "key_prefix": DEDUCTION_SPOOL_PREFIX}
+
+    key = lvr.run_object_key(seen["key_prefix"], "scaling_glm-4.7", lvr.VERIFIED_FILENAME)
+    assert key == f"{DEDUCTION_SPOOL_PREFIX}/scaling_glm-4.7/verified_rows.jsonl"
+    assert "//" not in key and not key.startswith("/")
+
+    # An explicit flag still reaches the published pre-cutoff study, with no env
+    # opt-in -- that is the read-only analysis path.
+    legacy = lvr._build_arg_parser().parse_args(
+        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/deduction/runs"])
+    assert lvr.parse_s3_uri(legacy.s3_prefix) == (lvr.SPOOL_BUCKET, "deduction/runs")
