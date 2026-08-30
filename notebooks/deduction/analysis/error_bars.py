@@ -33,7 +33,7 @@ Row rules are NOT re-implemented here: ``lane_outcomes`` grades through
 denominator rule and the recovery rows' second schema.
 
 Run (``--mode report`` is the default; ``-B`` sets the resample count):
-    uv run --no-project --with numpy --with scipy python \
+    .venv/bin/python \
         notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode sweep
 """
 
@@ -56,7 +56,6 @@ from power_analysis import (  # noqa: E402
     build_cross_family_contrasts,
     build_within_family_contrasts,
     grade_verdicts,
-    load_joint_cells,
     mcnemar_exact_p,
     reject_superseded,
     reject_unverified_verdicts,
@@ -372,6 +371,11 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     return graded, no_survivor
 
 
+def _rate(hits: int, n: int) -> float | None:
+    """``hits / n``, or None for an empty denominator (an undefined rate)."""
+    return hits / n if n else None
+
+
 def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
                count_as_failure: bool = True) -> tuple:
     """Build the paired 21-way pool under an explicit denominator rule.
@@ -415,19 +419,31 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
 
     # What the rule COST, measured rather than asserted. Successes are
     # unchanged, so the whole effect is a larger denominator; the cost is
-    # quoted pooled over the lane and again over the one prompt rung that
-    # absorbed the cell (a rung is ~1/4 of a lane, so that is where it bites).
+    # quoted pooled over the lane and again over the prompt rung that absorbed
+    # the cells (a rung is ~1/4 of a lane, so that is where it bites). One entry
+    # per (lane, rung) that gained cells, and the drop-rule denominators subtract
+    # ALL of that lane's / rung's added cells -- a per-cell marginal would
+    # understate a lane holding more than one.
     cost = []
     for model in MODELS:
-        for thm, k, rung in sorted(added[model]):
+        if not added[model]:
+            continue
+        n_lane = len(graded[model])
+        hit_lane = sum(graded[model].values())
+        rungs_added = sorted({rung for _thm, _k, rung in added[model]})
+        for rung in rungs_added:
+            in_rung = sorted((thm, k) for thm, k, r in added[model] if r == rung)
             n_rung = sum(1 for key in graded[model] if key[2] == rung)
             hit_rung = sum(v for key, v in graded[model].items() if key[2] == rung)
-            n_lane = len(graded[model])
-            hit_lane = sum(graded[model].values())
+            # A drop-rule denominator of 0 (every cell of the lane or rung was
+            # added) leaves the rate UNDEFINED -- reported None, never 0.
             cost.append(dict(
-                model=model, rung=rung, k=k, theorem=thm,
-                pooled_drop=hit_lane / (n_lane - 1), pooled_caf=hit_lane / n_lane,
-                rung_drop=hit_rung / (n_rung - 1), rung_caf=hit_rung / n_rung,
+                model=model, rung=rung, n_added=len(in_rung),
+                theorems=[f"{thm}@k{k}" for thm, k in in_rung],
+                pooled_caf=hit_lane / n_lane,
+                pooled_drop=_rate(hit_lane, n_lane - len(added[model])),
+                rung_caf=hit_rung / n_rung,
+                rung_drop=_rate(hit_rung, n_rung - len(in_rung)),
                 n_lane=n_lane, n_rung=n_rung,
             ))
     meta = dict(
@@ -440,28 +456,6 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
         own_rate={m: sum(graded[m].values()) / len(graded[m]) for m in MODELS},
     )
     return sorted(MODELS), blocks, prompt_rungs, meta
-
-
-def load(rows_dir: Path) -> tuple:
-    """Build a back-compatible drop-rule pool (no count-as-failure, no recovery).
-
-    Returns
-    -------
-    tuple
-        ``(models, blocks, prompt_rungs)`` from
-        ``power_analysis.load_joint_cells`` over
-        ``<rows_dir>/<model>/verified_rows.jsonl``.
-
-    Raises
-    ------
-    SystemExit
-        If any of those row files is missing.
-    """
-    files = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
-    missing = [f for f in files if not f.exists()]
-    if missing:
-        raise SystemExit(f"missing row files: {[str(f) for f in missing]}")
-    return load_joint_cells(files, models=tuple(MODELS))
 
 
 def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
@@ -542,24 +536,34 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
         if meta["count_as_failure"]:
             print(f"{n_added} model-dependent no-survivor cell(s) scored 0, in "
                   f"{len(meta['added'])} lane(s).")
-            print(f"  {'lane':28s} {'rung':9s} {'k':>3s}  "
-                  f"{'pooled pt':>10s} {'rung pt':>8s}  theorem")
+            # Magnitudes: every figure is how many points count-as-failure
+            # REMOVES relative to dropping the cells, never a signed delta.
+            print(f"  {'lane':28s} {'rung':9s} {'+cells':>6s}  "
+                  f"{'pooled pt':>10s} {'rung pt':>8s}  theorem(s)")
+            def _cost(c, field):
+                """Points the rule removes, or None where the drop rate is undefined."""
+                return None if c[field] is None else 100 * (c[field] - c[f"{field[:-5]}_caf"])
+
+            def _fmt(value, width):
+                return f"{value:{width}.3f}" if value is not None else f"{'n/a':>{width}}"
+
             for c in sorted(meta["rule_cost"],
-                            key=lambda c: c["rung_caf"] - c["rung_drop"]):
-                print(f"  {c['model']:28s} {c['rung']:9s} {c['k']:3d}  "
-                      f"{100 * (c['pooled_caf'] - c['pooled_drop']):+10.3f} "
-                      f"{100 * (c['rung_caf'] - c['rung_drop']):+8.3f}  "
-                      f"{c['theorem']}")
-            if meta["rule_cost"]:
-                worst_p = min(c["pooled_caf"] - c["pooled_drop"]
-                              for c in meta["rule_cost"])
-                worst_r = min(c["rung_caf"] - c["rung_drop"]
-                              for c in meta["rule_cost"])
-                print(f"  Cost of the rule: at most {100 * worst_p:.3f} "
-                      f"accuracy points pooled over a lane and\n  "
-                      f"{100 * worst_r:.3f} over a single prompt rung. Successes "
-                      f"are unchanged; only the\n  denominator moves, and it "
-                      f"moves to the SAME value in all 21 lanes.")
+                            key=lambda c: -(_cost(c, "rung_drop") or 0.0)):
+                print(f"  {c['model']:28s} {c['rung']:9s} {c['n_added']:6d}  "
+                      f"{_fmt(_cost(c, 'pooled_drop'), 10)} "
+                      f"{_fmt(_cost(c, 'rung_drop'), 8)}  "
+                      f"{', '.join(c['theorems'])}")
+            costs_p = [v for v in (_cost(c, "pooled_drop") for c in meta["rule_cost"])
+                       if v is not None]
+            costs_r = [v for v in (_cost(c, "rung_drop") for c in meta["rule_cost"])
+                       if v is not None]
+            if costs_p and costs_r:
+                worst_p, worst_r = max(costs_p) / 100, max(costs_r) / 100
+                print(f"  Cost of the rule: it lowers a lane's rate by at most "
+                      f"{100 * worst_p:.3f} accuracy\n  points pooled, and by at "
+                      f"most {100 * worst_r:.3f} within a single prompt rung. "
+                      f"Successes are\n  unchanged; only the denominator moves, "
+                      f"and it moves to the SAME value in all 21 lanes.")
         else:
             print("no-survivor cells dropped, so per-lane denominators "
                   "diverge.")

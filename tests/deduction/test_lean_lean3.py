@@ -35,6 +35,7 @@ def _write_align(path, mapping):
     pytest.param("exact fun s hs ↦ x c ⟨s, hs⟩", set(), id="arrow-before-nested-comma"),
     pytest.param("rw [CategoryTheory.Limits.prod.leftUnitor_inv_naturality]", set(), id="lean4-name-snake-suffix"),
     pytest.param("simp [Iso.inv_comp_eq]", set(), id="already-lean4-name"),
+    pytest.param("simp [inv_comp_eq]", set(), id="lean4-suffix-resolving-via-align-map"),
     pytest.param("exact le_refl x", set(), id="refl-not-in-head-position"),
     pytest.param("refine ⟨foo,\n  bar⟩", set(), id="trailing-comma-inside-open-bracket"),
     pytest.param("simp only [stdBasis_eq_pi_diag]", set(), id="snake-ish-with-no-align-hit"),

@@ -56,8 +56,6 @@ def fake_aws(monkeypatch):
         return client
 
     monkeypatch.setattr(_aws, "fresh_client", _fresh_client)
-    if hasattr(p, "fresh_client"):
-        monkeypatch.setattr(p, "fresh_client", _fresh_client)
     return client
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# aws-bedrock-token-generator: declared in the project's `aws` extra.
 from aws_bedrock_token_generator import provide_token
 
 token = provide_token(region="us-east-1")

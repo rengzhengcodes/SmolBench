@@ -22,7 +22,7 @@ zero-vs-zero ladder contrasts). Cells at or above COLLAPSE_THRESHOLD
 non-compliance are annotated by ONE symmetric criterion, never removed.
 
 Run:
-    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/significance_report.py
+    .venv/bin/python notebooks/induction/analysis/significance_report.py
 """
 
 import re
@@ -327,11 +327,10 @@ def main() -> None:
     print(f"\n{len(over)} of {len(census)} cells are at or above the "
           f"{COLLAPSE_THRESHOLD:.0%} criterion; {len(noise_over)} of them are "
           f"noise arms.\nThe criterion is applied SYMMETRICALLY to all four arms, "
-          f"which is why cells like\nmin3_14b/extens and min3_8b/intens appear "
-          f"here beside the noise arms.")
+          f"so non-noise arms appear here beside the noise arms.")
     zero_over = [k for k in over if k[1] == "zero"]
     if zero_over:
-        print(f"Two of them are `zero` baseline cells "
+        print(f"{len(zero_over)} of them are `zero` baseline cells "
               f"({', '.join(k[0] for k in zero_over)}): those lanes are "
               f"non-compliant\neven with an EMPTY context, so their collapse is "
               f"not padding-specific.")

@@ -261,6 +261,12 @@ def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3
     assert not (fake_repo / "ESCAPED_intens").exists()
     with pytest.raises(RuntimeError):
         sync_down(tmp_path / "elsewhere", TAGS)
+    # repo_root() itself + no base prefix = an empty log prefix: the whole
+    # bucket. Refused when the store is CONSTRUCTED, so sync_down never lists.
+    with pytest.raises(ValueError):
+        sync_down(fake_repo, TAGS)
+    with pytest.raises(ValueError):
+        S3ResultsStore(BUCKET, "", "", "us-west-2")
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
     with pytest.raises(RuntimeError):
         sync_down(results, TAGS)

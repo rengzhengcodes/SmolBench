@@ -32,6 +32,7 @@ import functools
 import importlib.util
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -316,7 +317,6 @@ def lane_env(
     instance, swapping each other's checkpoint out.
     """
     if base_env is None:
-        import os
 
         base_env = os.environ
 

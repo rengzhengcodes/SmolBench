@@ -159,8 +159,10 @@ def iter_dataset(
     seed : int
         Seeds the RNG for ``k_strategy="sample"`` only; ignored otherwise.
     stats : dict, optional
-        If given, populated in place with ``pool``, ``dropped`` (excluded),
-        ``theorems`` (emitted), ``examples``, and ``excluded`` (holdout size).
+        If given, populated in place with ``pool``, ``dropped`` (pool theorems
+        skipped), ``theorems`` (emitted), ``examples``, and ``excluded`` (size
+        of the exclusion set: the eval holdout UNION `extra_exclude`, whether or
+        not those names occur in the pool).
     """
     exclude = eval_holdout_names(eval_specs) | set(extra_exclude)
     rng = random.Random(seed)

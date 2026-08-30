@@ -47,10 +47,14 @@ def fresh_client(service: str, region: Optional[str] = None):
 def error_code(err: Exception) -> str:
     """Return ``err.response["Error"]["Code"]``, or ``""`` if absent.
 
-    Accepts any exception, not just ``ClientError``: a missing ``.response``
-    or nested key degrades to ``""`` rather than raising.
+    Accepts any exception, not just ``ClientError``: a missing, ``None`` or
+    non-mapping ``.response``/``Error`` degrades to ``""`` rather than raising
+    -- callers use this inside ``except`` blocks, where a second exception
+    would replace the real failure.
     """
-    return getattr(err, "response", {}).get("Error", {}).get("Code", "")
+    response = getattr(err, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    return error.get("Code", "") if isinstance(error, dict) else ""
 
 
 def assume_role_trust_policy(service: str) -> Dict[str, Any]:

@@ -60,7 +60,7 @@ scripts/                   operational scripts, grouped by job (see scripts/READ
   deduction/                 Lean run sharding, merging, and the deferred lean-dojo verify pass
   results/                   results-store admin: bucket provisioning, regrading, completeness audits, evidence manifests
   smoke/                     live-AWS smoke tests (spend real money -- opt-in only)
-  arch/                      the model-architecture atlas pipeline (see scripts/arch/README.md)
+  arch/                      the model-architecture facts pipeline (see scripts/arch/README.md)
 
 tests/                     the offline pytest suite (see tests/README.md), zero AWS credentials needed
   evals/                     provider round trips against a local stub server, EC2 payload checks

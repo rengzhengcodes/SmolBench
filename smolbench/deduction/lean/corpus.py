@@ -148,6 +148,11 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
         ``notebooks/deduction/README.md``'s "Data bootstrap".
     """
     path = data_root() / kind / f"{split}.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found — the LeanDojo Benchmark 4 dataset is not "
+            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
+        )
     raw = json.loads(path.read_text())
     return [_from_json(r) for r in raw]
 
@@ -176,7 +181,13 @@ def metadata() -> dict:
     FileNotFoundError
         Dataset not bootstrapped.
     """
-    return json.loads((data_root() / "metadata.json").read_text())
+    path = data_root() / "metadata.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found — the LeanDojo Benchmark 4 dataset is not "
+            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
+        )
+    return json.loads(path.read_text())
 
 
 def replay_passing_path(kind: SplitKind, split: Split) -> Path:

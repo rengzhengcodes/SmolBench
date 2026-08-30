@@ -250,6 +250,40 @@ def test_sweep_end_to_end(sweep_ctx, monkeypatch, concurrent):
     assert root.parts[-3:] == ("notebooks", "deduction", "results")
 
 
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_fully_resumed_sweep_opens_no_dojo_session(sweep_ctx, concurrent):
+    """With every cell already recorded, neither path pays a Dojo session to skip them."""
+    cfg = _make_config(concurrent)
+    assert _sweep(sweep_ctx, cfg)[0] == EXPECTED_CELLS
+    verifier = FakeVerifier()
+    written, run_dir = _sweep(sweep_ctx, cfg, verifier=verifier)
+    assert (written, verifier.open_count) == (0, 0)
+    assert json.loads((run_dir / "manifest.json").read_text())["counts"]["skipped"] == \
+        EXPECTED_CELLS
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_generation_exception_rows_carry_the_full_cell_schema(sweep_ctx, monkeypatch,
+                                                              concurrent):
+    """A raising provider still writes a complete cell row (reasoning_content None)."""
+    import smolbench.evals.providers.primeintellect as pi
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("upstream died")
+
+    monkeypatch.setattr(pi, "complete", _boom)
+    cfg = _make_config(concurrent, run_name="boom", rungs=["stepk:0"], n_replicates=1,
+                       theorems={"source": "explicit", "kind": "random", "split": "val",
+                                 "full_names": ["Mini.theoremA"]},
+                       models=[{"provider": "primeintellect", "model": M1}])
+    written, run_dir = _sweep(sweep_ctx, cfg, name="boom")
+    (row,) = _rows(run_dir, "cell")
+    assert written == 1 and row["verdict"] == "exception"
+    assert REQUIRED_ROW_KEYS <= set(row), REQUIRED_ROW_KEYS - set(row)
+    assert row["reasoning_content"] is None and row["finish_reason"] is None
+    assert "RuntimeError: upstream died" in row["lean_error"]
+
+
 def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
     """`prompt_tokens > 0` is the line between lost data and real data."""
     records = {

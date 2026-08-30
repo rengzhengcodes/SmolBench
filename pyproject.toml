@@ -25,7 +25,9 @@ requires-python = ">=3.12,<3.13"
 # Direct runtime dependencies, expressed as lower bounds at the versions
 # known to work here rather than the minimum ever supported.
 dependencies = [
-    "joblib>=1.0",
+    # 1.4 is the first release with Parallel(return_as="generator_unordered"),
+    # which smolbench.evals.openai_compat.evaluate streams results through.
+    "joblib>=1.4",
     "numpy>=2.4.3",
     # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
     "ordered-set>=4.1.0",
@@ -65,6 +67,8 @@ dev = [
 aws = [
     "botocore>=1.35.0",
     "boto3>=1.43",
+    # scripts/smoke/bedrock_smoke.py mints its Bedrock bearer token with this.
+    "aws-bedrock-token-generator>=1.0",
 ]
 
 # Lean theorem-proving eval (smolbench/deduction/lean/): corpus/context/prompt rendering

@@ -22,6 +22,7 @@ _THINK_NOT_AT_START = "some preamble <think>not a leading tag</think> exact h"
         ("<think>\nstill reasoning and reasoning with no end in sight...", ""),
         (_THINK_NOT_AT_START, _THINK_NOT_AT_START.strip()),
         ("<think></think>tac", "tac"),
+        ("```lean\nrfl", "rfl"),  # unclosed fence: header line stripped, body kept
     ],
 )
 def test_extract_tactic_block(text, expected):

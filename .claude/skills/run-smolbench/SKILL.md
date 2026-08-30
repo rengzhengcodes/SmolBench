@@ -34,7 +34,7 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
 bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real Dojo replay (see below)
-bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~1 min warm)
+bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~30 s warm)
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -92,9 +92,10 @@ gitignored). Manual driving from the repo root with
 .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
 
-The canonical sweep driver is `notebooks/deduction/lean_eval.ipynb` (kernel:
-`.venv`) — config dicts live in its cells; `run-sweep` is the headless
-escape hatch for the same config schema.
+The canonical sweep driver is `notebooks/deduction/run_study.py` (one lane per
+invocation, `LEAN_MODEL=<key>`); `notebooks/deduction/lean_eval.ipynb` is the
+interactive companion and `run-sweep` the headless escape hatch for the same
+config schema.
 
 **Credential-free END-TO-END sweep verification (fake LLM, REAL Lean):**
 `lean_smoke.sh --e2e` is the committed harness — it starts two local
@@ -120,10 +121,11 @@ explicit`). Sweep results land under `notebooks/deduction/results/runs/`.
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 
-`scripts/smoke/bedrock_smoke.py`, `scripts/smoke/ec2_lifecycle_smoke.py <step>`, and the
-`notebooks/{induction,deduction}/` notebooks provision/bill real AWS infra
-(Bedrock, EC2 spot vLLM, SageMaker) and need `keys.env` credentials (never
-print those files). Runbook: `scripts/README.md`'s "Live smoke runbook";
+`scripts/smoke/bedrock_smoke.py`, `scripts/smoke/ec2_lifecycle_smoke.py <step>`,
+`scripts/fleet/run_fleet.py` and the `notebooks/{induction,deduction}/run_study.py`
+lane drivers provision/bill real AWS infra (Bedrock, EC2 spot vLLM) and need
+`keys.env` credentials (never print those files). The notebooks themselves only
+document and analyse those runs. Runbook: `scripts/README.md`'s "Live smoke runbook";
 last live-verified 2026-07-02. Everything in this skill runs without them.
 
 ## Gotchas

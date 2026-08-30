@@ -47,7 +47,9 @@ from .corpus import BenchmarkTheorem
 # several sessions open concurrently: the Lean subprocess startup races on the
 # build cache. A reopen usually succeeds within seconds, so retry with backoff.
 _DOJO_OPEN_RETRIES = 3
-_DOJO_OPEN_BACKOFF_S = (5.0, 15.0, 45.0)
+#: One entry per SLEEP, i.e. `_DOJO_OPEN_RETRIES - 1`: the last attempt raises
+#: instead of sleeping.
+_DOJO_OPEN_BACKOFF_S = (5.0, 15.0)
 
 
 def _open_dojo_with_retry(thm: Theorem, timeout: int):

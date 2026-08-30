@@ -19,11 +19,9 @@ its verdicts are all the ``"unverified"`` placeholder, so every rate would read 
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
 the loud stderr banner `load_joint_cells` prints instead of falling back silently. Inputs
 are ``--s3`` (``s3://smolbench-results-414266451290/deduction/runs/scaling_*/``) or
-``--results-dir`` (local ``runs/scaling_*/verified_rows.jsonl``). Plain ``uv run``
-resyncs the extras away:
+``--results-dir`` (local ``runs/scaling_*/verified_rows.jsonl``):
 
-    uv run --no-project --with numpy --with scipy \
-        python notebooks/deduction/analysis/power_analysis.py --s3
+    .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
 """
 
 from __future__ import annotations
@@ -139,8 +137,7 @@ def _seed_of(name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Core statistics. Inlined rather than imported: this file must stay
-# self-contained under ``uv run --no-project``.
+# Core statistics, inlined so this file stays importable on its own.
 # --------------------------------------------------------------------------- #
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Probability at least one of `n` conditionally-independent replicates succeeds:

@@ -18,8 +18,11 @@ Response handling covers every provider's quirks at once:
   split client-side so scoring sees only the answer (models whose tokenizers
   lack think token ids: Nemotron-Ultra, Olmo-Think; see ``EC2_DEPLOY_SPECS``
   in ``smolbench.evals.providers.ec2``).
-- ``usage`` may be absent entirely (some SageMaker containers omit it): every
-  field is read defensively and the context guard then does not fire.
+- ``usage`` may be absent entirely (some SageMaker containers omit it), as may
+  ``model``/``finish_reason``: those are read defensively and the context guard
+  then does not fire. ``choices[0].message.content`` is NOT optional -- a body
+  without it raises ``KeyError``/``IndexError`` out of the retry loop, since a
+  server that answers 200 with no message is broken rather than transient.
 """
 
 import json
@@ -27,7 +30,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 from joblib import Parallel, delayed
@@ -249,10 +252,11 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
 class ChatResult:
     """Hold the full per-call response from :meth:`ChatClient.complete`.
 
-    Every field is populated DEFENSIVELY via ``.get`` chains: some SageMaker
-    containers omit ``usage`` entirely and not every server echoes
-    ``model``/``finish_reason``, so absence is non-exceptional, never a
-    ``KeyError``.
+    The usage/``model``/``finish_reason`` fields are populated DEFENSIVELY via
+    ``.get`` chains: some SageMaker containers omit ``usage`` entirely and not
+    every server echoes the others, so their absence is non-exceptional.
+    ``content``/``reasoning`` come from a REQUIRED ``choices[0].message`` (see
+    the module docstring).
     """
 
     #: The message content. Empty string on the server's null-content path
@@ -326,13 +330,18 @@ class ChatClient:
     #: Default per-request read timeout; long CoT generations may need the
     #: per-call ``request_timeout`` override instead.
     read_timeout_s: int = 120
-    #: When set, this many CONSECUTIVE connection-level failures (never HTTP
-    #: errors) abort the retry loop via ``on_unreachable``. For self-managed
+    #: When set, this many CONSECUTIVE connection-level failures abort the
+    #: retry loop via ``on_unreachable``. Connection-level means
+    #: ``requests.exceptions.ConnectionError`` (refused, reset, DNS,
+    #: ConnectTimeout) -- never an HTTP error, and never a ReadTimeout, which
+    #: is a server that ANSWERED and then generated slowly. For self-managed
     #: endpoints that can vanish (spot reclaim, caller-IP drift); None
     #: (default) retries forever, correct for managed APIs.
     max_connection_failures: Optional[int] = None
-    #: Diagnosis hook raising an actionable error once the failure cap trips.
-    on_unreachable: Optional[Callable[[Exception], NoReturn]] = None
+    #: Diagnosis hook called once the failure cap trips; it normally raises an
+    #: actionable error, but the caller does not rely on that (a plain return
+    #: falls through to the generic error below).
+    on_unreachable: Optional[Callable[[Exception], None]] = None
 
     def _flag(self, suffix: str) -> bool:
         """Read boolean env flag ``{env_prefix}_{suffix}`` at call time."""
@@ -376,7 +385,8 @@ class ChatClient:
             default 0 fails any usage-reporting response.
         extra_args : dict, optional
             Merged into the request body (e.g. ``max_completion_tokens``,
-            ``reasoning_effort``).
+            ``reasoning_effort``), BEFORE ``seed`` and the streaming keys, so
+            it can never override those.
         request_timeout : int, optional
             Per-request read timeout in seconds, overriding ``read_timeout_s``.
             Raise it so long CoT generations complete on attempt 1.
@@ -428,7 +438,9 @@ class ChatClient:
             # Resolved per attempt -- see the ``connection`` field docs.
             url, token = self.connection(model)
             try:
-                response = requests.post(
+                # Context-managed so a streamed response's socket is released
+                # on every path, including the error raised below.
+                with requests.post(
                     url=url,
                     # Extra headers first, base pair second: on collision the
                     # base Authorization/Content-Type wins (``extra_headers``).
@@ -437,16 +449,15 @@ class ChatClient:
                         "Content-Type": "application/json",
                     },
                     json=(
-                        {
-                            "model": self.body_model(model),
-                            "messages": messages,
-                            "seed": seed,
-                        }
+                        {"model": self.body_model(model), "messages": messages}
                         | (extra_args if extra_args else {})
-                        # Applied AFTER extra_args, so a caller's sampling
-                        # arguments cannot silently override the transport.
+                        # seed and the transport keys are applied AFTER
+                        # extra_args, so a caller's sampling arguments cannot
+                        # silently override either. This repo requires seeded
+                        # generations, so extra_args must not drop the seed.
                         # include_usage puts the token counters on the final
                         # chunk; without it a streamed row loses them.
+                        | {"seed": seed}
                         | ({"stream": True, "stream_options": {"include_usage": True}}
                            if stream else {})
                     ),
@@ -455,24 +466,25 @@ class ChatClient:
                         request_timeout or self.read_timeout_s,
                     ),
                     stream=stream,
-                )
-                # The server answered, so the endpoint is alive: only
-                # SUSTAINED connection failures count toward unreachable.
-                connection_failures = 0
+                ) as response:
+                    # The server answered, so the endpoint is alive: only
+                    # SUSTAINED connection failures count toward unreachable.
+                    connection_failures = 0
 
-                if not response.ok:
-                    # Surface the API's error body, not just the status line:
-                    # provider 4xx bodies carry the actionable detail
-                    # (context-too-long, invalid model id, billing) and callers
-                    # persist str(err) into durable artifacts (the Lean sweep's
-                    # exception rows). ``response=`` stays attached --
-                    # is_retryable_request_error reads its status_code.
-                    raise requests.exceptions.HTTPError(
-                        f"{response.status_code} {response.reason} for url "
-                        f"{response.url}: {response.text[:1000]}",
-                        response=response,
-                    )
-                body = collect_stream(response) if stream else response.json()
+                    if not response.ok:
+                        # Surface the API's error body, not just the status
+                        # line: provider 4xx bodies carry the actionable detail
+                        # (context-too-long, invalid model id, billing) and
+                        # callers persist str(err) into durable artifacts (the
+                        # Lean sweep's exception rows). ``response=`` stays
+                        # attached -- is_retryable_request_error reads its
+                        # status_code, which outlives the closed socket.
+                        raise requests.exceptions.HTTPError(
+                            f"{response.status_code} {response.reason} for url "
+                            f"{response.url}: {response.text[:1000]}",
+                            response=response,
+                        )
+                    body = collect_stream(response) if stream else response.json()
                 if self._flag("INFO") and self._flag("INFO_RESPONSE"):
                     logging.info(body)
 
@@ -538,9 +550,12 @@ class ChatClient:
             except requests.exceptions.RequestException as err:
                 if not is_retryable_request_error(err):
                     raise
-                if self.max_connection_failures is not None and not isinstance(
-                    err, requests.exceptions.HTTPError
-                ):
+                # ConnectionError (refused/reset/DNS/ConnectTimeout), not
+                # "everything that is not an HTTPError": a ReadTimeout means
+                # the endpoint ANSWERED and then generated slowly, which must
+                # not count toward "the endpoint has vanished".
+                connection_level = isinstance(err, requests.exceptions.ConnectionError)
+                if self.max_connection_failures is not None and connection_level:
                     connection_failures += 1
                     if connection_failures >= self.max_connection_failures:
                         if self.on_unreachable is not None:
@@ -560,7 +575,7 @@ class ChatClient:
                         if (
                             self.on_unreachable is not None
                             and connection_failures > 0
-                            and not isinstance(err, requests.exceptions.HTTPError)
+                            and connection_level
                         ):
                             self.on_unreachable(err)
                         raise

@@ -13,7 +13,7 @@ correction applies (unlike the family-ladder contrasts). Holm-Bonferroni over th
 models at FWER 0.05 (`ALPHA`), valid under arbitrary dependence.
 
 Run:
-    uv run --no-project --with numpy --with scipy python \
+    .venv/bin/python \
         notebooks/deduction/analysis/hint_vs_noise.py --rows-dir <dir>
 """
 
@@ -43,14 +43,13 @@ from power_analysis import (  # noqa: E402
 RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 
 
-def load_rungs(path: Path, model: str) -> dict:
+def load_rungs(path: Path) -> dict:
     """Map each ``(theorem_id, k)`` cell of one model to its two rung outcomes.
 
     Reads `path` (a model's ``verified_rows.jsonl``): only ``kind == "cell"``,
     ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded through
     ``power_analysis.grade_verdicts``, the single implementation of this study's row
-    rules -- in particular the EARLIEST measurable row for a cell+rung wins. `model`
-    is unused.
+    rules -- in particular the EARLIEST measurable row for a cell+rung wins.
 
     Returns
     -------
@@ -113,7 +112,7 @@ def main(argv=None) -> int:
 
     rows = []
     for model in MODELS:
-        pairs = load_rungs(args.rows_dir / model / "verified_rows.jsonl", model)
+        pairs = load_rungs(args.rows_dir / model / "verified_rows.jsonl")
         both = [v for v in pairs.values() if RUNG_INFO in v and RUNG_NOISE in v]
         info = np.array([v[RUNG_INFO] for v in both], dtype=bool)
         noise = np.array([v[RUNG_NOISE] for v in both], dtype=bool)

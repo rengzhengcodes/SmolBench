@@ -52,3 +52,14 @@ def test_data_root_default_is_repo_anchored(monkeypatch):
     root = corpus.data_root()
     assert root.is_absolute()
     assert root.parts[-4:] == ("notebooks", "deduction", "data", "leandojo_benchmark_4")
+
+
+def test_unbootstrapped_loaders_name_the_remedy(monkeypatch, tmp_path):
+    """Every loader's FileNotFoundError names the missing file and the bootstrap doc."""
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path))
+    corpus.reset_caches()
+    for call in (lambda: corpus.load_split("random", "val"), corpus.metadata,
+                 lambda: list(corpus.iter_replay_passing("random", "val"))):
+        with pytest.raises(FileNotFoundError, match="not found"):
+            call()
+    corpus.reset_caches()

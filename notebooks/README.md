@@ -59,8 +59,8 @@ So both drivers, and that env file, stay at their study root.
 
 ## Sibling imports inside a study
 
-Each analysis script puts its OWN directory on `sys.path` and imports its
-siblings by bare module name (`from power_analysis import ...`). Both legs
+Each analysis script puts `notebooks/` (for `_power_common`) and/or its own
+directory on `sys.path` and imports its siblings by bare module name (`from power_analysis import ...`). Both legs
 ship a file called `power_analysis.py`, so whichever imported first would
 otherwise own `sys.modules["power_analysis"]` for the rest of a session.
 Anything loading more than one leg in a single process -- `tests/tooling/

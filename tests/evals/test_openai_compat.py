@@ -1,13 +1,16 @@
 """Test offline round trips through the shared client via each provider module."""
 
 import importlib
+import json
 import socket
 import threading
+import time
 
 import pytest
 import requests
 
 from smolbench.evals import Numeric, ToF
+from smolbench.evals import openai_compat
 from smolbench.evals.openai_compat import ChatClient, collect_stream, metadata_get
 from smolbench.evals.providers import ec2
 from conftest import StubServer, _StubHandler, chat_completion
@@ -93,6 +96,10 @@ def test_system_message_ordering(ec2_env, model, context_length, system):
     ec2_env.queue_response(chat_completion("7"))
     assert ec2.query("user prompt", model, **kwargs) == ("7", None)
     assert ec2_env.requests[-1]["body"]["messages"] == expected
+    # extra_args merges FIRST, so no caller sampling argument can drop the seed.
+    ec2.complete("user prompt", model, extra_args={"seed": 999, "temperature": 0}, **kwargs)
+    body = ec2_env.requests[-1]["body"]
+    assert (body["seed"], body["temperature"]) == (1, 0)
 
 
 @pytest.mark.parametrize("name,prefix,env,model", [
@@ -211,6 +218,56 @@ def test_on_unreachable_scope(flaky_server):
     with pytest.raises(requests.exceptions.HTTPError):
         http500.complete("p", "m", seed=1, max_retries=2)
     assert len(diagnosed) == 1  # unchanged: an HTTP 5xx never reaches the hook
+
+
+def test_read_timeout_is_not_an_unreachable_endpoint(monkeypatch):
+    """A server that ANSWERED and then generated slowly never trips the connection cap."""
+    def _timeout(**kwargs):
+        raise requests.exceptions.ReadTimeout("generation outran the read timeout")
+
+    monkeypatch.setattr(openai_compat.requests, "post", _timeout)
+    diagnosed: list = []
+    client = _client("http://127.0.0.1:1/v1/chat/completions",
+                     max_connection_failures=2, on_unreachable=diagnosed.append)
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        client.complete("p", "m", seed=1, max_retries=3)
+    assert diagnosed == []  # a RuntimeError here would mean "the box is gone"
+
+
+#: Quiz size for the ordering test; also its thread fan-out, so the reversal is total.
+ORDER_N = 6
+
+
+class _EchoHandler(_StubHandler):
+    """Echoes each prompt back as its own content, slowest for the FIRST prompt."""
+
+    def do_POST(self):
+        payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or "0")))
+        prompt = payload["messages"][-1]["content"]
+        time.sleep(0.05 * (ORDER_N - int(prompt)))  # invert the completion order
+        self.server.requests.append({"body": payload})  # recorded on COMPLETION
+        self._reply(chat_completion(prompt))
+
+
+def test_evaluate_restores_quiz_order_under_parallel_fan_out():
+    """Responses land in reverse under max_parallel>1; marks still line up with their questions."""
+    server = StubServer()
+    server.RequestHandlerClass = _EchoHandler
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    prompts = [str(i) for i in range(ORDER_N)]
+    try:
+        quiz = tuple(Numeric(prompt=p, answer=int(p)) for p in prompts)
+        marks = _client(server).evaluate(quiz, "m", seed=1, max_parallel=ORDER_N,
+                                         show_progress=False)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+    completed = [r["body"]["messages"][-1]["content"] for r in server.requests]
+    assert completed == prompts[::-1], "premise: the wire order really was reversed"
+    assert [m.query for m in marks.marks] == prompts
+    assert [m.response for m in marks.marks] == prompts
+    assert marks.correct == ORDER_N
 
 
 def test_metadata_get_auth_and_check_status(stub_server, flaky_server):

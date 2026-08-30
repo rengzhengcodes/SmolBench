@@ -3,6 +3,7 @@
 ## Running
 
 ```
+uv sync --all-extras          # the suite imports the notebook extra (dotenv, scipy, statsmodels, matplotlib)
 .venv/bin/python -m pytest tests/ -q
 ```
 

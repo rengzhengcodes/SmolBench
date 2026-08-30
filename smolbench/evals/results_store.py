@@ -188,8 +188,10 @@ class ReplicateAddress:
     #: (see that method's docstring) and passes ``None`` when none does.
     #:
     #: ``model=None`` is a READ-only shape: ``LocalResultsStore`` never inspects
-    #: `model`; ``S3ResultsStore.exists``/``list_seeds`` return ``False``/``[]``;
-    #: ``dump_marks`` REFUSES it rather than write a literal ``"None"`` segment
+    #: `model`; ``S3ResultsStore.exists``/``list_seeds`` return ``False``/``[]``,
+    #: while its ``load_marks`` does NOT special-case it -- it lists the literal
+    #: ``"None"`` key segment and so raises ``FileNotFoundError`` for want of
+    #: anything there; ``dump_marks`` REFUSES it rather than write that segment
     #: into a log that cannot be corrected once written.
     model: Optional[str] = None
 
@@ -285,11 +287,10 @@ class LocalResultsStore(ResultsStore):
     prefix: str = ""
 
     def _dirname(self, tag: str, info: str) -> str:
-        """Return ``f"{self.prefix}{tag}_{info}"``, the per-condition dir name."""
         return f"{self.prefix}{tag}_{info}"
 
     def _path(self, addr: ReplicateAddress) -> Path:
-        """Return ``root/{prefix}{tag}_{info}/rep_{seed}.yaml``; `addr.model` is unused."""
+        # addr.model is unused: the local layout has no model dimension.
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
 
     def exists(self, addr: ReplicateAddress) -> bool:
@@ -325,7 +326,7 @@ class LocalResultsStore(ResultsStore):
         return sorted(seeds)
 
     def describe(self) -> str:
-        """See ``ResultsStore.describe``. Returns ``str(self.root)``."""
+        """See ``ResultsStore.describe``."""
         return str(self.root)
 
 
@@ -387,17 +388,34 @@ class S3ResultsStore(ResultsStore):
     #: its own chain.
     region: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        """Refuse a store whose :attr:`log_prefix` would be ``""``.
+
+        An empty prefix means "the whole bucket" to ``list_objects_v2`` -- a
+        ``sync_down`` would mirror every object into one results directory, and
+        writes would land under a leading ``"/"``. Refused at CONSTRUCTION, so
+        ``resolve_store`` fails loudly instead of handing back a store that
+        reads and writes the wrong thing. Usually means ``results_dir ==
+        repo_root()`` with no base prefix in ``SMOLBENCH_RESULTS_S3`` and no
+        notebook-shaped results dir (see :func:`experiment_name`).
+        """
+        if not self.log_prefix:
+            raise ValueError(
+                f"S3ResultsStore: refusing an empty log prefix on bucket "
+                f"s3://{self.bucket} -- base_prefix and experiment are both "
+                "empty, which would address the ENTIRE bucket."
+            )
+
     @property
     def log_prefix(self) -> str:
         """Return this store's key root: ``base_prefix`` and ``experiment`` joined.
 
         Whichever are non-empty, single ``"/"``, no leading/trailing ``"/"``;
-        ``""`` when both are empty.
+        never ``""`` on a constructed store (see :meth:`__post_init__`).
         """
         return "/".join(p for p in (self.base_prefix, self.experiment) if p)
 
     def _seed_prefix(self, model: str, seed: int) -> str:
-        """Return ``f"{log_prefix}/{model}/seed={seed}/"``."""
         return f"{self.log_prefix}/{model}/seed={seed}/"
 
     def _info_prefix(self, model: str, seed: int, info: str) -> str:
@@ -497,7 +515,7 @@ class S3ResultsStore(ResultsStore):
         return sorted(seeds)
 
     def describe(self) -> str:
-        """See ``ResultsStore.describe``. Returns ``f"s3://{bucket}/{log_prefix}"``."""
+        """See ``ResultsStore.describe``."""
         return f"s3://{self.bucket}/{self.log_prefix}"
 
 
@@ -529,14 +547,13 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
         ``S3ResultsStore.experiment``.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
-    # Step 1.
     if not uri:
         return LocalResultsStore(results_dir, prefix)
 
-    # Step 2: validate BEFORE the anchor check (docstring step 2 says why).
+    # Validated BEFORE the anchor check (docstring step 2 says why).
     bucket, base_prefix = parse_s3_uri(uri)
 
-    # Step 3: hermeticity fallback.
+    # Hermeticity fallback (docstring step 3).
     try:
         results_dir.resolve().relative_to(repo_root())
     except ValueError:
@@ -547,17 +564,15 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
         )
         return LocalResultsStore(results_dir, prefix)
 
-    # Step 4.
     experiment = experiment_name(results_dir, prefix)
 
-    # Step 5: None lets boto3's own chain decide.
+    # None lets boto3's own chain decide.
     region = (
         os.environ.get("SMOLBENCH_RESULTS_S3_REGION")
         or os.environ.get("AWS_REGION")
         or None
     )
 
-    # Step 6.
     return S3ResultsStore(
         bucket=bucket, base_prefix=base_prefix, experiment=experiment, region=region
     )
@@ -631,14 +646,19 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     RuntimeError
         `results_dir` resolved to a ``LocalResultsStore``: no log to sync.
     ValueError
-        ``log_prefix`` is ``""`` (would mirror the ENTIRE bucket), or a
-        destination resolves outside `results_dir`.
+        A destination resolves outside `results_dir`; or, from the store's own
+        construction, an empty ``log_prefix`` (see
+        ``S3ResultsStore.__post_init__``).
 
     Notes
     -----
-    The per-(seed, info) minimum-`run_ts` selection MUST stay identical to
+    The per-(seed, info) selection RULE -- the minimum `run_ts`, a plain
+    comparison of fixed-width stamps -- MUST stay identical to
     ``S3ResultsStore.load_marks``'s, or a synced tree and a direct load fork the
-    analysis. A local file is skipped only when it exists AND the listing
+    analysis. The two differ only in reach: this lists a whole model prefix, so
+    it must also SKIP keys ``_parse_log_entry`` rejects, while ``load_marks``
+    lists one ``seed=<seed>/<info>--`` prefix, which admits nothing else.
+    A local file is skipped only when it exists AND the listing
     ``ETag`` (no extra ``head_object``) decodes to a single-part MD5
     (:func:`_etag_md5`) equal to ``hashlib.md5`` of the local bytes; size-only
     would be UNSOUND (a regrade's ``1 -> 0`` flip preserves length).
@@ -660,18 +680,8 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             "there is no S3 log to sync down from."
         )
 
-    # An empty resolved log prefix means "list the whole bucket" to
-    # list_objects_v2 -- refuse rather than mirror it into one results_dir.
-    if store.log_prefix == "":
-        raise ValueError(
-            "sync_down: refusing to sync -- the resolved S3 log prefix is "
-            f"empty, which would mirror the ENTIRE bucket s3://{store.bucket} "
-            f"into {results_dir}. A results directory is expected to map to "
-            "a non-empty experiment name (see experiment_name); this usually "
-            "means results_dir == repo_root() with no base prefix in "
-            "SMOLBENCH_RESULTS_S3 and no notebook-shaped results_dir."
-        )
-
+    # An empty log prefix (which would mirror the whole bucket) can never get
+    # this far: resolve_store's S3ResultsStore refuses to be constructed.
     resolved_dir = results_dir.resolve()
     client = store._client()
     paginator = client.get_paginator("list_objects_v2")

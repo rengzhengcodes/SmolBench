@@ -47,8 +47,9 @@ def _extra_headers(model: str) -> Dict[str, str]:
 def get_model_context_length(model: str) -> int:
     """Get `model`'s context window from Prime Intellect.
 
-    A model's window is constant, so the lookup is cached; see the OpenRouter
-    twin of this function for the rationale.
+    A model's window is constant, so the lookup is cached, keyed on `model`
+    alone; see the OpenRouter twin of this function for the rationale and for
+    what that key omits.
     """
     response: Dict[str, Any] = metadata_get(
         f"{_base_url()}/models/{model}",
@@ -69,8 +70,7 @@ _CLIENT = ChatClient(
     retry_backoff_s=PRIME_INTELLECT_RETRY_BACKOFF_SECONDS,
 )
 
-# The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query / ChatClient.complete / ChatClient.evaluate.
+# The provider-facing API; see ChatClient.query/complete/evaluate.
 query = _CLIENT.query
-complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
+complete = _CLIENT.complete
 evaluate = _CLIENT.evaluate

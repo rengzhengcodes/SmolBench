@@ -37,7 +37,7 @@ def _add_fake(index, name, state):
 def test_normalization_and_variants():
     """normalize_text collapses whitespace/NFC and per-elaboration counters."""
     assert normalize_text("  a \n\n  b\tc ") == "a b c"
-    assert normalize_text("café") == normalize_text("café")
+    assert normalize_text("caf\u00e9") == normalize_text("cafe\u0301")  # NFC vs NFD
     assert normalize_text("⊢ ?m.248692 = ?m.99") == normalize_text("⊢ ?m.5 = ?m.6")
     assert normalize_text("inst✝⁶ : Field F") == normalize_text("inst✝ : Field F")
     assert normalize_text("F : Type u_1") == normalize_text("F : Type u")
@@ -55,7 +55,9 @@ def test_index_stats(index):
     """Only theoremA (3 tactics) contributes chain/3-gram keys."""
     s = index.stats()
     assert s["names"] == 2
-    assert s["statements"] == 2
+    # theoremB's hypothesis-free "⊢ 1 + 1 = 2" is its own goal-only variant and
+    # below `_MIN_GOAL_KEY_CHARS`, so it yields no statement/state key at all.
+    assert s["statements"] == 1
     assert s["chains"] == 1 and s["tactic_ngrams"] == 1
     assert s["pairs"] > 0
 
@@ -90,6 +92,9 @@ def test_long_and_near_duplicate_statements(index):
     hits = index.check(statement=long_stmt.replace("hs :", "h1 :"))
     assert hits and hits[0].key == "statement_near" and hits[0].theorem == "Mini.longStatement"
     assert index.check(statement="⊢ P n → Q n") == []
+    # Hypothesis-free short goal: one variant, and the floor still drops it.
+    assert index.check(statement="⊢ 1 + 1 = 2") == []
+    assert index.check(states=["⊢ 1 + 1 = 2"]) == []
 
 
 def test_clean_rows_and_mentions(index):

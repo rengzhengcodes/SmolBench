@@ -6,10 +6,10 @@ covering the roster's architecture facts; it is not described here.
 
 There is no `__init__.py` under `scripts/` -- the directories are implicit
 namespace packages, so `from scripts.<group>.<module> import ...` works
-from the repo root (pytest sets `pythonpath`). Load by file path instead
-only when a basename is ambiguous or a module has import-time side
-effects (`run_fleet.py`/`fleet_teardown.py` load `fleet_status.py` as a
-sibling for that reason).
+from the repo root (pytest sets `pythonpath`). `run_fleet.py` and
+`fleet_teardown.py` instead load `fleet_status.py` by file path, so that the
+test loader, which registers these scripts under private module names, never
+collides with a package import of the same basename.
 
 ## scripts/fleet/ -- launching and babysitting the family-ladder EC2 fleet
 
@@ -20,9 +20,8 @@ sibling for that reason).
 | `fleet_teardown.py` | Lists, and optionally terminates, the fleet's live instances -- the safety net for lanes a `run_fleet.py` run didn't shut down itself. |
 | `run_shards.py` | Babysits direct (supervisor-less) `notebooks/induction/run_study.py` shard fleets: adopts already-running shard processes, relaunches dead ones, and tears down completed shards' boxes. |
 
-`run_fleet.py` and `fleet_teardown.py` load `fleet_status.py` as a sibling
-module via `Path(__file__).parent`, so all three files must stay in this
-directory together.
+All three fleet files must stay in this directory together (the sibling
+load resolves via `Path(__file__).parent`).
 
 ## scripts/deduction/ -- the Lean deduction study's sharding and verification passes
 

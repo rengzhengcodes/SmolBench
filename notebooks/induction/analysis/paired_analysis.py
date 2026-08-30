@@ -19,7 +19,7 @@ completion) both fail. About 4% of marks are ``null``, so a DROP-INVALID
 sensitivity pass accompanies every headline.
 
 Run (ephemeral env via --no-project, per repo convention):
-    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/paired_analysis.py
+    .venv/bin/python notebooks/induction/analysis/paired_analysis.py
 """
 
 import re

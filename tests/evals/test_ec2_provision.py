@@ -35,6 +35,8 @@ def _base_kwargs(**overrides):
 
 
 def test_run_instances_kwargs_matches_pinned_shape(monkeypatch):
+    # EC2_MARKET is an import-time module global: pin it, never read the ambient env.
+    monkeypatch.setattr(ec2, "EC2_MARKET", "spot")
     assert _base_kwargs() == {
         "ImageId": "ami-0123456789abcdef0",
         "InstanceType": "p5e.48xlarge",
@@ -53,7 +55,6 @@ def test_run_instances_kwargs_matches_pinned_shape(monkeypatch):
         "UserData": b"#!/bin/bash\necho hi\n",
     }
     # No MarketType="on-demand" exists: absence is how the API expresses it.
-    monkeypatch.setattr(ec2, "EC2_MARKET", "spot")
     spot = _base_kwargs(max_price="12.34")
     monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
     assert {k: v for k, v in spot.items() if k != _IMO} == _base_kwargs(max_price="12.34")
@@ -244,6 +245,7 @@ _HAPPY = {
     "served_at": "2026-08-18T00:00:00+00:00", "vllm_args": ["--seed", "0"], "stream": True,
     "vllm_cache_config": _CACHE, "agent_fingerprint": _FP, "max_parallel_requests": 3,
     "vllm_image_digest": "vllm/vllm-openai@sha256:cec2df507519abc",
+    "region": "us-east-2", "attention_backend_log": ["INFO backend."],
 }
 # No box: box-derived fields blank, but client-side config is env-only so it survives.
 _NO_BOX = dict.fromkeys("instance_type gpu vllm_args max_model_len served_at vllm_version "
@@ -283,6 +285,9 @@ def test_server_config(monkeypatch, state, model, env, expected):
         assert cfg is None
         return
     assert {k: cfg[k] for k in expected} == expected
+    if expected is _HAPPY:
+        # Readers rely on the FULL schema being present on every snapshot.
+        assert set(cfg) == set(_HAPPY)
     probed = [] if state is None else [("203.0.113.10", "vk-stub-secret")]
     assert (calls["version"], calls["cache"], len(calls["agent"])) == (probed, probed, len(probed))
 
@@ -329,7 +334,8 @@ def test_fetch_agent_fingerprint(monkeypatch, status, expected):
 
 def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatch):
     state = {k: v for k, v in _S5_STATE.items() if k != "last_serve"}
-    monkeypatch.delenv("EC2_REQUIRE_GPU", raising=False)
+    # Also an import-time global, so delenv would not reach the check.
+    monkeypatch.setattr(ec2, "EC2_REQUIRE_GPU", "")
     monkeypatch.setattr(ec2, "_require_state", lambda: state)
     saved, agent_calls = {}, []
 

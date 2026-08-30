@@ -322,7 +322,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     it, or died in the reasoning channel. A pass@N table follows only when some
     cell recorded more than one replicate: a cell passes if ANY replicate
     verified, and N is the max replicate count seen IN THE DATA, not the sweep
-    config, so mixed-replicate sweeps stay correct. `path` is checked against
+    config -- so N is reported honestly for a partially-generated run, but a
+    mixed-replicate file still pools cells of unequal N under that one heading. `path` is checked against
     `runner.reject_superseded_rows` before it is opened.
 
     Returns
@@ -425,7 +426,6 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     sort_key = lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])
 
     # ---- Per-model rung ladder (ASCII bars) ----
-    by_model_rung: dict[tuple[str, str], dict[str, int]] = {(m, r): cells[(r, m)] for (r, m) in cells.keys()}
     models_in_data = sorted({m for (_, m) in cells.keys()})
     rungs_in_data = sorted({r for (r, _) in cells.keys()}, key=_rung_sort_key)
 
@@ -434,7 +434,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     for model in models_in_data:
         print(f"\n  {slug_model(model)}:")
         for rung in rungs_in_data:
-            c = by_model_rung.get((model, rung))
+            c = cells.get((rung, model))
             if not c or not c["n"]:
                 continue
             rate = c["success"] / c["n"]

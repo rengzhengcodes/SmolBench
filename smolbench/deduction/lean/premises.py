@@ -136,23 +136,29 @@ _TOP_LEVEL_RE = re.compile(
 
 
 @lru_cache(maxsize=1)
-def _traced_root() -> Path:
-    """Locate the cached, traced mathlib4 repo on disk."""
+def _traced_root() -> Path | None:
+    """The cached, traced mathlib4 repo under ``~/.cache/lean_dojo``, or None.
+
+    ``None``, never an exception: the traced repo is an OPTIONAL enrichment --
+    it upgrades `body_with_proof` from the corpus's stored `Premise.code` to the
+    full source slice -- so a machine without `lean_dojo`'s cache (CI, an
+    analysis box) must still render every rung.
+    """
     cache = Path.home() / ".cache" / "lean_dojo"
     for d in sorted(cache.glob("leanprover-community-mathlib4-*/mathlib4")):
         return d
-    raise FileNotFoundError(
-        "no cached mathlib4 traced repo found under ~/.cache/lean_dojo/"
-    )
+    return None
 
 
 def _resolve_source(file_path: str) -> Path | None:
-    """Resolve a corpus `file_path` against the traced repo root; None if absent."""
+    """Resolve a corpus `file_path` against the traced repo root; None if absent.
+
+    Also ``None`` when there is no traced repo at all (`_traced_root`).
+    """
     root = _traced_root()
-    if file_path.startswith(".lake/"):
-        candidate = root / file_path
-    else:
-        candidate = root / file_path
+    if root is None:
+        return None
+    candidate = root / file_path
     return candidate if candidate.exists() else None
 
 

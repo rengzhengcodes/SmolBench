@@ -13,9 +13,9 @@ session). `SMOLBENCH_LEAN_RESULTS` overrides the output root (`results_root()`).
 
 Output layout (`run_dir`):
 
-    manifest.json        config + run_id + start/finish timestamps
+    manifest.json        config + run_name + start/finish timestamps + counts
     all_rows.jsonl       source of truth, append-only across resumes
-    analysis.txt         `analyze` output, regenerated at end of sweep
+    analysis.txt         `write_run_analysis` output, regenerated at end of sweep
     theorems/<theorem_slug>/
         meta.json        full_name, file_path, k, ground_truth, premises
         prompts/<rung-slug>.md                    rendered prompt per rung
@@ -529,7 +529,7 @@ _VERDICT_GLYPH = {
     "skipped": "-",
 }
 
-_CHAIN_ORDER = {"stepk": 0, "hint": 1}
+_CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
 
 # Design: the sweep's per-theorem sanity gate (`_process_one_theorem`)
 # suppresses cell generation only when the replay POSITIVELY says the
@@ -574,7 +574,8 @@ def reject_superseded_rows(paths) -> None:
         these files parse perfectly and one would yield a complete, plausible,
         WRONG summary instead of a crash. Also logs, because
         `write_theorem_summary` runs inside the sweep's per-theorem worker,
-        which swallows exceptions into one THEOREM-WORKER-FAIL line.
+        which -- under ``theorem_workers > 1`` -- swallows exceptions into
+        one THEOREM-WORKER-FAIL line (serial runs propagate).
     """
     bad = [str(p) for p in paths
            if any(m in Path(p).name for m in RETIRED_MARKERS)]
@@ -590,7 +591,7 @@ def reject_superseded_rows(paths) -> None:
 
 
 def _rung_sort_key(rung: str) -> tuple[int, int]:
-    """Order rungs by chain then by level: stepk:0..2 before hint:0..4."""
+    """Order rungs by chain then by level: stepk, then hint, then noise."""
     if ":" not in rung:
         return (99, 0)
     chain, lvl = rung.split(":", 1)
@@ -854,63 +855,83 @@ def _run_cells_at_step(
     key is not a member is skipped exactly like an already-`done_keys` one and
     counted in the same `n_skipped`, indistinguishably (see `sweep` and
     `load_cell_whitelist`).
+
+    Filtering happens BEFORE `verifier.open_at_step`, and an empty pending list
+    returns without opening it (as `_run_cells_at_step_concurrent` does): a
+    resumed sweep whose cells are all done would otherwise pay a full Dojo
+    session -- tens of seconds of Lean startup -- per (theorem, k) to do nothing.
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
     print_lock = print_lock or threading.Lock()
 
-    with verifier.open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
-        for rung in rungs:
-            rendered = rendered_by_rung[rung]
-            chain, level_str = rung.split(":", 1)
-            level = int(level_str)
-            user_prompt = build_user_prompt(rendered)
-
-            for mc in models_cfg:
-                mod, ctx_len = provider_factory(mc)
-                model = mc["model"]
-                display_name = mc.get("display_name", model)
-                extra_params = mc.get("extra_params")
-                for replicate_idx in range(n_replicates):
-                    key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
-                    if key in done_keys or (
-                        cell_whitelist is not None and key not in cell_whitelist
-                    ):
-                        n_skipped += 1
-                        continue
-
+    # Pending cells in (rung, model, replicate) order -- the order rows are
+    # written and printed in. No re-sort: the concurrent variant's
+    # longest-first ordering is a scheduling optimisation with no serial analogue.
+    pending = []
+    for rung in rungs:
+        rendered = rendered_by_rung[rung]
+        chain, level_str = rung.split(":", 1)
+        level = int(level_str)
+        user_prompt = build_user_prompt(rendered)
+        for mc in models_cfg:
+            display_name = mc.get("display_name", mc["model"])
+            for replicate_idx in range(n_replicates):
+                key = _row_key(display_name, theorem.full_name, k, rung, replicate_idx)
+                if key in done_keys or (
+                    cell_whitelist is not None and key not in cell_whitelist
+                ):
+                    n_skipped += 1
+                    continue
+                pending.append({
+                    "rung": rung, "rendered": rendered,
+                    "chain": chain, "level": level,
+                    "user_prompt": user_prompt,
+                    "mc": mc, "model": mc["model"], "provider": mc["provider"],
+                    "replicate_idx": replicate_idx,
                     # Seed threading: the replicate index is the replication
-                    # axis (see `sweep`'s docstring), so the seed depends
-                    # only on replicate_idx -- keeping cross-model
-                    # comparisons at a given cell seed-paired.
-                    seed = base_seed + replicate_idx
-                    row = _execute_one_cell(
-                        verifier=verifier,
-                        mod=mod, model=model, ctx_len=ctx_len, user_prompt=user_prompt,
-                        rendered=rendered, theorem=theorem, k=k, chain=chain,
-                        level=level, rung=rung, replicate_idx=replicate_idx, seed=seed,
-                        provider=mc["provider"], temperature=temperature,
-                        max_tokens=max_tokens, request_timeout=request_timeout,
-                        max_retries=max_retries, dojo=dojo, state_at_k=state_at_k,
-                        display_name=display_name, extra_params=extra_params,
-                    )
+                    # axis (see `sweep`'s docstring), so the seed depends only
+                    # on replicate_idx -- keeping cross-model comparisons at a
+                    # given cell seed-paired.
+                    "seed": base_seed + replicate_idx,
+                    "display_name": display_name,
+                    "extra_params": mc.get("extra_params"),
+                })
 
-                    with write_lock:
-                        all_rows.write(json.dumps(row, ensure_ascii=False) + "\n")
-                        all_rows.flush()
-                    _append_output(row, tdir)
-                    n_written += 1
-                    if row["verdict"] == "success":
-                        n_ok += 1
+    if not pending:
+        return n_written, n_ok, n_skipped
 
-                    with print_lock:
-                        print(
-                            f"  {theorem.full_name[:40]:<40}  k={k}  {rung:<8}  "
-                            f"{slug_model(model):<24}  r{replicate_idx}  "
-                            f"{row['verdict']:<14}  "
-                            f"gen={row['gen_ms']/1000:.1f}s  ver={row['verify_ms']/1000:.1f}s",
-                            flush=True,
-                        )
+    with verifier.open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
+        for p in pending:
+            mod, ctx_len = provider_factory(p["mc"])
+            row = _execute_one_cell(
+                verifier=verifier,
+                mod=mod, model=p["model"], ctx_len=ctx_len, user_prompt=p["user_prompt"],
+                rendered=p["rendered"], theorem=theorem, k=k, chain=p["chain"],
+                level=p["level"], rung=p["rung"], replicate_idx=p["replicate_idx"],
+                seed=p["seed"],
+                provider=p["provider"], temperature=temperature,
+                max_tokens=max_tokens, request_timeout=request_timeout,
+                max_retries=max_retries, dojo=dojo, state_at_k=state_at_k,
+                display_name=p["display_name"], extra_params=p["extra_params"],
+            )
+
+            with write_lock:
+                all_rows.write(json.dumps(row, ensure_ascii=False) + "\n")
+                all_rows.flush()
+            _append_output(row, tdir)
+            n_written += 1
+            if row["verdict"] == "success":
+                n_ok += 1
+
+            with print_lock:
+                print(
+                    f"  {theorem.full_name[:40]:<40}  k={k}  {p['rung']:<8}  "
+                    f"{slug_model(p['model']):<24}  r{p['replicate_idx']}  "
+                    f"{row['verdict']:<14}  "
+                    f"gen={row['gen_ms']/1000:.1f}s  ver={row['verify_ms']/1000:.1f}s",
+                    flush=True,
+                )
     return n_written, n_ok, n_skipped
 
 
@@ -1069,6 +1090,7 @@ def _run_cells_at_step_concurrent(
                         "finish_reason": None,
                         "gen_ms": gen_ms, "verify_ms": 0,
                         "candidate_proof": "", "raw_response": "",
+                        "reasoning_content": None,
                         "verdict": "exception",
                         "lean_error": f"{type(exc).__name__}: {exc}",
                         "final_state_pp": None,
@@ -1179,6 +1201,7 @@ def _execute_one_cell(
             "finish_reason": None,
             "gen_ms": gen_ms, "verify_ms": 0,
             "candidate_proof": "", "raw_response": "",
+            "reasoning_content": None,
             "verdict": "exception",
             "lean_error": f"{type(exc).__name__}: {exc}",
             "final_state_pp": None,

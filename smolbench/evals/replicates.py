@@ -5,15 +5,9 @@ Each (archetype, info type, seed) replicate is addressed by a
 ``results_store.ReplicateAddress`` and persisted IMMEDIATELY after grading, so
 an interruption loses at most one replicate and a rerun skips already-persisted
 ones. Only the ``ResultsStore`` interface is used here, never a path or S3 key;
-see ``smolbench.evals.results_store`` for store resolution and the
-``SMOLBENCH_RESULTS_S3`` / ``SMOLBENCH_RESULTS_S3_REGION`` env contract.
-
-- ``LocalResultsStore``: ``{results_dir}/{prefix}{tag}_{info}/rep_{seed}.yaml``,
-  overwritten in place on a rerun; the shape every analysis script reads.
-- ``S3ResultsStore``: an APPEND-ONLY log under
-  ``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``; a rerun ADDS an
-  object, and every read resolves the EARLIEST logged run per (model, seed,
-  info). ``sync_down()`` converts it back to the local layout.
+see ``smolbench.evals.results_store`` for both backends' layouts, store
+resolution and the ``SMOLBENCH_RESULTS_S3`` /
+``SMOLBENCH_RESULTS_S3_REGION`` env contract.
 
 A seed's outstanding info types are pooled into ONE ``evaluate()`` call to keep
 the GPU saturated; ``evaluate()`` preserves input order, so the marks slice

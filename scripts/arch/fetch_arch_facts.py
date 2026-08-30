@@ -375,7 +375,7 @@ def main() -> int:
             for line in problems:
                 print(f"  {line}")
             return 1
-        print("cross-check vs tests/fixtures/roster_configs.json: all 21 agree")
+        print(f"cross-check vs tests/fixtures/roster_configs.json: all {len(bundle['facts'])} agree")
     return 1 if failures else 0
 
 

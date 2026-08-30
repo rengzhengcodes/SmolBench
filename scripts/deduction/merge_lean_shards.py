@@ -10,7 +10,8 @@ and, under ``--spool``, uploads via the driver's verified two-phase ``spool_to_s
 and only then prunes the shard dirs, so no run data accumulates locally.
 
 Merge gates (hard failures; nothing is written past a failed one): every shard dir
-has ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell key
+has ``all_rows.jsonl`` and ``manifest.json``; every row parses, except a torn
+FINAL line, which is dropped with a warning (resume regenerates it); no duplicate cell key
 (model, theorem_id, k, rung, replicate_idx) or sanity theorem across shards
 (stride shards are disjoint, so a duplicate means a mis-sharded/double-run lane);
 merged totals equal ``--expect-cells``/``--expect-sanity``; no ``theorems/`` path
@@ -42,6 +43,9 @@ EXPECT_SANITY: int = 300
 
 
 def _cell_key(row: dict) -> tuple:
+    # Duplicated verbatim in scripts/deduction/split_lean_run_into_shards.py
+    # rather than shared: both scripts must mirror `runner._row_key`'s field
+    # order, and neither may import smolbench (they run on boxes without it).
     return (
         row.get("model"),
         row.get("theorem_id"),
@@ -97,9 +101,24 @@ def merge_shards(
     n_cells = n_sanity = 0
     for d in shard_dirs:
         lines = (d / "all_rows.jsonl").read_text().splitlines()
-        per_shard_rows.append(lines)
-        for line in lines:
-            row = json.loads(line)
+        kept: list[str] = []
+        per_shard_rows.append(kept)
+        for lineno, line in enumerate(lines):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                # Same rule as split_lean_run_into_shards.py: a shard killed
+                # mid-write leaves a torn FINAL line, which the driver's resume
+                # regenerates, so drop it; a corrupt line anywhere else is real
+                # damage and must not be folded into the canonical run.
+                if lineno == len(lines) - 1:
+                    logging.warning(f"{d.name}: torn final line dropped (regenerates on resume)")
+                    continue
+                raise SystemExit(
+                    f"{d / 'all_rows.jsonl'}: corrupt row mid-file at line "
+                    f"{lineno + 1} -- aborting"
+                )
+            kept.append(line)
             if row.get("kind") == "cell":
                 n_cells += 1
                 k = _cell_key(row)

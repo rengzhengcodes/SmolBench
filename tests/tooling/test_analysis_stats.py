@@ -41,9 +41,9 @@ def test_shared_scaffolding_wiring():
     # None means "not reached within the cap"; a number prints bare, even at/past it
     assert [pc.fmt_r(*a) for a in ((None, 80), (None, 200), (1, 80), (80, 80), (200, 80))] == [
         ">80", ">200", "1", "80", "200"]
-    script = NOTEBOOKS / "periodic" / "analysis" / "power_analysis.py"
+    script = NOTEBOOKS / "induction" / "analysis" / "power_analysis.py"
     assert pc.results_dir(__file__) == Path(__file__).resolve().parent / "results"
-    assert pc.results_dir(str(script), up=1) == NOTEBOOKS / "periodic" / "results"
+    assert pc.results_dir(str(script), up=1) == NOTEBOOKS / "induction" / "results"
     assert pc.results_dir(str(script), up=0) == pc.results_dir(str(script))
     # no script carries a private copy of a multiplicity procedure
     assert (extens_vs_noise.holm, significance.holm, hint_vs_noise.holm) == (
@@ -161,6 +161,24 @@ def test_all_loaders_share_the_one_row_rule(tmp_path, monkeypatch):
     assert meta["n_unresolved"] == {"m1": 1, "m2": 1}
     assert set(meta["own_denominator"].values()) == {2}
 
+def test_rule_cost_is_measured_per_lane_not_per_added_cell(tmp_path, monkeypatch):
+    """A lane gaining two cells reports the cost of removing BOTH; 0/0 stays None."""
+    _lane(tmp_path, "m1", ("t1", "stepk:1", "success"), ("t2", "stepk:1", "success"),
+          ("t3", "stepk:1", "exception"), ("t4", "hint:2", "exception"))
+    _lane(tmp_path, "m2", ("t1", "stepk:1", "success"), ("t2", "stepk:1", "failure"),
+          ("t3", "stepk:1", "success"), ("t4", "hint:2", "failure"))
+    monkeypatch.setattr(error_bars, "MODELS", ["m1", "m2"])
+    _m, _b, _r, meta = error_bars.build_pool(tmp_path, count_as_failure=True)
+    by_rung = {c["rung"]: c for c in meta["rule_cost"]}
+    assert {c["model"] for c in meta["rule_cost"]} == {"m1"}
+    step = by_rung["stepk:1"]
+    # both added cells leave the lane denominator, not just this rung's one
+    assert (step["n_added"], step["n_lane"], step["theorems"]) == (1, 4, ["t3@k1"])
+    assert (step["pooled_caf"], step["pooled_drop"]) == (2 / 4, 2 / 2)
+    assert (step["rung_caf"], step["rung_drop"]) == (2 / 3, 2 / 2)
+    # hint:2 held exactly one cell and it was added: the drop rate is undefined
+    assert by_rung["hint:2"]["rung_drop"] is None
+
 def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
     path = _write_rows(tmp_path / "verified_rows.jsonl",
                       ("t1", "hint:3", "exception"), ("t1", "hint:3", "success"),
@@ -168,12 +186,12 @@ def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
                       ("t2", "hint:3", "replay_failed"), ("t2", "noise:3", "failure"),
                       ("t3", "stepk:1", "success"))  # later draws and other rungs: ignored
     # t2's hint:3 has no surviving row -> absent, not 0
-    assert hint_vs_noise.load_rungs(path, "m1") == {("t1", 1): {"hint:3": 1, "noise:3": 1},
+    assert hint_vs_noise.load_rungs(path) == {("t1", 1): {"hint:3": 1, "noise:3": 1},
                                                     ("t2", 1): {"noise:3": 0}}
     ungraded = _write_rows(tmp_path / "u.jsonl", ("t1", "hint:3", "success"),
                           ("t1", "noise:3", "unverified"))
     with pytest.raises(SystemExit, match="unverified"):
-        hint_vs_noise.load_rungs(ungraded, "m1")
+        hint_vs_noise.load_rungs(ungraded)
 
 @pytest.mark.parametrize("nc_extens, nc_noise, expected", [
     (0.00, 0.00, "information"), (0.10, 0.24, "information"),  # under the 25% criterion
@@ -219,7 +237,7 @@ def test_retired_artifacts_are_refused_by_every_scanner(tmp_path):
         ded_pa.load_joint_cells([rows], models=("m1",))
     hint = _write_rows(tmp_path / "h" / SUPERSEDED_NAME, ("t1", "hint:3", "success"))
     with pytest.raises(SystemExit, match="SUPERSEDED"):
-        hint_vs_noise.load_rungs(hint, "m1")
+        hint_vs_noise.load_rungs(hint)
     bad = tmp_path / "bad"
     with pytest.raises(ValueError, match="SUPERSEDED"):
         runner.write_theorem_summary(_theorem_dir_with(bad, SUPERSEDED_NAME))

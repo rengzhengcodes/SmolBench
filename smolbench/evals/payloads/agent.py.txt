@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Overridable so the repo's offline tests can run the agent unprivileged.
 RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
 AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
-# "8000" mirrors AGENT_PORT above; governs the health probe + docker -p below.
+# "8000" mirrors ec2.EC2_VLLM_PORT; governs the health probe + docker -p below.
 VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
 SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
 SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
@@ -99,8 +99,10 @@ def _probe_nvidia_smi():
 
 
 def fingerprint():
-    # Best-effort serving-stack snapshot for /status (DETERMINISM_PLAN section
-    # 5). Every field is independently guarded so one missing probe (no GPU
+    # Best-effort serving-stack snapshot for /status, so a result file records
+    # the stack that produced it (image digest, GPUs, HF snapshot) instead of
+    # needing a timestamp -> config side table. Every field is independently
+    # guarded so one missing probe (no GPU
     # locally, image not pulled yet, cold cache) never blanks the rest.
     out = {}
     out["image_repo_digests"] = _cached_probe("image_repo_digests", _probe_image_repo_digests)

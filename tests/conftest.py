@@ -1,10 +1,13 @@
 """Provide shared fixtures: a local OpenAI-compatible stub server and stub tokenizers.
 
-All tests in this directory run offline. They use no AWS credentials and no
-network access. The stub server implements enough of the Chat Completions
-API to exercise the shared client in ``smolbench/evals/openai_compat.py``
-through every provider module. ``StubTokenizer`` replaces the real model
-tokenizers that the induction generators would otherwise download.
+By default every test in this directory runs offline, with no AWS credentials
+and no network access beyond the loopback stub server; the only exception is
+opt-in, the ``s3_archive`` fixture below, whose tests SKIP unless
+``SMOLBENCH_ARCHIVE_S3`` is set. The stub server implements enough of the Chat
+Completions API to exercise the shared client in
+``smolbench/evals/openai_compat.py`` through every provider module.
+``StubTokenizer`` replaces the real model tokenizers that the induction
+generators would otherwise download.
 """
 
 import hashlib

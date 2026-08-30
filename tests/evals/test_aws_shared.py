@@ -172,6 +172,24 @@ def test_ec2_list_models_ignores_the_model_argument(stub_server, monkeypatch):
     assert inspect.signature(aws.list_models).parameters["model"].default == ""
 
 
+def _with_response(value):
+    err = RuntimeError("boom")
+    err.response = value  # botocore-free shapes: None, an HTML body, a partial dict
+    return err
+
+
+@pytest.mark.parametrize("err,code", [
+    (ClientError({"Error": {"Code": "EntityAlreadyExists"}}, "CreateRole"), "EntityAlreadyExists"),
+    (ValueError("no .response at all"), ""),
+    (_with_response(None), ""),
+    (_with_response("<html>429 Too Many Requests</html>"), ""),
+    (_with_response({"Error": None}), ""),
+])
+def test_error_code_degrades_instead_of_raising(err, code):
+    """Called inside except blocks: a missing/None/non-mapping response must not raise."""
+    assert _aws.error_code(err) == code
+
+
 def test_best_effort_teardown_runs_all_steps_even_when_one_raises():
     ran = []
 

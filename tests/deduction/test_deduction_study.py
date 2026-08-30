@@ -22,7 +22,9 @@ IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7
 BUCKET = "smolbench-results-414266451290"
 LANE_KEYS = ("EC2_EXPERIMENT_TAG", "EC2_STATE_FILE", "EC2_VLLM_IMAGE", "LEAN_STATE_FILE",
              "SMOLBENCH_LEAN_RESULTS")
-FLEET = {"EC2_EXPERIMENT_TAG": f"fleet-owned-{KEY}", "EC2_VLLM_IMAGE": "fleet/image:pinned",
+#: A fleet-supervisor export: its tag is the lane's own (run_fleet's
+#: `Lane.experiment_tag`), the other two are values only it knows.
+FLEET = {"EC2_EXPERIMENT_TAG": f"scaling-{KEY}", "EC2_VLLM_IMAGE": "fleet/image:pinned",
          "SMOLBENCH_LEAN_RESULTS": "/tmp/fleet-owned-results"}
 THEOREMS = {"source": "replay_passing", "kind": "novel_premises", "split": "val",
             "limit": 300, "seed": 0}
@@ -35,9 +37,12 @@ RUN_FILES = {"manifest.json": '{"run_name": "scaling_glm-4.7"}',
 def _load_isolated(path: Path, name: str, **env):
     """Exec `path` as module `name`; these files load_dotenv() and read LEAN_* at import."""
     saved = dict(os.environ)
-    os.environ.update(env)
-    for stale in ("LEAN_RUN_NAME", "LEAN_STATE_FILE"):
+    # Scrub the lane variables the ambient shell may carry (as _run_driver does
+    # for its child): a stray EC2_EXPERIMENT_TAG trips the driver's import-time
+    # lane guard and every test in this module fails at collection instead.
+    for stale in LANE_KEYS + ("LEAN_RUN_NAME", "LEAN_SHARD", "LEAN_CELL_WHITELIST"):
         os.environ.pop(stale, None)
+    os.environ.update(env)
     try:
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
@@ -150,7 +155,10 @@ def _run_driver(env: dict, checks: str = ""):
          "assert os.path.isabs(os.environ['EC2_STATE_FILE'])\n", True),
     (FLEET, "".join(f"assert os.environ[{k!r}] == {v!r}, os.environ[{k!r}]\n"
                     for k, v in FLEET.items()), True),
-    ({"EC2_EXPERIMENT_TAG": "scaling-standalone"}, "", False)])
+    ({"EC2_EXPERIMENT_TAG": "scaling-standalone"}, "", False),
+    # A NEIGHBOURING lane's tag: rejected only because the guard compares
+    # exactly -- "glm-4.7" is a substring of "scaling-glm-4.7-flash".
+    ({"EC2_EXPERIMENT_TAG": f"scaling-{KEY}-flash"}, "", False)])
 def test_driver_subprocess_env_contract(env, checks, ok):
     proc = _run_driver(env, checks)
     assert (proc.returncode == 0) is ok, f"stdout={proc.stdout}\nstderr={proc.stderr}"
@@ -238,6 +246,26 @@ def test_spool_uploads_preserving_paths_then_prunes(driver, tmp_path):
     assert all((run_dir / rel).is_file() for rel in RUN_FILES)
 
 
+def test_sharded_lane_refuses_to_spool(driver, monkeypatch, tmp_path):
+    """LEAN_SHARD without --no-s3 exits before any AWS call; with it, the sweep runs."""
+    monkeypatch.setenv("LEAN_SHARD", "1/3")
+    monkeypatch.setattr(driver.runner, "results_root", lambda: tmp_path)
+    monkeypatch.setattr(driver, "selected_model", lambda: KEY)
+    monkeypatch.setattr(driver.ec2, "provision_spot_instance",
+                        lambda *a, **k: pytest.fail("provisioned before the shard guard"))
+    with pytest.raises(SystemExit, match="--no-s3"):
+        driver.main([])
+    for obj, name, value in ((driver.runner, "sweep", lambda *a, **k: 0),
+                             (driver.ec2, "provision_spot_instance", lambda *a, **k: {}),
+                             (driver.ec2, "server_config", lambda *a, **k: None),
+                             (driver.ec2, "serve_model", lambda k: contextlib.nullcontext()),
+                             (driver, "select_verifier", lambda: None),
+                             (driver, "spool_to_s3",
+                              lambda *a, **k: pytest.fail("spooled a shard"))):
+        monkeypatch.setattr(obj, name, value)
+    driver.main(["--no-s3"])
+
+
 def test_force_rerun_archives_old_rows_and_disables_resume(tmp_path, monkeypatch):
     import notebooks.deduction.run_study as rs
     run_dir = tmp_path / "runs" / "scaling_test"
@@ -256,7 +284,8 @@ def test_force_rerun_archives_old_rows_and_disables_resume(tmp_path, monkeypatch
                              (rs.ec2, "serve_model", lambda k: contextlib.nullcontext()),
                              (rs, "select_verifier", lambda: None),
                              (rs, "selected_model", lambda: "test"),
-                             (rs, "build_config", lambda k: {"run_name": "scaling_test"})):
+                             (rs, "build_config",
+                              lambda k: {"run_name": "scaling_test", "theorems": {}})):
         monkeypatch.setattr(obj, name, value)
     rs.main(["--force-rerun", "--no-s3"])
     assert seen["resume"] is False

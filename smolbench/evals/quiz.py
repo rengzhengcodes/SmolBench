@@ -195,10 +195,12 @@ class Marks:
         import yaml
 
         # A legacy file always opens with the top-level Marks tag. Testing the
-        # first bytes (not a substring search) keeps a NEW-format file whose
-        # response text merely mentions "!!python/object" off the unsafe path.
-        # Legacy files are still read back after S3 seeding: not dead code.
-        if text.startswith("!!python/object"):
+        # first bytes for that FULL tag (not a substring search, and not the
+        # bare "!!python/object" prefix any nested tag also carries) keeps a
+        # new-format file whose response text merely quotes a tag off the
+        # unsafe path. Committed legacy result files are still read: not dead
+        # code.
+        if text.startswith("!!python/object:smolbench.evals.Marks"):
             # The tags name this module's class paths, so unsafe_load
             # reconstructs the objects.
             return yaml.unsafe_load(text)

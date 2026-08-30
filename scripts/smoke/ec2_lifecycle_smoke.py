@@ -1,9 +1,10 @@
 """Run a staged live smoke test of the smolbench EC2 provider.
 
 Invoke as ``ec2_lifecycle_smoke.py <step>``. The provisioning code reads its
-configuration at IMPORT time, so EC2_EXPERIMENT_TAG, EC2_STATE_FILE,
-EC2_INSTANCE_TYPES, EC2_REGIONS, EC2_ROOT_VOLUME_GB and EC2_IDLE_TIMEOUT_MIN
-must all be set in the environment before the script starts.
+configuration at IMPORT time, so EC2_EXPERIMENT_TAG, EC2_INSTANCE_TYPES,
+EC2_REGIONS, EC2_ROOT_VOLUME_GB and EC2_IDLE_TIMEOUT_MIN must all be set in
+the environment before the script starts; EC2_STATE_FILE is read at call time,
+but every step shares one, so set it up front too.
 """
 import json
 import os

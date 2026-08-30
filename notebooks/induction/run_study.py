@@ -7,8 +7,8 @@ family. Deployment facts live in
 ``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``; this file is the single
 source of truth for the STUDY's config, and
 ``notebooks/induction/induction_eval.ipynb`` imports every module-level name
-below instead of re-declaring it (pinned by
-``tests/induction/test_induction_study.py``).
+below instead of re-declaring it; the constants themselves are pinned by
+``tests/induction/test_induction_study.py``.
 
 The four info arms match ``periodic_moe``'s: ``intens``, ``extens``,
 ``noise_intens`` (``intens`` whitespace-padded to ``extens``'s token count under

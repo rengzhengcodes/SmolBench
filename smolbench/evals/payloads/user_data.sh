@@ -56,7 +56,7 @@ cat > /opt/smolbench/watchdog.py <<'WATCHDOG_EOF'
 @@WATCHDOG_PY@@
 WATCHDOG_EOF
 
-# Looping service, NOT a timer (see WATCHDOG_PY's module comment in ec2.py).
+# Looping service, NOT a timer (see WATCHDOG_PY in payloads/__init__.py).
 cat > /etc/systemd/system/smolbench-watchdog.service <<'UNIT_EOF'
 [Unit]
 Description=smolbench idle watchdog

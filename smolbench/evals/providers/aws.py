@@ -17,6 +17,11 @@ Setup -- Bedrock (default), then SageMaker (same client, your own endpoint):
     AWS_INFERENCE_BASE_URL=https://runtime.sagemaker.<region>.amazonaws.com/endpoints/<endpoint>/openai/v1
     AWS_INFERENCE_API_KEY=<minted bearer token>   # SageMaker only; lasts <= 12h
 
+Optional: ``AWS_BEDROCK_MAX_PARALLEL_REQUESTS`` (evaluate's fan-out, default
+8), ``AWS_BEDROCK_INFO`` / ``AWS_BEDROCK_INFO_RESPONSE`` (verbose logging),
+``AWS_BEDROCK_CONTEXT_LENGTH`` (the token guard) and
+``AWS_INFERENCE_BODY_MODEL`` (see ``_body_model``).
+
 All INFERENCE-path env config is read at CALL time, so refreshing
 AWS_INFERENCE_API_KEY takes effect on the next request. The PROVISIONING knobs
 ``SAGEMAKER_VLLM_DLC``/``SAGEMAKER_EXEC_ROLE_NAME`` are captured at IMPORT
@@ -101,7 +106,9 @@ def _body_model(model: str) -> str:
     ``{model}`` placeholder) sends the model id as-is. A SageMaker endpoint
     routes by URL, so the field is nominally free -- but a custom container may
     400 on ``""``, so its served id is resolved once via ``list_models``
-    (cached in ``_SERVED_MODELS``), falling back to ``""``.
+    (cached in ``_SERVED_MODELS``), falling back to ``""``. A FAILED lookup is
+    NOT cached: a transient error while the endpoint is still warming would
+    otherwise pin ``""`` for the rest of the process.
     """
     body_model_override = os.getenv("AWS_INFERENCE_BODY_MODEL")
     if body_model_override is not None:
@@ -111,9 +118,9 @@ def _body_model(model: str) -> str:
     if model not in _SERVED_MODELS:
         try:
             served = list_models(model)
-            _SERVED_MODELS[model] = served[0] if served else ""
         except requests.exceptions.RequestException:
-            _SERVED_MODELS[model] = ""
+            return ""  # not cached; retried on the next request
+        _SERVED_MODELS[model] = served[0] if served else ""
     return _SERVED_MODELS[model]
 
 
@@ -157,10 +164,9 @@ _CLIENT = ChatClient(
     retry_backoff_s=AWS_BEDROCK_RETRY_BACKOFF_SECONDS,
 )
 
-# The provider-facing API, dispatched via smolbench.evals.provider. Full
-# parameter docs live on ChatClient.query / ChatClient.complete / ChatClient.evaluate.
+# The provider-facing API; see ChatClient.query/complete/evaluate.
 query = _CLIENT.query
-complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
+complete = _CLIENT.complete
 evaluate = _CLIENT.evaluate
 
 
@@ -439,12 +445,9 @@ def provision_endpoint(model: str, timeout_min: int = 40):
 
         yield model
     finally:
-        # Hand-rolled rather than delegated to _aws.best_effort_teardown: the
-        # success line names the model and the skip line does not, which
-        # _teardown_steps' bare (label, call) shape leaves to this loop.
-        for label, call in _teardown_steps(_sagemaker_client(), model):
-            try:
-                call()
-                logging.info(f"provision_endpoint: torn down {label} {model}")
-            except Exception as exc:  # teardown must not mask the body's exception
-                logging.info(f"provision_endpoint: teardown skip {label}: {type(exc).__name__}: {exc}")
+        # The model name rides in the log prefix, so _teardown_steps' labels
+        # stay bare and every teardown line is attributable to this endpoint.
+        _aws.best_effort_teardown(
+            _teardown_steps(_sagemaker_client(), model),
+            log_prefix=f"provision_endpoint {model}",
+        )

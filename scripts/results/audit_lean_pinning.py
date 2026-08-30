@@ -7,8 +7,8 @@ while the next fails: (1) byte-identical ``theorems`` block and base ``seed``
 across the lanes' as-run ``manifest.json`` (launch config, not what came back);
 (2) the same 300 ``theorems/<slug>/`` prefixes in every spool; (3) the same 944
 ``(theorem, rung)`` output cells, since a lane can hold all 300 theorems and
-still miss rungs; (4) ``prompts/<rung>.md`` byte-equal across lanes by S3 ETag
-(MD5, so no download) -- the strongest gate: equal bytes prove the same theorem
+still miss rungs; (4) ``prompts/<rung>.md`` present in every lane and byte-equal
+across them by S3 ETag (MD5, so no download) -- the strongest gate: equal bytes prove the same theorem
 at the same step ``k`` in the same rendered context, and catch model-dependent
 ``noise:N`` padding (token-matched, so it may differ per tokenizer); and (5) the
 additive ``dojoinit_recovery_2026-08-18`` and the not-folded ``flip*``
@@ -126,14 +126,36 @@ def fetch_spool_index(s3) -> tuple[dict[str, set[str]], dict[str, dict[str, str]
     return cells, prompts
 
 
+def _is_missing_key(exc: Exception) -> bool:
+    """True only for S3's "that object does not exist".
+
+    Read off the error response rather than caught as ``s3.exceptions.NoSuchKey``
+    so a test double needs no botocore. Deliberately narrow: expired credentials,
+    a denied bucket or a throttle must NOT be recorded as "this lane recovered
+    nothing", which would silently pass layer 5.
+    """
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    code = str((response.get("Error") or {}).get("Code", ""))
+    status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    return code in {"NoSuchKey", "NotFound", "404"} or status == 404
+
+
 def fetch_recovery(s3) -> dict[str, set[str]]:
-    """Cell keys touched by the additive dojoinit recovery, per lane."""
+    """Cell keys touched by the additive dojoinit recovery, per lane.
+
+    A lane with no recovery object contributes ``set()``; every other S3 error
+    propagates (`_is_missing_key`).
+    """
     out: dict[str, set[str]] = {}
     for lane in LANES:
         key = f"{RUN_PREFIX}/{RECOVERY_RUN}/{lane}/recovered_rows.jsonl"
         try:
             body = _read(s3, key)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- narrowed, and re-raised
+            if not _is_missing_key(exc):
+                raise
             out[lane] = set()
             continue
         out[lane] = {
@@ -159,6 +181,21 @@ def fetch_flip_cells(s3) -> dict[str, set[str]]:
                 if len(parts) == 3 and parts[1] == "outputs":
                     cells.add(f"{parts[0]}|{parts[2].split('__')[0]}")
         out[run] = cells
+    return out
+
+
+def divergent_prompt_cells(cell_keys, prompts: dict[str, dict[str, str]]) -> set[str]:
+    """Cells whose ``prompts/<rung>.md`` is not one shared ETag across `LANES`.
+
+    A lane MISSING the artifact contributes ``None``, which counts as divergent:
+    a cell no lane spooled a prompt for collapses to the single value ``{None}``
+    and would otherwise be certified byte-identical on absent evidence.
+    """
+    out: set[str] = set()
+    for key in cell_keys:
+        etags = {prompts.get(lane, {}).get(key) for lane in LANES}
+        if len(etags) != 1 or None in etags:
+            out.add(key)
     return out
 
 
@@ -224,11 +261,10 @@ def main(argv: list[str] | None = None) -> int:
           f"(expected {EXPECTED_CELLS} == {EXPECTED_CELLS})")
 
     # Byte equality of the rendered prompt, per cell, across all 21 lanes.
-    variants = {key: len({prompts[l].get(key) for l in LANES}) for key in cunion}
-    divergent = {k: v for k, v in variants.items() if v != 1}
+    divergent = divergent_prompt_cells(cunion, prompts)
     if divergent:
-        failures.append(f"{len(divergent)} cells have model-dependent prompt bytes: "
-                        f"{sorted(divergent)[:5]}")
+        failures.append(f"{len(divergent)} cells have model-dependent or missing "
+                        f"prompt bytes: {sorted(divergent)[:5]}")
     print(f"[4/5] prompt bytes: {len(cunion) - len(divergent)}/{len(cunion)} cells "
           f"byte-identical across all {len(LANES)} lanes")
 

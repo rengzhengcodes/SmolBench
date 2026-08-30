@@ -49,9 +49,8 @@ from smolbench.evals import Quiz
 from smolbench.evals.replicates import ReplicateHarness
 
 
-# Canonical definition lives in smolbench.evals.results_store; re-exported
-# here for this module's own path construction.
-from smolbench.evals.results_store import repo_root  # noqa: F401 -- re-exported
+# Canonical definition lives in smolbench.evals.results_store.
+from smolbench.evals.results_store import repo_root
 
 
 @dataclass(frozen=True)

@@ -24,7 +24,7 @@ the subset because it looked interesting would be data-dependent family sizing,
 and the m = 21 column is a SENSITIVITY check only.
 
 Run:
-    uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/extens_vs_noise.py
+    .venv/bin/python notebooks/induction/analysis/extens_vs_noise.py
 """
 
 import sys

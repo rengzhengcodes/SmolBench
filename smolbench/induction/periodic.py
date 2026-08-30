@@ -68,6 +68,7 @@ __all__ = [
     "get_periodic_prompts",
     "get_periodic_quiz",
     "get_periodic_numeric_quiz",
+    "get_periodic_zero_info_numeric_quiz",
     "tof_membership_query_gen",
     "numeric_count_query_gen",
 ]

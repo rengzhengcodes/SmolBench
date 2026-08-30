@@ -37,6 +37,9 @@ RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
 def _cell_key(row: dict) -> tuple:
+    # Duplicated verbatim in scripts/deduction/merge_lean_shards.py rather than
+    # shared: both scripts must mirror `runner._row_key`'s field order, and
+    # neither may import smolbench (they run on boxes without it).
     return (
         row.get("model"),
         row.get("theorem_id"),

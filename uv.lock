@@ -136,6 +136,18 @@ wheels = [
 ]
 
 [[package]]
+name = "aws-bedrock-token-generator"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/39/cf1c2e12bc5a84af0f96a546481213f81fa6e7927d2bbabd81758c6558ca/aws_bedrock_token_generator-1.1.0.tar.gz", hash = "sha256:95ccb07f63a91ac486561f6df05cc4e04784c8ff5086dc687ed9c5fd3ab1b5ba", size = 19123, upload-time = "2025-07-29T19:53:19.511Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/fd/745ece98870c3824d294bcdce5dc5e15381188a41bc80832c246b205e40e/aws_bedrock_token_generator-1.1.0-py3-none-any.whl", hash = "sha256:bd12854f7c7e52dde5d980d369379f12d0cc5f0855099d87f38688b0f9de5cd4", size = 10291, upload-time = "2025-07-29T19:53:18.704Z" },
+]
+
+[[package]]
 name = "black"
 version = "26.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1843,6 +1855,7 @@ dependencies = [
 
 [package.optional-dependencies]
 aws = [
+    { name = "aws-bedrock-token-generator" },
     { name = "boto3" },
     { name = "botocore" },
 ]
@@ -1859,6 +1872,7 @@ lean = [
     { name = "tiktoken" },
 ]
 notebook = [
+    { name = "aws-bedrock-token-generator" },
     { name = "boto3" },
     { name = "botocore" },
     { name = "ipykernel" },
@@ -1871,6 +1885,7 @@ notebook = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aws-bedrock-token-generator", marker = "extra == 'aws'", specifier = ">=1.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.43" },
     { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.35.0" },
@@ -1878,7 +1893,7 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=7.2.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=8.0.1" },
     { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1" },
-    { name = "joblib", specifier = ">=1.0" },
+    { name = "joblib", specifier = ">=1.4" },
     { name = "lean-dojo", marker = "extra == 'lean'", specifier = ">=2.0" },
     { name = "matplotlib", marker = "extra == 'notebook'", specifier = ">=3.10.0" },
     { name = "numpy", specifier = ">=2.4.3" },

@@ -6,12 +6,18 @@ import pytest
 
 import smolbench.deduction.lean.context as context
 import smolbench.deduction.lean.corpus as corpus
+import smolbench.deduction.lean.premises as premises
 from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture
-def thms(monkeypatch):
+def thms(monkeypatch, tmp_path):
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
+    # Empty HOME: no ~/.cache/lean_dojo traced repo, so `premises._traced_root`
+    # returns None and `body_with_proof` falls back to the fixture's own code --
+    # the CI configuration, and what keeps the hint-rung goldens deterministic
+    # on a developer box that HAS a traced mathlib4.
+    monkeypatch.setenv("HOME", str(tmp_path))
     corpus.reset_caches()
     by_name = {t.full_name: t for t in corpus.load_split("random", "val")}
     yield by_name
@@ -65,6 +71,7 @@ def test_is_trivial_rung_branches(thms):
     """stepk:1 is trivial only without hypotheses; hint rungs need premises."""
     a = thms["Mini.theoremA"]
     b = thms["Mini.theoremB"]
+    assert premises._traced_root() is None, "fixture HOME must have no traced repo"
     assert context.is_trivial_rung(a, 0, "stepk", 0) is False
     assert context.is_trivial_rung(a, 0, "stepk", 1) is False
     assert context.is_trivial_rung(b, 0, "stepk", 1) is True
@@ -72,6 +79,16 @@ def test_is_trivial_rung_branches(thms):
     assert context.is_trivial_rung(a, 0, "hint", 0) is True
     assert context.is_trivial_rung(a, 2, "hint", 0) is False
     assert context.is_trivial_rung(a, 2, "hint", 1) is False
+    # hint:2 -- premiseA's stored code carries a proof body its signature lacks.
+    assert context.is_trivial_rung(a, 2, "hint", 2) is False
+    # hint:3 -- neither premise's body names another corpus premise, so the
+    # 1-hop closure is empty. Exercises the `_traced_root() is None` path too:
+    # the closure reads bodies through `body_with_proof`.
+    assert context.is_trivial_rung(a, 2, "hint", 3) is True
+    assert context.is_trivial_rung(a, 2, "noise", 0) is True
+    assert context.is_trivial_rung(a, 2, "noise", 2) is False
+    # noise:3 inherits hint:3's triviality.
+    assert context.is_trivial_rung(a, 2, "noise", 3) is True
 
 
 def test_noise_arm_invariants(thms):

@@ -244,3 +244,6 @@ CLAUDE.md
 # kept out by policy).
 /local_results_2026-08-10.zip
 /archive_2026-08-11.zip
+
+# multiplicity_sim.py writes its Monte Carlo summary next to itself
+notebooks/induction/analysis/multiplicity_sim_results.json

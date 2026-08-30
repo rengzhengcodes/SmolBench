@@ -1,5 +1,7 @@
 """Test the EC2 state-file lifecycle: offline, pure JSON and file logic."""
 
+import os
+
 import pytest
 
 from smolbench.evals.providers import ec2
@@ -29,6 +31,20 @@ def test_save_load_round_trip_and_mode_0600(state_file):
     assert (state_file.stat().st_mode & 0o777) == 0o600
     assert ec2._load_state() == SAMPLE_STATE
     assert ec2._require_state() == SAMPLE_STATE
+    state_file.chmod(0o666)  # a file an older version left loose is re-tightened
+    ec2._save_state(SAMPLE_STATE)
+    assert (state_file.stat().st_mode & 0o777) == 0o600
+
+
+def test_save_state_mode_comes_from_creation_not_a_later_chmod(state_file, monkeypatch):
+    """The token and api key are never world-readable, not even briefly."""
+    monkeypatch.setattr(ec2.os, "fchmod", lambda fd, mode: None)  # neutralize the re-assert
+    umask = os.umask(0)  # the most permissive default a caller could have
+    try:
+        ec2._save_state(SAMPLE_STATE)
+    finally:
+        os.umask(umask)
+    assert (state_file.stat().st_mode & 0o777) == 0o600
 
 
 @pytest.mark.parametrize("kind", ["missing", "corrupt"])

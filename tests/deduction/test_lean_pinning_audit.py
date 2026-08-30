@@ -69,3 +69,45 @@ def test_slug_theorem_maps_pinned_names_injectively():
     assert len({audit.slug_theorem(n) for n in names}) == len(names)
     assert all(audit.slug_theorem(n) == runner.slug_theorem(n) for n in names)
     assert any(re.search(r"[?']", n) for n in names)
+
+
+@pytest.fixture(scope="module")
+def audit():
+    spec = importlib.util.spec_from_file_location(
+        "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit):
+    """A cell no lane spooled a prompt for must not certify as byte-identical."""
+    lanes = audit.LANES
+    shared = {lane: {"thm|stepk-1": "etag-a", "thm|hint-2": "etag-b"} for lane in lanes}
+    assert audit.divergent_prompt_cells({"thm|stepk-1", "thm|hint-2"}, shared) == set()
+    assert audit.divergent_prompt_cells({"thm|absent"}, shared) == {"thm|absent"}
+    one_missing = {**shared, lanes[0]: {"thm|hint-2": "etag-b"}}
+    assert audit.divergent_prompt_cells({"thm|stepk-1"}, one_missing) == {"thm|stepk-1"}
+    differing = {**shared, lanes[1]: {**shared[lanes[1]], "thm|stepk-1": "etag-z"}}
+    assert audit.divergent_prompt_cells({"thm|stepk-1"}, differing) == {"thm|stepk-1"}
+
+
+def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit):
+    """Only "no such key" becomes an empty lane; AccessDenied must surface."""
+    class _Err(Exception):
+        def __init__(self, response):
+            self.response = response
+
+    class _S3:
+        def __init__(self, response):
+            self.response = response
+
+        def get_object(self, **kwargs):
+            raise _Err(self.response)
+
+    missing = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
+    assert audit.fetch_recovery(_S3(missing)) == {lane: set() for lane in audit.LANES}
+    denied = {"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}}
+    with pytest.raises(_Err):
+        audit.fetch_recovery(_S3(denied))

@@ -70,7 +70,8 @@ def test_load_real_legacy_result_file():
     """Pre-safe-dump artifacts, whose marks lack reasoning/compliance, stay loadable."""
     assert LEGACY_FIXTURE.is_file(), f"missing fixture {LEGACY_FIXTURE}"
     raw = LEGACY_FIXTURE.read_text()
-    assert raw.startswith("!!python/object"), "fixture is not in the legacy format"
+    # The sniff is the FULL top-level Marks tag, not the bare object prefix.
+    assert raw.startswith("!!python/object:smolbench.evals.Marks"), "fixture is not legacy format"
 
     marks = Marks.load(LEGACY_FIXTURE)
     assert marks.model == "qwen/qwen3-30b-a3b-instruct-2507"

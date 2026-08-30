@@ -84,3 +84,22 @@ def test_merge_gates_fail_closed(tmp_path):
     with pytest.raises(SystemExit, match="refusing to clobber"):
         merge_mod.merge_shards("clob", 1, runs_root=runs4, expect_cells=None, expect_sanity=None)
     assert (canonical / "all_rows.jsonl").read_text() == "precious\n"
+
+
+def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path):
+    """A shard's torn final line is dropped; a corrupt row anywhere else exits."""
+    runs = tmp_path / "runs"
+    _write_shard(runs, "torn", 0, 1, [_cell("A"), _sanity("A")])
+    with (runs / "scaling_torn_shard0of1" / "all_rows.jsonl").open("a") as f:
+        f.write('{"kind": "cell", "theo')
+    out = merge_mod.merge_shards("torn", 1, runs_root=runs, expect_cells=1, expect_sanity=1)
+    assert [json.loads(x)["kind"] for x in (out / "all_rows.jsonl").read_text().splitlines()] \
+        == ["cell", "sanity"]
+
+    runs2 = tmp_path / "runs2"
+    _write_shard(runs2, "bad", 0, 1, [_cell("A"), _sanity("A")])
+    path = runs2 / "scaling_bad_shard0of1" / "all_rows.jsonl"
+    path.write_text("{oops\n" + path.read_text())
+    with pytest.raises(SystemExit, match="corrupt row mid-file at line 1"):
+        merge_mod.merge_shards("bad", 1, runs_root=runs2, expect_cells=None, expect_sanity=None)
+    assert not (runs2 / "scaling_bad" / "all_rows.jsonl").exists()

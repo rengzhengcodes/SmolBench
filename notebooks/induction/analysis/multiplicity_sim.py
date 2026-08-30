@@ -9,7 +9,7 @@ general-association statistic mirrors that file's gcmh_reject. Results are
 checkpointed to multiplicity_sim_results.json after each part.
 
 Run it with:
-  uv run --no-project --with numpy --with scipy python multiplicity_sim.py
+  .venv/bin/python multiplicity_sim.py
 """
 
 from __future__ import annotations

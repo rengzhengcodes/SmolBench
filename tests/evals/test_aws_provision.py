@@ -7,6 +7,7 @@ credentials or network access are used.
 import os
 
 import pytest
+import requests
 
 from smolbench.evals.providers import aws
 
@@ -39,6 +40,28 @@ def test_create_model_kwargs_variants(spec, expected):
     for key, value in expected.items():
         got = container["Image"] if key == "Image" else container["Environment"][key]
         assert got == value
+
+
+def test_body_model_does_not_cache_a_failed_lookup(monkeypatch):
+    """A transient list_models failure must not pin "" for the rest of the process."""
+    monkeypatch.setenv(
+        "AWS_INFERENCE_BASE_URL",
+        "https://runtime.sagemaker.us-east-1.amazonaws.com/endpoints/{model}/openai/v1",
+    )
+    monkeypatch.delenv("AWS_INFERENCE_BODY_MODEL", raising=False)
+    monkeypatch.setattr(aws, "_SERVED_MODELS", {})
+    calls: list = []
+
+    def _flaky(model):
+        calls.append(model)
+        if len(calls) == 1:
+            raise requests.exceptions.ConnectionError("endpoint still warming")
+        return ["served-id"]
+
+    monkeypatch.setattr(aws, "list_models", _flaky)
+    assert aws._body_model("ep") == ""
+    assert [aws._body_model("ep"), aws._body_model("ep")] == ["served-id"] * 2
+    assert len(calls) == 2  # the SUCCESS is cached; the failure was not
 
 
 class _FakeSagemakerClient:

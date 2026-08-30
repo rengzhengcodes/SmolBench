@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .context import RenderedContext
 
 SYSTEM = """You are an expert in the Lean 4 theorem prover and the Mathlib4 library.
@@ -22,10 +24,7 @@ INSTRUCTION = """Produce the remaining Lean 4 tactics that close all goals from 
 state. Output only the tactic lines, nothing else.""".strip()
 
 
-_FENCE_RE = __import__("re").compile(
-    r"```(?:lean|lean4)?\s*\n(.*?)\n```",
-    __import__("re").DOTALL,
-)
+_FENCE_RE = re.compile(r"```(?:lean|lean4)?\s*\n(.*?)\n```", re.DOTALL)
 
 
 def extract_tactic_block(text: str) -> str:

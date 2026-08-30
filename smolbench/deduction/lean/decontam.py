@@ -92,17 +92,26 @@ def state_variants(state_pp: str) -> list[str]:
 #: Minimum normalized length for a *goal-only* variant to become a
 #: statement/state index key: shorter bare goals (``⊢ False``, ``⊢ a = b``)
 #: recur across unrelated mathlib theorems and would mass-drop harmless training
-#: rows. The full-state variant is always indexed, and `pairs` keeps even short
-#: goal variants -- a (state, tactic) match reproduces the *answer* at any length.
+#: rows. A state WITH hypotheses still contributes its full-state variant; a
+#: hypothesis-free one under the floor contributes no key at all, and `pairs`
+#: covers it -- a (state, tactic) match reproduces the *answer* at any length.
 _MIN_GOAL_KEY_CHARS = 24
 
 
 def _index_variants(state_pp: str) -> list[str]:
-    """`state_variants` filtered to the ones eligible as statement/state keys."""
-    variants = state_variants(state_pp)
-    if len(variants) == 2 and len(variants[1]) < _MIN_GOAL_KEY_CHARS:
-        return variants[:1]
-    return variants
+    """`state_variants` filtered to the ones eligible as statement/state keys.
+
+    The `_MIN_GOAL_KEY_CHARS` floor applies to any variant that IS the state's
+    goal-only form, not just to a two-variant list's second entry: a
+    hypothesis-free state (``⊢ False``) collapses to ONE variant which is its
+    own goal-only form, and indexing that short key would drop every training
+    row sharing it. Returns ``[]`` in exactly that case -- both callers iterate.
+    """
+    goal_only = normalize_text(extract_goal_only(state_pp))
+    return [
+        v for v in state_variants(state_pp)
+        if v != goal_only or len(v) >= _MIN_GOAL_KEY_CHARS
+    ]
 
 
 # ---------------------------------------------------------------------------

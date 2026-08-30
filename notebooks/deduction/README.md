@@ -29,14 +29,15 @@ directly beneath it because `notebooks/deduction/results` is the path
 `smolbench.deduction.lean.runner.results_root()` falls back to.
 
 `analysis/` holds the three read-only report scripts. Each puts its own
-directory on `sys.path` and imports its siblings by bare name, so
-`power_analysis.py` -> `error_bars.py` -> `hint_vs_noise.py` must be loaded
-in that order by anything importing them programmatically (see
+directory on `sys.path` and imports its siblings by bare name, so anything
+importing them programmatically must register each under a UNIQUE
+`sys.modules` name -- the bare names collide with the induction leg's
+same-named modules. Load order does not matter (see
 `tests/tooling/test_analysis_stats.py`).
 
 | File | What it's for |
 | --- | --- |
-| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. Owns `RESULTS_DIR` and the `--s3` run-file download for the chain. |
+| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. Owns `RESULTS_DIR` and a `--s3` run-file download **for itself only** -- it lands one row file per `scaling_<key>/` run prefix, not the `<model>/verified_rows.jsonl` tree `error_bars.py`/`hint_vs_noise.py` read from `--rows-dir`. |
 | `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--no-count-as-failure` drops cells with no surviving rollout instead of counting them as failures. |
 | `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. |
 
@@ -168,15 +169,6 @@ premises are under-represented in the benchmark's own train split. The first
 addresses a corpus this repo builds, the second is benchmark-internal
 generalization within the same 2024-03-24 snapshot.
 
-Making the study post-cutoff needs a different corpus, not a filter: trace
-mathlib4 at a recent commit and at the last commit at or before the target
-date, take the declarations present in the first and absent from the second
-(a name-wise set difference, so "post-cutoff" is provable rather than
-inferred from commit dates), re-derive `replay_passing`, and re-collect all
-21 lanes. Fixing the target date requires cutoffs for the 15 checkpoints
-that publish none, and at a target in late 2025 the resulting pool may not
-reach 300 theorems.
-
 ## What the eval exposes per theorem
 
 Each `BenchmarkTheorem` carries a `traced_tactics` list: one `TracedTactic`
@@ -236,7 +228,7 @@ Dojo cache.
   against Lean yet) and each per-theorem sanity row with `verdict ==
   "skipped"`. By default it uses `NullVerifier` (`LEAN_VERIFY=defer`), which
   never imports `smolbench.deduction.lean.verify` or its `lean_dojo`
-  dependency, so generation boxes don't need Lean, elan, or the Dojo cache.
+  dependency.
 - **Phase 2 (verification)** also runs on `.venv`, via
   `scripts/deduction/lean_verify_rows.py`. It downloads a run's
   `all_rows.jsonl` from S3, replays every recorded candidate proof against a

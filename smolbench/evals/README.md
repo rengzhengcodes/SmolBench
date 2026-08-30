@@ -75,8 +75,9 @@ need to talk to IAM/EC2/SageMaker/S3 to stand up an inference endpoint.
 brand-new `boto3.session.Session` per call, so a rotated
 `~/.aws/credentials` file is picked up on the next call instead of raising
 `ExpiredToken` until the process restarts), `error_code` (a
-`ClientError.Code` extractor that degrades to `""` for a non-`ClientError`
-input), `assume_role_trust_policy` (parameterized on the service principal),
+`ClientError.Code` extractor that degrades to `""` for any input without a
+mapping-shaped `.response["Error"]`, including a non-`ClientError`),
+`assume_role_trust_policy` (parameterized on the service principal),
 `ensure_sagemaker_execution_role` / `ensure_instance_profile` (IAM
 role/profile creation, idempotent against "already exists"), the generic
 `poll_until` wait loop, `best_effort_teardown` (runs every teardown step,
@@ -142,7 +143,8 @@ can never be silently unified into one "correct" choice.
 ## Results store
 
 `results_store.py` gives replicate results a second backend. Every
-replicate YAML a `ReplicateHarness` produces (`{tag}_{info}/rep_{seed}.yaml`)
+replicate YAML a `ReplicateHarness` produces
+(`{prefix}{tag}_{info}/rep_{seed}.yaml`)
 is written straight to a local directory under `notebooks/<notebook>/
 results/`. With `results_store.py` in the loop, the same file can instead
 be logged to S3 — durable across an ephemeral EC2 spot instance's lifetime,
@@ -179,8 +181,7 @@ calls `load_dotenv(keys.env)` *after* `import smolbench...`-style statements
 have already run; a module-level constant would freeze to the un-overridden
 default (unset → local store) for the rest of the kernel's life, silently,
 with every subsequent replicate quietly landing on the ephemeral box's local
-disk instead of S3. `keys.env`'s values are already correct and need no
-changes for this design.
+disk instead of S3.
 
 ### The S3 log key scheme
 
@@ -242,8 +243,8 @@ to unset the variable to stay hermetic.
 
 ### Syncing down for analysis
 
-`ReplicateHarness.sync_down()` (equivalently, `InductionExperiment.harness
-.sync_down()`) is the bridge: it translates an experiment's S3 log into the
+`ReplicateHarness.sync_down()` (an `InductionExperiment` reaches it as
+`.harness.sync_down()`) is the bridge: it translates an experiment's S3 log into the
 local analysis layout, resolving the earliest run per (model, seed, info) and
 writing `{prefix}{tag}_{info}/rep_{seed}.yaml`. It is the primary entry
 point because it is the piece that knows the model → archetype-tag mapping

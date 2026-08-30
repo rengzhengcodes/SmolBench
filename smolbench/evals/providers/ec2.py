@@ -23,10 +23,12 @@ shutdown terminates the box and deletes its EBS volume.
 
 Env-read timing
     Provisioning ``EC2_*`` constants are captured at IMPORT time -- set them
-    before the first import (e.g. keys.env); only ``EC2_INFERENCE_BASE_URL``,
-    ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE``, ``EC2_CAPACITY_RESERVATION``
-    (and ``EC2_CAPACITY_RESERVATION_REGION``) and ``HF_TOKEN`` are read at call
-    time. Setup needs ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region
+    before the first import (e.g. keys.env). Read at CALL time:
+    ``EC2_INFERENCE_BASE_URL``, ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE``,
+    ``EC2_CAPACITY_RESERVATION`` (and ``EC2_CAPACITY_RESERVATION_REGION``),
+    ``HF_TOKEN``, and the shared client's own ``EC2_MAX_PARALLEL_REQUESTS`` /
+    ``EC2_STREAM_COMPLETIONS`` / ``EC2_INFO`` / ``EC2_INFO_RESPONSE``.
+    Setup needs ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region
     tried, more via ``EC2_REGIONS``), boto3-resolvable credentials, and
     ``HF_TOKEN`` only for gated repos (baked into user-data at provision
     time). boto3/botocore import lazily, so the inference path needs neither.
@@ -196,9 +198,9 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # Per-model deployment spec. The dict key is both (a) the ``model`` argument
 # the notebook passes to query()/evaluate() and (b) vLLM's
 # ``--served-model-name``, so the OpenAI request body carries it verbatim.
-# Keys: hf_model_id, tp (tensor parallelism), max_model_len (also the soft
-# context guard), optional vllm_args (extra CLI flags), optional
-# system_prompt (prepended to every request for that model).
+# ``_aws.EC2_SPEC_KEYS`` is the authoritative key list (and what
+# tests/evals/test_aws_shared.py pins every spec against); ``_aws.DeploySpec``
+# documents each field.
 #
 # --- Family-ladder scaling study roster --------------------------------
 # 21 models = 7 families x 3 rungs, one EC2 instance per model. Every
@@ -299,7 +301,7 @@ MINISTRAL_THINK_SYSTEM: str = (
 EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # Smoke-test entry: exercises the full lifecycle on a cheap single-GPU
     # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar. 32768
-    # is the checkpoint's native window; the canary quiz needs > 16384 tokens.
+    # is the checkpoint's native window.
     "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768,
                             "vllm_args": ["--revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
                                           "--tokenizer-revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"]},
@@ -426,8 +428,9 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     _args = list(_spec.get("vllm_args") or [])
     assert "--enable-prefix-caching" not in _args, _spec_key
     assert not ({a for a in DETERMINISM_ARGS if a.startswith("--")} & set(_args)), _spec_key
-    # Plan §4 row 4: make the KV budget a function of the spec, not of free
-    # VRAM at profiling time. 0.92 equals vLLM's default AT THE PINNED BUILD
+    # Make the KV budget a function of the spec, not of free VRAM at
+    # profiling time (which varies with whatever else the box was doing).
+    # 0.92 equals vLLM's default AT THE PINNED BUILD
     # (vllm/config/cache.py:69 at 8efa13b70), made explicit here, and is what
     # the hinge det arms actually resolved to (their cache_config_info
     # records gpu_memory_utilization=0.92), so nothing the experiment
@@ -473,9 +476,8 @@ _INSTANCE_GPU_COUNTS = {
     # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both SM120,
     # PCIe-only. Counts verified via describe-instance-types -- the 12xlarge
     # sizes carry TWO GPUs, unlike g6e's four. Map a family fully or not at
-    # all: a lane whose --types spans a mapped and an unmapped size gets
-    # derived tp on one box and spec-fallback tp on the other, a silent
-    # mid-lane tp change.
+    # all (see derive_tp's fallback warning for what a half-mapped family
+    # does to a lane).
     "g7.2xlarge": 1, "g7.4xlarge": 1, "g7.8xlarge": 1,
     "g7.12xlarge": 2, "g7.24xlarge": 4, "g7.48xlarge": 8,
     "g7e.2xlarge": 1, "g7e.4xlarge": 1, "g7e.8xlarge": 1,
@@ -822,9 +824,18 @@ def _load_state() -> Optional[Dict[str, Any]]:
 
 
 def _save_state(state: Dict[str, Any]) -> None:
+    """Write the state file, owner-only from the moment it is created.
+
+    It holds the control token and the vLLM api key, so the mode rides on
+    ``os.open`` rather than a write-then-``chmod``, which would leave the
+    secrets readable at the process umask for the window in between. The
+    ``fchmod`` re-asserts it on a file some earlier version left looser.
+    """
     path = _state_path()
-    path.write_text(json.dumps(state, indent=2) + "\n")
-    path.chmod(0o600)  # holds the control token and the vLLM api key
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # re-assert before os.fdopen takes the descriptor
+    with os.fdopen(fd, "w") as file:
+        file.write(json.dumps(state, indent=2) + "\n")
 
 
 def _clear_state(instance_id: Optional[str] = None) -> None:
@@ -1008,27 +1019,23 @@ _CLIENT = ChatClient(
     on_unreachable=_raise_endpoint_unreachable,
 )
 
-# The provider-facing API (dispatched via smolbench.evals.provider); full
-# parameter docs live on ChatClient.query/complete/evaluate. The plain-text
-# <think> splitting that Nemotron-3 and EXAONE need (this study serves
-# neither with a server-side reasoning parser; see the "Reasoning wiring"
-# note in EC2_DEPLOY_SPECS) lives in the shared client, so every provider
-# handles it identically.
+# The provider-facing API; see ChatClient.query/complete/evaluate. The
+# plain-text <think> splitting that Nemotron-3 and EXAONE need (this study
+# serves neither with a server-side reasoning parser; see the "Reasoning
+# wiring" note in EC2_DEPLOY_SPECS) lives in the shared client, so every
+# provider handles it identically.
 query = _CLIENT.query
-complete = _CLIENT.complete  # ChatResult-returning superset of query (usage, model, finish_reason)
+complete = _CLIENT.complete
 evaluate = _CLIENT.evaluate
 
 
 # ---------------------------------------------------------------------------
 # On-instance payloads (control agent, idle watchdog, cloud-init bootstrap)
 # ---------------------------------------------------------------------------
-# The payload programs and cloud-init templates live as byte-exact assets in
-# smolbench/evals/payloads/ (agent.py.txt, watchdog.py.txt, user_data.sh).
-# That package renders them with payloads.render_user_data and gzip-compresses
-# the result with payloads.pack_user_data before it rides into RunInstances'
-# UserData kwarg. See that package's docstring for the payload contract
-# (py3.10/stdlib-only, 16 KB user-data budget, measured post-compression) and
-# tests/evals/test_ec2_payloads.py for their pre-launch validation.
+# The payload programs and cloud-init templates are byte-exact assets in
+# smolbench/evals/payloads/; that package renders them (render_user_data),
+# gzip-packs them (pack_user_data) for RunInstances' UserData kwarg, and
+# documents their contract.
 
 
 # ---------------------------------------------------------------------------
@@ -1065,7 +1072,6 @@ def _ec2_client(region: str):
     return _aws.fresh_client("ec2", region)
 
 
-# Re-exported as a plain name so tests can patch ``ec2._error_code``.
 _error_code = _aws.error_code
 
 
@@ -1198,8 +1204,7 @@ def _ensure_instance_profile(bucket: str) -> str:
     """Return the instance-profile name for the model cache, and create it if absent.
 
     Wraps ``_aws.ensure_instance_profile`` with this module's
-    ``EC2_INSTANCE_ROLE_NAME`` / ``_IAM_PROPAGATION_SLEEP_S``; it stays a local
-    name so tests can patch ``ec2._ensure_instance_profile``. The role grants
+    ``EC2_INSTANCE_ROLE_NAME`` / ``_IAM_PROPAGATION_SLEEP_S``. The role grants
     read/write scoped to the cache bucket plus SSM core, which doubles as the
     break-glass shell for a box with no SSH key.
     """
@@ -2086,8 +2091,9 @@ def _wait_model_ready(
         # A single dropped /status must NOT abort the (up to hours-long)
         # wait: the caller's egress NAT rotates source IPs mid-run, and one
         # flap killed an arm whose stale serve script then raced the next
-        # arm's container. Only a SOLID stretch of unreachability (~8 min at
-        # the 15s poll) counts as the box being gone.
+        # arm's container. Only a SOLID stretch of unreachability counts as
+        # the box being gone: 20 consecutive misses, i.e. at least 5 min at
+        # the 15s poll (longer, since each miss also burns its own timeout).
         try:
             status = _agent(state, "GET", "/status", timeout=30, connect_retries=0)
         except requests.exceptions.RequestException as exc:

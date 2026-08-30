@@ -17,8 +17,8 @@ module's ``load_dotenv`` (no ``override=True``, so it never beats an already-set
 value). Get the order wrong and nothing raises: this lane's tag, state file and
 vLLM image silently drift, and two lanes swap served checkpoints on a live
 billing box. ``setdefault``, never assignment, is what lets a fleet-exported
-value win. Import also raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` does
-not name this lane's model (see the GUARD below).
+value win. Import also raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is not
+exactly ``f"scaling-{LEAN_MODEL}"`` (see the GUARD below).
 
 LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
 and build the sweep config; (3) resolve ``LEAN_VERIFY`` -- steps 1-3 run BEFORE
@@ -33,8 +33,8 @@ Environment: ``LEAN_MODEL`` (required; one key of ``MODELS``);
 ``LEAN_STATE_FILE`` (optional EC2 state file, default
 ``.ec2_state_scaling_<LEAN_MODEL>.json`` -- a bare or relative name resolves
 against ``REPO_ROOT``, which is how both phases find the same box);
-``LEAN_RUN_NAME``, ``LEAN_SHARD``, ``LEAN_CELL_WHITELIST`` (optional, read at
-``build_config`` call time, not at import); ``LEAN_VERIFY`` -- ``"defer"`` (the
+``LEAN_RUN_NAME``, ``LEAN_SHARD`` (requires ``--no-s3``), ``LEAN_CELL_WHITELIST``
+(optional, read at ``build_config`` call time, not at import); ``LEAN_VERIFY`` -- ``"defer"`` (the
 default) records every verdict ``"unverified"``, leaving real checking to the
 later ``scripts/deduction/lean_verify_rows.py`` pass, while ``"real"`` verifies
 inline (see :func:`select_verifier`).
@@ -148,11 +148,14 @@ if _RAW_LEAN_MODEL:
     # wrong model. keys.env's standalone `EC2_EXPERIMENT_TAG=scaling-standalone`
     # exported by a `set -a` launcher is how lanes end up sharing one; the raise
     # below spells out that cause and the fix.
+    # EXACT compare, never a substring test: spec keys nest ("glm-4.7" is a
+    # prefix of "glm-4.7-flash"), so a containment check would accept the
+    # NEIGHBOURING lane's tag and re-open exactly the adoption hole it guards.
     _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
-    if _RAW_LEAN_MODEL not in _TAG:
+    if _TAG != f"scaling-{_RAW_LEAN_MODEL}":
         raise SystemExit(
-            f"EC2_EXPERIMENT_TAG={_TAG!r} does not name this lane's model "
-            f"({_RAW_LEAN_MODEL!r}).\n"
+            f"EC2_EXPERIMENT_TAG={_TAG!r} is not this lane's tag "
+            f"('scaling-{_RAW_LEAN_MODEL}').\n"
             "Two lanes sharing a tag will adopt each other's EC2 instance and "
             "generate rows under the wrong model.\n"
             "Most likely cause: a launcher sourced notebooks/deduction/keys.env "
@@ -447,8 +450,8 @@ def main(argv: list[str] | None = None) -> None:
     """Entry point: resolve the lane, provision/serve/sweep, spool, maybe teardown.
 
     ``SystemExit`` comes from argument parsing, ``selected_model()`` (unset or
-    unknown ``LEAN_MODEL``) or ``select_verifier()`` (invalid ``LEAN_VERIFY``) --
-    all three BEFORE any AWS call. Past those checks every path makes live,
+    unknown ``LEAN_MODEL``), ``LEAN_SHARD`` without ``--no-s3`` (see the GUARD)
+    or ``select_verifier()`` (invalid ``LEAN_VERIFY``) -- all BEFORE any AWS call. Past those checks every path makes live,
     billable AWS calls (``ec2.provision_spot_instance()``, ``ec2.serve_model()``,
     and ``ec2.shutdown_instance()`` under ``--teardown``). The sweep runs with
     ``resume=not --force-rerun``, so a relaunched lane picks up from the on-disk
@@ -501,6 +504,23 @@ def main(argv: list[str] | None = None) -> None:
     key = selected_model()
     config = build_config(key)
     run_dir = runner.results_root() / "runs" / config["run_name"]
+
+    # GUARD -- sharded lanes must not spool. `spool_to_s3`'s destination prefix
+    # is keyed on the MODEL, so every shard of a lane would upload its PARTIAL
+    # all_rows.jsonl over the canonical `deduction/runs/scaling_<key>/` object
+    # that scripts/deduction/lean_verify_rows.py and the analysis read: last
+    # writer wins and the lane silently reports one shard's cells as the whole
+    # run. Shards stay local until scripts/deduction/merge_lean_shards.py folds
+    # them into the canonical run and spools that. Read off the config (which
+    # owns the LEAN_SHARD read) rather than the environment a second time.
+    if config["theorems"].get("shard") and not args.no_s3:
+        raise SystemExit(
+            f"LEAN_SHARD={config['theorems']['shard']!r} requires --no-s3: a shard "
+            f"would overwrite the canonical s3://{SPOOL_BUCKET}/{SPOOL_PREFIX}/"
+            f"scaling_{key}/ objects with its partial rows.\n"
+            "Fix: re-run this shard with --no-s3, then merge and spool with "
+            "`scripts/deduction/merge_lean_shards.py <key> --n <n> --spool`."
+        )
 
     # Resolved -- and any SystemExit raised -- BEFORE provisioning: see the
     # module docstring's "LIFECYCLE" step 3.

@@ -25,8 +25,8 @@ with a pooled (condition-mean) sensitivity pass beside them. Results are
 S3-backed (SMOLBENCH_RESULTS_S3), never committed, and locked to BASE_SEED = 0
 (PILOT_SEED).
 
-Run (plain `uv run` would sync the project and strip the notebook extras):
-    uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/induction/analysis/power_analysis.py
+Run:
+    .venv/bin/python notebooks/induction/analysis/power_analysis.py
 """
 
 import re
