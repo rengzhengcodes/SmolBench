@@ -23,6 +23,8 @@ OLD_STUDY_NUMBERS = re.compile(r"\b(300|805|944)\b")
 
 @pytest.fixture(scope="module")
 def stats_nb() -> dict:
+    if not STATS_NB.exists():
+        pytest.skip("statistical_analyses.ipynb lives in the top stack slice")
     return json.loads(STATS_NB.read_text())
 
 
@@ -44,6 +46,8 @@ def test_notebook_json_shape_survives_editing(path):
     This is the recipe any edit script must use. A whole-file renormalization
     (or a `source` collapsed to one string) would bury the real change in noise.
     """
+    if not path.exists():
+        pytest.skip(f"{path.name} lives in a later stack slice")
     raw = path.read_text()
     nb = json.loads(raw)
     assert json.dumps(nb, indent=1, ensure_ascii=False) + "\n" == raw
