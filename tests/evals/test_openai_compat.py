@@ -76,6 +76,29 @@ def test_collect_stream_survives_usage_only_chunk_and_stops_at_done():
     assert (body["usage"], body["model"]) == ({"total_tokens": 9}, "m")
 
 
+def _stream_of(frames):
+    return type("_R", (), {"iter_lines": lambda s, decode_unicode=False: iter(frames)})()
+
+
+@pytest.mark.parametrize("frames", [
+    # Malformed chunk: must surface as the retryable stream-broke class, not
+    # a stdlib JSONDecodeError that escapes complete()'s retry loop.
+    ['data: {"choices": [{"delta": {"content": "4"}}]}', "data: {truncated"],
+    # Clean close before [DONE] with no finish_reason: an incomplete body
+    # must be retried, never graded as a finished generation.
+    ['data: {"choices": [{"delta": {"content": "4"}}]}'],
+])
+def test_collect_stream_rejects_malformed_or_truncated_streams(frames):
+    with pytest.raises(requests.exceptions.ChunkedEncodingError):
+        collect_stream(_stream_of(frames))
+
+
+def test_collect_stream_accepts_finish_reason_without_done():
+    """Some servers end the stream after the final chunk without a [DONE] sentinel."""
+    frames = ['data: {"choices": [{"delta": {"content": "42"}, "finish_reason": "stop"}]}']
+    assert collect_stream(_stream_of(frames))["choices"][0]["finish_reason"] == "stop"
+
+
 @pytest.mark.parametrize("model,context_length,system", [
     ("ministral-3-14b", 200000, "extra context"),
     ("qwen2.5-1.5b", 100, "extra context"),

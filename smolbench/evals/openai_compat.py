@@ -116,6 +116,13 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
         server sent reasoning deltas; ``usage`` only if the request sent
         ``stream_options: {"include_usage": true}``, else empty (tolerated
         downstream, but the study loses its token counts).
+
+    Raises
+    ------
+    requests.exceptions.ChunkedEncodingError
+        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or
+        any ``finish_reason`` (truncated body) -- retryable, like the
+        non-streamed transport's parse failure on a truncated body.
     """
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
@@ -124,6 +131,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     reported_model: Optional[str] = None
     saw_reasoning = False
     saw_content = False
+    saw_done = False
 
     for line in response.iter_lines(decode_unicode=True):
         if not line:
@@ -132,8 +140,19 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
             continue  # SSE comment/keepalive line
         payload = line[len("data:"):].strip()
         if payload == "[DONE]":
+            saw_done = True
             break
-        chunk = json.loads(payload)
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError as err:
+            # Stdlib JSONDecodeError is a ValueError, NOT a RequestException,
+            # so it would escape complete()'s retry loop and abort a whole
+            # pooled evaluate(). Re-raise as the stream-broke class the retry
+            # loop already handles, keeping the two transports' error
+            # handling identical.
+            raise requests.exceptions.ChunkedEncodingError(
+                f"malformed SSE chunk: {payload[:200]!r}"
+            ) from err
         reported_model = chunk.get("model") or reported_model
         # The usage-only final chunk (include_usage) carries an EMPTY
         # choices list, so this must not assume choices[0] exists.
@@ -150,6 +169,17 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
                 saw_reasoning = True
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
+
+    # Completeness gate: an intermediary closing the stream cleanly at a
+    # chunk boundary raises nothing from iter_lines, so without this a
+    # half-generated body would be graded as a finished one. A stream that
+    # produced neither [DONE] nor any finish_reason is truncated; raise the
+    # retryable stream-broke class, exactly what a truncated non-streamed
+    # body produces via response.json().
+    if not saw_done and finish_reason is None:
+        raise requests.exceptions.ChunkedEncodingError(
+            "SSE stream ended without [DONE] or a finish_reason; body is incomplete"
+        )
 
     # NO content deltas -> content is None, NOT "": vLLM's non-streamed body
     # sends `"content": null` when a generation spends its whole budget in the

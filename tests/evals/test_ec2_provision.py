@@ -339,6 +339,8 @@ def test_serve_model_stashes_last_serve_with_the_actual_launched_argv(monkeypatc
     # Also an import-time global, so delenv would not reach the check.
     monkeypatch.setattr(ec2, "EC2_REQUIRE_GPU", "")
     monkeypatch.setattr(ec2, "_require_state", lambda: state)
+    # serve_model re-reads the file before writing (concurrent-writer guard).
+    monkeypatch.setattr(ec2, "_load_state", lambda: dict(state))
     saved, agent_calls = {}, []
 
     def fake_agent(state_arg, method, path, payload=None, timeout=120, connect_retries=40):

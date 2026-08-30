@@ -753,7 +753,10 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
         return {
             "instance_type": itype or None,
             "gpu": f"{gpus}x {name}" if gpus and name else None,
-            "tp": derive_tp(model, itype, spec),
+            # From last_serve like its siblings, never re-derived live: a
+            # reattach onto a different instance type or a spec edit would
+            # otherwise stamp a tp the completions never ran under.
+            "tp": last_serve.get("tp") if last_serve_matches else None,
             "region": state.get("region"),
             "availability_zone": state.get("availability_zone"),
             "instance_id": state.get("instance_id"),
@@ -1511,6 +1514,30 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     )
 
 
+def _attach(
+    state: Dict[str, Any], instance: Dict[str, Any], my_ip: str, how: str
+) -> Dict[str, Any]:
+    """Shared attach tail for both reattach/recovery branches.
+
+    Authorize ingress for `my_ip`, refresh and persist ``public_ip``, block
+    until the agent answers, log. One implementation so the attach protocol
+    cannot drift between the state-file and tag-recovery paths (which path
+    runs depends only on whether the local state file survived).
+    """
+    region = state["region"]
+    _authorize_ingress(region, state["security_group_id"], my_ip)
+    state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
+        region, state["instance_id"]
+    )
+    _save_state(state)
+    _wait_agent(state)
+    logging.info(
+        f"provision_spot_instance: {how} {state['instance_id']} "
+        f"({state['instance_type']} @ {region}, {state['public_ip']})"
+    )
+    return state
+
+
 def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 1: reuse the state-file instance.
 
@@ -1534,17 +1561,7 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     # (see _instance_state's Notes).
     inst_state = (instance or {}).get("State", {}).get("Name", "absent")
     if inst_state in ("pending", "running"):
-        _authorize_ingress(state["region"], state["security_group_id"], my_ip)
-        state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
-            state["region"], state["instance_id"]
-        )
-        _save_state(state)
-        _wait_agent(state)
-        logging.info(
-            f"provision_spot_instance: reattached to {state['instance_id']} "
-            f"({state['instance_type']} @ {state['region']}, {state['public_ip']})"
-        )
-        return state
+        return _attach(state, instance, my_ip, "reattached to")
     logging.info(
         f"provision_spot_instance: stale state ({state['instance_id']} is {inst_state}); relaunching."
     )
@@ -1580,18 +1597,7 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     region, instance = found
     state = _recover_state_from_instance(region, instance)
     if state is not None:
-        _authorize_ingress(region, state["security_group_id"], my_ip)
-        state["public_ip"] = instance.get("PublicIpAddress") or _wait_public_ip(
-            region, state["instance_id"]
-        )
-        _save_state(state)
-        _wait_agent(state)
-        logging.info(
-            f"provision_spot_instance: recovered state for {state['instance_id']} "
-            f"({state['instance_type']} @ {region}, {state['public_ip']}) "
-            "from its user-data"
-        )
-        return state
+        return _attach(state, instance, my_ip, "recovered (from its user-data)")
     name = next(
         (t["Value"] for t in instance.get("Tags", []) if t["Key"] == "Name"), "?"
     )
@@ -2212,8 +2218,14 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
         # 128k one, so after a spec edit a re-run must swap, not skip. No
         # record (older state file, or another client served) means swap.
         try:
+            # connect_retries=0 like every other probe: a throw-away check
+            # must not block ~10 min (40 retries x 15s) on an unreachable box.
             already_serving = (
-                bool(_agent(state, "GET", "/status", timeout=15).get("healthy"))
+                bool(
+                    _agent(
+                        state, "GET", "/status", timeout=15, connect_retries=0
+                    ).get("healthy")
+                )
                 and list_models() == [model]
                 and state.get("serving") == serve_payload
             )
@@ -2236,17 +2248,31 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     # drift check above; ``last_serve`` is the stable-keyed record
     # server_config() reads back, so the argv that ACTUALLY launched stays
     # visible after a spec edit or after the box is gone.
-    state["serving"] = serve_payload
-    state["last_serve"] = {
-        "model": model,
-        "hf_model_id": spec["hf_model_id"],
-        "tp": serve_payload["tp"],
-        "max_model_len": serve_payload["max_model_len"],
-        "vllm_args": list(serve_payload["vllm_args"]),
-        "image": EC2_VLLM_IMAGE,
-        "served_at": datetime.now(timezone.utc).isoformat(),
-    }
-    _save_state(state)
+    #
+    # Re-read the state file before writing: the wait above can span hours
+    # (cold checkpoint pulls), and a concurrent provision may have recorded a
+    # replacement box in the meantime. Writing the entry snapshot back would
+    # clobber that newer instance's identity -- requests would go to the dead
+    # box and shutdown would terminate the wrong id.
+    current = _load_state()
+    if current is None or current.get("instance_id") != state.get("instance_id"):
+        logging.warning(
+            "serve_model: state file no longer records this instance "
+            f"({state.get('instance_id')}); not writing last_serve."
+        )
+    else:
+        current["serving"] = serve_payload
+        current["last_serve"] = {
+            "model": model,
+            "hf_model_id": spec["hf_model_id"],
+            "tp": serve_payload["tp"],
+            "max_model_len": serve_payload["max_model_len"],
+            "vllm_args": list(serve_payload["vllm_args"]),
+            "image": EC2_VLLM_IMAGE,
+            "served_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _save_state(current)
+        state = current
     logging.info(f"serve_model: {model!r} is up at {_base_url()}")
     if state.get("s3_cache"):
         # Weights are complete on disk, so refresh the S3 mirror in the

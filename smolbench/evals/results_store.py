@@ -720,7 +720,11 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 continue
             local_path.parent.mkdir(parents=True, exist_ok=True)
             body = client.get_object(Bucket=store.bucket, Key=key)["Body"].read()
-            local_path.write_bytes(body)
+            # tmp + os.replace, matching Marks.dump: a file that exists must
+            # never be a torn write, because resume-skips gate on presence.
+            tmp = local_path.with_name(local_path.name + ".tmp")
+            tmp.write_bytes(body)
+            os.replace(tmp, local_path)
             downloaded += 1
 
     logging.info(

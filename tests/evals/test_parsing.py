@@ -39,6 +39,12 @@ def test_tof_extraction(text, value, violation):
     [("2520", 2520, None), ("-7", -7, None), (" 42 ", 42, None),
      ("Answer: 315", 315, PREFIXED), ("**42**", 42, MARKUP), ("\\boxed{280}", 280, MARKUP),
      ("2520 // 8 = 315\n\n315", 315, MULTIPLE_VALUES), ("2520/2", 1260, EXPRESSION),
+     # A worked calculation after an "answer" lead-in: the terminal integer is
+     # the result; the first-after-lead would score the operand 2520.
+     ("The answer is computed as 2520 / 8 = 315", 315, MULTIPLE_VALUES),
+     # Over-long but varied bare integer: out of range, NOT a repetition
+     # collapse -- must not inflate the DEGENERATE census.
+     ("1234567890" * 5, None, UNPARSEABLE),
      ("2520//2", 1260, EXPRESSION), ("1260 + 0", 1260, EXPRESSION),
      ("2520 - 5 * 2", 2510, EXPRESSION), ("", None, EMPTY), ("no number here", None, UNPARSEABLE)],
 )

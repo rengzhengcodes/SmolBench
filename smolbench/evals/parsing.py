@@ -102,6 +102,14 @@ _TERMINAL_INT = re.compile(
     r"(?:answer\s*[:\-=]*\s*)?\**\s*\\?boxed\{?\s*(-?\d+)\s*\}?\**\s*[.!*\"'`]*\s*$",
     re.IGNORECASE,
 )
+#: The multi-integer tail check: like ``_TERMINAL_INT`` but the ``boxed``
+#: markup itself is optional, so a plain concluding integer ("... = 315")
+#: also counts as the stated result. ``_TERMINAL_INT`` keeps ``boxed``
+#: mandatory because its fullmatch branch labels the whole response MARKUP.
+_TERMINAL_ANSWER_INT = re.compile(
+    r"(?:answer\s*[:\-=]*\s*)?\**\s*(?:\\?boxed\{?\s*)?(-?\d+)\s*\}?\**\s*[.!*\"'`]*\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -315,7 +323,10 @@ def parse_numeric(text: str) -> ParseResult:
 
     if re.fullmatch(r"-?\d+", stripped):
         value = _safe_int(stripped)
-        return ParseResult(value, None if value is not None else DEGENERATE)
+        # Over-long is UNPARSEABLE, not DEGENERATE: is_degenerate already
+        # judged the text above, and a varied out-of-range integer is not a
+        # repetition collapse -- labeling it one would inflate the census.
+        return ParseResult(value, None if value is not None else UNPARSEABLE)
 
     # A bare integer wearing markup or punctuation, e.g. "**42**" or '"42".'
     # Only the number is present, so only the "no punctuation" clause broke.
@@ -342,7 +353,7 @@ def parse_numeric(text: str) -> ParseResult:
 
     # Several integers: a concluding "Answer: N" or a terminal integer is the
     # result, the earlier ones are working. FIRST would score the working.
-    terminal = _TERMINAL_INT.search(stripped[-_TAIL_WINDOW:])
+    terminal = _TERMINAL_ANSWER_INT.search(stripped[-_TAIL_WINDOW:])
     if terminal:
         return ParseResult(_safe_int(terminal.group(1)), MULTIPLE_VALUES)
     lead = _ANSWER_LEAD.split(stripped, maxsplit=1)
