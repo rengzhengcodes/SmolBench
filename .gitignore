@@ -144,7 +144,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.python-version
+# .python-version IS committed: it pins the single .venv to 3.12 (see the uv.lock
+# note above); `uv sync` must resolve the same interpreter from a fresh clone.
 
 # Spyder project settings
 .spyderproject
