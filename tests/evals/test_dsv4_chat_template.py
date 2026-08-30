@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 
+import jinja2
 import pytest
-
-jinja2 = pytest.importorskip("jinja2")
 
 from smolbench.evals.providers.ec2 import DSV4_CHAT_TEMPLATE
 from tests._paths import FIXTURES
