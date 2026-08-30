@@ -133,7 +133,7 @@ class AlignMap:
         path : Path, optional
             Defaults to ``corpus.data_root().parent / ALIGN_ASSET_NAME`` -- BESIDE
             the gitignored ~700 MB benchmark download, not inside it, per
-            `corpus.replay_passing_path`'s committed-sidecar layout.
+            `corpus.replay_passing_path`'s sidecar layout.
             `corpus.data_root()` resolves at call time, not at import, so a caller
             that repoints ``SMOLBENCH_LEAN_DATA`` first gets the new path.
 

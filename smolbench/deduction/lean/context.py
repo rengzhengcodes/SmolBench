@@ -155,8 +155,9 @@ class _TokenCounter:
     (see `_render_noise_parts`'s Notes).
     """
 
-    #: Names the counter in `token_matched_noise_prompt`'s `ValueError`
-    #: messages; nothing else consumes it.
+    #: Names the counter in the pad search's `ValueError` messages
+    #: (`token_matched_noise_prompt` and `choose_whitespace_unit`); nothing
+    #: else consumes it.
     name = "smolbench.deduction.lean.context._count_tokens (tiktoken cl100k_base, or len//4 fallback)"
 
     def count(self, text: str) -> int:

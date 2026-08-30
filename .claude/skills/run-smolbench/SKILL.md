@@ -46,16 +46,19 @@ directly from the repo root — no credentials, real production code path:
 # .venv/bin/python - <<'EOF' ... EOF
 import os, string, sys, threading
 sys.path.insert(0, ".")  # repo root: makes tests.conftest importable
-from tests.conftest import StubServer, chat_completion
+from tests.conftest import StubServer, StubTokenizer, chat_completion
 from smolbench.evals import provider
 from smolbench.induction.periodic import (
     PeriodicConfig, Prompter, get_periodic_numeric_quiz, numeric_count_query_gen)
 
 template = string.Template(
     "Rules:\n$positive_info\nHow many of positions 1..$seq_len include '$label'? Integer only.")
+# `tokenizer` is keyword-only and has NO default: the noise arm pads to an
+# exact token count, so a quiz cannot be built without one.
 quiz, _, _ = get_periodic_numeric_quiz(
     PeriodicConfig(n=2, labels=["fizz", "buzz"], seed=7),
-    Prompter(template, {}, numeric_count_query_gen))
+    Prompter(template, {}, numeric_count_query_gen),
+    tokenizer=StubTokenizer())
 
 server = StubServer()
 threading.Thread(target=server.serve_forever, daemon=True).start()

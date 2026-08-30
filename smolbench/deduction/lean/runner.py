@@ -154,7 +154,8 @@ def run_cell(
     Yields
     ------
     dict
-        One row per replicate, in `_execute_one_cell`'s schema.
+        One row per replicate, in `_execute_one_cell`'s schema minus
+        ``api_model`` (there is no separate display name here).
     """
     if verifier is None:
         verifier = _default_verifier()

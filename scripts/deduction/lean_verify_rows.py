@@ -63,7 +63,7 @@ _error_code = _aws.error_code
 
 
 # ---------------------------------------------------------------------------
-# Constants (exact names/values -- pinned by the caller's test suite)
+# Constants
 # ---------------------------------------------------------------------------
 DEFAULT_S3_PREFIX: str = "s3://smolbench-results-414266451290/deduction/runs"
 DEFAULT_RUNS_GLOB: str = "scaling_*"

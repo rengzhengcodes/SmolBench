@@ -27,7 +27,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."   # repo root
 
-# uv-managed Python needs the system CA bundle (see notebooks/deduction/README.md).
+# uv-managed Python needs the system CA bundle for the Zenodo/S3 downloads below.
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Tier 0: the generation/analysis side of smolbench.deduction.lean must import

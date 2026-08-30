@@ -13,7 +13,7 @@ notebooks/
   induction/                  family-ladder induction study
     run_study.py                the driver           <- fleet launches this by path
     induction_eval.ipynb        the exploration notebook
-    results/                    S3-mirrored replicate YAMLs  <- S3 key anchor
+    results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
   deduction/                   family-ladder Lean 4 deduction study
     run_study.py                the (generation-only) driver  <- ditto
@@ -45,7 +45,8 @@ script's `__file__`.
 Read-side consumers reach `results/` through
 `_power_common.results_dir(__file__, up=N)`, where `up` counts the levels
 between a script and its study root -- `up=1` for everything under
-`analysis/`. `tests/tooling/test_power_common.py` pins both call sites.
+`analysis/`. `tests/tooling/test_analysis_stats.py` pins both call sites
+(`test_shared_scaffolding_wiring`).
 
 **2. Both `run_study.py` files are launched by literal path.**
 `scripts/fleet/run_fleet.py` builds each lane's argv from
@@ -72,7 +73,7 @@ duration of each exec.
 The single notebook of this study's analyses. It imports the live modules
 above (sizing, paired, significance, error-bar and hint-vs-noise sections,
 gated behind `RUN_HEAVY` since they need the results store), ports the
-posterior DECIDED/EQUIVALENT/UNDECIDED classifier, and re-renders the
-§6.2 flip rate and §6.3 free bound from archived JSON streamed off S3,
-asserting equality with the stored numbers. It never writes archived data
+posterior DECIDED/EQUIVALENT/UNDECIDED classifier, and re-renders its
+§8 score-level flip rate and §9 free flip bound from archived JSON streamed
+off S3, asserting equality with the stored numbers. It never writes archived data
 to a local path. Outputs are committed cleared.

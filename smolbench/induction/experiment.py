@@ -79,7 +79,7 @@ class InductionExperiment:
     n_replicates: int = 30
     #: First replicate's seed; replicate 0 uses it exactly. Default 1776 (the
     #: July 4th nod); the family-ladder study overrides it to 0 on purpose --
-    #: see the module docstring's "Seed convention" section.
+    #: see ``notebooks/induction/run_study.py``'s "Seeds" paragraph.
     base_seed: int = 1776
     #: Info types evaluated per replicate, in serialization order. Forwarded to
     #: ``ReplicateHarness``. The default is the original three-condition set

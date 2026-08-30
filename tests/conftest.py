@@ -245,10 +245,9 @@ def _clear_provider_context_length_caches():
     after every test.
 
     Some tests avoid cross-test cache bleed by picking a globally unique
-    model-name string per test (see the "Unique model name per test avoids
-    ... lru_cache" comments in test_openai_compat.py and
-    test_lean_runner.py). Clearing around every test makes cross-test
-    isolation a real guarantee, rather than a per-test naming convention.
+    model-name string per test (``m-openrouter-shape``, ``mini/pi-model-a``).
+    Clearing around every test makes cross-test isolation a real guarantee,
+    rather than a per-test naming convention.
 
     The clear step is guarded by ImportError, so this fixture degrades
     gracefully (skips silently) if a provider module is ever renamed or

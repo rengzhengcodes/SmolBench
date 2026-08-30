@@ -2,8 +2,9 @@
 
 tests/ is grouped into subject subdirectories (evals/, induction/, deduction/,
 tooling/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
-(fixtures like lean_mini are shared across groups, and pytest resolves
-conftest.py by directory ancestry). Import these constants instead of hand-counting
+(one fixtures tree serves the groups that need one -- evals/, induction/ and
+deduction/ -- and pytest resolves conftest.py by directory ancestry). Import
+these constants instead of hand-counting
 ``Path(__file__).resolve().parents[N]``, which silently breaks whenever a
 test file moves to a different directory depth.
 """

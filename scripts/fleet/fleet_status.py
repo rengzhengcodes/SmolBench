@@ -42,7 +42,7 @@ def fleet_rows(
     client_factory : Callable[[str], Any] or None, optional
         Region name -> object exposing ``describe_instances(**kwargs)``; ``None``
         uses `_default_client_factory`. The seam that makes this testable with no
-        AWS SDK (``tests/tooling/test_run_fleet.py``'s ``_FakeEc2Client``).
+        AWS SDK (``tests/tooling/test_run_fleet.py`` injects a stub factory).
 
     Returns
     -------

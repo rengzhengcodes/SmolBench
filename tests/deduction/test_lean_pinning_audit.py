@@ -24,8 +24,9 @@ EXPECTED_COUNT = 300
 EXPECTED_SHA256 = "292194deb832f75ae2f4008a7d597e4d6ac765ff9c0c4e4a31b7eeab377e5b36"
 
 #: Corpus provenance. Pinned so a corpus swap cannot happen silently -- the
-#: recency finding in the audit doc is stated ENTIRELY in terms of this
-#: commit's trace date, so a different corpus invalidates that document.
+#: recency finding (notebooks/deduction/README.md, "Corpus date vs. model
+#: cutoffs") is stated ENTIRELY in terms of this commit's trace date, so a
+#: different corpus invalidates that section.
 EXPECTED_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
 EXPECTED_CREATION_TIME = "2024-03-24 23:38:32.469290"
 

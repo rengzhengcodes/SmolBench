@@ -1,7 +1,8 @@
 """Constants and path helpers shared by ``notebooks/{induction,deduction}/analysis/power_analysis.py``.
 
 Each caller keeps its own roster, contrasts, and statistics. Stdlib-only on purpose:
-both run under ``uv run --no-project``, with only numpy/scipy pulled in via ``--with``.
+both run under ``uv run --no-project``, with numpy/scipy (plus statsmodels for the
+induction leg) pulled in via ``--with``.
 """
 
 from pathlib import Path

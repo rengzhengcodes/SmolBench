@@ -73,8 +73,7 @@ method that needs the EC2 lifecycle (`provision`, `run`,
 `agent_status`, `teardown`) imports it lazily, inside the method body.
 A driver that imports `smolbench.induction.experiment` ahead of its
 `load_dotenv` call still gets the override. See that module's docstring
-(the "CRITICAL: no `smolbench.evals.providers.ec2` import at module scope"
-section) for the full contract.
+(its closing "CRITICAL" paragraph) for the full contract.
 
 ### Seed conventions
 
@@ -98,8 +97,11 @@ seed used against them.
 ### Offline vs. billed methods
 
 `InductionExperiment.summarize(model)` and `.cot_chain_lengths()` only
-read cached YAML off disk. They make no AWS or network calls, so you
-can call them any number of times. `.provision()`, `.run(model, ...)`,
+read stored marks back through the results store (`ReplicateHarness`'s
+`self.store`). They spend no EC2 or inference cost, so you can call them
+any number of times -- but against an S3-backed store
+(`SMOLBENCH_RESULTS_S3`) the reads are S3 requests, not local disk.
+`.provision()`, `.run(model, ...)`,
 `.agent_status()`, and `.teardown()` are LIVE AWS calls against a
 self-provisioned EC2 spot instance, billed for the duration it is up.
 See `smolbench/evals/providers/ec2.py` for the current per-hour rate and the

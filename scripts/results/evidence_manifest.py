@@ -3,8 +3,7 @@
 
 A results directory's ``EVIDENCE.json`` pins by sha256 every artifact a writeup
 relies on. ``notebooks/*/results/`` is gitignored wholesale, so some survive
-only inside tracked tarballs under
-``notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/``;
+only inside preserved tarballs (archived to S3; see ``notebooks/ARCHIVE.md``);
 those are addressed as ``tarball:<tarball-relpath>!<member-path>`` and hashed by
 STREAMING the member -- never extracted, since a scratch tree in a gitignored
 results directory is how untracked evidence gets born. :func:`verify` re-hashes

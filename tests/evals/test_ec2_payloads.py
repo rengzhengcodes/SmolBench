@@ -48,7 +48,7 @@ def _ec2_getenv_default(name: str) -> str:
 
 
 def test_payloads_are_stdlib_only_and_parse():
-    """No syntax above 3.10 and no non-stdlib imports in either payload."""
+    """Both payloads parse, and neither imports anything outside the stdlib."""
     stdlib = set(sys.stdlib_module_names)
     for payload in (AGENT_PY, WATCHDOG_PY):
         for node in ast.walk(ast.parse(payload)):

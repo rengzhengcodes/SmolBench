@@ -26,9 +26,10 @@ Tests are grouped by subsystem under test:
 
 ## Path conventions
 
-- `tests/conftest.py` and `tests/fixtures/` (including `fixtures/lean_mini`)
-  stay at the `tests/` root -- they are shared across every group, and
-  pytest resolves `conftest.py` by directory ancestry.
+- `tests/conftest.py` and `tests/fixtures/` (including `fixtures/lean_mini`,
+  which only `deduction/` loads) stay at the `tests/` root -- pytest resolves
+  `conftest.py` by directory ancestry, so its fixtures reach every group, and
+  one fixtures tree serves `evals/`, `induction/` and `deduction/`.
 - Import repo anchors from `tests/_paths.py` instead of hand-counting
   `parents[N]`; see that file for why.
 

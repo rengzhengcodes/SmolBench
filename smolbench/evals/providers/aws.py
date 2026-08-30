@@ -256,8 +256,8 @@ def _ensure_exec_role() -> str:
 
 
 # Pure kwargs builders -- no AWS I/O, no boto3 import, so
-# tests/evals/test_aws_provision.py pins each payload by dict equality with no
-# SageMaker client or provision_endpoint context.
+# tests/evals/test_aws_provision.py can pin a payload by calling one directly,
+# with no SageMaker client or provision_endpoint context.
 
 
 def _create_model_kwargs(model: str, spec: DeploySpec, role_arn: str) -> Dict[str, Any]:
@@ -343,9 +343,8 @@ def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
         Exactly three pairs in DEPENDENCY-SAFE order: ``"endpoint"`` (whose
         deletion stops the billed instance), ``"endpoint-config"``, ``"model"``.
         The calls are deferred, so building the list has no side effects.
-        Labels are bare (not ``f"endpoint {model}"``), pinned by
-        ``tests/evals/test_aws_provision.py::test_provision_endpoint_happy_path_full_lifecycle``;
-        ``provision_endpoint`` formats the model name into its own logs.
+        Labels are bare (not ``f"endpoint {model}"``): ``provision_endpoint``
+        formats the model name into its own logs.
     """
     mdl, cfg = f"{model}-model", f"{model}-config"
     return [
@@ -441,8 +440,8 @@ def provision_endpoint(model: str, timeout_min: int = 40):
         yield model
     finally:
         # Hand-rolled rather than delegated to _aws.best_effort_teardown: the
-        # success line names the model and the skip line does not, and
-        # test_aws_provision.py pins _teardown_steps' bare (label, call) shape.
+        # success line names the model and the skip line does not, which
+        # _teardown_steps' bare (label, call) shape leaves to this loop.
         for label, call in _teardown_steps(_sagemaker_client(), model):
             try:
                 call()

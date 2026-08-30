@@ -98,9 +98,9 @@ resolution order). Every loader in `smolbench.deduction.lean.corpus` raises
 an actionable `FileNotFoundError` naming the exact missing path if this
 step has not been done. The `replay_passing_*.jsonl` sidecars are generated
 from the bootstrapped dataset (`python -m smolbench.deduction.lean.cli
-filter --kind novel_premises --split val`) and are committed once
-generated, so a normal clone of this repo already has them without needing
-to regenerate.
+filter --kind novel_premises --split val`, ~70 min per split) and live
+beside the download at `data_root().parent`; they are not tracked -- see
+`notebooks/ARCHIVE.md` for the archived copies.
 
 ### The pinned 300
 

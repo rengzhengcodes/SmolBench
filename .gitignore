@@ -224,7 +224,9 @@ __marimo__/
 .hf_token
 
 # LeanDojo Benchmark 4 -- a ~700MB external dataset (Zenodo download), not a
-# generated artifact; the replay_passing_*.jsonl sidecars ARE committed.
+# generated artifact. The replay_passing_*.jsonl sidecars derived from it are
+# not committed either (regenerate with `smolbench.deduction.lean.cli filter`,
+# or restore from the archive -- see notebooks/ARCHIVE.md).
 notebooks/deduction/data/leandojo_benchmark_4/
 
 # Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool

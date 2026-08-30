@@ -1,6 +1,6 @@
 """SHA-256 golden pins of the induction generation pipelines.
 
-Hashes in tests/fixtures/golden_quizzes.json are recorded at the notebooks'
+Hashes in tests/fixtures/golden_quizzes.json are recorded at the studies'
 production configs, against conftest.StubTokenizer (offline, byte-stable).
 Any drift in generation, prompting, or noise padding trips these.
 """
@@ -61,7 +61,7 @@ TOKENIZER = StubTokenizer()
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_periodic_golden(seed):
-    # The periodic notebook's production config.
+    # The induction study's production config (notebooks/induction/run_study.py).
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     numeric = PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen)
     tof = PeriodicPrompter(PERIODIC_TOF_TMPL, {}, tof_membership_query_gen)
@@ -73,7 +73,7 @@ def test_periodic_golden(seed):
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_chromatic_golden(seed):
-    # The chromatic notebooks' production config.
+    # The chromatic study's production config; its notebooks are no longer in tree.
     cfg = ChromaticIntervalsConfig(n=int(12 * 250), intervals=250 // 4, colors=45, seed=seed)
     sub = {"role": "Twislax", "parade": "Gildane"}
     succession = ChromaticPrompter(CHROM_TMPL, sub, succession_query_gen, CHROM_EXT_TMPL)

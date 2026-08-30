@@ -1,7 +1,6 @@
 """Hold the on-instance payloads: control agent, idle watchdog, cloud-init.
 
-The ``.py.txt`` / ``.sh`` assets here ride to EC2 inside cloud-init user-data
-(or, for the train template, directly inside ``RunInstances``' UserData).
+The ``.py.txt`` / ``.sh`` assets here ride to EC2 inside cloud-init user-data.
 Nothing on the client imports them as modules; they run under Ubuntu 22.04's
 system python3 (3.10) and bash, so keep them stdlib-only and 3.10-compatible.
 ``tests/evals/test_ec2_payloads.py`` is their only pre-launch validation.

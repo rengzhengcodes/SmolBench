@@ -35,8 +35,9 @@ from the literal `notebook_dir="induction"` argument to
 and nothing under `analysis/` writes to the store -- they are
 read-only consumers of a synced-down local tree. Their depth affects only
 where they READ from, so the ones that need `results/` anchor it explicitly
-(`_power_common.results_dir(__file__, up=1)`, or `parents[1]`) rather than
-assuming a sibling. `tests/tooling/test_power_common.py` pins that.
+(`_power_common.results_dir(__file__, up=1)`) rather than
+assuming a sibling. `tests/tooling/test_analysis_stats.py`
+(`test_shared_scaffolding_wiring`) pins that.
 
 ## Study driver
 
@@ -50,9 +51,13 @@ assuming a sibling. `tests/tooling/test_power_common.py` pins that.
 
 ## analysis/ -- the published numbers
 
-Each script puts its own directory on `sys.path` and imports its siblings
-by bare name; `power_analysis.py` is the root of that chain and the only
-one that resolves `results/`.
+Each of the four chained scripts inserts a `__file__`-anchored directory on
+`sys.path` -- its own (`extens_vs_noise.py`, `significance_report.py`) or
+`notebooks/` (`power_analysis.py`, which imports `_power_common` from there,
+and `paired_analysis.py`) -- and imports its siblings by bare name off the
+script directory Python adds itself; `power_analysis.py` is the root of that
+chain and the only one that resolves `results/`. `multiplicity_sim.py` is
+standalone and inserts nothing.
 
 | File | What it's for |
 | --- | --- |

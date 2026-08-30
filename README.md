@@ -98,7 +98,7 @@ verification path's `lean-dojo` dependency.
 `aws` (boto3/botocore, for the EC2 and SageMaker/Bedrock providers),
 `lean` (the Lean theorem-proving stack), and `notebook` (matplotlib,
 python-dotenv, and other notebook-only dependencies). `smolbench` itself
-requires only Python 3.12+, `joblib`, `numpy`, `ordered-set`, `requests`,
+requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 `huggingface-hub`, and `tokenizers`.
 
 ## Run the tests

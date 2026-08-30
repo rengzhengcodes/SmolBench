@@ -97,12 +97,13 @@ notebook = [
     "smolbench[aws]",
     # smolbench.induction.figures plots results with matplotlib.
     "matplotlib>=3.10.0",
-    # The two power-analysis scripts (notebooks/{induction,deduction}/analysis/
-    # power_analysis.py) import scipy.stats for the CMH chi-square / Welch t
-    # reference distributions, and notebooks/induction additionally imports
-    # statsmodels for the omnibus interaction test. Both must stay declared:
-    # `uv sync` strips anything undeclared, and those scripts then fail on
-    # ModuleNotFoundError partway through a run.
+    # The analysis scripts under notebooks/{induction,deduction}/analysis/
+    # import scipy.stats for their reference distributions (induction
+    # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
+    # deduction hint_vs_noise.py: binom), and induction power_analysis.py
+    # additionally imports statsmodels for the omnibus interaction test. Both
+    # must stay declared: `uv sync` strips anything undeclared, and those
+    # scripts then fail on ModuleNotFoundError partway through a run.
     "scipy>=1.15",
     "statsmodels>=0.14",
 ]

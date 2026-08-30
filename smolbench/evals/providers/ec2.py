@@ -24,7 +24,8 @@ shutdown terminates the box and deletes its EBS volume.
 Env-read timing
     Provisioning ``EC2_*`` constants are captured at IMPORT time -- set them
     before the first import (e.g. keys.env); only ``EC2_INFERENCE_BASE_URL``,
-    ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE`` and ``HF_TOKEN`` are read at call
+    ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE``, ``EC2_CAPACITY_RESERVATION``
+    (and ``EC2_CAPACITY_RESERVATION_REGION``) and ``HF_TOKEN`` are read at call
     time. Setup needs ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region
     tried, more via ``EC2_REGIONS``), boto3-resolvable credentials, and
     ``HF_TOKEN`` only for gated repos (baked into user-data at provision
@@ -215,8 +216,8 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 #
 # Instance tiers (chosen from weights-size and 128k-KV arithmetic; the
 # fleet supervisor maps these to EC2_INSTANCE_TYPES per lane):
-#   tier A g6e.4xlarge  (1x L40S 48 GB):  nano-4b, gemma e2b/12b, ministral-3b
-#   tier B g6e.12xlarge (4x L40S 192 GB): qwen 27b, nano-30b, gemma-31b,
+#   tier A g6e.4xlarge  (1x L40S 48 GB):  nano-4b, gemma e2b, ministral-3b
+#   tier B g6e.12xlarge (4x L40S 192 GB): qwen 27b, nano-30b, gemma 12b/31b,
 #                                         glm-4.7-flash, ministral 8b/14b,
 #                                         exaone 32b/33b
 #   tier C p5.48xlarge  (8x H100 640 GB): qwen 122b/397b-fp8, super-120b,
@@ -437,7 +438,8 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
 
 #: ``num_attention_heads`` per family-ladder checkpoint, copied from each
 #: model's config.json (archived source scripts/arch/arch_configs_raw.json;
-#: test_deploy_specs drift-pins this map against it). Models absent here (the
+#: test_deploy_specs drift-pins this map against the vendored config.json rows
+#: in tests/fixtures/roster_configs.json). Models absent here (the
 #: qwen2.5-1.5b canary) fall back to their spec's static ``tp`` in derive_tp.
 MODEL_ATTENTION_HEADS = {
     "deepseek-v3.1": 128,
