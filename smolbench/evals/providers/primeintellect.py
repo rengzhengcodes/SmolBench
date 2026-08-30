@@ -6,15 +6,12 @@ the retry loop, response parsing, and parallel evaluation shared by every
 provider. Only Prime Intellect's endpoint, auth, and context-length lookup
 live here.
 
-Setup
------
-    PRIME_INTELLECT_API_KEY=<api key>
-    INFERENCE_PROVIDER=primeintellect   # to route smolbench.evals.provider here
-
-Tuning env vars (read at call time): ``PRIME_INTELLECT_MAX_PARALLEL_REQUESTS``
-(default 8), ``PRIME_INTELLECT_INFO`` / ``PRIME_INTELLECT_INFO_RESPONSE``
-(verbose logging). ``PRIME_INTELLECT_BASE_URL`` overrides the API root
-(offline stub tests; see tests/).
+Env, all read at call time: ``PRIME_INTELLECT_API_KEY``,
+``INFERENCE_PROVIDER=primeintellect`` (routes smolbench.evals.provider here),
+``PRIME_INTELLECT_MAX_PARALLEL_REQUESTS`` (default 8),
+``PRIME_INTELLECT_INFO`` / ``PRIME_INTELLECT_INFO_RESPONSE`` (verbose
+logging), ``PRIME_INTELLECT_TEAM_ID`` (team billing; see ``_extra_headers``),
+``PRIME_INTELLECT_BASE_URL`` (overrides the API root; offline stub tests).
 """
 
 import functools
@@ -28,10 +25,7 @@ _DEFAULT_BASE_URL: str = "https://api.pinference.ai/api/v1"
 
 
 def _base_url() -> str:
-    """Return the API root, resolved at call time.
-
-    This resolves at call time, so an env override needs no re-import.
-    """
+    """Return the API root, resolved at call time so an override needs no re-import."""
     return os.getenv("PRIME_INTELLECT_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
@@ -41,13 +35,10 @@ def _connection(model: str) -> Tuple[str, str]:
 
 
 def _extra_headers(model: str) -> Dict[str, str]:
-    """Return the optional team-billing header, resolved at call time.
+    """Return the ``X-Prime-Team-ID`` billing header, or ``{}`` for a personal account.
 
-    A team-billed Prime Intellect account routes billing and quota
-    through the ``X-Prime-Team-ID`` header. A personal account omits it
-    entirely. This function reads ``PRIME_INTELLECT_TEAM_ID`` on every
-    request attempt, so an operator can set it alongside the API key in
-    keys.env with no re-import needed.
+    ``PRIME_INTELLECT_TEAM_ID`` is read on every request attempt, so an
+    operator can set it alongside the API key in keys.env with no re-import.
     """
     team_id = os.getenv("PRIME_INTELLECT_TEAM_ID", "")
     return {"X-Prime-Team-ID": team_id} if team_id else {}
@@ -57,13 +48,13 @@ def _extra_headers(model: str) -> Dict[str, str]:
 def get_model_context_length(model: str) -> int:
     """Get `model`'s context window from Prime Intellect.
 
-    A model's window is constant, so this function caches the network
-    lookup. See the OpenRouter twin of this function for the rationale.
+    A model's window is constant, so the network lookup is cached; see the
+    OpenRouter twin of this function for the rationale.
     """
     response: Dict[str, Any] = metadata_get(
         f"{_base_url()}/models/{model}",
         os.getenv("PRIME_INTELLECT_API_KEY", ""),
-        check_status=False,  # unchecked -- see metadata_get's FIDELITY note
+        check_status=False,  # unchecked -- see metadata_get's check_status doc
     )
 
     ctx: int = response["context_length"]

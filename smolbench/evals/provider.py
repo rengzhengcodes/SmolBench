@@ -2,23 +2,20 @@
 Dispatch to the active inference provider, based on INFERENCE_PROVIDER.
 
 Set INFERENCE_PROVIDER in keys.env to openrouter (the default),
-primeintellect, aws (Amazon Bedrock by default; set AWS_INFERENCE_BASE_URL to
-target a SageMaker endpoint instead), or ec2 (a self-provisioned vLLM spot
-instance, whose endpoint is resolved at call time from the state file written
-by smolbench.evals.providers.ec2.provision_spot_instance). Then import
-query/complete/evaluate/get_model_context_length from here rather than from a
-provider-specific module.
+primeintellect, aws (Bedrock; set AWS_INFERENCE_BASE_URL to target a
+SageMaker endpoint instead), or ec2 (a self-provisioned vLLM spot instance,
+whose endpoint is resolved at call time from the state file written by
+smolbench.evals.providers.ec2.provision_spot_instance), then import
+query/complete/evaluate/get_model_context_length from here.
 
 Dispatch happens at CALL time -- the env var is read and the provider module
 imported on each call -- so a notebook only needs its env configured before the
-first query/evaluate call, not before any import.
-
-To mix providers per model in one process (one env var cannot express that),
-resolve explicitly with provider_module("ec2"), which bypasses the environment;
-smolbench.deduction.lean uses that pattern, everything else uses env dispatch.
-
-This module only dispatches. The AWS provisioning primitives shared by aws.py
-and ec2.py live in smolbench.evals._aws.
+first query/evaluate call, not before any import. To mix providers per model in
+one process (one env var cannot express that), resolve explicitly with
+provider_module("ec2"), which bypasses the environment; smolbench.deduction.lean
+uses that pattern, everything else uses env dispatch. This module only
+dispatches: the AWS provisioning primitives shared by aws.py and ec2.py live in
+smolbench.evals._aws.
 """
 
 import importlib
@@ -40,18 +37,19 @@ _PROVIDER_MODULES: dict[str, str] = {
 def provider_module(name: Optional[str] = None) -> ModuleType:
     """Resolve a provider module, either explicitly or from the environment.
 
-    ``name=None`` (the default) dispatches from ``INFERENCE_PROVIDER``
-    ("openrouter" when unset); an explicit `name` bypasses the environment
-    entirely.
+    Parameters
+    ----------
+    name : str, optional
+        Explicit provider name, bypassing the environment entirely; None (the
+        default) dispatches from ``INFERENCE_PROVIDER`` ("openrouter" unset).
 
     Raises
     ------
     ValueError
-        The resolved name is not a recognized provider, or it resolves to
-        "sagemaker" with no AWS_INFERENCE_BASE_URL set -- the aws module
-        defaults to the Bedrock URL, so it would otherwise silently hit
-        Bedrock. (ec2 needs no such guard: it raises at call time when it
-        finds no provisioned instance.)
+        Unrecognized provider name, or "sagemaker" with no
+        AWS_INFERENCE_BASE_URL set -- the aws module defaults to the Bedrock
+        URL, so it would otherwise silently hit Bedrock. (ec2 needs no such
+        guard: it raises at call time when it finds no provisioned instance.)
     """
     # Design: an explicit `name` bypasses the environment lookup entirely
     # rather than merely overriding it, so a caller resolving "ec2" here
@@ -82,17 +80,17 @@ def query(*args, **kwargs):
 
 
 def complete(*args, **kwargs):
-    """Query the active provider, returning the full ``ChatResult`` (content,
-    reasoning, token usage, server-reported model, finish_reason) instead of
-    query's narrowed ``(content, reasoning)`` 2-tuple; see ChatClient.complete."""
+    """Query the active provider, returning the full ``ChatResult`` (usage,
+    server-reported model, finish_reason) instead of query's narrowed
+    ``(content, reasoning)`` 2-tuple; see ChatClient.complete."""
     return provider_module().complete(*args, **kwargs)
 
 
 def evaluate(*args, **kwargs):
     """Evaluate a quiz on the active provider; see ChatClient.evaluate.
 
-    All providers share one implementation (smolbench.evals.openai_compat), so
-    per-call tuning behaves identically regardless of INFERENCE_PROVIDER.
+    Every provider shares that one implementation, so per-call tuning behaves
+    identically regardless of INFERENCE_PROVIDER.
     """
     return provider_module().evaluate(*args, **kwargs)
 

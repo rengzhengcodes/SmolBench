@@ -61,10 +61,23 @@ def split_run(
     """Partition `source`'s rows and theorem artifacts into n shard directories.
 
     Every gate runs on in-memory structures before the first shard directory is
-    created, so a failed gate leaves the tree untouched. `theorems_spec` must NOT
-    carry a ``shard`` key: this function adds ``shard: "i/n"`` per shard before
-    calling ``runner._select_theorems``. Returns the shard directory paths in
-    shard order.
+    created, so a failed gate leaves the tree untouched.
+
+    Parameters
+    ----------
+    source : Path
+        The unsharded run dir; READ only.
+    runs_root : Path
+        Parent the ``scaling_<key>_shard<i>of<n>`` dirs are created under.
+    theorems_spec : dict
+        The lane's theorems config; must NOT carry a ``shard`` key, since this
+        function adds ``shard: "i/n"`` per shard before calling
+        ``runner._select_theorems``.
+
+    Returns
+    -------
+    list[Path]
+        The shard directory paths, in shard order.
 
     Raises
     ------

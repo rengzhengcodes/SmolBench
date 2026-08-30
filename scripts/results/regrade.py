@@ -1,12 +1,12 @@
 """Re-grade collected replicates with the compliance-aware parser.
 
-Every mark stores its raw ``response``, so ``smolbench.evals.parsing`` can
-re-score a whole results tree with no model, no GPU and no re-run -- use this to
-bring arms graded under an older, stricter convention onto one convention, so
-they stay comparable. Per condition it reports before/after accuracy and changed
-verdicts, invalid marks recovered, and NONCOMPLIANCE: how often the model broke
-the output contract regardless of correctness, which separates degraded
-instruction following from degraded reasoning.
+Every mark stores its raw ``response``, so ``smolbench.evals.parsing`` re-scores
+a whole results tree with no model, no GPU and no re-run -- use this to bring
+arms graded under an older, stricter convention onto one convention. Per
+condition it reports before/after accuracy, changed verdicts, invalid marks
+recovered, and NONCOMPLIANCE: how often the model broke the output contract
+regardless of correctness, separating degraded instruction following from
+degraded reasoning.
 
 Dry run by default; ``--write`` rewrites the YAMLs in place. There is NO git
 safety net: ``.gitignore`` excludes ``notebooks/*/results/``, so no result YAML
@@ -18,11 +18,9 @@ S3-backed results guard: this script edits ``rep_*.yaml`` on the LOCAL
 filesystem only, while ``smolbench.evals.results_store.sync_down`` is a one-way
 S3-to-local mirror that OVERWRITES the local tree, so a local-only regrade is
 clobbered back to the stale S3 copy on the next sync -- invisibly, since a score
-flip preserves byte length. Before touching a single file, and regardless of
-``--write`` (a dry run's tallies off a non-authoritative local tree mislead just
-as badly), `main` resolves every study it would touch via `_s3_backed_studies`
-and returns nonzero if any is an ``S3ResultsStore``; the printed message gives
-the recovery sequence.
+flip preserves byte length. So `main` refuses -- before touching a file, and
+regardless of ``--write`` -- if `_s3_backed_studies` finds any requested study
+resolving to an ``S3ResultsStore``, printing the recovery sequence.
 
 Run from the repo root:
     .venv/bin/python scripts/results/regrade.py [--study induction] [--write]
@@ -54,12 +52,12 @@ def _s3_backed_studies(studies) -> List:
     """Return ``(study, tree, store.describe())`` for each S3-backed study in `studies`.
 
     `studies` are `STUDIES` keys; `tree` is ``REPO / STUDIES[study]``, the exact
-    directory `main` would read or write. The list is empty whenever every study
-    resolves locally, which is the case whenever ``SMOLBENCH_RESULTS_S3`` is
-    unset. Studies are resolved one at a time rather than short-circuiting on
-    that env var, so the printed refusal names each offending tree by its own
-    ``describe()`` value. ``results_store`` is imported lazily, per this repo's
-    house convention that importing a module must not require the AWS SDK.
+    directory `main` would read or write. Empty whenever every study resolves
+    locally, i.e. whenever ``SMOLBENCH_RESULTS_S3`` is unset. Studies are
+    resolved one at a time rather than short-circuiting on that env var, so the
+    refusal names each offending tree by its own ``describe()`` value.
+    ``results_store`` is imported lazily, per this repo's house convention that
+    importing a module must not require the AWS SDK.
     """
     from smolbench.evals.results_store import S3ResultsStore, resolve_store
 
@@ -75,14 +73,16 @@ def _s3_backed_studies(studies) -> List:
 def regrade_file(path: Path, parse) -> Dict:
     """Re-parse one ``rep_*.yaml`` replicate with `parse` (e.g. `parse_numeric`).
 
+    Nothing is written; the caller decides whether to dump the new `Marks`.
+
     Returns
     -------
     dict
         ``marks`` (a new `Marks` carrying the re-parsed score and compliance per
         mark), ``n``, ``before_correct``, ``before_invalid``, ``changed``
         (verdict changed), ``recovered`` (invalid -> real verdict), ``broke``
-        (real verdict -> invalid), and ``violations`` (a `Counter` of
-        output-contract violations).
+        (real verdict -> invalid), ``violations`` (`Counter` of output-contract
+        violations).
     """
     marks = Marks.load(path)
     new_marks = []
@@ -121,8 +121,8 @@ def main() -> int:
     """Re-grade every requested study and return a process exit code.
 
     Returns ``1`` if any requested study is S3-backed (see the module
-    docstring's guard) or if any mark regressed from a real verdict to invalid;
-    ``0`` otherwise.
+    docstring's "S3-backed results guard") or if any mark regressed from a real
+    verdict to invalid; ``0`` otherwise.
     """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")

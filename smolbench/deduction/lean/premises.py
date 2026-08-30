@@ -25,11 +25,10 @@ from .corpus import data_root
 class Premise:
     """One premise (theorem/def/instance/etc.) declared in the traced repo.
 
-    Built from one entry of a `corpus.jsonl` record's ``premises`` list. Distinct
-    from the lighter per-reference dicts in
-    ``smolbench.deduction.lean.corpus.TracedTactic.premises``; ``full_name`` is the
-    join key between the two, which `context.py`'s hint-chain rendering resolves via
-    `lookup`.
+    Built from one entry of a `corpus.jsonl` record's ``premises`` list.
+    ``full_name`` is the join key to the lighter per-reference dicts in
+    ``corpus.TracedTactic.premises``, which `context.py`'s hint-chain rendering
+    resolves via `lookup`.
     """
 
     #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``), unique
@@ -95,9 +94,9 @@ def lookup(full_name: str) -> Premise | None:
     """Look up a premise by fully-qualified name; None when absent.
 
     Absent means declared outside the traced repo, or dropped as a duplicate by
-    `_index`'s collision handling. Every caller here and in `context.py` treats None
-    as "premise unavailable" rather than an error -- ``context._render_hint_parts``
-    renders a "(not found in premise corpus)" placeholder instead of raising.
+    `_index`'s collision handling. Every caller here and in `context.py` treats
+    None as "premise unavailable" rather than an error --
+    ``context._render_hint_parts`` renders a placeholder instead of raising.
     """
     return _index().get(full_name)
 
@@ -106,9 +105,9 @@ def signature(p: Premise) -> str:
     """The premise signature: `p.code` up to the first top-level `:=`, rstripped.
 
     "Top-level" means outside any ``[]``, ``()`` or ``{}``: Lean attribute syntax
-    like ``@[to_additive (attr := simp) "..."]`` puts a ``:=`` inside the attribute,
-    so a naive split would chop the declaration in half. Many mathlib theorems have
-    no ``:=`` in `code` at all; those return the full `code`.
+    like ``@[to_additive (attr := simp) "..."]`` puts a ``:=`` inside the
+    attribute, so a naive split would chop the declaration in half. Many mathlib
+    theorems have no ``:=`` in `code` at all; those return the full `code`.
     """
     s = p.code
     depth = 0
@@ -126,9 +125,7 @@ def signature(p: Premise) -> str:
 
 
 def body(p: Premise) -> str:
-    """The premise source as captured in `corpus.jsonl` (`p.code`): signature-only
-    for theorems, signature plus ``:= body`` for defs.
-    """
+    """`p.code`: signature-only for theorems, signature plus ``:= body`` for defs."""
     return p.code
 
 
@@ -176,12 +173,11 @@ def _resolve_source(file_path: str) -> Path | None:
 def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: int = 200) -> str:
     """Slice the full declaration (statement + proof body) from a source file.
 
-    Reads `file_path` (corpus-relative, via `_resolve_source`) from
-    1-indexed `start_line`, and stops at the first of: the next line at
-    column 0 matching a top-level keyword (theorem/def/...), searching
-    from 1-indexed `end_line` onward; `max_lines` lines consumed; or end
-    of file. Returns the slice with trailing whitespace stripped, or `""`
-    if the source file is not found.
+    Reads `file_path` (corpus-relative, via `_resolve_source`) from 1-indexed
+    `start_line` and stops at the first of: the next column-0 line matching a
+    top-level keyword (theorem/def/...), searched from 1-indexed `end_line`
+    onward; `max_lines` lines consumed; or end of file. Returns the slice
+    rstripped, or ``""`` if the source file is not found.
     """
     src = _resolve_source(file_path)
     if src is None:
@@ -200,8 +196,9 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
 
 
 def body_with_proof(p: Premise) -> str:
-    """The full declaration including any proof body, via `slice_full_decl`;
-    falls back to `body(p)` if the source file is not accessible.
+    """The full declaration including any proof body, via `slice_full_decl`.
+
+    Falls back to `body(p)` when the source file is not accessible.
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
@@ -246,9 +243,8 @@ _LEAN_NOISE = frozenset({
 def _short_name_index() -> dict[str, list[str]]:
     """Map each premise's last-dot segment to the list of full_names sharing it.
 
-    Proof bodies reference premises both fully qualified
-    (``Set.subset_def``) and by bare short name (after ``open Set``); this
-    index lets `referenced_premises` match the latter.
+    Proof bodies reference premises both fully qualified (``Set.subset_def``)
+    and by bare short name (after ``open Set``); this index matches the latter.
     """
     out: dict[str, list[str]] = {}
     for full in _index().keys():
@@ -261,11 +257,11 @@ def _short_name_index() -> dict[str, list[str]]:
 def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     """Find premises referenced by name in `full_name`'s body (proof plus signature).
 
-    Resolves each identifier-like token against the premise index by exact full-name
-    match, or by short-name match when unambiguous, filtering out Lean keywords,
-    common tactics and very common short identifiers (`_LEAN_NOISE`). Returns a
-    tuple so the result stays hashable and lru-cacheable; empty if `full_name` is
-    not found or has no recognizable references.
+    Resolves each identifier-like token against the premise index by exact
+    full-name match, or by short-name match when unambiguous, filtering out Lean
+    keywords, common tactics and very common short identifiers (`_LEAN_NOISE`).
+    Returns a tuple so the result stays hashable and lru-cacheable; empty if
+    `full_name` is not found or has no recognizable references.
     """
     p = lookup(full_name)
     if p is None:
@@ -301,18 +297,24 @@ def premise_dep_closure(
 ) -> list[Premise]:
     """Run a BFS over per-premise references from `seeds`, to depth `depth`.
 
-    `seeds` are typically a tactic's true premises, resolved via `lookup`;
-    they are excluded from the result. ``depth <= 0``, or an empty `seeds`,
-    short-circuits to ``[]`` without calling `referenced_premises` at all.
-    `max_premises` caps the result to keep prompts bounded: the BFS returns
-    as soon as ``len(out) >= max_premises`` -- mid-hop, and even
-    mid-frontier-item, without finishing the premise being expanded or the
-    rest of that hop's frontier.
+    Parameters
+    ----------
+    seeds : list[Premise]
+        BFS roots (typically a tactic's true premises, resolved via `lookup`),
+        excluded from the result. Empty `seeds`, or ``depth <= 0``,
+        short-circuits to ``[]`` without calling `referenced_premises` at all.
+    max_premises : int
+        Result cap that keeps prompts bounded, checked mid-frontier: the BFS
+        returns the instant it is reached, without finishing the premise being
+        expanded or the rest of that hop's frontier.
 
-    Returns the premises reachable from `seeds` in strictly hop-major BFS
-    order (within a hop: frontier order, then per-premise reference order),
-    deduped across hops at their first-discovered hop -- so the
-    `max_premises` cut always drops the deepest, least-relevant tail.
+    Returns
+    -------
+    list[Premise]
+        Premises reachable from `seeds` in strictly hop-major BFS order (within
+        a hop: frontier order, then per-premise reference order), deduped at
+        their first-discovered hop -- so the `max_premises` cut always drops the
+        deepest, least-relevant tail.
     """
     if depth <= 0 or not seeds:
         return []

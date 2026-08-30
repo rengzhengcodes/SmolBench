@@ -50,12 +50,16 @@ class ToF(QnA):
 
     @staticmethod
     def condition(ans: str) -> bool:
-        """Convert a raw model response to a bool, case-insensitively and after
-        stripping every non-letter character.
+        """Convert a raw model response to a bool.
 
-        Raises ``ValueError`` unless the remainder is exactly "true"/"false" --
-        so ``"Answer: False"`` raises. The lenient recovery path is
-        ``smolbench.evals.parsing.parse_tof``.
+        Case-insensitive, and after stripping every non-letter character. The
+        lenient recovery path is ``smolbench.evals.parsing.parse_tof``.
+
+        Raises
+        ------
+        ValueError
+            The remainder is not exactly "true"/"false" -- so ``"Answer: False"``
+            raises.
         """
         # Strip everything but letters, so wrapping punctuation or markup
         # (e.g. "**True**") does not block the match below.
@@ -79,11 +83,15 @@ class Numeric(QnA):
 
     @staticmethod
     def condition(ans: str) -> int:
-        """Extract the FIRST integer in a raw model response; raises
-        ``ValueError`` when there is none.
+        """Extract the FIRST integer in a raw model response.
 
         First-match scores an operand when the model shows its working;
         ``smolbench.evals.parsing.parse_numeric`` is the robust path.
+
+        Raises
+        ------
+        ValueError
+            The response contains no integer.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -158,8 +166,8 @@ class Marks:
         """Count the marks whose response broke the prompt's output contract.
 
         Independent of ``correct``/``incorrect``/``invalid``: a response can be
-        graded correct and still have broken the format. That population is
-        what separates degraded instruction following from degraded reasoning.
+        graded correct and still have broken the format, so this population
+        separates degraded instruction following from degraded reasoning.
         """
         return sum(1 for m in self.marks if m.compliance is not None)
 

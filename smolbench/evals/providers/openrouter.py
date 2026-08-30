@@ -6,15 +6,11 @@ the retry loop, response parsing, and parallel evaluation shared by every
 provider. Only OpenRouter's endpoint, auth, and context-length lookup live
 here.
 
-Setup
------
-    OPENROUTER_API_KEY=<api key>
-    INFERENCE_PROVIDER=openrouter   # to route smolbench.evals.provider here
-
-Tuning env vars (read at call time): ``OPENROUTER_MAX_PARALLEL_REQUESTS``
-(default 8), ``OPENROUTER_INFO`` / ``OPENROUTER_INFO_RESPONSE`` (verbose
-logging). ``OPENROUTER_BASE_URL`` overrides the API root (offline stub
-tests; see tests/).
+Env, all read at call time: ``OPENROUTER_API_KEY``,
+``INFERENCE_PROVIDER=openrouter`` (routes smolbench.evals.provider here),
+``OPENROUTER_MAX_PARALLEL_REQUESTS`` (default 8), ``OPENROUTER_INFO`` /
+``OPENROUTER_INFO_RESPONSE`` (verbose logging), ``OPENROUTER_BASE_URL``
+(overrides the API root; offline stub tests).
 """
 
 import functools
@@ -28,10 +24,7 @@ _DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
 
 
 def _base_url() -> str:
-    """Return the API root, resolved at call time.
-
-    This resolves at call time, so an env override needs no re-import.
-    """
+    """Return the API root, resolved at call time so an override needs no re-import."""
     return os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
@@ -44,15 +37,14 @@ def _connection(model: str) -> Tuple[str, str]:
 def get_model_context_length(model: str) -> int:
     """Get `model`'s context window from its OpenRouter endpoint listing.
 
-    A model's window is constant, so this function caches the network
-    lookup. evaluate() calls it once per replicate, and re-fetching one
-    integer per call would cost a round trip, plus a fresh chance to trip
-    a 429.
+    A model's window is constant, so the network lookup is cached: evaluate()
+    calls this once per replicate, and re-fetching one integer per call would
+    cost a round trip plus a fresh chance to trip a 429.
     """
     response: Dict[str, Any] = metadata_get(
         f"{_base_url()}/models/{model}/endpoints",
         os.getenv("OPENROUTER_API_KEY", ""),
-        check_status=False,  # unchecked -- see metadata_get's FIDELITY note
+        check_status=False,  # unchecked -- see metadata_get's check_status doc
     )
 
     # pick the first available endpoint

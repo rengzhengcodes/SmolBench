@@ -15,17 +15,17 @@ no repair row carries an "error" the model gets no signal for.
 
 `lean3-name` detection and the `rename` transform need the Lean3<->Lean4
 `#align` map, which `AlignMap.load` reads from a gzipped-JSON asset at
-``corpus.data_root().parent / ALIGN_ASSET_NAME`` -- BESIDE the wholesale
-gitignored benchmark download, per `corpus.replay_passing_path`'s
-committed-sidecar layout. Every public function takes ``align=None``,
-which disables exactly that rule and that transform and never raises.
+``corpus.data_root().parent / ALIGN_ASSET_NAME`` -- BESIDE the gitignored
+benchmark download, per `corpus.replay_passing_path`'s committed-sidecar
+layout. Every public function takes ``align=None``, which disables exactly
+that rule and that transform, and never raises.
 
 Stdlib plus `.corpus` only (no `lean_dojo`, no torch). `corrupt_tail` is
-deterministic: it takes an explicit `random.Random` and reads no global or
-wall-clock state, so a build is byte-reproducible from its seed. Bracket
-depth (``⟨⟩ () [] {}``) accumulates **cumulatively across lines**, never
-reset per line, so an unclosed ``⟨`` suppresses a trailing-comma flag
-several lines later; string-literal contents are deliberately not skipped.
+deterministic: its `random.Random` argument is the only randomness source,
+so a build is byte-reproducible from its seed. Bracket depth (``⟨⟩ () []
+{}``) accumulates cumulatively across lines, never reset per line, so an
+unclosed ``⟨`` suppresses a trailing-comma flag several lines later;
+string-literal contents are deliberately not skipped.
 """
 
 from __future__ import annotations
@@ -50,14 +50,21 @@ ALIGN_ASSET_NAME = "lean3_align.json.gz"
 class Relic:
     """One Lean 3 relic found by `find_relics`, or claimed by `corrupt_tail`.
 
-    `kind` is one of ``refl``, ``existsi``, ``binder-comma``,
-    ``trailing-comma``, ``begin-end``, ``lean3-name``. `text` is the
-    offending token (``refl``/``existsi``/``lean3-name``) or stripped line
-    (``begin-end``/``trailing-comma``, or the binder-through-comma snippet).
-    `fix` is the Lean 4 replacement, ``None`` where no single-token fix
-    applies: ``begin-end``, and ``binder-comma`` (whose fix would mean
-    guessing which arrow to insert). `line` is 0-indexed within the scanned
-    text.
+    Attributes
+    ----------
+    kind : str
+        One of ``refl``, ``existsi``, ``binder-comma``, ``trailing-comma``,
+        ``begin-end``, ``lean3-name``.
+    text : str
+        The offending token (``refl``/``existsi``/``lean3-name``) or stripped
+        line (``begin-end``/``trailing-comma``, or the binder-through-comma
+        snippet).
+    fix : str or None
+        The Lean 4 replacement; ``None`` where no single-token fix applies --
+        ``begin-end``, and ``binder-comma`` (whose fix would mean guessing which
+        arrow to insert).
+    line : int
+        0-indexed within the scanned text.
     """
 
     kind: str
@@ -81,9 +88,8 @@ class AlignMap:
     whole map; an ambiguous partial name never silently picks a candidate.
 
     The constructor copies `lean3_to_lean4` and builds every lookup index
-    (suffix buckets, the Lean4 suffix set, `reverse_unique`) once, since
-    scans call `lookup_lean3` / `is_lean4_name` / `reverse_unique` once per
-    candidate token at dataset-build scale.
+    (suffix buckets, the Lean4 suffix set, `reverse_unique`) once, since scans
+    query them once per candidate token at dataset-build scale.
     """
 
     def __init__(self, lean3_to_lean4: dict[str, str]) -> None:
@@ -136,18 +142,24 @@ class AlignMap:
     def load(cls, path: Path | None = None) -> AlignMap | None:
         """Load the align map from its gzip-compressed JSON asset.
 
-        Returns ``None`` when the file does not exist. Absence is not an error:
-        every other function here accepts ``align=None`` and degrades to
-        parse-level-only detection/corruption.
-
-        `path` defaults to ``corpus.data_root().parent / ALIGN_ASSET_NAME`` --
-        beside the gitignored ~700 MB benchmark download, not inside it.
-        `corpus.data_root()` is resolved here at call time, not cached at import,
-        so a caller (or test) that repoints ``SMOLBENCH_LEAN_DATA`` first gets
-        the fresh path.
-
         Asset format: gzip-compressed UTF-8 JSON,
         ``{"lean3_to_lean4": {<lean3 name>: <lean4 name>, ...}}``.
+
+        Parameters
+        ----------
+        path : Path, optional
+            Defaults to ``corpus.data_root().parent / ALIGN_ASSET_NAME`` --
+            beside the gitignored ~700 MB benchmark download, not inside it.
+            `corpus.data_root()` is resolved at call time, not cached at import,
+            so a caller (or test) that repoints ``SMOLBENCH_LEAN_DATA`` first
+            gets the fresh path.
+
+        Returns
+        -------
+        AlignMap or None
+            ``None`` when the file does not exist. Absence is not an error:
+            every other function here accepts ``align=None`` and degrades to
+            parse-level-only detection/corruption.
         """
         if path is None:
             path = corpus.data_root().parent / ALIGN_ASSET_NAME
@@ -161,9 +173,9 @@ class AlignMap:
         """Resolve a candidate identifier token to its Lean4 name, if known.
 
         Order: exact Lean3 key; then `token`'s last two dotted components
-        against a suffix bucket holding exactly one lean3 name (checked first,
-        being more specific); then its last component likewise. ``None`` if
-        nothing resolves, including when a matching bucket is ambiguous (>= 2
+        against a suffix bucket holding exactly one lean3 name (more specific,
+        so checked first); then its last component likewise. ``None`` if nothing
+        resolves, including when a matching bucket is ambiguous (>= 2
         candidates). `token` is expected already trimmed of trailing ``.``/``,``
         (see `_iter_candidate_tokens`).
         """
@@ -183,8 +195,8 @@ class AlignMap:
 
         The CLEAN guard in `find_relics`' ``lean3-name`` rule: a token that
         resolves via `lookup_lean3` is still not flagged when it is itself
-        already valid Lean 4. Defense in depth -- with a well-formed align map
-        this branch should be unreachable.
+        already valid Lean 4. Defense in depth -- unreachable with a
+        well-formed align map.
         """
         return token in self._lean4_suffixes
 
@@ -256,11 +268,11 @@ _REFL_HEAD_MARKERS = (";", "<;>", "·", "{")  # ';' '<;>' '·' '{'
 def _is_head_position(line_prefix: str) -> bool:
     """True if text following `line_prefix` sits in tactic-head position.
 
-    Head position = everything before the token on its line is empty, or
-    ends with a `_REFL_HEAD_MARKERS` combinator. Single source of the
-    predicate for both `find_relics`' rule 2 and the `rfl->refl` transform
+    Head position = everything before the token on its line is empty, or ends
+    with a `_REFL_HEAD_MARKERS` combinator. Single source of the predicate for
+    both `find_relics`' rule 2 and the `rfl->refl` transform
     (`_head_rfl_matches`), which makes an injected `refl` re-detectable by
-    construction. A term-position `rfl` (`exact rfl`) must not be targeted,
+    construction: a term-position `rfl` (`exact rfl`) must not be targeted,
     since rule 2 deliberately does not flag `exact refl`.
     """
     p = line_prefix.rstrip()
@@ -270,13 +282,13 @@ def _is_head_position(line_prefix: str) -> bool:
 def _iter_candidate_tokens(text: str) -> list[tuple[re.Match, str]]:
     """Extract lean3-name candidate ``(match, token)`` pairs from `text`.
 
-    `token` is the raw match with a trailing ``.``/``,`` stripped (sentence
-    or list punctuation, not part of the identifier). Only tokens of length
-    >= 3 containing a ``_`` or ``.`` are kept: a short plain identifier
-    (`x`, `hx`, `n`) is never a lemma name and would dominate false
-    positives. The `re.Match` spans the ORIGINAL, untrimmed token, so a
-    caller needing the token's own span must use ``match.start()`` and
-    ``match.start() + len(token)``, not ``match.end()``.
+    `token` is the raw match with a trailing ``.``/``,`` stripped (sentence or
+    list punctuation, not part of the identifier). Only tokens of length >= 3
+    containing a ``_`` or ``.`` are kept: a short plain identifier (`x`, `hx`,
+    `n`) is never a lemma name and would dominate false positives. The
+    `re.Match` spans the ORIGINAL, untrimmed token, so a caller needing the
+    token's own span must use ``match.start()`` and ``match.start() +
+    len(token)``, not ``match.end()``.
     """
     out: list[tuple[re.Match, str]] = []
     for m in _CANDIDATE_RE.finditer(text):
@@ -328,24 +340,23 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
 def find_relics(text: str, align: AlignMap | None = None) -> list[Relic]:
     """Scan `text` for Lean 3 syntax and, optionally, mathlib3 lemma names.
 
-    Applies six rules (see the inline comments), each precision-guarded
-    against Lean 4 constructs that merely resemble a relic, and pinned by
+    Applies six rules (see the inline comments), each precision-guarded against
+    Lean 4 constructs that merely resemble a relic, and pinned by
     ``tests/deduction/test_lean_lean3.py``. Pure function: O(n) for the
     parse-level rules, plus one `AlignMap.lookup_lean3` and one
-    `AlignMap.is_lean4_name` call per candidate token for the name rule.
-
-    `text` may be multi-line; bracket depth accumulates across the whole
-    text, never reset per line. With ``align=None`` the ``lean3-name`` rule
-    is skipped entirely and the other five still run.
+    `AlignMap.is_lean4_name` call per candidate token for the name rule. `text`
+    may be multi-line; bracket depth accumulates across the whole text, never
+    reset per line. With ``align=None`` the ``lean3-name`` rule is skipped and
+    the other five still run.
 
     Returns
     -------
     list of Relic
-        One per distinct ``(kind, text, line)`` triple, in scan order -- so
-        two `refl` tactics on one line report as one relic. The five
-        parse-level rules run line by line, top to bottom, in rule order;
-        ``binder-comma`` is a separate whole-text pass, since a binder's
-        arrow or comma can follow a line break.
+        One per distinct ``(kind, text, line)`` triple, in scan order -- so two
+        `refl` tactics on one line report as one relic. The five parse-level
+        rules run line by line, top to bottom, in rule order; ``binder-comma``
+        is a separate whole-text pass, since a binder's arrow or comma can
+        follow a line break.
     """
     relics: list[Relic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -446,16 +457,15 @@ def _rename_candidates(
 ) -> list[tuple[re.Match, str, str]]:
     """Renamable ``(match, token, truncated_lean3_spelling)`` triples in `text`.
 
-    A candidate survives only if the spelling `_apply_rename` would actually
-    write is itself flaggable by `find_relics`' rule 6, checked against rule
-    6's own predicate chain: it must differ from the original token (~8k
-    ``#align`` pairs are identity spellings like ``#align inv_inv inv_inv``,
-    where a "rename" is a byte-level no-op); it must pass
-    `_iter_candidate_tokens`' shape filter (len >= 3, contains ``_`` or
-    ``.``); and `align.lookup_lean3` must resolve it while
-    `align.is_lean4_name` rejects it, which excludes a bare name that is
-    also a valid Lean4 suffix (``inv_comp_eq``). Without this the corrupter
-    could inject a relic the detector never corroborates, making
+    A candidate survives only if the spelling `_apply_rename` would write is
+    itself flaggable by `find_relics`' rule 6, checked against rule 6's own
+    predicate chain: it must differ from the original token (~8k ``#align``
+    pairs are identity spellings like ``#align inv_inv inv_inv``, where a
+    "rename" is a byte-level no-op); it must pass `_iter_candidate_tokens`'
+    shape filter (len >= 3, contains ``_`` or ``.``); and `align.lookup_lean3`
+    must resolve it while `align.is_lean4_name` rejects it, which excludes a
+    bare name that is also a valid Lean4 suffix (``inv_comp_eq``). Otherwise
+    the corrupter could inject a relic the detector never corroborates, making
     `synth_error` claim ``unknown identifier 'inv_inv'`` about valid Lean 4.
     """
     if align is None:
@@ -491,11 +501,11 @@ def _apply_rename(
 ) -> tuple[str, list[Relic]] | None:
     """`rename`: replace one seeded-chosen Lean4 name with its Lean3 spelling.
 
-    The replacement is the `reverse_unique` Lean3 name TRUNCATED to the
-    token's own number of dotted components -- a 2-component token resolving
-    to ``category_theory.iso.inv_comp_eq`` becomes ``iso.inv_comp_eq`` --
-    mimicking a partially-qualified mathlib3 reference instead of inventing
-    an implausible fully-qualified name.
+    The replacement is the `reverse_unique` Lean3 name TRUNCATED to the token's
+    own number of dotted components -- a 2-component token resolving to
+    ``category_theory.iso.inv_comp_eq`` becomes ``iso.inv_comp_eq`` -- mimicking
+    a partially-qualified mathlib3 reference rather than inventing an
+    implausible fully-qualified name.
     """
     candidates = _rename_candidates(text, align)
     if not candidates:
@@ -554,9 +564,14 @@ def _first_binder_arrow(text: str) -> tuple[re.Match, int, int] | None:
     "Depth-0" is the binder keyword's own cumulative bracket depth, not
     `_binder_forward_scan`'s relative depth: the `binder` transform corrupts
     only a top-level binder. A binder already followed by a comma before any
-    arrow is already a `binder-comma` relic with nothing left to corrupt, so
-    a ``"comma"`` scan result counts as no match. Returns ``(binder_match,
-    arrow_start, arrow_end)``, or ``None`` if no binder qualifies.
+    arrow is already a `binder-comma` relic with nothing left to corrupt, so a
+    ``"comma"`` scan result counts as no match.
+
+    Returns
+    -------
+    (re.Match, int, int) or None
+        ``(binder_match, arrow_start, arrow_end)``, or ``None`` if no binder
+        qualifies.
     """
     for m in _BINDER_RE.finditer(text):
         # The text here is proof-tail-sized (a handful of lines), so
@@ -583,8 +598,8 @@ def _apply_binder(
 
     Removing the arrow is the mandatory part -- that is what makes it a
     `binder-comma` relic. `fun` also becomes `λ` because Lean 3 has no `fun`
-    keyword, so `fun x, e` would be a syntax the detector flags but Lean 3
-    never produced.
+    keyword, so `fun x, e` would be a syntax the detector flags but Lean 3 never
+    produced.
     """
     found = _first_binder_arrow(text)
     if found is None:
@@ -692,17 +707,14 @@ def corrupt_tail(
 ) -> tuple[str, list[Relic]] | None:
     """Inject a seeded mix of Lean 3 relics into a clean Lean 4 tactic tail.
 
-    Computes which of the five transforms (`rename`, `rfl->refl`, `binder`,
-    `trailing`, `use->existsi`) apply to `tail`, draws ``n = rng.randint(1,
-    min(3, len(applicable)))``, shuffles the applicable names (seeded), and
-    applies the first `n` against the *evolving* text -- re-checking
-    applicability immediately before each, since an earlier transform can
-    consume what a later one needed, and skipping any that no longer applies
-    or whose application is a no-op.
+    Draws ``n = rng.randint(1, min(3, len(applicable)))`` of the five transforms
+    (`rename`, `rfl->refl`, `binder`, `trailing`, `use->existsi`) applicable to
+    `tail`, shuffles them (seeded), and applies them against the *evolving*
+    text, re-checking applicability immediately before each and skipping
+    no-ops -- an earlier transform can consume what a later one needed.
 
     Deterministic given ``(tail, rng-state, align)``: `rng` is the only
-    randomness source, so a fresh `random.Random(seed)` per row is
-    reproducible. `tail` is assumed Lean-3-relic-free. With ``align=None``
+    randomness source. `tail` is assumed Lean-3-relic-free. With ``align=None``
     the `rename` transform is never applicable (it needs
     `AlignMap.reverse_unique`); the other four are unaffected.
 
@@ -711,13 +723,12 @@ def corrupt_tail(
     (str, list of Relic) or None
         ``(corrupted, injected)``. The post-condition re-runs
         `find_relics(corrupted, align)` and keeps only injected relics whose
-        kind the detector re-reports, making ``{r.kind for r in injected}``
-        a subset of the detected kinds BY CONSTRUCTION (the shared-vocabulary
-        invariant) so no phantom claim leaks into `synth_error` /
-        repair-row metadata. ``None`` when no transform is applicable, when
-        every attempted transform turns out to be a no-op, when
-        ``corrupted == tail``, or when the post-condition leaves `injected`
-        empty.
+        kind the detector re-reports, so ``{r.kind for r in injected}`` is a
+        subset of the detected kinds BY CONSTRUCTION (the shared-vocabulary
+        invariant) and no phantom claim leaks into `synth_error` / repair-row
+        metadata. ``None`` when no transform is applicable, when every attempt
+        is a no-op, when ``corrupted == tail``, or when the post-condition
+        leaves `injected` empty.
     """
     applicable_names = [
         name for name, (is_applicable, _apply) in _TRANSFORMS.items() if is_applicable(tail, align)
@@ -769,8 +780,8 @@ def synth_error(relics: list[Relic]) -> str:
     """Synthesize a Lean-compiler-shaped error message for a relic list.
 
     Only the FIRST relic decides the message: a real compiler stops at and
-    reports its first error, so a multi-relic tail would only ever surface
-    one message to a repair loop. Shapes mimic the cases pinned in
+    reports its first error, so a multi-relic tail would only ever surface one
+    message to a repair loop. Shapes mimic the cases pinned in
     ``tests/deduction/test_lean_lean3.py``, not Lean's real diagnostics.
 
     - ``"unknown identifier '{text}'"`` for a `lean3-name` first relic.
@@ -778,8 +789,11 @@ def synth_error(relics: list[Relic]) -> str:
     - ``"<stdin>:1:1: unexpected token ','; expected command"`` for
       `binder-comma` / `trailing-comma`.
 
-    Raises ``ValueError`` if `relics` is empty, or its first element's
-    `kind` is not one of the six kinds `find_relics` produces.
+    Raises
+    ------
+    ValueError
+        If `relics` is empty, or its first element's `kind` is not one of the
+        six kinds `find_relics` produces.
     """
     if not relics:
         raise ValueError("synth_error requires at least one relic")
@@ -810,12 +824,12 @@ _REPAIR_INSTRUCTIONS = (
 def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     """Append a previous-attempt repair block to a user turn.
 
-    Returns `user`, a blank line, ``"## Previous attempt"``, the fenced
+    Layout: `user`, a blank line, ``"## Previous attempt"``, the fenced
     ```lean`` block holding `attempt`, then -- only when `error` is given
-    (typically `synth_error`'s output, or a real replay error) -- a fenced
-    error block, then `_REPAIR_INSTRUCTIONS`. The exact byte layout is a
-    coordination contract the repair-dataset builder and repair-loop runner
-    format against, so this deliberately exposes no parameters to vary it.
+    (typically `synth_error`'s output, or a real replay error) -- a fenced error
+    block, then `_REPAIR_INSTRUCTIONS`. Those exact bytes are a coordination
+    contract the repair-dataset builder and repair-loop runner format against,
+    so this deliberately exposes no parameters to vary them.
     """
     error_block = f"Lean reported:\n```\n{error}\n```\n\n" if error is not None else ""
     return (

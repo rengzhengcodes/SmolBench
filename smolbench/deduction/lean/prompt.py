@@ -32,17 +32,18 @@ def extract_tactic_block(text: str) -> str:
     """Pull the Lean tactics out of an LLM response, stripped.
 
     Four steps in order: (0) strip a leading ``<think>`` block through its first
-    ``</think>``; (1) return the LAST fenced ```` ```lean ```` (or unlabelled)
-    block, since models that reason first put the answer last; (2) else strip a
-    single surrounding fence; (3) else return the stripped text as-is.
+    ``</think>`` -- belt-and-suspenders, since `smolbench/evals/openai_compat.py`
+    is the primary split point; (1) return the LAST fenced ```` ```lean ```` (or
+    unlabelled) block, since models that reason first put the answer last; (2)
+    else strip a single surrounding fence; (3) else the stripped text as-is.
 
-    Returns ``""`` when the response opens with an UNCLOSED ``<think>`` block: the
-    completion was truncated mid-reasoning with no recoverable tactic text, and
-    scoring it would pollute ``lean_error`` stats with parse noise instead of a
-    clean "no answer" signal. `smolbench/evals/openai_compat.py` is the primary
-    ``</think>`` split point (client-side, when a server concatenates reasoning and
-    answer); step 0 here is belt-and-suspenders for text that still arrives with the
-    think blob attached.
+    Returns
+    -------
+    str
+        The tactic text, or ``""`` when the response opens with an UNCLOSED
+        ``<think>`` block: truncated mid-reasoning with no recoverable tactic
+        text, and scoring it would pollute ``lean_error`` stats with parse noise
+        instead of giving a clean "no answer" signal.
     """
     s = text.strip()
     if s.startswith("<think>"):

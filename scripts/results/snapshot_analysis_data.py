@@ -2,9 +2,8 @@
 
 Every byte already lives in S3, but in the layout the RUNNERS wanted
 (``induction/<model>/seed=<s>/<arm>--<ts>.yaml`` versus
-``deduction/runs/scaling_<model>/...``), so the two legs of one model do not sit
-under a common name and deduction sits a level deeper. This republishes them
-keyed the way analysis reads them, leg then model:
+``deduction/runs/scaling_<model>/...``), so a model's two legs sit under
+different names, deduction a level deeper. Republished as analysis reads them:
 
     <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
     <dest>/deduction/<model>/verified_rows.jsonl    # the analysis input
@@ -15,13 +14,12 @@ keyed the way analysis reads them, leg then model:
     <dest>/MANIFEST.json                            # what was copied, with byte counts
 
 A SNAPSHOT, NOT A MOVE: no source object is ever modified or deleted (the study
-bucket is an append-only experiment log); everything is written under
-``--dest``. Re-runs resume, skipping any destination object already present at a
-matching size. Copies run SERVER-SIDE, so the ~4.5 GB across ~55k objects never
-transits this host, using ``copy_object`` with ``TaggingDirective="REPLACE"``
-because the plain default reads the source's tags, needing
-``s3:GetObjectTagging``, a permission the scoped operator key deliberately
-lacks. Every copy's size is verified against its source before it is counted.
+bucket is an append-only experiment log); everything is written under ``--dest``.
+Re-runs resume, skipping any destination object already present at a matching
+size, and every copy's size is verified against its source before being counted.
+Copies run SERVER-SIDE (~4.5 GB across ~55k objects never transits this host)
+with ``TaggingDirective="REPLACE"``, since the default reads the source's tags
+and so needs ``s3:GetObjectTagging``, which the scoped operator key lacks.
 
 ``*_SUPERSEDED-*``, ``*_STALE-*`` and ``*_BROKEN-*`` files are copied on purpose:
 they are the repair audit trail, and their names say they are not current data.
@@ -62,9 +60,9 @@ def _s3():
 def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
-    The two legs key the model differently (deduction carries a ``scaling_``
-    prefix, stripped here so both legs of a model share one name). That asymmetry
-    is the whole reason this script exists.
+    The two legs key the model differently -- deduction carries a ``scaling_``
+    prefix, stripped here so both legs of a model share one name -- and that
+    asymmetry is the whole reason this script exists.
     """
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -89,10 +87,21 @@ def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
 def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
     """Copy one object server-side within `BUCKET`, and verify its size.
 
-    `size` is the expected source size in bytes: it decides whether an
-    already-present destination object can be skipped, and it is re-checked
-    after the copy. Returns ``"skipped"`` or ``"copied"``; raises `RuntimeError`
-    if the copied object's size does not match.
+    Parameters
+    ----------
+    size : int
+        Expected source size in bytes: it decides whether an already-present
+        destination object can be skipped, and is re-checked after the copy.
+
+    Returns
+    -------
+    str
+        ``"skipped"`` or ``"copied"``.
+
+    Raises
+    ------
+    RuntimeError
+        The copied object's size does not match `size`.
     """
     try:
         head = client.head_object(Bucket=BUCKET, Key=dest_key)

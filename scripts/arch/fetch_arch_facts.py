@@ -3,25 +3,23 @@
 The 21-checkpoint study (``scripts/fleet/run_fleet.py``) records how each
 checkpoint was SERVED and nothing about what it IS. This pulls every rung's own
 ``config.json`` (and ``generation_config.json``) from the Hugging Face repo it
-was served from, so write-ups quote the checkpoint rather than a recollection of
-it. ``config.json`` is the only artefact guaranteed to agree with the weights
-vLLM loaded; where a model card disagrees, the config wins and the disagreement
-is itself a finding. Every record carries the resolved commit SHA (the
-``x-repo-commit`` response header) and a UTC fetch timestamp, so a later reader
-can tell a stale note from a moved checkpoint.
+was served from: ``config.json`` is the only artefact guaranteed to agree with
+the weights vLLM loaded, so where a model card disagrees the config wins and the
+disagreement is itself a finding. Every record carries the resolved commit SHA
+(the ``x-repo-commit`` response header) and a UTC fetch timestamp, so a later
+reader can tell a stale note from a moved checkpoint.
 
 The roster is :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS` minus the
 ``qwen2.5-1.5b`` smoke entry -- the same subset ``run_fleet`` pins its tiers
 against. No literal model list lives here: a fourth copy is a fourth thing that
 can drift.
 
-Two outputs are written next to this file (``__file__``-anchored):
-``arch_configs_raw.json`` holds the verbatim payloads as the audit trail, and
-``arch_facts.json`` a normalised, diagram-ready view -- nested ``text_config``
-wrappers hoisted, long per-layer arrays run-length encoded into their repeating
-motif, fields grouped by attention / positional encoding / MoE / state space.
-Any unrecognised key is preserved under ``derived.unclassified`` rather than
-dropped: an unfamiliar field on a 2026 architecture is a finding, not noise.
+Two ``__file__``-anchored outputs: ``arch_configs_raw.json`` holds the verbatim
+payloads as the audit trail, ``arch_facts.json`` a normalised, diagram-ready
+view (``text_config`` wrappers hoisted, per-layer arrays run-length encoded into
+their repeating motif, fields grouped by attention / positional encoding / MoE /
+state space). Unrecognised keys are preserved under ``derived.unclassified``
+rather than dropped: an unfamiliar field on a 2026 architecture is a finding.
 
 ``--check`` also cross-checks the fetched configs against
 ``tests/fixtures/roster_configs.json`` (the deploy-spec test's ground truth) on
@@ -127,11 +125,14 @@ _IGNORED_KEYS = frozenset({
 def _fetch(repo: str, filename: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
     """Fetch one JSON file from a Hugging Face repo's main revision.
 
-    Returns ``(payload, revision, error)``: the parsed JSON or ``None``, the
-    commit SHA from the ``x-repo-commit`` response header, and a failure reason
-    (``None`` on success). A missing optional file reports ``"absent"``, so
-    callers can tell "this repo ships no generation_config" apart from "the
-    network broke".
+    Returns
+    -------
+    tuple
+        ``(payload, revision, error)``: the parsed JSON or ``None``, the commit
+        SHA from the ``x-repo-commit`` response header, and a failure reason
+        (``None`` on success). A missing optional file reports ``"absent"``, so
+        callers can tell "this repo ships no generation_config" apart from "the
+        network broke".
     """
     url = f"https://huggingface.co/{repo}/resolve/main/{filename}"
     request = urllib.request.Request(url, headers={"User-Agent": "smolbench-arch-facts"})
@@ -160,9 +161,14 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     """Find the shortest repeating motif that tiles ``items`` exactly.
 
     A block diagram draws the repeating unit and an ``x N`` multiplier, not 61
-    individual layers. Returns ``{"pattern": [...], "repeats": N}``, or ``None``
-    when the sequence does not tile (DeepSeek's leading dense layers, Nemotron's
-    irregular hybrid); the caller then falls back to the run-length view.
+    individual layers.
+
+    Returns
+    -------
+    dict or None
+        ``{"pattern": [...], "repeats": N}``, or ``None`` when the sequence does
+        not tile (DeepSeek's leading dense layers, Nemotron's irregular hybrid);
+        the caller then falls back to the run-length view.
     """
     n = len(items)
     if n == 0:
@@ -309,8 +315,12 @@ def collect() -> Dict[str, Any]:
 def cross_check(facts: Dict[str, Any]) -> List[str]:
     """Compare fetched configs against ``tests/fixtures/roster_configs.json``.
 
-    A mismatch means the upstream checkpoint moved under the study. Returns one
-    human-readable line per mismatch, empty when everything agrees.
+    A mismatch means the upstream checkpoint moved under the study.
+
+    Returns
+    -------
+    list[str]
+        One human-readable line per mismatch; empty when everything agrees.
     """
     if not _FIXTURE_PATH.exists():
         return [f"fixture missing: {_FIXTURE_PATH}"]

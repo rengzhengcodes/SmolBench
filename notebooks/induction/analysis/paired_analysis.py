@@ -1,16 +1,15 @@
 """Paired re-analysis of the family-ladder induction study (no new data).
 
-``power_analysis.py::cmh_reject`` treats the arms as independent binomials,
-but every model answers the SAME seeds with byte-identical prompts and the
-four info arms at a seed reuse one query/answer set, so all 210 PRIMARY
-contrasts are matched item-for-item. Each contrast is recomputed three ways
-and the change in Holm rejection status reported: unpaired CMH; item-level
-exact McNemar (DESCRIPTIVE only -- marks within a replicate are not
-independent); and `signflip_exact_p` over whole replicates, which carries the
-inference here as it does in `significance_report.py` and
-`extens_vs_noise.py`. `design_effect` measures the variance CMH omits by
-summing the 9 harmonic strata as if independent (>1 anticonservative, <1
-conservative).
+``power_analysis.py::cmh_reject`` treats the arms as independent binomials, but
+every model answers the SAME seeds with byte-identical prompts and the four info
+arms at a seed reuse one query/answer set, so all 210 PRIMARY contrasts are
+matched item-for-item. Each contrast is recomputed three ways and the change in
+Holm rejection status reported: unpaired CMH; item-level exact McNemar
+(DESCRIPTIVE only -- marks within a replicate are not independent); and
+`signflip_exact_p` over whole replicates, which carries the inference here as it
+does in `significance_report.py` and `extens_vs_noise.py`. `design_effect`
+measures the variance CMH omits by summing the 9 harmonic strata as if
+independent (>1 anticonservative, <1 conservative).
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
 (``{model}_{info}/rep_{seed}.yaml``). Those YAMLs carry ``!!python/object``
@@ -18,9 +17,9 @@ tags, so, as in ``power_analysis.py``, per-mark ``score:`` lines are regexed
 rather than unsafe-loaded; marks are serialized in ascending-period order, so
 position recovers the harmonic. Scoring matches
 ``power_analysis.py::load_outcomes``: ``score: 1`` is correct, ``0`` and
-``null`` (an invalid completion) both fail. About 4% of marks are ``null``, so
-a sensitivity pass that DROPS item-pairs where either arm is invalid
-accompanies every headline.
+``null`` (an invalid completion) both fail. About 4% of marks are ``null``, so a
+sensitivity pass that DROPS item-pairs where either arm is invalid accompanies
+every headline.
 
 Run (ephemeral env via --no-project, per repo convention):
     uv run --no-project --with numpy --with scipy python notebooks/induction/analysis/paired_analysis.py
@@ -53,13 +52,21 @@ SCORE_RE = re.compile(r"^\s*score:\s*(\S+)", re.M)
 def load_marks() -> tuple[dict, dict]:
     """Read every landed replicate into per-condition (seed -> 9-vector) maps.
 
-    Returns ``(correct, valid)``, both keyed ``(model, info)``:
-    ``correct[key][seed]`` is a length-9 bool array (True == score 1),
-    ``valid[key][seed]`` is False where the score is ``null``. Seeds are
-    whatever ``rep_*.yaml`` files exist, so a still-collecting lane simply
-    contributes fewer; `aligned` intersects seeds per contrast. Raises
-    ``SystemExit`` if a condition's results directory is missing -- call
-    ``InductionExperiment.harness.sync_down()`` first.
+    Seeds are whatever ``rep_*.yaml`` files exist, so a still-collecting lane
+    simply contributes fewer; `aligned` intersects seeds per contrast.
+
+    Returns
+    -------
+    correct : dict
+        ``(model, info)`` -> ``{seed: length-9 bool array}``, True == score 1.
+    valid : dict
+        Same keys; False where the score is ``null``.
+
+    Raises
+    ------
+    SystemExit
+        If a condition's results directory is missing -- call
+        ``InductionExperiment.harness.sync_down()`` first.
     """
     correct: dict = {}
     valid: dict = {}
@@ -98,10 +105,14 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
     Intersects `key_a`'s and `key_b`'s seeds (a still-collecting lane is
     compared only on the seeds it has), then flattens seed x harmonic into a
     single item axis, preserving the pairing. `drop_invalid` drops item-pairs
-    where either arm's mark is invalid (``score: null``). Returns
-    ``(a, b, seed_index)`` over matched items; `seed_index` records each item's
-    replicate, which the clustering measurements need in order to resample
-    whole replicates.
+    where either arm's mark is invalid (``score: null``).
+
+    Returns
+    -------
+    tuple
+        ``(a, b, seed_index)`` over matched items. `seed_index` records each
+        item's replicate, which the clustering measurements need in order to
+        resample whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
@@ -118,8 +129,8 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
 def mcnemar_exact_p(b: int, c: int) -> float:
     """Two-sided exact conditional (binomial) McNemar p for discordant counts `b`, `c`.
 
-    Returns 1.0 when there are no discordant pairs. Treats the 270 marks as
-    270 independent pairs, which they are not: DESCRIPTIVE only, while
+    Returns 1.0 when there are no discordant pairs. Treats the 270 marks as 270
+    independent pairs, which they are not: DESCRIPTIVE only, while
     `signflip_exact_p` carries the inference and collapses onto this test when
     every cluster is a singleton.
     """

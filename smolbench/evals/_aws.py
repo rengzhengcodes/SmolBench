@@ -7,9 +7,9 @@ extraction, trust policies, IAM role/instance-profile creation, a poll loop,
 and a teardown sweep. There is deliberately NO shared provision -> poll ->
 teardown framework: ``aws.provision_endpoint`` is a per-model
 ``@contextmanager`` that ALWAYS tears down (a SageMaker endpoint bills hourly
-until deleted), while ``ec2`` provisions one instance per experiment and
-tears down NOTHING on exit (an on-box idle watchdog plus a max-lifetime
-shutdown cover abandonment, since the instance outlives any one section).
+until deleted), while ``ec2`` provisions one instance per experiment and tears
+down NOTHING on exit (an on-box idle watchdog plus a max-lifetime shutdown
+cover abandonment, since the instance outlives any one section).
 
 Import boto3/botocore LAZILY inside each function that needs them: neither
 provider's inference path needs AWS credentials or the SDK, and importing
@@ -29,12 +29,16 @@ def fresh_client(service: str, region: Optional[str] = None):
 
     Deliberately NOT ``boto3.client(...)``, which caches credentials in the
     process-wide default session; clients are never reused either. A fresh
-    Session per call picks up a rotated ``~/.aws/credentials`` (this repo's
-    IdP sessions last ~12h) on the very next call, instead of raising
-    ``RequestExpired``/``ExpiredToken`` until the process restarts.
-    ``region=None`` (default) defers to boto3's own resolution order; callers
-    pass None for IAM, a global service. Imports boto3 lazily, so only
-    calling this requires boto3 installed and credentials resolvable.
+    Session per call picks up a rotated ``~/.aws/credentials`` (this repo's IdP
+    sessions last ~12h) on the very next call, instead of raising
+    ``RequestExpired``/``ExpiredToken`` until the process restarts. boto3 is
+    imported lazily, so only calling this requires it installed.
+
+    Parameters
+    ----------
+    region : str, optional
+        None (default) defers to boto3's own resolution order; callers pass
+        None for IAM, a global service.
     """
     import boto3  # lazy: keep the inference paths boto3-free
 
@@ -53,11 +57,16 @@ def error_code(err: Exception) -> str:
 def assume_role_trust_policy(service: str) -> Dict[str, Any]:
     """Build an IAM trust policy allowing ``sts:AssumeRole`` by one service.
 
-    ``service`` is a service principal (``"ec2.amazonaws.com"`` for ec2.py's
-    instance-profile role, ``"sagemaker.amazonaws.com"`` for aws.py's
-    execution role). Key order is fixed (``Version`` -> ``Statement`` ->
+    Key order is fixed (``Version`` -> ``Statement`` ->
     ``Effect``/``Principal``/``Action``); callers pin the exact
     ``AssumeRolePolicyDocument`` JSON string.
+
+    Parameters
+    ----------
+    service : str
+        Service principal: ``"ec2.amazonaws.com"`` for ec2.py's
+        instance-profile role, ``"sagemaker.amazonaws.com"`` for aws.py's
+        execution role.
     """
     return {
         "Version": "2012-10-17",
@@ -101,23 +110,31 @@ def ensure_sagemaker_execution_role(role_name: str) -> str:
 def ensure_instance_profile(role_name: str, bucket: str, propagation_sleep_s: int) -> str:
     """Return the EC2 instance-profile name for the S3 model cache, creating it if absent.
 
-    ``role_name`` names BOTH the IAM role and the instance profile, and is
-    returned for call-site convenience. The role grants exactly S3 list on
-    ``bucket`` plus get/put on its objects, and
-    ``AmazonSSMManagedInstanceCore`` (break-glass shell for a box launched
-    with no SSH key); ``put_role_policy`` overwrites idempotently, so the
-    grant re-targets ``bucket`` even for a pre-existing role.
-    ``propagation_sleep_s`` seconds are slept before returning ONLY when the
-    role or profile was freshly created, so ``RunInstances`` cannot reference
-    an IAM object that is not yet visible.
+    The role grants exactly S3 list on ``bucket`` plus get/put on its objects,
+    and ``AmazonSSMManagedInstanceCore`` (break-glass shell for a box launched
+    with no SSH key); ``put_role_policy`` overwrites idempotently, so the grant
+    re-targets ``bucket`` even for a pre-existing role.
 
-    Raises ``botocore.exceptions.ClientError`` for any IAM failure other than
-    the tolerated ones: ``EntityAlreadyExists`` on
-    ``create_role``/``create_instance_profile``, ``LimitExceeded`` on
-    ``add_role_to_instance_profile`` (AWS's code for "role already attached";
-    a profile holds at most one role), and ``AccessDenied`` on ``create_role``
-    (scoped credentials -- returns ``role_name`` optimistically, see the
-    comment there).
+    Parameters
+    ----------
+    role_name : str
+        Names BOTH the IAM role and the instance profile; returned as-is.
+    bucket : str
+        S3 bucket the role is granted access to.
+    propagation_sleep_s : int
+        Slept before returning ONLY when the role or profile was freshly
+        created, so ``RunInstances`` cannot reference an IAM object that is not
+        yet visible.
+
+    Raises
+    ------
+    botocore.exceptions.ClientError
+        Any IAM failure other than the tolerated ones: ``EntityAlreadyExists``
+        on ``create_role``/``create_instance_profile``, ``LimitExceeded`` on
+        ``add_role_to_instance_profile`` (AWS's code for "role already
+        attached"; a profile holds at most one role), and ``AccessDenied`` on
+        ``create_role`` (scoped credentials -- returns ``role_name``
+        optimistically, see the comment there).
     """
     import json as _json
 
@@ -196,19 +213,26 @@ def poll_until(
 ) -> T:
     """Poll ``check`` until it succeeds, with a fixed, load-bearing ordering.
 
-    ``check`` is one attempt: non-``None`` = success (returned), ``None`` =
-    keep waiting, and a raise aborts the loop unchanged (e.g. a spot instance
-    reclaimed mid-wait). ``on_timeout`` must RETURN (not raise) the exception
-    this function then raises; deferred so it can close over state from the
-    last ``check()`` -- ec2.py embeds the last polled status in its
-    ``TimeoutError``. ``timeout_s`` is measured from entry.
+    Parameters
+    ----------
+    check : callable
+        One attempt: non-``None`` = success (returned), ``None`` = keep
+        waiting, a raise aborts the loop unchanged (e.g. a spot instance
+        reclaimed mid-wait). All I/O lives here; this function does none.
+    timeout_s : float
+        Deadline, measured from entry.
+    on_timeout : callable
+        Must RETURN (not raise) the exception this function then raises;
+        deferred so it can close over state from the last ``check()`` -- ec2.py
+        embeds the last polled status in its ``TimeoutError``.
 
-    The ordering is a contract: call ``check()``; a non-``None`` result
-    returns IMMEDIATELY without consulting the deadline (so a success at or
-    just past the deadline still wins); a raise propagates with no sleep or
-    deadline check; otherwise raise ``on_timeout()`` if
-    ``time.time() > deadline``, else sleep ``interval_s`` and loop. This
-    function does no I/O of its own -- all polling lives in ``check``.
+    Notes
+    -----
+    The ordering is a contract: call ``check()``; a non-``None`` result returns
+    IMMEDIATELY without consulting the deadline (so a success at or just past
+    the deadline still wins); a raise propagates with no sleep or deadline
+    check; otherwise raise ``on_timeout()`` if ``time.time() > deadline``, else
+    sleep ``interval_s`` and loop.
     """
     deadline = time.time() + timeout_s
     while True:
@@ -225,12 +249,18 @@ def best_effort_teardown(
 ) -> None:
     """Run every teardown step, logging (never raising) each one's outcome.
 
-    Callers invoke this from a ``finally`` block, where a raise would mask
-    the ``with`` body's own exception. Every step therefore runs in attempt
-    order regardless of earlier failures, and each exception is caught and
-    logged at INFO -- a failed step leaves its resource behind for manual or
-    next-run cleanup. ``log_prefix`` (typically the caller's function name)
-    prefixes each log line so interleaved teardown sites stay attributable.
+    Callers invoke this from a ``finally`` block, where a raise would mask the
+    ``with`` body's own exception. Every step therefore runs in order
+    regardless of earlier failures, and each exception is logged at INFO -- a
+    failed step leaves its resource behind for manual or next-run cleanup.
+
+    Parameters
+    ----------
+    steps : sequence of (str, callable)
+        Label and deferred zero-argument call, attempted in order.
+    log_prefix : str
+        Prefixes each log line (typically the caller's function name), so
+        interleaved teardown sites stay attributable.
     """
     for label, call in steps:
         try:

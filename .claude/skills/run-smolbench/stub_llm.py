@@ -2,22 +2,18 @@
 
 Used by `lean_smoke.sh --e2e`: fake models, real LeanDojo verification.
 
-Port A (model "stub-good-model", served as provider `primeintellect`):
-answers every chat completion with the CORRECT ground-truth tail for
-Lagrange.eval_nodal_at_node at k=1, fenced as ```lean — real Lean accepts
-it, so the sweep row must come back `verdict: success`.
-
-Port B (model "stub-bad-model", served as provider `openrouter`): answers
-with a bogus tactic — real Lean rejects it, so the row must come back
+Port A (model "stub-good-model", served as provider `primeintellect`) answers
+every chat completion with the CORRECT ground-truth tail for
+Lagrange.eval_nodal_at_node at k=1, fenced as ```lean, so the sweep row must
+come back `verdict: success`. Port B (model "stub-bad-model", served as
+provider `openrouter`) answers with a bogus tactic, so the row must come back
 `verdict: lean_error` ("unknown identifier 'nonexistent_lemma_xyz42'").
 
 Both servers also answer the providers' context-length GETs (OpenRouter's
-`/endpoints` shape and Prime Intellect's flat shape). Every POST is logged
-as one JSON line to argv[1] so the caller can assert what the sweep
-actually sent (seed / system message / temperature / model). Ports are
-OS-assigned and printed once to stdout as {"pi": <port>, "or": <port>}.
-
-Stdlib only — runs on either venv.
+`/endpoints` shape and Prime Intellect's flat shape). Every POST is logged as
+one JSON line to argv[1] so the caller can assert what the sweep actually sent
+(seed / system message / temperature / model). Ports are OS-assigned and
+printed once to stdout as {"pi": <port>, "or": <port>}. Stdlib only.
 """
 import json
 import sys

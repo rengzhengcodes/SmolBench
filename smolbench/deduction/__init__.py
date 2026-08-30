@@ -1,20 +1,15 @@
-"""Deduction evals: tasks that probe *forward* logical inference.
+"""Deduction evals: deriving valid consequences from given premises.
 
-This is the sibling category to ``smolbench.induction`` (the
-pattern-completion evals, ``chromatic`` and ``periodic``). Induction asks
-a model to infer a rule from examples. Deduction asks the model to derive
-a valid consequence from given premises, under fixed rules of inference.
+Sibling category to ``smolbench.induction`` (the pattern-completion evals
+``chromatic`` and ``periodic``), which instead asks a model to infer a rule
+from examples.
 
 Members
 -------
 lean
-    Lean 4 theorem-proving eval over LeanDojo Benchmark 4 / Mathlib4 -- the
-    first (and currently only) deduction experiment. See
-    ``smolbench.deduction.lean`` for its module map and the
-    generation-vs-verification submodule split.
+    Lean 4 theorem-proving eval over LeanDojo Benchmark 4 / Mathlib4.
 
-This ``__init__`` deliberately carries no imports. ``smolbench.deduction.lean``
-pulls in heavy dependencies (``tiktoken``, ``lean_dojo``), so importing the
-category namespace must stay cheap. Import the specific submodule you need
-instead (e.g. ``import smolbench.deduction.lean.corpus``).
+Carries no imports deliberately: ``smolbench.deduction.lean`` pulls in heavy
+dependencies (``tiktoken``, ``lean_dojo``), so import the specific submodule
+you need instead (e.g. ``import smolbench.deduction.lean.corpus``).
 """

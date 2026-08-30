@@ -1,31 +1,36 @@
 """Headless driver for the FAMILY-LADDER SCALING induction study.
 
-The quiz is held fixed (the plain ``periodic_moe`` baseline, ``n=9``
-harmonics, unmodified) while the MODEL varies -- 7 vendor families x 3 rungs =
-the 21 checkpoints in ``MODELS`` -- so accuracy reads as a function of
-parameter count within a family. Deployment facts live in
+The quiz is held fixed (the plain ``periodic_moe`` baseline, ``n=9`` harmonics,
+unmodified) while the MODEL varies -- 7 vendor families x 3 rungs = the 21
+checkpoints in ``MODELS`` -- so accuracy reads as a function of parameter count
+within a family. Deployment facts live in
 ``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``; this file is the single
 source of truth for the STUDY's config, and
 ``notebooks/induction/induction_eval.ipynb`` imports every module-level name
 below instead of re-declaring it (pinned by
-``tests/induction/test_induction_study.py``). Info arms match
-``periodic_moe``'s: ``intens``, ``extens``, ``noise_intens`` (``intens``
-whitespace-padded to ``extens``'s token count under the SERVED model's own
-tokenizer -- a length control, not a content control), and ``zero`` (empty
-context, chance floor). CoT is ON for all 21 checkpoints.
+``tests/induction/test_induction_study.py``).
+
+The four info arms match ``periodic_moe``'s: ``intens``, ``extens``,
+``noise_intens`` (``intens`` whitespace-padded to ``extens``'s token count under
+the SERVED model's own tokenizer -- a length control, not a content control) and
+``zero`` (empty context, chance floor). CoT is ON for all 21 checkpoints.
+
+Seeds: ``BASE_SEED = 0``, not the sibling studies' 1776, so this study's seed
+range (0..29) can never alias theirs; ``N_REPLICATES = 30``, and neither is
+environment-overridable.
 
 Environment: ``INDUCTION_SHARD`` (``"index/count"``; splits ONE model's
-replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis
-tags; unset/empty selects all 21); ``INDUCTION_STATE_FILE`` (the only way to
-redirect this process's repo-root-anchored EC2 state file --
-``InductionExperiment._apply_env`` overwrites the bare ``EC2_STATE_FILE``
-shell variable from the ``state_file`` constructor argument on every
-provision/run/teardown). The fleet MUST set a distinct state file per lane:
-two lanes sharing one would have the second ``provision()`` reattach to the
-first's instance and swap the served model out from under it.
+replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
+unset/empty selects all 21); ``INDUCTION_FORCE_RERUN`` (``"1"`` or ``"a-b"``;
+re-collect seeds past the resume-skip); ``INDUCTION_STATE_FILE`` (the only way
+to redirect this process's repo-root-anchored EC2 state file --
+``InductionExperiment._apply_env`` overwrites the bare ``EC2_STATE_FILE`` shell
+variable on every provision/run/teardown). The fleet MUST set a distinct state
+file per lane: two lanes sharing one would have the second ``provision()``
+reattach to the first's instance and swap the served model out from under it.
 
-LIFECYCLE and COST: ``main()`` calls ``EXPERIMENT.teardown()`` only behind
-``--teardown``, which is for STANDALONE use only -- the fleet supervisor
+Lifecycle contract and COST: ``main()`` calls ``EXPERIMENT.teardown()`` only
+behind ``--teardown``, which is for STANDALONE use only -- the fleet supervisor
 (``scripts/fleet/run_fleet.py``) owns instance lifecycle and reuses each lane's
 box for a later deduction-phase lane, so a teardown here would terminate an
 instance that phase is about to reattach to. ``provision()`` and ``run()`` are
@@ -64,10 +69,9 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
 
     Sharding splits ONE model's replicates across N processes/instances,
     orthogonally to this study's one-model-per-box fan-out. Raises
-    ``SystemExit`` immediately at import if `var` is set but is not parseable
-    as ``"int/int"``, or fails ``count >= 1`` / ``0 <= index < count`` --
-    rather than silently running unsharded or crashing deep inside
-    ``InductionExperiment``.
+    ``SystemExit`` immediately at import if `var` is set but unparseable as
+    ``"int/int"``, or fails ``count >= 1`` / ``0 <= index < count`` -- rather
+    than silently running unsharded or crashing inside ``InductionExperiment``.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -304,15 +308,13 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     independent variable is the MODEL, not the quiz. `seed` drives label
     sampling and, downstream in ``ReplicateHarness``, the per-request decoding
     seed. `model` is the checkpoint's ``EC2_DEPLOY_SPECS``/``MODELS`` spec key,
-    required because ``noise_intens`` is a TOKEN-LENGTH control padded to the
-    matching ``extens`` prompt's token count under THIS model's own tokenizer
-    (``for_model(model)``); a character-matched pad would systematically over-
-    or under-pad. The other three arms are model-independent and stay
-    byte-identical across checkpoints.
-
-    ``for_model`` is called by plain module-global lookup, so
-    ``tests/induction/test_induction_study.py`` can monkeypatch it (and this
-    function) to keep the offline suite from downloading a tokenizer.
+    required because ``noise_intens`` is padded to the matching ``extens``
+    prompt's token count under THIS model's own tokenizer
+    (``for_model(model)``); the other three arms are model-independent and stay
+    byte-identical across checkpoints. ``for_model`` is called by plain
+    module-global lookup, so ``tests/induction/test_induction_study.py`` can
+    monkeypatch it (and this function) to keep the offline suite from
+    downloading a tokenizer.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(template, {}, numeric_count_query_gen)
@@ -326,20 +328,19 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
 def completion_budget(model: str, seeds: range) -> int:
     """Derive the largest completion budget that cannot overflow this model's context.
 
-    Returns ``min(CONTEXT_LIMIT - worst - TEMPLATE_RESERVE, BUDGET_CAP)``,
-    where ``worst`` is the largest prompt token count over every info type of
-    every probed seed. `seeds` is the full seed range this study will send to
-    `model`, but only ``PROBE_SEEDS`` of them are probed, always including both
+    Returns ``min(CONTEXT_LIMIT - worst - TEMPLATE_RESERVE, BUDGET_CAP)``, where
+    ``worst`` is the largest prompt token count over every info type of every
+    probed seed. `seeds` is the full seed range this study will send to `model`,
+    but only ``PROBE_SEEDS`` of them are probed, always including both
     endpoints: every structural driver of prompt length is identical across
     seeds, only the sampled labels vary, and ``TEMPLATE_RESERVE`` covers far
-    more than that residual. Pure CPU plus a HuggingFace tokenizer fetch, so
-    this runs before anything is provisioned and billing. ``BUDGET_CAP`` is a
-    single ``int`` (== ``CONTEXT_LIMIT``), not a per-model dict: a tighter cap
-    on one family would make its accuracy gap inseparable from "it had less
-    room to finish its reasoning", so the ``min()`` is a documented no-op guard
-    against a future edit reintroducing a per-vendor cap. Raises
-    ``SystemExit`` if the derived budget falls below ``MIN_VIABLE_BUDGET``;
-    such a run would truncate CoT and collect empties, not scorable data.
+    more than that residual. Pure CPU plus a HuggingFace tokenizer fetch, so it
+    runs before anything is provisioned and billing. ``BUDGET_CAP`` is a single
+    ``int`` (== ``CONTEXT_LIMIT``), not a per-model dict -- a tighter cap on one
+    family would make its accuracy gap inseparable from "it had less room to
+    reason" -- so the ``min()`` is a documented no-op guard against a future
+    per-vendor cap. Raises ``SystemExit`` if the derived budget falls below
+    ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
     """
     tok = for_model(model)
     picks = sorted({seeds[0], seeds[-1],
@@ -397,14 +398,14 @@ def selected_models() -> "tuple[str, ...]":
     """Return the spec keys to run: ``INDUCTION_MODELS``, or all of ``MODELS``.
 
     Always emitted in ``MODELS`` declaration order, whatever order the
-    environment variable listed them in. That family-grouped order is this
-    study's canonical order (matching ``ec2.py``'s roster), which keeps a
-    standalone unfiltered run deterministic.
+    environment listed them in; that family-grouped order is this study's
+    canonical order (matching ``ec2.py``'s roster) and keeps a standalone
+    unfiltered run deterministic.
 
     Raises ``SystemExit`` -- before any instance is provisioned -- if
     ``INDUCTION_MODELS`` names a key not in ``MODELS``, or is SET but resolves
-    to ZERO keys (e.g. ``","``, which is non-empty and so misses the "unset
-    selects all" branch). The empty case matters because ``main()`` provisions
+    to ZERO keys (e.g. ``","``, non-empty and so past the "unset selects all"
+    branch). The empty case matters because ``main()`` provisions
     unconditionally and never tears down, so it would leave a GPU box billing
     with nothing driving it.
     """
@@ -432,8 +433,8 @@ def main(argv: "list[str] | None" = None) -> None:
 
     Makes LIVE AWS calls on every path except ``--teardown`` and a failed
     argument parse, and never tears the instance down otherwise (see the module
-    docstring's LIFECYCLE and COST note). `argv` is a parameter so a test or
-    notebook cell can call this without a subprocess.
+    docstring's "Lifecycle contract and COST" section). `argv` is a parameter so
+    a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."

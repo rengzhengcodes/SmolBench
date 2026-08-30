@@ -4,22 +4,21 @@ Turns traced tactics into supervised fine-tuning pairs for the exact task the
 ``smolbench.deduction.lean`` eval scores: given the proof state at step ``k``,
 emit the remaining Lean 4 tactics.
 
-- **Prompt-format parity.** ``system``/``user`` are built with the *same*
-  `prompt` / `context` code the eval runner uses -- no train/serve prompt skew.
+- **Prompt parity.** ``system``/``user`` are built with the *same* `prompt` /
+  `context` code the eval runner uses -- no train/serve prompt skew.
 - **Decontamination.** Eval theorems are held out by ``full_name``. The
   benchmark's ``random`` and ``novel_premises`` kinds partition one theorem pool
   two *different* ways, so a ``novel_premises/test`` theorem can appear in
   ``random/train``; the explicit name exclusion closes that leak for any
-  ``train_kind``. Training on ``novel_premises/train`` additionally inherits
-  that split's premise-level decontamination.
+  ``train_kind``. ``novel_premises/train`` additionally inherits that split's
+  premise-level decontamination.
 - **Context rung.** ``stepk:1`` by default (full tactic state, no premise
   hints), so training never teaches the model to exploit the eval's
   answer-conditional ``hint`` rungs.
 - **Target.** The ground-truth tail as raw newline-separated lines, *no code
   fence* -- what `prompt.SYSTEM` asks for and `prompt.extract_tactic_block`
   parses back out. At the default ``k_strategy="last"`` the tail is the single
-  final tactic, exactly the cell the headline sweep scores (``k.strategy:
-  last``).
+  final tactic, exactly the cell the headline sweep scores (``k.strategy: last``).
 
 Imports only the generation-side siblings (`corpus`, `context`, `prompt`), never
 `verify`, so it stays importable without ``lean_dojo``.
@@ -78,10 +77,14 @@ class SFTExample:
 
 
 def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str]:
-    """Union of ``full_name`` over `corpus.load_split` of each eval spec.
+    """Collect every theorem ``full_name`` in the given eval splits.
 
-    Uses the *whole* split, not `iter_replay_passing`, so the holdout needs no
-    ``filter`` sidecar and is a strict superset of what any sweep can evaluate.
+    Returns
+    -------
+    set of str
+        Union of ``full_name`` over `corpus.load_split` of each spec -- the
+        *whole* split, not `iter_replay_passing`, so the holdout needs no
+        ``filter`` sidecar and is a strict superset of what a sweep can evaluate.
     """
     names: set[str] = set()
     for kind, split in eval_specs:
@@ -93,9 +96,16 @@ def eval_holdout_names(eval_specs: Iterable[tuple[SplitKind, Split]]) -> set[str
 def tail_target(theorem: BenchmarkTheorem, k: int) -> str:
     """The ground-truth tail from step ``k`` as raw newline-joined tactics.
 
-    `k` is 0-indexed with ``0 <= k < len(traced_tactics)``. The result is stripped
-    and unfenced: `prompt.SYSTEM` asks for bare tactic lines, and
-    `prompt.extract_tactic_block` returns unfenced text unchanged.
+    Parameters
+    ----------
+    k : int
+        0-indexed step the tail starts at; ``0 <= k < len(traced_tactics)``.
+
+    Returns
+    -------
+    str
+        Stripped and *unfenced*: `prompt.SYSTEM` asks for bare tactic lines, and
+        `prompt.extract_tactic_block` returns unfenced text unchanged.
     """
     return "\n".join(t.tactic for t in theorem.traced_tactics[k:]).strip()
 
@@ -120,9 +130,9 @@ def _train_pool(
     """Yield the training-theorem pool for ``(kind, split)``.
 
     ``source="with_proof"`` is every theorem with >=1 traced tactic;
-    ``"replay_passing"`` needs the ``filter`` sidecar and is far smaller/slower but
-    guarantees every target is a machine-verified proof. Raises ``ValueError`` on
-    any other value.
+    ``"replay_passing"`` needs the ``filter`` sidecar and is far smaller/slower
+    but guarantees every target is a machine-verified proof. Raises
+    ``ValueError`` on any other value.
     """
     if source == "with_proof":
         return corpus.iter_with_proof(kind, split)

@@ -45,9 +45,17 @@ def dump(tag: str) -> None:
 def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
     """Compute the repo's continuity-corrected 2x2xK CMH statistic (chi2, df=1).
 
-    `succ_a` and `succ_b` are (..., K) success counts out of `n` trials per
-    stratum, `n` the same for both arms; returns one statistic per leading
-    batch index.
+    Parameters
+    ----------
+    succ_a, succ_b : ndarray, shape (..., K)
+        Success counts out of `n` trials per stratum, for the two arms.
+    n : int
+        Trials per stratum; the same for both arms.
+
+    Returns
+    -------
+    ndarray, shape (...)
+        One statistic per leading batch index.
     """
     big_n = 2 * n
     m1 = succ_a + succ_b
@@ -69,9 +77,19 @@ def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
 def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     """Compute the generalized CMH "general association" statistic, 3 rungs (chi2, df=2).
 
-    `succ` is (..., 3, K) success counts, `n` trials per rung per stratum --
-    identical for every rung and stratum, the equal-n precondition behind the
-    covariance collapse documented on ``power_analysis.gcmh_reject``.
+    Parameters
+    ----------
+    succ : ndarray, shape (..., 3, K)
+        Success counts per (rung, stratum).
+    n : int
+        Trials per rung per stratum, identical for every rung and stratum --
+        the equal-n precondition behind the covariance collapse documented on
+        ``power_analysis.gcmh_reject``.
+
+    Returns
+    -------
+    ndarray, shape (...)
+        One statistic per leading batch index.
     """
     n_rungs = succ.shape[-2]
     total_n = float(n_rungs * n)
@@ -91,8 +109,19 @@ def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
 def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
     """Compute the 1-df CMH correlation (linear trend) statistic.
 
-    `succ` is (..., 3, K) success counts, `n` trials per rung per stratum;
-    `scores` are the ladder scores assigned to the 3 rungs, in rung order.
+    Parameters
+    ----------
+    succ : ndarray, shape (..., 3, K)
+        Success counts per (rung, stratum).
+    n : int
+        Trials per rung per stratum.
+    scores : sequence of float
+        Ladder scores assigned to the 3 rungs, in rung order.
+
+    Returns
+    -------
+    ndarray, shape (...)
+        One statistic per leading batch index.
     """
     x = np.asarray(scores)
     n_rungs = succ.shape[-2]
@@ -114,8 +143,15 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
 def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
     """Compute the two-sided exact conditional (binomial) McNemar p-value.
 
-    `b` counts A-succeeds/B-fails pairs and `c` the reverse; returns 1.0 where
-    ``b + c == 0`` (no discordant pairs).
+    Parameters
+    ----------
+    b, c : ndarray
+        Counts of A-succeeds/B-fails pairs and the reverse.
+
+    Returns
+    -------
+    ndarray
+        The p-value, 1.0 where ``b + c == 0`` (no discordant pairs).
     """
     nd = b + c
     lo = np.minimum(b, c)
@@ -128,8 +164,11 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
                  rng: np.random.Generator):
     """Simulate matched marks from a latent bivariate normal (tetrachoric `rho`).
 
-    Returns ``(marks_a, marks_b)``, boolean arrays of shape
-    ``(n_sims, reps, K_HARM)`` with marginal success rates `p_a` and `p_b`.
+    Returns
+    -------
+    tuple of ndarray
+        ``(marks_a, marks_b)``, boolean arrays of shape
+        ``(n_sims, reps, K_HARM)`` with marginal success rates `p_a` and `p_b`.
     """
     z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)

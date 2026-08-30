@@ -6,22 +6,21 @@ fourth, tp replication, grows it. Per layer and per token of effective context,
 at BF16 (2 bytes):
 
 * **full attention**: ``2 * n_kv * head_dim * 2`` bytes.
-* **sliding/local layers**: the same, but over ``min(ctx, sliding_window)``
-  tokens (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` at 4096).
+* **sliding/local layers**: the same, over ``min(ctx, sliding_window)`` tokens
+  (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` at 4096).
 * **linear-attention layers**: ~0 -- constant state, not ctx-proportional KV
   (Qwen3.5-27B: 48 of 64 layers).
 * **MLA**: ``(kv_lora_rank + qk_rope_head_dim) * 2``, one latent per token
   instead of ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
 * vLLM **replicates KV heads when tp > num_key_value_heads**, multiplying
-  non-MLA KV by ``max(1, tp / n_kv)``. DeepSeek-V4's single KV head at tp=8 is
+  non-MLA KV by ``max(1, tp / n_kv)``: DeepSeek-V4's single KV head at tp=8 is
   8x its tp=1 figure.
 
 The layer mix comes from the config: ``layer_types`` (a list) when present,
-otherwise ``sliding_window_pattern`` (a cycling string, ``L`` local / ``G``
-global), otherwise every layer counts as full attention. A bare
-``sliding_window`` value with neither mix field is deliberately NOT applied --
-DeepSeek-V4 carries ``sliding_window=128`` for its CSA/HCA sparse scheme yet
-keeps full-length KV.
+else ``sliding_window_pattern`` (a cycling string, ``L`` local / ``G`` global),
+else every layer counts as full attention. A bare ``sliding_window`` value with
+neither mix field is deliberately NOT applied -- DeepSeek-V4 carries
+``sliding_window=128`` for its CSA/HCA sparse scheme yet keeps full-length KV.
 
 For replication-study box sizing, budget ``weights + 2.0 x KV@131k`` against
 ``0.90 x total VRAM`` (about 8 concurrent requests); a box sized for a single
@@ -89,10 +88,22 @@ def _layer_mix(cfg: Dict[str, Any]) -> list:
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
     """Total KV-cache bytes for one sequence of `ctx` tokens, over all layers and tp shards.
 
-    `cfg` is the (text) config block for one checkpoint. For non-MLA models KV
-    heads replicate when ``tp > n_kv``, multiplying the total by ``tp / n_kv``;
-    replication never shrinks it. `naive` assumes every layer holds full-context
-    GQA KV -- the uncorrected comparison column.
+    Parameters
+    ----------
+    cfg : dict
+        The (text) config block for one checkpoint.
+    tp : int
+        Tensor-parallel degree. For non-MLA models KV heads replicate when
+        ``tp > n_kv``, multiplying the total by ``tp / n_kv``.
+    naive : bool
+        Assume every layer holds full-context GQA KV -- the uncorrected
+        comparison column.
+
+    Returns
+    -------
+    int
+        KV bytes across all layers and all tp shards. Replication makes the
+        total exceed the tp=1 figure; it never shrinks it.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

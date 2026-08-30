@@ -6,39 +6,38 @@ non-overlapping, exclusive-end ``[start, end)`` spans, each independently
 assigned one of ``colors`` labels
 (:func:`get_random_exclusive_chromatic_intervals`); the demo frames those as
 office-holders handing a ceremonial sceptre to their successor at each
-interval boundary. Three query shapes are built in:
-:func:`succession_query_gen` (True/False: did color2 immediately follow
-color1?), :func:`one_hop_year_query_gen` (True/False: did a color hold a
-given year?), and :func:`duration_query_gen` (integer: how many years total,
-after merging that color's adjacent intervals via
-:func:`anneal_intervals`). :class:`ChromaticIntervalsConfig` plus a
-``_common.Prompter`` determine a run, via
-:func:`get_random_exclusive_prompts`; this module holds generation machinery
-and query generators, not canonical eval configs.
+boundary. Three query shapes are built in: :func:`succession_query_gen`
+(True/False: did color2 immediately follow color1?),
+:func:`one_hop_year_query_gen` (True/False: did a color hold a given year?) and
+:func:`duration_query_gen` (integer: how many years total, after merging that
+color's adjacent intervals via :func:`anneal_intervals`).
+:class:`ChromaticIntervalsConfig` plus a ``_common.Prompter`` determine a run,
+via :func:`get_random_exclusive_prompts`; this module holds generation
+machinery and query generators, not canonical eval configs.
 
-Information conditions, all built from one set of intervals:
-**intensional** = one line per color naming the (annealed) span(s) it held,
-"<color> was <role> on 0 to 8." (:func:`_prompt_intervals`);
-**extensional** = the enumerated year -> color table, one "Year Y: Color."
-line per year (:func:`_prompt_extensional_indexed`), always at least as
-long; **noise_intens** = the intensional text padded with whitespace to the
-extensional prompt's token count under the model's own tokenizer. Matching
-the RENDERED PROMPT rather than the context block matters here in
-particular: the extensional arm renders from ``extens_template`` with an
-extra ``$query_years`` block, so equal-length CONTEXTS would still give
-unequal-length PROMPTS.
+Information conditions, all built from one set of intervals: **intensional** =
+one line per color naming the (annealed) span(s) it held, "<color> was <role>
+on 0 to 8." (:func:`_prompt_intervals`); **extensional** = the enumerated year
+-> color table, one "Year Y: Color." line per year
+(:func:`_prompt_extensional_indexed`), always at least as long;
+**noise_intens** = the intensional text padded with whitespace to the
+extensional prompt's token count. Matching the RENDERED PROMPT rather than the
+context block matters here in particular: the extensional arm renders from
+``extens_template`` with an extra ``$query_years`` block, so equal-length
+CONTEXTS would still give unequal-length PROMPTS.
 
-Every generator takes an explicit ``seed`` and builds its own RNG, so a run
-is reproducible from its config; the noise pad consumes no RNG. The noise
-arm's tokenizer is REQUIRED, not defaulted, so quizzes stay per-(seed,
-model) with only ``noise_intens`` varying across models (see
-``smolbench/induction/periodic.py``'s module docstring for why). Generation
-is byte-pinned by ``tests/induction/test_golden_quizzes.py``, and further
-exercised by ``tests/induction/test_noise_token_match.py`` and
-``tests/induction/test_induction_semantics.py``: any change to RNG call
-order or count (color/label, marker/interval, query sampling), or to the
-noise-padding scheme, breaks that pin -- fix the change, never the fixture.
-The ``__main__`` demo uses seed 1776.
+Tokenizer discipline: the noise arm's tokenizer is REQUIRED, not defaulted, so
+quizzes stay per-(seed, model) with only ``noise_intens`` varying across models
+(see ``smolbench/induction/periodic.py``'s module docstring for why).
+
+Every generator takes an explicit ``seed`` and builds its own RNG, so a run is
+reproducible from its config; the noise pad consumes no RNG. Generation is
+byte-pinned by ``tests/induction/test_golden_quizzes.py`` and further exercised
+by ``tests/induction/test_noise_token_match.py`` and
+``tests/induction/test_induction_semantics.py``: any change to RNG call order
+or count (color/label, marker/interval, query sampling), or to the
+noise-padding scheme, breaks that pin -- fix the change, never the fixture. The
+``__main__`` demo uses seed 1776.
 """
 
 import string
@@ -101,14 +100,13 @@ class ChromaticIntervalsConfig:
     seed: int
 
     def __post_init__(self):
-        """Validate n, intervals, and colors, and turn colors into a Collection.
+        """Validate n, intervals and colors; turn a color COUNT into a Collection.
 
         Raises
         ------
         ValueError
-            If ``n`` or ``intervals`` is not positive, or if ``intervals``
-            exceeds ``n`` (exclusive interval generation needs at least one
-            discrete unit per interval).
+            If ``n`` or ``intervals`` is not positive, or ``intervals`` exceeds
+            ``n`` (exclusive generation needs one discrete unit per interval).
         """
         if self.n < 1:
             raise ValueError("n must be positive.")
@@ -140,7 +138,7 @@ def _get_random_exclusive_intervals(n: int, intervaler: Iterator[int]) -> Iterat
     """Generate consecutive non-overlapping [start, end) intervals tiling [0, n).
 
     ``intervaler`` supplies candidate endpoints (e.g. sorted random markers);
-    each end is clamped to ``n`` and the final interval always closes at ``n``.
+    each end is clamped to ``n``, and the last interval always closes at ``n``.
     """
     start: int = 0
     end: int = 0
@@ -159,7 +157,7 @@ def get_random_exclusive_chromatic_intervals(
     Returns
     -------
     Tuple[Dict[Color, Collection[Interval]], Dict[Interval, Color]]
-        Color-to-intervals and intervals-to-color. Both preserve color-major
+        Color-to-intervals and interval-to-color. Both preserve color-major
         insertion order (all of the first color's intervals, then the
         second's, ...), which downstream query generators rely on for
         reproducible RNG consumption.
@@ -201,9 +199,9 @@ def get_random_exclusive_chromatic_intervals(
 def anneal_intervals(intervals: Intervals) -> Intervals:
     """Combine intervals that touch or overlap into merged spans.
 
-    Yields merged (start, end) tuples in ascending start order; two intervals
-    merge when the second starts at or before the first one's end.
-    ``intervals`` must be non-empty -- ``intervals[0]`` seeds the merge.
+    Yields merged (start, end) tuples in ascending start order; two merge when
+    the second starts at or before the first one's end. ``intervals`` must be
+    non-empty -- ``intervals[0]`` seeds the merge.
     """
     # This sorts the intervals by start.
     intervals = sorted(intervals, key=lambda interval: interval[0])
@@ -225,18 +223,15 @@ def _join_english_list(items: Iterable[str]) -> Iterator[str]:
     """Join pre-rendered item strings into a comma-and-"and" English list.
 
     Shared by ``_prompt_intervals`` and ``_prompt_extensional``, which differ
-    only in per-item rendering. Yields fragments that concatenate (e.g. via
-    ``"".join``) into the list. No Oxford comma at exactly two items:
-
-    - 1 item: yielded alone, unadorned.
-    - 2 items: ``"item1 "`` + ``"and item2"`` -> ``"item1 and item2"``.
-    - 3+ items: ``"item, "`` per item but the last, then ``"and itemN"``.
+    only in per-item rendering. Yields fragments that concatenate (``"".join``)
+    into the list; no Oxford comma at exactly two items ("A and B", vs
+    "A, B, and C" at three or more).
 
     Raises
     ------
     ValueError
-        If ``items`` is empty (unpacking needs at least one item);
-        unreachable through either caller.
+        If ``items`` is empty (unpacking needs one item); unreachable through
+        either caller.
     """
     # This picks off the last item for "and" handling.
     *left, terminus = items
@@ -256,8 +251,7 @@ def _join_english_list(items: Iterable[str]) -> Iterator[str]:
 def _prompt_intervals(intervals: Iterable[Interval]) -> Iterator[str]:
     """Turn an iterable of intervals into a prompt fragment listing them.
 
-    Uses exclusive-end notation (e.g. "5 to 10") to match the query
-    convention.
+    Exclusive-end notation (e.g. "5 to 10"), matching the query convention.
     """
     yield from _join_english_list(f"{start} to {end}" for start, end in intervals)
 
@@ -271,9 +265,9 @@ def _prompt_extensional(intervals: Iterable[Interval]) -> Iterator[str]:
 def _prompt_extensional_indexed(intervals_to_labels: Dict[Interval, Color]) -> Iterator[str]:
     """Yield one newline-terminated 'Year X: Color.' line per year, chronologically.
 
-    A year-keyed context, so the model resolves a queried year by direct
-    lookup rather than scanning a comma-separated list. Each year appears
-    exactly once, by the exclusive-interval property.
+    A year-keyed context, so the model resolves a queried year by direct lookup
+    rather than scanning a comma-separated list. Each year appears exactly
+    once, by the exclusive-interval property.
     """
     for (start, end), color in sorted(intervals_to_labels.items()):
         for year in range(start, end):
@@ -288,13 +282,13 @@ def get_random_exclusive_prompts(
 ) -> Iterable[Tuple[str, str, str, bool]]:
     """Generate an intensional, extensional, and noise-padded intensional prompt.
 
-    Yields ``(intens, extens, noise_intens, answer)`` per query. The
-    noise-padded prompt keeps the intensional interval-format context but
-    appends whitespace until the RENDERED prompt has exactly as many tokens
-    as the extensional prompt for the SAME query, ablating context length as
-    a confound. ``tokenizer`` defines that token target and must be the
-    model's own (``tokenization.for_model(model)``) -- see the module
-    docstring's tokenizer discipline.
+    Yields ``(intens, extens, noise_intens, answer)`` per query. The noise-
+    padded prompt keeps the intensional interval-format context but appends
+    whitespace until the RENDERED prompt has exactly as many tokens as the
+    extensional prompt for the SAME query, ablating context length as a
+    confound. ``tokenizer`` defines that token target and must be the model's
+    own (``tokenization.for_model(model)``) -- see the module docstring's
+    tokenizer discipline.
     """
     label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
         config
@@ -368,8 +362,8 @@ def get_random_exclusive_quiz(
 ) -> Tuple[Quiz, Quiz, Quiz]:
     """Wrap :func:`get_random_exclusive_prompts` to produce True/False QnA format.
 
-    Arguments are forwarded verbatim. Returns the intensional, extensional,
-    and noise-padded intensional Quiz, in that order.
+    Arguments forwarded verbatim; returns the intensional, extensional and
+    noise-padded intensional Quiz, in that order.
     """
     return quizzes_from_prompts(
         get_random_exclusive_prompts(config, prompter, tokenizer=tokenizer), ToF
@@ -384,10 +378,9 @@ def get_random_exclusive_numeric_quiz(
 ) -> Tuple[Quiz, Quiz, Quiz]:
     """Wrap :func:`get_random_exclusive_prompts` to produce integer-answer QnA format.
 
-    As :func:`get_random_exclusive_quiz`, but wraps each prompt in a
-    ``Numeric`` item instead of a ``ToF`` one. Arguments are forwarded
-    verbatim. Returns the intensional, extensional, and noise-padded
-    intensional Quiz, in that order.
+    As :func:`get_random_exclusive_quiz` but with ``Numeric`` items; returns
+    the intensional, extensional and noise-padded intensional Quiz, in that
+    order.
     """
     return quizzes_from_prompts(
         get_random_exclusive_prompts(config, prompter, tokenizer=tokenizer), Numeric
@@ -411,10 +404,9 @@ def succession_query_gen(
     """Generate direct-succession queries.
 
     Yields ``({"color1": ..., "color2": ...}, answer)`` pairs: True for each
-    unique (predecessor, successor) pair, then an equal number of False
-    queries from randomly-sampled non-successor pairs (``seed`` drives only
-    that sampling). Both mappings come from
-    :func:`get_random_exclusive_chromatic_intervals`.
+    unique (predecessor, successor) pair, then equally many False queries from
+    randomly-sampled non-successor pairs (``seed`` drives only that sampling).
+    Both mappings come from :func:`get_random_exclusive_chromatic_intervals`.
     """
     rng: np.random.Generator = np.random.default_rng(seed)
     sorted_intervals = sorted(interval_to_label.items(), key=lambda item: item[0][0])
@@ -443,9 +435,9 @@ def one_hop_year_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], bool]]:
     """Generate single-year queries (one-hop for both representations).
 
-    Yields ``({"color": ..., "year": ...}, answer)`` pairs: True for one
-    random year from each interval the color holds, False for one random year
-    from another color's interval, per interval held. Both mappings come from
+    Yields ``({"color": ..., "year": ...}, answer)`` pairs: True for one random
+    year from each interval the color holds, False for one random year from
+    another color's interval, per interval held. Both mappings come from
     :func:`get_random_exclusive_chromatic_intervals`; ``seed`` drives the year
     sampling.
     """
@@ -473,22 +465,21 @@ def duration_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], int]]:
     """Yield a ``({"color": ...}, total_years)`` pair per color.
 
-    ``total_years`` is sum(end - start) over the color's annealed intervals.
-    A color assigned zero intervals is skipped; one assigned only degenerate
+    ``total_years`` is sum(end - start) over the color's annealed intervals. A
+    color assigned zero intervals is skipped; one assigned only degenerate
     zero-length intervals (start == end) is NOT, and correctly answers 0.
-    ``intervals_to_labels`` and ``seed`` are unused here (duration queries
-    need neither direction nor sampling) but every ``query_gen`` in this
-    module shares one signature.
+    ``intervals_to_labels`` and ``seed`` are unused (duration queries need
+    neither direction nor sampling) but every ``query_gen`` here shares one
+    signature.
 
     Notes
     -----
-    ``intervals`` is the ``(num_intervals, 2)`` ndarray that
+    ``intervals`` is the ``(num_intervals, 2)`` ndarray
     ``get_random_exclusive_chromatic_intervals`` builds, so the "no intervals"
-    check must be a row-COUNT check (``len(intervals) == 0``). ``if not
-    intervals:`` raises ``ValueError`` for any multi-element array, and the
-    ``if not intervals.any():`` idiom used elsewhere in this module checks
-    element VALUES, so it would drop a color holding a single ``(0, 0)``
-    interval whose duration query legitimately answers 0.
+    check must be a row-COUNT check: ``if not intervals:`` raises
+    ``ValueError`` on a multi-element array, and ``if not intervals.any():``
+    (used elsewhere here) tests element VALUES, dropping a color that holds a
+    single ``(0, 0)`` interval whose duration legitimately answers 0.
     """
     for color, intervals in label_to_intervals.items():
         if len(intervals) == 0:

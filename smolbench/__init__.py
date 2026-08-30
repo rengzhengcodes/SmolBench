@@ -1,8 +1,7 @@
-"""Provide the smolbench package.
+"""Benchmark suite for smol manipulation of language.
 
-smolbench holds a benchmark suite for smol manipulation of language: it
-evaluates how representations of positive utility information in context
-affect LLM performance. See ``smolbench.induction`` for the induction
-benchmarks (periodic-pattern and chromatic-interval) and
-``smolbench.deduction`` for the Lean 4 theorem-proving benchmark.
+Evaluates how representations of positive utility information in context affect
+LLM performance: ``smolbench.induction`` holds the periodic-pattern and
+chromatic-interval benchmarks, ``smolbench.deduction`` the Lean 4
+theorem-proving benchmark.
 """

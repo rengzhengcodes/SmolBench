@@ -1,11 +1,11 @@
-"""Plotting helpers for induction analysis: score a ``Marks`` into a scalar
-accuracy, load a ``{(model, condition): accuracy}`` table from a directory of
-result YAMLs, and render the grouped-bar comparison figure. Exercised by
-``tests/induction/test_induction_figures.py``.
+"""Plotting helpers for induction analysis.
 
-Matplotlib is imported LAZILY, inside :func:`plot_archetype_accuracy` only: it
-lives in the ``notebook`` extra (see ``pyproject.toml``), not the core
-dependency set, so importing this module must not require it.
+Score a ``Marks`` into a scalar accuracy, load a ``{(model, condition):
+accuracy}`` table from a directory of result YAMLs, and render the grouped-bar
+comparison figure. Matplotlib is imported LAZILY, inside
+:func:`plot_archetype_accuracy` only: it lives in the ``notebook`` extra (see
+``pyproject.toml``), not the core dependency set, so importing this module must
+not require it. Exercised by ``tests/induction/test_induction_figures.py``.
 """
 
 from pathlib import Path
@@ -17,9 +17,9 @@ from smolbench.evals import Marks
 def accuracy(marks: Marks) -> float:
     """Fraction correct: ``correct / (correct + incorrect + invalid)``.
 
-    Invalid/unparseable responses count against the model just like incorrect ones.
-    An empty ``Marks`` returns ``0.0`` rather than raising, so it cannot abort a
-    table build.
+    Invalid/unparseable responses count against the model like incorrect ones.
+    An empty ``Marks`` returns ``0.0`` rather than raising, so it cannot abort
+    a table build.
     """
     total = marks.correct + marks.incorrect + marks.invalid
     return marks.correct / total if total > 0 else 0.0
@@ -31,14 +31,13 @@ def load_condition_accuracies(
 ) -> Dict[Tuple[str, str], Optional[float]]:
     """Load a ``{(model, condition): accuracy}`` table from result YAMLs.
 
-    ``files`` maps ``(model_key, condition_key) -> filename`` under `results_dir`;
-    one output entry per key, in ``files`` iteration order, ``None`` when the file
-    is absent. `results_dir` is a flat, single-run ``result2/`` archive -- NOT the
+    ``files`` maps ``(model_key, condition_key) -> filename`` under
+    `results_dir`; one output entry per key, in ``files`` iteration order,
+    ``None`` when the file is absent (and printed to stdout as ``Missing result
+    file: <path>``, so an incomplete checkout still surfaces a diagnostic).
+    `results_dir` is a flat, single-run ``result2/`` archive -- NOT the
     per-replicate ``results/<tag>/rep_<seed>.yaml`` tree the current experiment
     writes.
-
-    Side effect: prints ``f"Missing result file: {path}"`` to stdout per missing
-    file, so an incomplete checkout still surfaces the diagnostic.
     """
     data: Dict[Tuple[str, str], Optional[float]] = {}
     for (model_key, cond_key), fname in files.items():
@@ -65,31 +64,28 @@ def plot_archetype_accuracy(
 ):
     """Render the grouped-bar (model x condition) accuracy figure; return ``(fig, ax)``.
 
-    One group of bars per ``models`` entry ``(model_key, display_label)`` on the
-    x-axis, one bar per ``conditions`` entry ``(condition_key, display_label,
-    color)`` within each group, in the given order. Missing keys in `data` are
-    treated as ``None`` and plotted at 0 with no label, so a genuine 0% is
+    One group of bars per ``models`` entry ``(model_key, display_label)``, one
+    bar per ``conditions`` entry ``(condition_key, display_label, color)``
+    within each group, in the given order. Missing keys in `data` are treated as
+    ``None`` and plotted at 0 with no label, so a genuine 0% is
     indistinguishable from missing data.
 
     Parameters
     ----------
     chance : float or None, default 0.5
-        Y-value of the dashed, labeled "chance" reference line; ``None`` omits it.
+        Y-value of the dashed, labeled "chance" line; ``None`` omits it.
     bar_width : float, default 0.22
-        X-axis units allotted to each condition's bar; the drawn bar is
-        ``bar_width - 0.02``, leaving a hairline gap.
+        X-axis units per condition bar; the drawn bar is ``bar_width - 0.02``.
     ylim : Tuple[float, float], default (0, 1.1)
-        The default headroom above 1.0 leaves room for the percentage labels on
-        bars near 100%.
+        Headroom above 1.0 leaves room for percentage labels near 100%.
     out_path : pathlib.Path or None, default None
-        If given, the figure is also saved here with ``dpi=150,
-        bbox_inches="tight"``.
+        If given, also saves the figure with ``dpi=150, bbox_inches="tight"``.
 
     Notes
     -----
     Bar offsets are ``(i - (len(conditions) - 1) / 2) * bar_width``, which at
-    exactly 3 conditions reproduces the pinned figure bit-for-bit while generalizing
-    to any number of conditions per group.
+    exactly 3 conditions reproduces the pinned figure bit-for-bit while
+    generalizing to any number of conditions per group.
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mtick

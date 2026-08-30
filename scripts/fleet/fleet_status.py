@@ -4,10 +4,9 @@ Companion to ``scripts/fleet/run_fleet.py`` (launches and monitors) and
 ``scripts/fleet/fleet_teardown.py`` (terminates). Lists every EC2 instance
 tagged for this study across every region the study might use, and is safe to
 call from anywhere: analysis notebooks and ``run_fleet``'s monitor loop import
-it directly, and tests reach it through `client_factory` injection.
-
-boto3 is imported lazily inside `_default_client_factory`, never at module
-scope, so importing this module requires no AWS SDK.
+it directly, and tests reach it through `client_factory` injection. boto3 is
+imported lazily inside `_default_client_factory`, never at module scope, so
+importing this module requires no AWS SDK.
 """
 
 from __future__ import annotations
@@ -41,19 +40,13 @@ def fleet_rows(
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
 
-    Only ``running``/``pending`` are queried: the LIVE fleet an operator cares
-    about, and what ``fleet_teardown.py --terminate`` reads to decide what to
-    kill. The `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept
-    a trailing ``*``), so this never lists the whole account, and re-checked
-    CLIENT-SIDE so a regression in the server-side filter still cannot let a
-    sibling experiment's instances leak in. A region that raises (no
-    credentials, disabled region, throttle) is logged and skipped, so one bad
-    region cannot hide the other two.
-
-    `client_factory` maps a region name to an object exposing
-    ``describe_instances(**kwargs)``; ``None`` uses `_default_client_factory`.
-    That seam is what makes this testable with no AWS SDK
-    (``tests/tooling/test_run_fleet.py``'s ``_FakeEc2Client``).
+    Parameters
+    ----------
+    client_factory : Callable[[str], Any] or None, optional
+        Maps a region name to an object exposing ``describe_instances(**kwargs)``;
+        ``None`` uses `_default_client_factory`. That seam is what makes this
+        testable with no AWS SDK (``tests/tooling/test_run_fleet.py``'s
+        ``_FakeEc2Client``).
 
     Returns
     -------
@@ -64,6 +57,17 @@ def fleet_rows(
         ``datetime``, or ``None`` if EC2 reported none) and `age_hours` (float,
         against ``datetime.now(timezone.utc)`` at call time; ``0.0`` when
         `launch_time` is ``None``).
+
+    Notes
+    -----
+    Only ``running``/``pending`` are queried: the LIVE fleet an operator cares
+    about, and what ``fleet_teardown.py --terminate`` reads to decide what to
+    kill. The `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept
+    a trailing ``*``), so this never lists the whole account, and re-checked
+    CLIENT-SIDE so a regression in the server-side filter still cannot let a
+    sibling experiment's instances leak in. A region that raises (no credentials,
+    disabled region, throttle) is logged and skipped, so one bad region cannot
+    hide the other two.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -150,10 +154,9 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 def main(argv: Optional[list[str]] = None) -> int:
     """Print the live fleet table; always returns ``0``.
 
-    There are no flags -- `fleet_rows`'s defaults already cover every region
-    this study could have provisioned in -- and `fleet_rows` logs and skips a
-    region that fails to describe, so there is no fatal path short of an
-    unrecognized argument.
+    No flags: `fleet_rows`'s defaults already cover every region this study could
+    have provisioned in, and it logs and skips a region that fails to describe,
+    so there is no fatal path short of an unrecognized argument.
     """
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."

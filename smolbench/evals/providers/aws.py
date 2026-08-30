@@ -4,11 +4,11 @@ Interface with AWS-hosted models through an OpenAI-compatible endpoint.
 A configuration over :mod:`smolbench.evals.openai_compat` (the shared
 retry/parsing/evaluation core), adding AWS endpoint/auth resolution plus
 optional SageMaker provisioning. The default is Bedrock's bedrock-mantle Chat
-Completions endpoint (broad catalog; call ``list_models()``); Anthropic models
-are NOT reachable there, since Bedrock serves them over the Anthropic Messages
-API, and the bedrock-*runtime* OpenAI surface (an override, see
-``_base_url_template``) serves only gpt-oss. A self-deployed SageMaker
-endpoint speaks the same schema; only base URL and token differ.
+Completions endpoint (broad catalog; call ``list_models()``): Anthropic models
+are NOT reachable there (Bedrock serves them over the Messages API), and the
+bedrock-*runtime* OpenAI surface (an override, see ``_base_url_template``)
+serves only gpt-oss. A self-deployed SageMaker endpoint speaks the same
+schema; only base URL and token differ.
 
 Setup -- Bedrock (default), then SageMaker (same client, your own endpoint):
 
@@ -21,10 +21,10 @@ Setup -- Bedrock (default), then SageMaker (same client, your own endpoint):
 All INFERENCE-path env config (base URL, bearer token, body-model and
 context-length overrides) is read at CALL time, so refreshing
 AWS_INFERENCE_API_KEY takes effect on the next request. The PROVISIONING knobs
-``SAGEMAKER_VLLM_DLC`` and ``SAGEMAKER_EXEC_ROLE_NAME`` are the exception:
-captured once at IMPORT time, so ``load_dotenv()`` must run BEFORE importing
-this module. Provisioning builds on :mod:`smolbench.evals._aws` and imports
-boto3/botocore lazily, so the inference path speaks only HTTP.
+``SAGEMAKER_VLLM_DLC``/``SAGEMAKER_EXEC_ROLE_NAME`` are captured at IMPORT
+time, so ``load_dotenv()`` must run BEFORE importing this module. Provisioning
+builds on :mod:`smolbench.evals._aws` with lazy boto3/botocore imports, so
+importing this module stays dependency-free and inference speaks only HTTP.
 """
 
 import contextlib
@@ -62,9 +62,9 @@ def _region() -> str:
 def _base_url_template() -> str:
     """Return the base URL, up to (but excluding) ``/chat/completions``.
 
-    ``AWS_INFERENCE_BASE_URL`` if set (e.g. bedrock-runtime's OpenAI surface
-    ``https://bedrock-runtime.{region}.amazonaws.com/openai/v1``, gpt-oss
-    only, or a SageMaker endpoint
+    ``AWS_INFERENCE_BASE_URL`` if set (bedrock-runtime's OpenAI surface
+    ``https://bedrock-runtime.{region}.amazonaws.com/openai/v1``, gpt-oss only,
+    or a SageMaker endpoint
     ``https://runtime.sagemaker.{region}.amazonaws.com/endpoints/{ep}/openai/v1``),
     else the bedrock-mantle default templated with ``_region()``. Never has a
     trailing slash.
@@ -78,9 +78,8 @@ def _base_url_template() -> str:
 def _api_key() -> str:
     """Return the bearer token, resolved at call time.
 
-    ``AWS_INFERENCE_API_KEY`` (a minted, time-limited SageMaker token) wins
-    over ``AWS_BEARER_TOKEN_BEDROCK`` (the long-lived Bedrock API key);
-    ``""`` when neither is set.
+    ``AWS_INFERENCE_API_KEY`` (a minted, time-limited SageMaker token) wins over
+    ``AWS_BEARER_TOKEN_BEDROCK`` (long-lived); ``""`` when neither is set.
     """
     return os.getenv("AWS_INFERENCE_API_KEY") or os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
 
@@ -88,10 +87,9 @@ def _api_key() -> str:
 def _resolve_base(model: str) -> str:
     """Fill the ``{model}`` placeholder in the base URL with the endpoint name.
 
-    SageMaker serves one model per endpoint, so its base URL carries a
-    ``{model}`` placeholder filled per call. With no placeholder
-    (bedrock-mantle selects the model in the request body) the base URL is
-    returned unchanged.
+    SageMaker serves one model per endpoint, so its base URL carries the
+    placeholder; with none (bedrock-mantle selects the model in the request
+    body) the base URL is returned unchanged.
     """
     base = _base_url_template()
     return base.replace("{model}", model) if "{model}" in base else base
@@ -105,11 +103,11 @@ def _connection(model: str) -> Tuple[str, str]:
 def _body_model(model: str) -> str:
     """Return the OpenAI ``model`` field to put in the request body.
 
-    ``AWS_INFERENCE_BODY_MODEL`` wins for all endpoints. Otherwise Bedrock (no
+    ``AWS_INFERENCE_BODY_MODEL`` wins everywhere. Otherwise Bedrock (no
     ``{model}`` placeholder) sends the model id as-is. A SageMaker endpoint
-    routes by URL, so the field is nominally free -- but a custom container
-    may 400 on ``""``, so its served id is resolved once via ``list_models``
-    (cached in ``_SERVED_MODELS``), falling back to ``""`` if unavailable.
+    routes by URL, so the field is nominally free -- but a custom container may
+    400 on ``""``, so its served id is resolved once via ``list_models`` (cached
+    in ``_SERVED_MODELS``), falling back to ``""`` if unavailable.
     """
     body_model_override = os.getenv("AWS_INFERENCE_BODY_MODEL")
     if body_model_override is not None:
@@ -128,10 +126,10 @@ def _body_model(model: str) -> str:
 def get_model_context_length(model: str) -> int:
     """Return the context window (tokens) to guard ``usage.total_tokens`` against.
 
-    AWS's OpenAI-compatible endpoints expose model ids but not context
-    windows, so ``model`` is UNUSED (present only for parity with the other
-    providers' ``Callable[[str], int]`` signature) and there is no per-model
-    override. Reads ``AWS_BEDROCK_CONTEXT_LENGTH`` at CALL time, else
+    AWS's OpenAI-compatible endpoints expose model ids but not context windows,
+    so ``model`` is UNUSED (present only for parity with the other providers'
+    ``Callable[[str], int]`` signature) and there is no per-model override.
+    Reads ``AWS_BEDROCK_CONTEXT_LENGTH`` at CALL time, else
     ``AWS_BEDROCK_DEFAULT_CONTEXT_LENGTH``; one endpoint-wide value suffices
     because callers use it only as a soft post-hoc token guard.
     """
@@ -143,10 +141,14 @@ def list_models(model: str = "") -> list[str]:
 
     Works on bedrock-mantle and on SageMaker endpoints. bedrock-runtime's
     OpenAI surface does NOT implement ``GET /models`` (it 404s); discover ids
-    there with ``aws bedrock list-foundation-models``. ``model`` fills the
-    ``{model}`` placeholder of a templated SageMaker base URL and is required
-    there, or the request hits a literal ``{model}`` path and fails; the
-    default ``""`` suits bedrock-mantle.
+    there with ``aws bedrock list-foundation-models``.
+
+    Parameters
+    ----------
+    model : str, optional
+        Endpoint name filling the ``{model}`` placeholder of a templated
+        SageMaker base URL -- required there, or the request hits a literal
+        ``{model}`` path and fails. The default ``""`` suits bedrock-mantle.
     """
     response = metadata_get(f"{_resolve_base(model)}/models", _api_key(), check_status=True)
     return [m["id"] for m in response.get("data", [])]
@@ -209,10 +211,12 @@ def _is_sagemaker_provider() -> bool:
 
 
 def _sagemaker_client():
-    """Return a SageMaker client from a fresh boto3 session.
+    """Return a SageMaker client from a fresh boto3 Session.
 
-    A locally-named one-liner so ``tests/evals/test_aws_provision.py`` can
-    monkeypatch this single name with a recording fake.
+    Fresh per call, so a just-rotated credentials file is picked up on the next
+    call (see ``_aws.fresh_client``). Locally named so
+    ``tests/evals/test_aws_provision.py`` can monkeypatch this single name with
+    a recording fake.
     """
     return _aws.fresh_client("sagemaker", _region())
 
@@ -222,9 +226,17 @@ def mint_sagemaker_token(expires: int = 43200) -> str:
 
     A base64-encoded SigV4 pre-signed ``CallWithBearerToken`` URL prefixed
     ``sagemaker-api-key-`` -- the SageMaker SDK's ``generate_token`` scheme,
-    reimplemented on botocore so no extra SDK is needed. ``expires`` is the
-    lifetime in seconds, capped by SageMaker at 12h (the default 43200).
-    Raises ``RuntimeError`` when no local AWS credentials are found.
+    reimplemented on botocore so no extra SDK is needed.
+
+    Parameters
+    ----------
+    expires : int
+        Token lifetime in seconds; SageMaker caps it at 12h (the default).
+
+    Raises
+    ------
+    RuntimeError
+        No local AWS credentials found.
     """
     import base64
     from botocore.auth import SigV4QueryAuth
@@ -262,11 +274,16 @@ def _ensure_exec_role() -> str:
 def _create_model_kwargs(model: str, spec: DeploySpec, role_arn: str) -> Dict[str, Any]:
     """Build the pure ``CreateModel`` kwargs for one SageMaker deploy spec.
 
-    ``model`` is the endpoint name; the separate SageMaker *model* resource is
-    ``f"{model}-model"``. ``spec`` must have ``hf_model_id`` (else
-    ``KeyError``); ``image`` (default ``SAGEMAKER_VLLM_DLC``), ``tp`` (default
-    1) and ``env`` (default ``{}``) are optional. ``spec["env"]`` merges
-    SECOND into ``Environment``, so spec keys override colliding base keys.
+    Parameters
+    ----------
+    model : str
+        Endpoint name; the separate SageMaker *model* resource is
+        ``f"{model}-model"``.
+    spec : DeploySpec
+        Must have ``hf_model_id`` (else ``KeyError``); ``image`` (default
+        ``SAGEMAKER_VLLM_DLC``), ``tp`` (default 1) and ``env`` (default
+        ``{}``) are optional. ``spec["env"]`` merges SECOND into
+        ``Environment``, so spec keys override colliding base keys.
     """
     return {
         "ModelName": f"{model}-model",
@@ -286,11 +303,17 @@ def _create_model_kwargs(model: str, spec: DeploySpec, role_arn: str) -> Dict[st
 def _create_endpoint_config_kwargs(model: str, spec: DeploySpec) -> Dict[str, Any]:
     """Build the pure ``CreateEndpointConfig`` kwargs for one SageMaker deploy spec.
 
-    ``model`` is the endpoint name; the config is ``f"{model}-config"`` and
-    references ``f"{model}-model"``. ``spec`` must have ``instance_type``
-    (else ``KeyError``). One production variant (``"variant1"``, 1 instance)
-    with a fixed 1800s container-startup health-check timeout, since large
-    multi-GPU DLC images are slow to pull and load.
+    One production variant (``"variant1"``, 1 instance) with a fixed 1800s
+    container-startup health-check timeout, since large multi-GPU DLC images
+    are slow to pull and load.
+
+    Parameters
+    ----------
+    model : str
+        Endpoint name; the config is ``f"{model}-config"`` and references
+        ``f"{model}-model"``.
+    spec : DeploySpec
+        Must have ``instance_type`` (else ``KeyError``).
     """
     return {
         "EndpointConfigName": f"{model}-config",
@@ -319,15 +342,23 @@ def _create_endpoint_kwargs(model: str) -> Dict[str, Any]:
 def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
     """Build the ordered ``(label, callable)`` teardown steps for one endpoint.
 
-    ``sm`` is a SageMaker client (``Any``: boto3 clients are dynamically
-    generated); ``model`` is the endpoint name, whose config and model
-    resources are ``f"{model}-config"`` / ``f"{model}-model"``. Returns
-    exactly three pairs in DEPENDENCY-SAFE order: ``"endpoint"`` (whose
-    deletion stops the billed instance), ``"endpoint-config"``, ``"model"``.
-    Each call is a deferred zero-argument closure, so building the list has no
-    side effects. Labels are bare (not ``f"endpoint {model}"``): pinned by
-    ``tests/evals/test_aws_provision.py::test_provision_endpoint_happy_path_full_lifecycle``,
-    and ``provision_endpoint`` formats the model name into its own logs.
+    Parameters
+    ----------
+    sm : Any
+        A SageMaker client (``Any``: boto3 clients are dynamically generated).
+    model : str
+        Endpoint name, whose config and model resources are
+        ``f"{model}-config"`` / ``f"{model}-model"``.
+
+    Returns
+    -------
+    list
+        Exactly three pairs in DEPENDENCY-SAFE order: ``"endpoint"`` (whose
+        deletion stops the billed instance), ``"endpoint-config"``, ``"model"``.
+        Each call is a deferred zero-argument closure, so building the list has
+        no side effects. Labels are bare (not ``f"endpoint {model}"``): pinned by
+        ``tests/evals/test_aws_provision.py::test_provision_endpoint_happy_path_full_lifecycle``,
+        and ``provision_endpoint`` formats the model name into its own logs.
     """
     mdl, cfg = f"{model}-model", f"{model}-config"
     return [
@@ -341,23 +372,29 @@ def _teardown_steps(sm: Any, model: str) -> List[Tuple[str, Callable[[], Any]]]:
 def provision_endpoint(model: str, timeout_min: int = 40):
     """Provision the SageMaker endpoint named ``model`` for the body of a ``with``.
 
-    Deploys from ``SAGEMAKER_DEPLOY_SPECS[model]``, waits up to
-    ``timeout_min`` (default 40; large multi-GPU DLC images are slow to
-    provision, pull and load) for ``InService``, refreshes
-    ``AWS_INFERENCE_API_KEY``, and yields ``model`` unchanged. Teardown
-    (endpoint + endpoint-config + model, which stops the billed instance) is
-    GUARANTEED on exit: success, exception, or KeyboardInterrupt. A no-op that
-    still yields ``model`` for serverless Bedrock and non-AWS providers, so
-    wrapping an experiment is always safe::
+    Deploys from ``SAGEMAKER_DEPLOY_SPECS[model]``, waits for ``InService``,
+    refreshes ``AWS_INFERENCE_API_KEY``, and yields ``model`` unchanged.
+    Teardown (endpoint + endpoint-config + model, which stops the billed
+    instance) is GUARANTEED on exit: success, exception, or KeyboardInterrupt.
+    A no-op that still yields ``model`` for serverless Bedrock and non-AWS
+    providers, so wrapping an experiment is always safe.
 
-        with provision_endpoint(DENSE_MODEL):
-            decode_intens_eval = evaluate(intens_quiz, DENSE_MODEL, SEED)
+    Parameters
+    ----------
+    timeout_min : int
+        Minutes to wait for ``InService`` (default 40; large multi-GPU DLC
+        images are slow to provision, pull and load).
 
-    Raises ``KeyError`` when the provider is SageMaker but ``model`` has no
-    ``SAGEMAKER_DEPLOY_SPECS`` entry (checked before any AWS call, so a typo
-    fails fast), ``RuntimeError`` if the endpoint reaches
-    ``Failed``/``OutOfService``, and ``TimeoutError`` if it is not
-    ``InService`` in time.
+    Raises
+    ------
+    KeyError
+        The provider is SageMaker but ``model`` has no
+        ``SAGEMAKER_DEPLOY_SPECS`` entry; checked before any AWS call, so a
+        typo fails fast.
+    RuntimeError
+        The endpoint reached ``Failed``/``OutOfService``.
+    TimeoutError
+        Not ``InService`` within ``timeout_min``.
     """
     if not _is_sagemaker_provider():
         logging.info("provision_endpoint: serverless/non-SageMaker provider; nothing to provision.")

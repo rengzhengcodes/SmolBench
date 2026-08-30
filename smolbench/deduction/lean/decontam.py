@@ -203,9 +203,10 @@ class Hit:
 
 @dataclass
 class HoldoutIndex:
-    """Content fingerprints of every eval-holdout theorem: build with `build`,
-    query with `check`. Every lookup structure maps back to the eval theorem's
-    ``full_name``, so a `Hit` can name its source.
+    """Content fingerprints of every eval-holdout theorem.
+
+    Build with `build`, query with `check`. Every lookup structure maps back to
+    the eval theorem's ``full_name``, so a `Hit` can name its source.
     """
 
     #: K1: eval theorem names.
@@ -314,12 +315,27 @@ class HoldoutIndex:
     ) -> list[Hit]:
         """Check one candidate training example against every key family.
 
-        Callers pass whichever facets their row has; any may be omitted. A row should be
-        **dropped** iff the returned list is non-empty (one `Hit` per matched family).
+        Callers pass whichever facets their row has; any may be omitted. A row
+        should be **dropped** iff the returned list is non-empty.
 
-        Facet -> family: `name` K1; `statement` K2 exact + near-dup, and also K3, since
-        a state-shaped row's "statement" may be a mid-proof eval state; `states` K3
-        exact only; `tactics` (in order) K4a; `pairs` K4b.
+        Parameters
+        ----------
+        name : str, optional
+            K1.
+        statement : str, optional
+            K2 exact + near-dup, and also K3: a state-shaped row's "statement"
+            may be a mid-proof eval state.
+        states : iterable of str, optional
+            K3, exact only.
+        tactics : sequence of str, optional
+            K4a; expected in proof order.
+        pairs : iterable of (str, str), optional
+            K4b, ``(state, next tactic)``.
+
+        Returns
+        -------
+        list of Hit
+            One per matched key family; empty means keep the row.
         """
         hits: list[Hit] = []
         if name is not None and name in self.names:

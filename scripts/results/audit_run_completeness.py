@@ -6,17 +6,14 @@ generating box died mid-run and the driver recorded the failure as an ordinary
 per-cell ``exception`` row. Row counts, shard-merge gates and traceback counts
 all pass on that data. Assert on CONTENT.
 
-A cell is DEAD when no row for its key carries a non-empty candidate_proof. Dead
-cells split into two populations that must never be conflated:
-
-  INFRA   No attempt reached the model (no surviving row with prompt_tokens > 0)
-          and some row carries an infrastructure error. This is LOST DATA, and
-          exactly the set ``runner._existing_keys()`` re-runs, so a plain
-          relaunch regenerates these cells and nothing else.
-
-  GENUINE No error anywhere: the model was asked and returned nothing. This is
-          DATA, not loss. Regenerating it resamples until the model happens to
-          answer, which inflates the numerator. Never "repair" these cells.
+A cell is DEAD when no row for its key carries a non-empty candidate_proof, and
+dead cells split into two populations that must never be conflated. INFRA: no
+attempt reached the model (no surviving row with prompt_tokens > 0) and some row
+carries an infrastructure error -- LOST DATA, and exactly the set
+``runner._existing_keys()`` re-runs, so a plain relaunch regenerates these cells
+and nothing else. GENUINE: no error anywhere, the model was asked and returned
+nothing -- DATA, not loss; regenerating resamples until the model happens to
+answer, which inflates the numerator, so never "repair" these cells.
 
 Exits 1 on INFRA loss (also on short lanes, missing sanity rows, or a selection
 that matched no lane) so a pipeline can gate on it. Genuine empties are reported
@@ -69,9 +66,17 @@ def _s3():
 def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
-    Reads local run directories when `local`, otherwise each lane's
-    ``all_rows.jsonl`` from S3. The text is ``""`` when S3 holds no such object
-    for a lane, which is itself a finding.
+    Parameters
+    ----------
+    local : bool
+        Read local run directories instead of each lane's ``all_rows.jsonl``
+        from S3.
+
+    Yields
+    ------
+    tuple of (str, str)
+        Lane name and its raw rows text, which is ``""`` when S3 holds no such
+        object for a lane -- itself a finding.
     """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
@@ -102,10 +107,17 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
 def audit_lane(text: str) -> Dict[str, object]:
     """Classify one lane's cells into ok, infra-dead, or genuine-empty.
 
-    `text` is the raw ``all_rows.jsonl`` yielded by `iter_deduction_lanes`.
-    Returns counts keyed ``cells`` (distinct cell keys), ``infra`` (dead cells
-    lost to infrastructure), ``genuine`` (dead cells the model answered emptily)
-    and ``sanity_missing`` (sanity theorems with no passing verdict in any row).
+    Parameters
+    ----------
+    text : str
+        Raw ``all_rows.jsonl``, as yielded by `iter_deduction_lanes`.
+
+    Returns
+    -------
+    dict
+        Counts keyed ``cells`` (distinct cell keys), ``infra`` (dead cells lost
+        to infrastructure), ``genuine`` (dead cells the model answered emptily)
+        and ``sanity_missing`` (sanity theorems with no passing verdict).
     """
     rows_by_key: Dict[tuple, List[dict]] = collections.defaultdict(list)
     sanity: Dict[str, bool] = {}
@@ -151,8 +163,12 @@ def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, i
 
     The induction analogue of an empty cell is a MISSING seed: the arm file is
     written only when a seed completes, so a lane that died mid-seed leaves no
-    trace at all in S3. Only models with at least one gap are returned; `models`
-    restricts the report, and ``None`` covers every model found in S3.
+    trace at all in S3. Only models with at least one gap are returned.
+
+    Parameters
+    ----------
+    models : list of str, optional
+        Restrict the report to these models; ``None`` covers every model in S3.
     """
     s3 = _s3()
     seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)

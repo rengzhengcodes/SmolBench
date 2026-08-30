@@ -1,66 +1,49 @@
-"""Provide one facade over the induction eval harness and EC2 lifecycle.
+"""One facade over the induction eval harness and its EC2 lifecycle.
 
-:class:`InductionExperiment` bundles the induction eval harness with the EC2
-spot-instance lifecycle that serves the models under test, so a caller
-supplies only its experiment-specific config and calls ``provision()`` /
-``run(model, ...)`` / ``summarize(model)`` / ``teardown()``. The family-ladder
-scaling study builds one module-level ``EXPERIMENT`` in
-``notebooks/induction/run_study.py``, launched per lane by
-``scripts/fleet/run_fleet.py``.
+:class:`InductionExperiment` bundles the eval harness
+(:class:`~smolbench.evals.replicates.ReplicateHarness`) with the EC2 spot
+lifecycle that serves the models under test: a caller supplies its
+experiment-specific config and calls ``provision()`` / ``run(model, ...)`` /
+``summarize(model)`` / ``teardown()``. The family-ladder scaling study builds
+one module-level ``EXPERIMENT`` in ``notebooks/induction/run_study.py``,
+launched per lane by ``scripts/fleet/run_fleet.py``.
 
-Seeds. A "replicate" is the SAME quiz regenerated under a fresh seed, and
-``seeds`` is always ``tuple(base_seed + r for r in range(n_replicates))``.
-That seed drives both the quiz's own randomness (``PeriodicConfig.seed`` /
-``ChromaticIntervalsConfig.seed``) and the per-request decoding seed, which is
-what makes a replicate reproducible from its ``rep_{seed}.yaml`` path alone:
-``make_quizzes(seed, model)`` regenerates byte-identical prompts. (The model
-is in that call because the noise arm is padded to an exact token count under
-the model's own tokenizer; the rep file's DIRECTORY already names its
-archetype.)
+Seed convention. A "replicate" is the SAME quiz regenerated under a fresh seed,
+and ``seeds`` is always ``tuple(base_seed + r for r in range(n_replicates))``.
+That seed drives the quiz's own randomness AND the per-request decoding seed, so
+``make_quizzes(seed, model)`` regenerates byte-identical prompts and a replicate
+is reproducible from its ``rep_{seed}.yaml`` path alone; it takes the model
+because the noise arm is padded to an exact token count under the model's own
+tokenizer.
 
 Results and resume. ``results_store.resolve_store`` picks local disk vs S3 at
 call time from ``SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]``
 (unset/empty selects local) and ``SMOLBENCH_RESULTS_S3_REGION`` (default
-``AWS_REGION``, else boto3's own chain); pooling and resume-skip belong to
-:class:`~smolbench.evals.replicates.ReplicateHarness`, keyed per replicate by
-a ``results_store.ReplicateAddress``. The LOCAL layout, which every analysis
-script, notebook and committed results tree depends on, is
-``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir``, one file per
-replicate, overwritten on rerun. The S3 layout is instead an APPEND-ONLY
-EXPERIMENT LOG::
+``AWS_REGION``, else boto3's chain); pooling and resume-skip belong to
+``ReplicateHarness``. The LOCAL layout every analysis script depends on is
+``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir``, overwritten on
+rerun. S3 is instead an APPEND-ONLY log keyed
+``<base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``
+(``<experiment>`` from ``results_store.experiment_name``: ``notebook_dir`` plus
+``prefix`` minus its trailing ``"_"``; ``run_ts`` a fixed-width UTC
+``YYYYMMDDTHHMMSSZ`` stamp, so key order is chronological). Reads resolve the
+EARLIEST ``run_ts`` per (model, seed, info), which is what makes the first
+logged run the pass@1 measurement; ``harness.sync_down()`` renders the log back
+into the local layout (``archetype_tags`` supplies the model-to-tag mapping a
+log key cannot carry), one-way and destructively.
 
-    <base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml
+COST: ``provision()``, ``run()``, ``agent_status()`` and ``teardown()`` are LIVE
+AWS calls against a self-provisioned spot instance, billed while it is up
+(~$30-45/h on p5e/p5). ``summarize()`` and ``cot_chain_lengths()`` spend no
+EC2/inference cost but do issue S3 reads under an S3-backed store.
 
-``results_store.experiment_name`` maps
-``repo_root()/notebooks/<notebook_dir>/results`` to ``<notebook_dir>``, with
-``prefix`` folded in as a sub-level minus its trailing ``"_"``
-(``notebook_dir="induction"``, ``prefix="one_hop_"`` -> ``"induction/one_hop"``).
-``run_ts`` is a fixed-width UTC ``YYYYMMDDTHHMMSSZ`` stamp, so lexicographic
-key order is chronological. A rerun APPENDS and NEVER overwrites, so a
-superseded verdict stays recoverable, and every READ path resolves the
-EARLIEST ``run_ts`` per (model, seed, info) and treats only that one as live
--- which is what makes the first logged run the pass@1 measurement.
-``harness.sync_down()`` renders that log back into the local layout for
-store-unaware tooling, supplying ``archetype_tags`` as the model-to-tag
-mapping a log key cannot carry; it is one-way and destructive.
-
-COST: ``provision()``, ``run()``, ``agent_status()`` and ``teardown()`` are
-LIVE AWS calls against a self-provisioned EC2 spot instance, billed for as
-long as it is up (~$30-45/h for the p5e/p5 family; see
-``smolbench/evals/providers/ec2.py``). ``summarize()`` and
-``cot_chain_lengths()`` spend no EC2 or inference cost, but under an S3-backed
-store they DO issue S3 reads.
-
-CRITICAL -- never import ``smolbench.evals.providers.ec2`` at module scope.
-Its ``EC2_*`` constants are ordinary module attributes captured from
-``os.environ`` at IMPORT time (callers read them back as
-``ec2.EC2_EXPERIMENT_TAG``, and notebooks ``load_dotenv(keys.env)`` before
-importing ``ec2``), so an eager import here would freeze them to their
-un-overridden defaults, with no error, for any process that imports this
-module ahead of its ``load_dotenv``. Every method that needs the lifecycle
-therefore imports ``ec2`` INSIDE its body, after ``_apply_env()``.
-(``smolbench.evals.replicates`` is safe at module scope: its provider dispatch
-resolves at CALL time.)
+CRITICAL -- never import ``smolbench.evals.providers.ec2`` at module scope. Its
+``EC2_*`` constants are captured from ``os.environ`` at IMPORT time (notebooks
+``load_dotenv(keys.env)`` first), so an eager import here would silently freeze
+them to un-overridden defaults for any process importing this module ahead of
+its ``load_dotenv``. Every method needing the lifecycle imports ``ec2`` INSIDE
+its body, after ``_apply_env()``. (``smolbench.evals.replicates`` is safe at
+module scope: its provider dispatch resolves at CALL time.)
 """
 
 import functools
@@ -86,8 +69,8 @@ class InductionExperiment:
     Lifecycle order: ``provision()`` once, ``run(model, ...)`` once per
     archetype, ``summarize(model)`` / ``cot_chain_lengths()`` any number of
     times (offline), ``teardown()`` once at the end. Frozen, like
-    ``ReplicateHarness``: an experiment's configuration must not mutate
-    mid-run. ``harness`` is the one lazily built attribute.
+    ``ReplicateHarness``: an experiment's configuration must not mutate mid-run.
+    ``harness`` is the one lazily built attribute.
     """
 
     #: Which results tree this experiment belongs to. Used only to locate
@@ -162,14 +145,13 @@ class InductionExperiment:
         """Return the replicate seeds this process is responsible for.
 
         Replicate ``r``'s seed is ``base_seed + r``, so a seed names the same
-        replicate no matter which shard collects it. Unsharded this is all
-        ``n_replicates`` of them; sharded it is every ``count``-th one
-        starting at ``index``. Shards STRIDE rather than take contiguous
-        blocks, which keeps them within one replicate of each other in size
-        when ``count`` does not divide ``n_replicates`` (30 over 4 shards
-        splits 8/8/7/7, not 8/8/8/6) -- the slowest shard sets the wall-clock
-        time sharding exists to reduce. Every replicate lands in exactly one
-        shard, so parallel shards never contend for the same
+        replicate whichever shard collects it. Unsharded this is all
+        ``n_replicates``; sharded it is every ``count``-th one starting at
+        ``index``. Shards STRIDE rather than take contiguous blocks, which
+        keeps them within one replicate of each other in size (30 over 4
+        shards splits 8/8/7/7, not 8/8/8/6) -- the slowest shard sets the
+        wall-clock time sharding exists to reduce. Every replicate lands in
+        exactly one shard, so parallel shards never contend for the same
         ``rep_{seed}.yaml``.
         """
         every = tuple(self.base_seed + r for r in range(self.n_replicates))
@@ -185,12 +167,12 @@ class InductionExperiment:
 
     @functools.cached_property
     def harness(self) -> ReplicateHarness:
-        """Return the :class:`ReplicateHarness` built from this experiment's config.
+        """Return this experiment's :class:`ReplicateHarness`, built once and reused.
 
-        Built once and reused. Caching is safe on a frozen dataclass because
+        Caching is safe on a frozen dataclass because
         ``cached_property.__get__`` writes straight into ``instance.__dict__``
-        (which still exists -- ``frozen=True`` adds no ``__slots__``) rather
-        than going through the overridden ``__setattr__``.
+        (``frozen=True`` adds no ``__slots__``) rather than going through the
+        overridden ``__setattr__``.
         """
         return ReplicateHarness(
             results_dir=self.results_dir,
@@ -207,12 +189,11 @@ class InductionExperiment:
 
         Sets ``INFERENCE_PROVIDER=ec2`` and, when ``state_file`` is configured,
         points ``EC2_STATE_FILE`` at this experiment's private,
-        repo-root-anchored state file; both are read at CALL time (per
-        ``ec2.py``'s "Env-read timing" section), unlike the ``EC2_*`` constants
-        frozen at import. When ``state_file`` is None it EXPLICITLY POPS
-        ``EC2_STATE_FILE``, so a later ``state_file=None`` experiment in the
-        same process cannot silently keep talking to an earlier one's state
-        file instead of ``ec2.py``'s default path.
+        repo-root-anchored state file; both are read at CALL time, unlike the
+        ``EC2_*`` constants frozen at import. When ``state_file`` is None it
+        EXPLICITLY POPS ``EC2_STATE_FILE``, so a later ``state_file=None``
+        experiment in the same process cannot silently keep talking to an
+        earlier one's state file instead of ``ec2.py``'s default path.
         """
         os.environ["INFERENCE_PROVIDER"] = "ec2"
         if self.state_file is not None:
@@ -226,10 +207,15 @@ class InductionExperiment:
         LIVE AWS call (see the module docstring's COST paragraph). Calls
         ``ec2.provision_spot_instance()`` bare, relying entirely on the
         ``EC2_*`` environment for instance types/regions/volume/idle
-        timeout/max lifetime. Returns that call's state dict (``instance_id``,
-        ``region``, ``public_ip``, ``instance_type``, ``availability_zone``,
-        ``control_token``, ``vllm_api_key``, ...), which it also persists to
-        ``EC2_STATE_FILE``.
+        timeout/max lifetime.
+
+        Returns
+        -------
+        Dict[str, Any]
+            That call's state dict (``instance_id``, ``region``,
+            ``public_ip``, ``instance_type``, ``availability_zone``,
+            ``control_token``, ``vllm_api_key``, ...), which it also persists
+            to ``EC2_STATE_FILE``.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
@@ -256,14 +242,22 @@ class InductionExperiment:
         inference calls. Swaps the instance's vLLM container to ``model`` and,
         while it is up, runs every info type's outstanding replicates via
         ``self.harness.run_replicates``; safe to re-run after an interruption,
-        since both are idempotent and resumable. ``model`` must be a key of
-        ``archetype_tags`` AND of ``ec2.EC2_DEPLOY_SPECS`` (``KeyError``
-        otherwise). ``extra_args`` (extra chat-completions body fields, e.g. a
-        CoT archetype's ``{"max_completion_tokens": 16384}``),
-        ``max_parallel`` (fan-out cap) and ``request_timeout`` (per-request
-        read timeout in seconds, which CoT archetypes raise so the longest
-        chain finishes on attempt 1) reach ``run_replicates`` UNCHANGED, with
-        None meaning "no override".
+        since both are idempotent and resumable. All three keyword arguments
+        reach ``run_replicates`` UNCHANGED, None meaning "no override".
+
+        Parameters
+        ----------
+        model : str
+            Must be a key of ``archetype_tags`` AND of
+            ``ec2.EC2_DEPLOY_SPECS``; ``KeyError`` otherwise.
+        extra_args : dict, optional
+            Extra chat-completions body fields, e.g. a CoT archetype's
+            ``{"max_completion_tokens": 16384}``.
+        max_parallel : int, optional
+            Request fan-out cap.
+        request_timeout : int, optional
+            Per-request read timeout in seconds; CoT archetypes raise it so
+            the longest chain finishes on attempt 1.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
@@ -303,30 +297,29 @@ class InductionExperiment:
     def summarize(self, model: str) -> None:
         """Print per-info-type totals for ``model`` over every stored replicate.
 
-        A pure ``ReplicateHarness.summarize`` delegate: applies no environment
-        and spends no EC2/inference cost, but issues S3 reads under an
-        S3-backed store. ``model`` must be a key of ``archetype_tags``;
-        ``KeyError`` otherwise.
+        A pure ``ReplicateHarness.summarize`` delegate: no environment applied,
+        no EC2/inference cost, but S3 reads under an S3-backed store.
+        ``model`` must be a key of ``archetype_tags``; ``KeyError`` otherwise.
         """
         self.harness.summarize(model)
 
     def cot_chain_lengths(self, tag: str = "cot") -> None:
         """Print reasoning-chain word-count stats from the stored CoT replicates.
 
-        A pure ``ReplicateHarness.cot_chain_lengths`` delegate: applies no
-        environment and spends no EC2/inference cost, but issues S3 reads
-        under an S3-backed store. ``tag`` selects which archetype's stored
-        replicates to scan; every CoT archetype is tagged "cot".
+        A pure ``ReplicateHarness.cot_chain_lengths`` delegate: no environment
+        applied, no EC2/inference cost, but S3 reads under an S3-backed store.
+        ``tag`` selects which archetype's stored replicates to scan; every CoT
+        archetype is tagged "cot".
         """
         self.harness.cot_chain_lengths(tag)
 
     def agent_status(self) -> Dict[str, Any]:
-        """Return the provisioned instance's control-agent status.
+        """Return the provisioned instance's control-agent status, verbatim.
 
         LIVE AWS call. Container state, health and recent docker logs, for
         diagnosing a stuck ``run()``/``provision()`` without re-triggering
-        either. Returns ``ec2.agent_status()``'s value verbatim, and raises its
-        ``RuntimeError`` if no instance has been provisioned yet.
+        either. Raises ``ec2.agent_status()``'s ``RuntimeError`` if no instance
+        has been provisioned yet.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.
@@ -341,9 +334,8 @@ class InductionExperiment:
         safe even if provisioning failed or the state file was lost, since
         ``shutdown_instance`` falls back to the ``smolbench:experiment``
         instance tag. The family-ladder study invokes this only behind an
-        explicit ``--teardown`` flag, because ``scripts/fleet/run_fleet.py``
-        owns teardown there (with ``scripts/fleet/fleet_teardown.py`` as a
-        safety net).
+        explicit ``--teardown`` flag: ``scripts/fleet/run_fleet.py`` owns
+        teardown there.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.

@@ -3,18 +3,21 @@
 Some induction runs launch ``notebooks/induction/run_study.py`` DIRECTLY, one
 process per ``INDUCTION_SHARD``, instead of the one-model-per-box lanes
 ``run_fleet.py`` supervises -- and such a process stays dead once it dies. This
-script supervises ONE shard group: it ADOPTS already-running shards (matched on
-``INDUCTION_MODELS``/``INDUCTION_SHARD`` in ``/proc/<pid>/environ``) rather than
-double-launching them, so it is safe to start mid-run; it relaunches a dead
-shard on the hand-launch environment recipe, so the relaunch REATTACHES to a
-still-live box through its state file, or provisions a fresh one; it HALTS a
-shard that dies within ``FAST_CRASH_SECONDS`` of launch ``MAX_FAST_CRASHES``
-times in a row, except for capacity-exhausted hunts (``CAPACITY_MARKER``),
-which retry indefinitely on a longer backoff; and on a shard's clean exit it
-terminates that shard's instance through its state file, since direct runs do
-no teardown of their own and the box would otherwise idle about 30 minutes
-until the on-box watchdog fires. It exits once every shard is complete or
-halted, non-zero if any halted.
+script supervises ONE shard group:
+
+- ADOPTS already-running shards (matched on ``INDUCTION_MODELS`` /
+  ``INDUCTION_SHARD`` in ``/proc/<pid>/environ``) rather than double-launching
+  them, so it is safe to start mid-run.
+- Relaunches a dead shard on the hand-launch environment recipe, so the
+  relaunch REATTACHES to a still-live box through its state file, or provisions
+  a fresh one.
+- HALTS a shard that dies within ``FAST_CRASH_SECONDS`` of launch
+  ``MAX_FAST_CRASHES`` times in a row; capacity-exhausted hunts
+  (``CAPACITY_MARKER``) are exempt and retry indefinitely on a longer backoff.
+- On a shard's clean exit, terminates its instance through its state file --
+  direct runs do no teardown, so the box would otherwise idle about 30 minutes
+  until the on-box watchdog fires.
+- Exits once every shard is complete or halted, non-zero if any halted.
 
 Launch it from a shell that has sourced ``notebooks/induction/keys.env`` and
 ``notebooks/ec2-operator.env``: children inherit this process's environment,

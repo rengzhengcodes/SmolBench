@@ -12,7 +12,6 @@ induction/
   keys.env                the driver's own sibling (untracked)
   results/                S3-mirrored replicate YAMLs; archived out of the tree
   analysis/               the numbers that got published
-  audits/                 concluded one-off probes
 ```
 
 ## Layout
@@ -33,7 +32,7 @@ matches to derive the short S3 experiment prefix `induction`.
 Everything else is free to be grouped, and is. The write-side S3 key comes
 from the literal `notebook_dir="induction"` argument to
 `InductionExperiment` (`run_study.py`), not from any script's `__file__`,
-and nothing under `analysis/` or `audits/` writes to the store -- they are
+and nothing under `analysis/` writes to the store -- they are
 read-only consumers of a synced-down local tree. Their depth affects only
 where they READ from, so the ones that need `results/` anchor it explicitly
 (`_power_common.results_dir(__file__, up=1)`, or `parents[1]`) rather than
@@ -43,10 +42,8 @@ assuming a sibling. `tests/tooling/test_power_common.py` pins that.
 
 - `run_study.py` -- headless driver for the family-ladder scaling study.
   Defines the roster (`MODELS`, `COT_ARGS`) and sweep config.
-  `notebooks/deduction/run_study.py` loads it by file path for both;
-  `audits/check_currency.py` imports `MODELS` from it as the model ->
-  local-tag map. The analysis scripts do
-  NOT -- they take their own `MODELS` from `analysis/power_analysis.py`.
+  `notebooks/deduction/run_study.py` loads it by file path. The analysis
+  scripts do NOT -- they take their own `MODELS` from `analysis/power_analysis.py`.
 - `induction_eval.ipynb` -- the fleet-aware notebook for exploring and
   validating the study; framing cells document the as-served roster,
   config epochs, and the earliest-wins selection rule.
@@ -65,16 +62,10 @@ one that resolves `results/`.
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
 | `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Standalone -- imports nothing from its siblings. |
 
-## audits/ -- concluded one-off probes
+## audits/ -- archived
 
-These answered a specific question once and are kept for the record;
-read each one's module docstring for its inputs before re-running.
-
-| File | What it answered |
-| --- | --- |
-| `check_currency.py` | Re-gates the local induction tree on CONTENT, under the earliest-wins ruling. Takes an S3 key listing as `argv[1]`. |
-| `verify_survivorship.py` | Shows the empty-response profile of ministral-3-14b's re-collected seeds vs the rest. |
-| `response_audit.py` | Response-level audit of the induction results tree. `verify_survivorship.py` imports its `TagIgnoringLoader`. |
+The three concluded one-off probes (`check_currency.py`, `verify_survivorship.py`,
+`response_audit.py`) left the tree on 2026-08-30; see `notebooks/ARCHIVE.md`.
 
 ## results/
 

@@ -11,8 +11,8 @@ This module extracts the answer robustly and reports the contract violation
 SEPARATELY (see the label constants below), so an analysis can ask "how often
 was the model right?" and "how often did it obey the instructions?"
 independently. That split is load-bearing for the induction benchmarks: the
-token-matched whitespace pad of the ``noise_intens`` arm, meant to control only
-for LENGTH, measurably degrades instruction following too.
+``noise_intens`` arm's token-matched whitespace pad, meant to control only for
+LENGTH, measurably degrades instruction following too.
 
 Recovery is deliberately conservative: mining a verdict from anywhere in a
 response would invent verdicts out of chains cut off by the completion budget,
@@ -114,9 +114,12 @@ _TERMINAL_INT = re.compile(
 
 @dataclass(frozen=True)
 class ParseResult:
-    """One response's extracted answer (None when nothing could be extracted)
-    plus its contract compliance: ``violation`` is None when the response obeyed
-    the output contract exactly, otherwise one of this module's labels."""
+    """One response's extracted answer plus its contract compliance.
+
+    ``value`` is None when nothing could be extracted; ``violation`` is None
+    when the response obeyed the output contract exactly, otherwise one of this
+    module's labels.
+    """
 
     value: Optional[Answer]
     violation: Optional[str]
@@ -140,11 +143,11 @@ def is_degenerate(text: str) -> bool:
     under the whitespace-padded noise arm, motivate the three tests: collapse
     from the start (Nemotron-Ultra-253B: 24,576 characters of "0"), collapse
     after a real beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens after
-    genuine reasoning -- hence the TAIL check), and collapse onto a PHRASE with
-    a wide character alphabet (Llama-4-Maverick looping
-    ``"## Step 1\\n\\n"`` -- hence the WORD checks). Misclassifying these is not
-    cosmetic: `TRUNCATED` blames the completion budget and `MULTIPLE_VALUES`
-    blames the parser, when the finding is that the condition breaks the model.
+    genuine reasoning -- the TAIL check), and collapse onto a PHRASE with a wide
+    character alphabet (Llama-4-Maverick looping ``"## Step 1\\n\\n"`` -- the
+    WORD checks). Misclassifying these is not cosmetic: `TRUNCATED` blames the
+    completion budget and `MULTIPLE_VALUES` blames the parser, when the finding
+    is that the condition breaks the model.
     """
     stripped = text.strip()
     if not stripped:
@@ -189,8 +192,13 @@ def _eval_arithmetic(text: str) -> Optional[int]:
 
     Walks a validated AST instead of calling ``eval``, honoring only numeric
     literals and `_ARITHMETIC_BINOPS`, so a hostile response cannot execute
-    code. Returns None for a malformed expression, division by zero, or a
-    non-integral result (2520/2 = 1260.0 counts as integral).
+    code.
+
+    Returns
+    -------
+    int or None
+        None for a malformed expression, division by zero, or a non-integral
+        result (2520/2 = 1260.0 counts as integral).
     """
     if not _ARITHMETIC_ONLY.fullmatch(text) or not any(c.isdigit() for c in text):
         return None
@@ -236,8 +244,7 @@ def _safe_int(digits: str) -> Optional[int]:
 
     Python raises ValueError on int/str conversion beyond 4,300 digits, so an
     unguarded ``int()`` crashes grading -- it took a live run down when a model
-    emitted a 20,379-digit run. No such number is a plausible answer: these
-    quizzes count occurrences, bounded by lcm(1..9) = 2520.
+    emitted a 20,379-digit run. No such number is a plausible answer anyway.
     """
     stripped = digits.lstrip("-")
     if len(stripped) > _MAX_ANSWER_DIGITS:

@@ -4,39 +4,41 @@ Serve models from a self-provisioned EC2 Spot instance.
 One large Spot box per experiment runs vLLM's OpenAI-compatible server in
 Docker; sections swap WHICH model it serves rather than provisioning new
 hardware, because multi-GPU SageMaker endpoint quotas default to 0 while Spot
-P5 capacity is available. Lifecycle, one step per notebook cell::
+P5 capacity is available. One step per notebook cell::
 
     state = provision_spot_instance()   # idempotent; once at notebook start
     with serve_model(DENSE_MODEL):      # per archetype section
         marks = evaluate(quiz, DENSE_MODEL, SEED)
     shutdown_instance()                 # once at notebook end
 
-Provisioning records the box in ``EC2_STATE_FILE`` (repo root regardless of
-cwd; mode 0600, gitignored) and tags it ``smolbench:experiment``, so a re-run
-reattaches -- rebuilding lost state from the tagged instance's user-data --
-rather than launching a second box. ``serve_model`` tears NOTHING down on exit;
-abandonment is covered on-instance by an idle watchdog (60s loop) halting after
-``EC2_IDLE_TIMEOUT_MIN`` without agent requests, vLLM request-token movement or
-a model loading within ``EC2_STARTUP_GRACE_MIN`` of its ``/serve``; by a
-boot-scheduled ``shutdown -h +EC2_MAX_LIFETIME_MIN``; and by one-time Spot with
-InstanceInitiatedShutdownBehavior=terminate, so an OS shutdown terminates the
-box and deletes its EBS volume.
+Provisioning records the box in ``EC2_STATE_FILE`` (repo root, mode 0600,
+gitignored) and tags it ``smolbench:experiment``, so a re-run reattaches --
+rebuilding lost state from the tagged instance's user-data -- instead of
+launching a second box. ``serve_model`` tears NOTHING down on exit;
+abandonment is covered by the on-instance idle watchdog
+(``EC2_IDLE_TIMEOUT_MIN`` without requests, after an ``EC2_STARTUP_GRACE_MIN``
+load grace), a boot-scheduled ``shutdown -h +EC2_MAX_LIFETIME_MIN``, and
+one-time Spot with InstanceInitiatedShutdownBehavior=terminate, so any OS
+shutdown terminates the box and deletes its EBS volume.
 
-Setup: ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region tried; more via
-``EC2_REGIONS``), boto3-resolvable credentials, and ``HF_TOKEN`` only for gated
-repos (baked into user-data at provision time). PROVISIONING ``EC2_*``
-constants are captured at IMPORT time -- set them before the first import (e.g.
-keys.env), since notebooks bind them as module attributes; only
-``EC2_INFERENCE_BASE_URL``, ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE`` and
-``HF_TOKEN`` are read at call time. boto3/botocore are imported lazily, so the
-inference path needs neither. The ``model`` argument to query()/evaluate() is
-an ``EC2_DEPLOY_SPECS`` key, which is also vLLM's ``--served-model-name``.
+Env-read timing
+    Setup: ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region tried, more
+    via ``EC2_REGIONS``), boto3-resolvable credentials, and ``HF_TOKEN`` only
+    for gated repos (baked into user-data at provision time). PROVISIONING
+    ``EC2_*`` constants are captured at IMPORT time -- set them before the
+    first import (e.g. keys.env), since notebooks bind them as module
+    attributes; only ``EC2_INFERENCE_BASE_URL``, ``EC2_VLLM_API_KEY``,
+    ``EC2_STATE_FILE`` and ``HF_TOKEN`` are read at call time. boto3/botocore
+    import lazily, so the inference path needs neither. The ``model`` argument
+    to query()/evaluate() is an ``EC2_DEPLOY_SPECS`` key, which is also vLLM's
+    ``--served-model-name``.
 
-Security, accepted for a short-lived single-user box: the security group opens
-ports 8000 (vLLM) and 9000 (agent) ONLY to the caller's public IP /32,
-re-asserted by every provisioning call -- re-run it if your IP changes. Both
-are plain HTTP behind a per-experiment random token held in the state file and
-in user-data (readable in-account via DescribeInstanceAttribute).
+Security model
+    Accepted for a short-lived single-user box: ports 8000 (vLLM) and 9000
+    (agent) are opened ONLY to the caller's public IP /32, re-asserted by every
+    provisioning call -- re-run it if your IP changes. Both are plain HTTP
+    behind a per-experiment random token held in the state file and in
+    user-data (readable in-account via DescribeInstanceAttribute).
 """
 
 import contextlib
@@ -514,12 +516,17 @@ _INSTANCE_GPU_COUNTS = {
 def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     """Return the tensor-parallel degree (>= 1) for `model` on the box that landed.
 
-    ``tp = gcd(num_attention_heads, gpu_count)``: the largest head-divisor that
-    also divides the landed GPU count, so every GPU the hunt paid for is used
-    whenever head divisibility allows (a tp=1 spec on a 4-GPU g6e.12xlarge
-    idled 3 of 4 L40S). ``spec["tp"]`` is the fallback for models absent from
-    ``MODEL_ATTENTION_HEADS`` or instance types absent from
-    ``_INSTANCE_GPU_COUNTS``.
+    ``tp = gcd(num_attention_heads, gpu_count)`` -- the largest head-divisor
+    that also divides the landed GPU count, so every GPU the hunt paid for is
+    used whenever head divisibility allows (a tp=1 spec on a 4-GPU
+    g6e.12xlarge idled 3 of 4 L40S).
+
+    Parameters
+    ----------
+    spec : Dict[str, Any]
+        Deploy spec; its ``"tp"`` is the fallback when `model` is absent from
+        ``MODEL_ATTENTION_HEADS`` or `instance_type` from
+        ``_INSTANCE_GPU_COUNTS``.
     """
     heads = MODEL_ATTENTION_HEADS.get(model)
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
@@ -663,12 +670,12 @@ def _fetch_agent_fingerprint(
 ) -> Tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
     """Return (``/status``'s ``"fingerprint"``, attention-backend log lines).
 
-    Best-effort: either element degrades to None on failure. It reuses
-    ``_agent`` with ``connect_retries=0`` because this is a snapshot, not a
-    wait loop. The backend lines are mined from ``/status``'s ``log_tail`` (the
-    container's last ~300 lines; they appear nowhere in the metrics endpoint),
-    a moving window, so on a long-serving box they may have scrolled away --
-    call ``server_config`` right after serve to catch them.
+    Best-effort: either element degrades to None on failure, and ``_agent`` is
+    called with ``connect_retries=0`` because this is a snapshot, not a wait
+    loop. The backend lines are mined from ``/status``'s ``log_tail`` (the
+    container's last ~300 lines; they appear in no metrics endpoint), a moving
+    window -- call ``server_config`` right after serve or they may already have
+    scrolled away.
     """
     try:
         status = _agent(
@@ -693,44 +700,42 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
 
     Stamped onto every stored replicate (``Marks.server_config`` via
     ``ReplicateHarness.run_replicates``) and written as a deduction run's
-    ``server_config.yaml`` sidecar. NEVER raises -- provenance is a passenger
-    and must not crash a lane -- and reads the state file at call time, so call
-    it INSIDE the ``serve_model`` block. Live probes are read-only GETs bounded
-    by ``_SERVER_CONFIG_PROBE_TIMEOUT_S``.
+    ``server_config.yaml`` sidecar. Reads the state file at call time, so call
+    it INSIDE the ``serve_model`` block.
 
     Returns
     -------
     Optional[Dict[str, Any]]
         None only when the state-file read itself raised; otherwise every key
         is present, None for unknown/unreachable pieces, so readers see the
-        schema even from a half-built snapshot.
+        schema even from a half-built snapshot. Four groups:
 
-        From state/spec, no network: ``instance_type``, ``gpu`` (e.g. ``"2x RTX
-        PRO 4500 32GB"``, from a static per-type table -- NOT an nvidia-smi
-        observation), ``tp``, ``region``, ``availability_zone``,
-        ``instance_id``, ``vllm_image`` (the CONFIGURED ``EC2_VLLM_IMAGE``,
-        possibly a mutable tag), ``hf_model_id`` (the spec's pin, not
-        necessarily what is loaded).
+        - From state/spec, no network: ``instance_type``, ``gpu`` (from a
+          static per-type table, NOT an nvidia-smi observation), ``tp``,
+          ``region``, ``availability_zone``, ``instance_id``, ``vllm_image``
+          (the CONFIGURED ``EC2_VLLM_IMAGE``, possibly a mutable tag),
+          ``hf_model_id`` (the spec's pin, not necessarily what is loaded).
+        - From ``state["last_serve"]`` (the argv actually POSTed):
+          ``vllm_args``, ``max_model_len``, ``served_at`` (UTC ISO-8601), all
+          None unless ``last_serve["model"] == model``, so a previous swap on
+          the same box is never misattributed.
+        - Live probes (read-only GETs bounded by
+          ``_SERVER_CONFIG_PROBE_TIMEOUT_S``), None on any failure including
+          "no box": ``vllm_version``, ``vllm_cache_config`` (raw unparsed
+          ``cache_config_info`` Prometheus lines), ``attention_backend_log``,
+          ``agent_fingerprint`` (``payloads/agent.py.txt``'s ``fingerprint()``:
+          ``image_repo_digests``, ``nvidia_smi`` -- an OBSERVATION, unlike the
+          static ``gpu`` --, ``hf_snapshots`` = resolved revision dirnames on
+          disk, ``weights_digest`` = sha256 of the safetensors index plus
+          per-file sizes, NOT a full weights read), ``vllm_image_digest``.
+        - Client-side env reads, populated even with no box:
+          ``max_parallel_requests`` (``EC2_MAX_PARALLEL_REQUESTS``, default 8)
+          and ``stream`` (``EC2_STREAM_COMPLETIONS``), each individually
+          guarded so one malformed value degrades only itself.
 
-        From ``state["last_serve"]`` (the argv actually POSTed): ``vllm_args``,
-        ``max_model_len``, ``served_at`` (UTC ISO-8601) -- all None unless
-        ``last_serve["model"] == model``, so a previous swap on the same box is
-        never misattributed.
-
-        Live probes, None on any failure including "no box": ``vllm_version``,
-        ``vllm_cache_config`` (raw unparsed ``cache_config_info`` Prometheus
-        lines), ``attention_backend_log``, ``agent_fingerprint`` (the agent's
-        ``fingerprint()`` in ``payloads/agent.py.txt``: ``image_repo_digests``,
-        ``nvidia_smi`` -- an OBSERVATION, unlike the static ``gpu`` --,
-        ``hf_snapshots`` = resolved revision dirnames on disk,
-        ``weights_digest`` = sha256 of the safetensors index plus per-file
-        sizes, NOT a full weights read), ``vllm_image_digest``
-        (``image_repo_digests[0]``).
-
-        Client-side env reads, populated even with no box:
-        ``max_parallel_requests`` (``EC2_MAX_PARALLEL_REQUESTS``, default 8) and
-        ``stream`` (``EC2_STREAM_COMPLETIONS``), read via ``ChatClient`` and
-        individually guarded so one malformed value degrades only itself.
+    Notes
+    -----
+    NEVER raises: provenance is a passenger and must not crash a lane.
     """
     try:
         state = _load_state() or {}
@@ -867,11 +872,14 @@ def _save_state(state: Dict[str, Any]) -> None:
 def _clear_state(instance_id: Optional[str] = None) -> None:
     """Remove the local state file, unless another instance has claimed it.
 
-    ``instance_id`` is the instance being torn down: when the file now names a
-    different one -- a second run for the same experiment tag provisioned a
-    fresh box mid-teardown -- the file is LEFT ALONE, because deleting it
-    strands a live, billing GPU box with no driver and no local record. None
-    deletes unconditionally, for callers with no instance in hand.
+    Parameters
+    ----------
+    instance_id : Optional[str]
+        The instance being torn down. When the file now names a different one
+        -- a second run for the same experiment tag provisioned a fresh box
+        mid-teardown -- the file is LEFT ALONE, because deleting it strands a
+        live, billing GPU box with no driver and no local record. None deletes
+        unconditionally, for callers with no instance in hand.
     """
     try:
         if instance_id is not None:
@@ -942,10 +950,14 @@ def list_models(model: str = "") -> List[str]:
     """Return the ``data[].id`` values from vLLM's ``GET /v1/models``.
 
     Normally a single-element list: this instance serves exactly one model at a
-    time (whichever ``serve_model`` last swapped in), so ``model`` is accepted
-    and IGNORED. It exists only for signature parity with
-    ``smolbench.evals.providers.aws.list_models``, which does use it, so
-    ``smolbench.evals.provider`` can dispatch uniformly.
+    time, whichever ``serve_model`` last swapped in.
+
+    Parameters
+    ----------
+    model : str
+        Accepted and IGNORED; it exists only for signature parity with
+        ``smolbench.evals.providers.aws.list_models``, which does use it, so
+        ``smolbench.evals.provider`` can dispatch uniformly.
     """
     response = metadata_get(f"{_base_url()}/models", _api_key(), check_status=True)
     return [m["id"] for m in response.get("data", [])]
@@ -1367,10 +1379,15 @@ def _instance_state(region: str, instance_id: str) -> str:
 
     One DescribeInstances call per invocation, via ``_describe_instance``;
     "absent" covers both "never existed" and "aged out of the API after
-    termination". Sites that also need another field from the same describe
-    result (``_wait_public_ip``, ``provision_spot_instance``'s reattach branch)
-    deliberately do NOT use this helper -- it would cost them a second
-    DescribeInstances call for data they already hold.
+    termination" (``InvalidInstanceID.NotFound``, which this helper swallows).
+
+    Notes
+    -----
+    Sites that also need another field from the same describe result
+    (``_wait_public_ip``, ``_reattach_existing_instance``) deliberately do NOT
+    use this helper -- it would cost them a second DescribeInstances call for
+    data they already hold. ``_raise_endpoint_unreachable`` avoids it for a
+    different reason: it wants the raw ClientError, not "absent".
     """
     instance = _describe_instance(region, instance_id)
     return (instance or {}).get("State", {}).get("Name", "absent")
@@ -1379,10 +1396,9 @@ def _instance_state(region: str, instance_id: str) -> str:
 def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
     """Call run_instances, with a fallback for spot rejecting the shutdown behavior.
 
-    One-time spot instances terminate on OS shutdown regardless, so asking
-    for InstanceInitiatedShutdownBehavior=terminate is belt-and-braces.
-    Some API paths reject the combination; this function then simply
-    retries without it.
+    One-time spot instances terminate on OS shutdown regardless, so asking for
+    InstanceInitiatedShutdownBehavior=terminate is belt-and-braces; some API
+    paths reject the combination, and this then retries without it.
     """
     from botocore.exceptions import ClientError
 
@@ -1460,13 +1476,16 @@ def _agent(
 ) -> Dict[str, Any]:
     """Make one authenticated control-agent call; raise with the body on failure.
 
-    ``connect_retries`` gives extra attempts 15s apart on CONNECT-level
-    failures only (``requests.ConnectionError``, which covers ConnectTimeout),
-    because the caller's egress NAT drops connections in bursts and killed
-    one-shot ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint
-    is idempotent, so connect patience is always safe; the polling loops
-    (``_wait_agent``/``_wait_model_ready``) and the best-effort graceful
-    shutdown pass 0 to keep their own cadence and fail-fast semantics.
+    Parameters
+    ----------
+    connect_retries : int
+        Extra attempts, 15s apart, on CONNECT-level failures only
+        (``requests.ConnectionError``, which covers ConnectTimeout): the
+        caller's egress NAT drops connections in bursts and killed one-shot
+        ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint is
+        idempotent, so connect patience is always safe; the polling loops
+        (``_wait_agent``/``_wait_model_ready``) and the best-effort graceful
+        shutdown pass 0 to keep their own cadence and fail-fast semantics.
     """
     for attempt in range(connect_retries + 1):
         try:
@@ -1493,8 +1512,12 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     Polls ``GET /status`` every ``_AGENT_POLL_S`` seconds; every
     ``_AGENT_PROGRESS_EVERY_N_POLLS`` polls it also confirms via
     DescribeInstances that the instance is still alive, so a spot reclaim
-    during boot fails fast instead of burning the whole budget. `state` needs
-    ``public_ip``, ``control_token``, ``region``, ``instance_id``.
+    during boot fails fast instead of burning the whole budget.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Needs ``public_ip``, ``control_token``, ``region``, ``instance_id``.
 
     Raises
     ------
@@ -1502,8 +1525,7 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
         The liveness check found the instance no longer ``pending``/``running``
         (spot reclaimed while waiting for its agent).
     TimeoutError
-        The agent never answered within ``timeout_min`` (default
-        ``EC2_PROVISION_TIMEOUT_MIN``).
+        The agent never answered within ``timeout_min``.
     """
     from botocore.exceptions import ClientError
 
@@ -1553,14 +1575,20 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 1: reuse the state-file instance.
 
     Safe to call unconditionally; a missing or corrupt state file is a normal
-    "nothing to reattach to" outcome, not an error. Returns the refreshed,
-    already-saved state dict when the recorded instance is still
-    ``pending``/``running``, else None.
+    "nothing to reattach to" outcome, not an error.
 
-    Side effects: on reattach, re-authorizes the security group for `my_ip`,
-    refreshes and persists ``public_ip``, and blocks until the agent answers.
-    When the recorded instance is dead, clears the stale state file so the
-    caller's next strategy starts clean.
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        The refreshed, already-saved state dict when the recorded instance is
+        still ``pending``/``running``, else None.
+
+    Notes
+    -----
+    On reattach it re-authorizes the security group for `my_ip`, refreshes and
+    persists ``public_ip``, and blocks until the agent answers. A dead recorded
+    instance clears the stale state file, so the caller's next strategy starts
+    clean.
     """
     state = _load_state()
     if state is None:
@@ -1593,14 +1621,18 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
 def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 2: recover a live tagged instance.
 
-    Runs only after branch 1 finds nothing. Covers a lost state file: an
+    Runs only after branch 1 finds nothing, and covers a lost state file: an
     instance tagged ``smolbench:experiment=EC2_EXPERIMENT_TAG`` carries its own
     secrets in its user-data (see ``_recover_state_from_instance``), so the
     state dict is rebuilt from the instance rather than stranding a $30-45/h
-    box. Returns the recovered, already-saved state dict, or None when no
-    tagged instance exists (caller proceeds to a fresh launch). Same side
-    effects as ``_reattach_existing_instance``: re-authorize ingress, refresh
-    and persist ``public_ip``, wait for the agent.
+    box. Same side effects as ``_reattach_existing_instance``: re-authorize
+    ingress, refresh and persist ``public_ip``, wait for the agent.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        The recovered, already-saved state dict, or None when no tagged
+        instance exists (the caller proceeds to a fresh launch).
 
     Raises
     ------
@@ -1681,19 +1713,24 @@ def _run_instances_kwargs(
 ) -> Dict[str, Any]:
     """Build the ``run_instances`` kwargs for one launch attempt.
 
-    Pure and side-effect-free (no AWS calls). Per-attempt values are
-    parameters (`subnet_id` pins the AZ; `ami`/`root_device` come from
-    ``_resolve_ami``, `group_id` from ``_ensure_security_group``, `volume_gb`
-    is in GiB); experiment-wide ones (root-volume throughput/IOPS, the experiment
-    tag) come from the module-level ``EC2_*`` constants. The result describes a
-    one-time Spot instance with
-    InstanceInitiatedShutdownBehavior=terminate (``_try_launch`` retries
-    without it when an API path rejects the combination), a single ENI with a
-    public IP in the experiment's security group, and a gp3 root volume tuned
-    from ``EC2_ROOT_VOLUME_*``.
+    Pure and side-effect-free (no AWS calls). The result describes a one-time
+    Spot instance with InstanceInitiatedShutdownBehavior=terminate
+    (``_try_launch`` retries without it when an API path rejects the
+    combination), a single ENI with a public IP in the experiment's security
+    group, and a gp3 root volume tuned from ``EC2_ROOT_VOLUME_*``. Per-attempt
+    values are parameters; experiment-wide ones (root-volume throughput/IOPS,
+    the experiment tag) come from the module-level ``EC2_*`` constants.
 
     Parameters
     ----------
+    ami, root_device : str
+        From ``_resolve_ami`` for this attempt's region.
+    subnet_id : str
+        Pins the AZ for this attempt.
+    group_id : str
+        From ``_ensure_security_group``.
+    volume_gb : int
+        Root volume size, in GiB.
     user_data : bytes
         Gzip-compressed cloud-init script (``payloads.pack_user_data``), passed
         through UNENCODED: boto3 base64-encodes bytes ``UserData`` itself (see
@@ -1715,8 +1752,8 @@ def _run_instances_kwargs(
         defaults paid 1.29-1.48x each type's cheapest AZ against a 2.46x
         intra-type spread, hence the cap derived from live
         ``describe_spot_price_history`` medians. A bid under an AZ's current
-        price fails fast with ``SpotMaxPriceTooLow`` (tolerated by the hunt,
-        which moves to the next AZ).
+        price fails fast with ``SpotMaxPriceTooLow``, which the hunt tolerates
+        and moves on from.
     """
     kwargs: Dict[str, Any] = {
         "ImageId": ami,
@@ -1806,20 +1843,30 @@ def _launch_fresh(
     """Run ``provision_spot_instance`` branch 3: hunt capacity and launch fresh.
 
     Runs only after branches 1 and 2 find nothing. Generates fresh
-    per-experiment secrets (control token, vLLM API key), optionally
-    provisions the S3 model-cache bucket/instance-profile, renders the
-    cloud-init user-data once, then hunts Spot capacity TYPE-MAJOR: every
-    region (and every default-VPC subnet/AZ within it) for the first instance
-    type before falling back to the next type. Per-region resources (AMI,
-    security group, subnets) are resolved once and cached across the
-    instance-type loop via ``region_info``. Returns the new instance's state
-    dict, already saved to ``EC2_STATE_FILE``, once its agent answers.
+    per-experiment secrets (control token, vLLM API key), optionally provisions
+    the S3 model-cache bucket/instance-profile, renders the cloud-init
+    user-data once, then hunts Spot capacity TYPE-MAJOR: every region (and
+    every default-VPC subnet/AZ within it) for the first instance type before
+    falling back to the next. Per-region resources (AMI, security group,
+    subnets) are resolved once and cached across the instance-type loop via
+    ``region_info``. Every argument arrives already defaulted by
+    ``provision_spot_instance`` from the corresponding ``EC2_*`` constant.
 
-    All arguments arrive already defaulted by ``provision_spot_instance`` from
-    the corresponding ``EC2_*`` constants (`volume_gb` in GiB,
-    `idle_timeout_min`/`max_lifetime_min` in minutes). `my_ip` is resolved ONCE
-    by the caller and threaded through rather than re-resolved per region, to
-    avoid an extra ``checkip.amazonaws.com`` round trip per region.
+    Parameters
+    ----------
+    volume_gb : int
+        Root volume size, in GiB.
+    idle_timeout_min, max_lifetime_min : int
+        Watchdog and boot-scheduled-halt budgets, in minutes.
+    my_ip : str
+        Caller's public IP, resolved ONCE by the caller rather than per region,
+        to save a ``checkip.amazonaws.com`` round trip each time.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The new instance's state dict, already saved to ``EC2_STATE_FILE``,
+        once its agent answers.
 
     Raises
     ------
@@ -2086,15 +2133,19 @@ def provision_spot_instance(
     and refreshing the saved endpoint), ``_recover_tagged_instance`` (state
     file lost, live tagged instance exists), ``_launch_fresh`` (neither -- hunt
     capacity type-major across ``instance_types`` x ``regions`` x each region's
-    default-VPC subnets/AZs).
+    default-VPC subnets/AZs). Each argument defaults to the matching ``EC2_*``
+    constant.
 
     When ``EC2_CAPACITY_RESERVATION`` is set the reservation is authoritative:
     a live instance OUTSIDE that block is TERMINATED rather than reused (reuse
     would bill Spot on top of the already-paid block) and the launch goes into
     the reservation.
 
-    Returns the state dict, also persisted to ``EC2_STATE_FILE``: instance_id,
-    region, public_ip, instance_type, control_token, vllm_api_key, ...
+    Returns
+    -------
+    Dict[str, Any]
+        State dict, also persisted to ``EC2_STATE_FILE``: instance_id, region,
+        public_ip, instance_type, control_token, vllm_api_key, ...
     """
     instance_types = tuple(instance_types or EC2_INSTANCE_TYPES)
     regions = tuple(regions or EC2_REGIONS)
@@ -2209,13 +2260,27 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
     Swaps the serving container (removing the previous model's), waits until
-    the OpenAI endpoint is healthy and serving ``model``, then yields.
-    Idempotent: an instance already healthy on ``model`` skips the swap
-    entirely unless ``force=True``, so re-running a section cell after an
-    interruption costs seconds, not a reload. Exit tears NOTHING down -- the
-    box stays up for the next section, and the idle watchdog covers the case
-    where there is none. Raises KeyError for a model with no
-    ``EC2_DEPLOY_SPECS`` entry.
+    the OpenAI endpoint is healthy and serving ``model``, then yields it. Exit
+    tears NOTHING down -- the box stays up for the next section, and the idle
+    watchdog covers the case where there is none.
+
+    Parameters
+    ----------
+    timeout_min : Optional[int]
+        Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
+    force : bool
+        Swap even when the box is already healthy on ``model`` with the same
+        launch payload. The default fast path skips the swap entirely, so
+        re-running a section cell after an interruption costs seconds, not a
+        reload.
+
+    Raises
+    ------
+    KeyError
+        ``model`` has no ``EC2_DEPLOY_SPECS`` entry.
+    RuntimeError
+        The instance became healthy serving something else (another process
+        swapped the model).
     """
     spec = EC2_DEPLOY_SPECS.get(model)
     if spec is None:
@@ -2335,6 +2400,13 @@ def shutdown_instance(wait: bool = True) -> None:
     (DeleteOnTermination) and any served model die with it. The security group
     is deliberately left behind: it is free, and EC2 will not delete it while
     the instance's network interface lingers anyway.
+
+    Parameters
+    ----------
+    wait : bool
+        Block on the ``instance_terminated`` waiter. A waiter timeout is logged
+        and swallowed: TerminateInstances already succeeded, and p5-class
+        teardown can outlast botocore's 10-minute budget.
     """
     state = _load_state()
     region: Optional[str] = None

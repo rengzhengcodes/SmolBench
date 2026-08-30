@@ -1,40 +1,31 @@
 #!/usr/bin/env python
 """Build and verify ``EVIDENCE.json``, the manifest that pins what a writeup cites.
 
-A results directory's ``EVIDENCE.json`` lists every artifact a writeup relies
-on and pins it by sha256. ``notebooks/*/results/`` is gitignored wholesale, so
-some cited artifacts survive only inside tracked tarballs (under
-``notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/``);
+A results directory's ``EVIDENCE.json`` pins by sha256 every artifact a writeup
+relies on. ``notebooks/*/results/`` is gitignored wholesale, so some survive
+only inside tracked tarballs, under
+``notebooks/deduction/results/uncommitted_evidence_preserved_2026-08-22/``;
 those are addressed as ``tarball:<tarball-relpath>!<member-path>`` and hashed by
-STREAMING the member out -- the tool never extracts to disk, because an
-extracted scratch tree in a gitignored results directory is how untracked
-evidence gets born.
-:func:`verify` re-hashes every pinned reference, then checks coverage: every
-backtick-quoted artifact name in a ``writeup`` entry must be a
-whole-path-component suffix of some pinned reference, or carry an explicit
-``allowlist`` entry WITH A REASON. Whether an artifact is the *right* one is a
-semantic claim for an entry's ``note`` field, not for this tool.
+STREAMING the member -- never extracted, since a scratch tree in a gitignored
+results directory is how untracked evidence gets born. :func:`verify` re-hashes
+every reference, then requires each backtick-quoted artifact name in a
+``writeup`` entry to be a whole-path-component suffix of a pinned reference, or
+to carry an ``allowlist`` entry WITH A REASON; whether an artifact is the
+*right* one is a claim for its ``note``, not for this tool.
 
 Two properties are easy to break by "improving" them: a reference MAY traverse
-upward with ``..`` (the real manifests reach up two levels to the preserved
-tarballs), so there is deliberately no containment guard; and :func:`build` is
-DETERMINISTIC -- no timestamp, no set iteration, no ``id()`` order -- so a diff
-on a rebuilt manifest always means the evidence itself changed.
+upward with ``..``, so there is deliberately no containment guard; and
+:func:`build` is DETERMINISTIC, so a diff on a rebuild means the evidence moved.
 
-::
+Entry points: ``evidence_manifest.py verify [dir ...]`` (no directories = every
+manifest under ``notebooks/*/results/``; exits non-zero if any fails) and
+``evidence_manifest.py build <dir> --spec <spec.json>``.
 
-    .venv/bin/python scripts/results/evidence_manifest.py verify [dir ...]
-    .venv/bin/python scripts/results/evidence_manifest.py build <dir> --spec <spec.json>
-
-``verify`` with no directories walks every ``EVIDENCE.json`` under
-``notebooks/*/results/`` and exits non-zero if any manifest fails.
-
-``scripts/`` is not an importable package, so load this module by file path and
-register it in ``sys.modules`` BEFORE calling ``exec_module``. That is required,
-not optional: under ``from __future__ import annotations`` ``@dataclass`` --
-:class:`VerifyResult` is one -- resolves annotations through
-``sys.modules[cls.__module__]``, and for an unregistered module that lookup
-returns ``None``, making ``dataclasses._is_type`` raise ``AttributeError``.
+``scripts/`` is not an importable package: load this module by file path and
+register it in ``sys.modules`` BEFORE ``exec_module``, or the ``@dataclass``
+:class:`VerifyResult` raises ``AttributeError`` (under ``from __future__ import
+annotations`` dataclasses resolve annotations via
+``sys.modules[cls.__module__]``, ``None`` for an unregistered module).
 """
 from __future__ import annotations
 
@@ -91,11 +82,10 @@ _BACKTICKED = re.compile(r"`([^`\n]+)`")
 class ResolutionError(FileNotFoundError):
     """Raised when a manifest reference does not resolve to a readable file.
 
-    Subclasses :class:`FileNotFoundError`, so :func:`build` meets its
-    documented contract by simple propagation while :func:`verify` folds the
-    message into its failure census. Each message is built complete, in the
-    form ``"<relpath>: missing tarball member: <member>"``, so both callers
-    report the same wording.
+    Subclasses :class:`FileNotFoundError`, so :func:`build` meets its documented
+    contract by propagation while :func:`verify` folds the message into its
+    failure census. Messages are built complete (``"<relpath>: missing tarball
+    member: <member>"``), so both callers report the same wording.
     """
 
 
@@ -106,17 +96,24 @@ class ResolutionError(FileNotFoundError):
 def _split_reference(relpath: str) -> tuple[str, str | None]:
     """Split a manifest ``relpath`` into its on-disk path and tarball member.
 
-    Returns ``(path, None)`` for a plain reference -- a POSIX-style path
-    relative to the manifest's own directory, where ``..`` is allowed and used
-    in practice -- or ``(tarball_relpath, member)`` for
-    ``tarball:<tarball-relpath>!<member-path>``. Both components come back
-    verbatim, unnormalised: the manifest's own spelling is what gets
-    re-verified. Raises ``ValueError`` for a ``tarball:`` reference with no
-    ``!`` separator or an empty side.
+    Parameters
+    ----------
+    relpath : str
+        A POSIX path relative to the manifest's own directory (``..`` allowed
+        and used in practice), or ``tarball:<tarball-relpath>!<member-path>``,
+        split on the FIRST ``!`` -- so a member path may contain one and a
+        tarball path effectively cannot, rather than inventing an escape syntax.
 
-    The split is on the FIRST ``!``, so a member path may contain one while a
-    tarball path effectively cannot; an escape syntax nobody uses is a second
-    grammar to get wrong.
+    Returns
+    -------
+    tuple of (str, str or None)
+        Path and member, verbatim and unnormalised (the manifest's own spelling
+        is what gets re-verified); member is ``None`` for a plain reference.
+
+    Raises
+    ------
+    ValueError
+        A ``tarball:`` reference with no ``!`` separator or an empty side.
     """
     if not relpath.startswith(TARBALL_PREFIX):
         return relpath, None
@@ -132,10 +129,9 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
 def _candidates(relpath: str) -> list[str]:
     """Return the path strings a citation may be matched against.
 
-    A plain reference offers one candidate, itself. A tarball reference offers
-    two, in fixed order: the tarball's own path (a writeup may legitimately
-    cite the preserved archive), then the member path (how an artifact existing
-    only inside a tarball gets covered).
+    A plain reference offers itself; a tarball reference offers two, in fixed
+    order -- the tarball's own path (a writeup may cite the preserved archive)
+    then the member path (how an artifact living only inside one gets covered).
     """
     path, member = _split_reference(relpath)
     return [path] if member is None else [path, member]
@@ -145,20 +141,28 @@ def _candidates(relpath: str) -> list[str]:
 def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
     """Open a manifest reference for binary reading, without extracting it.
 
-    ``relpath`` (a reference in :func:`_split_reference`'s grammar) resolves
-    relative to ``manifest_dir``; the yielded stream is closed on exit. The
-    archive is opened once per reference and never cached across a
-    :func:`verify` pass, so no archive handle outlives the entry that needed
-    it. Members stream via ``extractfile``; ``extract``/``extractall`` are
-    never called, so the filesystem stays byte-for-byte as it was found.
+    Members stream via ``extractfile``; ``extract``/``extractall`` are never
+    called, so the filesystem stays byte-for-byte as found. The archive is
+    opened per reference and never cached, so no handle outlives its entry.
+
+    Parameters
+    ----------
+    manifest_dir : Path
+        Directory ``relpath`` resolves against.
+    relpath : str
+        A reference in :func:`_split_reference`'s grammar.
+
+    Yields
+    ------
+    IO[bytes]
+        Binary stream, closed on exit.
 
     Raises
     ------
     ResolutionError
-        The plain file, the tarball, or the member is absent or is not a
-        regular file.
+        The file, the tarball, or the member is absent or not a regular file.
     ValueError
-        The reference is a malformed ``tarball:`` reference.
+        Malformed ``tarball:`` reference.
     tarfile.TarError
         The archive exists but is not readable as a gzipped tar.
     """
@@ -200,9 +204,8 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     """Stream a reference and return its sha256 as 64 lowercase hex chars.
 
     Reads in :data:`CHUNK_BYTES` blocks: these packages pin whole run dumps, so
-    a tool that needed each artifact to fit in RAM would never run on the ones
-    that matter most. Raises `ResolutionError` if the reference does not
-    resolve.
+    a tool needing each artifact to fit in RAM would never run on the ones that
+    matter most. Raises `ResolutionError` if the reference does not resolve.
     """
     digest = hashlib.sha256()
     with _open_reference(manifest_dir, relpath) as stream:
@@ -218,14 +221,13 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
-    Returns sorted, deduplicated tokens, verbatim as written. Conservative and
-    fully deterministic: only backtick-quoted, whitespace-free tokens ending in
-    a :data:`CITED_SUFFIXES` suffix, and a token never spans a newline, so an
-    unmatched backtick cannot swallow the rest of the document and prose like
-    ``sha256(pool_analyze.py) = 3824a4`` is not read as a citation. Anything
-    cleverer -- stripping punctuation, splitting on ``/`` -- would trade a
-    hard, explainable rule for a heuristic; the cost of a miss is only that one
-    real citation goes ungated.
+    Returns sorted, deduplicated tokens, verbatim as written: only
+    backtick-quoted, whitespace-free ones ending in a :data:`CITED_SUFFIXES`
+    suffix, and never spanning a newline, so an unmatched backtick cannot
+    swallow the rest of the document and prose like ``sha256(pool_analyze.py) =
+    3824a4`` is not read as a citation. Anything cleverer -- stripping
+    punctuation, splitting on ``/`` -- would trade a hard, explainable rule for
+    a heuristic; a miss costs only one real citation going ungated.
     """
     found: set[str] = set()
     for raw in _BACKTICKED.findall(text):
@@ -240,11 +242,11 @@ def cited_artifacts(text: str) -> list[str]:
 def covers(cited: str, entry_path: str) -> bool:
     """Is ``cited`` a whole-path-component suffix of ``entry_path``?
 
-    The load-bearing subtlety of the whole coverage mechanism. ``entry_path``
-    is a candidate from the manifest: a plain relpath, or a tarball's own path
-    or member path. The check is asymmetric by design -- a longer citation is
-    never covered by a shorter entry path, because the writeup made the more
-    specific claim and the manifest must meet it.
+    The load-bearing subtlety of the coverage mechanism. ``entry_path`` is a
+    manifest candidate: a plain relpath, or a tarball's own path or member path.
+    The check is asymmetric by design -- a longer citation is never covered by a
+    shorter entry path, because the writeup made the more specific claim and the
+    manifest must meet it.
 
     Examples
     --------
@@ -274,32 +276,44 @@ def build(manifest_dir: str | Path,
           write: bool = True) -> dict[str, Any]:
     """Hash every listed artifact and write the directory's ``EVIDENCE.json``.
 
-    Every ``relpath`` resolves relative to ``manifest_dir`` (upward ``..`` is
-    legitimate). Each of ``entries`` needs ``relpath`` (non-empty str) and
-    ``role`` (one of :data:`ROLES`), and may carry ``note`` (str) and
-    ``sha256``, which is CHECKED, never trusted; each ``allowlist`` item needs
-    non-empty ``name`` and ``reason`` -- a citation that no entry covers, plus
-    why that is acceptable. ``note`` is free text whose key is omitted when
-    None; ``write=False`` computes and returns the manifest without touching
-    the filesystem. The returned dict is ordered ``schema, note?, entries,
-    allowlist``, each entry ``relpath, sha256, role, note?``.
+    Caller order is kept for both lists (grouping by role is an editorial choice
+    sorting would destroy) and no timestamp is written, so rebuilds are
+    byte-identical and a diff on ``EVIDENCE.json`` means the evidence moved.
+    Coverage is NOT checked here; only :func:`verify` judges a writeup's claims.
 
-    Caller order is kept for both lists (grouping by role or by story is an
-    editorial choice sorting would destroy) and there is no timestamp, so
-    rebuilds are byte-identical and a diff on ``EVIDENCE.json`` always means the
-    evidence moved. Citation coverage is NOT checked here: ``build()`` states
-    what exists, only :func:`verify` judges the writeups' claims.
+    Parameters
+    ----------
+    manifest_dir : str or Path
+        Directory written into, and the base every ``relpath`` resolves against
+        (upward ``..`` is legitimate).
+    entries : iterable of mapping
+        Each needs ``relpath`` (non-empty str) and ``role`` (one of
+        :data:`ROLES`); may carry ``note`` (str) and ``sha256``, which is
+        CHECKED against the computed digest, never trusted.
+    allowlist : iterable of mapping
+        Each needs non-empty ``name`` and ``reason``: a citation no entry
+        covers, plus why that is acceptable.
+    note : str, optional
+        Free text; the key is omitted from the manifest when None.
+    write : bool, default True
+        False returns the manifest without touching the filesystem.
+
+    Returns
+    -------
+    dict
+        Ordered ``schema, note?, entries, allowlist``; each entry ``relpath,
+        sha256, role, note?``.
 
     Raises
     ------
     FileNotFoundError
-        An entry does not resolve: a missing plain file, tarball, or member.
-        Nothing is written in that case.
+        An entry does not resolve (missing plain file, tarball, or member);
+        nothing is written in that case.
     ValueError
-        A missing or empty ``relpath``; a ``role`` outside :data:`ROLES`; a
-        malformed ``tarball:`` reference; a non-str ``note``; a supplied
-        ``sha256`` that disagrees with the computed one; or an allowlist entry
-        missing ``name`` or ``reason``, or with an empty one.
+        Missing/empty ``relpath``; ``role`` outside :data:`ROLES`; malformed
+        ``tarball:`` reference; non-str ``note``; supplied ``sha256``
+        disagreeing with the computed one; allowlist entry missing or with an
+        empty ``name`` or ``reason``.
     """
     mdir = Path(manifest_dir)
 
@@ -384,15 +398,14 @@ class VerifyResult:
         Entries the manifest LISTS, including any the schema check rejected.
     roles : dict of str to int
         Counts per role over schema-valid entries only; a role with no entries
-        is absent rather than set to zero.
+        is absent rather than zero.
     allowlist : list of dict
         The schema-valid allowlist entries only, as stored.
     citations : dict of str to list of str
         Writeup relpath -> sorted citation tokens, for every ``writeup`` entry
-        that resolved, whether or not all of its citations were covered.
+        that resolved, covered or not.
     failures : list of str
-        Human-readable defects, in check order. Empty means the manifest
-        verified.
+        Human-readable defects, in check order; empty means verified.
     """
 
     ok: bool
@@ -410,8 +423,7 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     ``index`` names the entry in messages, since the ``relpath`` may itself be
     the missing field. Returns True if the entry is well formed enough to
     resolve and to serve as a coverage candidate. Every check runs before
-    returning, so a hand-edited entry reports all of its defects in one pass
-    instead of one per re-run.
+    returning, so a hand-edited entry reports all its defects in one pass.
     """
     if not isinstance(entry, Mapping):
         failures.append(f"entry {index}: not an object: {entry!r}")
@@ -456,10 +468,10 @@ def _check_allowlist_schema(raw_allowlist: Any,
     """Validate the manifest's allowlist, returning its usable entries.
 
     ``raw_allowlist`` is the decoded ``allowlist`` value (absent is treated as
-    empty); the well-formed ``{"name": ..., "reason": ...}`` entries come back
-    in file order. An entry whose ``reason`` is missing is reported AND
-    dropped: it must not keep working as an escape hatch, or the cheapest way
-    to silence a coverage failure would be to delete its justification.
+    empty); well-formed ``{"name": ..., "reason": ...}`` entries come back in
+    file order. An entry whose ``reason`` is missing is reported AND dropped: it
+    must not keep working as an escape hatch, or the cheapest way to silence a
+    coverage failure would be to delete its justification.
     """
     if not isinstance(raw_allowlist, list):
         failures.append(f"allowlist: not a list: {raw_allowlist!r}")
@@ -489,13 +501,16 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
     """Re-hash a directory's pinned evidence and check its citation coverage.
 
     Checks, in order: manifest schema; reference resolution; sha256 (by
-    streaming); and citation coverage for every ``writeup`` entry. Read-only:
-    tarball members stream and are never extracted.
-
+    streaming); citation coverage for every ``writeup`` entry. Read-only.
     Every defect except a missing or unparseable manifest is COLLECTED into the
     result rather than raised on, so one run reports the whole state of a
-    package. A sha256 mismatch does NOT stop that entry's citation scan: a
-    writeup that drifted is exactly the one whose citations most need checking.
+    package; a sha256 mismatch does NOT stop that entry's citation scan, since a
+    writeup that drifted is the one whose citations most need checking.
+
+    Returns
+    -------
+    VerifyResult
+        Census plus the ordered failure list; ``ok`` is ``not failures``.
 
     Raises
     ------
@@ -581,8 +596,8 @@ def find_manifests(root: Path | None = None) -> list[Path]:
     """Locate every ``EVIDENCE.json`` under ``notebooks/*/results/``.
 
     Searches ``root`` (default :data:`REPO`) at any depth below a results
-    directory, so a package under ``results/runs/<name>/`` counts too. Paths
-    come back sorted; an empty list is a valid state, not an error.
+    directory, so a package under ``results/runs/<name>/`` counts too. Sorted;
+    an empty list is a valid state, not an error.
     """
     base = REPO if root is None else Path(root)
     return sorted(base.glob(f"notebooks/*/results/**/{MANIFEST_NAME}"))
@@ -662,10 +677,10 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
 def _cmd_build(manifest_dir: str, spec_path: str) -> int:
     """Build one ``EVIDENCE.json`` from a JSON spec file.
 
-    ``spec_path`` is a JSON file of the form ``{"note": ..., "entries": [...],
-    "allowlist": [...]}`` carrying no hashes -- they are computed here, so a
-    spec can be hand-written and re-run after the evidence legitimately
-    changes. Returns 0; any defect raises out of :func:`build` instead.
+    ``spec_path`` holds ``{"note": ..., "entries": [...], "allowlist": [...]}``
+    and carries no hashes -- they are computed here, so a spec can be
+    hand-written and re-run after the evidence legitimately changes. Returns 0;
+    any defect raises out of :func:`build` instead.
     """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     manifest = build(manifest_dir,

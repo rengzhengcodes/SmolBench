@@ -10,10 +10,9 @@ SEED -- one label alphabet and one answer vector shared by its 9 harmonic items
 -- so a seed on which an arm collapses contributes up to 9 correlated
 discordances, not 9 pieces of evidence. It enumerates all 2^30 sign assignments
 of the 30 per-seed differences by DP: exact, deterministic (no resampling seed),
-equal to exact McNemar when every cluster is a singleton, and unimprovable
-within its family (studentizing is a no-op, since sum_s d_s^2 is sign-flip
-invariant). Item-level McNemar and the unpaired harmonic-stratified CMH stay as
-labelled DESCRIPTIVE columns; the gap to the cluster p is the design effect.
+and equal to exact McNemar when every cluster is a singleton. Item-level McNemar
+and the unpaired harmonic-stratified CMH stay as labelled DESCRIPTIVE columns;
+the gap to the cluster p is the design effect.
 
 Holm holds under ARBITRARY dependence and is the headline; Hochberg needs
 Simes-type positive dependence (MTP2, Sarkar 1998), NOT verified for 210
@@ -72,6 +71,11 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     The sort is stable, for the same reason as ``paired_analysis.holm``: the cluster
     test has a hard resolution floor at 2/2^30 and several contrasts sit exactly on
     it, so the rejection set must not depend on contrast build order.
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask, in `pvals` order.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -95,9 +99,12 @@ def compliance_census() -> dict:
     annotated is a threshold decision made downstream, so the criterion stays
     visible and symmetric.
 
-    Returns each cell to ``rate`` (non-compliance share), ``n`` (mark count) and
-    ``modes`` (a `collections.Counter` of non-null labels). Cells with no marks are
-    omitted.
+    Returns
+    -------
+    dict
+        Cell key -> ``rate`` (non-compliance share), ``n`` (mark count) and
+        ``modes`` (a `collections.Counter` of non-null labels). Cells with no
+        marks are omitted.
     """
     rx = re.compile(r"^\s*compliance:\s*(\S+)", re.M)
     out = {}
@@ -134,11 +141,15 @@ def collapse_note(key, census: dict) -> str:
 def classify(label: str, key_a, key_b) -> str:
     """Bucket a contrast from its two ``(model, info)`` keys.
 
-    Returns ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
-    informative arm against the chance baseline: a positive control), or
-    ``"zero-vs-zero"`` (a ladder contrast between two baseline arms, null by
-    construction); the last two are jointly the zero-arm controls. `label` is not
-    read by the current logic; callers pass it uniformly.
+    `label` is not read by the current logic; callers pass it uniformly.
+
+    Returns
+    -------
+    str
+        ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one informative
+        arm against the chance baseline: a positive control), or
+        ``"zero-vs-zero"`` (a ladder contrast between two baseline arms, null by
+        construction). The last two are jointly the zero-arm controls.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:

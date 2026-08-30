@@ -15,7 +15,6 @@ notebooks/
     induction_eval.ipynb        the exploration notebook
     results/                    S3-mirrored replicate YAMLs  <- S3 key anchor
     analysis/                   the numbers that got published
-    audits/                     concluded one-off probes
   deduction/                   family-ladder Lean 4 deduction study
     run_study.py                the (generation-only) driver  <- ditto
     lean_eval.ipynb             the exploration notebook

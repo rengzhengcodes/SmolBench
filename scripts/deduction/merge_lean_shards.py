@@ -3,13 +3,13 @@
 ``notebooks/deduction/run_study.py`` can run one lane as N theorem-stride shards
 (``LEAN_SHARD=i/n``; see ``runner._select_theorems``'s ``shard`` key), each
 writing its own NON-canonical dir ``runs/scaling_<key>_shard<i>of<n>`` under
-``--no-s3``. Shard dirs must never reach the canonical S3 prefix, because its
-sole ``all_rows.jsonl`` is the exact object the verification pass
+``--no-s3``. Shard dirs must never reach the canonical S3 prefix, whose sole
+``all_rows.jsonl`` is the exact object the verification pass
 (``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script
 folds the completed shards into one canonical ``runs/scaling_<key>``,
-regenerates ``analysis.txt`` and, under ``--spool``, uploads via the driver's
-own verified two-phase ``spool_to_s3`` and only then prunes the shard dirs (no
-run data accumulates on the local host).
+regenerates ``analysis.txt`` and, under ``--spool``, uploads via the driver's own
+verified two-phase ``spool_to_s3`` and only then prunes the shard dirs, so no run
+data accumulates on the local host.
 
 Merge gates -- all hard failures; nothing is written past a failed gate: every
 shard dir exists with ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell
@@ -67,9 +67,17 @@ def merge_shards(
 ) -> Path:
     """Fold ``n`` shard run directories into the canonical ``scaling_<key>`` directory.
 
-    `runs_root` holds both the shard run dirs and the canonical run dir;
-    `expect_cells` and `expect_sanity` are the merged row-count gates, and
-    ``None`` disables either. Returns the canonical run directory.
+    Parameters
+    ----------
+    runs_root : Path
+        Holds both the shard run dirs and the canonical run dir.
+    expect_cells, expect_sanity : int or None
+        Merged row-count gates; ``None`` disables either.
+
+    Returns
+    -------
+    Path
+        The canonical run directory.
 
     Raises
     ------

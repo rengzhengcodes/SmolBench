@@ -8,32 +8,45 @@ real Lean, and uploads the sibling ``verified_rows.jsonl``. S3 decouples the pha
 generation needs only a provider API, verification needs ``elan``/Lean plus the traced
 mathlib4 corpus (``.venv`` with the ``lean`` extra). **``all_rows.jsonl`` is NEVER
 modified or re-uploaded**, so a verification bug can never lose a candidate proof that
-already cost inference spend.
+already cost inference spend. The unit of work is a ``(theorem_id, k)`` group:
+``verify.open_at_step`` replays the prefix ``0..k-1`` once into a Dojo session that
+every rung/model/replicate at that pair reuses.
 
-- Unit of work is a ``(theorem_id, k)`` group: ``verify.open_at_step`` replays the
-  prefix ``0..k-1`` once into a Dojo session every rung/model/replicate at that pair
-  reuses, and identical ``candidate_proof`` text within a group collapses to one
-  ``try_tail`` call, fanned back out.
-- Ground-truth sanity replay is memoised per THEOREM per run, under a shared lock:
-  identical to per-group memoisation under this repo's configured
-  ``k.strategy == "last"`` (``runner._k_indices``), strictly cheaper otherwise. A row
-  carries no ``(kind, split)``, so ``_lookup_theorem`` rebuilds its
-  ``BenchmarkTheorem`` by scanning the whole local corpus.
-- ``verified_rows.jsonl``'s row order is EXACTLY ``all_rows.jsonl``'s -- a hard
-  downstream invariant upheld by :func:`seed_out_rows`; orphans are appended, never
-  inserted. Resume is :func:`resume_done_groups`'s ALL-cells rule, evaluated against
-  the PAIRED output and never a prior ``verified_rows.jsonl`` alone, and progress
-  check-points every :data:`UPLOAD_EVERY_GROUPS` groups plus once at the end.
-- :func:`verify_run` returns 1 for a run with no ``all_rows.jsonl``, and 2 when a FULL
-  pass (no ``--limit``/``--theorem``) leaves a cell on the ``"unverified"`` sentinel:
-  downstream loaders score such a cell as a failure, so a work-free pass would read as
-  "the model proved nothing".
-- ``--dry-run`` skips :func:`require_lean_dojo`, :func:`check_workers` and the Dojo
-  cache flock, which guard real Lean work only; requiring them would fail a low-memory
-  preview host, or block a dry run alongside a live pass.
-- Two lazy import seams keep this module importable without ``lean_dojo``:
-  ``smolbench.deduction.lean.verify`` (:func:`_default_verifier`) and
-  ``boto3``/``botocore`` (house convention -- importing never requires the AWS SDK).
+Sanity replay
+-------------
+Ground-truth replay is memoised per THEOREM per run, under a shared lock: identical to
+per-group memoisation under this repo's configured ``k.strategy == "last"``
+(``runner._k_indices``), strictly cheaper otherwise. A row carries no ``(kind, split)``,
+so :func:`_lookup_theorem` rebuilds its ``BenchmarkTheorem`` from the whole local corpus.
+
+Content invariant
+-----------------
+``verified_rows.jsonl``'s row order is EXACTLY ``all_rows.jsonl``'s, upheld by
+:func:`seed_out_rows`: orphaned prior rows, and a fresh sanity row for a theorem
+``all_rows.jsonl`` has none for, are APPENDED, never inserted, so indices computed
+against ``all_rows.jsonl`` stay valid against the output.
+
+Resume and checkpointing
+------------------------
+:func:`resume_done_groups`'s ALL-cells rule, evaluated against the PAIRED output and
+never a prior ``verified_rows.jsonl`` alone; uploads check-point every
+:data:`UPLOAD_EVERY_GROUPS` groups plus once at the end. :func:`verify_run` returns 2
+when a FULL pass leaves a cell on the ``"unverified"`` sentinel, which downstream
+loaders score as a failure -- such a pass would read as "the model proved nothing".
+
+The Dojo cache lock
+-------------------
+One exclusive flock on a DEDICATED FILE inside :data:`DOJO_CACHE_DIR` -- never the cache
+directory itself, which this process's own worker threads read and write -- held for the
+whole multi-run loop, because concurrent passes race on the shared traced-repo cache.
+
+Import-safety
+-------------
+Two lazy seams keep this module importable without ``lean_dojo``:
+``smolbench.deduction.lean.verify`` (:func:`_default_verifier`) and ``boto3``/
+``botocore`` (house convention -- importing never requires the AWS SDK). ``--dry-run``
+likewise skips :func:`require_lean_dojo`, :func:`check_workers` and the cache lock, which
+guard real Lean work only.
 """
 
 from __future__ import annotations
@@ -97,9 +110,17 @@ _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 def parse_s3_uri(uri: str) -> tuple[str, str]:
     """Parse an ``s3://bucket[/key-prefix]`` URI into ``(bucket, key_prefix)``.
 
-    `key_prefix` has any trailing ``"/"`` stripped, and is ``""`` for a bare
-    ``s3://bucket``. Raises ``ValueError``, naming `uri`, if it does not start with
-    ``"s3://"`` or its bucket segment (everything up to the next ``"/"``) is empty.
+    Returns
+    -------
+    tuple[str, str]
+        `key_prefix` has any trailing ``"/"`` stripped, and is ``""`` for a bare
+        ``s3://bucket``.
+
+    Raises
+    ------
+    ValueError
+        Naming `uri`, if it does not start with ``"s3://"`` or its bucket segment
+        (everything up to the next ``"/"``) is empty.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"parse_s3_uri: {uri!r} does not start with 's3://'")
@@ -111,10 +132,14 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
 
 
 def run_object_key(key_prefix: str, run: str, filename: str) -> str:
-    """Build one run's object key under a bucket's key prefix:
-    ``f"{key_prefix}/{run}/{filename}"`` with empty segments dropped and stray slashes
-    stripped, so the result never has a leading or a doubled ``"/"`` (`key_prefix` may
-    be ``""`` -- see :func:`parse_s3_uri`).
+    """Build one run's object key ``f"{key_prefix}/{run}/{filename}"``.
+
+    Returns
+    -------
+    str
+        Empty segments are dropped and stray slashes stripped, so the key never has a
+        leading or a doubled ``"/"`` (`key_prefix` may be ``""``, see
+        :func:`parse_s3_uri`).
     """
     segments = (key_prefix.strip("/"), run.strip("/"), filename.strip("/"))
     return "/".join(segment for segment in segments if segment)
@@ -124,14 +149,22 @@ def run_object_key(key_prefix: str, run: str, filename: str) -> str:
 # Pure: grouping, deduplication, fan-out, resume
 # ---------------------------------------------------------------------------
 def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
-    """Group still-unverified cell rows by their ``(theorem_id, k)`` pair -- the unit
-    of work, since every cell row sharing it can share one Dojo session.
+    """Group still-unverified cell rows by their ``(theorem_id, k)`` pair.
 
-    `rows` are ``all_rows.jsonl``'s rows in file order. Returns
-    ``(theorem_id, int(k))`` -> ascending indices into `rows`, for rows with
-    ``kind == "cell"`` AND ``verdict == "unverified"`` only, in first-seen key order.
-    ``k`` is coerced with ``int()`` to tolerate a string-typed value from a
-    hand-edited fixture.
+    That pair is the unit of work: every cell row sharing it can share one Dojo session.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        ``all_rows.jsonl``'s rows, in file order.
+
+    Returns
+    -------
+    dict[tuple[str, int], list[int]]
+        ``(theorem_id, int(k))`` -> ascending indices into `rows`, for rows with
+        ``kind == "cell"`` AND ``verdict == "unverified"`` only, in first-seen key
+        order. ``k`` is coerced with ``int()`` to tolerate a string-typed value from a
+        hand-edited fixture.
     """
     groups: dict[tuple[str, int], list[int]] = {}
     for index, row in enumerate(rows):
@@ -145,14 +178,22 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
 
 
 def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[int]]:
-    """Group `indices` (typically one :func:`group_unverified` value) by their exact
-    ``candidate_proof`` text.
+    """Group `indices` by their exact ``candidate_proof`` text.
 
     Lean replay is deterministic, so rows sharing candidate text need exactly one
     ``try_tail`` call. No normalisation is applied: a one-character difference is
-    correctly two groups, since Lean need not treat them identically either. Returns
-    each distinct candidate -> its indices in the order given, first-seen key order; a
-    missing or ``None`` candidate groups under ``""``.
+    correctly two groups, since Lean need not treat them identically either.
+
+    Parameters
+    ----------
+    indices : list[int]
+        Indices into `rows`, typically one :func:`group_unverified` value.
+
+    Returns
+    -------
+    dict[str, list[int]]
+        Each distinct candidate -> its indices in the order given, first-seen key
+        order; a missing or ``None`` candidate groups under ``""``.
     """
     groups: dict[str, list[int]] = {}
     for index in indices:
@@ -164,9 +205,12 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
 def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, Any]) -> None:
     """Apply one verification `result` to every row in `indices`, in place.
 
-    Sets ``verdict``, ``lean_error``, ``final_state_pp`` and ``verify_ms`` (all
-    required keys of `result`) on each row. No other key is read or written, so `seed`
-    and every other recorded field survive untouched.
+    Parameters
+    ----------
+    result : Mapping[str, Any]
+        Must carry ``verdict``, ``lean_error``, ``final_state_pp`` and ``verify_ms``;
+        each is set on every row. No other key is read or written, so `seed` and every
+        other recorded field survive untouched.
     """
     for index in indices:
         row = rows[index]
@@ -179,17 +223,23 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
 def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     """Find the ``(theorem_id, k)`` groups where every cell row is fully graded.
 
-    `verified_rows` must be the PAIRED output of :func:`seed_out_rows`, never a prior
-    ``verified_rows.jsonl`` in isolation: a cell phase 1 appended to an already-graded
-    group exists nowhere in that file by itself. Returns every
-    ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows ALL carry a
-    non-``"unverified"`` verdict; non-cell rows are ignored and can never make a group
-    done, and ``k`` is coerced with ``int()`` to tolerate a string-typed value from a
-    hand-edited fixture.
-
     The ALL-cells rule (rather than ANY) is what holds ACROSS passes:
     ``all_rows.jsonl`` grows by appending, so a group a prior pass finished can gain
     new sentinel cells, and an ANY rule would leave them ``"unverified"`` forever.
+
+    Parameters
+    ----------
+    verified_rows : list[dict]
+        The PAIRED output of :func:`seed_out_rows`, never a prior
+        ``verified_rows.jsonl`` in isolation: a cell phase 1 appended to an
+        already-graded group exists nowhere in that file by itself.
+
+    Returns
+    -------
+    set[tuple[str, int]]
+        Every ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows ALL carry a
+        non-``"unverified"`` verdict; non-cell rows are ignored and can never make a
+        group done. ``k`` is coerced with ``int()``.
     """
     groups: dict[tuple[str, int], list[dict]] = {}
     for row in verified_rows:
@@ -212,10 +262,14 @@ def row_identity(row: dict) -> tuple:
     `model`/`k`/`rung`/`replicate_idx` -- still yields a well-formed key with ``None``
     in those slots instead of raising. The trailing five fields mirror
     ``runner._row_key`` exactly, with `kind` prepended, so a cell row and a sanity row
-    for the same `theorem_id` can never collide. `k` is read RAW here, unlike
-    :func:`resume_done_groups`'s ``int()`` coercion: both files are written by the same
-    writer, and a hand-edited string-typed `k` would merely fail to pair (surfacing as
-    an orphan plus a redundant re-verification), never mis-assign a verdict.
+    for the same `theorem_id` can never collide.
+
+    Notes
+    -----
+    `k` is read RAW here, unlike :func:`resume_done_groups`'s ``int()`` coercion: both
+    files are written by the same writer, and a hand-edited string-typed `k` would
+    merely fail to pair (surfacing as an orphan plus a redundant re-verification),
+    never mis-assign a verdict.
     """
     return (
         row.get("kind"),
@@ -231,30 +285,40 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     """Pair a prior pass's rows onto the current rows, by identity and occurrence order.
 
     This is what keeps the output's row order identical to ``all_rows.jsonl``, whatever
-    order or length a prior pass's own output had. `rows` is the freshly downloaded
-    ``all_rows.jsonl`` in file order; `verified_rows` is a prior
-    ``verified_rows.jsonl`` in that file's own order (``[]`` on a first pass, or under
-    ``--no-resume``). Returns ``(out_rows, n_orphans)``: for each entry of `rows`, in
-    order, the matching PRIOR row object at that identity's next unclaimed occurrence
-    else the current row itself, then every unmatched prior row (an "orphan") appended
-    in its original order.
+    order or length a prior pass's own output had.
 
+    Parameters
+    ----------
+    rows : list[dict]
+        The freshly downloaded ``all_rows.jsonl``, in file order.
+    verified_rows : list[dict]
+        A prior ``verified_rows.jsonl`` in that file's own order; ``[]`` on a first
+        pass, or under ``--no-resume``.
+
+    Returns
+    -------
+    tuple[list[dict], int]
+        ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the matching
+        PRIOR row object at that identity's next unclaimed occurrence else the current
+        row itself, then every unmatched prior row (an "orphan") appended in its
+        original order.
+
+    Notes
+    -----
     Pairing is by :func:`row_identity` plus occurrence ordinal, never by list position
-    -- a positional seed raises ``IndexError`` once ``all_rows.jsonl`` grows between
-    passes, and mis-pairs silently once the two lists merely differ in order -- and
-    never through a ``dict[identity] -> row`` map, because repeated identities are the
-    norm here: real lanes carry up to 16 occurrences of one identity, and a map would
-    seed the single survivor into every one of that identity's slots. Matched rows are
-    carried over WHOLESALE, never field-merged; ``--no-resume`` is the remedy for a
-    regenerated lane.
+    (a positional seed raises ``IndexError`` once ``all_rows.jsonl`` grows between
+    passes, and mis-pairs silently once the two lists merely differ in order) and never
+    through a ``dict[identity] -> row`` map, which would seed the single survivor into
+    every slot of an identity real lanes repeat up to 16 times. Matched rows are carried
+    over WHOLESALE, never field-merged; ``--no-resume`` is the remedy for a regenerated
+    lane.
 
-    Orphans are APPENDED, never inserted and never dropped. Appending keeps the prefix
-    shared with `rows` intact, which keeps every index computed against `rows`
+    Orphans are APPENDED, never inserted and never dropped: appending keeps the prefix
+    shared with `rows` intact, so every index computed against `rows`
     (:func:`group_unverified`, hence every :func:`fan_out_verdict` /
-    :func:`unique_candidates` call) valid against `out_rows`. Dropping them is never
-    safe: :func:`_update_sanity_row` legitimately appends a sanity row for a theorem
-    ``all_rows.jsonl`` has none for, and on the next pass that row has no counterpart
-    there at all.
+    :func:`unique_candidates` call) stays valid against `out_rows`. Dropping is unsafe
+    because :func:`_update_sanity_row` legitimately appends a sanity row for a theorem
+    ``all_rows.jsonl`` has none for.
     """
     prior_by_identity: dict[tuple, collections.deque[tuple[int, dict]]] = (
         collections.defaultdict(collections.deque)
@@ -293,12 +357,15 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
 # Pure: RAM budget / worker cap
 # ---------------------------------------------------------------------------
 def available_ram_gb(meminfo_text: str) -> float:
-    """Extract ``MemAvailable`` (kB in the file) from a ``/proc/meminfo`` file's TEXT,
-    returned in GiB.
+    """Extract ``MemAvailable`` (kB in the file) from ``/proc/meminfo`` TEXT, in GiB.
 
     Takes the text rather than reading ``/proc`` itself, so the budget math is
-    unit-testable against a literal fixture. Raises ``ValueError`` if `meminfo_text`
-    has no line starting with ``"MemAvailable:"``.
+    unit-testable against a literal fixture.
+
+    Raises
+    ------
+    ValueError
+        If `meminfo_text` has no line starting with ``"MemAvailable:"``.
     """
     for line in meminfo_text.splitlines():
         if line.startswith("MemAvailable:"):
@@ -311,9 +378,14 @@ def available_ram_gb(meminfo_text: str) -> float:
 
 
 def max_workers_allowed(meminfo_text: str) -> int:
-    """Cap worker count by available RAM at `RAM_GB_PER_WORKER` GiB each: the floored
-    quotient, but never below 1, so a host under one worker's budget still yields a
-    comparable cap :func:`check_workers` can refuse against rather than a confusing 0.
+    """Cap worker count by available RAM at `RAM_GB_PER_WORKER` GiB each.
+
+    Returns
+    -------
+    int
+        The floored quotient, but never below 1, so a host under one worker's budget
+        still yields a comparable cap :func:`check_workers` can refuse against rather
+        than a confusing 0.
     """
     return max(int(available_ram_gb(meminfo_text) // RAM_GB_PER_WORKER), 1)
 
@@ -323,10 +395,14 @@ def check_workers(requested: int, meminfo_text: str) -> None:
 
     Each Dojo session holds a live Lean process plus its fully loaded environment --
     `RAM_GB_PER_WORKER` (6) GiB empirically. Oversubscribing does not fail fast: it
-    fails hours into a pass, as an OOM kill that takes every in-flight row down with
-    it. Raises ``SystemExit`` -- naming `requested`, the computed cap and the observed
-    available RAM -- if `requested` is below 1 or exceeds :func:`max_workers_allowed`,
-    before a single worker thread or Dojo session exists.
+    fails hours into a pass, as an OOM kill that takes every in-flight row down with it.
+
+    Raises
+    ------
+    SystemExit
+        If `requested` is below 1 or exceeds :func:`max_workers_allowed`, before a
+        single worker thread or Dojo session exists; the message names `requested`, the
+        computed cap and the observed available RAM.
     """
     if requested < 1:
         raise SystemExit(f"check_workers: --workers must be >= 1, got {requested}")
@@ -346,9 +422,7 @@ def check_workers(requested: int, meminfo_text: str) -> None:
 # Pure: interpreter guard, Dojo-failure operator guidance
 # ---------------------------------------------------------------------------
 def require_lean_dojo() -> None:
-    """Raise ``SystemExit`` if ``lean_dojo`` (the ``lean`` extra) is not importable in
-    this interpreter.
-    """
+    """Raise ``SystemExit`` if ``lean_dojo`` (the ``lean`` extra) is not importable."""
     if importlib.util.find_spec("lean_dojo") is None:
         raise SystemExit(
             "lean_verify_rows: this is the deferred VERIFICATION pass and needs "
@@ -361,14 +435,14 @@ def require_lean_dojo() -> None:
 def dojo_failure_hint(exc: BaseException) -> str:
     """Build actionable operator guidance for a Dojo-init-class failure.
 
-    Returns `exc`'s own text plus guidance grounded in this pipeline: ``verify.py``'s
-    ``_open_dojo_with_retry`` already retried 3x with backoff before `exc` surfaced;
-    the FIRST Dojo call on a host pulls a ~2.4 GB traced corpus from LeanDojo's S3
-    cache into `DOJO_CACHE_DIR`, credential-free (cold ~2-4 min, warm ~10s), which
-    needs ``elan`` installed; a corrupt or partial cache is cleared by removing
-    `DOJO_CACHE_DIR` entirely. The text points at
-    ``.claude/skills/run-smolbench/SKILL.md`` for the pull timings and the ``elan``
-    install command.
+    Returns
+    -------
+    str
+        `exc`'s own text plus guidance grounded in this pipeline (``verify.py``'s
+        ``_open_dojo_with_retry`` has already retried 3x with backoff by then): the
+        cold/warm cost of the FIRST Dojo call's corpus pull into `DOJO_CACHE_DIR`, the
+        ``elan`` install command, that removing that directory clears a corrupt cache,
+        and a pointer to ``.claude/skills/run-smolbench/SKILL.md``.
     """
     return (
         f"Dojo failed to open: {type(exc).__name__}: {exc}\n"
@@ -420,9 +494,13 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     """Resolve a row's `theorem_id` (== ``BenchmarkTheorem.full_name``) to its theorem.
 
     The result carries the traced-tactic prefix `open_at_step` needs and the
-    ``url``/``commit`` LeanDojo needs to address it. Raises ``LookupError`` if
-    `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination -- see
-    :func:`_theorem_index`.
+    ``url``/``commit`` LeanDojo needs to address it.
+
+    Raises
+    ------
+    LookupError
+        If `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination --
+        see :func:`_theorem_index`.
     """
     index = _theorem_index()
     if theorem_id not in index:
@@ -437,8 +515,8 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
 # Lazy import seams (see the module docstring's "Import-safety" section)
 # ---------------------------------------------------------------------------
 def _default_verifier():
-    """Lazily import and return ``smolbench.deduction.lean.verify``, which exposes
-    `open_at_step`, `try_tail` and `replay_ground_truth`.
+    """Lazily import ``smolbench.deduction.lean.verify`` (`open_at_step`, `try_tail`,
+    `replay_ground_truth`).
 
     That module requires `lean_dojo`, so the import is deferred to call time -- the
     same seam ``runner._default_verifier`` uses -- and its `ImportError` propagates
@@ -467,11 +545,20 @@ def list_runs(
 ) -> list[str]:
     """List run directory names directly under `key_prefix`, filtered by `pattern`.
 
-    `client` need only expose ``get_paginator("list_objects_v2")``; `key_prefix` -- the
-    prefix under which each run's own sub-prefix lives -- may be ``""``; `pattern` is
-    an `fnmatch` pattern matched against a run's NAME, not its full key. Returns the
-    matching ``CommonPrefixes`` names of one ``Delimiter="/"`` listing, across every
-    page, sorted ascending.
+    Parameters
+    ----------
+    client : Any
+        Need only expose ``get_paginator("list_objects_v2")``.
+    key_prefix : str
+        The prefix under which each run's own sub-prefix lives; may be ``""``.
+    pattern : str
+        `fnmatch` pattern matched against a run's NAME, not its full key.
+
+    Returns
+    -------
+    list[str]
+        The matching ``CommonPrefixes`` names of one ``Delimiter="/"`` listing, across
+        every page, sorted ascending.
     """
     prefix = f"{key_prefix}/" if key_prefix else ""
     names: list[str] = []
@@ -487,13 +574,18 @@ def list_runs(
 def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     """Download one JSONL object to `dest` and return its parsed rows.
 
-    Returns one `json.loads`-parsed dict per non-blank line, in file order, and ``[]``
-    when the object does not exist -- absence is NORMAL for a not-yet-created
-    ``verified_rows.jsonl``, and is detected as a ``ClientError`` whose ``Error.Code``
-    is ``"NoSuchKey"`` or ``"404"`` (the two shapes boto3 and this repo's fakes raise;
-    see ``tests/evals/test_results_store.py``'s ``FakeS3Client``). Every other S3
-    failure (permissions, malformed bucket, ...) propagates unhandled: it must never be
-    read as "nothing to verify yet". `dest`'s parent directories are created as needed.
+    `dest`'s parent directories are created as needed.
+
+    Returns
+    -------
+    list[dict]
+        One `json.loads`-parsed dict per non-blank line, in file order; ``[]`` when the
+        object does not exist -- absence is NORMAL for a not-yet-created
+        ``verified_rows.jsonl``, and is detected as a ``ClientError`` whose
+        ``Error.Code`` is ``"NoSuchKey"`` or ``"404"`` (the two shapes boto3 and this
+        repo's fakes raise; see ``tests/evals/test_results_store.py``'s
+        ``FakeS3Client``). Every other S3 failure (permissions, malformed bucket, ...)
+        propagates unhandled: it must never be read as "nothing to verify yet".
     """
     from botocore.exceptions import ClientError  # lazy -- see module docstring
 
@@ -519,9 +611,12 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
 def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: Path) -> None:
     """Serialise `rows` to a scratch file under `workdir`, then upload it to `key`.
 
-    `workdir` is created if absent, and its scratch file (named `VERIFIED_FILENAME`) is
-    overwritten with the full current row set on every call, so :func:`verify_run`'s
-    repeated checkpoint uploads against one `workdir` are safe.
+    Parameters
+    ----------
+    workdir : Path
+        Created if absent; its scratch file (named `VERIFIED_FILENAME`) is overwritten
+        with the full current row set on every call, so :func:`verify_run`'s repeated
+        checkpoint uploads against one `workdir` are safe.
     """
     workdir.mkdir(parents=True, exist_ok=True)
     scratch = workdir / VERIFIED_FILENAME
@@ -543,9 +638,13 @@ def _dojo_cache_lock() -> Iterator[None]:
     multi-run loop), released however the block exits; concurrent verification passes
     would otherwise race on the shared traced-repo build cache. The lock is on a
     DEDICATED FILE, never `DOJO_CACHE_DIR` itself, which one process's own worker
-    threads read and write concurrently. Raises ``SystemExit``, naming the lock file,
-    when another process already holds it (``BlockingIOError`` from the non-blocking
-    `fcntl.flock`).
+    threads read and write concurrently.
+
+    Raises
+    ------
+    SystemExit
+        Naming the lock file, when another process already holds it
+        (``BlockingIOError`` from the non-blocking `fcntl.flock`).
     """
     DOJO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = DOJO_CACHE_DIR / _LOCK_FILENAME
@@ -620,29 +719,49 @@ def verify_run(
 ) -> int:
     """Verify one run's unverified cell groups; upload `VERIFIED_FILENAME`.
 
-    `client` is an injected S3 client (real, or a test fake) and `bucket`/`key_prefix`
-    locate this run's objects -- see :func:`run_object_key`. `workers` sizes the
-    `ThreadPoolExecutor`, one ``(theorem_id, k)`` group per task. `theorem` restricts
-    processing to groups with that `theorem_id`; `limit` caps groups processed THIS
-    call (0 = no cap); `dry_run` reports the selected groups and returns, touching
-    neither Lean nor the S3 upload machinery. `workdir` is the PARENT of this run's
-    private scratch dir ``workdir / run``, never shared with another run's scratch
-    files. `verifier` is a module exposing `open_at_step`, `try_tail` and
-    `replay_ground_truth`; ``None`` resolves the real one via
-    :func:`_default_verifier`, but ONLY when at least one group is pending -- an empty
-    pending set, or `dry_run`, never imports it.
+    Parameters
+    ----------
+    client : Any
+        Injected S3 client -- real, or a test fake.
+    bucket, key_prefix, run : str
+        Locate this run's objects; see :func:`run_object_key`.
+    workers : int
+        Size of the `ThreadPoolExecutor`, one ``(theorem_id, k)`` group per task.
+    theorem : str, optional
+        Restrict processing to groups with this `theorem_id`.
+    limit : int
+        Cap on groups processed THIS call; 0 = no cap.
+    workdir : Path
+        PARENT of this run's private scratch dir ``workdir / run``, never shared with
+        another run's scratch files.
+    dry_run : bool
+        Report the selected groups and return, touching neither Lean nor the S3 upload
+        machinery.
+    no_resume : bool
+        Discard the prior pass's verdicts and re-verify every group.
+    verifier : Any, optional
+        Module exposing `open_at_step`, `try_tail` and `replay_ground_truth`; ``None``
+        resolves the real one via :func:`_default_verifier`, but ONLY when at least one
+        group is pending -- an empty pending set, or `dry_run`, never imports it.
 
-    Returns ``0`` on success, including "nothing to do" and every partial pass
-    (``--limit``, ``--theorem``, ``--dry-run``); ``1`` if this run has no
-    ``all_rows.jsonl`` (logged, run skipped); ``2`` if a FULL pass still left at least
-    one ``kind == "cell"`` row on the ``"unverified"`` sentinel after its final upload.
-    Resume is not an exemption: a `done` group has zero sentinel cells by construction,
-    so a survivor means either a pending group's verdict was never written back (a
-    swallowed per-cell failure) or an ungraded ORPHAN absent from the current
-    ``all_rows.jsonl``, which :func:`group_unverified` can never select. Downstream
-    loaders score an ``"unverified"`` cell as a failure, so such a pass would read as
-    "the model proved nothing". The graded output is uploaded either way: this gates
-    the RESULT, it is never a reason to withhold it.
+    Returns
+    -------
+    int
+        ``0`` on success, including "nothing to do" and every partial pass
+        (``--limit``, ``--theorem``, ``--dry-run``); ``1`` if this run has no
+        ``all_rows.jsonl`` (logged, run skipped); ``2`` if a FULL pass still left at
+        least one ``kind == "cell"`` row on the ``"unverified"`` sentinel after its
+        final upload.
+
+    Notes
+    -----
+    Resume is not an exemption from the ``2`` gate: a `done` group has zero sentinel
+    cells by construction, so a survivor means either a pending group's verdict was
+    never written back (a swallowed per-cell failure) or an ungraded ORPHAN absent from
+    the current ``all_rows.jsonl``, which :func:`group_unverified` can never select.
+    Downstream loaders score an ``"unverified"`` cell as a failure, so such a pass would
+    read as "the model proved nothing". The graded output is uploaded either way: this
+    gates the RESULT, it is never a reason to withhold it.
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)
@@ -990,11 +1109,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     Step order: :func:`require_lean_dojo`, then :func:`check_workers` against a live
     ``/proc/meminfo`` read, then the exclusive Dojo cache lock held for the rest of the
     call -- all three skipped together under ``--dry-run`` -- then :func:`list_runs`
-    and :func:`verify_run` per matching run. `argv` defaults to ``sys.argv[1:]``.
+    and :func:`verify_run` per matching run.
 
-    Returns ``0`` when every matching run was found and processed, even if a run had
-    nothing left to verify; otherwise the COUNT of runs :func:`verify_run` returned
-    non-zero for.
+    Returns
+    -------
+    int
+        ``0`` when every matching run was found and processed, even if a run had
+        nothing left to verify; otherwise the COUNT of runs :func:`verify_run` returned
+        non-zero for.
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)

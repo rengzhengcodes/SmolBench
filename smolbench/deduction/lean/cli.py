@@ -1,14 +1,12 @@
 """Command-line entry points: `python -m smolbench.deduction.lean.cli <subcommand>`.
 
-Dependency split: `replay`, `filter`, `run-cell`, and `run-sweep` verify proofs
+Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs
 against Lean and so need `smolbench.deduction.lean.verify`, which requires
-`lean_dojo` (the `lean` extra, plus elan and a traced-repo cache at runtime).
-`metadata`, `list`, `analyze`, `report`, `show`, `compare`, and `prompt-stats`
-need none of that.
-
-To keep the split real, `.verify` is imported lazily inside `cmd_replay` and
-`cmd_filter` rather than at module top; `run-cell`/`run-sweep` never import it
-directly, reaching it through `runner._default_verifier()`.
+`lean_dojo` (the `lean` extra, plus elan and a traced-repo cache at runtime);
+`metadata`, `list`, `analyze`, `report`, `show`, `compare` and `prompt-stats`
+need none of that. To keep the split real, `.verify` is imported lazily inside
+`cmd_replay`/`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
+`runner._default_verifier()`.
 """
 
 from __future__ import annotations
@@ -30,8 +28,11 @@ from .runner import (
 def cmd_metadata(_: argparse.Namespace) -> int:
     """Print the benchmark's `metadata.json` as indented JSON; always returns 0.
 
-    Propagates `corpus.metadata`'s `FileNotFoundError` when the dataset has not
-    been bootstrapped.
+    Raises
+    ------
+    FileNotFoundError
+        Propagated from `corpus.metadata` when the dataset has not been
+        bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -40,8 +41,8 @@ def cmd_metadata(_: argparse.Namespace) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     """List theorems with traced tactics in a ``(kind, split)`` slice; returns 0.
 
-    ``--limit`` caps only how many are PRINTED; the reported total is the full
-    matching count.
+    ``--limit`` caps only how many are PRINTED; the reported total is the
+    full matching count.
     """
     items = list(iter_with_proof(args.kind, args.split))
     print(f"# {len(items)} theorems with traced tactics in {args.kind}/{args.split}")
@@ -53,11 +54,15 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     """Replay ground-truth tactics through Dojo for a sample of theorems.
 
-    Requires `lean_dojo` (opens real Dojo sessions). ``--full-name`` replays
-    exactly that theorem instead of sampling ``-n`` from the ``--max-tactics``
-    filtered pool under ``--seed``; ``--timeout`` is per-theorem seconds.
-    Returns 2 when ``--full-name`` matches no theorem, 0 when every replay
-    verdict is ``"success"``, else 1.
+    Requires `lean_dojo` (opens real Dojo sessions). ``--full-name`` replays that
+    theorem instead of sampling ``-n`` from the ``--max-tactics`` filtered pool
+    under ``--seed``; ``--timeout`` is per-theorem seconds.
+
+    Returns
+    -------
+    int
+        2 if ``--full-name`` matches no theorem, 0 if every replay verdict is
+        ``"success"``, else 1.
     """
     # Local import: `.verify` requires `lean_dojo` (see that module's
     # import guard). Deferring the import to this function body, rather
@@ -106,10 +111,9 @@ def cmd_filter(args: argparse.Namespace) -> int:
     """Replay every theorem with traced tactics; persist a passing list to JSONL.
 
     Requires `lean_dojo`. Appends to `corpus.replay_passing_path(kind, split)`,
-    flushing after each theorem, and resumes by skipping theorems already
+    flushing after each theorem and resuming by skipping theorems already
     recorded there, so an interrupt loses at most the in-flight theorem.
-    ``--fresh`` deletes the sidecar and starts over; ``--limit 0`` means no cap.
-    Always returns 0.
+    ``--fresh`` deletes the sidecar; ``--limit 0`` means no cap. Always 0.
     """
     # Local import: see `cmd_replay`'s comment above `.verify`'s import.
     from .verify import replay_ground_truth
@@ -178,13 +182,15 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 
     Requires `lean_dojo`, reached through `runner.run_cell`'s lazily-resolved
     default verifier. ``--k -1`` means the last step; ``--rung`` is
-    ``<chain>:<level>``, validated via `context.validate`; ``--seed`` is the
-    base decoding seed, with replicate ``i`` using ``seed + i``. Writes one row
-    per replicate to ``<results_root()>/runs/<new_run_id()>.jsonl``.
+    ``<chain>:<level>``, validated via `context.validate`; ``--seed`` is the base
+    decoding seed, replicate ``i`` using ``seed + i``. Writes one row per
+    replicate to ``<results_root()>/runs/<new_run_id()>.jsonl``.
 
-    Returns 2 when ``--full-name`` matches no theorem or ``--rung`` is
-    malformed/out of range, 0 when every replicate verdict is ``"success"``,
-    else 1.
+    Returns
+    -------
+    int
+        2 if ``--full-name`` matches no theorem or ``--rung`` is malformed or
+        out of range, 0 if every replicate verdict is ``"success"``, else 1.
     """
     pool = list(iter_with_proof(args.kind, args.split))
     matches = [t for t in pool if t.full_name == args.full_name]
@@ -248,12 +254,17 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
     """Render prompts for each (theorem, k=last, rung) and report token stats.
 
     No Lean toolchain needed. The pool is replay-passing theorems only
-    (`corpus.iter_replay_passing`), filtered by ``--max-tactics`` and
-    sub-sampled by ``--limit``/``--seed``; ``--rungs`` defaults to
-    `context.IMPLEMENTED_RUNGS`. Tokens are counted with `tiktoken`
-    ``cl100k_base`` with NO char-based fallback, unlike `context._count_tokens`
-    — a missing `tiktoken` surfaces as `ImportError`. A `render` exception is
-    counted as a render error and skipped. Returns 1 on an empty pool, else 0.
+    (`corpus.iter_replay_passing`), filtered by ``--max-tactics`` and sub-sampled
+    by ``--limit``/``--seed``; ``--rungs`` defaults to
+    `context.IMPLEMENTED_RUNGS`. Tokens come from `tiktoken` ``cl100k_base`` with
+    NO char-based fallback, unlike `context._count_tokens`, so a missing
+    `tiktoken` surfaces as `ImportError`. A `render` exception counts as a render
+    error and is skipped.
+
+    Returns
+    -------
+    int
+        1 on an empty pool, else 0.
     """
     import statistics as stats
     import tiktoken
@@ -310,18 +321,21 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
-    Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file
-    with the same row schema): no Lean toolchain, no Dojo session, no writes.
-    Its ``trunc`` column counts rows that opened a ``<think>`` block without
-    closing it, or died in the reasoning channel. A pass@N table follows only
-    when some cell recorded more than one replicate; a cell passes if ANY
-    replicate verified, and N is the max replicate count seen IN THE DATA (not
-    the sweep config), so it stays correct for sweeps that mix replicate counts.
+    Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file with
+    the same row schema): no Lean toolchain, no Dojo session, no writes. The
+    ``trunc`` column counts rows that opened a ``<think>`` block without closing
+    it, or died in the reasoning channel. A pass@N table follows only when some
+    cell recorded more than one replicate: a cell passes if ANY replicate
+    verified, and N is the max replicate count seen IN THE DATA, not the sweep
+    config, so mixed-replicate sweeps stay correct. `path` is user-supplied, so
+    it is checked against `runner.reject_superseded_rows` first — a retired
+    file's rows parse cleanly and would aggregate into a plausible, wrong
+    summary.
 
-    Returns 1 when `path` has no cell rows, else 0. `path` is user-supplied and
-    unfiltered, so it is checked against `runner.reject_superseded_rows` first —
-    a retired file's rows parse cleanly and would aggregate into a complete,
-    plausible, wrong summary.
+    Returns
+    -------
+    int
+        1 if `path` has no cell rows, else 0.
     """
     from collections import defaultdict
 
@@ -534,9 +548,13 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
 
     ``--config`` is `yaml.safe_load`ed into `runner.sweep`'s `config`; ``--out``
     defaults to ``results_root()/runs/<config["run_name"] or new_run_id()>``;
-    ``--fresh`` passes ``resume=False``. All side effects (output layout,
-    resume, manifest/analysis writing) belong to `runner.sweep`. Returns 0 in
-    practice — `sweep` never returns a negative count.
+    ``--fresh`` passes ``resume=False``. All side effects (output layout, resume,
+    manifest/analysis writing) belong to `runner.sweep`.
+
+    Returns
+    -------
+    int
+        0 in practice — `sweep` never returns a negative count.
     """
     import yaml
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -550,9 +568,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
     """For one model, compare two rungs cell-by-cell on a run dir.
 
     Pure JSONL comparison over ``<run_dir>/all_rows.jsonl``: no Lean toolchain,
-    no writes. Reports regressions (rung_a ✓ → rung_b ✘) and improvements
-    (unless ``--regressions-only``), comparing only replicate index
-    ``--replicate``. Returns 2 when ``all_rows.jsonl`` is missing, else 0.
+    no writes. Reports regressions (rung_a ✓ → rung_b ✘) and, unless
+    ``--regressions-only``, improvements; compares only replicate
+    ``--replicate``.
+
+    Returns
+    -------
+    int
+        2 if ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     all_rows = run_dir / "all_rows.jsonl"
@@ -644,9 +667,13 @@ def cmd_show(args: argparse.Namespace) -> int:
 
     Reads only ``summary.md``/``outputs/*.jsonl``; no Lean toolchain. Listing
     mode (no ``theorem`` argument) tallies rates by re-scanning each theorem's
-    ``outputs/*.jsonl`` rather than its possibly-stale `summary.md`. Returns 2
-    when ``<run_dir>/theorems`` is missing, 1 when a named theorem has no
-    ``summary.md``, else 0.
+    ``outputs/*.jsonl``, not its possibly-stale `summary.md`.
+
+    Returns
+    -------
+    int
+        2 if ``<run_dir>/theorems`` is missing, 1 if a named theorem has no
+        ``summary.md``, else 0.
     """
     from .runner import slug_theorem
     run_dir = Path(args.run_dir)
@@ -698,8 +725,12 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     Delegates to `runner.regenerate_run_artifacts`, which reads only
     `all_rows.jsonl` and each theorem's `meta.json`/`outputs/*.jsonl` (no Lean
-    toolchain) and OVERWRITES `analysis.txt` and every `theorems/*/summary.md`
-    in place. Returns 2 when ``all_rows.jsonl`` is missing, else 0.
+    toolchain) and OVERWRITES `analysis.txt` and every `theorems/*/summary.md`.
+
+    Returns
+    -------
+    int
+        2 if ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "all_rows.jsonl").exists():

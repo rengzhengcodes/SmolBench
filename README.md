@@ -48,7 +48,6 @@ notebooks/                 experiment drivers and analysis, one directory per st
   induction/                family-ladder induction study (see notebooks/induction/README.md)
     run_study.py, induction_eval.ipynb   the driver (launched by literal path) and its notebook
     analysis/                  the published numbers: power, paired, significance, extens-vs-noise
-    audits/                    concluded one-off probes, kept for the record
   deduction/                family-ladder Lean deduction study (see notebooks/deduction/README.md)
     run_study.py, lean_eval.ipynb        the generation-only driver and its notebook
     analysis/                  the published numbers: power, error bars, hint-vs-noise

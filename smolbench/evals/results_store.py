@@ -2,33 +2,28 @@
 Store replicate results in S3, with local files as the offline/test fallback.
 
 ``ReplicateHarness`` writes every replicate YAML through a
-:class:`ResultsStore`, so results survive an ephemeral spot instance with no
-second harness code path; a :class:`ReplicateAddress` names a replicate by both
-`tag` (the local layout's key) and `model` (the S3 log's key).
+:class:`ResultsStore`, so results survive an ephemeral spot instance; a
+:class:`ReplicateAddress` carries `tag` (local key) and `model` (S3 key).
 
 Env contract: ``SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]`` selects the
 S3 store, unset/empty/whitespace-only the local store rooted at ``results_dir``;
-region is ``SMOLBENCH_RESULTS_S3_REGION``, else ``AWS_REGION``, else ``None``
-(boto3 resolves its own). Both are read inside :func:`resolve_store` at CALL
-time, never as module constants: a notebook runs ``load_dotenv(keys.env)`` after
-``import smolbench``, so a frozen constant would pin every later replicate to
-the ephemeral box's local disk. :func:`resolve_store` also falls back to local
-whenever ``results_dir`` is not under ``repo_root()``, keeping the offline
-suite's ``tmp_path`` runs hermetic without unsetting anything.
+region is ``SMOLBENCH_RESULTS_S3_REGION``, else ``AWS_REGION``, else ``None``.
+:func:`resolve_store` reads both at CALL time, never as module constants (a
+notebook runs ``load_dotenv(keys.env)`` AFTER ``import smolbench``), and falls
+back to local whenever ``results_dir`` is not under ``repo_root()`` -- which is
+what keeps the offline suite's ``tmp_path`` runs hermetic.
 
 S3 holds an append-only experiment LOG, keyed
 ``<base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml`` with a
-FIXED-WIDTH UTC ``run_ts``, so every "earliest run" lookup here is a plain
-lexicographic MINIMUM over listed keys. A dump always creates a NEW object and
-every read resolves the EARLIEST run per (model, seed, info), keeping reported
-scores pass@1: a re-collection can NEVER supersede logged data, and voiding it
-requires an explicit exclusion visible to readers. The LOCAL layout instead
-keeps one file per (tag, info, seed), overwritten in place with no history
-(committed results trees must stay byte-identical), and analysis code reads
-that tree; since an S3-active run writes no local copy,
-:func:`sync_down` bridges the two, one-way and overwriting. It silently
-destroys a local-only regrade, so the safe operator sequence is sync down,
-unset ``SMOLBENCH_RESULTS_S3``, regrade locally.
+FIXED-WIDTH UTC ``run_ts``. A dump always creates a NEW object; every read takes
+the EARLIEST run per (model, seed, info) -- the lexicographic MINIMUM key --
+keeping reported scores pass@1: a re-collection can NEVER supersede logged data,
+and voiding one requires an explicit exclusion visible to readers. The LOCAL
+layout instead keeps one file per (tag, info, seed), overwritten in place with
+no history (committed results trees must stay byte-identical), and it is what
+analysis code reads; :func:`sync_down` bridges the log into it, one-way and
+overwriting, silently destroying any local-only regrade -- so the safe operator
+sequence is sync down, unset ``SMOLBENCH_RESULTS_S3``, then regrade.
 """
 
 import abc
@@ -63,15 +58,29 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Public and shared deliberately: any other package mapping the same URI to a
     bucket/prefix (e.g. a bucket-seeding script) must use THIS parser, or a
     seeder and a reader drift and orphan history under a prefix neither can find
-    again. `uri` is not stripped here -- ``resolve_store`` strips its env-var
-    value first, keeping "stray whitespace around the URI" distinguishable from
-    "whitespace inside it". ``base_prefix`` is ``""`` when the URI names only a
-    bucket and never carries a leading or trailing ``"/"``, so
-    ``"s3://b/archive/"`` and ``"s3://b/archive"`` agree. Raises ``ValueError``
-    -- naming the URI and the rule broken -- on a missing ``"s3://"`` scheme, an
-    empty ``"/"``-delimited segment (missing bucket, or a doubled slash), or
-    whitespace in a segment, which would yield a bucket name S3 never accepts
-    and silently produce a store that can never find what it writes.
+    again.
+
+    Parameters
+    ----------
+    uri : str
+        NOT stripped here -- ``resolve_store`` strips its env-var value first,
+        keeping "stray whitespace around the URI" distinguishable from
+        "whitespace inside it".
+
+    Returns
+    -------
+    tuple[str, str]
+        ``base_prefix`` is ``""`` when the URI names only a bucket, and never
+        carries a leading or trailing ``"/"``, so ``"s3://b/archive/"`` and
+        ``"s3://b/archive"`` agree.
+
+    Raises
+    ------
+    ValueError
+        Missing ``"s3://"`` scheme, an empty ``"/"``-delimited segment (missing
+        bucket, or a doubled slash), or whitespace in a segment -- each would
+        yield a bucket name S3 never accepts, silently producing a store that
+        can never find what it writes. The message names the URI and the rule.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
@@ -107,14 +116,22 @@ def utcnow() -> datetime:
 def format_run_ts(when: datetime) -> str:
     """Format `when` as the fixed-width UTC timestamp used in S3 log keys.
 
-    `when` must already be UTC (normally from :func:`utcnow`): ``tzinfo`` is
-    neither converted nor inspected and the trailing ``"Z"`` is a literal, so a
-    naive or non-UTC datetime is silently mislabeled. The result is always
-    exactly 16 characters (``"20260810T193000Z"``), and that fixed width is
-    load-bearing -- it makes lexicographic order agree with chronological order,
-    which is how every earliest-run read here (:meth:`S3ResultsStore.load_marks`,
-    :func:`sync_down`) works without parsing a timestamp out of a key (``%z``
-    would render 5 characters and vary off UTC).
+    Parameters
+    ----------
+    when : datetime
+        Must ALREADY be UTC (normally from :func:`utcnow`): ``tzinfo`` is
+        neither converted nor inspected and the trailing ``"Z"`` is a literal,
+        so a naive or non-UTC datetime is silently mislabeled.
+
+    Returns
+    -------
+    str
+        Always exactly 16 characters (``"20260810T193000Z"``). The fixed width
+        is load-bearing: it makes lexicographic order agree with chronological
+        order, which is how every earliest-run read here
+        (:meth:`S3ResultsStore.load_marks`, :func:`sync_down`) works without
+        parsing a timestamp out of a key (``%z`` would render 5 characters and
+        vary off UTC).
     """
     return when.strftime("%Y%m%dT%H%M%SZ")
 
@@ -122,10 +139,13 @@ def format_run_ts(when: datetime) -> str:
 def experiment_name(results_dir: Path, prefix: str = "") -> str:
     """Derive the ``<experiment>`` segment of an S3 log key from a results dir.
 
-    `results_dir` must resolve under ``repo_root()``; :func:`resolve_store`, the
-    only production caller, has already confirmed that. `prefix` is the harness
-    namespace prefix, e.g. ``"one_hop_"``. Raises ``ValueError`` (from
-    ``Path.relative_to``) if `results_dir` is not under ``repo_root()``.
+    Parameters
+    ----------
+    results_dir : Path
+        Must resolve under ``repo_root()``; :func:`resolve_store`, the only
+        production caller, has already confirmed that.
+    prefix : str, optional
+        Harness namespace prefix, e.g. ``"one_hop_"``.
 
     Returns
     -------
@@ -137,6 +157,12 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
         still gets a stable, collision-free name. A non-empty `prefix` folds in
         as a sub-level with exactly one trailing ``"_"`` stripped, so notebook
         ``"chromatic"`` with ``prefix="one_hop_"`` yields ``"chromatic/one_hop"``.
+
+    Raises
+    ------
+    ValueError
+        From ``Path.relative_to``, when `results_dir` is not under
+        ``repo_root()``.
 
     Notes
     -----
@@ -239,41 +265,61 @@ class ResultsStore(abc.ABC):
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
         Performs no existence check; a caller wanting resume-skip calls
-        :meth:`exists` first (as ``ReplicateHarness`` does). `run_ts` is the
-        collection instant, normally :func:`utcnow` captured ONCE per seed by
-        ``ReplicateHarness.run_replicates`` so every info type from that seed's
-        single pooled ``evaluate()`` shares one timestamp (per-info stamps would
-        scatter one evaluation event across several apparent runs).
-        ``S3ResultsStore`` embeds it in the new object's key -- that IS the
-        append-only mechanism; ``LocalResultsStore`` ignores it and overwrites
-        one file per (tag, info, seed) in place.
+        :meth:`exists` first (as ``ReplicateHarness`` does).
+
+        Parameters
+        ----------
+        run_ts : datetime
+            Collection instant, normally :func:`utcnow` captured ONCE per seed
+            by ``ReplicateHarness.run_replicates`` so every info type from that
+            seed's single pooled ``evaluate()`` shares one timestamp (per-info
+            stamps would scatter one evaluation event across several apparent
+            runs). ``S3ResultsStore`` embeds it in the new object's key -- that
+            IS the append-only mechanism; ``LocalResultsStore`` ignores it and
+            overwrites one file per (tag, info, seed) in place.
         """
 
     @abc.abstractmethod
     def load_marks(self, addr: ReplicateAddress) -> Marks:
         """Deserialize the replicate result stored/logged at `addr`.
 
-        Returns the single local file, or on S3 the EARLIEST logged run -- never
-        a later re-collection of the same replicate. Raises
-        ``FileNotFoundError`` when nothing is stored/logged for `addr` on either
-        backend (S3 raises it explicitly, naming the missing key prefix).
+        Returns
+        -------
+        Marks
+            The single local file, or on S3 the EARLIEST logged run -- never a
+            later re-collection of the same replicate.
+
+        Raises
+        ------
+        FileNotFoundError
+            Nothing is stored/logged for `addr`, on either backend (S3 raises
+            it explicitly, naming the missing key prefix).
         """
 
     @abc.abstractmethod
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
         """List every seed with at least one stored/logged replicate.
 
-        `model` is the S3 backend's key dimension, `tag` the local backend's;
-        ``model=None`` ("no model known for this query", see
-        ``ReplicateAddress.model``) yields ``[]``, not an error. Seeds come back
-        SORTED and DISTINCT -- a seed re-collected many times still counts once
-        -- and empty when nothing is stored yet, which is not an error.
+        Parameters
+        ----------
+        model : str or None
+            The S3 backend's key dimension; ``None`` ("no model known for this
+            query", see ``ReplicateAddress.model``) yields ``[]``, not an error.
+        tag : str
+            The local backend's key dimension.
+
+        Returns
+        -------
+        list[int]
+            SORTED and DISTINCT -- a seed re-collected many times still counts
+            once -- and empty when nothing is stored yet, which is not an error.
         """
 
     @abc.abstractmethod
     def describe(self) -> str:
-        """Return this store's location (a path, or an ``s3://bucket/prefix``);
-        for logging/CLI output only, never parsed back into a store.
+        """Return this store's location: a path, or an ``s3://bucket/prefix``.
+
+        For logging/CLI output only; never parsed back into a store.
         """
 
 
@@ -307,8 +353,10 @@ class LocalResultsStore(ResultsStore):
         return self._path(addr).exists()
 
     def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
-        """See ``ResultsStore.dump_marks``. Ignores `run_ts`; creates parent
-        dirs itself, so one call is a complete unit of work on both backends.
+        """See ``ResultsStore.dump_marks``. Ignores `run_ts`.
+
+        Creates parent dirs itself, so one call is a complete unit of work on
+        both backends.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,15 +392,24 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     """Parse an S3 log key remainder into ``(seed, info, run_ts)``, or ``None``.
 
     Reverses the ``"seed=<seed>/<info>--<run_ts>.yaml"`` key shape; shared by
-    :meth:`S3ResultsStore.list_seeds` and :func:`sync_down`. `rel` is a key with
-    the leading ``"<log_prefix>/<model>/"`` already stripped, and is UNTRUSTED
-    -- it comes from an S3 listing, not only from this module's writers -- so
-    this touches no filesystem. Returns ``None`` when `rel` is not exactly two
-    ``"/"`` components, the first does not start with ``"seed="`` followed by an
-    ``int`` (a negative seed parses; the log format does not forbid one), or the
-    second does not end in ``".yaml"`` with a ``"--"`` in its stem. The stem
-    splits on the FIRST ``"--"``, unambiguous since no `info` value contains one.
-    Callers SKIP a ``None``: a stray or pre-scheme key is "not one of ours".
+    :meth:`S3ResultsStore.list_seeds` and :func:`sync_down`.
+
+    Parameters
+    ----------
+    rel : str
+        A key with the leading ``"<log_prefix>/<model>/"`` already stripped, and
+        UNTRUSTED -- it comes from an S3 listing, not only from this module's
+        writers -- so this touches no filesystem.
+
+    Returns
+    -------
+    tuple[int, str, str] or None
+        ``None`` when `rel` is not exactly two ``"/"`` components, the first
+        does not start with ``"seed="`` followed by an ``int`` (a negative seed
+        parses; the log format does not forbid one), or the second does not end
+        in ``".yaml"`` with a ``"--"`` in its stem. Callers SKIP a ``None``: a
+        stray or pre-scheme key is "not one of ours". The stem splits on the
+        FIRST ``"--"``, unambiguous since no `info` value contains one.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -406,8 +463,10 @@ class S3ResultsStore(ResultsStore):
         return f"{self.log_prefix}/{model}/seed={seed}/"
 
     def _info_prefix(self, model: str, seed: int, info: str) -> str:
-        """Return `_seed_prefix` plus ``f"{info}--"``: the prefix every logged run
-        of this replicate shares, differing only in the ``run_ts``/``.yaml``.
+        """Return `_seed_prefix` plus ``f"{info}--"``.
+
+        Every logged run of this replicate shares that prefix, differing only in
+        the ``run_ts``/``.yaml`` tail.
         """
         return self._seed_prefix(model, seed) + f"{info}--"
 
@@ -477,11 +536,11 @@ class S3ResultsStore(ResultsStore):
 
         Returns the run at the LEXICOGRAPHICALLY MINIMUM key under `addr`'s
         (model, seed, info) prefix, which `run_ts`'s fixed width makes the
-        chronologically first; every later run is ignored (see the module
-        docstring's supersede-requires-explicit-exclusion corollary). The loop
-        keeps an explicit running min rather than breaking on S3's already-
-        ordered listing, so the selection rule lives in the code. Raises
-        ``FileNotFoundError`` naming the prefix when nothing is logged there.
+        chronologically first; every later run is ignored (the module
+        docstring's earliest-wins rule). The loop keeps an explicit running min
+        rather than breaking on S3's already-ordered listing, so the selection
+        rule lives in the code. Raises ``FileNotFoundError`` naming the prefix
+        when nothing is logged there.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -550,10 +609,14 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
        (``SMOLBENCH_RESULTS_S3_REGION``, else ``AWS_REGION``, else ``None``),
        and return the ``S3ResultsStore``.
 
-    `results_dir` need not exist -- it is resolved non-strictly, since an
-    S3-first run's local results directory may never be created. `prefix`
-    becomes ``LocalResultsStore.prefix``, or folds into
-    ``S3ResultsStore.experiment`` via :func:`experiment_name`.
+    Parameters
+    ----------
+    results_dir : Path
+        Need not exist -- resolved non-strictly, since an S3-first run's local
+        results directory may never be created.
+    prefix : str, optional
+        Becomes ``LocalResultsStore.prefix``, or folds into
+        ``S3ResultsStore.experiment`` via :func:`experiment_name`.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     # Step 1: unset/empty/whitespace-only -> local, unconditionally.
@@ -562,8 +625,8 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
 
     # Step 2: parse + validate BEFORE the repo-anchor check (see the
     # docstring above for why this ordering is the safe direction).
-    # parse_s3_uri is the single shared parser -- see the module docstring's
-    # "URI parsing: one parser, shared" section.
+    # parse_s3_uri is the single shared parser -- see its docstring for why
+    # every caller must go through it.
     bucket, base_prefix = parse_s3_uri(uri)
 
     # Step 3: repo-anchor check / hermeticity fallback.
@@ -577,8 +640,8 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
         )
         return LocalResultsStore(results_dir, prefix)
 
-    # Step 4: this experiment's log path segment (see module docstring's
-    # "S3 key layout" section for a worked example).
+    # Step 4: this experiment's log path segment (see experiment_name's
+    # Returns section for a worked example).
     experiment = experiment_name(results_dir, prefix)
 
     # Step 5: region -- SMOLBENCH_RESULTS_S3_REGION, else AWS_REGION, else
@@ -642,13 +705,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     ``ResultsStore``; this is the bridge. For each (model, seed, info) it
     downloads the EARLIEST logged run to the path ``LocalResultsStore`` would
     use -- a TRANSLATION, not a mirror, since the local directory comes from
-    `tags` (``{model: tag}``, an experiment's ``archetype_tags``, the one thing
-    the log cannot supply itself) and not from the S3 key, which names only a
-    model. ``ReplicateHarness.sync_down()`` already holds that mapping and is
-    the PRIMARY caller; :func:`main` exists for callers that must re-type it.
-    `prefix` is forwarded to :func:`experiment_name` and used in each local
-    directory name ``f"{prefix}{tag}_{info}"``. Returns the number of objects
-    actually DOWNLOADED, excluding those skipped as already-identical.
+    `tags` and not from the S3 key, which names only a model.
 
     ONE-WAY and DESTRUCTIVE -- S3 -> local only, overwriting local files, never
     touching the log. It silently destroys a local-only edit (e.g. a
@@ -656,12 +713,32 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     re-append to S3 cannot protect one either; see the module docstring for the
     safe regrade sequence.
 
-    Raises ``RuntimeError`` when `results_dir` resolved to a
-    ``LocalResultsStore`` (``SMOLBENCH_RESULTS_S3`` unset/empty, or
-    `results_dir` not under ``repo_root()``; the message says which), and
-    ``ValueError`` when the resolved ``log_prefix`` is ``""`` -- syncing would
-    mirror the ENTIRE bucket into `results_dir` -- or an entry's destination
-    resolves outside `results_dir` (:func:`_resolve_download_path`).
+    Parameters
+    ----------
+    tags : Mapping[str, str]
+        ``{model: tag}``, an experiment's ``archetype_tags`` -- the one thing
+        the log cannot supply itself. ``ReplicateHarness.sync_down()`` already
+        holds it and is the PRIMARY caller; :func:`main` exists for callers
+        that must re-type it.
+    prefix : str, optional
+        Forwarded to :func:`experiment_name`, and used in each local directory
+        name ``f"{prefix}{tag}_{info}"``.
+
+    Returns
+    -------
+    int
+        Objects actually DOWNLOADED, excluding those skipped as identical.
+
+    Raises
+    ------
+    RuntimeError
+        `results_dir` resolved to a ``LocalResultsStore``
+        (``SMOLBENCH_RESULTS_S3`` unset/empty, or `results_dir` not under
+        ``repo_root()``; the message says which), so there is no log to sync.
+    ValueError
+        The resolved ``log_prefix`` is ``""`` -- syncing would mirror the
+        ENTIRE bucket into `results_dir` -- or an entry's destination resolves
+        outside `results_dir` (:func:`_resolve_download_path`).
 
     Notes
     -----
@@ -775,16 +852,29 @@ def main(argv: "Sequence[str] | None" = None) -> int:
 
     ``ReplicateHarness.sync_down()`` is the PRIMARY way to bring an S3-backed
     experiment's results onto local disk -- a harness already has the
-    ``{model: tag}`` mapping (``archetype_tags``) in hand. This CLI exists for
-    out-of-notebook use, where that mapping is re-typed by hand as repeated
-    ``--tag`` flags; each splits on the FIRST ``"="``, so further ``"="`` in a
-    model id or tag is unambiguous, and a later entry for the same model
-    silently OVERWRITES an earlier one. `argv` defaults to ``None``, i.e.
-    argparse reads ``sys.argv[1:]``. Returns ``0`` after printing one line
-    naming `results_dir`, the number of objects downloaded and the store's
-    :meth:`ResultsStore.describe`; a malformed ``--tag`` (no ``"="``) or any
-    other argparse-level problem calls ``parser.error(...)``, raising
-    ``SystemExit(2)``, which propagates rather than being caught here.
+    ``{model: tag}`` mapping (``archetype_tags``) in hand. This CLI is for
+    out-of-notebook use, where that mapping is re-typed as repeated ``--tag``
+    flags; each splits on the FIRST ``"="``, so further ``"="`` in a model id or
+    tag is unambiguous, and a later entry for the same model silently
+    OVERWRITES an earlier one.
+
+    Parameters
+    ----------
+    argv : Sequence[str] or None, optional
+        ``None`` means argparse reads ``sys.argv[1:]``.
+
+    Returns
+    -------
+    int
+        ``0``, after printing one line naming `results_dir`, the number of
+        objects downloaded and the store's :meth:`ResultsStore.describe`.
+
+    Raises
+    ------
+    SystemExit
+        Code 2, via ``parser.error(...)``, on a malformed ``--tag`` (no
+        ``"="``) or any other argparse-level problem; it propagates rather than
+        being caught here.
     """
     import argparse
 

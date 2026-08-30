@@ -80,19 +80,34 @@ def render_user_data(
 ) -> str:
     """Fill every ``@@PLACEHOLDER@@`` in ``USER_DATA_TEMPLATE``; assert completeness.
 
-    ``control_token`` and ``vllm_api_key`` are the per-experiment bearer tokens
-    the control agent (``ec2.EC2_AGENT_PORT``) and vLLM require. ``hf_token``
-    and ``s3_cache_uri`` may be ``""`` (the default deploy specs are all
-    ungated; empty disables the S3 model-cache mirror). ``startup_grace_min``
-    is how long a loading-but-not-yet-healthy model still counts as watchdog
-    activity; ``max_lifetime_min`` schedules an absolute ``shutdown -h``
-    backstop that many minutes after boot. ``vllm_port`` rides in as
-    ``SMOLBENCH_VLLM_PORT``; its ``8000`` default mirrors
-    ``ec2.EC2_VLLM_PORT``, which this package must not import (ec2 imports it),
-    so ec2.py passes the constant explicitly.
+    Parameters
+    ----------
+    control_token : str
+        Bearer token the control agent (``ec2.EC2_AGENT_PORT``) requires.
+    vllm_api_key : str
+        Bearer token vLLM requires. Both tokens are per-experiment.
+    hf_token : str
+        Token for gated checkpoints; ``""`` is fine (default specs are ungated).
+    idle_timeout_min : int
+        Minutes of inactivity before the on-instance watchdog self-halts.
+    startup_grace_min : int
+        Minutes a loading-but-not-yet-healthy model still counts as activity.
+    max_lifetime_min : int
+        Absolute ``shutdown -h`` backstop, this many minutes after boot.
+    image : str
+        ``docker pull``-able vLLM image reference.
+    s3_cache_uri : str, optional
+        ``s3://bucket/prefix`` model-cache mirror; ``""`` disables it.
+    vllm_port : int, optional
+        Rides in as ``SMOLBENCH_VLLM_PORT``. The ``8000`` default mirrors
+        ``ec2.EC2_VLLM_PORT``, which this package must not import (ec2 imports
+        it), so ec2.py passes the constant explicitly.
 
-    Returns the rendered script, which is NOT yet ready for ``RunInstances``'
-    ``UserData`` -- pass it through ``pack_user_data`` first.
+    Returns
+    -------
+    str
+        The rendered script, NOT yet ready for ``RunInstances``' ``UserData``
+        -- pass it through :func:`pack_user_data` first.
 
     Raises
     ------
@@ -130,9 +145,16 @@ def pack_user_data(rendered: str) -> bytes:
     EC2's 16 KB user-data limit (before base64) applies to these COMPRESSED
     bytes. Compression is transparent on both ends: cloud-init detects the gzip
     magic number and gunzips before running, and boto3 base64-encodes a
-    ``bytes`` ``UserData`` directly, so the result goes straight into
-    ``run_instances(UserData=...)``. ``mtime=0`` keeps the output
-    byte-for-byte reproducible for identical input.
+    ``bytes`` ``UserData`` directly.
+
+    Returns
+    -------
+    bytes
+        `rendered`, UTF-8 encoded then gzip-compressed, ready to pass straight
+        to ``run_instances(UserData=...)``. ``mtime=0`` (rather than gzip's
+        default "now") keeps the output byte-for-byte reproducible for
+        identical input, which is what makes the byte-stability test in
+        ``tests/evals/test_ec2_payloads.py`` meaningful.
 
     Raises
     ------

@@ -1,22 +1,21 @@
 """A verifier that verifies nothing -- for generation-only sweeps that need no Lean toolchain.
 
 `runner.sweep` / `runner.run_cell` reach Lean only through an injected
-`verifier` object, so ``sweep(config, run_dir, verifier=NullVerifier())``
-runs phase 1 -- call the model, write every row -- with no `lean_dojo`,
-elan, or traced mathlib4 checkout. Phase 2, replaying the recorded tails
-against a real Dojo, is a separate slow pass not implemented here.
+`verifier`, so ``sweep(config, run_dir, verifier=NullVerifier())`` runs
+phase 1 -- call the model, write every row -- with no `lean_dojo`, elan,
+or traced mathlib4 checkout. Phase 2, replaying the recorded tails
+against a real Dojo, is a separate pass not implemented here.
 
-This module must never import `smolbench.deduction.lean.verify`, even
-lazily inside a method body: merely resolving that module object reruns
-its unconditional top-level ``import lean_dojo``, which raises
-`ImportError` wherever `lean_dojo` is absent. Hence the local mirror
-dataclasses below.
+Never import `smolbench.deduction.lean.verify` here, even lazily inside a
+method body: resolving that module object reruns its unconditional
+top-level ``import lean_dojo``, which raises `ImportError` wherever
+`lean_dojo` is absent. Hence the local mirror dataclasses below.
 
-``"skipped"`` -- the only verdict `replay_ground_truth` produces -- is
+``"skipped"``, the only verdict `replay_ground_truth` produces, is
 deliberately absent from `runner.SANITY_FAILURE_VERDICTS`: this module
-never replays anything, so it has no basis to claim a ground truth
-failed, and suppressing those theorems would leave a generation-only
-sweep with zero cells.
+never replays, so it has no basis to claim a ground truth failed, and
+suppressing those theorems would leave a generation-only sweep with zero
+cells.
 """
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ class NullProofResult:
     positional fields, then the same two optional keyword fields -- so
     `runner.py`'s generation-exception handlers can construct one exactly
     as they construct a real `ProofResult`, bypassing
-    `try_tail`/`verify_proof_tail`. `verdict` is therefore not restricted
+    `try_tail`/`verify_proof_tail`. `verdict` is therefore NOT restricted
     to ``"unverified"``; only this module's own methods always set that.
     """
 
@@ -91,10 +90,10 @@ class NullVerifier:
     `open_at_step`, `try_tail` and `verify_proof_tail` -- here real
     instance methods, where the real `verify` is a module of top-level
     functions, so callers pass an *instance*. `timeout` and `k` arguments
-    are accepted for interface parity and unused throughout.
+    exist for interface parity and are unused.
 
     Stateless and I/O-free (no Dojo session, filesystem, or network), so
-    one instance can be reused across a whole sweep, including across the
+    one instance is reusable across a whole sweep, including across the
     runner's concurrent-generation worker threads.
     """
 
@@ -112,9 +111,9 @@ class NullVerifier:
         """Report that the ground-truth sanity replay was not attempted.
 
         Returns ``verdict="skipped"``, ``tactics_applied=0``,
-        ``tactics_total=len(bt.traced_tactics)``. See the module docstring
-        for why ``"skipped"`` deliberately does not suppress
-        `runner.sweep`'s per-theorem sanity gate.
+        ``tactics_total=len(bt.traced_tactics)``; see the module docstring for
+        why ``"skipped"`` deliberately does not trip `runner.sweep`'s
+        per-theorem sanity gate.
         """
         return NullReplayResult(
             theorem=bt.full_name,
@@ -131,10 +130,10 @@ class NullVerifier:
         """Yield ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
 
         Unlike `verify.open_at_step`, never raises `ValueError` for an
-        out-of-range `k` -- there is no prefix to replay. Nothing is
-        opened, so the `contextmanager` wrapping exists only for the
-        ``with ... as (dojo, state):`` protocol `runner.py` uses; callers
-        pass the yielded pair on to `try_tail`, which ignores it.
+        out-of-range `k` -- there is no prefix to replay. The
+        `contextmanager` wrapping exists only for the ``with ... as (dojo,
+        state):`` protocol `runner.py` uses; callers pass the yielded pair
+        on to `try_tail`, which ignores it.
         """
         yield None, None
 

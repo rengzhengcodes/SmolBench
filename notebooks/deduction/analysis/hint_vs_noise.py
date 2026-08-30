@@ -8,12 +8,11 @@ TOP OF an already-complete direct-premise context. It is NOT the deduction
 analogue of the induction extens-vs-noise contrast, which swaps the encoding of
 the whole evidence set; results do not carry between legs.
 
-Cells are paired on (theorem_id, k) WITHIN one model, so each model is its own
-control and contributes exactly ONE cell per theorem: the pairs are independent,
-exact McNemar is the primary test, and NO cluster correction applies here
-(unlike the family-ladder contrasts). Multiplicity is Holm-Bonferroni over the
-21 models at FWER 0.05, valid under the arbitrary dependence induced by the
-shared theorem set.
+Cells are paired on (theorem_id, k) WITHIN one model, which contributes exactly
+ONE cell per theorem: the pairs are independent, exact McNemar is the primary
+test, and NO cluster correction applies here (unlike the family-ladder
+contrasts). Multiplicity is Holm-Bonferroni over the 21 models at FWER 0.05,
+valid under the arbitrary dependence induced by the shared theorem set.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
@@ -47,20 +46,29 @@ RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 
 
 def load_rungs(path: Path, model: str) -> dict:
-    """Map each ``(theorem_id, k)`` cell of one model's ``verified_rows.jsonl``
-    to its `RUNG_INFO` / `RUNG_NOISE` outcomes (``1`` success, ``0`` real failure).
+    """Map each ``(theorem_id, k)`` cell of one model's ``verified_rows.jsonl`` to its
+    `RUNG_INFO` / `RUNG_NOISE` outcomes.
 
     Reads only ``kind == "cell"``, ``replicate_idx == 0`` rows in those two rungs,
-    grading them through ``power_analysis.grade_verdicts`` (the single
-    implementation of this study's row rules). The EARLIEST measurable row for a
-    cell+rung wins -- a later retry is an independent draw, and last-wins would
-    report pass@N as pass@1. A cell with no measurable row stays ABSENT, never
-    scored 0. `model` is unused.
+    graded through ``power_analysis.grade_verdicts`` (the single implementation of
+    this study's row rules). The EARLIEST measurable row for a cell+rung wins -- a
+    later retry is an independent draw, and last-wins would report pass@N as pass@1.
 
-    `reject_unverified_verdicts` runs at INGESTION, before the rung filter, so an
-    ungraded row sitting in a rung this comparison never reads still raises (it
-    proves the verification pass on this file did not finish). It and
-    `reject_superseded` raise ``SystemExit``.
+    `model` is unused.
+
+    Returns
+    -------
+    dict
+        ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``. A cell with no
+        measurable row stays ABSENT, never scored 0.
+
+    Raises
+    ------
+    SystemExit
+        From `reject_superseded`, or from `reject_unverified_verdicts`, which runs
+        at INGESTION before the rung filter -- so an ungraded row in a rung this
+        comparison never reads still raises, since it proves the verification pass
+        on this file did not finish.
     """
     reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
@@ -88,10 +96,9 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
 
     The region is the two-sided exact-McNemar one, ``{b <= k_crit} U {b >= n_disc -
     k_crit}`` for a discordant total `n_disc` (``b + c``); under a true
-    discordant-favour probability pi the count b is Binomial(`n_disc`, pi), so power
-    has a CLOSED FORM. This runs a fixed 200-step bisection over ``[0.5, 1.0]`` on
-    it (hence no convergence check): no seed, no Monte Carlo error, same number on
-    every run.
+    discordant-favour probability pi, b is Binomial(`n_disc`, pi), so power has a
+    CLOSED FORM. A fixed 200-step bisection over ``[0.5, 1.0]`` on it (hence no
+    convergence check): no seed, no Monte Carlo error, same number every run.
     """
     lo, hi = 0.5, 1.0
     for _ in range(200):

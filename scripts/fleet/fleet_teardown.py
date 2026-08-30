@@ -2,10 +2,9 @@
 
 The teardown half of the fleet lifecycle: ``run_fleet.py --phase induction``
 never terminates anything, on purpose, and prints a reminder pointing here. The
-listing itself is `fleet_status.py`, imported rather than reimplemented.
-
-The default is READ-ONLY: nothing is terminated and no state file deleted
-without an explicit ``--terminate``.
+listing itself is `fleet_status.py`, imported rather than reimplemented. The
+default is READ-ONLY: nothing is terminated and no state file deleted without
+an explicit ``--terminate``.
 
 Safety invariants, enforced in code rather than by convention:
 
@@ -39,9 +38,8 @@ STATE_FILE_GLOB = ".ec2_state_scaling_*.json"
 def _fleet_status():
     """Load ``scripts/fleet/fleet_status.py`` by file path, lazily; cached.
 
-    By path rather than ``sys.path`` plus a bare import, to avoid colliding with
-    the private module names ``tests/tooling/test_run_fleet.py`` loads these
-    files under.
+    By path rather than a bare import, to avoid colliding with the private module
+    names ``tests/tooling/test_run_fleet.py`` loads these files under.
     """
     path = Path(__file__).resolve().parent / "fleet_status.py"
     spec = importlib.util.spec_from_file_location("fleet_teardown_fleet_status_dep", path)
@@ -61,16 +59,24 @@ def state_file_path(lane: str) -> Path:
 
 
 def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -> list[dict]:
-    """Terminate every instance in `rows`, region by region; return the rows terminated.
+    """Terminate every instance in `rows`, region by region.
 
-    `rows` are shaped like `fleet_status.fleet_rows`'s output and must carry
-    `region`, `instance_id` and `experiment_tag`; a row whose `experiment_tag`
-    lacks the `fleet_status.SCALING_TAG_PREFIX` prefix is SKIPPED -- the
-    last-line safety re-check described in the module docstring.
-    `client_factory` maps a region to an object with
-    ``terminate_instances(InstanceIds=...)``; ``None`` builds a real boto3
-    client lazily per region, per this repo's convention that nothing reachable
-    at import time requires the AWS SDK.
+    Parameters
+    ----------
+    rows : list[dict]
+        Shaped like `fleet_status.fleet_rows`'s output; must carry `region`,
+        `instance_id` and `experiment_tag`. A row whose `experiment_tag` lacks
+        the `fleet_status.SCALING_TAG_PREFIX` prefix is SKIPPED -- the last-line
+        safety re-check described in the module docstring.
+    client_factory : Any, optional
+        Maps a region to an object with ``terminate_instances(InstanceIds=...)``;
+        ``None`` builds a real boto3 client lazily per region, per this repo's
+        convention that nothing reachable at import time requires the AWS SDK.
+
+    Returns
+    -------
+    list[dict]
+        The rows actually terminated.
     """
     fleet_status = _fleet_status()
 
@@ -92,12 +98,24 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
 
 
 def delete_state_files(rows: list[dict]) -> list[Path]:
-    """Delete each row's local EC2 state file if present; return the paths deleted.
+    """Delete each row's local EC2 state file if present.
 
-    Rows must carry `lane`. `state_file_path(row["lane"])` is ``.resolve()``d
-    and unlinked only when its parent is `REPO_ROOT` (also resolved) AND its
-    basename matches `STATE_FILE_GLOB`: `lane` traces back to an AWS tag value,
-    so a crafted ``scaling-../../secrets`` tag must not walk outside the repo.
+    Parameters
+    ----------
+    rows : list[dict]
+        Must carry `lane`.
+
+    Returns
+    -------
+    list[Path]
+        The resolved paths actually unlinked.
+
+    Notes
+    -----
+    `state_file_path(row["lane"])` is ``.resolve()``d and unlinked only when its
+    parent is `REPO_ROOT` (also resolved) AND its basename matches
+    `STATE_FILE_GLOB`: `lane` traces back to an AWS tag value, so a crafted
+    ``scaling-../../secrets`` tag must not walk outside the repo.
     """
     deleted: list[Path] = []
     repo_root_resolved = REPO_ROOT.resolve()
@@ -115,9 +133,12 @@ def delete_state_files(rows: list[dict]) -> list[Path]:
 def main(argv: Optional[list[str]] = None) -> int:
     """Run the CLI: print the fleet listing, and with ``--terminate`` kill it.
 
-    Returns ``0`` for a read-only listing, or after a confirmed or
-    ``--yes``-forced termination (`terminate_fleet`, then `delete_state_files`);
-    ``1`` if ``--terminate`` was requested and the confirmation declined.
+    Returns
+    -------
+    int
+        ``0`` for a read-only listing, or after a confirmed or ``--yes``-forced
+        termination (`terminate_fleet`, then `delete_state_files`); ``1`` if
+        ``--terminate`` was requested and the confirmation declined.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."

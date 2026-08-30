@@ -59,11 +59,20 @@ ALPHA = 0.05
 def mechanism(nc_e: float, nc_n: float) -> str:
     """Classify which of the two mechanisms a lane's contrast can speak to.
 
-    `nc_e` / `nc_n` are the measured non-compliance rates of the `extens` and
-    `noise_intens` arms. Returns ``"COLLAPSE"`` if the noise arm is at or above
-    `COLLAPSE_THRESHOLD`, ``"extens degraded"`` if only the extens arm is, else
-    ``"information"``. Same symmetric criterion as the significance report, applied
-    to both arms alike; never a hand-written lane list.
+    Same symmetric criterion as the significance report, applied to both arms
+    alike; never a hand-written lane list.
+
+    Parameters
+    ----------
+    nc_e, nc_n : float
+        Measured non-compliance rates of the `extens` and `noise_intens` arms.
+
+    Returns
+    -------
+    str
+        ``"COLLAPSE"`` if the noise arm is at or above `COLLAPSE_THRESHOLD`,
+        ``"extens degraded"`` if only the extens arm is, else
+        ``"information"``.
     """
     if nc_n >= COLLAPSE_THRESHOLD:
         return "COLLAPSE"          # noise arm broken: extens-higher is forced

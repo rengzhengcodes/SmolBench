@@ -1,16 +1,15 @@
 """Load LeanDojo Benchmark 4 splits (per-theorem tactic traces).
 
 `LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a mathlib4
-snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; the parallel
-corpus of every premise declared in that repo lives in
-``smolbench.deduction.lean.premises``. See ``notebooks/deduction/README.md``
-for pool sizes and bootstrap instructions.
+snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; its parallel
+premise corpus lives in ``smolbench.deduction.lean.premises``. Pool sizes and
+bootstrap instructions: ``notebooks/deduction/README.md``.
 
 Loaders are keyed by ``(kind, split)``: ``kind`` is ``"random"`` (i.i.d.) or
-``"novel_premises"`` (val/test theorems whose premises are under-represented
-in train -- the harder generalization slice); ``split`` is ``"train"``,
-``"val"`` or ``"test"``. The ~700 MB dataset is not shipped here; loaders
-raise ``FileNotFoundError`` naming the remedy when a file is missing.
+``"novel_premises"`` (val/test theorems whose premises are under-represented in
+train -- the harder generalization slice); ``split`` is ``"train"``, ``"val"``
+or ``"test"``. The ~700 MB dataset is not shipped here; loaders raise
+``FileNotFoundError`` naming the remedy when a file is missing.
 """
 
 from __future__ import annotations
@@ -29,11 +28,9 @@ def data_root() -> Path:
     """Root of the LeanDojo Benchmark 4 dataset; not guaranteed to exist.
 
     ``SMOLBENCH_LEAN_DATA`` if set, else
-    ``notebooks/deduction/data/leandojo_benchmark_4`` anchored off the
-    installed ``smolbench`` package rather than cwd (importers run from
-    arbitrary directories). The env var is read at *call* time, so callers
-    may set it late; call `reset_caches` afterwards to drop results memoized
-    under a stale value.
+    ``notebooks/deduction/data/leandojo_benchmark_4`` anchored off the installed
+    ``smolbench`` package, never cwd. Read at *call* time, so a late-set env var
+    still takes effect -- but call `reset_caches` to drop stale memoized results.
     """
     override = os.getenv("SMOLBENCH_LEAN_DATA")
     if override:
@@ -122,9 +119,8 @@ class BenchmarkTheorem:
 def _from_json(rec: dict) -> BenchmarkTheorem:
     """Parse one raw split-file JSON record into a `BenchmarkTheorem`.
 
-    A raw tactic's ``annotated_tactic`` is nominally an ``[text, premises]``
-    pair but some records give only ``[text]``; that and an explicit empty
-    list both normalize to ``TracedTactic.premises == []``.
+    ``annotated_tactic`` is nominally an ``[text, premises]`` pair but some
+    records give only ``[text]``; both normalize to ``premises == []``.
     """
     tts = []
     for tt in rec["traced_tactics"]:
@@ -152,10 +148,9 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
 def load_split(kind: SplitKind = "random", split: Split = "val") -> list[BenchmarkTheorem]:
     """Every theorem in ``<data_root()>/<kind>/<split>.json``, in file order.
 
-    Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations). The
-    cache key does NOT include `data_root`'s current value, so repointing
-    ``SMOLBENCH_LEAN_DATA`` mid-process keeps serving theorems from whichever
-    root was active first; call `reset_caches` to force a re-read.
+    Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations); the
+    key excludes `data_root()`, so repointing ``SMOLBENCH_LEAN_DATA``
+    mid-process keeps serving the first root until `reset_caches` runs.
 
     Raises
     ------
@@ -181,9 +176,16 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
 def metadata() -> dict:
     """Load the benchmark's top-level ``metadata.json``.
 
-    Keys include ``dataset_name``, ``creation_time``, ``from_repo``
-    (``{url, commit}``) and ``leandojo_version``. Raises
-    ``FileNotFoundError`` if the dataset is not bootstrapped.
+    Returns
+    -------
+    dict
+        Keys include ``dataset_name``, ``creation_time``, ``from_repo``
+        (``{url, commit}``) and ``leandojo_version``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Dataset not bootstrapped.
     """
     return json.loads((data_root() / "metadata.json").read_text())
 
@@ -193,7 +195,7 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
 
     ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl`` -- beside the
     dataset directory, so these small committed sidecars stay out of the
-    wholesale-gitignored ~700 MB download. Not guaranteed to exist.
+    gitignored ~700 MB download. Not guaranteed to exist.
     """
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 

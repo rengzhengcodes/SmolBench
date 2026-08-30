@@ -11,14 +11,12 @@ keep that correlation -- the standard cluster/block bootstrap (Davison &
 Hinkley 1997, ch. 3; Field & Welsh 2007). Effective n is the block count, so
 the intervals come out wider than a naive binomial on cells; both figures are
 printed. They are BCa (Efron 1987) accelerated by a jackknife over blocks,
-shown beside percentile intervals because BCa is what moves materially for the
-near-floor lanes; where its bias correction is undefined (only at a degenerate
-0.000) the code falls back to percentile and reports the fallback, not a silent
-NaN. The PRIMARY p-value uses the same unit: a block SIGN-FLIP permutation test
-on per-theorem differences (null: within a theorem, which of the two models
-does better is a coin flip), which collapses onto exact McNemar at one cell per
-block. Cell-level McNemar stays as a labelled DESCRIPTIVE column; the gap
-between the two is clustering.
+shown beside percentile intervals; where the bias correction is undefined (only
+at a degenerate 0.000) the code falls back to percentile and reports the
+fallback, not a silent NaN. The PRIMARY p-value uses the same unit: a block
+SIGN-FLIP permutation test on per-theorem differences, which collapses onto
+exact McNemar at one cell per block. Cell-level McNemar stays as a labelled
+DESCRIPTIVE column; the gap between the two is clustering.
 
 Denominator rule, COUNT-AS-FAILURE by default: a cell with no surviving
 measurable row in one lane scores 0 there exactly when its key is measurable in
@@ -32,10 +30,9 @@ denominators and their maximum disagreement are printed, never quoted as
 constants.
 
 Row rules are NOT re-implemented here: ``lane_outcomes`` grades through
-``power_analysis.grade_verdicts``, the single implementation of
-earliest-surviving-row-per-cell and the unmeasurable-verdict exclusion, shared
-with ``load_joint_cells`` and ``hint_vs_noise.load_rungs``. This file adds only
-the count-as-failure denominator rule and the recovery rows' second schema.
+``power_analysis.grade_verdicts``, shared with ``load_joint_cells`` and
+``hint_vs_noise.load_rungs``. This file adds only the count-as-failure
+denominator rule and the recovery rows' second schema.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
@@ -101,6 +98,11 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     contrasts sit exactly on the permutation test's ``1/(B+1)`` resolution
     floor, and those ties must not make the rejection mask depend on the order
     the contrasts were built in.
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask, in `pvals` order.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -116,9 +118,13 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarray]:
     """Flatten `blocks` (from `build_pool`) into per-theorem arrays.
 
-    Returns ``(succ, size)``: ``(n_theorems, n_models)`` successes with columns
-    in `models` order, and the ``(n_theorems,)`` cell count per block. The
-    bootstrap resamples both together, so a theorem is always drawn whole.
+    Returns
+    -------
+    succ : ndarray, shape (n_theorems, n_models)
+        Successes, columns in `models` order and rows in sorted theorem order.
+    size : ndarray, shape (n_theorems,)
+        Cell count per block. The bootstrap resamples both together, so a
+        theorem is always drawn whole.
     """
     thms = sorted(blocks)
     succ = np.zeros((len(thms), len(models)), dtype=np.int32)
@@ -135,10 +141,18 @@ def _bca_bounds(theta_star: np.ndarray, theta_hat: float, jack: np.ndarray,
                 alpha: float) -> tuple[float, float, bool]:
     """Compute the BCa interval endpoints for one statistic.
 
-    `jack` holds the jackknife values, one per theorem block; `alpha` is the
-    two-sided level (0.05 for a 95% interval). Returns
-    ``(lo, hi, used_percentile_fallback)``; the flag is True when the bias
-    correction z0 was undefined and a plain percentile interval was used.
+    Parameters
+    ----------
+    jack : ndarray
+        Jackknife values, one per theorem block.
+    alpha : float
+        Two-sided level (0.05 for a 95% interval).
+
+    Returns
+    -------
+    tuple of (float, float, bool)
+        ``(lo, hi, used_percentile_fallback)``; the flag is True when the bias
+        correction z0 was undefined and a plain percentile interval was used.
     """
     lo_pct, hi_pct = np.percentile(theta_star, [100 * alpha / 2,
                                                 100 * (1 - alpha / 2)])
@@ -161,17 +175,28 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
                     alpha: float = 0.05) -> dict:
     """Compute block-bootstrap marginal rates and BCa intervals per model.
 
-    One resample draws ``n_theorems`` theorem indices WITH REPLACEMENT (`succ`
-    and `size` come from `block_matrix`) and recomputes every model's rate as
-    ``sum(successes) / sum(cells)`` over them -- a ratio estimator, since a
-    resample's total cell count varies with the draw. `seed` fixes the
-    resamples; `alpha` is the two-sided interval level.
+    One resample draws ``n_theorems`` theorem indices WITH REPLACEMENT and
+    recomputes every model's rate as ``sum(successes) / sum(cells)`` over them
+    -- a ratio estimator, since a resample's total cell count varies with the
+    draw.
 
-    Returns a dict of ``star_rate`` (the ``(B, n_models)`` resampled rate
-    matrix, kept so `diff_ci` can pair two models on the SAME theorem draws),
-    ``jack`` (``(n_theorems, n_models)`` jackknife rates), ``theta_hat``
-    (full-sample rate per model), ``marginal`` (BCa and percentile intervals
-    keyed by model index) and ``alpha``.
+    Parameters
+    ----------
+    succ, size : ndarray
+        From `block_matrix`.
+    seed : int
+        Fixes the resamples.
+    alpha : float, optional
+        Two-sided interval level.
+
+    Returns
+    -------
+    dict
+        ``star_rate`` (the ``(B, n_models)`` resampled rate matrix, kept so
+        `diff_ci` can pair two models on the SAME theorem draws), ``jack``
+        (``(n_theorems, n_models)`` jackknife rates), ``theta_hat``
+        (full-sample rate per model), ``marginal`` (BCa and percentile
+        intervals keyed by model index) and ``alpha``.
     """
     n_thm, n_mod = succ.shape
     rng = np.random.default_rng(seed)
@@ -214,10 +239,21 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
 
     The difference is taken INSIDE each resample, cancelling the two models'
     shared theorem draw; that is the point of pairing, and it makes this
-    interval much tighter than the two marginals suggest. `bs` is
-    `bootstrap_stats` output; `ja`/`jb` index its ``star_rate`` columns for the
-    baseline and the comparison model. Returns ``diff`` (full-sample paired
-    difference), ``lo``/``hi`` (BCa), ``se`` and ``fallback``.
+    interval much tighter than the two marginals suggest.
+
+    Parameters
+    ----------
+    bs : dict
+        `bootstrap_stats` output.
+    ja, jb : int
+        Columns of ``bs["star_rate"]`` for the baseline and the comparison
+        model.
+
+    Returns
+    -------
+    dict
+        ``diff`` (full-sample paired difference), ``lo``/``hi`` (BCa), ``se``
+        and ``fallback``.
     """
     star = bs["star_rate"][:, jb] - bs["star_rate"][:, ja]
     hat = float(bs["theta_hat"][jb] - bs["theta_hat"][ja])
@@ -230,10 +266,18 @@ def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
     """Compute discordant counts and the exact McNemar p over all paired cells.
 
     Treats each cell as independent, so it is a DESCRIPTIVE column beside the
-    PRIMARY block sign-flip test, never used for inference. `blocks` is as built
-    by `build_pool`. Returns ``(nb, nc, p)``: cells where `a` succeeds and `b`
-    fails, cells where `b` succeeds and `a` fails, and the exact two-sided
-    McNemar p-value.
+    PRIMARY block sign-flip test, never used for inference.
+
+    Parameters
+    ----------
+    blocks : dict
+        As built by `build_pool`.
+
+    Returns
+    -------
+    tuple
+        ``(nb, nc, p)``: cells where `a` succeeds and `b` fails, cells where
+        `b` succeeds and `a` fails, and the exact two-sided McNemar p-value.
     """
     ia, ib = models.index(a), models.index(b)
     nb = nc = 0
@@ -263,11 +307,22 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     standard Monte-Carlo correction keeping the test exact-valid at finite B.
     With one cell per theorem every D_t is 0 or +-1 and the sign-flip
     distribution IS the binomial McNemar conditions on, so this degenerates to
-    cell-level exact McNemar. All contrasts are permuted with the SAME eps
-    draws, which costs nothing and keeps the family's dependence structure
-    intact. `succ` is `block_matrix`'s array with columns in `models` order;
-    `chunk` bounds peak memory. Returns one p-value per contrast, in
-    `contrasts` order.
+    cell-level exact McNemar.
+
+    Parameters
+    ----------
+    succ : ndarray
+        `block_matrix`'s array, columns in `models` order.
+    contrasts : list
+        ``(label, a, b)`` triples. All are permuted with the SAME eps draws,
+        which costs nothing and keeps the family's dependence structure intact.
+    chunk : int, optional
+        Bounds peak memory.
+
+    Returns
+    -------
+    ndarray
+        One p-value per contrast, in `contrasts` order.
     """
     n_thm = succ.shape[0]
     jmap = {m: j for j, m in enumerate(models)}
@@ -302,12 +357,16 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     generation-time ``"unverified"`` sentinel would grade as a real failure and
     bias this lane's rate invisibly.
 
-    Returns ``(graded, no_survivor)``: ``(theorem_id, k, prompt_rung) -> 0/1``
-    under ``power_analysis.grade_verdicts`` (the shared rule where the EARLIEST
-    surviving row wins and an unmeasurable verdict is not a measurement), plus
-    the cell keys that rule could not grade at all. The latter are returned
-    unresolved rather than scored, because only a cross-lane comparison tells a
-    model-dependent fault from an unrunnable cell; `build_pool` decides.
+    Returns
+    -------
+    graded : dict
+        ``(theorem_id, k, prompt_rung) -> 0/1`` under
+        ``power_analysis.grade_verdicts`` (the shared rule: the EARLIEST
+        surviving row wins, and an unmeasurable verdict is not a measurement).
+    no_survivor : set
+        Cell keys that rule could not grade at all. Returned unresolved rather
+        than scored, because only a cross-lane comparison tells a
+        model-dependent fault from an unrunnable cell; `build_pool` decides.
     """
     rows: dict = {}
     sources = [(rows_dir / model / "verified_rows.jsonl", "verdict")]
@@ -341,16 +400,23 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
                count_as_failure: bool = True) -> tuple:
     """Build the paired 21-way pool under an explicit denominator rule.
 
-    `rows_dir` and `recovery_dir` pass through to `lane_outcomes`;
-    `count_as_failure` (default True) scores a model-dependent no-survivor cell
-    as 0 instead of dropping it (see the module docstring).
+    Parameters
+    ----------
+    rows_dir, recovery_dir : Path
+        Passed through to `lane_outcomes`.
+    count_as_failure : bool, optional
+        Score a model-dependent no-survivor cell as 0 instead of dropping it
+        (the module docstring's denominator rule); default True.
 
-    Returns ``(models, blocks, prompt_rungs, meta)``: sorted model names;
-    blocks as ``{theorem_id: {(k, prompt_rung): {model: 0 or 1}}}``; the sorted
-    distinct prompt rungs present; and `meta`, recording what the denominator
-    rule actually did (cells added, per lane, and each lane's own-denominator
-    rate) so the report can PRINT the rule's cost instead of asserting it is
-    negligible.
+    Returns
+    -------
+    tuple
+        ``(models, blocks, prompt_rungs, meta)``: sorted model names; blocks as
+        ``{theorem_id: {(k, prompt_rung): {model: 0 or 1}}}``; the sorted
+        distinct prompt rungs present; and `meta`, recording what the
+        denominator rule actually did (cells added, per lane, and each lane's
+        own-denominator rate) so the report can PRINT the rule's cost instead
+        of asserting it is negligible.
     """
     graded, nosurv = {}, {}
     for model in MODELS:
@@ -409,10 +475,17 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
 def load(rows_dir: Path) -> tuple:
     """Build a back-compatible drop-rule pool (no count-as-failure, no recovery).
 
-    Returns ``(models, blocks, prompt_rungs)`` from
-    ``power_analysis.load_joint_cells`` over
-    ``<rows_dir>/<model>/verified_rows.jsonl``; raises ``SystemExit`` if any
-    model's row file is missing.
+    Returns
+    -------
+    tuple
+        ``(models, blocks, prompt_rungs)`` from
+        ``power_analysis.load_joint_cells`` over
+        ``<rows_dir>/<model>/verified_rows.jsonl``.
+
+    Raises
+    ------
+    SystemExit
+        If any model's row file is missing.
     """
     files = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
     missing = [f for f in files if not f.exists()]
@@ -461,16 +534,26 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
     difference, block sign-flip p-value, cell-level McNemar p-value and Holm/BH
     rejection; then the design effect versus a naive binomial; then, when
     `sensitivity` is given, the same PRIMARY test under the other denominator
-    rules. `succ`/`size` come from `block_matrix` and `models` matches their
-    column order; `blocks` (from `build_pool`) feeds the McNemar column.
+    rules.
 
-    `per_lane` maps model name to that lane's rate over its OWN measurable
-    denominator (``build_pool``'s ``meta["own_rate"]``), and `meta` is that same
-    denominator-rule metadata -- when given, the report prints what the rule
-    did. `out_json` is where to write the results dict as JSON, if given.
-    `sensitivity` rows are ``(label, n_cells, n_blocks, n_rejected, max_gap)``
-    per alternate denominator pool; a row with ``n_cells == 0`` is a plain
-    message, printed after the table instead of as a table row.
+    Parameters
+    ----------
+    succ, size : ndarray
+        From `block_matrix`; `models` matches their column order.
+    blocks : dict
+        From `build_pool`; feeds the McNemar column.
+    per_lane : dict
+        Model name -> that lane's rate over its OWN measurable denominator
+        (``build_pool``'s ``meta["own_rate"]``).
+    out_json : Path or None
+        Where to write the results dict as JSON, if given.
+    meta : dict, optional
+        That same denominator-rule metadata; when given, the report prints what
+        the rule did.
+    sensitivity : list, optional
+        ``(label, n_cells, n_blocks, n_rejected, max_gap)`` per alternate
+        denominator pool; a row with ``n_cells == 0`` is a plain message,
+        printed after the table instead of as a table row.
     """
     bs = bootstrap_stats(succ, size, B, seed=20260816)
     n_thm = succ.shape[0]
@@ -665,8 +748,15 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
 def main(argv=None) -> int:
     """Parse arguments, build the pool, and run the requested mode.
 
-    Returns the process exit code (0 on success); raises ``SystemExit`` if any
-    model's ``verified_rows.jsonl`` is missing.
+    Returns
+    -------
+    int
+        Process exit code (0 on success).
+
+    Raises
+    ------
+    SystemExit
+        If any model's ``verified_rows.jsonl`` is missing.
     """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rows-dir", type=Path, required=True,
