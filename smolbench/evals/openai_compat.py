@@ -554,7 +554,7 @@ class ChatClient:
                             f"context-length guard ({context_length}) unenforceable -- "
                             f"a window-truncated response would grade as a wrong answer"
                         )
-                elif total_tokens > context_length:
+                elif context_length and total_tokens > context_length:
                     logging.warning(
                         f"Response:\n{body}\n was {total_tokens} > {context_length}"
                     )
