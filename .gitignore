@@ -95,9 +95,10 @@ ipython_config.py
 #Pipfile.lock
 
 # UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
+#   uv.lock IS committed: the project resolves to a single Python 3.12
+#   .venv (pinned by .python-version, since lean-dojo pins
+#   Requires-Python <3.13) holding every extra, so the pins (lean-dojo,
+#   tiktoken, ray, ...) must be reproducible from a fresh clone.
 #uv.lock
 
 # poetry
@@ -143,7 +144,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.python-version
+# .python-version IS committed: it pins the single .venv to 3.12 (see the uv.lock
+# note above); `uv sync` must resolve the same interpreter from a fresh clone.
 
 # Spyder project settings
 .spyderproject
@@ -210,6 +212,40 @@ __marimo__/
 # Environment variables.
 *.env
 
-# Claude files
-.claude
+# EC2 spot-instance state written by smolbench/evals/providers/ec2.py (holds the
+# instance's control token and vLLM api key).
+.ec2_state*.json
+
+# SSH private keys and any loose HF token file -- secrets, must never be
+# committed. The .pem.pub public key is not secret but is machine-generated;
+# ignore it too.
+*.pem
+*.pem.pub
+.hf_token
+
+# LeanDojo Benchmark 4 -- a ~700MB external dataset (Zenodo download), not a
+# generated artifact. The replay_passing_*.jsonl sidecars derived from it are
+# not committed either (regenerate with `smolbench.deduction.lean.cli filter`,
+# or restore from the archive -- see notebooks/ARCHIVE.md).
+notebooks/deduction/data/leandojo_benchmark_4/
+
+# Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
+# dirs pruned after upload; never committed.
+notebooks/*/results/
+
+# Claude files at ANY depth (a claude session run from a subdirectory
+# creates a nested .claude/ with local settings) -- except the repo-root
+# .claude/skills/, which holds committed agent tooling (run skills + their
+# drivers).
+**/.claude/*
+!.claude/skills/
 CLAUDE.md
+
+# Local archives of retired result trees and experiment directories: kept on
+# disk, never committed (one exceeds GitHub's 100MB file limit; the other is
+# kept out by policy).
+/local_results_2026-08-10.zip
+/archive_2026-08-11.zip
+
+# multiplicity_sim.py writes its Monte Carlo summary next to itself
+notebooks/induction/analysis/multiplicity_sim_results.json
