@@ -181,9 +181,10 @@ unset -- both checks raise `ValueError` rather than silently proceeding.
 gate, BEFORE any AWS call: it requires `corpus.postcutoff_metadata()` to be
 non-`None` (else `SystemExit`, naming the corpus root and its traced commit)
 and requires the block's `target_date` to be `>=` `ROSTER_LATEST_RELEASE`
-(`"2026-04-24"`, the latest release date on the 21-model roster -- a
-checkpoint cannot have trained on data published after it shipped, so this
-is the conservative floor a post-cutoff corpus's target date must clear).
+(`"2026-06-03"`, the latest weights-publication date across the 21-model
+roster: the last Hugging Face commit touching a weight file at each lane's
+pinned revision; weights cannot encode data published after they were
+written, so this is the floor a post-cutoff corpus's target date must clear).
 `build_config` then sets `theorems.require_postcutoff: True` in the sweep
 config it hands to `runner.sweep`, so `_select_theorems` re-checks the same
 corpus and every selected theorem at sweep time, independent of the earlier

@@ -346,12 +346,12 @@ def test_build_config_refuses_a_pre_cutoff_corpus(driver, monkeypatch):
     corpus.reset_caches()
 
 
-@pytest.mark.parametrize("target_date,ok", [("2026-07-31", True), ("2026-04-24", True),
-                                            ("2026-04-23", False), ("2025-12-31", False)])
+@pytest.mark.parametrize("target_date,ok", [("2026-07-31", True), ("2026-06-03", True),
+                                            ("2026-06-02", False), ("2026-04-24", False)])
 def test_build_config_gates_target_date_on_roster_latest_release(
         driver, monkeypatch, tmp_path, target_date, ok):
     """T must be at or after the roster's latest release; equality passes (>=)."""
-    assert driver.ROSTER_LATEST_RELEASE == "2026-04-24"
+    assert driver.ROSTER_LATEST_RELEASE == "2026-06-03"
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA",
                        str(_retarget(tmp_path, target_date=target_date)))
     corpus.reset_caches()

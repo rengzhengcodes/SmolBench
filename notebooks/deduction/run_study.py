@@ -79,14 +79,15 @@ SPOOL_REGION: str = "us-west-2"
 #: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override (or the
 #: legacy-prefix refusal) takes effect per-invocation rather than at import.
 
-#: DeepSeek-V4-Flash/V4-Pro's release date, the LATEST release date recorded
-#: for any checkpoint on this study's 21-model roster (`MODELS`, below). A
-#: release date bounds a model's knowledge cutoff from above (a checkpoint
-#: cannot have been trained on data published after it shipped), so it is the
-#: conservative floor for a post-cutoff corpus's `target_date`: any corpus
-#: targeting an earlier date risks some roster checkpoint having seen its
-#: "post-cutoff" theorems. See `build_config`'s corpus gate.
-ROSTER_LATEST_RELEASE: str = "2026-04-24"
+#: The latest date any served checkpoint's WEIGHTS were published: the last
+#: Hugging Face commit touching a weight file at the pinned `--revision` of
+#: each roster lane (resolved 2026-08-30 via the HF tree API's per-file
+#: lastCommit; gemma-4-12b's safetensors, revision 707f0a3b, is the max --
+#: its later 07-20 commit only changed tokenizer_config.json). Weights cannot
+#: encode data published after they were written, so this bounds every
+#: knowledge cutoff from above and is the floor a post-cutoff corpus's
+#: `target_date` must clear. See `build_config`'s corpus gate.
+ROSTER_LATEST_RELEASE: str = "2026-06-03"
 
 
 def lane_env_defaults(

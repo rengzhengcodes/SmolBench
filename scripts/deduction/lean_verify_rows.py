@@ -382,11 +382,7 @@ def check_workers(requested: int, meminfo_text: str) -> None:
 # ---------------------------------------------------------------------------
 # Pure: interpreter guard, Dojo-failure operator guidance
 # ---------------------------------------------------------------------------
-# NOTE: the name `require_lean_dojo` is retained deliberately even though the
-# package it now checks for is `lean_interact`: its only call site lives in
-# `main()`, which is owned elsewhere, and renaming here would force an edit
-# there. Rename it when that file is next opened.
-def require_lean_dojo() -> None:
+def require_lean_interact() -> None:
     """Raise ``SystemExit`` if ``lean_interact`` (the ``lean`` extra) is not importable."""
     if importlib.util.find_spec("lean_interact") is None:
         raise SystemExit(
@@ -984,7 +980,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point: verify every run matching ``--runs`` under ``--s3-prefix``.
 
-    Order: :func:`require_lean_dojo`, :func:`check_workers` on a live ``/proc/meminfo``
+    Order: :func:`require_lean_interact`, :func:`check_workers` on a live ``/proc/meminfo``
     read, the Dojo cache lock held for the rest of the call (all three skipped under
     ``--dry-run``), then :func:`verify_run` per :func:`list_runs` match.
 
@@ -1002,7 +998,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     s3_prefix = args.s3_prefix or f"s3://{SPOOL_BUCKET}/{spool_prefix()}"
 
     if not args.dry_run:
-        require_lean_dojo()
+        require_lean_interact()
 
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
     workdir.mkdir(parents=True, exist_ok=True)

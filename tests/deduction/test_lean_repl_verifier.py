@@ -837,7 +837,7 @@ def test_verify_rows_script_guard_requires_lean_interact():
         src = (SCRIPTS / "deduction" / "lean_verify_rows.py").read_text()
         assert "lean_interact" in src
         # The guard passes here because lean_interact IS installed in this venv.
-        module.require_lean_dojo()
+        module.require_lean_interact()
     finally:
         sys.modules.pop("lvr_seam", None)
 
