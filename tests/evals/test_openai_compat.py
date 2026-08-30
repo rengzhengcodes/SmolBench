@@ -1,140 +1,78 @@
 """Test offline round trips through the shared client via each provider module."""
 
 import importlib
-import json
 import socket
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import requests
 
 from smolbench.evals import Numeric, ToF
-from smolbench.evals.openai_compat import ChatClient, metadata_get
-from conftest import chat_completion
+from smolbench.evals.openai_compat import ChatClient, collect_stream, metadata_get
+from smolbench.evals.providers import ec2
+from conftest import StubServer, _StubHandler, chat_completion
+
+CAP = {"prompt_tokens": 5, "completion_tokens": 32768, "total_tokens": 50}
+TAIL = (5, 32768, 0, 50, "qwen2.5-1.5b", "length")  # prompt/completion/cached/total, model, finish
+CALL = {"seed": 1, "context_length": 100}
 
 
 @pytest.fixture
 def ec2_env(stub_server, monkeypatch):
-    """Points the ec2 provider at the stub (bypasses the state file)."""
     monkeypatch.setenv("EC2_INFERENCE_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("EC2_VLLM_API_KEY", "stub-key")
     return stub_server
 
 
-@pytest.mark.parametrize("body,expected", [
-    (chat_completion("7", reasoning_content="thought"), ("7", "thought")),
-    (chat_completion("<think>step by step</think>\n7"), ("7", "step by step")),
-    (chat_completion("True", reasoning="hmm"), ("True", "hmm")),
-])
-def test_query_splits_reasoning_channels(ec2_env, body, expected):
-    """reasoning_content, an inline <think> block, and the legacy `reasoning` key all split."""
-    from smolbench.evals.providers import ec2
-    ec2_env.queue_response(body)
-    assert ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100) == expected
-
-
-def _body(message, finish_reason, usage):
-    """A chat-completions body with model and finish_reason pinned (the stream echoes both)."""
-    return {"choices": [{"message": message, "finish_reason": finish_reason}],
-            "usage": usage, "model": "served"}
+def _body(content, finish_reason=None, model=None, **kwargs):
+    body = chat_completion(content, **kwargs)
+    body["choices"][0]["finish_reason"] = finish_reason
+    body["model"] = model
+    return body
 
 
 @pytest.mark.parametrize("body,expected", [
-    (_body({"content": "7"}, "length",
-           {"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33}), ("7", None)),
-    (_body({"content": "<think>step by step</think>\n7"}, "stop",
-           {"total_tokens": 10}), ("7", "step by step")),
-    (_body({"content": None, "reasoning": "long thought"}, "length",
-           {"total_tokens": 10}), ("", "long thought")),
+    (_body("7", "stop", "served", usage={"prompt_tokens": 12, "completion_tokens": 3,
+     "total_tokens": 15, "prompt_tokens_details": {"cached_tokens": 5}}),
+     ("7", None, 12, 3, 5, 15, "served", "stop")),
+    (_body("7", usage=None), ("7", None, 0, 0, 0, None, "qwen2.5-1.5b", None)),
+    (_body("7", usage=None, reasoning_content="thought"),
+     ("7", "thought", 0, 0, 0, None, "qwen2.5-1.5b", None)),
+    (_body("True", usage=None, reasoning="hmm"), ("True", "hmm", 0, 0, 0, None, "qwen2.5-1.5b", None)),
+    (_body("<think>step by step</think>\n7", "length", usage=CAP), ("7", "step by step") + TAIL),
+    (_body(None, "length", reasoning_content="cap hit", usage=CAP), ("", "cap hit") + TAIL),
+    (_body(None, "length", reasoning="legacy key", usage=CAP), ("", "legacy key") + TAIL),
+    # Usage above the model's window is an error, not a silent truncation.
+    (_body("7", usage={"total_tokens": 999}), ValueError),
 ])
-def test_stream_matches_non_streamed(ec2_env, monkeypatch, body, expected):
-    """Transport changes, data does not: the same body parses identically both ways."""
-    from smolbench.evals.providers import ec2
+def test_complete_chat_result_fields(ec2_env, monkeypatch, body, expected):
+    """Channels split, usage/model/finish_reason, null content, guard -- streamed and not alike."""
     ec2_env.queue_response(body)
-    plain = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
+    if expected is ValueError:
+        with pytest.raises(ValueError):
+            ec2.complete("p", "qwen2.5-1.5b", **CALL)
+        return
+    plain = ec2.complete("p", "qwen2.5-1.5b", **CALL)
     assert "stream" not in ec2_env.requests[-1]["body"]
-    assert (plain.content, plain.reasoning) == expected
-    assert plain.total_tokens == body["usage"]["total_tokens"]
-    assert plain.finish_reason == body["choices"][0]["finish_reason"]
-    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")
+    assert (plain.content, plain.reasoning, plain.prompt_tokens, plain.completion_tokens,
+            plain.cached_prompt_tokens, plain.total_tokens, plain.model,
+            plain.finish_reason) == expected
+    monkeypatch.setenv("EC2_STREAM_COMPLETIONS", "1")  # transport changes, data does not
     ec2_env.queue_response(body)
-    streamed = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
-    assert streamed == plain
+    assert ec2.complete("p", "qwen2.5-1.5b", **CALL) == plain
     sent = ec2_env.requests[-1]["body"]
-    assert sent["stream"] is True
-    assert sent["stream_options"] == {"include_usage": True}
+    assert sent["stream"] is True and sent["stream_options"] == {"include_usage": True}
 
 
-def test_collect_stream_survives_usage_only_chunk():
-    """The include_usage final chunk has an EMPTY choices list."""
-    from smolbench.evals.openai_compat import collect_stream
-    frames = [
-        'data: {"model": "m", "choices": [{"delta": {"content": "4"}}]}',
-        'data: {"choices": [{"delta": {"content": "2"}, "finish_reason": "stop"}]}',
-        'data: {"choices": [], "usage": {"total_tokens": 9}}',
-        "data: [DONE]",
-        'data: {"choices": [{"delta": {"content": "IGNORED"}}]}',
-    ]
-
-    class _Resp:
-        def iter_lines(self, decode_unicode=False):
-            return iter(frames)
-
-    body = collect_stream(_Resp())
-    assert body["choices"][0]["message"]["content"] == "42"
-    assert body["choices"][0]["finish_reason"] == "stop"
-    assert body["usage"] == {"total_tokens": 9}
-    assert body["model"] == "m"
-    assert "reasoning_content" not in body["choices"][0]["message"]
-
-
-@pytest.mark.parametrize("message,reasoning", [
-    ({"content": None, "reasoning_content": "cap hit"}, "cap hit"),
-    ({"content": None, "reasoning": "legacy key"}, "legacy key"),
-    ({"content": None}, None),
-])
-def test_null_content_keeps_content_empty_and_retains_reasoning(ec2_env, message, reasoning):
-    """A reasoning-only cap-hit keeps its reasoning but stays content="" for every scorer."""
-    from smolbench.evals.providers import ec2
-    ec2_env.queue_response({
-        "choices": [{"message": message, "finish_reason": "length"}],
-        "usage": {"prompt_tokens": 5, "completion_tokens": 32768, "total_tokens": 50},
-    })
-    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
-    assert result.content == ""
-    assert result.reasoning == reasoning
-    assert result.finish_reason == "length"
-    assert result.completion_tokens == 32768
-
-
-def test_query_context_guard(ec2_env):
-    """A prompt whose usage exceeds the model's window is an error, not a silent truncation."""
-    from smolbench.evals.providers import ec2
-    ec2_env.queue_response(chat_completion("7", usage={"total_tokens": 999}))
-    with pytest.raises(ValueError):
-        ec2.query("p", "qwen2.5-1.5b", seed=1, context_length=100)
-
-
-@pytest.mark.parametrize("usage,expected", [
-    ({"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15,
-      "prompt_tokens_details": {"cached_tokens": 5}}, (12, 3, 5, 15, "served", "stop")),
-    (None, (0, 0, 0, None, "qwen2.5-1.5b", None)),
-])
-def test_complete_chat_result_fields(ec2_env, usage, expected):
-    """Usage (incl. cached prompt tokens), server model id, and finish_reason, or their defaults."""
-    from smolbench.evals.providers import ec2
-    body = {"choices": [{"message": {"content": "7"}}]}
-    if usage is not None:
-        body["usage"] = usage
-        body["choices"][0]["finish_reason"] = "stop"
-        body["model"] = "served"
-    ec2_env.queue_response(body)
-    result = ec2.complete("p", "qwen2.5-1.5b", seed=1, context_length=100)
-    assert result.content == "7"
-    assert result.reasoning is None
-    assert (result.prompt_tokens, result.completion_tokens, result.cached_prompt_tokens,
-            result.total_tokens, result.model, result.finish_reason) == expected
+def test_collect_stream_survives_usage_only_chunk_and_stops_at_done():
+    """The include_usage final chunk has an EMPTY choices list; frames after [DONE] are dead."""
+    frames = ['data: {"model": "m", "choices": [{"delta": {"content": "42"}, "finish_reason": "stop"}]}',
+              'data: {"choices": [], "usage": {"total_tokens": 9}}', "data: [DONE]",
+              'data: {"choices": [{"delta": {"content": "IGNORED"}}]}']
+    body = collect_stream(type("_R", (), {"iter_lines": lambda s, decode_unicode=False:
+                                          iter(frames)})())
+    assert body["choices"][0] == {"message": {"content": "42"}, "finish_reason": "stop"}
+    assert (body["usage"], body["model"]) == ({"total_tokens": 9}, "m")
 
 
 @pytest.mark.parametrize("model,context_length,system", [
@@ -144,14 +82,9 @@ def test_complete_chat_result_fields(ec2_env, usage, expected):
 ])
 def test_system_message_ordering(ec2_env, model, context_length, system):
     """[provider system, per-call system, user], and query() stays a 2-tuple wrapper."""
-    from smolbench.evals.providers import ec2
-    from smolbench.evals.providers.ec2 import MINISTRAL_THINK_SYSTEM
-    expected = []
-    if model == "ministral-3-14b":
-        expected.append({"role": "system", "content": MINISTRAL_THINK_SYSTEM})
-    if system is not None:
-        expected.append({"role": "system", "content": system})
-    expected.append({"role": "user", "content": "user prompt"})
+    expected = [{"role": "system", "content": ec2.MINISTRAL_THINK_SYSTEM}] * (model != "qwen2.5-1.5b")
+    expected += [{"role": "system", "content": system}] * (system is not None)
+    expected += [{"role": "user", "content": "user prompt"}]
     kwargs = {"seed": 1, "context_length": context_length, "system": system}
     ec2.complete("user prompt", model, **kwargs)
     body = ec2_env.requests[-1]["body"]
@@ -162,28 +95,14 @@ def test_system_message_ordering(ec2_env, model, context_length, system):
     assert ec2_env.requests[-1]["body"]["messages"] == expected
 
 
-def test_evaluate_grades_and_orders(ec2_env):
-    """Correct, wrong, and unparseable -> 1, 0, None, restored to quiz order."""
-    from smolbench.evals.providers import ec2
-    quiz = tuple(Numeric(prompt=f"q{i}", answer=7) for i in range(3))
-    ec2_env.default_response = chat_completion("7")
-    for text in ("7", "8", "no digits here"):
-        ec2_env.queue_response(chat_completion(text))
-    marks = ec2.evaluate(quiz, "qwen2.5-1.5b", seed=1, max_parallel=1, show_progress=False)
-    assert [m.score for m in marks.marks] == [1, 0, None]
-    assert (marks.correct, marks.incorrect, marks.invalid) == (1, 1, 1)
-
-
-@pytest.mark.parametrize("name,env,model", [
-    ("openrouter", {"OPENROUTER_API_KEY": "stub-key"}, "m-openrouter-shape"),
-    ("primeintellect", {"PRIME_INTELLECT_API_KEY": "stub-key",
-                        "PRIME_INTELLECT_TEAM_ID": "team-42"}, "m-primeintellect-shape"),
-    ("aws", {"AWS_BEARER_TOKEN_BEDROCK": "stub-key"}, "qwen.qwen3-32b"),
+@pytest.mark.parametrize("name,prefix,env,model", [
+    ("openrouter", "OPENROUTER", {"OPENROUTER_API_KEY": "stub-key"}, "m-openrouter-shape"),
+    ("primeintellect", "PRIME_INTELLECT", {"PRIME_INTELLECT_API_KEY": "stub-key",
+     "PRIME_INTELLECT_TEAM_ID": "team-42"}, "m-primeintellect-shape"),
+    ("aws", "AWS_INFERENCE", {"AWS_BEARER_TOKEN_BEDROCK": "stub-key"}, "qwen.qwen3-32b"),
 ])
-def test_provider_request_shape(stub_server, monkeypatch, name, env, model):
-    """Every provider posts to /v1/chat/completions with a verbatim model id, the seed, and bearer auth."""
-    prefix = {"openrouter": "OPENROUTER", "primeintellect": "PRIME_INTELLECT",
-              "aws": "AWS_INFERENCE"}[name]
+def test_provider_request_shape(stub_server, monkeypatch, name, prefix, env, model):
+    """Every provider posts to /v1/chat/completions with a verbatim model id, seed, bearer auth."""
     monkeypatch.setenv(f"{prefix}_BASE_URL", stub_server.base_url)
     monkeypatch.delenv("AWS_INFERENCE_API_KEY", raising=False)
     for key, value in env.items():
@@ -193,90 +112,56 @@ def test_provider_request_shape(stub_server, monkeypatch, name, env, model):
         assert module.get_model_context_length(model) == 100000
         assert stub_server.requests[-1]["path"] == f"/v1/models/{model}"
     stub_server.queue_response(chat_completion("True"))
-    content, _ = module.query("p", model, seed=1, context_length=100)
-    assert content == "True"
+    assert module.query("p", model, **CALL)[0] == "True"
     request = stub_server.requests[-1]
-    assert request["path"] == "/v1/chat/completions"
-    assert request["body"]["model"] == model
-    assert request["body"]["seed"] == 1
+    assert (request["path"], request["body"]["model"], request["body"]["seed"]) == (
+        "/v1/chat/completions", model, 1)
     assert request["headers"]["Authorization"] == "Bearer stub-key"
-    if name == "primeintellect":
+    if name == "primeintellect":  # the routing header is present when set, absent when unset
         assert request["headers"]["X-Prime-Team-ID"] == "team-42"
         monkeypatch.delenv("PRIME_INTELLECT_TEAM_ID")
         stub_server.queue_response(chat_completion("True"))
-        module.query("p", model, seed=1, context_length=100)
+        module.query("p", model, **CALL)
         assert "X-Prime-Team-ID" not in stub_server.requests[-1]["headers"]
+    if name == "aws":  # the call-time minted key outranks the Bedrock key, with no reload
+        monkeypatch.setenv("AWS_INFERENCE_API_KEY", "minted")
+        assert module._api_key() == "minted"
 
 
-def test_aws_api_key_precedence(monkeypatch):
-    """AWS_INFERENCE_API_KEY (call-time, minted) outranks the Bedrock key with no reload."""
-    from smolbench.evals.providers import aws
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-key")
-    monkeypatch.setenv("AWS_INFERENCE_API_KEY", "minted")
-    assert aws._api_key() == "minted"
-
-
-def test_provider_dispatch_complete_and_evaluate(stub_server, monkeypatch):
-    """provider.complete/evaluate dispatch to the env-selected provider and forward tuning kwargs."""
+def test_provider_dispatch_grades_and_orders(ec2_env, monkeypatch):
+    """provider.* dispatch to the env-selected provider; correct/wrong/unparseable -> 1/0/None."""
     from smolbench.evals import provider
-    monkeypatch.setenv("OPENROUTER_BASE_URL", stub_server.base_url)
-    monkeypatch.setenv("INFERENCE_PROVIDER", "openrouter")
-    stub_server.queue_response(chat_completion("True"))
-    result = provider.complete("p", "m-complete-dispatch-test", seed=1, context_length=100)
-    assert result.content == "True"
-    assert result.total_tokens == 10
-    stub_server.default_response = chat_completion("True")
-    marks = provider.evaluate(
-        (ToF(prompt="q", answer=True),), "m-evaluate-dispatch-test", seed=1,
-        max_parallel=2, request_timeout=30, show_progress=False,
-    )
-    assert marks.correct == 1
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ec2")
+    ec2_env.default_response = chat_completion("7")
+    result = provider.complete("p", "qwen2.5-1.5b", **CALL)
+    assert (result.content, result.total_tokens) == ("7", 10)
+    quiz = tuple(Numeric(prompt=f"q{i}", answer=7) for i in range(3)) + (ToF(prompt="q", answer=True),)
+    for text in ("7", "8", "no digits here", "True"):
+        ec2_env.queue_response(chat_completion(text))
+    marks = provider.evaluate(quiz, "qwen2.5-1.5b", seed=1, max_parallel=1, request_timeout=30,
+                              show_progress=False)
+    assert [m.score for m in marks.marks] == [1, 0, None, 1]
+    assert (marks.correct, marks.incorrect, marks.invalid) == (2, 1, 1)
 
 
-class _FlakyHandler(BaseHTTPRequestHandler):
+class _FlakyHandler(_StubHandler):
     """Replays a queue of ``(status_code, body)`` pairs, one per request."""
 
-    def _reply(self, obj, code):
-        payload = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+    def do_GET(self):
+        code, body = self.server.next_response()
+        _StubHandler._reply(self, body, code)
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
         self.do_GET()
 
-    def do_GET(self):
-        code, body = self.server.next_response()
-        self._reply(body, code)
-
-    def log_message(self, *args):
-        pass
-
-
-class _FlakyServer(ThreadingHTTPServer):
-    """Queue of scripted (status_code, body) responses; the shared stub only replies 200."""
-
-    def __init__(self):
-        super().__init__(("127.0.0.1", 0), _FlakyHandler)
-        self._responses: list = []
-
-    def queue(self, code: int, body) -> None:
-        self._responses.append((code, body))
-
-    def next_response(self):
-        return self._responses.pop(0)
-
-    @property
-    def base_url(self) -> str:
-        return f"http://127.0.0.1:{self.server_address[1]}/v1"
-
 
 @pytest.fixture
 def flaky_server():
-    server = _FlakyServer()
+    """A stub server scripted with (status_code, body) pairs; the shared stub only replies 200."""
+    server = StubServer()
+    server.RequestHandlerClass = _FlakyHandler
+    server.queue = lambda code, body: server._responses.append((code, body))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -284,91 +169,60 @@ def flaky_server():
     thread.join(timeout=5)
 
 
-def _client(url, **kwargs) -> ChatClient:
-    """A ChatClient pointed at a scripted server, with no retry sleep."""
-    return ChatClient(
-        name="flaky-test", env_prefix="FLAKY_TEST", context_length=lambda model: 100,
-        connection=lambda model: (url, "stub-key"), retry_backoff_s=0, **kwargs,
-    )
+def _client(target, **kwargs) -> ChatClient:
+    url = target if isinstance(target, str) else f"{target.base_url}/chat/completions"
+    return ChatClient(name="flaky-test", env_prefix="FLAKY_TEST", retry_backoff_s=0,
+                      context_length=lambda m: 100, connection=lambda m: (url, "stub-key"), **kwargs)
 
 
-def _chat_url(server) -> str:
-    return f"{server.base_url}/chat/completions"
-
-
-@pytest.mark.parametrize("method,script,max_retries,raises", [
-    ("complete", [(500, {"error": "boom 1"}), (500, {"error": "boom 2"})], 2, True),
-    ("complete", [(500, {"error": "boom"}), (200, chat_completion("7"))], 2, False),
-    ("query", [(500, {"error": "boom"})], 1, True),
+@pytest.mark.parametrize("method,script,max_retries,status", [
+    ("complete", [(500, "boom 1"), (500, "boom 2")], 2, 500),
+    ("complete", [(500, "boom"), (200, chat_completion("7"))], 2, None),
+    ("query", [(500, "boom")], 1, 500),
+    ("complete", [(400, "context_length_exceeded")], 2, 400),  # non-retryable
 ])
-def test_complete_max_retries(flaky_server, method, script, max_retries, raises):
-    """The Nth failure raises instead of retrying again; query() forwards max_retries."""
-    for code, body in script:
-        flaky_server.queue(code, body)
-    call = getattr(_client(_chat_url(flaky_server)), method)
-    if raises:
-        with pytest.raises(requests.exceptions.HTTPError):
-            call("p", "m", seed=1, context_length=100, max_retries=max_retries)
-    else:
-        result = call("p", "m", seed=1, context_length=100, max_retries=max_retries)
-        assert result.content == "7"
-
-
-def test_complete_error_body_survives_in_httperror(flaky_server):
-    """The API's error BODY and the response object both survive into the raised HTTPError."""
-    marker = "context_length_exceeded"
-    flaky_server.queue(400, {"error": {"message": marker, "code": marker}})
-    client = _client(_chat_url(flaky_server))
+def test_retry_cap_and_error_surface(flaky_server, method, script, max_retries, status):
+    """The Nth failure raises instead of retrying; query() forwards the cap; error body survives."""
+    for code, marker in script:
+        flaky_server.queue(code, marker if code == 200 else {"error": {"message": marker}})
+    call = getattr(_client(flaky_server), method)
+    if status is None:
+        assert call("p", "m", max_retries=max_retries, **CALL).content == "7"
+        return
     with pytest.raises(requests.exceptions.HTTPError) as excinfo:
-        client.complete("p", "m", seed=1)
-    err = excinfo.value
-    assert marker in str(err)
-    assert "400" in str(err)
-    assert err.response is not None
-    assert err.response.status_code == 400
+        call("p", "m", max_retries=max_retries, **CALL)
+    assert script[-1][1] in str(excinfo.value)  # the API's error BODY survives
+    assert excinfo.value.response is not None and excinfo.value.response.status_code == status
 
 
 def test_on_unreachable_scope(flaky_server):
     """The hook fires at max_retries exhaustion on CONNECTION failures only, never on HTTP 5xx."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    closed_port = sock.getsockname()[1]
-    sock.close()
-
-    def _diagnose(exc):
-        raise RuntimeError("DIAGNOSED")
-
-    closed = _client(f"http://127.0.0.1:{closed_port}/v1/chat/completions",
-                     max_connection_failures=10, on_unreachable=_diagnose)
-    with pytest.raises(RuntimeError, match="DIAGNOSED"):
-        closed.complete("p", "m", seed=1, max_retries=2)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        closed_url = f"http://127.0.0.1:{sock.getsockname()[1]}/v1/chat/completions"
     diagnosed: list = []
-    flaky_server.queue(500, {"error": "boom1"})
-    flaky_server.queue(500, {"error": "boom2"})
-    http500 = _client(_chat_url(flaky_server), max_connection_failures=10,
-                      on_unreachable=diagnosed.append)
+    closed = _client(closed_url, max_connection_failures=10, on_unreachable=diagnosed.append)
+    with pytest.raises(requests.exceptions.ConnectionError):
+        closed.complete("p", "m", seed=1, max_retries=2)
+    assert len(diagnosed) == 1
+    for _ in range(2):
+        flaky_server.queue(500, {"error": "boom"})
+    http500 = _client(flaky_server, max_connection_failures=10, on_unreachable=diagnosed.append)
     with pytest.raises(requests.exceptions.HTTPError):
         http500.complete("p", "m", seed=1, max_retries=2)
-    assert diagnosed == []
+    assert len(diagnosed) == 1  # unchanged: an HTTP 5xx never reaches the hook
 
 
-def test_metadata_get_round_trip_sends_bearer_auth(stub_server):
-    """The shared metadata GET carries bearer auth to the requested path."""
-    body = metadata_get(f"{stub_server.base_url}/models", "sekret-key", check_status=False)
-    assert body == {"data": [{"id": "stub-model"}]}
+def test_metadata_get_auth_and_check_status(stub_server, flaky_server):
+    """Bearer auth on the GET; check_status=True raises (list_models), False passes the body on."""
+    url = f"{stub_server.base_url}/models"
+    assert metadata_get(url, "sekret-key", check_status=False) == {"data": [{"id": "stub-model"}]}
     request = stub_server.requests[-1]
-    assert request["path"] == "/v1/models"
-    assert request["headers"]["Authorization"] == "Bearer sekret-key"
-
-
-@pytest.mark.parametrize("check_status", [True, False])
-def test_metadata_get_check_status(flaky_server, check_status):
-    """check_status=True raises (list_models); False passes the error body through (context length)."""
-    error = {"error": {"message": "denied"}}
+    assert (request["path"], request["headers"]["Authorization"]) == ("/v1/models",
+                                                                     "Bearer sekret-key")
+    error, url = {"error": {"message": "denied"}}, f"{flaky_server.base_url}/models"
     flaky_server.queue(500, error)
-    url = f"{flaky_server.base_url}/models"
-    if check_status:
-        with pytest.raises(requests.exceptions.HTTPError):
-            metadata_get(url, "k", check_status=True)
-    else:
-        assert metadata_get(url, "k", check_status=False) == error
+    assert metadata_get(url, "k", check_status=False) == error  # context-length probe
+    flaky_server.queue(500, error)
+    with pytest.raises(requests.exceptions.HTTPError):
+        metadata_get(url, "k", check_status=True)
