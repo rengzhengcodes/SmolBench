@@ -1,0 +1,41 @@
+[
+ {
+  "url": "/mnt/data/mathlib4",
+  "commit": "2ca39e62989124794bd8405bb2e60805f63d37bc",
+  "file_path": "Mini/New.lean",
+  "full_name": "Mini.postA",
+  "theorem_statement": "theorem postA (n : ℕ) : G0 n",
+  "start": [
+   10,
+   1
+  ],
+  "end": [
+   11,
+   40
+  ],
+  "traced_tactics": [
+   {
+    "tactic": "step0",
+    "annotated_tactic": [
+     "step0",
+     [
+      {
+       "full_name": "Mini.premiseA",
+       "def_path": "Mini/Prem.lean",
+       "def_pos": [
+        3,
+        9
+       ],
+       "def_end_pos": [
+        3,
+        22
+       ]
+      }
+     ]
+    ],
+    "state_before": "n : ℕ\n⊢ G0 n",
+    "state_after": "no goals"
+   }
+  ]
+ }
+]
