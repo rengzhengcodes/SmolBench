@@ -2,44 +2,37 @@
 
 :class:`InductionExperiment` bundles
 :class:`~smolbench.evals.replicates.ReplicateHarness` with the EC2 spot
-lifecycle that serves the models under test: ``provision()`` / ``run(model,
-...)`` / ``summarize(model)`` / ``teardown()``. The family-ladder scaling study
+lifecycle that serves the models under test. The family-ladder scaling study
 builds one module-level ``EXPERIMENT`` in ``notebooks/induction/run_study.py``,
 launched per lane by ``scripts/fleet/run_fleet.py``.
 
 Seed convention. A "replicate" is the SAME quiz regenerated under a fresh seed;
 ``seeds`` is always ``tuple(base_seed + r for r in range(n_replicates))``. That
-seed drives the quiz's own randomness AND the per-request decoding seed, so
-``make_quizzes(seed, model)`` regenerates byte-identical prompts and a replicate
-is reproducible from its ``rep_{seed}.yaml`` path alone; it takes the model
-because the noise arm is padded to an exact token count under the model's own
-tokenizer.
+seed drives the quiz's own randomness AND the per-request decoding seed, so a
+replicate is reproducible from its ``rep_{seed}.yaml`` path alone.
+``make_quizzes`` also takes the model, because the noise arm is padded to an
+exact token count under the model's own tokenizer.
 
 Results and resume. ``results_store.resolve_store`` picks local disk vs S3 at
-call time from ``SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]``
-(unset/empty selects local) and ``SMOLBENCH_RESULTS_S3_REGION`` (default
-``AWS_REGION``, else boto3's chain); pooling and resume-skip belong to
-``ReplicateHarness``. The LOCAL layout analysis scripts depend on is
-``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir``, overwritten on
-rerun. S3 is instead an APPEND-ONLY log keyed
-``<base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``
-(``<experiment>`` = ``results_store.experiment_name``: ``notebook_dir`` plus
-``prefix`` minus its trailing ``"_"``; ``run_ts`` a fixed-width UTC
-``YYYYMMDDTHHMMSSZ`` stamp, so key order is chronological). Reads resolve the
-EARLIEST ``run_ts`` per (model, seed, info), making the first logged run the
-pass@1 measurement; ``harness.sync_down()`` renders the log back into the local
-layout, one-way and destructively (``archetype_tags`` supplies the model-to-tag
-mapping a log key cannot carry).
+call time; its module docstring is the canonical home for the env contract, the
+append-only S3 key layout and earliest-wins (= pass@1) reads, and pooling and
+resume-skip belong to ``ReplicateHarness``. What this class pins is the
+``<experiment>`` key segment (``results_store.experiment_name``: ``notebook_dir``
+plus ``prefix`` minus its trailing ``"_"``) and the local layout analysis
+scripts read, ``{prefix}{tag}_{info}/rep_{seed}.yaml`` under ``results_dir``,
+overwritten on rerun. ``harness.sync_down()`` renders the log back into that
+layout, ``archetype_tags`` supplying the model-to-tag mapping a log key cannot
+carry.
 
 COST: ``provision()``, ``run()``, ``agent_status()`` and ``teardown()`` are LIVE
 AWS calls against a self-provisioned spot instance, billed while it is up
 (~$30-45/h on p5e/p5). ``summarize()`` and ``cot_chain_lengths()`` spend no
 EC2/inference cost but do issue S3 reads under an S3-backed store.
 
-CRITICAL -- never import ``smolbench.evals.providers.ec2`` at module scope. Its
+CRITICAL -- never import ``smolbench.evals.providers.ec2`` at module scope: its
 ``EC2_*`` constants are captured from ``os.environ`` at IMPORT time (notebooks
-``load_dotenv(keys.env)`` first), so an eager import would silently freeze them
-to un-overridden defaults for any process importing this module ahead of its
+``load_dotenv(keys.env)`` first), so an eager import silently freezes them to
+un-overridden defaults for any process importing this module ahead of its
 ``load_dotenv``. Every method needing the lifecycle imports ``ec2`` INSIDE its
 body, after ``_apply_env()``. (``smolbench.evals.replicates`` is safe at module
 scope: its provider dispatch resolves at CALL time.)
@@ -68,8 +61,7 @@ class InductionExperiment:
     Lifecycle order: ``provision()`` once, ``run(model, ...)`` once per
     archetype, ``summarize(model)`` / ``cot_chain_lengths()`` any number of
     times (offline), ``teardown()`` once at the end. Frozen, like
-    ``ReplicateHarness``: configuration must not mutate mid-run. ``harness`` is
-    the one lazily built attribute.
+    ``ReplicateHarness``: configuration must not mutate mid-run.
     """
 
     #: Locates results at ``repo_root()/notebooks/<notebook_dir>/results``.
@@ -79,9 +71,8 @@ class InductionExperiment:
     #: ``{"olmo-3.1-32b-instruct": "decode"}``). Forwarded to ``ReplicateHarness``.
     archetype_tags: Mapping[str, str]
     #: (seed, model) -> {info type: quiz}. Forwarded to ``ReplicateHarness``,
-    #: which calls it lazily per outstanding seed. It takes the model because
-    #: the noise arm is token-matched with the tokenizer of the model under
-    #: test, so only that arm varies per model.
+    #: which calls it lazily per outstanding seed. Only the noise arm varies per
+    #: model -- see the module docstring's "Seed convention" section.
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Number of replicate seeds. Every induction study to date uses 30 (each
     #: study's ``power_analysis.py`` carries the derivation).
@@ -93,8 +84,7 @@ class InductionExperiment:
     #: Info types evaluated per replicate, in serialization order. Forwarded to
     #: ``ReplicateHarness``. The default is the original three-condition set
     #: (see ``periodic.py`` / ``chromatic.py``'s "Information conditions"
-    #: module docstring section); the family-ladder study passes a 4-tuple
-    #: adding ``"zero"`` for
+    #: module docstring section); the family-ladder study adds ``"zero"`` for
     #: :func:`~smolbench.induction.periodic.get_periodic_zero_info_numeric_quiz`.
     info_types: Tuple[str, ...] = ("intens", "extens", "noise_intens")
     #: Optional namespace prefix on result directory names (e.g.
@@ -130,14 +120,12 @@ class InductionExperiment:
     def seeds(self) -> Tuple[int, ...]:
         """Return the replicate seeds this process is responsible for.
 
-        Replicate ``r``'s seed is ``base_seed + r``, so a seed names the same
-        replicate whichever shard collects it. Unsharded this is all
-        ``n_replicates``; sharded it is every ``count``-th one starting at
-        ``index``. Shards STRIDE rather than take contiguous blocks, keeping
-        them within one replicate of each other in size (30 over 4 shards
-        splits 8/8/7/7, not 8/8/8/6) -- the slowest shard sets the wall-clock
-        time sharding exists to reduce. Every replicate lands in exactly one
-        shard, so parallel shards never contend for one ``rep_{seed}.yaml``.
+        Sharded, that is every ``count``-th seed starting at ``index``. Shards
+        STRIDE rather than take contiguous blocks, keeping them within one
+        replicate of each other in size (30 over 4 shards splits 8/8/7/7, not
+        8/8/8/6) -- the slowest shard sets the wall-clock time sharding exists
+        to reduce. Every replicate lands in exactly one shard, so parallel
+        shards never contend for one ``rep_{seed}.yaml``.
         """
         every = tuple(self.base_seed + r for r in range(self.n_replicates))
         if self.shard is None:
@@ -174,10 +162,9 @@ class InductionExperiment:
         Sets ``INFERENCE_PROVIDER=ec2`` and, when ``state_file`` is configured,
         points ``EC2_STATE_FILE`` at this experiment's private,
         repo-root-anchored state file; both are read at CALL time, unlike the
-        ``EC2_*`` constants frozen at import. When ``state_file`` is None it
-        EXPLICITLY POPS ``EC2_STATE_FILE``, so a later ``state_file=None``
-        experiment in the same process cannot keep talking to an earlier one's
-        state file instead of ``ec2.py``'s default path.
+        ``EC2_*`` constants frozen at import. With ``state_file=None`` it
+        EXPLICITLY POPS ``EC2_STATE_FILE``, so such an experiment cannot keep
+        talking to an earlier one's state file instead of ``ec2.py``'s default.
         """
         os.environ["INFERENCE_PROVIDER"] = "ec2"
         if self.state_file is not None:
@@ -254,9 +241,9 @@ class InductionExperiment:
             )
             return
 
-        # Forward exactly what the caller passed, unfiltered:
-        # ``run_replicates`` already populates its own ``eval_kwargs`` only for
-        # non-None values, so passing None through is identical to omitting it.
+        # Forward what the caller passed, unfiltered: run_replicates populates
+        # its own eval_kwargs only for non-None values, so passing None through
+        # is identical to omitting it.
         with ec2.serve_model(model):
             self.harness.run_replicates(
                 model,
@@ -281,10 +268,9 @@ class InductionExperiment:
     def cot_chain_lengths(self, tag: str = "cot") -> None:
         """Print reasoning-chain word-count stats from the stored CoT replicates.
 
-        A pure ``ReplicateHarness.cot_chain_lengths`` delegate: no environment
-        applied, no EC2/inference cost, but S3 reads under an S3-backed store.
-        ``tag`` selects the archetype whose stored replicates are scanned; every
-        CoT archetype is tagged "cot".
+        Like :meth:`summarize`, a pure ``ReplicateHarness`` delegate (no EC2 or
+        inference cost, but S3 reads under an S3-backed store). ``tag`` selects
+        the archetype scanned; every CoT archetype is tagged "cot".
         """
         self.harness.cot_chain_lengths(tag)
 

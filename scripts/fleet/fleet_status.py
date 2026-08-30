@@ -1,11 +1,10 @@
 """List the family-ladder scaling study's live EC2 fleet, read-only.
 
 Companion to ``scripts/fleet/run_fleet.py`` (launches and monitors) and
-``scripts/fleet/fleet_teardown.py`` (terminates). Safe to call from anywhere:
-analysis notebooks and ``run_fleet``'s monitor loop import it directly, and
-tests reach it through `client_factory` injection. boto3 is imported lazily
-inside `_default_client_factory`, never at module scope, so importing this
-module requires no AWS SDK.
+``scripts/fleet/fleet_teardown.py`` (terminates); both import it, as do
+analysis notebooks. Importing needs no AWS SDK -- boto3 is imported lazily
+inside `_default_client_factory`, never at module scope -- and tests inject a
+fake through `client_factory`.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ STATUS_REGIONS: tuple[str, ...] = ("us-east-1", "us-east-2", "us-west-2")
 
 
 def _default_client_factory(region: str) -> Any:
-    """Build a real boto3 EC2 client bound to `region` (boto3 imported here, lazily)."""
+    """Build a boto3 EC2 client for `region` (boto3 imported here, lazily)."""
     import boto3
 
     return boto3.client("ec2", region_name=region)
@@ -63,7 +62,7 @@ def fleet_rows(
     trailing ``*``), so this never lists the whole account, and re-checked
     CLIENT-SIDE so a regression there still cannot let a sibling experiment's
     instances leak in. A region that raises (no credentials, disabled region,
-    throttle) is logged and skipped, so one bad region cannot hide the others.
+    throttle) is logged and skipped, so one bad region cannot hide the rest.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -150,8 +149,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     """Print the live fleet table; always returns ``0``.
 
     No flags: `fleet_rows`'s defaults cover every region this study could have
-    provisioned in, and it logs and skips a region that fails to describe, so
-    there is no fatal path short of an unrecognized argument.
+    provisioned in, and it logs and skips a region that fails to describe.
     """
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."

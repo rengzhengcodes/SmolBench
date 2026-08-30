@@ -8,11 +8,11 @@ system python3 (3.10) and bash, so keep them stdlib-only and 3.10-compatible.
 
 They are BYTE-EXACT payloads: every byte ships verbatim, comments included --
 do not reformat them, and keep them LF-only (pinned by ``.gitattributes``). The
-non-``.py`` extension keeps formatters and the import machinery away from files
-whose bytes are a production contract (the agent also reads required env vars
-at module top, so importing it would raise). EC2 caps user-data at 16 KB before
-base64, and the cap binds on the GZIP-COMPRESSED bootstrap (see
-``pack_user_data``), not the raw render, which no longer fits.
+non-``.py`` extension keeps formatters and the import machinery away from a
+production byte contract (the agent also reads required env vars at module
+top, so importing it would raise). EC2's 16 KB user-data cap (before base64)
+binds on the GZIP-COMPRESSED bootstrap (``pack_user_data``); the raw render no
+longer fits.
 
 Assets are read ONCE at import into plain ``str`` constants, so a test can
 ``ast.parse()`` them directly and a missing file surfaces at import, not
@@ -58,9 +58,8 @@ WATCHDOG_PY: str = _asset("watchdog.py.txt")
 # embedded bash and python are full of braces and dollar signs. The max-lifetime
 # backstop is scheduled FIRST so the box self-halts even if a later bootstrap
 # step fails. Heredocs are single-quoted (<<'EOF') so the embedded scripts land
-# byte-exact. The static systemd units stay in this template so they render
-# through the same heredoc mechanism, each heredoc next to its delimiter, which
-# is what keeps render_user_data's truncation guard easy to reason about.
+# byte-exact; the static systemd units stay in this template, each heredoc next
+# to its delimiter, which keeps render_user_data's truncation guard simple.
 USER_DATA_TEMPLATE: str = _asset("user_data.sh")
 
 def render_user_data(
@@ -95,9 +94,8 @@ def render_user_data(
     s3_cache_uri : str, optional
         ``s3://bucket/prefix`` model-cache mirror; ``""`` disables it.
     vllm_port : int, optional
-        Rides in as ``SMOLBENCH_VLLM_PORT``. The ``8000`` default mirrors
-        ``ec2.EC2_VLLM_PORT``, which this package must not import (ec2 imports
-        it), so ec2.py passes the constant explicitly.
+        Rides in as ``SMOLBENCH_VLLM_PORT``. Default mirrors ``ec2.EC2_VLLM_PORT``
+        (not importable here: ec2 imports this package), so ec2.py passes it.
 
     Returns
     -------
@@ -136,27 +134,23 @@ def render_user_data(
 def pack_user_data(rendered: str) -> bytes:
     """Gzip-compress a rendered cloud-init script for the EC2 size cap (pure).
 
-    EC2's 16 KB user-data limit (before base64) applies to these COMPRESSED
-    bytes. Compression is transparent on both ends: cloud-init detects the gzip
-    magic number and gunzips before running, and boto3 base64-encodes a
-    ``bytes`` ``UserData`` directly.
+    The 16 KB limit (before base64) applies to these COMPRESSED bytes.
+    Compression is transparent on both ends: cloud-init detects the gzip magic
+    and gunzips before running; boto3 base64-encodes ``bytes`` ``UserData``.
 
     Returns
     -------
     bytes
-        `rendered`, UTF-8 encoded then gzip-compressed, ready to pass straight
-        to ``run_instances(UserData=...)``. ``mtime=0`` rather than gzip's
-        default "now" keeps the output byte-for-byte reproducible for identical
-        input, which is what makes the byte-stability test in
-        ``tests/evals/test_ec2_payloads.py`` meaningful rather than trivial.
+        UTF-8 then gzip, ready for ``run_instances(UserData=...)``. ``mtime=0``
+        (not gzip's wall-clock default) makes the output byte-reproducible,
+        which is what the byte-stability test in
+        ``tests/evals/test_ec2_payloads.py`` pins.
 
     Raises
     ------
     AssertionError
         The compressed result is >= 16 KB.
     """
-    # mtime=0, not gzip's wall-clock default: see Returns for why the output
-    # must be byte-reproducible.
     packed = gzip.compress(rendered.encode(), mtime=0)
     assert len(packed) < 16384, f"compressed user-data too large: {len(packed)} bytes"
     return packed

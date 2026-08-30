@@ -3,15 +3,14 @@
 The rungs are byte-identical through goal, tactic state, proof so far, and the
 premises the next tactic uses; hint:3 then adds a trailing 1-hop TRANSITIVE
 premise-closure block that noise:3 replaces with token-matched padding. So this leg
-asks only whether that background helps ON TOP OF an already-complete
-direct-premise context -- NOT the induction extens-vs-noise contrast, which swaps
-the encoding of the whole evidence set; results do not carry between legs.
+asks only whether that background helps ON TOP OF an already-complete direct-premise
+context -- NOT the induction extens-vs-noise contrast, which swaps the encoding of the
+whole evidence set; results do not carry between legs.
 
-Cells are paired on (theorem_id, k) WITHIN one model, which contributes exactly ONE
-cell per theorem: the pairs are independent, exact McNemar is the primary test, and
-no cluster correction applies here (unlike the family-ladder contrasts).
-Multiplicity is Holm-Bonferroni over the 21 models at FWER 0.05, valid under the
-arbitrary dependence induced by the shared theorem set.
+Cells are paired on (theorem_id, k) WITHIN one model, contributing exactly ONE cell per
+theorem: the pairs are independent, so exact McNemar is the primary test and no cluster
+correction applies (unlike the family-ladder contrasts). Holm-Bonferroni over the 21
+models at FWER 0.05 (`ALPHA`), valid under arbitrary dependence.
 
 Run:
     uv run --no-project --with numpy --with scipy python \
@@ -48,10 +47,10 @@ def load_rungs(path: Path, model: str) -> dict:
     """Map each ``(theorem_id, k)`` cell of one model to its two rung outcomes.
 
     Reads `path` (a model's ``verified_rows.jsonl``): only ``kind == "cell"``,
-    ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded
-    through ``power_analysis.grade_verdicts`` (the single implementation of this
-    study's row rules). The EARLIEST measurable row for a cell+rung wins: a retry is
-    an independent draw, so last-wins would report pass@N as pass@1. `model` is unused.
+    ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded through
+    ``power_analysis.grade_verdicts``, the single implementation of this study's row
+    rules -- in particular the EARLIEST measurable row for a cell+rung wins. `model`
+    is unused.
 
     Returns
     -------
@@ -75,8 +74,7 @@ def load_rungs(path: Path, model: str) -> dict:
             continue
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
             continue
-        # None = not a measurement: neither scores nor claims the cell, so the
-        # next row still gets its chance.
+        # None = not a measurement: neither scores nor claims the cell.
         grade = grade_verdicts([row.get("verdict")])
         if grade is None:
             continue
@@ -155,20 +153,13 @@ def main(argv=None) -> int:
     print(f"  hint:3 HIGHER (information helps): {len(up)}")
     print(f"  noise:3 HIGHER:                    {len(sig) - len(up)}")
 
-    # A null means nothing without the effect it could have caught, so this
-    # report states the MINIMUM DETECTABLE EFFECT -- two distinct quantities:
-    #
-    #   boundary -- the most balanced discordant split that still clears Holm's
-    #               FIRST (strictest) threshold at the model's OBSERVED
-    #               discordant total, i.e. the smallest effect that WOULD HAVE
-    #               been significant. A ~50%-power figure, not a design's MDE.
-    #   mde80    -- the smallest TRUE effect this design detects 80% of the
-    #               time: the smallest pi = P(a discordant pair favours hint:3)
-    #               whose exact binomial power at that threshold reaches 0.80,
-    #               converted back to accuracy points.
-    #
-    # Both condition on the observed discordant total, itself random, so an
-    # unconditional MDE would be larger still.
+    # A null means nothing without the effect it could have caught, so the report
+    # below states the MINIMUM DETECTABLE EFFECT and defines its two columns. What
+    # it does not say: boundary is the most balanced discordant split still clearing
+    # Holm's strictest threshold, and mde80 is the smallest pi = P(a discordant pair
+    # favours hint:3) whose exact binomial power reaches 0.80, converted back to
+    # accuracy points. Both condition on the observed discordant total, itself
+    # random, so an unconditional MDE would be larger still.
     print(f"\n{'-' * 78}\nMINIMUM DETECTABLE EFFECT -- what this null actually rules out")
     print(f"{'-' * 78}")
     print(f"Both columns are evaluated at each model's OBSERVED discordant "

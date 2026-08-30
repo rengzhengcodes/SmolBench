@@ -21,11 +21,11 @@ condition (EMPTY context) returning ONE Quiz, not the three-condition tuple.
 Period sets: the default 1..n makes sequence length the step function lcm(1..n)
 -- lcm(1..10) == lcm(1..9) == 2520, then n=11 leaps to 27,720 positions (~341k
 tokens, past every context window). ``PeriodicConfig`` therefore accepts an
-explicit ``periods`` set in two dual modes, validated there: pairwise coprime
-lengthens the EXTENSIONAL listing, while factor-sharing (``periods`` plus
-``expect_seq_len``) lengthens the INTENSIONAL rule list at a near-fixed listing
-(against 2,520, 9 harmonics -> 26 grows it 2.5%, but all 48 divisors would grow
-it 31%). The pathways diverge only in :func:`_periods_of`.
+explicit ``periods`` set in two dual modes, documented and validated on that
+field: pairwise coprime lengthens the EXTENSIONAL listing, factor-sharing
+lengthens the INTENSIONAL rule list at a near-fixed listing (against 2,520, 9
+harmonics -> 26 grows it 2.5%, but all 48 divisors would grow it 31%). The
+pathways diverge only in :func:`_periods_of`.
 
 Tokenizer discipline: the noise arm's tokenizer is REQUIRED, not defaulted -- a
 plausible-but-wrong default would silently de-calibrate the very length control
@@ -110,17 +110,15 @@ class PeriodicConfig:
     # tests/induction/test_golden_quizzes.py.
     periods: Tuple[int, ...] | None = None
     # The sequence length `periods` is expected to produce. Omit it and the
-    # periods must be PAIRWISE COPRIME, so lcm == product and the length is
-    # whatever the caller multiplied out -- the pathway for a longer
-    # EXTENSIONAL listing. Supply it and coprimality is NOT required; instead
-    # lcm(periods) must equal it exactly, which lets a DIVISOR set add
-    # harmonics while pinning the sequence length -- the pathway for a longer
-    # INTENSIONAL rule list at a fixed extensional listing.
-    #
-    # Either way the caller states the length it expects and construction fails
-    # if the periods disagree, because that failure is otherwise invisible: a
-    # wrong-length period set still generates a perfectly self-consistent quiz,
-    # just not the one that was asked for.
+    # periods must be PAIRWISE COPRIME, so lcm == product and the caller dials
+    # the length by multiplying out -- the pathway for a longer EXTENSIONAL
+    # listing. Supply it and coprimality is NOT required; lcm(periods) must
+    # equal it exactly instead, letting a DIVISOR set add harmonics while
+    # pinning the length -- the pathway for a longer INTENSIONAL rule list at a
+    # fixed extensional listing. Either way construction fails when the periods
+    # disagree with the declared length, because that failure is otherwise
+    # invisible: a wrong-length set still generates a self-consistent quiz, just
+    # not the one that was asked for.
     expect_seq_len: int | None = None
 
     def __post_init__(self):
@@ -139,9 +137,7 @@ class PeriodicConfig:
             if self.expect_seq_len is None:
                 # Pairwise coprimality makes lcm(periods) == prod(periods), so
                 # sequence length is a product the caller dials directly
-                # instead of the step function lcm(1..n) -- which is why n=10
-                # buys nothing (lcm stays 2520) and n=11 jumps 11x straight
-                # past every model's context window.
+                # instead of the step function lcm(1..n).
                 for i, a in enumerate(periods):
                     for b in periods[i + 1:]:
                         if gcd(a, b) != 1:
@@ -200,8 +196,7 @@ class PeriodicConfig:
                 )
 
 
-# This charset is restricted to lowercase letters, so the default '|'
-# separator is always safe.
+# Lowercase letters only, so the default '|' separator is always safe.
 _LABEL_CHARSET: str = string.ascii_lowercase
 
 
@@ -221,22 +216,16 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
 
 
 def _seq_len_of(config: PeriodicConfig) -> int:
-    """Return the sequence length: the lcm of the config's harmonic periods.
-
-    The step function lcm(1..n) on the default pathway; on a validated
-    pairwise-coprime set it degenerates to the product, so the caller picks the
-    length directly.
-    """
+    """Return the sequence length: the lcm of the config's harmonic periods."""
     return lcm(*_periods_of(config))
 
 
 def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
     """Generate the period-to-label and position-to-compound mappings.
 
-    Covers positions 1..lcm(periods). A position's compound label is the
-    sep-joined concatenation of every label whose period divides it, in
-    ascending period order; labels are assigned in ascending-period order too,
-    so ``labels[i]`` belongs to the i-th smallest period.
+    Covers positions 1..lcm(periods), each mapped to the sep-joined labels whose
+    periods divide it, in ascending period order (``labels[i]`` belonging to the
+    i-th smallest period).
     """
     periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
@@ -284,10 +273,9 @@ def get_periodic_prompts(
 ) -> Iterable[Tuple[str, str, str, Answer]]:
     """Generate intensional, extensional, and noise-padded intensional prompts.
 
-    Yields ``(intens, extens, noise_intens, answer)`` per query. The noise-padded
-    prompt appends whitespace until it has exactly as many tokens as the
-    extensional prompt for the SAME query, ablating context length as a confound.
-    The extensional prompt uses ``extens_template`` when the prompter sets one;
+    Yields ``(intens, extens, noise_intens, answer)`` per query, the noise arm
+    padded to the token count of the SAME query's extensional prompt. The
+    extensional prompt uses ``extens_template`` when the prompter sets one;
     otherwise all three share ``template``. ``tokenizer`` defines the noise arm's
     token target and must be the model's own -- see the module docstring's
     tokenizer discipline.
@@ -307,11 +295,9 @@ def get_periodic_prompts(
         extens = prompter.resolved_extens_template.safe_substitute(
             build_substitution(query, prompter, extension)
         )
-        # Match per query, on the RENDERED prompt: the substituted query text
-        # differs in length, so one shared pad could not make every noise
-        # prompt match its own extensional counterpart. The closure renders
-        # exactly as the intensional arm above, so they differ only in
-        # `positive_info`.
+        # Match per query on the RENDERED prompt (why: token_matched_noise_prompt).
+        # The closure renders exactly as the intensional arm above, so the two
+        # differ only in `positive_info`.
         noise_intens = token_matched_noise_prompt(
             context_renderer(prompter, query),
             intension,
@@ -333,11 +319,7 @@ def get_periodic_quiz(
     *,
     tokenizer: Tokenizer,
 ) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_periodic_prompts` to produce True/False QnA format.
-
-    Arguments forwarded verbatim; returns the intensional, extensional and
-    noise-padded intensional Quiz, in that order.
-    """
+    """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes: intens, extens, noise."""
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer), ToF
     )
@@ -349,11 +331,7 @@ def get_periodic_numeric_quiz(
     *,
     tokenizer: Tokenizer,
 ) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_periodic_prompts` to produce integer-answer QnA format.
-
-    Arguments forwarded verbatim; returns the intensional, extensional and
-    noise-padded intensional Quiz, in that order.
-    """
+    """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes: intens, extens, noise."""
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer), Numeric
     )
@@ -405,9 +383,8 @@ def tof_membership_query_gen(
     Yields ``({"pos": ..., "label": ...}, answer)`` pairs: at most
     ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
     if the pattern admits fewer of either polarity), sampled without replacement
-    under ``seed``; period-1 labels are excluded as trivially True. The query
-    count does NOT scale with n or sequence length. Both mappings come from
-    :func:`generate_sequence`.
+    under ``seed``; period-1 labels are excluded as trivially True. Both mappings
+    come from :func:`generate_sequence`.
     """
     rng = np.random.default_rng(seed)
 

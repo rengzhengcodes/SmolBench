@@ -10,11 +10,10 @@ holds only where the noise arm is a working control, and whitespace padding
 DESTROYS the output contract in a substantial minority of models. So all 21
 lanes print their measured non-compliance on both arms and are bucketed by
 `mechanism`, making the split visible rather than editorial: INFORMATION /
-LABEL-DENSITY (noise arm well-formed and still outscoring the enumeration, so
-enumerated evidence really is harder to induce from at equal length) vs
-PADDING-ROBUSTNESS COLLAPSE (noise arm largely non-compliant, so extens > noise
-is mechanically forced -- a padding-robustness finding, NOT excluded and NOT
-evidence about information).
+LABEL-DENSITY (both arms well-formed, so enumerated evidence really is harder
+to induce from at equal length) vs PADDING-ROBUSTNESS COLLAPSE (noise arm
+largely non-compliant, so extens > noise is mechanically forced -- a padding
+finding, NOT excluded and NOT evidence about information).
 
 PRIMARY p = the exact seed-level sign-flip test; the 30 replicate seeds are the
 independent unit, since the 9 harmonic items in a seed share one answer vector

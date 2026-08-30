@@ -1,19 +1,16 @@
 """Provision the S3-backed replicate results bucket (needs ADMIN credentials).
 
 The runbook counterpart to ``smolbench.evals.results_store``, which writes here
-when ``SMOLBENCH_RESULTS_S3`` is configured. Provisions `BUCKET` in `REGION`, a
-public-access block with all four flags on, versioning, and a managed IAM policy
-(`POLICY_NAME`) granting ``s3:ListBucket`` on the bucket plus
-``s3:GetObject``/``s3:PutObject``/``s3:DeleteObject`` on its contents, attached
-to IAM group `GROUP_NAME`. Every step is IDEMPOTENT; nothing runs at import
-time::
+when ``SMOLBENCH_RESULTS_S3`` is configured. Provisions `BUCKET` in `REGION`
+with all four public-access-block flags on and versioning enabled, plus the
+managed read/write policy `POLICY_NAME` (see `policy_document`) attached to IAM
+group `GROUP_NAME`. Every step is IDEMPOTENT; nothing runs at import time::
 
     .venv/bin/python scripts/results/provision_results_bucket.py
 
-The scoped ``smolbench-ec2-operators`` key the eval drivers use day-to-day is
-deliberately EC2-only, so every AWS call here returns ``AccessDenied`` under it.
 Exit status is ``0`` when every step succeeded or was already in place, ``1``
-when a call was denied.
+when a call was denied -- as every call here is under the day-to-day
+``smolbench-ec2-operators`` key, which is deliberately EC2-only.
 
 The bucket is a clean, append-only EXPERIMENT LOG written by the harness through
 ``S3ResultsStore``, and deliberately NOT seeded: any historical import MUST go
@@ -28,16 +25,13 @@ import json
 import sys
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 BUCKET = "smolbench-results-414266451290"
 REGION = "us-west-2"
 POLICY_NAME = "SmolbenchResultsBucketRW"
 GROUP_NAME = "smolbench-ec2-operators"
 
-#: `ClientError` codes meaning "the caller's credentials are not allowed
-#: to do this". `_run_step` handles these uniformly; see its docstring.
+#: `ClientError` codes meaning "the caller's credentials are not allowed to do
+#: this"; `_run_step` handles these uniformly.
 _ACCESS_DENIED_CODES = frozenset(
     {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
 )
@@ -47,11 +41,10 @@ _ACCESS_DENIED_CODES = frozenset(
 # Pure functions (no AWS, no I/O)
 # ---------------------------------------------------------------------------
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse this script's command line (``None`` parses ``sys.argv[1:]``).
+    """Parse this script's command line; the namespace is always empty.
 
-    Returns an empty namespace: there are no flags, since what varies is the
-    module-level `BUCKET`/`REGION`/`POLICY_NAME`/`GROUP_NAME`. The parse still
-    runs so ``--help`` and a stray argument behave as elsewhere.
+    There are no flags -- what varies is the module-level constants -- but the
+    parse still runs so ``--help`` and a stray argument behave as elsewhere.
     """
     parser = argparse.ArgumentParser(
         description=(
@@ -99,9 +92,9 @@ def access_denied_message(operation: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# AWS steps. Each takes an already-built client as its first parameter, so
-# each is testable against a fake client with no AWS SDK installed; none
-# builds a client itself, and none runs at import time.
+# AWS steps. Each takes an already-built client as its first parameter, so each
+# is testable against a fake with no AWS SDK installed; none builds a client
+# itself, and none runs at import time.
 # ---------------------------------------------------------------------------
 def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
     """Create ``bucket`` in ``region``, tolerating "already provisioned".
@@ -111,7 +104,7 @@ def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
     client's region binding. ``BucketAlreadyOwnedByYou`` and
     ``BucketAlreadyExists`` both count as idempotent success; the latter
     ordinarily means a DIFFERENT account owns the globally-unique name, but
-    `BUCKET` embeds this account's id as a suffix so that cannot happen here.
+    `BUCKET` embeds this account's id as a suffix.
 
     Raises
     ------
@@ -137,11 +130,6 @@ def put_public_access_block(s3: Any, bucket: str = BUCKET) -> None:
     """Block all public access on ``bucket``, setting all four flags to True.
 
     A PUT (replace), so re-running is idempotent with no error-code handling.
-
-    Raises
-    ------
-    botocore.exceptions.ClientError
-        Any S3 failure, most notably ``AccessDenied``.
     """
     s3.put_public_access_block(
         Bucket=bucket,
@@ -155,18 +143,12 @@ def put_public_access_block(s3: Any, bucket: str = BUCKET) -> None:
 
 
 def enable_versioning(s3: Any, bucket: str = BUCKET) -> None:
-    """Enable S3 versioning on ``bucket``.
+    """Enable S3 versioning on ``bucket`` (an idempotent call).
 
     A replicate ``rep_*.yaml`` is written exactly once and never mutated (see
     ``smolbench.evals.replicates``), so versions cost almost nothing while
     making an accidental overwrite (two drivers racing on one replicate number)
-    or a destructive ``aws s3 sync --delete`` recoverable. The call is itself
-    idempotent.
-
-    Raises
-    ------
-    botocore.exceptions.ClientError
-        Any S3 failure, most notably ``AccessDenied``.
+    or a destructive ``aws s3 sync --delete`` recoverable.
     """
     s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
 
@@ -179,8 +161,7 @@ def ensure_policy(iam: Any, bucket: str = BUCKET, name: str = POLICY_NAME) -> st
     versions per managed policy, so a genuine change is a deliberate manual
     ``aws iam create-policy-version``. The existing ARN comes from
     ``list_policies(Scope="Local")``, paginated by hand via
-    ``Marker``/``IsTruncated`` to stay on the one ``iam`` client (a global
-    service, built without a region).
+    ``Marker``/``IsTruncated`` to stay on the one ``iam`` client.
 
     Returns
     -------
@@ -190,8 +171,7 @@ def ensure_policy(iam: Any, bucket: str = BUCKET, name: str = POLICY_NAME) -> st
     Raises
     ------
     botocore.exceptions.ClientError
-        Any IAM failure other than ``EntityAlreadyExists`` on
-        ``create_policy`` -- most notably ``AccessDenied``.
+        Any IAM failure other than ``EntityAlreadyExists`` on ``create_policy``.
     RuntimeError
         IAM reported ``EntityAlreadyExists`` but no policy by that name is in
         ``list_policies`` -- better than a ``None`` ARN reaching
@@ -237,11 +217,6 @@ def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -
     server-side and succeeds silently, unlike
     ``_aws.ensure_instance_profile``'s ``add_role_to_instance_profile``, which
     DOES raise ``LimitExceeded``.
-
-    Raises
-    ------
-    botocore.exceptions.ClientError
-        Any IAM failure, most notably ``AccessDenied`` or a missing group.
     """
     iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
 
@@ -250,11 +225,7 @@ def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -
 # Orchestration
 # ---------------------------------------------------------------------------
 class _ProvisionAccessDenied(Exception):
-    """Signal an AccessDenied AWS call inside `main`'s step sequence.
-
-    `_run_step` prints the denial and raises this; `main` catches it once and
-    returns a nonzero exit status instead of a `ClientError` traceback.
-    """
+    """Raised by `_run_step` on a denied call, so `main` exits 1 with no traceback."""
 
 
 def _run_step(label: str, operation: str, call):
@@ -295,9 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     """Provision the results bucket and return an exit status.
 
     ``0`` when every step succeeded or was already in place, ``1`` when an AWS
-    call was denied. Builds its two clients via
-    ``smolbench.evals._aws.fresh_client`` (never a cached/default-session one):
-    S3 bound to `REGION`, and IAM (global).
+    call was denied. Clients come from ``smolbench.evals._aws.fresh_client``,
+    never a cached/default-session one: S3 bound to `REGION`, IAM global.
     """
     parse_args(argv)
 

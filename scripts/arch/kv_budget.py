@@ -17,9 +17,8 @@ replication grows it. Per layer, per token of effective context, at BF16:
 
 The layer mix comes from ``layer_types`` (a list), else
 ``sliding_window_pattern`` (a cycling string, ``L`` local / ``G`` global), else
-every layer counts as full attention. A bare ``sliding_window`` with neither
-mix field is deliberately NOT applied: DeepSeek-V4 carries
-``sliding_window=128`` for its CSA/HCA sparse scheme yet keeps full-length KV.
+every layer counts as full attention; a bare ``sliding_window`` with neither mix
+field is deliberately NOT applied (see `_layer_mix`).
 
 For box sizing, budget ``weights + 2.0 x KV@131k`` (about 8 concurrent
 requests) against ``0.90 x total VRAM``; a box sized for one sequence goes
@@ -99,8 +98,7 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     Returns
     -------
     int
-        KV bytes across all layers and tp shards. Replication only ever raises
-        the total above the tp=1 figure.
+        Replication only ever raises the total above the tp=1 figure.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

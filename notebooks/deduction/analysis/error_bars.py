@@ -13,9 +13,9 @@ naive binomial on cells; both figures are printed. They are BCa (Efron 1987),
 jackknifed over blocks and shown beside percentile intervals; where the bias
 correction is undefined (only at a degenerate 0.000) the code falls back to
 percentile and reports the fallback, not a silent NaN. The PRIMARY p-value uses
-the same unit: a block SIGN-FLIP permutation test on per-theorem differences,
-which collapses onto exact McNemar at one cell per block. Cell-level McNemar
-stays as a labelled DESCRIPTIVE column; the gap between the two is clustering.
+the same unit -- a block SIGN-FLIP permutation test on per-theorem differences,
+collapsing onto exact McNemar at one cell per block -- while cell-level McNemar
+stays a labelled DESCRIPTIVE column; the gap between the two is clustering.
 
 Denominator rule, COUNT-AS-FAILURE by default: a cell with no surviving
 measurable row in one lane scores 0 there exactly when its key is measurable in
@@ -32,11 +32,9 @@ Row rules are NOT re-implemented here: ``lane_outcomes`` grades through
 ``hint_vs_noise.load_rungs``. This file adds only the count-as-failure
 denominator rule and the recovery rows' second schema.
 
-Run:
+Run (``--mode report`` is the default; ``-B`` sets the resample count):
     uv run --no-project --with numpy --with scipy python \
         notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode sweep
-    uv run --no-project --with numpy --with scipy python \
-        notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode report -B 20000
 """
 
 import argparse
@@ -91,11 +89,10 @@ DRIFT_TOL = 0.0005
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Compute Holm (1979) step-down rejections at familywise level `alpha`.
 
-    Valid under ARBITRARY dependence, which this family needs: the 21 ladder
-    contrasts share cells and models. The sort is STABLE because several
-    contrasts sit exactly on the permutation test's ``1/(B+1)`` resolution
-    floor, and those ties must not make the rejection mask depend on contrast
-    build order.
+    Valid under ARBITRARY dependence, which this family needs (the 21 ladder
+    contrasts share cells and models). The sort is STABLE: several contrasts
+    sit exactly on the permutation test's ``1/(B+1)`` resolution floor, and
+    those ties must not make the rejection mask depend on build order.
 
     Returns
     -------
@@ -285,10 +282,10 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     ``D_t = successes_b(t) - successes_a(t)``: under the null, which model does
     better within a theorem is a coin flip, so block signs are exchangeable and
     ``p = (#{|sum eps_t D_t| >= |sum D_t|} + 1) / (B + 1)`` for eps uniform on
-    ``{-1, +1}^n_theorems``. Both ``+1``s are
-    the Monte-Carlo correction that keeps the test exact-valid at finite B.
-    With one cell per theorem the sign-flip distribution IS the binomial
-    McNemar conditions on, so this degenerates to cell-level exact McNemar.
+    ``{-1, +1}^n_theorems``. Both ``+1``s are the Monte-Carlo correction that
+    keeps the test exact-valid at finite B. With one cell per theorem the
+    sign-flip distribution IS the binomial McNemar conditions on, so this
+    degenerates to cell-level exact McNemar.
 
     Parameters
     ----------
@@ -357,9 +354,8 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     reject_superseded(path for path, _field in sources)
     for path, field in sources:
         parsed = [json.loads(line) for line in path.read_text().splitlines() if line]
-        # Refused HERE, on this source's own field, before any row is graded
-        # -- see reject_unverified_verdicts for why the check is per-source
-        # rather than always on "verdict".
+        # Screened on this source's OWN field -- see reject_unverified_verdicts
+        # for why the check is per-source rather than always on "verdict".
         reject_unverified_verdicts(parsed, field, path)
         for row in parsed:
             if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
@@ -471,9 +467,9 @@ def load(rows_dir: Path) -> tuple:
 def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
     """Measure Monte-Carlo drift across `B_GRID`, so B is chosen, not asserted.
 
-    Runs `bootstrap_stats` at each B on an INDEPENDENT RNG stream and prints
-    the interval-endpoint drift against the next larger B. `succ`/`size` come
-    from `block_matrix`; `models` matches `succ`'s column order.
+    Runs `bootstrap_stats` at each `B_GRID` entry and prints the
+    interval-endpoint drift against the next larger B. `succ`/`size` come from
+    `block_matrix`; `models` matches `succ`'s column order.
     """
     print(f"Resample-count sweep -- {succ.shape[0]} theorem blocks, "
           f"{int(size.sum())} cells, {len(models)} models")
@@ -620,10 +616,10 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
             rows.append((label, a, b, ci, nb, nc, float(p_block[i]), p_cell))
         pv = np.array([r[6] for r in rows])          # PRIMARY inference
         pv_cell = np.array([r[7] for r in rows])     # descriptive
-        # PRIMARY gets Holm (FWER, arbitrary dependence); SECONDARY, an
-        # exploratory tier, gets the pre-registered Benjamini-Hochberg FDR at
-        # q = 0.05. Both run here, not in a throwaway script: every number in
-        # the report must come out of this file.
+        # PRIMARY gets Holm (FWER, arbitrary dependence); SECONDARY, exploratory,
+        # gets the pre-registered Benjamini-Hochberg FDR at q = 0.05. Both run
+        # here, not in a throwaway script: every number in the report must come
+        # out of this file.
         rej = holm(pv) if corrected else benjamini_hochberg(pv, Q_SECONDARY)
         rej_cell = holm(pv_cell) if corrected else benjamini_hochberg(pv_cell,
                                                                      Q_SECONDARY)

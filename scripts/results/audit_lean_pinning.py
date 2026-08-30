@@ -44,10 +44,9 @@ REGION = "us-west-2"
 RUN_PREFIX = "deduction/runs"
 RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 
-#: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: they
-#: share the study's `theorems` block but live under their own run prefix,
-#: and are NOT folded into headline pools. Still gated against the pin,
-#: since a stray theorem would mean the draw was not deterministic.
+#: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: own run
+#: prefix, NOT folded into headline pools, still gated against the pin -- a
+#: stray theorem would mean the draw was not deterministic.
 FLIP_RUNS = [("flip_nemotron-3-nano-4b", "nemotron-3-nano-4b"),
              ("flip2_nemotron-3-nano-4b", "nemotron-3-nano-4b")]
 
@@ -102,10 +101,10 @@ def fetch_spool_index(s3) -> tuple[dict[str, set[str]], dict[str, dict[str, str]
     -------
     tuple of (dict, dict)
         Both keyed by lane: cell keys ``"<theorem-slug>|<rung-slug>"`` for every
-        ``outputs/`` object (presence only; content is gated elsewhere), then
-        each cell's ``prompts/<rung>.md`` ETag. Those are small single-part
-        uploads, so the ETag is the object MD5 and cross-lane equality is byte
-        equality without downloading ~19 MB x 21 of spool.
+        ``outputs/`` object (presence only), then each cell's
+        ``prompts/<rung>.md`` ETag. Those are small single-part uploads, so the
+        ETag is the object MD5 and cross-lane equality is byte equality without
+        downloading ~19 MB x 21 of spool.
     """
     cells: dict[str, set[str]] = {}
     prompts: dict[str, dict[str, str]] = {}

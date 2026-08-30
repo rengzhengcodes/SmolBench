@@ -18,10 +18,8 @@ one line per color naming the (annealed) span(s) it held, "<color> was <role> on
 color table, one "Year Y: Color." line per year
 (:func:`_prompt_extensional_indexed`), always at least as long; **noise_intens**
 = the intensional text padded with whitespace to the extensional prompt's token
-count. Matching the RENDERED PROMPT rather than the context block matters here
-in particular: the extensional arm renders from ``extens_template`` with an
-extra ``$query_years`` block, so equal-length CONTEXTS would still give
-unequal-length PROMPTS.
+count -- matched on the RENDERED PROMPT, which is what accounts for the extra
+``$query_years`` block ``extens_template`` adds.
 
 Tokenizer discipline: the noise arm's tokenizer is REQUIRED, not defaulted, so
 quizzes stay per-(seed, model) with only ``noise_intens`` varying across models
@@ -270,12 +268,11 @@ def get_random_exclusive_prompts(
 ) -> Iterable[Tuple[str, str, str, bool]]:
     """Generate an intensional, extensional, and noise-padded intensional prompt.
 
-    Yields ``(intens, extens, noise_intens, answer)`` per query. The noise-padded
-    prompt keeps the intensional interval-format context but appends whitespace
-    until the RENDERED prompt has exactly as many tokens as the extensional
-    prompt for the SAME query, ablating context length as a confound.
-    ``tokenizer`` defines that token target and must be the model's own -- see
-    the module docstring's tokenizer discipline.
+    Yields ``(intens, extens, noise_intens, answer)`` per query: the noise arm
+    keeps the interval-format context and is padded to the token count of the
+    SAME query's rendered extensional prompt. ``tokenizer`` defines that target
+    and must be the model's own -- see the module docstring's tokenizer
+    discipline.
     """
     label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(
         config
@@ -283,9 +280,8 @@ def get_random_exclusive_prompts(
 
     # Intensional representation: person-indexed, interval format.
     intension: str = ""
-    # `role` is hoisted out of the loop: it is constant across colors, and
-    # pulling it out avoids nesting a "..." lookup inside an f-string that is
-    # itself delimited with "...".
+    # `role` is hoisted out of the loop: constant across colors, and pulling it
+    # out avoids nesting a "..." lookup inside a "..."-delimited f-string.
     role: str = prompter.substitution["role"]
     for color, inters in label_to_intervals.items():
         if not inters.any():
@@ -319,9 +315,7 @@ def get_random_exclusive_prompts(
 
         # Noise-padded intensional prompt: same template/query as intens, but
         # positive_info is padded until the whole rendered prompt matches THIS
-        # query's extensional prompt token for token -- including the
-        # $query_years block extens_template adds, which a context-level match
-        # could never account for.
+        # query's extensional prompt token for token, $query_years included.
         noise_intens = token_matched_noise_prompt(
             context_renderer(prompter, query),
             intension,
@@ -339,11 +333,7 @@ def get_random_exclusive_quiz(
     *,
     tokenizer: Tokenizer,
 ) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_random_exclusive_prompts` to produce True/False QnA format.
-
-    Arguments forwarded verbatim; returns the intensional, extensional and
-    noise-padded intensional Quiz, in that order.
-    """
+    """Wrap :func:`get_random_exclusive_prompts` as ``ToF`` quizzes: intens, extens, noise."""
     return quizzes_from_prompts(
         get_random_exclusive_prompts(config, prompter, tokenizer=tokenizer), ToF
     )
@@ -355,11 +345,7 @@ def get_random_exclusive_numeric_quiz(
     *,
     tokenizer: Tokenizer,
 ) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_random_exclusive_prompts` to produce integer-answer QnA format.
-
-    As :func:`get_random_exclusive_quiz` but with ``Numeric`` items; returns the
-    intensional, extensional and noise-padded intensional Quiz, in that order.
-    """
+    """Wrap :func:`get_random_exclusive_prompts` as ``Numeric`` quizzes: intens, extens, noise."""
     return quizzes_from_prompts(
         get_random_exclusive_prompts(config, prompter, tokenizer=tokenizer), Numeric
     )
@@ -369,9 +355,8 @@ def get_random_exclusive_numeric_quiz(
 # Built-in query generators
 # ---------------------------------------------------------------------------
 # The importable task definitions (mirroring periodic.py's). The offline test
-# suite (tests/induction/test_golden_quizzes.py, test_noise_token_match.py,
-# test_induction_semantics.py) and the __main__ demo consume these SAME
-# functions, so the statistically load-bearing query sampling lives in one place.
+# suite and the __main__ demo consume these SAME functions, so the
+# statistically load-bearing query sampling lives in one place.
 
 def succession_query_gen(
     labels_to_intervals: Dict[Color, Intervals],

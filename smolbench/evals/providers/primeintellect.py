@@ -1,10 +1,9 @@
 """
 Interface directly with the Prime Intellect inference API.
 
-A thin configuration over :mod:`smolbench.evals.openai_compat`, which holds
-the retry loop, response parsing and parallel evaluation shared by every
-provider; only Prime Intellect's endpoint, auth and context-length lookup
-live here.
+A thin configuration over :mod:`smolbench.evals.openai_compat` (the shared
+retry/parsing/evaluation core); only Prime Intellect's endpoint, auth and
+context-length lookup live here.
 
 Env, all read at call time: ``PRIME_INTELLECT_API_KEY``,
 ``INFERENCE_PROVIDER=primeintellect`` (routes smolbench.evals.provider here),
@@ -37,8 +36,8 @@ def _connection(model: str) -> Tuple[str, str]:
 def _extra_headers(model: str) -> Dict[str, str]:
     """Return the ``X-Prime-Team-ID`` billing header, or ``{}`` for a personal account.
 
-    ``PRIME_INTELLECT_TEAM_ID`` is read on every request attempt, so it can be
-    set alongside the API key in keys.env with no re-import.
+    ``PRIME_INTELLECT_TEAM_ID`` is read on every request attempt, so setting it
+    in keys.env alongside the API key needs no re-import.
     """
     team_id = os.getenv("PRIME_INTELLECT_TEAM_ID", "")
     return {"X-Prime-Team-ID": team_id} if team_id else {}

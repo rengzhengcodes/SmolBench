@@ -1,13 +1,12 @@
-"""
-Tokenize prompts for the model under test, to size token-matched prompts.
+"""Tokenize prompts for the model under test, to size token-matched prompts.
 
 The induction ``noise_intens`` arm pads the intensional (rule) prompt to the
 extensional (listing) prompt's length, so an intens-vs-extens gap cannot be
 blamed on prompt length. Length means TOKENS under the tested model's OWN
 tokenizer, not characters: at the periodic production config (``n=9``, seed
 1776, ``cl100k_base``) a character-matched pad ran 1.62x the extensional
-prompt's 26,279 tokens. `for_model` is the entry point: it maps an eval model
-alias (also vLLM's ``--served-model-name``) to that checkpoint's `Tokenizer`.
+prompt's 26,279 tokens. `for_model` maps an eval model alias (also vLLM's
+``--served-model-name``) to that checkpoint's `Tokenizer`.
 
 NO SILENT FALLBACKS: every constructor raises when it cannot load its
 tokenizer. A count fixes PROMPT BYTES, so a fallback would pad differently
@@ -28,13 +27,13 @@ from smolbench.evals.openai_compat import METADATA_TIMEOUT_S
 class Tokenizer(Protocol):
     """Anything that can count a string's tokens for the model under test.
 
-    Structural, not nominal, so the offline test suite can drive token
-    matching with a deterministic stub.
+    Structural, not nominal, so the offline test suite can drive token matching
+    with a deterministic stub.
     """
 
     #: Human-readable identity (repo id, encoding name, served model...).
-    #: Format is free: it appears only in logs and errors, so that a
-    #: token-match failure names WHICH tokenizer could not reach the target.
+    #: Free-form: it appears only in logs and errors, so a token-match failure
+    #: names WHICH tokenizer could not reach the target.
     name: str
 
     def count(self, text: str) -> int:
@@ -72,10 +71,10 @@ class HFTokenizer:
     def from_repo(cls, repo_id: str) -> "HFTokenizer":
         """Download (once, then cached) and load `repo_id`'s tokenizer.
 
-        Fetches only ``tokenizer.json`` (a few MB, not the weights) into the
-        usual ``~/.cache/huggingface`` cache, so only the first call needs
-        network. Disabling truncation and padding on load is load-bearing: an
-        embedded ``truncation`` stanza is honored on every ``encode``
+        Fetches only ``tokenizer.json`` (a few MB, not the weights) into
+        ``~/.cache/huggingface``, so only the first call needs network.
+        Disabling truncation and padding on load is load-bearing: an embedded
+        ``truncation`` stanza is honored on every ``encode``
         (``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
         ``{"max_length": 512}``, reporting a ~26,000-token prompt as 512), and
         a padded batch counts tokens the model never sees.
@@ -122,7 +121,7 @@ class TiktokenTokenizer:
 
     NOT a stand-in for the model under test: ``cl100k_base`` is nobody's
     tokenizer among the served checkpoints, and nothing falls back to it -- a
-    caller must select it explicitly.
+    caller selects it explicitly.
     """
 
     def __init__(self, encoding_name: str = "cl100k_base") -> None:

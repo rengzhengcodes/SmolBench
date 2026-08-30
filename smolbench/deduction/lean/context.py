@@ -27,15 +27,13 @@ Chain = Literal["stepk", "hint", "noise"]
 # - "hint" caps at 9: `_render_hint_parts` defines 0 (premise names), 1
 #   (+ signatures), 2 (+ full bodies with proofs), and 3+ as a transitive
 #   premise-dependency closure of `level - 2` hops (hint:3 = 1-hop ...
-#   hint:9 = 7-hop). That deliberately runs past the hint:0..4 range
-#   `notebooks/deduction/README.md` documents and sweep-tests: nothing
-#   breaks, because `_HINT2_3_TOKEN_CAP` (50k tokens) bounds the rendered
-#   text however far the closure walks, so deeper hops only truncate
-#   earlier. The cap keeps `validate` a real bound without pinning it to
-#   the levels currently in use.
+#   hint:9 = 7-hop). Deliberately past the hint:0..4 range
+#   `notebooks/deduction/README.md` documents and sweep-tests, so `validate`
+#   is a real bound and not a pin on the levels currently in use: deeper
+#   hops only truncate earlier, since `_HINT2_3_TOKEN_CAP` (50k tokens)
+#   bounds the rendered text however far the closure walks.
 # - "noise" caps at 9 to mirror "hint": `_render_noise_parts(level)`
-#   renders `_render_hint_parts` at both `level - 1` and `level`, so it
-#   needs the same range.
+#   renders `_render_hint_parts` at both `level - 1` and `level`.
 _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 
 
@@ -370,11 +368,6 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     chain, level : Chain, int
         Rung to render; checked by `validate`.
 
-    Returns
-    -------
-    RenderedContext
-        `text` = the chain-specific parts joined by blank lines.
-
     Raises
     ------
     ValueError
@@ -397,9 +390,8 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
 
 
-# Canonical default rung universe. hint:N for N≥3 is a (N−2)-hop
-# transitive closure; depths up to 9 run, but mathlib's dependency fan-out
-# hits the 50k token cap by depth ~5-6.
+# Canonical default rung universe. Depths up to hint:9 run (see `_MAX_LEVEL`),
+# but mathlib's dependency fan-out hits the 50k token cap by depth ~5-6.
 IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
     ("stepk", 0), ("stepk", 1), ("stepk", 2),
     ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3),
@@ -451,8 +443,8 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
         return False
 
     if chain == "hint":
-        # Without recorded premises the whole chain collapses: hint:0 says
-        # "(none recorded)", and 1+ have nothing to elaborate.
+        # Collapses the whole chain: hint:0 says "(none recorded)", 1+ have
+        # nothing to elaborate.
         if not tt.premises:
             return True
         if level == 0:
@@ -472,8 +464,6 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
             return not premise_dep_closure(seeds, level - 2)
         return False
     if chain == "noise":
-        # Trivial when the matching hint rung is trivial, or when there
-        # is nothing to pad (hint:N's text length ≤ hint:(N-1)'s).
         if level < 1:
             return True
         if is_trivial_rung(theorem, k, "hint", level):

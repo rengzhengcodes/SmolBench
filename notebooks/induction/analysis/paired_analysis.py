@@ -8,8 +8,7 @@ rejection status reported: unpaired CMH; item-level exact McNemar (DESCRIPTIVE
 only -- marks within a replicate are not independent); and `signflip_exact_p`
 over whole replicates, which carries the inference here as in
 `significance_report.py` and `extens_vs_noise.py`. `design_effect` measures the
-variance CMH omits by summing the 9 harmonic strata as if independent (>1
-anticonservative, <1 conservative).
+variance CMH omits by summing the 9 harmonic strata as if independent.
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
 (``{model}_{info}/rep_{seed}.yaml``); as in ``power_analysis.py`` the

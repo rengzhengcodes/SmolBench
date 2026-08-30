@@ -3,9 +3,9 @@
 `sft`'s ``full_name`` holdout is blind to two leak channels: a *restatement* of
 an eval theorem under another name (mathlib has duplicate lemmas; an
 autoformalized corpus shares no naming at all), and answer-content overlap
-without the theorem -- mathlib-derived synthetic corpora (e.g. LeanNavigator)
-reproduce eval states and tactic chains inside *other* theorems. `HoldoutIndex`
-fingerprints every eval theorem; `.check` reports which keys a candidate hits.
+without the theorem -- mathlib-derived corpora (e.g. LeanNavigator) reproduce
+eval states and tactic chains inside *other* theorems. `HoldoutIndex` fingerprints
+every eval theorem; `.check` reports which keys a candidate hits.
 
 Key families
 ------------
@@ -19,8 +19,7 @@ Key families
   proofs with >= 3 tactics; (b) ``(state, next-tactic)`` pairs, the answer unit
   of the headline ``k=last`` cells. 1-2-tactic chains are deliberately NOT
   chain-indexed: ``simp`` and ``intro h``+``simp`` are ubiquitous idioms
-  revealing no answer, and the pair key covers them *with* the state that makes
-  them answer-conditional.
+  revealing no answer, and the pair key covers them *with* the state.
 
 Deterministic (pure text normalization, seeded MinHash, no model calls), so a
 build is byte-reproducible from its manifest config. Imports only
@@ -46,14 +45,13 @@ from .sft import DEFAULT_EVAL_SPECS
 # ---------------------------------------------------------------------------
 
 
-# Incidental tokens Lean allocates deterministically per elaboration; they
-# differ between two traces of the *same* goal (different proof context, or a
-# different mathlib commit -- LeanNavigator pins none). Canonicalizing them lets
-# a mathlib-derived corpus's states and chains match the eval's. On a full
-# 4.7M-row LeanNavigator scan this recovered 29 goal-state and 22 (state,
-# tactic) matches that exact byte-match missed, while collapsing only 4 of the
-# eval's ~20.5k state variants -- near-injective, so the recall costs almost no
-# over-drop.
+# Incidental tokens Lean allocates per elaboration; they differ between two
+# traces of the *same* goal (different proof context, or a different mathlib
+# commit -- LeanNavigator pins none), so canonicalizing them lets a
+# mathlib-derived corpus's states and chains match the eval's. Measured on a full
+# 4.7M-row LeanNavigator scan: +29 goal-state and +22 (state, tactic) matches
+# over exact byte-match, collapsing only 4 of the eval's ~20.5k state variants --
+# near-injective, so the recall costs almost no over-drop.
 _METAVAR_RE = re.compile(r"\?[\w]+(?:\.\d+)?")  # ?m.248692, ?a, ?_  -> ?m
 # Superscript digits span TWO Unicode blocks: ¹²³ are Latin-1 (U+00B9/B2/B3),
 # ⁰⁴⁵⁶⁷⁸⁹ are Superscripts-and-Subscripts (U+2070/2074-2079) -- so a range
@@ -65,12 +63,10 @@ _UNIVERSE_RE = re.compile(r"\bu_\d+\b")  # universe params u_1 -> u
 def normalize_text(s: str) -> str:
     """Canonicalize Lean text for fingerprinting.
 
-    In order: Unicode NFC; collapse the per-elaboration counters that differ
-    between two traces of one goal (``?m.248692`` -> ``?m``, ``inst✝⁶`` ->
-    ``inst✝``, ``u_1`` -> ``u``); collapse every whitespace run *including
-    newlines* to one space, then strip, so multi-line and one-line renderings of
-    a state collide. Applied identically to index and query sides, so the
-    collapses can only *add* matches.
+    In order: Unicode NFC; the three per-elaboration counter collapses above;
+    then every whitespace run *including newlines* to one space, stripped, so
+    multi-line and one-line renderings of a state collide. Applied identically to
+    index and query sides, so the collapses can only *add* matches.
     """
     s = unicodedata.normalize("NFC", s)
     s = _METAVAR_RE.sub("?m", s)
@@ -95,10 +91,9 @@ def state_variants(state_pp: str) -> list[str]:
 
 #: Minimum normalized length for a *goal-only* variant to become a
 #: statement/state index key: shorter bare goals (``⊢ False``, ``⊢ a = b``)
-#: recur across unrelated mathlib theorems, identify nothing, and indexing them
-#: would mass-drop harmless training rows. The full-state variant is always
-#: indexed, and `pairs` keeps even short goal variants -- a (state, tactic)
-#: match reproduces the eval cell's *answer* at any length.
+#: recur across unrelated mathlib theorems and would mass-drop harmless training
+#: rows. The full-state variant is always indexed, and `pairs` keeps even short
+#: goal variants -- a (state, tactic) match reproduces the *answer* at any length.
 _MIN_GOAL_KEY_CHARS = 24
 
 
@@ -148,9 +143,9 @@ _PERMS = _perm_params()
 def _shingles(text: str) -> frozenset[int]:
     """Hashed character `_SHINGLE_N`-gram shingle set of normalized `text`.
 
-    Shingles are 64-bit ``blake2b`` integers, stable across processes and
-    Python versions unlike built-in ``hash``. Text shorter than the
-    shingle width contributes itself as one shingle.
+    64-bit ``blake2b`` integers -- stable across processes and Python versions,
+    unlike built-in ``hash``. Text shorter than the shingle width contributes
+    itself as one shingle.
     """
     if len(text) <= _SHINGLE_N:
         grams = [text] if text else []
@@ -248,8 +243,8 @@ class HoldoutIndex:
         self.names.add(t.full_name)
         if not t.traced_tactics:
             return
-        # K2: the statement is the step-0 state -- what stepk:0/1 render at the
-        # start of the proof, and what an external corpus would restate.
+        # K2: the statement is the step-0 state -- what an external corpus
+        # would restate.
         for vi, variant in enumerate(_index_variants(t.traced_tactics[0].state_before)):
             self.statements.setdefault(variant, t.full_name)
             shingles = _shingles(variant)
@@ -260,8 +255,7 @@ class HoldoutIndex:
                 for band in range(_BANDS):
                     bucket = (band, sig[band * _ROWS : (band + 1) * _ROWS])
                     self._lsh.setdefault(bucket, []).append(key)
-        # K3 + K4b: every step's state (and goal-only variant), plus the
-        # (state, next-tactic) answer pair.
+        # K3 + K4b: every step's state, plus its (state, next-tactic) answer pair.
         tactics = [normalize_text(tt.tactic) for tt in t.traced_tactics]
         for tt, tactic in zip(t.traced_tactics, tactics):
             for variant in _index_variants(tt.state_before):

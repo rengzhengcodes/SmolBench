@@ -18,10 +18,6 @@ see ``smolbench.evals.results_store`` for store resolution and the
 A seed's outstanding info types are pooled into ONE ``evaluate()`` call to keep
 the GPU saturated; ``evaluate()`` preserves input order, so the marks slice
 back per info type by question count, under one shared ``run_ts``.
-``make_quizzes`` is keyed on (seed, model) because the ``noise_intens`` arm is
-padded to an exact TOKEN count under the tested model's own tokenizer; the
-``intens``/``extens`` arms stay byte-identical across models, keeping
-cross-model comparisons paired on identical prompts.
 """
 
 import functools
@@ -43,23 +39,24 @@ class ReplicateHarness:
     (local disk or S3 -- see the module docstring) plus a quiz factory."""
 
     #: Directory holding the per-condition replicate dirs; against an
-    #: ``S3ResultsStore`` it is instead the anchor this experiment's S3 log
-    #: path segment is derived from (``results_store.experiment_name``).
+    #: ``S3ResultsStore`` it is instead the anchor the experiment's S3 log path
+    #: segment is derived from (``results_store.experiment_name``, which maps it
+    #: relative to ``results_store.repo_root()``).
     #:
     #: MUST be absolute and package/file-anchored, never cwd-relative: a
-    #: notebook kernel can run with a temp-dir cwd, the power-analysis scripts
-    #: read this same tree, and the path is mapped relative to
-    #: ``results_store.repo_root()`` to build the S3 experiment name.
+    #: notebook kernel can run with a temp-dir cwd, and the power-analysis
+    #: scripts read this same tree.
     results_dir: Path
     #: model name -> short archetype tag used in result dir names
     #: (e.g. {"olmo-3.1-32b-instruct": "decode"}).
     archetype_tags: Mapping[str, str]
-    #: (seed, model) -> {info type: quiz}, called on demand per outstanding
-    #: seed rather than eagerly for all seeds, to keep notebook memory bounded
-    #: (a chromatic replicate embeds the full interval history in about 120
-    #: prompts). It takes the MODEL because the noise arm is a token-length
-    #: control sized with the tokenizer of the model under test, so its prompts
-    #: differ per model (the intensional and extensional arms do not -- see
+    #: (seed, model) -> {info type: quiz}, called on demand per outstanding seed
+    #: rather than eagerly, to keep notebook memory bounded (a chromatic
+    #: replicate embeds the full interval history in about 120 prompts). Keyed
+    #: on the MODEL because the ``noise_intens`` arm is padded to an exact TOKEN
+    #: count under the tested model's own tokenizer, so its prompts differ per
+    #: model; ``intens``/``extens`` stay byte-identical across models, keeping
+    #: cross-model comparisons paired on identical prompts (see
     #: ``smolbench.induction.periodic``'s tokenizer discipline).
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Replicate seeds; each doubles as the per-request decoding seed.
@@ -72,17 +69,16 @@ class ReplicateHarness:
     #: sub-level of the experiment name (``results_store.experiment_name``).
     prefix: str = ""
     #: Seeds counted as outstanding even when the store already has them: the
-    #: ``store.exists`` resume-skip is bypassed for exactly these, and each is
-    #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (the
-    #: default) disables forcing entirely.
+    #: ``store.exists`` resume-skip is bypassed for exactly these, each being
+    #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (default)
+    #: disables forcing entirely.
     #:
-    #: WARNING: against an S3-backed store this knob cannot SUPERSEDE anything.
-    #: Reads resolve the EARLIEST logged run, so forcing an already-logged seed
-    #: spends real GPU money appending an object no reader here will ever
-    #: return. Forcing is meaningful only for a seed with no logged run, or
-    #: against a LOCAL store (which overwrites in place). Replacing logged data
-    #: is an explicit-exclusion problem -- see the results_store module
-    #: docstring.
+    #: WARNING: against an S3-backed store this cannot SUPERSEDE anything. Reads
+    #: resolve the EARLIEST logged run, so forcing an already-logged seed spends
+    #: real GPU money appending an object no reader here will return. Forcing is
+    #: meaningful only for a seed with no logged run, or against a LOCAL store
+    #: (which overwrites in place). Replacing logged data is an
+    #: explicit-exclusion problem -- see the results_store module docstring.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
@@ -90,11 +86,11 @@ class ReplicateHarness:
         """Return the ``ResultsStore`` backing this harness's replicates.
 
         See ``resolve_store`` for the resolution order, including the
-        repo-anchor fallback that pins the offline test suite to the local
-        store. The caching is load-bearing: the env is read once at FIRST
-        access, after a notebook's ``load_dotenv(keys.env)`` cell, so every
-        later call reaches the same store. ``cached_property`` works on a frozen
-        dataclass because it writes straight into ``instance.__dict__``.
+        repo-anchor fallback pinning the offline test suite to the local store.
+        The caching is load-bearing: the env is read once at FIRST access, after
+        a notebook's ``load_dotenv(keys.env)`` cell, so every later call reaches
+        the same store. ``cached_property`` works on a frozen dataclass because
+        it writes straight into ``instance.__dict__``.
         """
         return resolve_store(self.results_dir, self.prefix)
 
@@ -102,19 +98,17 @@ class ReplicateHarness:
         """Build one replicate's store address.
 
         ``model=None`` is the valid tag-only-read case (see
-        ``ReplicateAddress.model``), used by `cot_chain_lengths` when no
-        configured model carries the requested tag.
+        ``ReplicateAddress.model``), used by `cot_chain_lengths`.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
     def has_outstanding(self, model: str) -> bool:
         """Return whether any (info type, seed) for `model` still needs evaluation.
 
-        Lets a caller skip SERVING a model it has no work for. `model` must be
-        a key of ``archetype_tags``. The store is consulted on every call
-        (against S3, one listing request per (info type, seed)); ANY logged S3
-        run counts as "not outstanding", a seed in ``force_seeds`` always as
-        outstanding.
+        Lets a caller skip SERVING a model it has no work for. `model` must be a
+        key of ``archetype_tags``. The store is consulted on every call (against
+        S3, one listing request per (info type, seed)); ANY logged S3 run counts
+        as "not outstanding", a seed in ``force_seeds`` always as outstanding.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -169,10 +163,10 @@ class ReplicateHarness:
                 or not self.store.exists(self._address(model, tag, info, seed))
             ]
             if not outstanding:
-                continue  # every info type for this seed already graded
-            # One timestamp per SEED -- see this method's "Notes" section
-            # above. Captured before make_quizzes/evaluate, so it dates the
-            # start of the collection event, not the end of serialization.
+                continue
+            # One timestamp per SEED (see this method's "Notes" section),
+            # captured before make_quizzes/evaluate so it dates the start of the
+            # collection event, not the end of serialization.
             run_ts = utcnow()
             quizzes = self.make_quizzes(seed, model)
             # Pooled across the outstanding info types (see the module
@@ -185,13 +179,13 @@ class ReplicateHarness:
                 marks = Marks(
                     model=model,
                     marks=tuple(pooled.marks[start:start + n]),
-                    # dict(): a private copy per dump, so a caller mutating its
-                    # mapping later cannot alter what a replicate claims it ran on.
+                    # A private copy per dump, so a caller mutating its mapping
+                    # later cannot alter what a replicate claims it ran on.
                     server_config=dict(server_config) if server_config else None,
                 )
                 start += n
-                # No mkdir here: LocalResultsStore.dump_marks owns creating its
-                # parent directory, and S3ResultsStore.dump_marks needs none.
+                # No mkdir: LocalResultsStore.dump_marks creates its own parent
+                # directory, and S3ResultsStore.dump_marks needs none.
                 self.store.dump_marks(marks, self._address(model, tag, info, seed), run_ts)
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
@@ -203,7 +197,7 @@ class ReplicateHarness:
 
         Against S3, "stored" means "has at least one logged run"; totals come
         from the EARLIEST logged run of each seed, and the printed count is of
-        distinct seeds, not of log objects.
+        distinct seeds, not log objects.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
@@ -234,7 +228,7 @@ class ReplicateHarness:
         it (models sharing a tag already share one local
         ``{prefix}{tag}_{info}/`` directory). With NO such model the address
         model is ``None``, ``S3ResultsStore.exists`` returns False, and every
-        (seed, info) is skipped rather than loaded.
+        (seed, info) is skipped.
         """
         model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
         lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}
@@ -262,10 +256,10 @@ class ReplicateHarness:
     def sync_down(self) -> int:
         """Pull this harness's S3-backed replicate log into the local layout.
 
-        Thin delegate to ``results_store.sync_down``, and the PRIMARY way to
-        feed the local-reading analysis tooling: the model -> tag mapping it
-        needs already lives here (the ``python -m
-        smolbench.evals.results_store`` CLI needs it re-typed by hand).
+        Thin delegate to ``results_store.sync_down``, and the PRIMARY way to feed
+        the local-reading analysis tooling: the model -> tag mapping it needs
+        already lives here (the ``python -m smolbench.evals.results_store`` CLI
+        needs it re-typed by hand).
 
         Returns
         -------

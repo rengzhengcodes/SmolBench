@@ -101,16 +101,14 @@ class ReplayResult:
     """Outcome of replaying a theorem's full recorded ground-truth proof.
 
     Produced by `replay_ground_truth`, the sanity gate (`cli.py`'s ``replay`` /
-    ``filter``, `runner.sweep`'s per-theorem sanity row) that the ground truth
-    is replayable before any LLM tail is compared against it. `verdict` takes 5
-    of the 6 values in the "Verdict taxonomy" comment above `Verdict` -- never
-    ``"replay_failed"``; a failing prefix step surfaces as ``"exception"``.
+    ``filter``, `runner.sweep`'s per-theorem sanity row) that the ground truth is
+    replayable before any LLM tail is compared against it.
     """
 
     #: The theorem's `full_name`.
     theorem: str
-    #: Replay outcome; see the module's verdict taxonomy comment (excludes
-    #: ``"replay_failed"`` -- see this class's docstring).
+    #: Replay outcome; see the module's verdict taxonomy comment, which lists
+    #: the 5 values this takes (never ``"replay_failed"``).
     verdict: Verdict
     #: Tactics successfully applied before `verdict` was reached. Equals
     #: `tactics_total` for ``"success"``/``"incomplete"``, less for
@@ -144,7 +142,7 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
     `timeout` is seconds for the whole Dojo session (opening it, per
     `_open_dojo_with_retry`, plus every tactic). Returns ``"incomplete"`` with
     zero counts, without opening Dojo, when `bt.has_proof` is False. Every
-    exception from opening or driving the session is caught and reported as
+    exception from opening or driving the session is reported as
     ``verdict="exception"`` rather than propagated: callers loop over many
     theorems, and one failure must not abort the batch.
     """
@@ -190,8 +188,7 @@ class ProofResult:
     """Outcome of trying a candidate proof tail from a specific proof step.
 
     Produced by `try_tail` (and its wrapper `verify_proof_tail`), and
-    constructed directly by `runner`'s exception handlers. The only one of the
-    two result classes that can carry ``"replay_failed"``.
+    constructed directly by `runner`'s exception handlers.
     """
 
     #: The theorem's `full_name`.
@@ -299,9 +296,9 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
 def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600) -> ProofResult:
     """One-shot verifier: open Dojo, replay 0..k-1, run tail, return verdict.
 
-    Opens exactly one Dojo session per call -- what `runner.run_cell` needs,
-    each cell being independent; contrast `runner.sweep`, which shares one
-    session per ``(theorem, k)`` via `open_at_step` + `try_tail`.
+    Opens exactly one Dojo session per call -- what `runner.run_cell` needs, each
+    cell being independent; contrast `runner.sweep`, which shares one session per
+    ``(theorem, k)`` via `open_at_step` + `try_tail`.
 
     Returns
     -------

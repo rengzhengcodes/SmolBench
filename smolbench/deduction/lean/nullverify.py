@@ -3,18 +3,17 @@
 `runner.sweep` / `runner.run_cell` reach Lean only through an injected
 `verifier`, so ``sweep(config, run_dir, verifier=NullVerifier())`` runs phase 1
 -- call the model, write every row -- with no `lean_dojo`, elan, or traced
-mathlib4 checkout. Phase 2, replaying the recorded tails against a real Dojo,
-is a separate pass not implemented here.
+mathlib4 checkout. Phase 2 (replaying the recorded tails against a real Dojo)
+is a separate pass, not implemented here.
 
-Never import `smolbench.deduction.lean.verify` here, even lazily inside a
-method body: resolving that module reruns its unconditional top-level
-``import lean_dojo``, which raises `ImportError` wherever `lean_dojo` is
-absent. Hence the local mirror dataclasses below.
+Never import `smolbench.deduction.lean.verify` here, even lazily inside a method
+body: that module's unconditional top-level ``import lean_dojo`` raises
+`ImportError` wherever `lean_dojo` is absent. Hence the local mirror dataclasses.
 
 ``"skipped"``, the only verdict `replay_ground_truth` produces, is deliberately
 absent from `runner.SANITY_FAILURE_VERDICTS`: this module never replays, so it
-cannot claim a ground truth failed, and suppressing those theorems would leave
-a generation-only sweep with zero cells.
+cannot claim a ground truth failed, and suppressing those theorems would leave a
+generation-only sweep with zero cells.
 """
 
 from __future__ import annotations
@@ -40,8 +39,7 @@ class NullReplayResult:
     verdict: str
     #: Always ``0``.
     tactics_applied: int
-    #: ``len(bt.traced_tactics)``, for parity with the real `ReplayResult`,
-    #: even though no tactics were run.
+    #: ``len(bt.traced_tactics)``, for parity though no tactics were run.
     tactics_total: int
     #: Always ``None``.
     error: str | None = None
@@ -65,8 +63,7 @@ class NullProofResult:
     #: ``"unverified"`` from this module's own methods; `runner.py`'s exception
     #: handlers may construct any other verdict (see the class docstring).
     verdict: str
-    #: The candidate tail that was (not) attempted, recorded for parity with
-    #: the real `ProofResult`.
+    #: The candidate tail that was (not) attempted, recorded for parity.
     tail_tried: str
     #: Always ``None`` from this module's own methods; `runner.py` may set it.
     error: str | None = None
@@ -87,9 +84,8 @@ class NullVerifier:
     """
 
     #: See `NullProofResult`; `runner.py` calls it as `verifier.ProofResult(...)`.
-    #: A class attribute that is itself a class is not a descriptor, so no
-    #: implicit `self` is injected -- matching how `verify.ProofResult(...)` is
-    #: called when `verifier` is the real `verify` module instead.
+    #: A class attribute that is itself a class is not a descriptor, so no implicit
+    #: `self` is injected -- matching the real `verify` module's plain function.
     ProofResult = NullProofResult
 
     def replay_ground_truth(self, bt: BenchmarkTheorem, timeout: int = 600) -> NullReplayResult:
@@ -112,10 +108,9 @@ class NullVerifier:
     ) -> Iterator[tuple[None, None]]:
         """Yield ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
 
-        Unlike `verify.open_at_step`, never raises `ValueError` for an
-        out-of-range `k` -- there is no prefix to replay. The `contextmanager`
-        wrapping exists only for the ``with ... as (dojo, state):`` protocol
-        `runner.py` uses.
+        Unlike `verify.open_at_step`, never raises `ValueError` for out-of-range
+        `k` -- there is no prefix to replay. The `contextmanager` wrapping exists
+        only for `runner.py`'s ``with ... as (dojo, state):`` protocol.
         """
         yield None, None
 

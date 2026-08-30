@@ -1,24 +1,20 @@
 """Merge a sharded deduction lane's run directories into the canonical run.
 
 ``notebooks/deduction/run_study.py`` can run one lane as N theorem-stride shards
-(``LEAN_SHARD=i/n``; see ``runner._select_theorems``'s ``shard`` key), each
-writing its own NON-canonical ``runs/scaling_<key>_shard<i>of<n>`` under
-``--no-s3``: shard dirs must never reach the canonical S3 prefix, whose sole
-``all_rows.jsonl`` is the exact object the verification pass
-(``scripts/deduction/lean_verify_rows.py``) and the analysis read. This script
-folds the completed shards into one canonical ``runs/scaling_<key>``, regenerates
-``analysis.txt`` and, under ``--spool``, uploads via the driver's own verified
-two-phase ``spool_to_s3`` and only then prunes the shard dirs, so no run data
-accumulates on the local host.
+(``LEAN_SHARD=i/n``; ``runner._select_theorems``'s ``shard`` key), each writing a
+NON-canonical ``runs/scaling_<key>_shard<i>of<n>`` under ``--no-s3``: shard dirs
+must never reach the canonical S3 prefix, whose sole ``all_rows.jsonl`` is what
+``scripts/deduction/lean_verify_rows.py`` and the analysis read. This script folds
+the shards into one canonical ``runs/scaling_<key>``, regenerates ``analysis.txt``
+and, under ``--spool``, uploads via the driver's verified two-phase ``spool_to_s3``
+and only then prunes the shard dirs, so no run data accumulates locally.
 
-Merge gates -- all hard failures, nothing written past a failed one: every shard
-dir exists with ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell key
-(model, theorem_id, k, rung, replicate_idx) and no duplicate sanity theorem
-across shards (theorem-stride shards are disjoint by construction, so a duplicate
-means a mis-sharded or double-run lane); merged totals equal
-``--expect-cells``/``--expect-sanity`` (default `EXPECT_CELLS`/`EXPECT_SANITY`);
-no ``theorems/`` path collides between shards; and the canonical
-``all_rows.jsonl`` must not already exist -- it is never overwritten.
+Merge gates (hard failures; nothing is written past a failed one): every shard dir
+has ``all_rows.jsonl`` and ``manifest.json``; no duplicate cell key
+(model, theorem_id, k, rung, replicate_idx) or sanity theorem across shards
+(stride shards are disjoint, so a duplicate means a mis-sharded/double-run lane);
+merged totals equal ``--expect-cells``/``--expect-sanity``; no ``theorems/`` path
+collides; the canonical ``all_rows.jsonl`` does not already exist (never overwritten).
 
 Run from the repo root after the shard drivers have exited::
 
@@ -80,9 +76,9 @@ def merge_shards(
     Raises
     ------
     SystemExit
-        On any failed gate (see the module docstring). A failure may leave the
-        canonical dir absent or partly written, but never touches the shard dirs:
-        only ``main`` prunes them, and only after a verified S3 spool.
+        On any failed gate (see the module docstring). May leave the canonical dir
+        absent or partial; never touches the shard dirs, which only ``main`` prunes
+        after a verified S3 spool.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]
@@ -94,7 +90,7 @@ def merge_shards(
     if (canonical / "all_rows.jsonl").exists():
         raise SystemExit(f"{canonical / 'all_rows.jsonl'} already exists -- refusing to clobber.")
 
-    # Gate: check uniqueness and totals BEFORE this function writes anything.
+    # Gates run before anything is written.
     cell_keys: set[tuple] = set()
     sanity_ids: set[str] = set()
     per_shard_rows: list[list[str]] = []
@@ -214,16 +210,14 @@ def main(argv: list[str] | None = None) -> None:
         expect_sanity=None if args.no_expect else args.expect_sanity,
     )
 
-    # Regenerate analysis.txt over the MERGED rows: per-shard analysis files were
-    # never copied into the canonical dir, and would be partial anyway.
+    # Per-shard analysis.txt files are partial and were not copied; regenerate.
     from smolbench.deduction.lean import runner  # late: heavy import chain
 
     runner.write_run_analysis(canonical)
 
     if args.spool:
         # Reuse the driver's verified two-phase spool rather than re-deriving
-        # bucket/prefix/verify semantics here; loaded by file path, for the same
-        # reason the driver itself loads its sibling that way.
+        # bucket/prefix/verify semantics; loaded by file path like the driver itself.
         spec = importlib.util.spec_from_file_location(
             "merge_lean_shards_driver",
             REPO_ROOT / "notebooks" / "deduction" / "run_study.py",

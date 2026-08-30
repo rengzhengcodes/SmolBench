@@ -673,9 +673,8 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     -------
     Optional[Dict[str, Any]]
         None only when the state-file read itself raised; otherwise every key
-        of the returned literal is present, None for unknown/unreachable
-        pieces, so readers see the schema even from a half-built snapshot.
-        Four groups:
+        is present (None for unknown/unreachable pieces), so readers always
+        see the full schema. Four groups:
 
         - From state/spec, no network: ``gpu`` comes from a static per-type
           table, NOT an nvidia-smi observation; ``vllm_image`` is the
@@ -938,12 +937,8 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
                 "Reservations"
             ]
             instances = reservations[0]["Instances"] if reservations else []
-            # Deliberately NOT the _instance_state helper (see its
-            # docstring): it swallows InvalidInstanceID.NotFound into
-            # "absent", whereas here a raw ClientError must fall into the
-            # `except Exception` below and give the generic "instance-state
-            # check failed" detail. Switching would silently change the
-            # message for an aged-out instance id.
+            # Not _instance_state (see its Notes): a raw ClientError must reach
+            # the `except Exception` below and keep the generic detail.
             inst_state = instances[0]["State"]["Name"] if instances else "absent"
             if inst_state not in ("pending", "running"):
                 raise RuntimeError(
@@ -1039,12 +1034,10 @@ evaluate = _CLIENT.evaluate
 # ---------------------------------------------------------------------------
 # These functions import boto3/botocore internally (via _aws.fresh_client),
 # so the inference path stays dependency-free (see the module docstring).
-# Each client comes from a FRESH boto3 Session per operation, not from
-# boto3.client(), whose process-wide default session caches credentials at
-# first resolve: without this, a refreshed ~/.aws/credentials (IdP sessions
-# here last ~12h) keeps raising RequestExpired until the kernel restarts.
-# Full rationale in smolbench.evals._aws.fresh_client's docstring; aws.py
-# hits the same failure mode, which is why the fix is shared.
+# Each client is a FRESH boto3 Session per operation: boto3.client()'s default
+# session caches credentials, so a refreshed ~/.aws/credentials (~12h IdP
+# sessions) keeps raising RequestExpired until kernel restart. Rationale in
+# _aws.fresh_client's docstring (shared with aws.py).
 
 # ClientError codes that mean "this pool cannot fill the request right now"
 # -- worth trying the next subnet or region -- as opposed to quota or genuine
@@ -1323,17 +1316,16 @@ def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]
 def _instance_state(region: str, instance_id: str) -> str:
     """Return an instance's EC2 ``State.Name``, or "absent" when it is gone.
 
-    One DescribeInstances call per invocation, via ``_describe_instance``;
-    "absent" covers both "never existed" and "aged out of the API after
-    termination" (``InvalidInstanceID.NotFound``, which this helper swallows).
+    One DescribeInstances call via ``_describe_instance``; "absent" also
+    covers ``InvalidInstanceID.NotFound`` (aged out), which is swallowed.
 
     Notes
     -----
-    Sites that also need another field from the same describe result
-    (``_wait_public_ip``, ``_reattach_existing_instance``) deliberately do NOT
-    use this helper -- it would cost a second DescribeInstances call for data
-    they already hold. ``_raise_endpoint_unreachable`` avoids it because it
-    wants the raw ClientError, not "absent".
+    Sites needing another field from the same describe result
+    (``_wait_public_ip``, ``_reattach_existing_instance``) deliberately skip
+    this helper to avoid a second DescribeInstances call;
+    ``_raise_endpoint_unreachable`` skips it because it wants the raw
+    ClientError, not "absent".
     """
     instance = _describe_instance(region, instance_id)
     return (instance or {}).get("State", {}).get("Name", "absent")
@@ -1384,15 +1376,12 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     def check() -> Optional[str]:
         nonlocal absent_streak
         instance = _describe_instance(region, instance_id)
-        # Not _instance_state: this site also needs PublicIpAddress from the
-        # SAME describe result right below, and the helper would cost a
-        # second DescribeInstances call. See _instance_state's docstring.
+        # Not _instance_state: PublicIpAddress is read from the SAME result
+        # below (see _instance_state's Notes).
         inst_state = (instance or {}).get("State", {}).get("Name", "absent")
         if inst_state == "absent":
-            # DescribeInstances is eventually consistent: a just-launched
-            # instance can be invisible for seconds while coming up fine,
-            # whereas a truly reclaimed one stays describable as "terminated"
-            # for ~an hour. Only a sustained streak means it is really gone.
+            # Eventual consistency: a just-launched instance can be invisible
+            # for seconds; a reclaimed one stays "terminated" for ~an hour.
             absent_streak += 1
             if absent_streak < _ABSENT_STREAK_LIMIT:
                 return None
@@ -1530,9 +1519,8 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     if state is None:
         return None
     instance = _describe_instance(state["region"], state["instance_id"])
-    # Not _instance_state: `instance` is reused for PublicIpAddress just
-    # below, and the helper would cost a second DescribeInstances call. See
-    # _instance_state's docstring.
+    # Not _instance_state: `instance` is reused for PublicIpAddress below
+    # (see _instance_state's Notes).
     inst_state = (instance or {}).get("State", {}).get("Name", "absent")
     if inst_state in ("pending", "running"):
         _authorize_ingress(state["region"], state["security_group_id"], my_ip)
@@ -1676,12 +1664,11 @@ def _run_instances_kwargs(
         to the block instead of the Spot market; the caller must pass the
         block's own AZ subnet and instance type or RunInstances rejects it.
     max_price : Optional[str]
-        Spot bid ceiling in USD/hour, stringified as the API wants; ``None``
-        leaves EC2's default ceiling (the on-demand price). Price-blind
-        defaults paid 1.29-1.48x each type's cheapest AZ against a 2.46x
-        intra-type spread, hence the cap derived from live
-        ``describe_spot_price_history`` medians; a bid under an AZ's current
-        price fails fast with ``SpotMaxPriceTooLow`` and the hunt moves on.
+        Spot bid ceiling in USD/hour as the API's string; ``None`` leaves
+        EC2's default ceiling (the on-demand price). Derived from live
+        ``describe_spot_price_history`` medians because price-blind defaults
+        paid 1.29-1.48x each type's cheapest AZ (see
+        ``EC2_SPOT_BID_MULTIPLIER``).
     """
     kwargs: Dict[str, Any] = {
         "ImageId": ami,
@@ -1738,14 +1725,11 @@ def _run_instances_kwargs(
             }
         }
     elif EC2_MARKET == "on-demand":
-        # On-demand is expressed by the ABSENCE of InstanceMarketOptions --
-        # there is no MarketType="on-demand" -- and MaxPrice goes with it,
-        # since an on-demand launch has no bid. Instance type, GPU count and
-        # tp stay IDENTICAL to the lane's spot box, so only how the capacity
-        # was purchased differs. InstanceInitiatedShutdownBehavior stays
-        # "terminate" and the idle watchdog still fires, which matters far
-        # more here: an abandoned on-demand p5e bills at full rate
-        # indefinitely, while an abandoned spot box is at least reclaimable.
+        # On-demand = ABSENCE of InstanceMarketOptions (there is no
+        # MarketType="on-demand"); MaxPrice goes with it. Instance type, GPU
+        # count and tp stay IDENTICAL to the spot box; shutdown-terminate and
+        # the idle watchdog still apply (see EC2_MARKET for why that
+        # matters more here).
         kwargs.pop("InstanceMarketOptions", None)
     elif max_price:
         kwargs["InstanceMarketOptions"]["SpotOptions"]["MaxPrice"] = max_price
@@ -1782,8 +1766,8 @@ def _launch_fresh(
     idle_timeout_min, max_lifetime_min : int
         Watchdog and boot-scheduled-halt budgets, in minutes.
     my_ip : str
-        Caller's public IP, resolved ONCE by the caller rather than per
-        region, to save a ``checkip.amazonaws.com`` round trip each time.
+        Caller's public IP, resolved ONCE by the caller (one
+        ``checkip.amazonaws.com`` round trip, not one per region).
 
     Returns
     -------
@@ -1800,12 +1784,9 @@ def _launch_fresh(
     control_token = secrets.token_urlsafe(32)
     vllm_api_key = secrets.token_urlsafe(32)
     hf_token = os.getenv("HF_TOKEN", "")
-    # The token is baked into user-data at boot and CANNOT be injected later,
-    # so a gated checkpoint swapped into the specs needs HF_TOKEN set BEFORE
-    # provisioning. The default EC2_DEPLOY_SPECS are all UNGATED repos (Qwen,
-    # NVIDIA, Google, zai-org, mistralai, LGAI-EXAONE, deepseek-ai), so an
-    # empty token is fine -- and a set-but-INVALID one breaks even ungated
-    # downloads (the hub rejects bad credentials outright).
+    # Baked into user-data, so it CANNOT be injected after provisioning. All
+    # default EC2_DEPLOY_SPECS repos are ungated, so empty is fine; a
+    # set-but-INVALID token breaks even ungated downloads.
     if not hf_token:
         logging.warning(
             "HF_TOKEN is not set. The default deploy specs are all ungated, so "
@@ -1822,9 +1803,8 @@ def _launch_fresh(
             f"provision_spot_instance: S3 model cache at {EC2_S3_MODEL_CACHE} "
             f"(instance profile {iam_profile})"
         )
-    # Gzip-compressed (pack_user_data): the raw render exceeds EC2's 16 KB
-    # user-data cap; only the compressed form fits. boto3 base64-encodes
-    # bytes UserData directly, so no manual encoding step is needed.
+    # Gzip-compressed: the raw render exceeds EC2's 16 KB user-data cap
+    # (see _run_instances_kwargs' user_data entry for the encoding contract).
     user_data = pack_user_data(
         render_user_data(
             control_token=control_token,
@@ -1910,10 +1890,8 @@ def _launch_fresh(
         return state
 
     # Price the whole hunt space up front (one best-effort call per region; {}
-    # on failure = the price-blind fallback). Each type's bid cap is 1.25x the
-    # median of its observed AZ prices across ALL hunted regions: a
-    # normal-priced AZ always clears it, while outlier AZs (2.46x intra-type
-    # spread) fail fast with SpotMaxPriceTooLow and the hunt moves on.
+    # on failure = price-blind). Each type's cap = EC2_SPOT_BID_MULTIPLIER x
+    # the median of its observed AZ prices across ALL hunted regions.
     spot_prices: Dict[str, Dict[Tuple[str, str], float]] = {
         r: _spot_price_map(r, list(instance_types)) for r in regions
     }
@@ -1934,9 +1912,7 @@ def _launch_fresh(
                 f"range ${observed[0]:.2f}-${observed[-1]:.2f})"
             )
         else:
-            # No MaxPrice: the ceiling defaults to the ON-DEMAND price, the
-            # highest bid EC2 accepts. Reached either because the pricing
-            # lookup failed (price-blind fallback) or because
+            # No MaxPrice (on-demand ceiling): pricing lookup failed, or
             # EC2_SPOT_BID_MULTIPLIER <= 0 asked for it.
             type_caps[_type] = None
             if EC2_SPOT_BID_MULTIPLIER <= 0:
@@ -2042,14 +2018,11 @@ def provision_spot_instance(
 ) -> Dict[str, Any]:
     """Provision (or reattach to) the experiment's EC2 spot instance.
 
-    Idempotent, so re-running the cell after a kernel restart is safe. Three
-    helpers are tried in order: ``_reattach_existing_instance`` (reuse the
-    state-file box, re-authorizing the security group for the caller's CURRENT
-    public IP and refreshing the saved endpoint), ``_recover_tagged_instance``
-    (state file lost, live tagged instance exists), ``_launch_fresh`` (neither
-    -- hunt capacity type-major across ``instance_types`` x ``regions`` x each
-    region's default-VPC subnets/AZs). Each argument defaults to the matching
-    ``EC2_*`` constant.
+    Idempotent, so re-running the cell after a kernel restart is safe. Tries,
+    in order, ``_reattach_existing_instance`` (state-file box; re-authorizes
+    the security group for the caller's CURRENT IP), ``_recover_tagged_instance``
+    (state file lost, live tagged instance) and ``_launch_fresh`` (type-major
+    capacity hunt). Each argument defaults to the matching ``EC2_*`` constant.
 
     When ``EC2_CAPACITY_RESERVATION`` is set the reservation is authoritative:
     a live instance OUTSIDE that block is TERMINATED rather than reused, since
@@ -2073,10 +2046,8 @@ def provision_spot_instance(
     # 1) Reattach to the instance in the state file when it is still alive.
     state = _reattach_existing_instance(my_ip)
     if state is None:
-        # 2) A live tagged instance without a state file: rebuild state from
-        #    the instance's own user-data (readable via
-        #    DescribeInstanceAttribute; see "Security model" up top), so
-        #    losing the local file cannot strand a $30-45/h box.
+        # 2) State file lost, live tagged instance: rebuild state from its
+        #    user-data (see _recover_tagged_instance).
         state = _recover_tagged_instance(my_ip)
     if state is not None:
         if not cb_id or state.get("capacity_reservation_id") == cb_id:
@@ -2086,9 +2057,8 @@ def provision_spot_instance(
             f"capacity block {cb_id}; terminating it and launching in the "
             "block instead."
         )
-        # wait=False: the block's capacity is independent of the dying
-        # box, and p5-class teardown can outlast botocore's 10-min waiter
-        # (a WaiterError there would kill the whole provision).
+        # wait=False: the block's capacity is independent of the dying box,
+        # and a waiter timeout must not kill the whole provision.
         shutdown_instance(wait=False)
 
     # 3) Fresh launch.
@@ -2102,9 +2072,9 @@ def _wait_model_ready(
 ) -> None:
     """Poll the agent until vLLM answers /health for ``model``.
 
-    The checkpoint download dominates first-time serves (hundreds of GB for the
-    big FP8 models); the HF cache makes later swaps take minutes. On timeout
-    the error reports the LAST polled ``container`` state and ``log_tail``.
+    First-time serves are dominated by the checkpoint download (hundreds of
+    GB); cached swaps take minutes. On timeout the error reports the LAST
+    polled ``container`` state and ``log_tail``.
     """
     last_status: Dict[str, Any] = {}
     consec_failures = 0
@@ -2170,9 +2140,8 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
     Swaps the serving container (removing the previous model's), waits until
-    the OpenAI endpoint is healthy and serving ``model``, then yields it. Exit
-    tears NOTHING down: the box stays up for the next section, and the idle
-    watchdog covers abandonment.
+    the OpenAI endpoint is healthy on ``model``, then yields it. Exit tears
+    NOTHING down (see the module docstring).
 
     Parameters
     ----------
@@ -2198,8 +2167,7 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             "add one with hf_model_id / tp / max_model_len."
         )
     state = _require_state()
-    # This checks the silicon BEFORE swapping the container: a mismatched
-    # box must not generate even one row (see EC2_REQUIRE_GPU).
+    # BEFORE the swap: a mismatched box must not generate one row.
     _assert_required_gpu(state, model)
     serve_payload = {
         "served_model_name": model,
@@ -2246,15 +2214,11 @@ def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = Fal
             f"instance is healthy but serves {served}, not {model!r}; "
             "did another process swap the model?"
         )
-    # Remember exactly what this container was launched with, so the
-    # already-serving fast path above tells config drift from a true match.
+    # ``serving`` (wire-payload key names) exists only for the fast path's
+    # drift check above; ``last_serve`` is the stable-keyed record
+    # server_config() reads back, so the argv that ACTUALLY launched stays
+    # visible after a spec edit or after the box is gone.
     state["serving"] = serve_payload
-    # A SEPARATE record from ``state["serving"]`` above, which exists only to
-    # short-circuit the fast path and mirrors the wire payload's key names
-    # (``served_model_name`` etc.). ``last_serve`` is what server_config()
-    # reads back under stable, self-describing keys, so the argv that ACTUALLY
-    # launched stays visible after a mid-study spec edit, or long after the
-    # box is gone.
     state["last_serve"] = {
         "model": model,
         "hf_model_id": spec["hf_model_id"],
@@ -2363,10 +2327,9 @@ def shutdown_instance(wait: bool = True) -> None:
             _ec2_client(region).get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
             logging.info(f"shutdown_instance: {instance_id} terminated.")
         except WaiterError:
-            # TerminateInstances already succeeded above, so the instance IS
-            # dying; p5-class teardown just outlasts botocore's 10-min
-            # waiter, and crashing here would strand the caller AFTER the
-            # only action that matters has been taken.
+            # Termination is already issued (see the `wait` parameter doc);
+            # crashing here would strand the caller after the action that
+            # matters.
             logging.warning(
                 f"shutdown_instance: {instance_id} still shutting down after the "
                 "waiter's max attempts; termination is already issued, proceeding."

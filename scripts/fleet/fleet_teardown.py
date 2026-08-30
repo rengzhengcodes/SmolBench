@@ -6,12 +6,9 @@ listing itself is `fleet_status.py`, imported rather than reimplemented. The
 default is READ-ONLY: nothing is terminated and no state file deleted without
 an explicit ``--terminate``.
 
-Two safety invariants are enforced in code rather than by convention, both
-re-checked at the point of action because `lane` comes from an AWS tag value
-this script does not control: only instances whose ``smolbench:experiment`` tag
-starts with ``"scaling-"`` are terminated (`terminate_fleet`), and only
-``REPO_ROOT/.ec2_state_scaling_<lane>.json`` is ever unlinked
-(`delete_state_files`, which ``.resolve()``s first).
+Because `lane` comes from an AWS tag value this script does not control, two
+safety invariants are re-checked in code at the point of action -- see
+`terminate_fleet` (tag prefix) and `delete_state_files` (resolved path).
 """
 
 from __future__ import annotations
@@ -44,9 +41,8 @@ def _fleet_status():
 def state_file_path(lane: str) -> Path:
     """Return the UNRESOLVED ``REPO_ROOT/.ec2_state_scaling_{lane}.json`` path.
 
-    Nothing is checked here: `lane` comes from an AWS tag value this script does
-    not control, so a caller that deletes this path MUST ``.resolve()``-verify
-    it first (see `delete_state_files`).
+    Nothing is checked here, and `lane` is untrusted, so a caller that deletes
+    this path MUST ``.resolve()``-verify it first (see `delete_state_files`).
     """
     return REPO_ROOT / f".ec2_state_scaling_{lane}.json"
 
@@ -58,8 +54,9 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     ----------
     rows : list[dict]
         `fleet_status.fleet_rows`-shaped; needs `region`, `instance_id` and
-        `experiment_tag`. A row lacking the `fleet_status.SCALING_TAG_PREFIX`
-        prefix is SKIPPED -- the module docstring's last-line safety re-check.
+        `experiment_tag`. A row whose `experiment_tag` lacks the
+        `fleet_status.SCALING_TAG_PREFIX` prefix is SKIPPED -- the safety
+        re-check that stops this terminating another experiment's instance.
     client_factory : Any, optional
         Region -> object with ``terminate_instances(InstanceIds=...)``; ``None``
         builds a boto3 client lazily per region (no AWS SDK at import time).
@@ -90,11 +87,6 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
 
 def delete_state_files(rows: list[dict]) -> list[Path]:
     """Delete each row's local EC2 state file if present.
-
-    Parameters
-    ----------
-    rows : list[dict]
-        Must carry `lane`.
 
     Returns
     -------
@@ -127,9 +119,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns
     -------
     int
-        ``0`` for a read-only listing, or after a confirmed or ``--yes``-forced
-        termination (`terminate_fleet`, then `delete_state_files`); ``1`` if the
-        ``--terminate`` confirmation was declined.
+        ``0`` for a read-only listing, or after a confirmed (or ``--yes``)
+        termination -- `terminate_fleet`, then `delete_state_files`; ``1`` if
+        the ``--terminate`` confirmation was declined.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."

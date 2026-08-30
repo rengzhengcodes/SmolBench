@@ -14,10 +14,9 @@ emit the remaining Lean 4 tactics.
 - **Context rung.** ``stepk:1`` by default (full tactic state, no premise
   hints), so training never teaches the model to exploit the eval's
   answer-conditional ``hint`` rungs.
-- **Target.** The ground-truth tail as raw newline-separated lines, *no code
-  fence* -- what `prompt.SYSTEM` asks for and `prompt.extract_tactic_block`
-  parses back out. At the default ``k_strategy="last"`` the tail is the single
-  final tactic, exactly the cell the headline sweep scores (``k.strategy: last``).
+- **Target.** The ground-truth tail, unfenced (`tail_target`). At the default
+  ``k_strategy="last"`` the tail is the single final tactic, exactly the cell
+  the headline sweep scores (``k.strategy: last``).
 
 Imports only `corpus`/`context`/`prompt`, never `verify`, so it stays importable
 without ``lean_dojo``.
@@ -35,9 +34,7 @@ from .corpus import BenchmarkTheorem, Split, SplitKind
 
 #: Splits held out of training by default -- everything the eval can draw from:
 #: ``novel_premises/test`` (headline slice) and ``novel_premises/val`` (pilot).
-#: Held out at *whole-split* level via `corpus.load_split`, stricter than the
-#: replay-passing subset the eval actually uses, and needing no ``filter``
-#: sidecar to compute.
+#: Held out at *whole-split* level; see `eval_holdout_names`.
 DEFAULT_EVAL_SPECS: tuple[tuple[SplitKind, Split], ...] = (
     ("novel_premises", "val"),
     ("novel_premises", "test"),
@@ -48,8 +45,8 @@ DEFAULT_EVAL_SPECS: tuple[tuple[SplitKind, Split], ...] = (
 #:   sweep's ``k.strategy: last`` exactly.
 #: - ``"all"`` -- every step ``0..len-1``; richest curriculum, but
 #:   ~avg-proof-length examples per theorem.
-#: - ``"sample"`` -- one uniformly-random (seeded) step per theorem: ~one
-#:   example per theorem, from states throughout the proof.
+#: - ``"sample"`` -- one uniformly-random (seeded) step per theorem, drawn from
+#:   states throughout the proof.
 KStrategy = str  # Literal["last", "all", "sample"]
 
 

@@ -58,9 +58,8 @@ from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 # column, so there is no lazy-import seam to preserve.
 
 # Design: NO top-level `from .verify import ...`. `.verify` imports
-# `lean_dojo`, which is not always installed, and `runner`'s pure
-# dispatch/schema logic is exercised offline without it. `_default_verifier`
-# below is the lazy seam that resolves those names at call time.
+# `lean_dojo`, which is not always installed; `_default_verifier` below is
+# the lazy seam that resolves those names at call time.
 
 
 def results_root() -> Path:
@@ -168,9 +167,7 @@ def run_cell(
         ctx_len = mod.get_model_context_length(model)
     except Exception as exc:  # noqa: BLE001
         # Same rationale as `_ctx_len_for`: a catalog lookup failure must
-        # not abort the cell. The huge fallback disables `complete()`'s
-        # token guard, so a genuine overflow surfaces later as that
-        # guard's ValueError instead.
+        # not abort the cell.
         ctx_len = 10**9
         print(f"warning: context-length lookup failed for {model} on {provider}: {exc}", flush=True)
 
@@ -304,10 +301,7 @@ def _select_theorems(
     # Dropping whole theorems here, not only per-cell in
     # `_run_cells_at_step[_concurrent]`, skips the sanity-gate replay and
     # the per-(theorem, k) Dojo session for every untouched theorem -- the
-    # efficiency an n=200-cell rerun needs against a 300-theorem pool. A
-    # surviving theorem still gets its unconditional SANITY row; the
-    # (k, rung, model, replicate_idx) narrowing happens later against the
-    # SAME `cell_whitelist` object.
+    # efficiency an n=200-cell rerun needs against a 300-theorem pool.
     if cell_whitelist is not None:
         whitelisted_theorems = {key[1] for key in cell_whitelist}
         pool = [t for t in pool if t.full_name in whitelisted_theorems]
@@ -333,9 +327,9 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 # ---------------------------------------------------------------------------
 # Cell whitelist (LEAN_CELL_WHITELIST) -- an env-gated filter scoped to
 # specific (model, theorem, k, rung, replicate_idx) cells, rather than a
-# stride over the theorem pool like `theorems.shard`. Regenerates an exact
-# small cell sample on a fresh box without re-running (or re-sanity-gating)
-# the rest of a lane. `sweep`'s docstring says where it is consulted.
+# stride over the theorem pool like `theorems.shard`: regenerates an exact
+# small cell sample on a fresh box without re-running the rest of a lane.
+# `sweep`'s Notes say where it is consulted.
 # ---------------------------------------------------------------------------
 
 
@@ -414,8 +408,7 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     proof unchecked. Among survivors: any with non-empty ``candidate_proof``
     skips the cell; else any with ``prompt_tokens > 0`` also skips it (asked,
     and returned nothing extractable — that is DATA); else nothing was ever
-    measured (spot interruption, idle watchdog, unreachable endpoint, transient
-    API error) and the cell re-runs. Re-running an asked-and-empty cell would
+    measured and the cell re-runs. Re-running an asked-and-empty cell would
     resample until it happened to emit a proof, inflating pass@1.
     ``prompt_tokens`` draws that line with no tuned constant, and is the signal
     `scripts/results/audit_run_completeness.py` uses.
@@ -539,12 +532,11 @@ _CHAIN_ORDER = {"stepk": 0, "hint": 1}
 
 # Design: the sweep's per-theorem sanity gate (`_process_one_theorem`)
 # suppresses cell generation only when the replay POSITIVELY says the
-# ground truth failed; any other non-success verdict passes THROUGH.
-# Notably "skipped", the only verdict
-# `smolbench.deduction.lean.nullverify.NullVerifier` produces -- a
-# generation-only sweep defers the real verification pass, so nothing has
-# failed yet. Membership in this frozenset, rather than `!= "success"`, is
-# what makes that distinction possible.
+# ground truth failed; any other non-success verdict passes THROUGH --
+# notably "skipped", the only verdict
+# `smolbench.deduction.lean.nullverify.NullVerifier` produces, since a
+# generation-only sweep defers the real verification pass. Membership in
+# this frozenset, rather than `!= "success"`, makes that distinction.
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
     {"lean_error", "incomplete", "given_up", "exception", "replay_failed"}
 )
@@ -579,16 +571,13 @@ def reject_superseded_rows(paths) -> None:
     ValueError
         Naming every offending path -- rather than warning and skipping, since
         these files parse perfectly and one would yield a complete, plausible,
-        WRONG summary instead of a crash. Also logs, because the sweep's
-        per-theorem worker swallows exceptions into one THEOREM-WORKER-FAIL
-        line.
+        WRONG summary instead of a crash. Also logs, because
+        `write_theorem_summary` runs inside the sweep's per-theorem worker,
+        which swallows exceptions into one THEOREM-WORKER-FAIL line.
     """
     bad = [str(p) for p in paths
            if any(m in Path(p).name for m in RETIRED_MARKERS)]
     if bad:
-        # Logs as well as raising: `write_theorem_summary` runs inside the
-        # sweep's per-theorem worker, whose caller collapses the exception
-        # into one THEOREM-WORKER-FAIL line, losing these names.
         logging.error(
             "refusing SUPERSEDED row file(s): %s", ", ".join(bad)
         )
@@ -990,10 +979,9 @@ def _run_cells_at_step_concurrent(
     if not pending:
         return n_written, n_ok, n_skipped
 
-    # Submit the longest-running cells first, so slow reasoning models
-    # start before fast ones queue up: the Dojo session stays open until
-    # the last gen completes, so front-loading slow gens cuts per-theorem
-    # wall-clock.
+    # Submit the longest-running cells first: the Dojo session stays open
+    # until the last gen completes, so front-loading slow reasoning models
+    # cuts per-theorem wall-clock.
     # Sort key (asc): (rung_order, is_non_reasoning, model_order, replicate_idx)
     rung_order = {r: i for i, r in enumerate(rungs)}
     model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
@@ -1184,9 +1172,9 @@ def _execute_one_cell(
             **base_row,
             "prompt_tokens": 0, "completion_tokens": 0,
             "cache_read_tokens": 0, "cache_creation_tokens": 0,
-            # The request itself raised, so there is no server-reported
-            # stop reason; the key stays present so every cell row,
-            # success or exception, indexes row["finish_reason"] alike.
+            # No server-reported stop reason when the request itself raised;
+            # the key stays present so every cell row indexes
+            # row["finish_reason"] alike.
             "finish_reason": None,
             "gen_ms": gen_ms, "verify_ms": 0,
             "candidate_proof": "", "raw_response": "",
@@ -1463,8 +1451,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                     return n_w, n_o, n_s
             elif prev_sanity in SANITY_FAILURE_VERDICTS:
                 # Resume re-applies the gate rather than just skipping the
-                # replay: otherwise it would generate cells the first pass
-                # refused to run.
+                # replay (see `_sanity_done`).
                 with print_lock:
                     print(
                         f"  SANITY-FAIL {theorem.full_name}: {prev_sanity} "

@@ -5,11 +5,10 @@ snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; its parallel
 premise corpus lives in ``smolbench.deduction.lean.premises``. Pool sizes and
 bootstrap instructions: ``notebooks/deduction/README.md``.
 
-Loaders are keyed by ``(kind, split)``: ``kind`` is ``"random"`` (i.i.d.) or
-``"novel_premises"`` (val/test theorems whose premises are under-represented in
-train -- the harder generalization slice); ``split`` is ``"train"``, ``"val"``
-or ``"test"``. The ~700 MB dataset is not shipped here; loaders raise
-``FileNotFoundError`` naming the remedy when a file is missing.
+Loaders are keyed by ``(kind, split)``; ``kind="novel_premises"`` is the harder
+generalization slice (val/test theorems whose premises are under-represented in
+train), ``"random"`` is i.i.d. The ~700 MB dataset is not shipped here; loaders
+raise ``FileNotFoundError`` naming the remedy when a file is missing.
 """
 
 from __future__ import annotations
@@ -63,12 +62,11 @@ class TracedTactic:
     #: applied (``"no goals"`` when the tactic closes the last goal).
     state_after: str
     #: Premises referenced by name inside `tactic`, one dict per reference:
-    #: ``{full_name, def_path, def_pos, def_end_pos}`` -- a lighter shape
-    #: than ``smolbench.deduction.lean.premises.Premise`` (no
-    #: ``code``/``kind``). ``full_name`` is the join key into
-    #: ``premises.lookup`` (see ``context._render_hint_parts``). Empty for
-    #: most tactics (``intro h``, bare ``simp``). Extracted from the raw
-    #: ``annotated_tactic`` field by ``_from_json``.
+    #: ``{full_name, def_path, def_pos, def_end_pos}`` -- lighter than
+    #: ``smolbench.deduction.lean.premises.Premise`` (no ``code``/``kind``).
+    #: ``full_name`` is the join key into ``premises.lookup`` (see
+    #: ``context._render_hint_parts``). Empty for most tactics. Extracted from
+    #: the raw ``annotated_tactic`` field by ``_from_json``.
     premises: list[dict]
 
 
@@ -90,9 +88,7 @@ class BenchmarkTheorem:
     #: convention is untested -- unlike
     #: ``smolbench.deduction.lean.premises.Premise.start``, whose *line* is
     #: provably 1-indexed (``premises.slice_full_decl`` converts with an
-    #: explicit ``start_line - 1``). Fixture data is consistent with a
-    #: 1-indexed line (``start == (1, 1)`` at the top of a file) but does
-    #: not pin the column. Treat both as opaque trace positions.
+    #: explicit ``start_line - 1``). Treat both as opaque trace positions.
     start: tuple[int, int]
     #: ``(line, column)`` of the declaration's end. See `start`.
     end: tuple[int, int]
@@ -104,8 +100,7 @@ class BenchmarkTheorem:
     def has_proof(self) -> bool:
         """True if LeanDojo recorded at least one traced tactic step.
 
-        Empty usually means a term-mode or otherwise untraceable proof;
-        `iter_with_proof` skips those.
+        Empty usually means a term-mode or otherwise untraceable proof.
         """
         return len(self.traced_tactics) > 0
 
@@ -228,8 +223,6 @@ def reset_caches() -> None:
 
     Those loaders key only on their own arguments, never on `data_root()`, so
     call this after repointing ``SMOLBENCH_LEAN_DATA`` to force a re-read.
-    `premises` is imported in the body because it imports `data_root` from here;
-    a top-level import would be a cycle that fails at package import.
     """
     load_split.cache_clear()
 

@@ -114,14 +114,14 @@ class Mark:
     score: Optional[int]
     #: Chain-of-thought reasoning returned by the model, or None.
     reasoning: Optional[str] = None
-    #: How the response broke the prompt's output contract; None means it
-    #: obeyed the contract exactly. Label values live in
-    #: `smolbench.evals.parsing`. Separate from ``score`` so an analysis can
-    #: tell "the model was wrong" from "right but broke the format".
+    #: How the response broke the prompt's output contract; None means it obeyed
+    #: the contract exactly. Label values live in `smolbench.evals.parsing`.
+    #: Separate from ``score`` so an analysis can tell "the model was wrong" from
+    #: "right but broke the format".
     #:
     #: MUST stay optional: stored marks written without it are still read
-    #: (``Marks.load`` builds each mark with ``Mark(**m)``), and None there
-    #: means "not assessed", not "compliant".
+    #: (``Marks.load`` builds each mark with ``Mark(**m)``), where None means
+    #: "not assessed", not "compliant".
     compliance: Optional[str] = None
 
 
@@ -139,9 +139,8 @@ class Marks:
     #: type, GPUs, tensor-parallel degree, image, ...), so a result file is
     #: self-describing about its hardware and needs no timestamp -> config side
     #: table. None for a provider with nothing to report, and for stored results
-    #: predating the field. The default is a plain value, not a
-    #: default_factory, so a tagged file missing the attribute falls back to
-    #: the class attribute on access.
+    #: predating the field. A plain default, not a default_factory, so a tagged
+    #: file missing the attribute falls back to the class attribute on access.
     server_config: Optional[dict] = None
 
     @property
@@ -169,14 +168,14 @@ class Marks:
     # -- Serialization ------------------------------------------------------
     # A result file is plain-dict YAML (safe_dump of dataclasses.asdict), NOT
     # yaml.dump of the dataclasses: a python-object tag would weld every stored
-    # result to this class's import path (a rename would orphan the results
-    # tree) and force readers onto yaml.unsafe_load. ``load`` still reads the
-    # legacy tagged files this repo already committed. PyYAML lives in the
-    # notebook extra, so the imports stay inside the methods.
+    # result to this class's import path (a rename would orphan the results tree)
+    # and force readers onto yaml.unsafe_load. ``load`` still reads the legacy
+    # tagged files this repo already committed. PyYAML lives in the notebook
+    # extra, so the imports stay inside the methods.
     #
-    # ``dumps``/``loads`` are the str-in/str-out form; ``dump``/``load`` are
-    # thin path wrappers. The split exists for ``S3ResultsStore``, which
-    # round-trips through put_object/get_object bodies with no path to open().
+    # ``dumps``/``loads`` are the str-in/str-out form, ``dump``/``load`` thin path
+    # wrappers. The split exists for ``S3ResultsStore``, which round-trips
+    # through put_object/get_object bodies with no path to open().
 
     def dumps(self) -> str:
         """Return this result as a ``yaml.safe_load``-able plain-mapping document."""

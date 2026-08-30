@@ -10,14 +10,13 @@ code path -- so the two can never disagree about ownership.
 `source` is only READ (``theorems/`` subtrees copied, not moved); the caller
 renames it out of the canonical path first and deletes it only after the merge's
 verified S3 spool. Every row must land in exactly one shard, so the script aborts
-BEFORE writing any shard dir on an unmapped ``theorem_id``, an unknown ``kind``,
-a duplicate cell key, or a torn MIDDLE line; a torn FINAL line (SIGKILL
-mid-write) is dropped with a warning and regenerates on resume.
-``server_config.yaml`` and ``manifest.json`` go to shard 0 -- the latter as
-``manifest_prelude.json``, the unsharded phase's provenance, since the shard's
-own sweep writes a fresh ``manifest.json`` -- because shard 0 relaunches against
-the ORIGINAL box through the original state file, keeping the sidecar chain as
-one box's history; copy the prelude into the canonical dir before spooling.
+BEFORE writing any shard dir on an unmapped ``theorem_id``, unknown ``kind``,
+duplicate cell key, or torn MIDDLE line; a torn FINAL line (SIGKILL mid-write) is
+dropped with a warning and regenerates on resume. ``server_config.yaml`` and
+``manifest.json`` (as ``manifest_prelude.json``, the unsharded phase's provenance;
+the shard's sweep writes a fresh ``manifest.json``) go to shard 0, which relaunches
+against the ORIGINAL box via the original state file, keeping the sidecar chain one
+box's history; copy the prelude into the canonical dir before spooling.
 
 Runbook: ``kill -9`` the driver (NOT SIGINT/SIGTERM, whose ``--teardown`` finally
 block would run against the live box), rename ``runs/scaling_<key>`` aside, run
@@ -57,8 +56,8 @@ def split_run(
 ) -> list[Path]:
     """Partition `source`'s rows and theorem artifacts into n shard directories.
 
-    Every gate runs on in-memory structures before the first shard directory is
-    created, so a failed gate leaves the tree untouched.
+    Every gate runs in memory before the first shard dir is created, so a failed
+    gate leaves the tree untouched.
 
     Parameters
     ----------
@@ -67,8 +66,7 @@ def split_run(
     runs_root : Path
         Parent of the created ``scaling_<key>_shard<i>of<n>`` dirs.
     theorems_spec : dict
-        The lane's theorems config; must NOT carry a ``shard`` key -- this
-        function adds ``shard: "i/n"`` per shard.
+        The lane's theorems config WITHOUT a ``shard`` key; one is added per shard.
 
     Returns
     -------

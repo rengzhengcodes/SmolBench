@@ -1,8 +1,7 @@
 """Constants and path helpers shared by ``notebooks/{induction,deduction}/analysis/power_analysis.py``.
 
-Each caller keeps its own roster, contrast family, and statistics. Stdlib-only on
-purpose: both run under ``uv run --no-project``, with only numpy/scipy pulled in
-via ``--with``.
+Each caller keeps its own roster, contrasts, and statistics. Stdlib-only on purpose:
+both run under ``uv run --no-project``, with only numpy/scipy pulled in via ``--with``.
 """
 
 from pathlib import Path
@@ -16,10 +15,9 @@ POWER_TARGETS = (0.80, 0.90)
 def results_dir(file: str, up: int = 0) -> Path:
     """Resolve a study's ``results/`` dir, anchored on `file` and never the process cwd.
 
-    `up` is a level count, not a study path: the study directory name is the
-    ``<study>`` segment of this repo's S3 experiment keys
-    (`results_store.experiment_name` matches ``notebooks/<study>/results`` exactly
-    three components deep), so a typo in a caller-supplied path would mint a new prefix.
+    `up` is a level count rather than a study path because
+    `results_store.experiment_name` matches ``notebooks/<study>/results`` exactly three
+    components deep: a typo in a caller-supplied path would mint a new S3 prefix.
 
     Parameters
     ----------

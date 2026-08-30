@@ -140,7 +140,6 @@ def audit_lane(text: str) -> Dict[str, object]:
     for key, rows in rows_by_key.items():
         if any((r.get("candidate_proof") or "").strip() for r in rows):
             continue
-        # INFRA loss only if NO attempt ever reached the model:
         # `prompt_tokens > 0` means the server counted a prompt, so the model
         # WAS asked and the empty result is its answer -- data, not loss.
         reached_model = any(int(r.get("prompt_tokens") or 0) > 0 for r in rows)
@@ -162,8 +161,8 @@ def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, i
 
     The induction analogue of an empty cell is a MISSING seed: the arm file is
     written only when a seed completes, so a lane that died mid-seed leaves no
-    trace at all in S3. Only models with at least one gap are returned;
-    ``models`` restricts the report, ``None`` covers every model in S3.
+    trace in S3. Only models with at least one gap are returned; ``models``
+    restricts the report, ``None`` covers every model in S3.
     """
     s3 = _s3()
     seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)
@@ -224,9 +223,8 @@ def main() -> int:
     )
 
     if not audited:
-        # An audit that examined NOTHING must never report success. That
-        # would be the exact failure this script exists to catch, turned
-        # on itself.
+        # An audit that examined NOTHING must never report success: that is
+        # the exact failure this script exists to catch, turned on itself.
         where = "local run dirs" if args.local else "S3"
         print(
             f"\n*** AUDITED NOTHING: no lane in {where} matched "

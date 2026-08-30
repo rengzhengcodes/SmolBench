@@ -3,11 +3,10 @@
 `corpus.jsonl` has one record per Lean source file in the traced repo:
     {path, imports: [paths], premises: [{full_name, code, start, end, kind}]}
 
-Three layers of premise text: `signature(p)` (the prefix of `code` before
-the first top-level `:=`), `body(p)` (the corpus's `code` field:
-signature-only for theorems, `:= body` included for `def`s), and
-`body_with_proof(p)` (slices the source file from the premise's `start` to
-the next top-level declaration, so theorem proof bodies are captured too).
+Three layers of premise text: `signature(p)` (the prefix of `code` before the
+first top-level `:=`), `body(p)` (the corpus's `code` field), and
+`body_with_proof(p)` (slices the source file from the premise's `start` to the
+next top-level declaration, so theorem proof bodies are captured too).
 """
 
 from __future__ import annotations
@@ -34,25 +33,23 @@ class Premise:
     #: within the index (see `_index`'s collision-handling note).
     full_name: str
     #: Source text as captured by the corpus: signature-only for theorems
-    #: (proof omitted), signature plus ``:= body`` for defs. `signature` /
-    #: `body` / `body_with_proof` are the three views callers get.
+    #: (proof omitted), signature plus ``:= body`` for defs.
     code: str
-    #: ``(line, column)`` of the declaration's start in `file_path`. The line
-    #: is 1-indexed, per `slice_full_decl`'s explicit ``start_line - 1``
-    #: conversion -- the one place the convention is actually exercised.
+    #: ``(line, column)`` of the declaration's start in `file_path`. The line is
+    #: 1-indexed, per `slice_full_decl`'s explicit ``start_line - 1`` conversion
+    #: -- the one place the convention is actually exercised.
     start: tuple[int, int]
-    #: ``(line, column)`` of the declaration's end in `file_path`. See
-    #: `start`.
+    #: ``(line, column)`` of the declaration's end in `file_path`; see `start`.
     end: tuple[int, int]
     #: Corpus-reported declaration kind (e.g. ``"theorem"``, ``"def"``,
     #: ``"instance"``), surfaced alongside the premise's signature/body in
     #: rendered hint-chain prompts (``context._render_hint_parts``).
     kind: str
-    #: Path (relative to the traced repo root) of the source file this premise
-    #: is declared in. Provenance: the *file record*'s ``path`` field in
-    #: ``corpus.jsonl``, not any field of the premise's own JSON dict, so every
-    #: `Premise` from one file record shares this value. `_resolve_source` uses
-    #: it to locate the cached mathlib4 source for `body_with_proof`'s slicing.
+    #: Path (relative to the traced repo root) of the source file this premise is
+    #: declared in, used by `_resolve_source` to locate the cached mathlib4
+    #: source for `body_with_proof`'s slicing. Provenance: the *file record*'s
+    #: ``path`` field in ``corpus.jsonl``, not any field of the premise's own
+    #: JSON dict, so every `Premise` from one file record shares this value.
     file_path: str
 
 
@@ -85,8 +82,8 @@ def lookup(full_name: str) -> Premise | None:
 
     Absent means declared outside the traced repo, or dropped as a duplicate by
     `_index`'s collision handling. Every caller here and in `context.py` treats
-    None as "premise unavailable", not an error: ``_render_hint_parts`` renders
-    a placeholder instead of raising.
+    None as "premise unavailable", not an error: ``_render_hint_parts`` renders a
+    placeholder instead of raising.
     """
     return _index().get(full_name)
 
@@ -115,7 +112,7 @@ def signature(p: Premise) -> str:
 
 
 def body(p: Premise) -> str:
-    """`p.code`: signature-only for theorems, signature plus ``:= body`` for defs."""
+    """The premise's corpus source text, unchanged (see `Premise.code`)."""
     return p.code
 
 

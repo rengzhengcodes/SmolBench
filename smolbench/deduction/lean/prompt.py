@@ -40,16 +40,15 @@ def extract_tactic_block(text: str) -> str:
     Returns
     -------
     str
-        The tactic text, or ``""`` when the response opens with an UNCLOSED
-        ``<think>`` block: no recoverable tactic text, and scoring it would
-        pollute ``lean_error`` stats instead of giving a clean "no answer".
+        The tactic text, or ``""`` for a response opening with an UNCLOSED
+        ``<think>`` block: no recoverable tactics, and scoring it would pollute
+        ``lean_error`` stats instead of giving a clean "no answer".
     """
     s = text.strip()
     if s.startswith("<think>"):
         close_idx = s.find("</think>")
         if close_idx == -1:
-            # Truncated CoT: "" keeps this a clean miss rather than a
-            # guaranteed-wrong proof attempt (see Returns above).
+            # Truncated CoT: "" is a clean miss, not a wrong proof (see Returns).
             return ""
         s = s[close_idx + len("</think>") :].lstrip()
     matches = _FENCE_RE.findall(s)

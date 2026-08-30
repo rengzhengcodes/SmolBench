@@ -2,10 +2,9 @@
 
 Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs
 against Lean and so need `.verify`, which requires `lean_dojo` (the `lean`
-extra, plus elan and a traced-repo cache at runtime); `metadata`, `list`,
-`analyze`, `report`, `show`, `compare` and `prompt-stats` need none of that. To
-keep the split real, `.verify` is imported lazily inside `cmd_replay` and
-`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
+extra, plus elan and a traced-repo cache at runtime); every other subcommand
+needs none of that. To keep the split real, `.verify` is imported lazily inside
+`cmd_replay` and `cmd_filter`, and `run-cell`/`run-sweep` reach it only through
 `runner._default_verifier()`.
 """
 
@@ -323,9 +322,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     it, or died in the reasoning channel. A pass@N table follows only when some
     cell recorded more than one replicate: a cell passes if ANY replicate
     verified, and N is the max replicate count seen IN THE DATA, not the sweep
-    config, so mixed-replicate sweeps stay correct. `path` is user-supplied and
-    is checked against `runner.reject_superseded_rows` first — a retired file's
-    rows parse cleanly and would aggregate into a plausible, wrong summary.
+    config, so mixed-replicate sweeps stay correct. `path` is checked against
+    `runner.reject_superseded_rows` before it is opened.
 
     Returns
     -------
@@ -342,21 +340,18 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
-    # Keyed on full cell identity (model, rung, theorem_id, k), not folded
-    # into `cells`: pass@N must ask "did ANY replicate of *this exact*
-    # (theorem, k) succeed", which the (rung, model)-only `cells`
-    # aggregation has already lost.
+    # Keyed on full cell identity (model, rung, theorem_id, k), not folded into
+    # `cells`: pass@N asks "did ANY replicate of *this exact* (theorem, k)
+    # succeed", which the (rung, model)-only `cells` aggregation has lost.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    # `path` is user-supplied and, unlike the run-directory globs elsewhere
-    # in this file, unfiltered upstream -- the likeliest place to point at a
-    # retired `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
-    # Reject before opening: those rows parse cleanly, so the failure mode
-    # is a plausible wrong summary, not a crash, and a warning would not do.
+    # Unlike the run-directory globs elsewhere in this file, `path` is
+    # unfiltered upstream -- the likeliest place to point at a retired
+    # `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
     reject_superseded_rows([args.path])
     with open(args.path) as f:
         for line in f:
@@ -484,10 +479,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
 
-    # ---- pass@N. With n_replicates==1 everywhere it duplicates the plain
-    # success rate above, so it is skipped. N comes from the data (max
-    # replicates in any single cell), not the sweep config, so sweeps that
-    # mix replicate counts across models/rungs stay correct.
+    # ---- pass@N; skipped at n_replicates==1, where it would duplicate the
+    # plain success rate above. N comes from the data, not the sweep config. ----
     n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
     if n_max_replicates > 1:
         passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
@@ -573,7 +566,6 @@ def cmd_compare(args: argparse.Namespace) -> int:
             continue
         if r.get("rung") not in (args.rung_a, args.rung_b):
             continue
-        # With multiple replicates this compares only --replicate (default 0).
         if r.get("replicate_idx", 0) != args.replicate:
             continue
         by_thm.setdefault(r["theorem_id"], {})[r["rung"]] = r

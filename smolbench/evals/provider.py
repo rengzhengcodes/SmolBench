@@ -12,9 +12,7 @@ Dispatch happens at CALL time -- the env var is read and the module imported on
 each call -- so a notebook only needs its env configured before the first
 query/evaluate call, not before any import. To mix providers per model in one
 process (one env var cannot express that), resolve explicitly with
-provider_module("ec2"), which bypasses the environment; smolbench.deduction.lean
-uses that pattern. This module only dispatches: the AWS provisioning primitives
-shared by aws.py and ec2.py live in smolbench.evals._aws.
+provider_module("ec2"), as smolbench.deduction.lean does.
 """
 
 import importlib
@@ -39,8 +37,7 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
     Parameters
     ----------
     name : str, optional
-        Explicit provider name, bypassing the environment entirely (so a
-        mixed-provider sweep is unaffected by INFERENCE_PROVIDER); None (the
+        Explicit provider name, bypassing the environment entirely; None (the
         default) dispatches from ``INFERENCE_PROVIDER`` ("openrouter" unset).
 
     Raises
@@ -75,8 +72,7 @@ def query(*args, **kwargs):
 
 def complete(*args, **kwargs):
     """Query the active provider, returning the full ``ChatResult`` (usage,
-    server-reported model, finish_reason) instead of query's narrowed
-    ``(content, reasoning)`` 2-tuple; see ChatClient.complete."""
+    server-reported model, finish_reason); see ChatClient.complete."""
     return provider_module().complete(*args, **kwargs)
 
 

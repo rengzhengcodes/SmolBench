@@ -9,23 +9,21 @@ Pre-registered; all-pairs would be 840 tests this study never asks.
   Tier 1 -- 7 family omnibus gates at ALPHA/7 (`gcmh_reject`, df=2, K=36
       harmonic x info strata); a family's Tier-2 contrasts stay exploratory
       until its own gate rejects.
-  Tier 2 -- PRIMARY, N_PRIMARY=210 under Bonferroni: 84 within-family ladder +
-      126 within-model info contrasts (`build_primary_contrasts`).
+  Tier 2 -- PRIMARY, N_PRIMARY=210 pairwise contrasts under Bonferroni.
   Tier 3 -- SECONDARY, N_SECONDARY=63 cross-family, size-matched, `intens`-only
-      contrasts (`build_secondary_contrasts`) under Benjamini-Hochberg q=0.05,
-      sized at BH's rank-1 threshold q/N -- an UPPER BOUND on the R BH needs,
-      since only the most significant test is held to q/m.
+      contrasts under Benjamini-Hochberg q=0.05, sized at BH's rank-1 threshold
+      q/N -- an UPPER BOUND on the R BH needs, since only the most significant
+      test is held to q/m.
 
 Notes
 -----
-One binary outcome per harmonic k=1..9 per condition, from the PILOT run, in
-ascending-period (hence ascending-harmonic) order. Difficulty varies with k, so
-power scales with REPLICATES per harmonic; adding harmonics instead would
-change task difficulty and blow up lcm(1..n) context length. Assumed rates
-shrink each y_k toward the condition mean, p_k = (y_k + c*p_bar)/(1+c) with
-c = SHRINKAGE = 1, with a pooled (condition-mean) sensitivity pass beside it.
-Results are S3-backed (SMOLBENCH_RESULTS_S3), never committed, and locked to
-BASE_SEED = 0 (PILOT_SEED).
+One binary outcome per harmonic k=1..9 per condition, from the PILOT run.
+Difficulty varies with k, so power scales with REPLICATES per harmonic; adding
+harmonics would change task difficulty and blow up lcm(1..n) context length.
+Assumed rates shrink each harmonic toward its condition mean (`SHRINKAGE`),
+with a pooled (condition-mean) sensitivity pass beside them. Results are
+S3-backed (SMOLBENCH_RESULTS_S3), never committed, and locked to BASE_SEED = 0
+(PILOT_SEED).
 
 Run (plain `uv run` would sync the project and strip the notebook extras):
     uv run --no-project --with numpy --with scipy --with statsmodels python notebooks/induction/analysis/power_analysis.py
@@ -52,8 +50,7 @@ from _power_common import (
 )
 
 # ---------------------------------------------------------------------------
-# Experiment design, unchanged from periodic_moe; MODELS and FAMILIES are
-# given verbatim by the study spec.
+# Experiment design; MODELS and FAMILIES are given verbatim by the study spec.
 # ---------------------------------------------------------------------------
 MODELS = (
     "qwen35_27b", "qwen35_122b", "qwen35_397b",
@@ -75,37 +72,35 @@ FAMILIES: dict[str, tuple[str, str, str]] = {
     "ds":      ("ds_flash", "ds_v31", "ds_pro"),
 }
 
-# Drift guard: MODELS (flat, iteration order) and FAMILIES (ladder/omnibus
-# structure) are hand-maintained and must never disagree about which 21
-# models exist or in what order. Checked at MODULE scope so importers get
-# the guard too; `main` re-asserts it, per the spec's "assert BOTH"
-# requirement.
+# Drift guard: MODELS (iteration order) and FAMILIES (ladder/omnibus structure)
+# are hand-maintained and must never disagree about which 21 models exist or in
+# what order. At MODULE scope so importers get the guard too; `main` re-asserts
+# it, per the spec's "assert BOTH" requirement.
 assert MODELS == tuple(rung for rungs in FAMILIES.values() for rung in rungs), (
     "MODELS must equal the concatenation of FAMILIES' rungs, in FAMILIES order"
 )
 
-INFOS = ("intens", "extens", "noise_intens", "zero")   # unchanged from periodic_moe
-N_HARMONICS = 9                                         # unchanged
-PILOT_SEED = 0                                          # CHANGED: seed 0, file rep_0.yaml
-# NOTE: PILOT_SEED (which replicate's YAML to read) and SEED (_power_common's
-# RNG seed for this script's OWN Monte Carlo) both equal 0 only because the
-# study is locked to BASE_SEED = 0; they are unrelated and may diverge.
+INFOS = ("intens", "extens", "noise_intens", "zero")
+N_HARMONICS = 9
+PILOT_SEED = 0                                          # seed 0 -> rep_0.yaml
+# PILOT_SEED (which replicate's YAML to read) and SEED (_power_common's RNG
+# seed for this script's OWN Monte Carlo) both equal 0 only because the study
+# is locked to BASE_SEED = 0; they are unrelated and may diverge.
 
 RESULTS_DIR = results_dir(__file__, up=1)
 
-# Stratified-CMH simulation parameters (not chromatic's quiz-level design),
-# unchanged from periodic_moe. The larger contrast family (210 + 63 vs. 30)
-# makes the script slower, not less precise, so N_SIMS is NOT reduced to
-# compensate (see the module docstring's "Contrast tiers" section).
+# Stratified-CMH simulation parameters (not chromatic's quiz-level design).
+# The larger contrast family (210 + 63) makes the script slower, not less
+# precise, so N_SIMS is NOT reduced to compensate (see the module docstring's
+# "Contrast tiers" section).
 N_SIMS = 10_000
 MAX_REPLICATES = 200
 SHRINKAGE = 1.0  # c in p_k = (y_k + c * p_bar) / (1 + c)
 
 # ---------------------------------------------------------------------------
-# Tier alphas, defined before the functions below so their `alpha=...`
-# defaults bind to these study-specific values. PRIMARY and SECONDARY need
-# different per-test alphas, so `alpha` is an explicit parameter throughout
-# -- see the Notes section on `simulated_power`.
+# Tier alphas, defined before the functions below so their `alpha=...` defaults
+# bind to these values. PRIMARY and SECONDARY need different per-test alphas, so
+# `alpha` is an explicit parameter throughout (see `simulated_power`'s Notes).
 # ---------------------------------------------------------------------------
 
 # Tier 2 -- PRIMARY: 84 ladder contrasts (7 families x 4 infos x
@@ -143,8 +138,7 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
     Raises
     ------
     SystemExit
-        If a pilot replicate file is missing; names the path and
-        ``InductionExperiment.harness.sync_down()``.
+        If a pilot replicate file is missing.
     """
     outcomes: dict[tuple[str, str], np.ndarray] = {}
     for model in MODELS:
@@ -305,11 +299,6 @@ def simulated_power(
     rates_a, rates_b : ndarray
         The two conditions' assumed true per-harmonic rates.
 
-    Returns
-    -------
-    float
-        Fraction of `n_sims` simulations in which `cmh_reject` rejects.
-
     Notes
     -----
     The ALPHA_PRIMARY default is for standalone/REPL use only: the two pairwise
@@ -444,11 +433,6 @@ def omnibus_power(
         Keyed like `load_outcomes`'s return value; the shrunk-toward-mean rates.
     rng : numpy.random.Generator
         Freshly seeded by the caller, so repeated calls reproduce.
-
-    Returns
-    -------
-    float
-        Fraction of `n_sims` simulations that reject.
     """
     rungs = FAMILIES[family]
     strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]  # K = 36
@@ -528,10 +512,9 @@ def build_primary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str
     Returns
     -------
     list of (str, tuple, tuple)
-        ``(label, key_a, key_b)`` over ``(model, info)`` keys: all 84 ladder
-        contrasts first (by `FAMILIES` order, then `INFOS` order, then
-        ``combinations(rungs, 2)``), then the 126 info contrasts (by `MODELS`
-        order, then ``combinations(INFOS, 2)``). Labels:
+        ``(label, key_a, key_b)`` over ``(model, info)`` keys, all 84 ladder
+        contrasts first (`main` slices on that boundary), then the 126 info
+        contrasts. Labels, parsed downstream:
         ``"[{family} ladder | {info}] {rung_a} vs {rung_b}"`` and
         ``"[{model}] {info_a} vs {info_b}"``.
     """
@@ -560,9 +543,7 @@ def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, s
     -------
     list of (str, tuple, tuple)
         As `build_primary_contrasts`, always ``info == "intens"``, grouped by
-        rung level then by ``combinations(FAMILIES, 2)`` (i.e. `FAMILIES`'
-        definition) order. Labels:
-        ``"[rung {r} | intens] {model_a} vs {model_b}"``.
+        rung level. Labels: ``"[rung {r} | intens] {model_a} vs {model_b}"``.
     """
     contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
     for r in range(3):
@@ -657,10 +638,8 @@ def _print_sizing_rows(
 def main() -> None:
     """Run the full family-ladder power analysis and print the report.
 
-    Asserts the pre-registered family sizes (210 / 63) and the MODELS/FAMILIES
-    agreement before touching pilot data: a silent change there would
-    invalidate ALPHA_PRIMARY / ALPHA_SECONDARY. Then prints the eight numbered
-    sections marked in the body; the recommended R comes from Tier 2 alone.
+    Prints the eight numbered sections marked in the body; the recommended R
+    comes from Tier 2 alone.
     """
     # Drift guards: a silent change to the pre-registered family sizes would
     # invalidate the Bonferroni/BH corrections baked into ALPHA_PRIMARY /

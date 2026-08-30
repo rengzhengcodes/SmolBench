@@ -16,9 +16,9 @@ degrades instruction following too.
 
 Recovery is deliberately conservative: mining a verdict from anywhere would
 invent verdicts out of chains cut off by the completion budget, so a long
-response is mined only when it ENDS in a verdict and otherwise gets
-`TRUNCATED`. Repetition collapse gets its own `DEGENERATE` label for the same
-reason -- calling it a parse failure would misattribute the finding.
+response is mined only when it ENDS in a verdict and otherwise gets `TRUNCATED`.
+Repetition collapse gets its own `DEGENERATE` label for the same reason --
+calling it a parse failure would misattribute the finding.
 """
 
 import ast
@@ -108,8 +108,8 @@ _TERMINAL_INT = re.compile(
 class ParseResult:
     """One response's extracted answer plus its contract compliance.
 
-    ``value`` is None when nothing could be extracted; ``violation`` is None
-    when the response obeyed the contract exactly, else one of the labels above.
+    ``value`` is None when nothing could be extracted; ``violation`` is None when
+    the response obeyed the contract exactly, else one of the labels above.
     """
 
     value: Optional[Answer]
@@ -136,8 +136,8 @@ def is_degenerate(text: str) -> bool:
     beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens, the TAIL check), and
     collapse onto a PHRASE with a wide character alphabet (Llama-4-Maverick
     looping ``"## Step 1\\n\\n"``, the WORD checks). Misclassifying these would
-    blame the completion budget (`TRUNCATED`) or the parser
-    (`MULTIPLE_VALUES`) for a finding about the condition breaking the model.
+    blame the completion budget (`TRUNCATED`) or the parser (`MULTIPLE_VALUES`)
+    for a finding about the condition breaking the model.
     """
     stripped = text.strip()
     if not stripped:
@@ -232,7 +232,7 @@ def _safe_int(digits: str) -> Optional[int]:
 
     Python raises ValueError on int/str conversion beyond 4,300 digits, so an
     unguarded ``int()`` crashes grading -- a 20,379-digit run took a live run
-    down. No such number is a plausible answer anyway.
+    down.
     """
     stripped = digits.lstrip("-")
     if len(stripped) > _MAX_ANSWER_DIGITS:
@@ -252,8 +252,8 @@ def parse_tof(text: str) -> ParseResult:
     """Extract a True/False verdict, and classify contract compliance.
 
     The contract is "exactly one of these two strings and nothing else", so
-    anything beyond a bare ``True``/``False`` is a violation even when the
-    verdict is still recovered.
+    anything beyond a bare ``True``/``False`` is a violation even when the verdict
+    is still recovered.
     """
     if not text or not text.strip():
         return ParseResult(None, EMPTY)
@@ -302,8 +302,8 @@ def parse_tof(text: str) -> ParseResult:
 def parse_numeric(text: str) -> ParseResult:
     """Extract an integer answer, and classify contract compliance.
 
-    The contract is "exactly one integer and nothing else", so prose, markup,
-    or a worked calculation around the number are all violations. The worked
+    The contract is "exactly one integer and nothing else", so prose, markup, or
+    a worked calculation around the number are all violations. The worked
     calculation is the dangerous case: the first integer is an operand.
     """
     if not text or not text.strip():

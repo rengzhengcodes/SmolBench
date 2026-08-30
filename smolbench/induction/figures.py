@@ -15,9 +15,8 @@ from smolbench.evals import Marks
 def accuracy(marks: Marks) -> float:
     """Fraction correct: ``correct / (correct + incorrect + invalid)``.
 
-    Invalid responses count against the model like incorrect ones. An empty
-    ``Marks`` returns ``0.0`` rather than raising, so it cannot abort a table
-    build.
+    Invalids count against the model. An empty ``Marks`` returns ``0.0`` rather
+    than raising, so it cannot abort a table build.
     """
     total = marks.correct + marks.incorrect + marks.invalid
     return marks.correct / total if total > 0 else 0.0
@@ -86,9 +85,8 @@ def plot_archetype_accuracy(
 
     Notes
     -----
-    Bar offsets are ``(i - (len(conditions) - 1) / 2) * bar_width``, which at
-    exactly 3 conditions reproduces the pinned figure bit-for-bit while
-    generalizing to any number of conditions.
+    The generalized bar offsets reproduce the pinned 3-condition figure
+    bit-for-bit.
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mtick

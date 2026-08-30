@@ -4,8 +4,8 @@ Every mark stores its raw ``response``, so ``smolbench.evals.parsing`` re-scores
 a whole results tree with no model, no GPU and no re-run -- use this to bring
 arms graded under an older, stricter convention onto one convention. Per
 condition it reports before/after accuracy, changed verdicts, invalid marks
-recovered, and NONCOMPLIANCE: how often the model broke the output contract
-regardless of correctness, which separates degraded instruction following from
+recovered, and NONCOMPLIANCE (how often the model broke the output contract
+regardless of correctness), which separates degraded instruction following from
 degraded reasoning.
 
 Dry run by default; ``--write`` rewrites the YAMLs in place with NO git safety
@@ -40,9 +40,9 @@ from smolbench.evals.parsing import parse_numeric  # noqa: E402
 
 STUDIES = {
     # The family-ladder scaling study (notebooks/induction) is S3-backed
-    # (SMOLBENCH_RESULTS_S3), so the guard in `main` refuses a local regrade
-    # until the operator syncs down and unsets the env var; see the module
-    # docstring's "S3-backed results guard".
+    # (SMOLBENCH_RESULTS_S3), so the module docstring's "S3-backed results
+    # guard" refuses a local regrade until the operator syncs down and
+    # unsets the env var.
     "induction": "notebooks/induction/results",
 }
 
@@ -50,13 +50,12 @@ STUDIES = {
 def _s3_backed_studies(studies) -> List:
     """Return ``(study, tree, store.describe())`` for each S3-backed study in `studies`.
 
-    `studies` are `STUDIES` keys; `tree` is ``REPO / STUDIES[study]``, the exact
-    directory `main` would read or write. Empty whenever every study resolves
-    locally, i.e. whenever ``SMOLBENCH_RESULTS_S3`` is unset. Studies are
-    resolved one at a time rather than short-circuiting on that env var, so the
-    refusal names each offending tree by its own ``describe()`` value.
-    ``results_store`` is imported lazily, per the house convention that
-    importing a module must not require the AWS SDK.
+    `studies` are `STUDIES` keys and `tree` is ``REPO / STUDIES[study]``, the
+    exact directory `main` would read or write; the list is empty whenever
+    ``SMOLBENCH_RESULTS_S3`` is unset. Studies are resolved one at a time rather
+    than short-circuiting on that env var, so the refusal names each offending
+    tree by its own ``describe()``. ``results_store`` is imported lazily, per
+    the house convention that importing a module must not require the AWS SDK.
     """
     from smolbench.evals.results_store import S3ResultsStore, resolve_store
 
@@ -78,10 +77,9 @@ def regrade_file(path: Path, parse) -> Dict:
     -------
     dict
         ``marks`` (a new `Marks` carrying the re-parsed score and compliance per
-        mark), ``n``, ``before_correct``, ``before_invalid``, ``changed``
-        (verdict changed), ``recovered`` (invalid -> real verdict), ``broke``
-        (real verdict -> invalid), ``violations`` (`Counter` of output-contract
-        violations).
+        mark), ``n``, ``before_correct``, ``before_invalid``, ``changed``,
+        ``recovered`` (invalid -> real verdict), ``broke`` (real verdict ->
+        invalid), ``violations`` (`Counter` of output-contract violations).
     """
     marks = Marks.load(path)
     new_marks = []
@@ -119,9 +117,8 @@ def regrade_file(path: Path, parse) -> Dict:
 def main() -> int:
     """Re-grade every requested study and return a process exit code.
 
-    Returns ``1`` if any requested study is S3-backed (see the module
-    docstring's "S3-backed results guard") or if any mark regressed from a real
-    verdict to invalid; ``0`` otherwise.
+    ``1`` if any requested study is S3-backed (see the module docstring's
+    "S3-backed results guard") or any mark regressed to invalid; ``0`` otherwise.
     """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")
@@ -131,9 +128,8 @@ def main() -> int:
     studies = args.study or sorted(STUDIES)
 
     # Guard (see the module docstring's "S3-backed results guard"). It fires
-    # regardless of --write: once SMOLBENCH_RESULTS_S3 is set, a dry run's
-    # tallies come from a local tree that is not authoritative, which would
-    # mislead rather than inform the operator's --write decision.
+    # regardless of --write: a dry run's tallies would come from a local tree
+    # that is not authoritative, misleading the operator's --write decision.
     offending = _s3_backed_studies(studies)
     if offending:
         print("REFUSING to regrade: the following stud(y/ies) are S3-backed, not local:")

@@ -25,11 +25,11 @@ from smolbench.evals import Answer, QnA, Quiz
 class Prompter:
     """Bundle everything needed to prompt an LLM with a generated context.
 
-    Contract: ``template`` MUST reference ``$positive_info`` (the intensional,
-    extensional, or noise-padded context) plus every key ``query_gen`` and
-    ``substitution`` produce. Rendering uses ``safe_substitute``, which SILENTLY
-    leaves a misspelled placeholder verbatim in the prompt instead of raising,
-    so validate templates against a sample query before an expensive run.
+    Placeholder contract: ``template`` MUST reference ``$positive_info`` (the
+    intensional, extensional or noise-padded context) plus every key
+    ``query_gen`` and ``substitution`` produce. Rendering uses
+    ``safe_substitute``, which SILENTLY leaves a misspelled placeholder verbatim
+    instead of raising, so validate templates on a sample query first.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
@@ -56,11 +56,11 @@ def build_substitution(
 ) -> Dict[str, str]:
     """Merge a query's substitutions with the prompter's, plus positive_info.
 
-    The single merge point, so all three renderings in both benchmarks share one
-    precedence: dict-union over ``query``, ``prompter.substitution``,
-    ``positive_info``, so ``positive_info`` wins a collision. Returns a fresh
-    dict, so callers may mutate it further (chromatic's extensional renderer
-    adds ``query_years``).
+    The single merge point for all three renderings in both benchmarks, so
+    precedence is uniform: dict-union in the order ``query``,
+    ``prompter.substitution``, ``positive_info``, the last winning a collision.
+    Returns a fresh dict, so callers may mutate it further (chromatic's
+    extensional renderer adds ``query_years``).
     """
     return query | prompter.substitution | {"positive_info": positive_info}
 
@@ -75,7 +75,7 @@ def context_renderer(
     :func:`token_matched_noise_prompt` needs the rendering as a reusable
     callable; binding ``query`` in a function scope also avoids closing over a
     loop variable at the call site. ``template`` defaults to
-    ``prompter.template``, what the intensional and noise-padded arms use.
+    ``prompter.template``, the intensional and noise-padded arms' template.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -138,12 +138,12 @@ def random_labels(
 ) -> Tuple[str, ...]:
     """Auto-generate ``count`` unique random labels for a benchmark config.
 
-    Both ``PeriodicConfig`` and ``ChromaticIntervalsConfig`` derive labels here,
-    which keeps their label-length formulas calibrated. Length is
+    Shared by both benchmarks' configs, which keeps their label lengths
+    calibrated. Length is
     ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``;
-    ``min_length=0`` (chromatic) adds no floor beyond that formula, periodic
-    passes 2 so single-character labels are never auto-generated. RNG call order
-    is fixed -- one fresh ``np.random.default_rng(seed)``, then one
+    ``min_length=0`` (chromatic) adds no floor, periodic passes 2 so
+    single-character labels are never auto-generated. RNG call order is fixed --
+    one fresh ``np.random.default_rng(seed)``, then one
     :func:`random_unique_strings` call -- so a seed always yields the same set.
     """
     length: int = max(
@@ -177,12 +177,11 @@ WHITESPACE_UNITS: Tuple[str, ...] = (
 
 # Repetition counts `choose_whitespace_unit` probes. Small and large mixed, so
 # it rejects a unit that merges only once a run gets long (the failure mode that
-# makes a pad silently saturate below its target). The top probe deliberately
-# goes past 1024: a `tokenizer.json` can embed a `truncation` stanza capping
-# every count (Nemotron-Ultra ships max_length 512), which would make a
-# saturating tokenizer look linear at 256 and then silently refuse to grow.
-# `HFTokenizer` also disables truncation on load; this probe is the backstop for
-# tokenizers built elsewhere.
+# silently saturates a pad below its target). The top probe deliberately goes
+# past 1024: a `tokenizer.json` can embed a `truncation` stanza capping every
+# count (Nemotron-Ultra ships max_length 512), which would make a saturating
+# tokenizer look linear at 256 and then silently refuse to grow. `HFTokenizer`
+# disables truncation on load; this probe backstops tokenizers built elsewhere.
 _UNIT_PROBES: Tuple[int, ...] = (1, 64, 256, 2048)
 
 # A unit qualifies when its marginal cost stays within this factor of 1 token
@@ -203,9 +202,8 @@ def choose_whitespace_unit(tokenizer) -> str:
     """Pick a whitespace pad atom that costs ~1 token per repetition.
 
     Whether a unit repeats linearly depends on the tokenizer's merge table, and
-    these benchmarks run against whatever tokenizer the model under test uses
-    (any :class:`~smolbench.evals.tokenization.Tokenizer`), so the choice is
-    probed empirically rather than hard-coded.
+    the model under test supplies the tokenizer, so the choice is probed
+    empirically rather than hard-coded.
 
     Returns
     -------
@@ -292,19 +290,18 @@ def token_matched_noise_prompt(
     pad_unit: str = unit if unit is not None else choose_whitespace_unit(tokenizer)
 
     # Estimate, then correct, then (only if needed) bisect. The unit costs ~1
-    # token, so the token deficit is itself a near-exact estimate of the missing
-    # repetitions. Every pass re-measures the WHOLE rendered prompt, which
-    # absorbs the second-order effects no estimate can predict: merges where the
-    # pad abuts the context, and between the pad and what the template renders
-    # after it.
+    # token, so the token deficit is a near-exact estimate of the missing
+    # repetitions. Every pass re-measures the WHOLE rendered prompt, absorbing
+    # the merges no estimate can predict: pad against context, and pad against
+    # whatever the template renders after it.
     #
     # Correction alone can oscillate (n -> n+3 -> n -> ...) when those merges
     # make the local token cost jump around, so the probes also maintain a
     # bracket (`lo` below the target, `hi` above) and replace any estimate that
-    # escapes it with the midpoint -- turning oscillation into a bisection that
-    # must terminate. A bracket that closes to adjacent values without an exact
-    # hit means the token count JUMPS over the target: no repetition count
-    # satisfies the request, a genuine failure.
+    # escapes it with the midpoint -- turning oscillation into a terminating
+    # bisection. A bracket that closes to adjacent values without an exact hit
+    # means the token count JUMPS over the target: no repetition count satisfies
+    # the request, a genuine failure.
     n: int = target_tokens - base_tokens
     lo: int = 0  # f(0) = base_tokens < target_tokens, per the early return
     hi: Optional[int] = None

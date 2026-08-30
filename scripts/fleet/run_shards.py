@@ -5,27 +5,23 @@ process per ``INDUCTION_SHARD``, instead of the one-model-per-box lanes
 ``run_fleet.py`` supervises -- and such a process stays dead once it dies. This
 script supervises ONE shard group:
 
-- ADOPTS already-running shards (matched on ``INDUCTION_MODELS`` /
-  ``INDUCTION_SHARD`` in ``/proc/<pid>/environ``) rather than double-launching
-  them, so it is safe to start mid-run.
+- ADOPTS already-running shards (matched by `find_adoptable`) rather than
+  double-launching them, so it is safe to start mid-run.
 - Relaunches a dead shard on the hand-launch environment recipe, so it
-  REATTACHES to a still-live box through its state file, or provisions a fresh
-  one.
+  REATTACHES to a still-live box through its state file, or provisions a new one.
 - HALTS a shard that dies within ``FAST_CRASH_SECONDS`` of launch
   ``MAX_FAST_CRASHES`` times in a row; capacity-exhausted hunts
   (``CAPACITY_MARKER``) are exempt and retry indefinitely on a longer backoff.
 - On a shard's clean exit, terminates its instance through its state file --
-  direct runs do no teardown, so the box would otherwise idle about 30 minutes
-  until the on-box watchdog fires.
+  direct runs do no teardown, so the box would otherwise idle ~30 minutes until
+  the on-box watchdog fires.
 - Exits once every shard is complete or halted, non-zero if any halted.
 
 Launch it detached (``setsid nohup ... &``, redirecting to a log under
 ``notebooks/induction/results/fleet_logs/``) from a shell that has sourced
 ``notebooks/induction/keys.env`` and ``notebooks/ec2-operator.env``: children
 inherit this process's environment, with only per-shard variables layered on
-top. ``--count 1 --no-shard`` supervises a single unsharded run, and then needs
-explicit ``--tag`` and ``--state-file``, there being no shard suffix to derive
-them from.
+top.
 """
 
 from __future__ import annotations
@@ -67,7 +63,7 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
     plus operator credentials) plus per-shard variables. Passing the same base
     ``EC2_EXPERIMENT_TAG`` reproduces the hand launches' tags -- the driver
     derives the per-shard tag and state-file suffix from ``INDUCTION_SHARD`` --
-    which is what makes adoption and reattach seamless.
+    which is what makes adoption and reattach work.
     """
     env = dict(os.environ)
     env["INDUCTION_MODELS"] = args.model
@@ -89,9 +85,9 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
     """Return the PID of a live ``run_study.py`` process for (`model`, `shard`), or None.
 
-    Matches through ``/proc/<pid>/environ`` on ``INDUCTION_MODELS`` and
-    ``INDUCTION_SHARD`` (``"i/n"``, or ``None`` for an unsharded run). First
-    match wins; the launch discipline guarantees at most one per (model, shard).
+    Matches on ``INDUCTION_MODELS`` and ``INDUCTION_SHARD`` (``"i/n"``, or
+    ``None`` for an unsharded run) in ``/proc/<pid>/environ``. First match wins;
+    the launch discipline guarantees at most one per (model, shard).
     """
     try:
         pids = subprocess.run(
@@ -129,9 +125,9 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
 def terminate_shard_box(args: argparse.Namespace, index: int) -> None:
     """Best-effort terminate of completed shard `index`'s instance, via its state file.
 
-    Direct runs do no teardown by contract, so this reclaims the box at once
-    instead of waiting ~30 minutes for the on-box idle watchdog. Any failure is
-    logged and swallowed; that watchdog is the backstop.
+    Direct runs do no teardown, so this reclaims the box at once instead of
+    waiting ~30 minutes for the on-box idle watchdog, which stays the backstop:
+    any failure here is logged and swallowed.
     """
     path = state_file_for(args, index)
     try:
@@ -160,12 +156,11 @@ def main() -> int:
     parser.add_argument("--tag", default="scaling", help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver).")
     parser.add_argument("--no-shard", action="store_true", help="Single unsharded run (requires --state-file; --count must be 1).")
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")
-    # WHY: the driver provisions BEFORE it checks has_outstanding(). So a
-    # shard whose seeds are already collected still bids for a box, holds
-    # it through boot, finds nothing to do, and exits -- starving the
-    # shards that have real work against the account's vCPU quota. The
-    # --only-shards filter keeps the seed->shard mapping intact (--count
-    # still defines it), while it skips launching the empty shards.
+    # WHY: the driver provisions BEFORE it checks has_outstanding(), so a shard
+    # whose seeds are already collected still bids for a box, holds it through
+    # boot, finds nothing to do, and exits -- starving the shards with real work
+    # against the account's vCPU quota. --count still defines the seed->shard
+    # mapping; this only skips launching the empty shards.
     parser.add_argument(
         "--only-shards", default="",
         help="Comma-separated shard indices to run (default: all). "

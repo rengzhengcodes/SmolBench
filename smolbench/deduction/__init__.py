@@ -8,7 +8,7 @@ Members
 lean
     Lean 4 theorem-proving eval over LeanDojo Benchmark 4 / Mathlib4.
 
-Carries no imports deliberately: ``smolbench.deduction.lean`` pulls in
-``tiktoken`` and ``lean_dojo``, so import the specific submodule you need
-(e.g. ``import smolbench.deduction.lean.corpus``).
+Deliberately imports nothing; import the specific submodule you need (e.g.
+``import smolbench.deduction.lean.corpus``). See ``smolbench.deduction.lean``
+for which submodules pull in ``tiktoken`` / ``lean_dojo``.
 """

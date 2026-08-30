@@ -11,9 +11,9 @@ ALWAYS tears down (a SageMaker endpoint bills hourly until deleted), while
 (an on-box idle watchdog plus a max-lifetime shutdown cover abandonment, since
 the instance outlives any one section).
 
-Import boto3/botocore LAZILY inside each function that needs them: neither
-provider's inference path needs AWS credentials or the SDK, and importing this
-module must not force that dependency.
+Import boto3/botocore LAZILY inside each function that needs them: no inference
+path needs AWS credentials or the SDK, and importing this module must not force
+that dependency.
 """
 
 import logging
@@ -31,14 +31,13 @@ def fresh_client(service: str, region: Optional[str] = None):
     process-wide default session; clients are never reused either. A fresh
     Session per call picks up a rotated ``~/.aws/credentials`` (this repo's IdP
     sessions last ~12h) on the very next call, instead of raising
-    ``RequestExpired``/``ExpiredToken`` until the process restarts. boto3 is
-    imported lazily, so only calling this needs it installed.
+    ``RequestExpired``/``ExpiredToken`` until the process restarts.
 
     Parameters
     ----------
     region : str, optional
-        None (default) defers to boto3's own resolution order; callers pass
-        None for IAM, a global service.
+        None defers to boto3's own resolution order; callers pass None for IAM,
+        a global service.
     """
     import boto3  # lazy: keep the inference paths boto3-free
 
@@ -225,11 +224,9 @@ def poll_until(
 
     Notes
     -----
-    The ordering is a contract: call ``check()``; a non-``None`` result returns
-    IMMEDIATELY without consulting the deadline (so a success at or just past
-    the deadline still wins); a raise propagates with no sleep or deadline
-    check; otherwise raise ``on_timeout()`` if ``time.time() > deadline``, else
-    sleep ``interval_s`` and loop.
+    The ordering is a contract: a non-``None`` ``check()`` result returns
+    IMMEDIATELY without consulting the deadline, so a success at or just past
+    the deadline still wins over ``on_timeout()``.
     """
     deadline = time.time() + timeout_s
     while True:
@@ -247,9 +244,9 @@ def best_effort_teardown(
     """Run every teardown step, logging (never raising) each one's outcome.
 
     Callers invoke this from a ``finally`` block, where a raise would mask the
-    ``with`` body's own exception. Every step therefore runs in order
-    regardless of earlier failures, and each exception is logged at INFO -- a
-    failed step leaves its resource behind for manual or next-run cleanup.
+    ``with`` body's own exception. Every step therefore runs regardless of
+    earlier failures, each exception logged at INFO -- a failed step leaves its
+    resource behind for manual or next-run cleanup.
 
     Parameters
     ----------
@@ -270,12 +267,11 @@ def best_effort_teardown(
 class _DeploySpecRequired(TypedDict):
     """Hold the one field every deploy spec must have; see `DeploySpec`."""
 
-    #: HuggingFace repo id to deploy/serve, e.g.
-    #: ``"Qwen/Qwen2.5-1.5B-Instruct"``. SageMaker puts it in the container's
-    #: ``HF_MODEL_ID`` env var (``aws.provision_endpoint``); EC2/vLLM passes it
-    #: as the control agent's ``hf_model_id`` payload field, which becomes
-    #: vLLM's ``--model`` flag (``ec2.serve_model`` / ``_serve`` in
-    #: ``payloads/agent.py.txt``).
+    #: HuggingFace repo id to deploy/serve, e.g. ``"Qwen/Qwen2.5-1.5B-Instruct"``.
+    #: SageMaker puts it in the container's ``HF_MODEL_ID`` env var
+    #: (``aws.provision_endpoint``); EC2/vLLM passes it as the control agent's
+    #: ``hf_model_id`` payload field, i.e. vLLM's ``--model`` flag
+    #: (``ec2.serve_model`` / ``_serve`` in ``payloads/agent.py.txt``).
     hf_model_id: str
 
 
@@ -292,11 +288,10 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: SageMaker's ``SM_VLLM_TENSOR_PARALLEL_SIZE`` env var, EC2/vLLM's ``tp``
     #: payload field (vLLM's ``--tensor-parallel-size``).
     tp: int
-    #: SageMaker ONLY: the ``InstanceType`` for the endpoint's production
-    #: variant (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``,
-    #: so SageMaker specs require it. EC2 specs have no use for it: their
-    #: instance type is chosen once at ``provision_spot_instance`` time, not
-    #: per model.
+    #: SageMaker ONLY: ``InstanceType`` for the endpoint's production variant
+    #: (e.g. ``"ml.p5.48xlarge"``); read via ``spec["instance_type"]``, so
+    #: SageMaker specs require it. EC2 picks its instance type once at
+    #: ``provision_spot_instance`` time, not per model.
     instance_type: str
     #: SageMaker ONLY: extra container environment variables merged into the
     #: DLC's base ``Environment`` dict (e.g. ``{"HF_TOKEN": "hf_..."}`` for a
@@ -305,29 +300,26 @@ class DeploySpec(_DeploySpecRequired, total=False):
     #: SageMaker ONLY: override for the default vLLM DLC image URI; read via
     #: ``spec.get("image", SAGEMAKER_VLLM_DLC)``.
     image: str
-    #: EC2/vLLM ONLY: context window vLLM launches with (``--max-model-
-    #: len``); also doubles as ``get_model_context_length``'s soft token
-    #: guard. Read via ``spec.get("max_model_len", EC2_CONTEXT_LENGTH)``.
+    #: EC2/vLLM ONLY: context window vLLM launches with (``--max-model-len``),
+    #: doubling as ``get_model_context_length``'s soft token guard. Read via
+    #: ``spec.get("max_model_len", EC2_CONTEXT_LENGTH)``.
     max_model_len: int
     #: EC2/vLLM ONLY: extra CLI flags appended verbatim to the ``docker run``
-    #: vLLM command (e.g. ``["--trust-remote-code"]``,
-    #: ``["--reasoning-parser", "qwen3"]``); read via ``spec.get("vllm_args",
-    #: [])``.
+    #: vLLM command (e.g. ``["--trust-remote-code"]``, ``["--reasoning-parser",
+    #: "qwen3"]``); read via ``spec.get("vllm_args", [])``.
     vllm_args: List[str]
-    #: EC2/vLLM ONLY: a system prompt the provider layer injects ahead of
-    #: every user prompt for this model (e.g. Nemotron-Ultra's "detailed
-    #: thinking on" CoT toggle); read via ``spec.get("system_prompt")``. This
-    #: field, uniquely, has no non-None default: absence means "no
-    #: provider-injected system prompt".
+    #: EC2/vLLM ONLY: a system prompt the provider layer injects ahead of every
+    #: user prompt for this model (e.g. Nemotron-Ultra's "detailed thinking on"
+    #: CoT toggle); read via ``spec.get("system_prompt")``. Uniquely, it has no
+    #: non-None default: absence means "no provider-injected system prompt".
     system_prompt: str
-    #: EC2/vLLM ONLY: repo id to load this model's TOKENIZER from, when that
-    #: differs from ``hf_model_id``. ``smolbench.evals.tokenization.for_model``
-    #: reads it via ``spec.get("tokenizer_hf_id")``, falling back to
-    #: ``hf_model_id`` (the normal case). Exists because a quantized
-    #: redistribution occasionally ships weights with no ``tokenizer.json``
-    #: while its unquantized base repo has one; the tokenizer is identical
-    #: either way, so pointing at the base repo keeps token-matched prompts
-    #: (the induction noise arm) buildable for that checkpoint.
+    #: EC2/vLLM ONLY: repo id to load this model's TOKENIZER from when that
+    #: differs from ``hf_model_id``; ``tokenization.for_model`` reads it via
+    #: ``spec.get("tokenizer_hf_id")``, falling back to ``hf_model_id``. Exists
+    #: because a quantized redistribution occasionally ships weights with no
+    #: ``tokenizer.json`` while its unquantized base repo has one; the
+    #: tokenizer is identical either way, so pointing at the base repo keeps
+    #: token-matched prompts (the induction noise arm) buildable.
     tokenizer_hf_id: str
     #: EC2/vLLM ONLY: LoRA adapters to stage from S3 and register with vLLM,
     #: as ``[{"name": ..., "s3": "<prefix>/<base_key>[/<sub>]", "region": ...}]``.
@@ -338,18 +330,16 @@ class DeploySpec(_DeploySpecRequired, total=False):
 
 #: Keys `aws.SAGEMAKER_DEPLOY_SPECS` entries may use. Verified against the dict
 #: literal and every place a spec is read (``provision_endpoint``).
-#: ``hf_model_id``/``instance_type`` are read unconditionally
-#: (``spec["..."]``), so any entry actually deployed needs them;
-#: ``tp``/``env``/``image`` are read via ``.get(...)`` with documented defaults.
+#: ``hf_model_id``/``instance_type`` are read unconditionally (``spec["..."]``),
+#: so any entry actually deployed needs them; the rest via ``.get(...)``.
 SAGEMAKER_SPEC_KEYS: frozenset = frozenset(
     {"hf_model_id", "tp", "instance_type", "env", "image"}
 )
 #: Keys `ec2.EC2_DEPLOY_SPECS` entries may use. Verified against the dict
 #: literal and every place a spec is read (``get_model_context_length``,
-#: ``serve_model``, ``_system_prompt``). ``hf_model_id`` is read
-#: unconditionally; ``tp``/``max_model_len``/``vllm_args``/``system_prompt``
-#: via ``.get(...)`` with documented defaults, as is ``tokenizer_hf_id`` one
-#: module over in ``tokenization.for_model``.
+#: ``serve_model``, ``_system_prompt``, plus ``tokenizer_hf_id`` one module
+#: over in ``tokenization.for_model``). Only ``hf_model_id`` is read
+#: unconditionally; the rest via ``.get(...)``.
 EC2_SPEC_KEYS: frozenset = frozenset(
     {
         "hf_model_id",

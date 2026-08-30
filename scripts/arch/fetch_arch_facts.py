@@ -18,12 +18,12 @@ Two ``__file__``-anchored outputs: ``arch_configs_raw.json``, the verbatim audit
 trail, and ``arch_facts.json``, a normalised diagram-ready view (``text_config``
 wrappers hoisted, per-layer arrays run-length encoded into their repeating
 motif, fields grouped by attention / positional encoding / MoE / state space).
-Unrecognised keys are kept under ``derived.unclassified`` rather than dropped:
-an unfamiliar field on a 2026 architecture is a finding.
+Unrecognised keys go to ``derived.unclassified`` rather than being dropped: an
+unfamiliar field on a 2026 architecture is a finding.
 
-``--check`` also cross-checks the fetched configs against
-``tests/fixtures/roster_configs.json`` (the deploy-spec test's ground truth) on
-the four fields both hold, and exits non-zero on any mismatch or fetch failure.
+``--check`` also cross-checks against ``tests/fixtures/roster_configs.json`` (the
+deploy-spec test's ground truth) on the four fields both hold, exiting non-zero
+on any mismatch or fetch failure.
 """
 
 from __future__ import annotations
@@ -56,11 +56,10 @@ _TIMEOUT_SECONDS = 60
 # --------------------------------------------------------------------------
 # Field groupings
 #
-# These lists drive the normalised view and are intentionally *generous*: a key
-# appearing in only one family (``attn_output_gate``, ``ssm_state_size``,
-# ``num_kv_shared_layers``) still lands in the group a reader would look for it
-# in. Anything unlisted goes to ``unclassified``, so a new architectural knob
-# announces itself instead of vanishing.
+# Intentionally *generous*: a key appearing in only one family
+# (``attn_output_gate``, ``ssm_state_size``, ``num_kv_shared_layers``) still
+# lands in the group a reader would look for it in. Anything unlisted goes to
+# ``unclassified``, so a new architectural knob announces itself.
 # --------------------------------------------------------------------------
 
 _SHAPE_KEYS = (
@@ -186,9 +185,9 @@ def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     Ten of the 21 rungs ship as ``*ForConditionalGeneration`` wrappers whose
     language-model fields live in ``text_config``; the study serves them with
     ``--language-model-only``, which is exactly that inner model. Top-level keys
-    win on collision, since they describe the wrapper. The returned sibling
-    names (vision, audio) let a write-up note that the served model is the text
-    tower of a larger checkpoint.
+    win on collision, since they describe the wrapper. The returned sibling names
+    (vision, audio) let a write-up note that the served model is the text tower of
+    a larger checkpoint.
     """
     text_config = config.get("text_config")
     if not isinstance(text_config, dict):

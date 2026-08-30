@@ -17,9 +17,7 @@ A SNAPSHOT, NOT A MOVE: no source object is ever modified or deleted (the study
 bucket is an append-only experiment log); everything is written under ``--dest``.
 Re-runs resume, skipping any destination object already present at a matching
 size, and every copy's size is verified against its source before being counted.
-Copies run SERVER-SIDE (~4.5 GB across ~55k objects never transits this host)
-with ``TaggingDirective="REPLACE"``, since the default reads the source's tags
-and so needs ``s3:GetObjectTagging``, which the scoped operator key lacks.
+Copies run SERVER-SIDE, so ~4.5 GB across ~55k objects never transits this host.
 
 ``*_SUPERSEDED-*``, ``*_STALE-*`` and ``*_BROKEN-*`` files are copied on purpose:
 they are the repair audit trail, and their names say they are not current data.
@@ -40,11 +38,9 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUCKET = "smolbench-results-414266451290"
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
-#: Provenance documents copied alongside the data, so the snapshot
-#: explains itself.
+#: Provenance documents copied alongside the data, so the snapshot explains
+#: itself: README.md indexes the tree, ARCHIVE.md locates the archived docs.
 PROVENANCE_DOCS = (
-    # notebooks/README.md is the tree index; notebooks/ARCHIVE.md says where
-    # the archived provenance docs live.
     "notebooks/README.md",
     "notebooks/ARCHIVE.md",
     "notebooks/deduction/README.md",
@@ -74,8 +70,7 @@ def iter_source_keys(client) -> List[Tuple[str, str, str, int]]:
                 rest = key[len(prefix):]
                 model = rest.split("/", 1)[0]
                 if leg == "deduction":
-                    # 'scaling_qwen3.5-27b' -> 'qwen3.5-27b'. This puts both
-                    # legs of one model under the same directory name.
+                    # 'scaling_qwen3.5-27b' -> 'qwen3.5-27b'
                     model = model[len("scaling_"):] if model.startswith("scaling_") else model
                 if "/" not in rest:
                     continue  # skip a stray object directly under the prefix
@@ -111,9 +106,8 @@ def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
     client.copy_object(
         Bucket=BUCKET, Key=dest_key,
         CopySource={"Bucket": BUCKET, "Key": src_key},
-        # Use REPLACE, not the default COPY: the default reads the
-        # source's tags, which needs s3:GetObjectTagging, a permission
-        # the operator key does not have.
+        # REPLACE, not the default COPY: the default reads the source's tags,
+        # needing s3:GetObjectTagging, which the scoped operator key lacks.
         TaggingDirective="REPLACE",
     )
     got = client.head_object(Bucket=BUCKET, Key=dest_key)["ContentLength"]
@@ -155,8 +149,8 @@ def main() -> int:
         return 0
 
     # Each copy is two S3 round trips (copy, then verify), so 55k objects
-    # serially would be ~5 hours of pure latency moving no bytes through this
-    # host. The work is entirely network wait, so threads are the right tool.
+    # serially would be ~5 hours of pure latency; the work is entirely network
+    # wait, so threads are the right tool.
     counts = collections.Counter()
     done = 0
 

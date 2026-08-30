@@ -6,8 +6,7 @@ supervisor (``scripts/fleet/run_fleet.py``) launches up to 21 of these, one per
 lane; each reattaches to the box its induction phase already provisioned, by
 reusing that phase's ``EC2_EXPERIMENT_TAG`` and state file.
 ``MODELS``/``COT_ARGS`` are loaded BY FILE PATH from
-``notebooks/induction/run_study.py`` (the roster's single source of truth),
-never ``import run_study``: both trees ship a module of that name.
+``notebooks/induction/run_study.py``, the roster's single source of truth.
 
 MODULE IMPORT ORDER is load-bearing. ``smolbench.evals.providers.ec2`` freezes
 ``EC2_EXPERIMENT_TAG``, ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES`` and
@@ -19,8 +18,7 @@ value). Get the order wrong and nothing raises: this lane's tag, state file and
 vLLM image silently drift, and two lanes swap served checkpoints on a live
 billing box. ``setdefault``, never assignment, is what lets a fleet-exported
 value win. Import also raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` does
-not name this lane's model, because lanes sharing a tag adopt each other's
-instance and generate rows under the wrong model.
+not name this lane's model (see the GUARD below).
 
 LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
 and build the sweep config; (3) resolve ``LEAN_VERIFY`` -- steps 1-3 run BEFORE
@@ -37,9 +35,9 @@ Environment: ``LEAN_MODEL`` (required; one key of ``MODELS``);
 against ``REPO_ROOT``, which is how both phases find the same box);
 ``LEAN_RUN_NAME``, ``LEAN_SHARD``, ``LEAN_CELL_WHITELIST`` (optional, read at
 ``build_config`` call time, not at import); ``LEAN_VERIFY`` -- ``"defer"`` (the
-default) passes a ``NullVerifier`` that never imports ``lean_dojo`` and records
-every verdict ``"unverified"``, leaving real checking to the later pass
-``scripts/deduction/lean_verify_rows.py``, while ``"real"`` verifies inline.
+default) records every verdict ``"unverified"``, leaving real checking to the
+later ``scripts/deduction/lean_verify_rows.py`` pass, while ``"real"`` verifies
+inline (see :func:`select_verifier`).
 
 Run (repo root)::
 
@@ -62,8 +60,8 @@ logging.basicConfig(level=logging.INFO)
 # Anchoring + S3-spool constants (pure; no environment or filesystem effects)
 # ---------------------------------------------------------------------------
 # parents[2] of <repo>/notebooks/deduction/run_study.py is the repo root.
-# Anchored via __file__, never the cwd: the fleet, a notebook kernel, or a bare
-# shell may launch this file from any working directory.
+# Anchored via __file__, never the cwd: the fleet, a notebook kernel or a bare
+# shell may launch this file from anywhere.
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
 #: Same bucket and region ``scripts/fleet/run_fleet.py``'s
@@ -102,10 +100,10 @@ def lane_env_defaults(
     dict[str, str]
         ``EC2_EXPERIMENT_TAG`` (``f"scaling-{key}"``), ``EC2_STATE_FILE``
         (absolute), ``EC2_VLLM_IMAGE`` (digest-pinned; must match the image the
-        induction phase already serves under, or reattaching swaps images
-        mid-study) and ``SMOLBENCH_LEAN_RESULTS``
-        (``repo_root/notebooks/deduction/results``, explicit so the output
-        location does not depend on how ``smolbench`` is installed).
+        induction phase serves under, or reattaching swaps images mid-study) and
+        ``SMOLBENCH_LEAN_RESULTS`` (``repo_root/notebooks/deduction/results``,
+        explicit so output location does not depend on how ``smolbench`` is
+        installed).
     """
     if state_file is None:
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"
@@ -141,18 +139,15 @@ if _RAW_LEAN_MODEL:
         os.environ.setdefault(_env_name, _env_value)
     del _env_name, _env_value
 
-    # GUARD -- cross-lane box adoption. setdefault above lets an
-    # EC2_EXPERIMENT_TAG already in the environment WIN, which is correct when a
-    # fleet supervisor overrides it per lane but catastrophic when the value is
-    # shared: boxes are discovered by tag whenever a state file is absent
-    # (``_recover_tagged_instance``), so a second lane under the same tag ADOPTS
-    # the first lane's instance, serves its own model on top of it, and every
-    # row after the swap is attributed to the wrong model.
-    #
-    # keys.env ships ``EC2_EXPERIMENT_TAG=scaling-standalone`` as a
-    # standalone-run safety default, and a launcher sourcing keys.env with
-    # ``set -a`` exports it into every lane -- how two lanes end up sharing one.
-    # A lane's tag must name its lane, so fail loudly instead of mislabelling.
+    # GUARD -- cross-lane box adoption. setdefault above lets an already-set
+    # EC2_EXPERIMENT_TAG WIN, correct when a fleet supervisor overrides it per
+    # lane but catastrophic when the value is SHARED: boxes are discovered by
+    # tag whenever a state file is absent (`_recover_tagged_instance`), so a
+    # second lane under the same tag ADOPTS the first's instance, serves its own
+    # model on top of it, and every row after the swap is attributed to the
+    # wrong model. keys.env's standalone `EC2_EXPERIMENT_TAG=scaling-standalone`
+    # exported by a `set -a` launcher is how lanes end up sharing one; the raise
+    # below spells out that cause and the fix.
     _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
     if _RAW_LEAN_MODEL not in _TAG:
         raise SystemExit(
@@ -168,16 +163,15 @@ if _RAW_LEAN_MODEL:
         )
     del _TAG
 # else: LEAN_MODEL is unset/empty, so the whole setdefault block is skipped
-# rather than seeded with a placeholder -- a tag derived from an empty key (e.g.
-# "scaling-") would be actively misleading, and selected_model() already raises
-# an actionable SystemExit for this case before any real work happens.
+# rather than seeded with a placeholder -- a tag like "scaling-" would be
+# actively misleading, and selected_model() raises for this case before any real
+# work happens.
 
 # ---------------------------------------------------------------------------
 # Load notebooks/induction/run_study.py BY FILE PATH -- the single source of
-# truth for MODELS / COT_ARGS. Never a bare `import run_study`: the deduction
-# and induction trees each ship a same-named run_study.py, so a module-name
-# import is ambiguous the moment both are on sys.path in one process. That is
-# already scripts/fleet/run_fleet.py's situation, which uses this same pattern.
+# truth for MODELS / COT_ARGS. A bare `import run_study` is ambiguous the moment
+# both trees' same-named modules are on sys.path in one process, which is
+# already scripts/fleet/run_fleet.py's situation (it uses this same pattern).
 # ---------------------------------------------------------------------------
 _INDUCTION_RUN_STUDY_PATH: Path = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 _induction_spec = importlib.util.spec_from_file_location(
@@ -200,8 +194,8 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 
 # ---------------------------------------------------------------------------
 # Late imports: safe only now that (a) our own EC2_* setdefaults have landed,
-# and (b) MODELS/COT_ARGS are bound. The noqa: E402 markers match
-# notebooks/induction/run_study.py's convention, for the same reason.
+# and (b) MODELS/COT_ARGS are bound. Hence the noqa: E402 markers, as in
+# notebooks/induction/run_study.py.
 # ---------------------------------------------------------------------------
 from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.deduction.lean import runner  # noqa: E402
@@ -245,10 +239,8 @@ def build_config(key: str) -> dict:
         and a ``models[0]["extra_params"]`` that DEEP-copies ``COT_ARGS[key]``,
         so a caller's in-place mutation cannot corrupt that shared nested table
         for other lanes. Two further keys are conditional: ``theorems["shard"]``
-        under ``LEAN_SHARD``, and top-level ``cell_whitelist`` (path plus a
-        ``runner.hash_cell_keys`` fingerprint of its sorted content, so
-        ``manifest.json`` records which whitelist was in effect even if the file
-        is later edited) under ``LEAN_CELL_WHITELIST``.
+        under ``LEAN_SHARD`` and top-level ``cell_whitelist`` under
+        ``LEAN_CELL_WHITELIST``.
 
     Notes
     -----
@@ -263,10 +255,10 @@ def build_config(key: str) -> dict:
     # Optional theorem-stride shard ("i/n", passed to runner._select_theorems).
     # The key is CONDITIONALLY present, so an unsharded theorems block stays
     # byte-identical to the study config. Sharding also suffixes the DEFAULT
-    # run_name with _shard<i>of<n>, keeping two concurrent shards out of one run
-    # directory: concurrent appends to one all_rows.jsonl from separate
-    # processes interleave large rows and corrupt the file. An explicit
-    # LEAN_RUN_NAME still wins verbatim, and then owns that uniqueness itself.
+    # run_name, keeping two concurrent shards out of one run directory:
+    # concurrent appends to one all_rows.jsonl from separate processes
+    # interleave large rows and corrupt the file. An explicit LEAN_RUN_NAME
+    # still wins verbatim, and then owns that uniqueness itself.
     shard = os.environ.get("LEAN_SHARD", "").strip()
     shard_suffix = ""
     if shard:
@@ -310,17 +302,15 @@ def build_config(key: str) -> dict:
 
     # Optional LEAN_CELL_WHITELIST sidecar stamp -- CONDITIONALLY present, like
     # the shard key above, but purely informational: `runner.sweep` reads
-    # `LEAN_CELL_WHITELIST` from the environment itself. This key exists so the
-    # run's `manifest.json` (`sweep` stamps `{"config": config, ...}` verbatim
-    # -- see runner.py's module docstring, "Output layout") records WHICH
-    # whitelist was in effect, without embedding the possibly large key list
-    # again. The path alone is not enough, since the file can be edited after a
-    # run starts, so `runner.hash_cell_keys` fingerprints its SORTED content: a
-    # reader diffs `sha256` against a fresh
-    # `hash_cell_keys(runner.load_cell_whitelist(path))` to confirm the file on
-    # disk is the one this run used. `load_cell_whitelist` raises loudly on a
-    # missing or malformed file, so that failure lands HERE, before any AWS call
-    # -- see this function's own Notes section.
+    # `LEAN_CELL_WHITELIST` itself. The key exists so the run's `manifest.json`
+    # (`sweep` stamps `{"config": config, ...}` verbatim -- see runner.py's
+    # module docstring, "Output layout") records WHICH whitelist was in effect,
+    # without re-embedding the possibly large key list. The path alone is not
+    # enough, since the file can be edited after a run starts, so
+    # `runner.hash_cell_keys` fingerprints its SORTED content: a reader diffs
+    # `sha256` against a fresh `hash_cell_keys(load_cell_whitelist(path))` to
+    # confirm the file on disk is the one this run used. `load_cell_whitelist`
+    # raises loudly on a missing or malformed file -- see this function's Notes.
     whitelist_path = os.environ.get("LEAN_CELL_WHITELIST", "").strip()
     if whitelist_path:
         cfg["cell_whitelist"] = {
@@ -338,9 +328,9 @@ def select_verifier() -> Any:
     default; every verdict is then recorded ``"unverified"`` rather than replayed
     against a real Dojo); the ``smolbench.deduction.lean.verify`` MODULE object
     -- not an instance, since ``runner.sweep`` calls its functions directly --
-    when it is exactly ``"real"``. That import lives inside the ``"real"`` branch
-    so importing this file never requires ``lean_dojo``; ``"real"`` without it
-    raises ``ImportError`` naming the fix. Any other value raises ``SystemExit``.
+    when it is exactly ``"real"``. That import is local to the ``"real"`` branch,
+    so importing this file never requires ``lean_dojo`` (``"real"`` without it
+    raises ``ImportError``). Any other value raises ``SystemExit``.
     """
     choice = os.environ.get("LEAN_VERIFY", "defer").strip() or "defer"
     if choice == "defer":
@@ -378,9 +368,8 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         ``LEAN_RUN_NAME`` renamed the run directory.
     client : Any, optional
         S3 client with ``upload_file`` and ``head_object``; ``None`` lazily
-        builds one against `SPOOL_REGION` (boto3, not the ``aws`` CLI, which
-        this repo does not depend on), so importing this file needs no AWS SDK
-        and tests can inject a fake.
+        builds a boto3 one against `SPOOL_REGION`, so importing this file needs
+        no AWS SDK and tests can inject a fake.
 
     Returns
     -------
@@ -432,8 +421,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
                 "local data left intact, nothing pruned."
             )
 
-    # Phase 2: every upload is verified, so pruning is safe. manifest.json stays
-    # so a later resume recognises the run without re-downloading the spool.
+    # Phase 2: every upload is verified, so pruning is safe.
     manifest_path = run_dir / "manifest.json"
     for path in files:
         if path != manifest_path:
@@ -531,11 +519,9 @@ def main(argv: list[str] | None = None) -> None:
         with ec2.serve_model(key):
             # Provenance sidecar: snapshot the serving stack INSIDE the serve
             # block (the landed box is the one that generates) into run_dir, so
-            # spool_to_s3 carries it with the rows. One file per run, not per
-            # row: a deduction run serves on one box unless it crashes. A
-            # relaunch APPENDS a fresh timestamped snapshot rather than
-            # overwriting, so a resume that landed on different hardware stays
-            # visible in the log.
+            # spool_to_s3 carries it with the rows. One file per run; a relaunch
+            # APPENDS a fresh timestamped snapshot rather than overwriting, so a
+            # resume that landed on different hardware stays visible in the log.
             cfg = ec2.server_config(key)
             if cfg is not None:
                 import datetime
@@ -552,13 +538,11 @@ def main(argv: list[str] | None = None) -> None:
             if args.force_rerun:
                 # Move the old rows aside rather than appending on top of them:
                 # with resume=False the sweep regenerates every cell but still
-                # APPENDS to all_rows.jsonl, leaving the superseded and the
-                # fresh row for each key in one file, generated on different
-                # hardware, with nothing but line order to tell them apart.
-                # Archiving removes that confound, and the archive stays inside
-                # run_dir so spool_to_s3 carries it to S3 under its own key --
-                # the superseded data is preserved and plainly labelled, never
-                # silently dropped.
+                # APPENDS to all_rows.jsonl, leaving superseded and fresh rows
+                # for each key in one file, generated on different hardware,
+                # with only line order to tell them apart. The archive stays
+                # inside run_dir, so spool_to_s3 carries it to S3 under its own
+                # key -- superseded data is labelled, never silently dropped.
                 old = run_dir / "all_rows.jsonl"
                 if old.exists():
                     import datetime

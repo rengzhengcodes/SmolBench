@@ -67,9 +67,9 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
 
     Sharding splits ONE model's replicates across N processes/instances,
     orthogonally to this study's one-model-per-box fan-out. Raises
-    ``SystemExit`` at import if `var` is set but unparseable, or fails
-    ``count >= 1`` / ``0 <= index < count`` -- rather than silently running
-    unsharded or crashing inside ``InductionExperiment``.
+    ``SystemExit`` at import on an unparseable value or a violation of
+    ``count >= 1`` / ``0 <= index < count``, rather than silently running
+    unsharded.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -116,11 +116,10 @@ SHARD = _parse_shard("INDUCTION_SHARD")
 # reattaches to shard 0's live box and swaps the served model out from under a
 # run in progress (the collision the periodic_divisor driver hit first). Both
 # are derived from the lane rather than asking callers to remember two more
-# environment variables.
+# environment variables. Unsharded runs get an empty suffix.
 #
-# MUST execute before smolbench.evals.providers.ec2 is imported below: ec2.py
-# freezes its EC2_* constants from os.environ at import time, so a tag set
-# afterwards is silently ignored. Unsharded runs get an empty suffix.
+# MUST execute before the ec2 import below, for the import-time freeze the
+# load_dotenv comment above describes.
 _LANE = ""
 if SHARD is not None:
     _models = os.environ.get("INDUCTION_MODELS", "").strip().replace(",", "-")
@@ -140,15 +139,13 @@ from smolbench.induction.periodic import (  # noqa: E402
     numeric_count_query_gen,
 )
 
-#: USER-LOCKED. Every prior induction study seeded from 1776. This study
-#: deliberately uses 0, so its seed range (0..29) can never silently
-#: alias a sibling study's. See the module docstring's "Seeds" section.
+#: USER-LOCKED at 0, not the 1776 every prior induction study seeded from -- see
+#: the module docstring's "Seeds" section.
 BASE_SEED: int = 0
 
-#: USER-LOCKED. Unlike every sibling driver's ``*_N_REPLICATES`` environment
-#: override, this is NOT environment-overridable: the family-ladder comparison
-#: across 21 checkpoints is apples-to-apples only if every checkpoint collects
-#: the same replicate count.
+#: USER-LOCKED. Sibling drivers expose a ``*_N_REPLICATES`` env override; this
+#: one deliberately does NOT: the 21-checkpoint comparison is apples-to-apples
+#: only if every checkpoint collects the same replicate count.
 N_REPLICATES: int = 30
 
 #: The four amounts-of-positive-information conditions, matching periodic_moe's
@@ -163,12 +160,12 @@ CONTEXT_LIMIT: int = 131_072
 
 #: Tokens withheld from the completion budget, covering what a count() on one
 #: seed's prompt cannot see: the chat template's special/BOS tokens (count()
-#: deliberately excludes them -- see the Tokenizer protocol docstring in
-#: tokenization.py) and cross-seed variation in the randomly-sampled labels,
-#: which compounds over a long extensional listing. Sized generously -- sibling
-#: studies measured this reserve at 1,500-3,700 tokens on comparable listings --
-#: so the budget stays safe even when the probe below misses the longest of the
-#: 30 seeds. It costs only completion headroom that would go unused.
+#: deliberately excludes them -- see tokenization.py's Tokenizer protocol) and
+#: cross-seed variation in the sampled labels, compounding over a long
+#: extensional listing. Sibling studies measured that reserve at 1,500-3,700
+#: tokens on comparable listings; sized well above it, so the budget stays safe
+#: when the probe below misses the longest seed, at the cost of headroom that
+#: would go unused anyway.
 TEMPLATE_RESERVE: int = 8_000
 
 #: Seeds sampled when measuring the worst-case prompt in completion_budget; see
@@ -187,9 +184,8 @@ MIN_VIABLE_BUDGET: int = 48_000
 BUDGET_CAP: int = CONTEXT_LIMIT
 
 # Byte-identical to periodic_moe's / periodic_divisor's template: the prompt
-# WORDING stays fixed across every induction study to date, so the only thing
-# varying between studies is the roster (model, quiz generator, or
-# periodic_divisor's harmonic set) filling in $positive_info / $seq_len / $label.
+# WORDING is fixed across every induction study to date, so only the roster
+# (model, quiz generator, harmonic set) varies between studies.
 template = string.Template(
     "You are a precise integer counter.\n"
     "\n"
@@ -288,12 +284,11 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
 
     Uses the plain ``periodic_moe`` baseline config (``n=9`` harmonics, default
     periods 1..9, lcm==2,520), unmodified: the study's independent variable is
-    the MODEL, not the quiz. `seed` drives label sampling and, downstream in
-    ``ReplicateHarness``, the per-request decoding seed. `model` is the
-    ``EC2_DEPLOY_SPECS``/``MODELS`` spec key, required because ``noise_intens``
-    is padded to the matching ``extens`` prompt's token count under THIS model's
+    the MODEL, not the quiz. `seed` drives label sampling and, downstream, the
+    per-request decoding seed. `model` is the ``EC2_DEPLOY_SPECS``/``MODELS``
+    spec key, needed because ``noise_intens`` is padded under THIS model's
     tokenizer; the other three arms stay byte-identical across checkpoints.
-    ``for_model`` is called by plain module-global lookup, so
+    ``for_model`` is looked up as a plain module global, so
     ``tests/induction/test_induction_study.py`` can monkeypatch it (and this
     function) to keep the offline suite from downloading a tokenizer.
     """
@@ -318,9 +313,9 @@ def completion_budget(model: str, seeds: range) -> int:
     before anything is provisioned and billing. ``BUDGET_CAP`` is a single ``int``
     (== ``CONTEXT_LIMIT``), not a per-model dict -- a tighter cap on one family
     would make its accuracy gap inseparable from "it had less room to reason" --
-    so the ``min()`` is a no-op guard against a future per-vendor cap. Raises
-    ``SystemExit`` if the budget falls below ``MIN_VIABLE_BUDGET``, which would
-    truncate CoT and collect empties.
+    so the ``min()`` only guards against a future per-vendor cap. Raises
+    ``SystemExit`` below ``MIN_VIABLE_BUDGET``, which would truncate CoT and
+    collect empties.
     """
     tok = for_model(model)
     picks = sorted({seeds[0], seeds[-1],
@@ -346,10 +341,10 @@ def completion_budget(model: str, seeds: range) -> int:
     return budget
 
 
-# notebook_dir="induction" makes results_store.experiment_name() derive this
-# experiment's S3 log path segment as "induction", so every replicate lands
-# under keys shaped induction/<spec-key>/seed=<seed>/<info>--<run_ts>.yaml,
-# distinct from every sibling study's own notebook_dir-derived prefix.
+# notebook_dir="induction" is also the S3 log's <experiment> key segment (via
+# results_store.experiment_name), so every replicate lands under
+# induction/<spec-key>/seed=<seed>/<info>--<run_ts>.yaml, distinct from every
+# sibling study's keys.
 EXPERIMENT = InductionExperiment(
     notebook_dir="induction",
     archetype_tags=MODELS,
@@ -359,12 +354,11 @@ EXPERIMENT = InductionExperiment(
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
     shard=SHARD,
-    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip. "1"
-    # forces the full seed range, "a-b" the inclusive subrange a..b; combines
-    # with INDUCTION_SHARD (a shard forces only the forced seeds it owns).
-    # Reads are EARLIEST-wins (see smolbench/evals/results_store.py), so a
-    # forced re-run appends to the S3 log but does NOT supersede the original
-    # on read -- voiding data requires explicit exclusion.
+    # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip (syntax
+    # in _parse_force_seeds); combines with INDUCTION_SHARD, a shard forcing
+    # only the seeds it owns. Reads are EARLIEST-wins (see
+    # smolbench/evals/results_store.py), so a forced re-run appends to the S3
+    # log but does NOT supersede the original on read.
     force_seeds=_parse_force_seeds(
         os.environ.get("INDUCTION_FORCE_RERUN", ""),
         range(BASE_SEED, BASE_SEED + N_REPLICATES),

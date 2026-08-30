@@ -10,27 +10,27 @@ mathlib4 corpus (``.venv`` with the ``lean`` extra). ``all_rows.jsonl`` is NEVER
 modified or re-uploaded, so a verification bug cannot lose a candidate proof that
 already cost inference spend.
 
-The contracts, each enforced where it is documented:
+Contracts, each enforced where documented:
 
-- the unit of work is a ``(theorem_id, k)`` group, whose prefix ``0..k-1``
-  ``verify.open_at_step`` replays once into one Dojo session every rung/model/replicate
-  at that pair reuses (:func:`group_unverified`);
-- ``verified_rows.jsonl``'s row order is EXACTLY ``all_rows.jsonl``'s -- new rows are
+- unit of work = a ``(theorem_id, k)`` group: ``verify.open_at_step`` replays the
+  prefix ``0..k-1`` once into one Dojo session shared by every rung/model/replicate
+  at that pair (:func:`group_unverified`);
+- ``verified_rows.jsonl`` keeps ``all_rows.jsonl``'s row order EXACTLY; new rows are
   APPENDED, never inserted, so indices computed against ``all_rows.jsonl`` stay valid
-  against the output (:func:`seed_out_rows`);
+  (:func:`seed_out_rows`);
 - ground-truth sanity replay is memoised per THEOREM per run under a shared lock:
-  identical to per-group memoisation under this repo's configured
-  ``k.strategy == "last"`` (``runner._k_indices``), strictly cheaper otherwise;
+  identical to per-group memoisation under the configured ``k.strategy == "last"``
+  (``runner._k_indices``), strictly cheaper otherwise;
 - resume applies an ALL-cells rule to the PAIRED output, never to a prior
-  ``verified_rows.jsonl`` alone (:func:`resume_done_groups`); uploads check-point every
-  :data:`UPLOAD_EVERY_GROUPS` groups and once at the end, and :func:`verify_run`
-  returns 2 if a FULL pass leaves a cell on the ``"unverified"`` sentinel, which
-  downstream loaders score as a failure;
-- one exclusive flock on a dedicated file inside :data:`DOJO_CACHE_DIR` is held for the
-  whole multi-run loop, because concurrent passes race on the shared traced-repo cache
+  ``verified_rows.jsonl`` alone (:func:`resume_done_groups`); uploads checkpoint every
+  :data:`UPLOAD_EVERY_GROUPS` groups and once at the end; :func:`verify_run` returns 2
+  if a FULL pass leaves a cell on the ``"unverified"`` sentinel, which downstream
+  loaders score as a failure;
+- one exclusive flock on a dedicated file in :data:`DOJO_CACHE_DIR` is held for the
+  whole multi-run loop, since concurrent passes race on the shared traced-repo cache
   (:func:`_dojo_cache_lock`);
-- ``lean_dojo`` and ``boto3``/``botocore`` are imported lazily, so this module imports
-  without either, and ``--dry-run`` needs neither Lean nor the lock.
+- ``lean_dojo`` and ``boto3``/``botocore`` import lazily: the module imports without
+  either, and ``--dry-run`` needs neither Lean nor the lock.
 """
 
 from __future__ import annotations
@@ -74,14 +74,12 @@ UPLOAD_EVERY_GROUPS: int = 10
 RAM_GB_PER_WORKER: int = 6
 DOJO_CACHE_DIR: Path = Path.home() / ".cache" / "lean_dojo"
 
-#: Basename of the dedicated lock file `_dojo_cache_lock` acquires inside
-#: `DOJO_CACHE_DIR` -- a file NEXT TO the cache, never the cache directory
-#: itself, which this process's own worker threads read and write.
+#: Lock file `_dojo_cache_lock` flocks inside `DOJO_CACHE_DIR` -- a file NEXT TO the
+#: cache, never the cache dir itself, which this process's worker threads read/write.
 _LOCK_FILENAME = ".smolbench_verify.lock"
 
-#: Every `(kind, split)` combination `smolbench.deduction.lean.corpus` defines
-#: (its `SplitKind`/`Split` literals) -- the full search space `_lookup_theorem`
-#: scans, since a row carries no `kind`/`split` of its own.
+#: Every `(kind, split)` the corpus defines (`SplitKind`/`Split` literals): the full
+#: space `_lookup_theorem` scans, since a row carries no `kind`/`split` of its own.
 _CORPUS_KINDS: tuple[str, ...] = ("random", "novel_premises")
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 
@@ -134,17 +132,13 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
 
     That pair is the unit of work: every cell row sharing it can share one Dojo session.
 
-    Parameters
-    ----------
-    rows : list[dict]
-        ``all_rows.jsonl``'s rows, in file order.
-
     Returns
     -------
     dict[tuple[str, int], list[int]]
-        ``(theorem_id, int(k))`` -> ascending indices into `rows`, in first-seen key
-        order; only rows with ``kind == "cell"`` AND ``verdict == "unverified"``.
-        ``k`` is ``int()``-coerced to tolerate a hand-edited string-typed value.
+        ``(theorem_id, int(k))`` -> ascending indices into `rows` (``all_rows.jsonl``
+        order), first-seen key order; only ``kind == "cell"`` AND
+        ``verdict == "unverified"`` rows. ``k`` is ``int()``-coerced to tolerate a
+        hand-edited string value.
     """
     groups: dict[tuple[str, int], list[int]] = {}
     for index, row in enumerate(rows):
@@ -163,11 +157,6 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     Lean replay is deterministic, so rows sharing candidate text need exactly one
     ``try_tail`` call. No normalisation: a one-character difference is correctly
     two groups, since Lean need not treat them identically either.
-
-    Parameters
-    ----------
-    indices : list[int]
-        Indices into `rows`, typically one :func:`group_unverified` value.
 
     Returns
     -------
@@ -238,18 +227,12 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
 def row_identity(row: dict) -> tuple:
     """Extract a row's identity: ``(kind, model, theorem_id, k, rung, replicate_idx)``.
 
-    Every field is read via ``row.get``, so a sanity row -- which carries no
-    `model`/`k`/`rung`/`replicate_idx` -- still yields a well-formed key with ``None``
-    in those slots instead of raising. The trailing five fields mirror
-    ``runner._row_key`` exactly, with `kind` prepended, so a cell row and a sanity row
-    for the same `theorem_id` can never collide.
-
-    Notes
-    -----
-    `k` is read RAW here, unlike :func:`resume_done_groups`'s ``int()`` coercion: both
-    files come from the same writer, and a hand-edited string-typed `k` would merely
-    fail to pair (an orphan plus a redundant re-verification), never mis-assign a
-    verdict.
+    ``row.get`` throughout, so a sanity row (no `model`/`k`/`rung`/`replicate_idx`)
+    yields ``None`` in those slots instead of raising. The trailing five fields mirror
+    ``runner._row_key`` with `kind` prepended, so a cell and a sanity row for one
+    `theorem_id` never collide. `k` is read RAW (unlike :func:`resume_done_groups`):
+    both files share a writer, and a hand-edited string `k` would merely fail to pair
+    (one orphan plus a redundant re-verification), never mis-assign a verdict.
     """
     return (
         row.get("kind"),
@@ -285,17 +268,16 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
 
     Notes
     -----
-    Pairing is by :func:`row_identity` plus occurrence ordinal: a positional seed raises
-    ``IndexError`` once ``all_rows.jsonl`` grows between passes and mis-pairs silently
-    once the two lists merely differ in order, and a ``dict[identity] -> row`` map would
-    seed the single survivor into every slot of an identity real lanes repeat up to 16
-    times. Matched rows are carried over WHOLESALE, never field-merged; ``--no-resume``
-    is the remedy for a regenerated lane.
+    Pairing is by :func:`row_identity` plus occurrence ordinal: a positional seed breaks
+    once ``all_rows.jsonl`` grows or reorders between passes, and a
+    ``dict[identity] -> row`` map would seed one survivor into every slot of an identity
+    real lanes repeat up to 16 times. Matched rows carry over WHOLESALE, never
+    field-merged; ``--no-resume`` is the remedy for a regenerated lane.
 
-    Orphans are APPENDED, never inserted and never dropped: appending keeps the prefix
-    shared with `rows` intact, so every index computed against `rows` stays valid
-    against `out_rows`, and :func:`_update_sanity_row` legitimately appends a sanity row
-    for a theorem ``all_rows.jsonl`` has none for.
+    Orphans are APPENDED, never inserted or dropped: the prefix shared with `rows` stays
+    intact, so indices computed against `rows` stay valid against `out_rows`, and
+    :func:`_update_sanity_row` legitimately appends a sanity row for a theorem
+    ``all_rows.jsonl`` has none for.
     """
     prior_by_identity: dict[tuple, collections.deque[tuple[int, dict]]] = (
         collections.defaultdict(collections.deque)
@@ -312,11 +294,8 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
         else:
             out_rows.append(row)
 
-    # Flatten whatever every bucket still holds: prior rows `rows` never
-    # claimed. Sort by ORIGINAL index, not by identity and not by insertion
-    # order across different identities. A multi-orphan identity's own
-    # relative order then survives the reseed exactly as it was in
-    # `verified_rows`.
+    # Orphans = prior rows `rows` never claimed. Sort by ORIGINAL index (not identity
+    # or bucket order) so a multi-orphan identity keeps its `verified_rows` order.
     orphans = sorted(
         (
             (original_index, prior_row)
@@ -370,15 +349,14 @@ def max_workers_allowed(meminfo_text: str) -> int:
 def check_workers(requested: int, meminfo_text: str) -> None:
     """Refuse an oversubscribed (or non-positive) ``--workers`` value up front.
 
-    Each Dojo session holds a live Lean process plus its fully loaded environment --
-    `RAM_GB_PER_WORKER` (6) GiB empirically. Oversubscribing does not fail fast: it
-    fails hours into a pass, as an OOM kill that takes every in-flight row down with it.
+    A Dojo session (live Lean process + loaded environment) costs `RAM_GB_PER_WORKER`
+    (6) GiB empirically; oversubscription fails hours in as an OOM kill, not fast.
 
     Raises
     ------
     SystemExit
-        If `requested` is below 1 or exceeds :func:`max_workers_allowed`, before a
-        single worker thread or Dojo session exists.
+        If `requested` < 1 or exceeds :func:`max_workers_allowed`, before any
+        worker thread or Dojo session exists.
     """
     if requested < 1:
         raise SystemExit(f"check_workers: --workers must be >= 1, got {requested}")
@@ -409,16 +387,8 @@ def require_lean_dojo() -> None:
 
 
 def dojo_failure_hint(exc: BaseException) -> str:
-    """Build actionable operator guidance for a Dojo-init-class failure.
-
-    Returns
-    -------
-    str
-        `exc`'s own text plus guidance grounded in this pipeline (``verify.py``'s
-        ``_open_dojo_with_retry`` has already retried 3x with backoff by then): the
-        cold/warm cost of the FIRST Dojo call's corpus pull into `DOJO_CACHE_DIR`, the
-        ``elan`` install command, that removing that directory clears a corrupt cache,
-        and a pointer to ``.claude/skills/run-smolbench/SKILL.md``.
+    """Build operator guidance for a Dojo-init-class failure: `exc`'s text plus the
+    cache-pull/``elan``/corrupt-cache remedies (``verify.py`` has already retried 3x).
     """
     return (
         f"Dojo failed to open: {type(exc).__name__}: {exc}\n"
@@ -444,14 +414,11 @@ def dojo_failure_hint(exc: BaseException) -> str:
 def _theorem_index() -> dict[str, BenchmarkTheorem]:
     """Build a ``full_name -> BenchmarkTheorem`` index over the WHOLE local corpus.
 
-    A row records only `theorem_id` (a `full_name`) and `k`, never its
-    ``(kind, split)``, so scanning every combination is the only correct lookup.
-    First-seen wins on a name collision -- not expected in practice, since a mathlib4
-    declaration belongs to one ``random``/``novel_premises`` partition at a time. A
-    combination whose dataset file was never bootstrapped locally
-    (``FileNotFoundError`` from `load_split`) is skipped, not fatal: an operator may
-    only have bootstrapped the splits they actually swept. Memoised for the life of the
-    process, over ``lru_cache``-memoised `load_split` calls, so no file is read twice.
+    A row records only `theorem_id` (a `full_name`) and `k`, never ``(kind, split)``,
+    so every combination is scanned. First-seen wins on a name collision (not expected:
+    a declaration belongs to one partition at a time). A combination never bootstrapped
+    locally (``FileNotFoundError`` from `load_split`) is skipped, not fatal -- an
+    operator may only have bootstrapped the splits they swept. Memoised per process.
     """
     index: dict[str, BenchmarkTheorem] = {}
     for kind in _CORPUS_KINDS:
@@ -468,14 +435,11 @@ def _theorem_index() -> dict[str, BenchmarkTheorem]:
 def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     """Resolve a row's `theorem_id` (== ``BenchmarkTheorem.full_name``) to its theorem.
 
-    The result carries the traced-tactic prefix `open_at_step` needs and the
-    ``url``/``commit`` LeanDojo needs to address it.
-
     Raises
     ------
     LookupError
-        If `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination --
-        see :func:`_theorem_index`.
+        If `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination
+        (:func:`_theorem_index`).
     """
     index = _theorem_index()
     if theorem_id not in index:
@@ -490,11 +454,10 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
 # Lazy import seams -- this module must import without lean_dojo or boto3
 # ---------------------------------------------------------------------------
 def _default_verifier():
-    """Lazily import ``smolbench.deduction.lean.verify``, the real verifier module.
+    """Lazily import the real verifier ``smolbench.deduction.lean.verify``.
 
-    It requires `lean_dojo`, so the import is deferred to call time -- the same seam
-    ``runner._default_verifier`` uses -- and its `ImportError` propagates when the
-    ``lean`` extra is absent.
+    Deferred because it needs `lean_dojo` (same seam as ``runner._default_verifier``);
+    its `ImportError` propagates when the ``lean`` extra is absent.
     """
     from smolbench.deduction.lean import verify
 
@@ -502,11 +465,10 @@ def _default_verifier():
 
 
 def _build_s3_client() -> Any:
-    """Build a fresh boto3 S3 client bound to `S3_REGION`, via ``_aws.fresh_client``.
+    """Build a fresh boto3 S3 client bound to `S3_REGION` via ``_aws.fresh_client``.
 
-    A brand-new boto3 Session per call (repo convention), so a rotated credentials file
-    is picked up rather than silently signed with a stale one. THIS call, not the
-    top-level ``_aws`` import, is the actual boto3 opt-in.
+    A new Session per call (repo convention) picks up a rotated credentials file. THIS
+    call, not the top-level ``_aws`` import, is the actual boto3 opt-in.
     """
     return _aws.fresh_client("s3", S3_REGION)
 
@@ -524,15 +486,15 @@ def list_runs(
     client : Any
         Need only expose ``get_paginator("list_objects_v2")``.
     key_prefix : str
-        The prefix each run's own sub-prefix lives under; may be ``""``.
+        May be ``""``.
     pattern : str
-        `fnmatch` pattern matched against a run's NAME, not its full key.
+        `fnmatch` pattern against a run's NAME, not its full key.
 
     Returns
     -------
     list[str]
-        The matching ``CommonPrefixes`` names of one ``Delimiter="/"`` listing, across
-        every page, sorted ascending.
+        Matching ``CommonPrefixes`` names of a ``Delimiter="/"`` listing, all pages,
+        sorted ascending.
     """
     prefix = f"{key_prefix}/" if key_prefix else ""
     names: list[str] = []
@@ -546,19 +508,16 @@ def list_runs(
 
 
 def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
-    """Download one JSONL object to `dest` and return its parsed rows.
-
-    `dest`'s parent directories are created as needed.
+    """Download one JSONL object to `dest` (parents created) and return its parsed rows.
 
     Returns
     -------
     list[dict]
-        One parsed dict per non-blank line, in file order; ``[]`` when the object does
-        not exist -- absence is NORMAL for a not-yet-created ``verified_rows.jsonl``,
-        detected as a ``ClientError`` whose ``Error.Code`` is ``"NoSuchKey"`` or
-        ``"404"`` (the two shapes boto3 and this repo's fakes raise; see
-        ``tests/evals/test_results_store.py``'s ``FakeS3Client``). Every other S3
-        failure propagates unhandled: it must never read as "nothing to verify yet".
+        One dict per non-blank line, in file order; ``[]`` when the object does not
+        exist (NORMAL for a not-yet-created ``verified_rows.jsonl``), detected as a
+        ``ClientError`` with ``Error.Code`` ``"NoSuchKey"`` or ``"404"`` -- the shapes
+        boto3 and ``tests/evals/test_results_store.py``'s ``FakeS3Client`` raise. Any
+        other S3 failure propagates: it must never read as "nothing to verify yet".
     """
     from botocore.exceptions import ClientError  # lazy: importing must not need boto3
 
@@ -587,9 +546,8 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
     Parameters
     ----------
     workdir : Path
-        Created if absent; its scratch file (named `VERIFIED_FILENAME`) is overwritten
-        with the full current row set on every call, so :func:`verify_run`'s repeated
-        checkpoint uploads against one `workdir` are safe.
+        Created if absent; its `VERIFIED_FILENAME` scratch file is rewritten with the
+        full row set each call, so repeated checkpoint uploads are safe.
     """
     workdir.mkdir(parents=True, exist_ok=True)
     scratch = workdir / VERIFIED_FILENAME
@@ -604,19 +562,15 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
 # ---------------------------------------------------------------------------
 @contextlib.contextmanager
 def _dojo_cache_lock() -> Iterator[None]:
-    """Hold an exclusive, non-blocking flock on a dedicated file in `DOJO_CACHE_DIR`.
+    """Hold an exclusive non-blocking flock on `_LOCK_FILENAME` in `DOJO_CACHE_DIR`.
 
-    Acquired once and held for the process's remaining life (the caller wraps the whole
-    multi-run loop), released however the block exits; concurrent verification passes
-    would otherwise race on the shared traced-repo build cache. The lock is on a
-    DEDICATED FILE, never `DOJO_CACHE_DIR` itself, which one process's own worker
-    threads read and write concurrently.
+    Acquired once around the whole multi-run loop, released however the block exits;
+    concurrent passes would otherwise race on the shared traced-repo build cache.
 
     Raises
     ------
     SystemExit
-        Naming the lock file, when another process already holds it
-        (``BlockingIOError`` from the non-blocking `fcntl.flock`).
+        Naming the lock file, when another process holds it (``BlockingIOError``).
     """
     DOJO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = DOJO_CACHE_DIR / _LOCK_FILENAME
@@ -644,10 +598,9 @@ def _dojo_cache_lock() -> Iterator[None]:
 def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[str, Any], ms: int) -> None:
     """Update `theorem_id`'s sanity row in `out_rows` in place, appending one if absent.
 
-    Overwrites an existing ``kind == "sanity"`` row's ``verdict``, ``tactics_applied``,
-    ``tactics_total`` and ``error`` (all required keys of `payload`) plus ``ms``
-    (wall-clock milliseconds). A fresh sanity row is APPENDED to the END of `out_rows`,
-    never inserted, so the prefix shared with ``all_rows.jsonl`` never shifts.
+    Writes `payload`'s required ``verdict``/``tactics_applied``/``tactics_total``/
+    ``error`` plus ``ms`` (wall-clock). A fresh row is APPENDED, never inserted, so the
+    prefix shared with ``all_rows.jsonl`` never shifts.
     """
     for row in out_rows:
         if row.get("kind") == "sanity" and row.get("theorem_id") == theorem_id:
@@ -696,39 +649,30 @@ def verify_run(
     bucket, key_prefix, run : str
         Locate this run's objects; see :func:`run_object_key`.
     workers : int
-        Size of the `ThreadPoolExecutor`, one ``(theorem_id, k)`` group per task.
+        `ThreadPoolExecutor` size; one ``(theorem_id, k)`` group per task.
     theorem : str, optional
-        Restrict processing to groups with this `theorem_id`.
+        Only groups with this `theorem_id`.
     limit : int
         Cap on groups processed THIS call; 0 = no cap.
     workdir : Path
-        PARENT of this run's private scratch dir ``workdir / run``, never shared with
-        another run's scratch files.
+        PARENT of this run's private scratch dir ``workdir / run``.
     dry_run : bool
-        Report the selected groups and return, touching neither Lean nor S3 upload.
+        Report the selected groups and return; touches neither Lean nor S3 upload.
     no_resume : bool
         Discard the prior pass's verdicts and re-verify every group.
     verifier : Any, optional
-        Module exposing `open_at_step`, `try_tail` and `replay_ground_truth`; ``None``
-        resolves the real one via :func:`_default_verifier`, but ONLY when at least one
-        group is pending -- an empty pending set, or `dry_run`, never imports it.
+        Module exposing `open_at_step`, `try_tail`, `replay_ground_truth`; ``None``
+        resolves :func:`_default_verifier`, but ONLY once a group is pending -- an
+        empty pending set or `dry_run` never imports it.
 
     Returns
     -------
     int
-        ``0`` on success, including "nothing to do" and every partial pass
-        (``--limit``, ``--theorem``, ``--dry-run``); ``1`` if this run has no
-        ``all_rows.jsonl`` (logged, run skipped); ``2`` if a FULL pass still left a
-        ``kind == "cell"`` row on the ``"unverified"`` sentinel after its final upload.
-
-    Notes
-    -----
-    Resume is not an exemption from the ``2`` gate: a `done` group has zero sentinel
-    cells by construction, so a survivor means either a pending group's verdict was
-    never written back (a swallowed per-cell failure) or an ungraded ORPHAN absent from
-    the current ``all_rows.jsonl``, which :func:`group_unverified` can never select.
-    The graded output is uploaded either way: this gates the RESULT, it is never a
-    reason to withhold it.
+        ``0`` on success, including "nothing to do" and partial passes (``--limit``,
+        ``--theorem``, ``--dry-run``); ``1`` if the run has no ``all_rows.jsonl``
+        (logged, skipped); ``2`` if a FULL pass left a cell on the ``"unverified"``
+        sentinel after its final upload (see the gate comment in the body; the output
+        is uploaded regardless -- the gate reports, never withholds).
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)
@@ -743,25 +687,16 @@ def verify_run(
     verified_key = run_object_key(key_prefix, run, VERIFIED_FILENAME)
     verified_rows = download_rows(client, bucket, verified_key, run_dir / VERIFIED_FILENAME)
     if no_resume:
-        # Resume is keyed on (theorem_id, k) GROUPS, not on the candidate proofs
-        # inside them: if phase 1 regenerated a lane after a verification pass,
-        # every group still looks "done" while its proofs are completely
-        # different, so the pass would report success, verify nothing, and leave
-        # verified_rows.jsonl describing text that no longer exists. The caller
-        # must archive the superseded verified_rows.jsonl first -- this
-        # overwrites it.
+        # Resume is keyed on (theorem_id, k) GROUPS, not candidate text, so a lane
+        # phase 1 regenerated looks "done" with different proofs; see --no-resume help.
         logging.warning(
             f"lean_verify_rows[{run}]: --no-resume: discarding {len(verified_rows)} "
             "row(s) from the prior verification pass and re-verifying every group."
         )
         verified_rows = []
 
-    # Seed the OUTPUT row list by IDENTITY plus occurrence ordinal, never by
-    # list position, so `out_rows` always has exactly `rows`'s shape plus any
-    # appended orphans: every index computed below against `rows` (the immutable
-    # all_rows.jsonl download) stays valid against it, whatever length or order a
-    # prior pass's own output had. An orphaned prior row is kept, not dropped --
-    # see `seed_out_rows` for the real shape that produces one.
+    # `out_rows` = `rows`'s shape plus appended orphans, so every index computed
+    # below against `rows` (the immutable download) stays valid (see seed_out_rows).
     out_rows, n_orphans = seed_out_rows(rows, verified_rows)
     if n_orphans:
         logging.warning(
@@ -770,16 +705,12 @@ def verify_run(
             f"appended to the end of {VERIFIED_FILENAME} rather than dropped."
         )
 
-    # Resume completeness is evaluated against the PAIRED `out_rows`, never
-    # against `verified_rows` in isolation: the ALL-cells rule must see every
-    # CURRENT cell of a group, including one phase 1 appended to a group a prior
-    # pass already finished, which exists nowhere in `verified_rows` by itself.
+    # Resume is judged on the PAIRED `out_rows` (ALL-cells rule must see cells phase 1
+    # appended to a finished group), never on `verified_rows` alone.
     done = resume_done_groups(out_rows)
 
-    # `group_unverified` runs against `rows` (the immutable source), NOT
-    # `out_rows`: all_rows.jsonl's cell verdicts never change, so this always
-    # returns the COMPLETE set of every group phase 1 ever wrote. `done` (above)
-    # is what actually implements resume, subtracted next.
+    # Grouped from `rows`, whose verdicts never change: the COMPLETE set of groups
+    # phase 1 ever wrote. Subtracting `done` is what implements resume.
     all_groups = group_unverified(rows)
     pending = {key: indices for key, indices in all_groups.items() if key not in done}
     if theorem is not None:
@@ -818,8 +749,7 @@ def verify_run(
             bt = None
             lookup_error = exc
 
-        # Sanity gate: replay the full ground-truth proof once per THEOREM, not
-        # once per group (memoised for this run under `sanity_lock`).
+        # Sanity replay once per THEOREM, not per group (memoised under `sanity_lock`).
         with sanity_lock:
             first_time_this_theorem = theorem_id not in sanity_done_this_run
             sanity_done_this_run.add(theorem_id)
@@ -885,14 +815,11 @@ def verify_run(
         except Exception as exc:  # noqa: BLE001 -- open_at_step-class failure, recorded below
             message = str(exc)
             if isinstance(exc, RuntimeError) and message.startswith("prefix tactic "):
-                # Dojo opened fine; the recorded ground-truth PREFIX itself did
-                # not replay (open_at_step's own explicit RuntimeError shape).
-                # Not a Dojo/cache infra problem, so dojo_failure_hint would
-                # mislead -- leave the message as-is.
+                # open_at_step's own shape: Dojo opened but the ground-truth PREFIX did
+                # not replay -- not infra, so dojo_failure_hint would mislead.
                 lean_error = f"{type(exc).__name__}: {exc}"
             else:
-                # Dojo itself never opened: a connection/EOF/subprocess failure,
-                # even after verify.py's own 3x retry. Give infra guidance.
+                # Dojo never opened (connection/EOF/subprocess, after verify.py's 3x retry).
                 lean_error = dojo_failure_hint(exc)
             payload = {
                 "verdict": "replay_failed",
@@ -904,15 +831,12 @@ def verify_run(
                 fan_out_verdict(out_rows, indices, payload)
 
     def _process_group(key: tuple[str, int]) -> tuple[str, int]:
-        """Executor entry point: last-resort safety net around `_verify_one_group`.
+        """Executor entry point: last-resort net around `_verify_one_group`.
 
-        That function already maps every documented failure onto a row
-        (open_at_step-class -> "replay_failed", try_tail-class -> "exception", lookup
-        failure -> "replay_failed"), so this catch-all exists only for a genuinely
-        unanticipated bug, e.g. a malformed row missing an expected key. It still lands
-        an "exception" verdict on every row in the group, per this file's "never swallow
-        an exception without recording it on a row" contract, and never lets one escape
-        into the executor.
+        That function already records every documented failure on its rows, so this
+        catches only an unanticipated bug (e.g. a malformed row) and still lands an
+        "exception" verdict on every row of the group -- never swallow an exception
+        without recording it on a row -- and never raises into the executor.
         """
         theorem_id, k = key
         try:
@@ -944,19 +868,13 @@ def verify_run(
     upload_rows(client, out_rows, bucket, verified_key, run_dir)
     logging.info(f"lean_verify_rows[{run}]: done -- {completed} group(s) processed, final upload.")
 
-    # Full-pass sentinel gate. Only --limit, --theorem and --dry-run ask for
-    # PARTIAL work; resume is deliberately NOT among them, because under the
-    # ALL-cells rule a `done` group holds zero sentinel cells by construction and
-    # every pending group gets graded this pass. A `not done` term here would
-    # therefore silence the gate in precisely the scenario that motivated it: a
-    # RESUMED completion pass, where `done` is non-empty by design. A sentinel
-    # surviving a full pass means one of two faults:
-    #   - a pending group was "verified" but the verdict written back is
-    #     still the sentinel (a no-op or swallowed per-cell failure); or
-    #   - a sentinel-carrying ORPHAN -- an ungraded prior row with no
-    #     counterpart in the current all_rows.jsonl. `group_unverified` reads
-    #     all_rows, so an orphan is never pending and never gets graded; without
-    #     this gate it sits in the output as a failure-scored cell forever.
+    # Full-pass sentinel gate. Only --limit/--theorem/--dry-run ask for PARTIAL work;
+    # resume is deliberately NOT a `full_pass` term: a `done` group has zero sentinel
+    # cells by construction, and a `not done` term would silence the gate in the
+    # resumed completion pass that motivated it. A surviving sentinel means either a
+    # pending group's verdict was never written back (swallowed per-cell failure) or
+    # an ungraded ORPHAN absent from all_rows.jsonl, which `group_unverified` never
+    # selects -- left alone it scores as a failed cell forever.
     full_pass = limit <= 0 and theorem is None
     if full_pass:
         n_sentinel = sum(
@@ -1046,17 +964,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point: verify every run matching ``--runs`` under ``--s3-prefix``.
 
-    Step order: :func:`require_lean_dojo`, then :func:`check_workers` against a live
-    ``/proc/meminfo`` read, then the exclusive Dojo cache lock held for the rest of the
-    call -- all three skipped together under ``--dry-run`` -- then :func:`list_runs`
-    and :func:`verify_run` per matching run.
+    Order: :func:`require_lean_dojo`, :func:`check_workers` on a live ``/proc/meminfo``
+    read, the Dojo cache lock held for the rest of the call (all three skipped under
+    ``--dry-run``), then :func:`verify_run` per :func:`list_runs` match.
 
     Returns
     -------
     int
-        ``0`` when every matching run was found and processed, even if a run had
-        nothing left to verify; otherwise the COUNT of runs :func:`verify_run`
-        returned non-zero for.
+        ``0`` when every matching run was processed (even with nothing to verify);
+        otherwise the COUNT of runs :func:`verify_run` returned non-zero for.
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)

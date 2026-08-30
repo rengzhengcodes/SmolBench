@@ -21,7 +21,7 @@ runner, verify, cli
 
 Only ``verify`` needs a Lean toolchain (``lean_dojo`` from the ``lean`` extra,
 ``uv sync --all-extras``, plus elan and a traced-repo cache at runtime); the
-rest is the generation/analysis side. This ``__init__`` therefore carries no
-imports, so neither ``tiktoken`` (via ``context``) nor ``lean_dojo`` loads
-merely because a caller wrote ``import smolbench.deduction.lean``.
+rest is the generation/analysis side. This ``__init__`` therefore imports
+nothing, so neither ``tiktoken`` (via ``context``) nor ``lean_dojo`` loads on a
+bare ``import smolbench.deduction.lean``.
 """

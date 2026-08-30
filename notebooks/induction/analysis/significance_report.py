@@ -8,11 +8,9 @@ PRIMARY test: the exact seed-level sign-flip randomization test
 (``paired_analysis.signflip_exact_p``). The independent unit is the REPLICATE
 SEED -- one label alphabet and one answer vector shared by its 9 harmonic items
 -- so a seed on which an arm collapses contributes up to 9 correlated
-discordances, not 9 pieces of evidence. All 2^30 sign assignments of the 30
-per-seed differences are enumerated by DP: exact, deterministic (no resampling
-seed), equal to exact McNemar when every cluster is a singleton. Item-level
-McNemar and the unpaired harmonic-stratified CMH stay labelled DESCRIPTIVE
-columns; the gap to the cluster p is the design effect.
+discordances, not 9 pieces of evidence. Item-level McNemar and the unpaired
+harmonic-stratified CMH stay labelled DESCRIPTIVE columns; the gap to the
+cluster p is the design effect.
 
 Holm holds under ARBITRARY dependence and is the headline; Hochberg needs
 Simes-type positive dependence (MTP2, Sarkar 1998), NOT verified for 210
@@ -93,9 +91,7 @@ def compliance_census() -> dict:
     other value names HOW it failed (``empty``, ``multiple-values``,
     ``degenerate-repetition``, ``prefixed``, ``unparseable``, ``markup``,
     ``truncated``, ``verbose``). Counting the modes, not just the nulls, is what
-    lets the census describe a mechanism instead of a bare rate; which cells get
-    annotated is a threshold decision made downstream, so the criterion stays
-    visible and symmetric.
+    lets the census describe a mechanism instead of a bare rate.
 
     Returns
     -------

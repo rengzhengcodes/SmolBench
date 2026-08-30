@@ -1,9 +1,9 @@
 """
 Interface directly with the OpenRouter API.
 
-A thin configuration over :mod:`smolbench.evals.openai_compat`, which holds
-the retry loop, response parsing and parallel evaluation shared by every
-provider; only OpenRouter's endpoint, auth and context-length lookup live here.
+A thin configuration over :mod:`smolbench.evals.openai_compat` (the shared
+retry/parsing/evaluation core); only OpenRouter's endpoint, auth and
+context-length lookup live here.
 
 Env, all read at call time: ``OPENROUTER_API_KEY``,
 ``INFERENCE_PROVIDER=openrouter`` (routes smolbench.evals.provider here),
