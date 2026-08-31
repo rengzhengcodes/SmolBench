@@ -1,0 +1,486 @@
+"""Test periodic-pattern induction (generalized FizzBuzz).
+
+A sequence of ``n`` overlapping periodic "harmonics": the k-th fires at every
+multiple of its period, and each position's label is the sep-joined
+concatenation of every label whose period divides it (:func:`generate_sequence`),
+over exactly one full period, positions 1..lcm(periods). Queries ask whether a
+label appears at a position (:func:`tof_membership_query_gen`) or how many
+positions contain it (:func:`numeric_count_query_gen`). :class:`PeriodicConfig`
+plus a ``_common.Prompter`` determine a run; the canonical eval configs live in
+``notebooks/induction/run_study.py``.
+
+Information conditions, all built from one sequence by
+:func:`get_periodic_prompts`: **intensional** = the compact rules ("Every 3
+positions write gerbil."); **extensional** = the enumerated position ->
+compound-label table ("Position 6: fizz|buzz|gerbil."), always at least as long;
+**noise_intens** = the intensional text plus whitespace until the RENDERED
+PROMPT hits its extensional counterpart's token count, isolating length as a
+confound. :func:`get_periodic_zero_info_numeric_quiz` is a standalone fourth
+condition (EMPTY context) returning ONE Quiz, not the three-condition tuple.
+
+Period sets: the default 1..n makes sequence length the step function lcm(1..n)
+-- lcm(1..10) == lcm(1..9) == 2520, then n=11 leaps to 27,720 positions (~341k
+tokens, past every context window). ``PeriodicConfig`` therefore accepts an
+explicit ``periods`` set in two dual modes, documented and validated on that
+field: pairwise coprime lengthens the EXTENSIONAL listing, factor-sharing
+lengthens the INTENSIONAL rule list at a near-fixed listing (against 2,520, 9
+harmonics -> 26 grows it 2.5%, but all 48 divisors would grow it 31%). The
+pathways diverge only in :func:`_periods_of`.
+
+Tokenizer discipline: the noise arm's tokenizer is REQUIRED, not defaulted -- a
+plausible-but-wrong default would silently de-calibrate the very length control
+this arm provides -- so quizzes are per-(seed, model), with only
+``noise_intens`` varying across models.
+
+Every generator takes an explicit ``seed`` and builds a fresh
+``np.random.default_rng(seed)``, never global RNG state; the noise pad consumes
+no RNG. Generation is byte-pinned by ``tests/induction/test_golden_quizzes.py``
+at the notebooks' production configs, so any change to RNG call order or count,
+or to the noise-padding scheme, breaks that pin -- fix the change, never
+re-baseline the fixture. The ``__main__`` demo uses seed 42.
+"""
+
+import string
+from dataclasses import dataclass
+from math import gcd, lcm
+from typing import TypeAlias, Collection, Iterable, Tuple, Dict
+
+import numpy as np
+
+from smolbench.evals import Quiz, ToF, Numeric, Answer
+from smolbench.evals.tokenization import TiktokenTokenizer, Tokenizer
+from smolbench.induction._common import (
+    Prompter,
+    build_substitution,
+    choose_whitespace_unit,
+    context_renderer,
+    quizzes_from_prompts,
+    random_labels,
+    token_matched_noise_prompt,
+)
+
+# Prompter is re-exported for callers configuring the benchmark; the class
+# itself lives in ``_common`` with the rest of the generation machinery.
+__all__ = [
+    "PeriodicConfig",
+    "Prompter",
+    "generate_sequence",
+    "get_periodic_prompts",
+    "get_periodic_quiz",
+    "get_periodic_numeric_quiz",
+    "get_periodic_zero_info_numeric_quiz",
+    "tof_membership_query_gen",
+    "numeric_count_query_gen",
+]
+
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+Label: TypeAlias = str          # label string for a single harmonic
+Period: TypeAlias = int          # period k: fires at positions k, 2k, 3k, …
+CompoundLabel: TypeAlias = str   # sep-joined labels active at a position
+PeriodToLabel: TypeAlias = Dict[Period, Label]
+PosToCompound: TypeAlias = Dict[int, CompoundLabel]
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PeriodicConfig:
+    """Configure the generation of one periodic pattern."""
+
+    # Number of harmonics. With the default periods (None), the k-th harmonic
+    # fires at positions k, 2k, 3k, … for k in 1..n; with an explicit `periods`
+    # set, n is how many periods that set holds.
+    n: int
+    # Labels for each harmonic: n strings, or int n to auto-generate n random
+    # labels. Assigned in ascending-period order, so labels[i] belongs to the
+    # i-th smallest period.
+    labels: Collection[Label] | int
+    # RNG seed for reproducibility.
+    seed: int
+    # Separator placed between active labels in compound output. Must not
+    # appear in any label.
+    sep: str = "|"
+    # Explicit harmonic periods, replacing the default 1..n. None selects the
+    # consecutive-integer pathway, whose generated bytes are pinned by
+    # tests/induction/test_golden_quizzes.py.
+    periods: Tuple[int, ...] | None = None
+    # The sequence length `periods` is expected to produce. Omit it and the
+    # periods must be PAIRWISE COPRIME, so lcm == product and the caller dials
+    # the length by multiplying out -- the pathway for a longer EXTENSIONAL
+    # listing. Supply it and coprimality is NOT required; lcm(periods) must
+    # equal it exactly instead, letting a DIVISOR set add harmonics while
+    # pinning the length -- the pathway for a longer INTENSIONAL rule list at a
+    # fixed extensional listing. Either way construction fails when the periods
+    # disagree with the declared length, because that failure is otherwise
+    # invisible: a wrong-length set still generates a self-consistent quiz, just
+    # not the one that was asked for.
+    expect_seq_len: int | None = None
+
+    def __post_init__(self):
+        if self.n < 1:
+            raise ValueError("n must be positive.")
+        if self.periods is not None:
+            periods = tuple(int(p) for p in self.periods)
+            if len(periods) != self.n:
+                raise ValueError(
+                    f"Number of periods ({len(periods)}) must equal n ({self.n})."
+                )
+            if len(set(periods)) != len(periods):
+                raise ValueError(f"Periods must be distinct, got {periods}.")
+            if any(p < 1 for p in periods):
+                raise ValueError(f"Periods must be positive, got {periods}.")
+            if self.expect_seq_len is None:
+                # Pairwise coprimality makes lcm(periods) == prod(periods), so
+                # sequence length is a product the caller dials directly
+                # instead of the step function lcm(1..n).
+                for i, a in enumerate(periods):
+                    for b in periods[i + 1:]:
+                        if gcd(a, b) != 1:
+                            raise ValueError(
+                                f"Periods must be pairwise coprime; gcd({a}, {b}) = {gcd(a, b)}. "
+                                "Without coprimality lcm(periods) < prod(periods) and the "
+                                "sequence length is no longer the product you asked for. "
+                                "Pass expect_seq_len=<length> to use a non-coprime set on "
+                                "purpose (the divisor pathway)."
+                            )
+            else:
+                # Divisor pathway: the periods deliberately SHARE factors so
+                # lcm stays put. Each period d contributes seq_len/d
+                # occurrences to the extensional listing, so adding large
+                # divisors grows the rule list and leaves the listing ~fixed.
+                actual = lcm(*periods)
+                if actual != self.expect_seq_len:
+                    raise ValueError(
+                        f"lcm(periods) is {actual}, not the declared expect_seq_len "
+                        f"{self.expect_seq_len}. Every period must divide the declared "
+                        "length (and together they must reach it) or the extensional "
+                        "listing silently changes size, which is the one thing this "
+                        "pathway exists to hold fixed."
+                    )
+            object.__setattr__(self, "periods", periods)
+        elif self.expect_seq_len is not None:
+            raise ValueError(
+                "expect_seq_len only means something alongside an explicit `periods` "
+                "set; on the default 1..n pathway the length is lcm(1..n) by definition."
+            )
+        if isinstance(self.labels, int):
+            if self.labels != self.n:
+                raise ValueError(
+                    f"When labels is int it must equal n ({self.n}), got {self.labels}."
+                )
+            # min_length=2: periodic labels are always multi-character, even at
+            # small n where the information-theoretic minimum would allow
+            # single letters -- see random_labels' docstring.
+            object.__setattr__(
+                self,
+                "labels",
+                random_labels(
+                    self.labels, self.seed, charset=_LABEL_CHARSET, min_length=2
+                ),
+            )
+        else:
+            object.__setattr__(self, "labels", tuple(self.labels))
+        if len(self.labels) != self.n:
+            raise ValueError(
+                f"Number of labels ({len(self.labels)}) must equal n ({self.n})."
+            )
+        if len(set(self.labels)) != len(self.labels):
+            # A duplicate label states two rules for one string, giving a
+            # single prompt two contradictory ground truths. Auto-generated
+            # labels are unique by construction; this guards explicit lists.
+            raise ValueError(f"Labels must be distinct, got {tuple(self.labels)}.")
+        for lbl in self.labels:
+            if self.sep in lbl:
+                raise ValueError(
+                    f"Label '{lbl}' contains the separator '{self.sep}'."
+                )
+
+
+# Lowercase letters only, so the default '|' separator is always safe.
+_LABEL_CHARSET: str = string.ascii_lowercase
+
+
+# ---------------------------------------------------------------------------
+# Sequence generation
+# ---------------------------------------------------------------------------
+
+def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
+    """Return the harmonic periods this config asks for, in ascending order.
+
+    The only point where the default 1..n and explicit-``periods`` pathways
+    differ; everything downstream is shared verbatim.
+    """
+    if config.periods is None:
+        return tuple(range(1, config.n + 1))
+    return tuple(sorted(config.periods))
+
+
+def _seq_len_of(config: PeriodicConfig) -> int:
+    """Return the sequence length: the lcm of the config's harmonic periods."""
+    return lcm(*_periods_of(config))
+
+
+def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
+    """Generate the period-to-label and position-to-compound mappings.
+
+    Covers positions 1..lcm(periods), each mapped to the sep-joined labels whose
+    periods divide it, in ascending period order (``labels[i]`` belonging to the
+    i-th smallest period).
+    """
+    periods = _periods_of(config)
+    period_to_label: PeriodToLabel = {
+        k: config.labels[i] for i, k in enumerate(periods)
+    }
+    seq_len = _seq_len_of(config)
+    pos_to_compound: PosToCompound = {
+        pos: config.sep.join(
+            period_to_label[k] for k in periods if pos % k == 0
+        )
+        for pos in range(1, seq_len + 1)
+    }
+    return period_to_label, pos_to_compound
+
+
+# ---------------------------------------------------------------------------
+# Prompt renderers
+# ---------------------------------------------------------------------------
+
+def _render_intensional(period_to_label: PeriodToLabel) -> str:
+    """Render the harmonic rules as human-readable text."""
+    return "".join(
+        f"Every {k} positions write {label}.\n"
+        for k, label in sorted(period_to_label.items())
+    )
+
+
+def _render_extensional(pos_to_compound: PosToCompound) -> str:
+    """Render the sequence as a position-indexed lookup table."""
+    return "".join(
+        f"Position {pos}: {compound}.\n"
+        for pos, compound in sorted(pos_to_compound.items())
+    )
+
+
+# ---------------------------------------------------------------------------
+# Core prompt generation
+# ---------------------------------------------------------------------------
+
+def get_periodic_prompts(
+    config: PeriodicConfig,
+    prompter: Prompter,
+    *,
+    tokenizer: Tokenizer,
+) -> Iterable[Tuple[str, str, str, Answer]]:
+    """Generate intensional, extensional, and noise-padded intensional prompts.
+
+    Yields ``(intens, extens, noise_intens, answer)`` per query, the noise arm
+    padded to the token count of the SAME query's extensional prompt. The
+    extensional prompt uses ``extens_template`` when the prompter sets one;
+    otherwise all three share ``template``. ``tokenizer`` defines the noise arm's
+    token target and must be the model's own -- see the module docstring's
+    tokenizer discipline.
+    """
+    period_to_label, pos_to_compound = generate_sequence(config)
+
+    intension: str = _render_intensional(period_to_label)
+    extension: str = _render_extensional(pos_to_compound)
+
+    # Probe the pad atom once, not per query: it depends only on the tokenizer.
+    unit: str = choose_whitespace_unit(tokenizer)
+
+    for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
+        intens = prompter.template.safe_substitute(
+            build_substitution(query, prompter, intension)
+        )
+        extens = prompter.resolved_extens_template.safe_substitute(
+            build_substitution(query, prompter, extension)
+        )
+        # Match per query on the RENDERED prompt (why: token_matched_noise_prompt).
+        # The closure renders exactly as the intensional arm above, so the two
+        # differ only in `positive_info`.
+        noise_intens = token_matched_noise_prompt(
+            context_renderer(prompter, query),
+            intension,
+            tokenizer.count(extens),
+            tokenizer,
+            unit=unit,
+        )
+
+        yield intens, extens, noise_intens, answer
+
+
+# ---------------------------------------------------------------------------
+# Quiz wrappers
+# ---------------------------------------------------------------------------
+
+def get_periodic_quiz(
+    config: PeriodicConfig,
+    prompter: Prompter,
+    *,
+    tokenizer: Tokenizer,
+) -> Tuple[Quiz, Quiz, Quiz]:
+    """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes: intens, extens, noise."""
+    return quizzes_from_prompts(
+        get_periodic_prompts(config, prompter, tokenizer=tokenizer), ToF
+    )
+
+
+def get_periodic_numeric_quiz(
+    config: PeriodicConfig,
+    prompter: Prompter,
+    *,
+    tokenizer: Tokenizer,
+) -> Tuple[Quiz, Quiz, Quiz]:
+    """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes: intens, extens, noise."""
+    return quizzes_from_prompts(
+        get_periodic_prompts(config, prompter, tokenizer=tokenizer), Numeric
+    )
+
+
+def get_periodic_zero_info_numeric_quiz(
+    config: PeriodicConfig,
+    prompter: Prompter,
+) -> Quiz:
+    """Build the zero-information baseline quiz.
+
+    Same numeric queries and answers as :func:`get_periodic_numeric_quiz` but
+    with an EMPTY ``positive_info`` context, so the count cannot be computed from
+    the prompt at all: the chance floor of the positive-information gradient.
+    Returns ONE Quiz, leaving the 3-condition tuple shape untouched.
+    """
+    period_to_label, pos_to_compound = generate_sequence(config)
+    return tuple(
+        Numeric(
+            prompt=prompter.template.safe_substitute(
+                build_substitution(query, prompter, "")
+            ),
+            answer=answer,
+        )
+        for query, answer in prompter.query_gen(
+            period_to_label, pos_to_compound, config.seed
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Built-in query generators
+# ---------------------------------------------------------------------------
+
+# tof_membership_query_gen samples at most this many queries of EACH polarity
+# per quiz, so quiz size stays fixed as n grows. n changes task difficulty and
+# the lcm(1..n) context length; it must never silently change sample size,
+# because a replication design is powered around fixed question counts. (This
+# ToF generator is pinned by the golden hashes and used by sibling studies;
+# the family-ladder driver runs numeric_count_query_gen, whose count is n by
+# construction.)
+MAX_QUERIES_PER_POLARITY: int = 10
+
+
+def tof_membership_query_gen(
+    period_to_label: PeriodToLabel,
+    pos_to_compound: PosToCompound,
+    seed: int,
+) -> Iterable[Tuple[Dict[str, str], bool]]:
+    """Yield True/False queries of the form "Does label appear at position pos?"
+
+    Yields ``({"pos": ..., "label": ...}, answer)`` pairs: at most
+    ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
+    if the pattern admits fewer of either polarity), sampled without replacement
+    under ``seed``; period-1 labels are excluded as trivially True. Both mappings
+    come from :func:`generate_sequence`.
+    """
+    rng = np.random.default_rng(seed)
+
+    true_qs: list = []
+    false_qs: list = []
+
+    # Hoisted: the (period, label) ordering is position-independent.
+    period_labels = sorted(period_to_label.items())
+    for pos in sorted(pos_to_compound.keys()):
+        for period, label in period_labels:
+            if period == 1:
+                continue  # true for every position -- skip this trivial query
+            entry = ({"pos": str(pos), "label": label}, pos % period == 0)
+            (true_qs if pos % period == 0 else false_qs).append(entry)
+
+    n = min(len(true_qs), len(false_qs), MAX_QUERIES_PER_POLARITY)
+    if n == 0:
+        # Too small to admit both polarities -> empty quiz, not an error
+        # (legitimate for tiny test configs).
+        return
+
+    # True block then False block, unshuffled: each query is a separate
+    # prompt, so order leaks nothing between questions.
+    for idx in rng.choice(len(true_qs), n, replace=False):
+        yield true_qs[idx]
+    for idx in rng.choice(len(false_qs), n, replace=False):
+        yield false_qs[idx]
+
+
+def numeric_count_query_gen(
+    period_to_label: PeriodToLabel,
+    pos_to_compound: PosToCompound,
+    seed: int,
+) -> Iterable[Tuple[Dict[str, str], int]]:
+    """Yield count queries of the form "How many positions 1..seq_len contain label?"
+
+    Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label, the
+    answer being floor(seq_len / period) -- always exact, since seq_len is the
+    lcm of the harmonic periods on every pathway. Reads only ``pos_to_compound``'s
+    KEYS (to find ``seq_len``) and ignores ``seed``: count queries need no
+    sampling, but every ``query_gen`` here shares one signature.
+    """
+    seq_len = max(pos_to_compound.keys())
+    for period, label in sorted(period_to_label.items()):
+        yield {"label": label, "seq_len": str(seq_len)}, seq_len // period
+
+
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    template = string.Template(
+        "Context:\n"
+        "---\n"
+        "There is a counting game. Count positions starting from 1. "
+        "At each position write down words according to the following rules:\n"
+        "$positive_info\n"
+        "Query:\n"
+        "How many of the positions 1 through $seq_len include '$label'? "
+        "Answer with a single integer."
+    )
+
+    cfg = PeriodicConfig(
+        n=3,
+        labels=["fizz", "buzz", "gerbil"],
+        seed=42,
+    )
+
+    # No served model here, so measure with a fixed tiktoken encoding. A real
+    # run passes the model under test's; see the module docstring's tokenizer
+    # discipline.
+    demo_tokenizer = TiktokenTokenizer("cl100k_base")
+
+    for intens, extens, noise_intens, answer in get_periodic_prompts(
+        cfg,
+        Prompter(template, {}, numeric_count_query_gen),
+        tokenizer=demo_tokenizer,
+    ):
+        print("-- intensional --")
+        print(intens)
+        print("-- extensional --")
+        print(extens)
+        print("answer:", answer)
+        print(
+            "token counts -- intens:", demo_tokenizer.count(intens),
+            "extens:", demo_tokenizer.count(extens),
+            "noise_intens:", demo_tokenizer.count(noise_intens),
+        )
+        print()
