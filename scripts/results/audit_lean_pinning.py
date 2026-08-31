@@ -1,0 +1,475 @@
+"""Audit that all 21 deduction lanes ran the SAME pinned theorems.
+
+Every cross-model claim of the family-ladder deduction study (ladder contrasts,
+paired McNemar, block bootstrap) assumes the lanes are PAIRED; nothing in the
+pipeline enforced that. Five checks run weakest to strongest, each able to pass
+while the next fails: (1) byte-identical ``theorems`` block and base ``seed``
+across the lanes' as-run ``manifest.json`` (launch config, not what came back);
+(2) the same 300 ``theorems/<slug>/`` prefixes in every spool; (3) the same 944
+``(theorem, rung)`` output cells, since a lane can hold all 300 theorems and
+still miss rungs; (4) ``prompts/<rung>.md`` present in every lane and byte-equal
+across them by S3 ETag (MD5, so no download) -- the strongest gate: equal bytes prove the same theorem
+at the same step ``k`` in the same rendered context, and catch model-dependent
+``noise:N`` padding (token-matched, so it may differ per tokenizer); and (5) the
+additive ``dojoinit_recovery_2026-08-18`` and the not-folded ``flip*``
+process-nondeterminism runs, which share this ``theorems`` block, staying inside
+the pinned 944.
+
+Layers 4-5 must slug theorem names as `runner.slug_theorem` does, or ~18 phantom
+out-of-set cells per lane are reported. A pass means the lanes were ASKED the
+same questions, not that their surviving data is identical -- the published
+analysis ran on smaller pools (707 / 828 / 833), the axis of
+``scripts/results/audit_run_completeness.py`` -- nor does it vouch for the
+corpus (mathlib4 at commit ``fe4454af``, traced 2024-03-24, predating every
+roster model's cutoff; see ``notebooks/deduction/README.md``).
+
+Read-only, with ambient AWS credentials. ``--reproduce`` also rederives the pin,
+needing the LeanDojo split and 805-theorem replay sidecar the 2026-08-25 archive
+moved out of the repo: point ``--val-json``/``--replay-jsonl`` at local or S3
+copies under ``archives/2026-08-25/``.
+
+``--offline`` skips all five S3 layers -- no ``boto3`` client is constructed and
+no AWS call is made -- so ``--emit-manifest``/``--reproduce`` can run against
+local corpus files alone (e.g. a post-cutoff corpus with no spool yet). Under
+``--offline`` the "reproduced pin == spooled set" comparison in layer "+" is
+skipped and that is stated in the printed output, not silently dropped.
+
+``--emit-manifest PATH`` writes the reproduced pin as a JSON manifest of this
+shape (this is exactly what generated the committed
+``notebooks/deduction/pinned_theorems.json``)::
+
+    {"_comment": "<what this file is and how to re-derive it>",
+     "corpus": <metadata.json, verbatim>,
+     "derivation": {"source": "replay_passing", "kind": ..., "split": ...,
+                     "pool_size": ..., "limit": ..., "seed": ..., "recipe": ...},
+     "sha256_of_sorted_full_names": "<hex>",
+     "count": <int>,
+     "full_names": [<sorted theorem names>]}
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import random
+import re
+import sys
+from pathlib import Path
+
+BUCKET = "smolbench-results-414266451290"
+REGION = "us-west-2"
+RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
+
+#: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: own run
+#: prefix, NOT folded into headline pools, still gated against the pin -- a
+#: stray theorem would mean the draw was not deterministic.
+FLIP_RUNS = [("flip_nemotron-3-nano-4b", "nemotron-3-nano-4b"),
+             ("flip2_nemotron-3-nano-4b", "nemotron-3-nano-4b")]
+
+#: The 21 lane spec keys, in roster order (7 families x 3 rungs). Kept
+#: literal rather than imported from ``notebooks/induction/run_study.py``
+#: so this audit does not depend on the driver it is auditing.
+LANES = [
+    "qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b",
+    "nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b",
+    "gemma-4-e2b", "gemma-4-12b", "gemma-4-31b",
+    "glm-4.7-flash", "glm-4.5-air", "glm-4.7",
+    "ministral-3-3b", "ministral-3-8b", "ministral-3-14b",
+    "exaone-4.0-32b", "exaone-4.5-33b", "k-exaone-236b-a23b",
+    "deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro",
+]
+
+def slug_theorem(name: str) -> str:
+    """Filesystem-safe theorem name; mirrors `runner.slug_theorem` exactly.
+
+    Duplicated rather than imported, like ``LANES``: this audit must not inherit
+    a bug from the module under audit. Kept in step by
+    ``tests/deduction/test_lean_pinning_audit.py``.
+    """
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+
+
+def _client():
+    import boto3
+
+    return boto3.client("s3", region_name=REGION)
+
+
+def _read(s3, key: str) -> str:
+    return s3.get_object(Bucket=BUCKET, Key=key)["Body"].read().decode()
+
+
+def _default_run_prefix() -> str:
+    """Resolve the fetch_* helpers' ``run_prefix`` when a caller passes none.
+
+    Lazily imports `runner.spool_prefix` -- a key prefix is CONFIGURATION,
+    not audited logic (unlike `LANES`/`slug_theorem`, which are duplicated
+    literally above so this audit cannot inherit a bug from the module under
+    audit), so importing the single source of truth for it here is not the
+    hazard that duplication rule guards against. `main()` already resolves
+    this once (also via a lazy import, for the same reason) and passes it to
+    every fetch_* call explicitly; this function only backstops a direct
+    caller -- e.g. a test -- that omits ``run_prefix``.
+    """
+    from smolbench.deduction.lean.runner import spool_prefix
+
+    return spool_prefix()
+
+
+def fetch_manifests(s3, *, run_prefix: str | None = None) -> dict[str, dict]:
+    """Per-lane as-run ``manifest.json`` (the config actually launched)."""
+    run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
+    return {k: json.loads(_read(s3, f"{run_prefix}/scaling_{k}/manifest.json")) for k in LANES}
+
+
+def fetch_spool_index(
+    s3, *, run_prefix: str | None = None
+) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
+    """List each lane's output-cell keys and prompt ETags in one pass.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        Both keyed by lane: cell keys ``"<theorem-slug>|<rung-slug>"`` for every
+        ``outputs/`` object (presence only), then each cell's
+        ``prompts/<rung>.md`` ETag. Those are small single-part uploads, so the
+        ETag is the object MD5 and cross-lane equality is byte equality without
+        downloading ~19 MB x 21 of spool.
+    """
+    run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
+    cells: dict[str, set[str]] = {}
+    prompts: dict[str, dict[str, str]] = {}
+    for lane in LANES:
+        pref = f"{run_prefix}/scaling_{lane}/theorems/"
+        c: set[str] = set()
+        p: dict[str, str] = {}
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=pref):
+            for obj in page.get("Contents", []):
+                parts = obj["Key"][len(pref):].split("/")
+                if len(parts) != 3:
+                    continue
+                thm, kind, leaf = parts
+                if kind == "outputs":
+                    c.add(f"{thm}|{leaf.split('__')[0]}")
+                elif kind == "prompts" and leaf.endswith(".md"):
+                    p[f"{thm}|{leaf[:-3]}"] = obj["ETag"].strip('"')
+        cells[lane], prompts[lane] = c, p
+    return cells, prompts
+
+
+def _is_missing_key(exc: Exception) -> bool:
+    """True only for S3's "that object does not exist".
+
+    Read off the error response rather than caught as ``s3.exceptions.NoSuchKey``
+    so a test double needs no botocore. Deliberately narrow: expired credentials,
+    a denied bucket or a throttle must NOT be recorded as "this lane recovered
+    nothing", which would silently pass layer 5.
+    """
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    code = str((response.get("Error") or {}).get("Code", ""))
+    status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    return code in {"NoSuchKey", "NotFound", "404"} or status == 404
+
+
+def fetch_recovery(s3, *, run_prefix: str | None = None) -> dict[str, set[str]]:
+    """Cell keys touched by the additive dojoinit recovery, per lane.
+
+    A lane with no recovery object contributes ``set()``; every other S3 error
+    propagates (`_is_missing_key`).
+    """
+    run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
+    out: dict[str, set[str]] = {}
+    for lane in LANES:
+        key = f"{run_prefix}/{RECOVERY_RUN}/{lane}/recovered_rows.jsonl"
+        try:
+            body = _read(s3, key)
+        except Exception as exc:  # noqa: BLE001 -- narrowed, and re-raised
+            if not _is_missing_key(exc):
+                raise
+            out[lane] = set()
+            continue
+        out[lane] = {
+            f"{slug_theorem(r['theorem_id'])}|{r['rung'].replace(':', '-')}"
+            for r in (json.loads(x) for x in body.splitlines() if x.strip())
+        }
+    return out
+
+
+def fetch_flip_cells(s3, *, run_prefix: str | None = None) -> dict[str, set[str]]:
+    """Cell keys reached by the flip-rate side-runs, per run name.
+
+    These spool in the normal ``theorems/<slug>/outputs/`` layout, not the
+    recovery run's flat ``recovered_rows.jsonl``.
+    """
+    run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
+    out: dict[str, set[str]] = {}
+    for run, _lane in FLIP_RUNS:
+        pref = f"{run_prefix}/{run}/theorems/"
+        cells: set[str] = set()
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=pref):
+            for obj in page.get("Contents", []):
+                parts = obj["Key"][len(pref):].split("/")
+                if len(parts) == 3 and parts[1] == "outputs":
+                    cells.add(f"{parts[0]}|{parts[2].split('__')[0]}")
+        out[run] = cells
+    return out
+
+
+def divergent_prompt_cells(cell_keys, prompts: dict[str, dict[str, str]]) -> set[str]:
+    """Cells whose ``prompts/<rung>.md`` is not one shared ETag across `LANES`.
+
+    A lane MISSING the artifact contributes ``None``, which counts as divergent:
+    a cell no lane spooled a prompt for collapses to the single value ``{None}``
+    and would otherwise be certified byte-identical on absent evidence.
+    """
+    out: set[str] = set()
+    for key in cell_keys:
+        etags = {prompts.get(lane, {}).get(key) for lane in LANES}
+        if len(etags) != 1 or None in etags:
+            out.add(key)
+    return out
+
+
+def reproduce_pin(
+    val_json: Path, replay_jsonl: Path, *, limit: int, seed: int
+) -> tuple[list[str], int]:
+    """Re-derive a pinned theorem set from its documented recipe.
+
+    Mirrors `runner._select_theorems` for a ``replay_passing`` spec: from the
+    split at `val_json`, keep, IN SPLIT ORDER, the theorems whose ground-truth
+    proof replays (``verdict == "success"`` in `replay_jsonl`), then sample
+    `limit` of them with ``random.Random(seed).sample`` -- but ONLY when
+    ``0 < limit < len(pool)``, exactly as `runner._select_theorems` does;
+    otherwise (``limit <= 0``, or the pool is no larger than `limit`) the
+    entire pool is kept, unsampled, in split order. Split order is
+    load-bearing -- ``rng.sample`` is order-sensitive, so a re-sorted pool
+    yields a different draw under the same seed.
+
+    Parameters
+    ----------
+    val_json : Path
+        LeanDojo split file, e.g. ``<corpus>/<kind>/val.json``.
+    replay_jsonl : Path
+        Sidecar of ``{"full_name": ..., "verdict": ...}`` replay records.
+    limit : int
+        Sample size; see the sampling rule above.
+    seed : int
+        `random.Random` seed for the sample.
+
+    Returns
+    -------
+    tuple of (list of str, int)
+        ``(names, pool_size)`` -- the selected ``full_name``s, and the pool
+        size BEFORE sampling (needed by `main` to record `derivation` and to
+        decide whether a sample actually happened).
+    """
+    val = json.loads(val_json.read_text())
+    passing = {
+        json.loads(line)["full_name"]
+        for line in replay_jsonl.read_text().splitlines()
+        if line.strip() and json.loads(line).get("verdict") == "success"
+    }
+    pool = [t for t in val if t["full_name"] in passing]
+    pool_size = len(pool)
+    selected = random.Random(seed).sample(pool, limit) if 0 < limit < pool_size else pool
+    return [t["full_name"] for t in selected], pool_size
+
+
+def main(argv: list[str] | None = None) -> int:
+    # Lazy import, at the TOP of main(): a key prefix and the expected-shape
+    # constants are CONFIGURATION, not audited logic, so importing `runner`
+    # here does not reintroduce the hazard `slug_theorem`'s/`LANES`'s
+    # "duplicated rather than imported" comments warn against (this audit
+    # inheriting a bug from the module under audit; see `_default_run_prefix`,
+    # which every fetch_* helper falls back to for the same reason). Import
+    # must happen BEFORE the parser is built -- `runner.EXPECTED_THEOREMS`/
+    # `runner.EXPECTED_CELLS` are used as argparse defaults below, and unlike
+    # `spool_prefix()` (which can raise on the legacy prefix) they are plain
+    # ints that cannot fail, so using them straight as defaults is safe.
+    from smolbench.deduction.lean import runner
+
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--reproduce", action="store_true",
+                    help="also re-derive the pin from corpus data (needs --val-json/--replay-jsonl)")
+    ap.add_argument("--val-json", type=Path,
+                    default=Path("notebooks/deduction/data/leandojo_benchmark_4/novel_premises/val.json"))
+    ap.add_argument("--replay-jsonl", type=Path,
+                    default=Path("notebooks/deduction/data/replay_passing_novel_premises_val.jsonl"))
+    ap.add_argument(
+        "--metadata", type=Path, default=None,
+        help="corpus metadata.json to embed verbatim in the emitted manifest's "
+             "'corpus' block (default: <val-json's split dir>/../metadata.json "
+             "-- the corpus root is the split file's grandparent)",
+    )
+    ap.add_argument("--emit-manifest", type=Path, default=None,
+                    help="write the reproduced pin to this path as pinned_theorems.json")
+    ap.add_argument(
+        "--limit", type=int, default=runner.EXPECTED_THEOREMS,
+        help="theorems to sample for --reproduce/--emit-manifest (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--seed", type=int, default=0,
+        help="random.Random seed for --reproduce/--emit-manifest's sample (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--offline", action="store_true",
+        help="skip the five S3 audit layers entirely -- no boto3 client is "
+             "constructed and no AWS call is made. Only meaningful with "
+             "--emit-manifest/--reproduce, which then also skip the "
+             "'reproduced pin == spooled set' comparison (there is no spool "
+             "to compare against).",
+    )
+    ap.add_argument(
+        "--expect-theorems", type=int, default=runner.EXPECTED_THEOREMS,
+        help="expected theorem-set size for layer [2/5] (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
+        help="expected cell-set size for layer [3/5] (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--spool-prefix", default=None,
+        help="S3 key prefix the 21 lanes spooled under (default: the re-collection "
+             "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset). "
+             "The published pre-cutoff study lives at deduction/runs; pass that "
+             "explicitly to audit it (no env opt-in needed on this read-only path).",
+    )
+    args = ap.parse_args(argv)
+
+    # The corpus root is the split file's grandparent, e.g.
+    # <corpus>/novel_premises/val.json -> <corpus>/metadata.json. Resolved
+    # AFTER parsing so an explicit --metadata always wins.
+    if args.metadata is None:
+        args.metadata = args.val_json.parent.parent / "metadata.json"
+
+    failures: list[str] = []
+    inter: set[str] | None = None
+
+    if args.offline:
+        print("[offline] --offline set: skipping all five S3 audit layers "
+              "(no boto3 client constructed, no AWS call made)")
+    else:
+        run_prefix = args.spool_prefix or runner.spool_prefix()
+        s3 = _client()
+
+        # -- Layer 1: as-run config --------------------------------------
+        mans = fetch_manifests(s3, run_prefix=run_prefix)
+        blocks = {k: json.dumps(m["config"]["theorems"], sort_keys=True) for k, m in mans.items()}
+        seeds = {k: m["config"]["seed"] for k, m in mans.items()}
+        if len(set(blocks.values())) != 1:
+            failures.append(f"theorems blocks differ across lanes: {sorted(set(blocks.values()))}")
+        if len(set(seeds.values())) != 1:
+            failures.append(f"base seeds differ across lanes: {sorted(set(seeds.values()))}")
+        print(f"[1/5] config      : {len(set(blocks.values()))} distinct theorems block, "
+              f"{len(set(seeds.values()))} distinct seed  -> {next(iter(blocks.values()))}")
+
+        # -- Layers 2-4: what actually landed in the spool ----------------
+        cells, prompts = fetch_spool_index(s3, run_prefix=run_prefix)
+        thm_sets = {k: {c.split("|")[0] for c in v} for k, v in cells.items()}
+        inter, union = set.intersection(*thm_sets.values()), set.union(*thm_sets.values())
+        if not (len(inter) == len(union) == args.expect_theorems):
+            failures.append(f"theorem sets differ: intersection={len(inter)} union={len(union)}")
+        print(f"[2/5] theorem sets: intersection={len(inter)} union={len(union)} "
+              f"(expected {args.expect_theorems} == {args.expect_theorems})")
+
+        cinter, cunion = set.intersection(*cells.values()), set.union(*cells.values())
+        if not (len(cinter) == len(cunion) == args.expect_cells):
+            failures.append(f"cell key sets differ: intersection={len(cinter)} union={len(cunion)}")
+        print(f"[3/5] cell keys   : intersection={len(cinter)} union={len(cunion)} "
+              f"(expected {args.expect_cells} == {args.expect_cells})")
+
+        # Byte equality of the rendered prompt, per cell, across all 21 lanes.
+        divergent = divergent_prompt_cells(cunion, prompts)
+        if divergent:
+            failures.append(f"{len(divergent)} cells have model-dependent or missing "
+                            f"prompt bytes: {sorted(divergent)[:5]}")
+        print(f"[4/5] prompt bytes: {len(cunion) - len(divergent)}/{len(cunion)} cells "
+              f"byte-identical across all {len(LANES)} lanes")
+
+        # -- Layer 5: side-runs stay inside the pinned set -----------------
+        rec = fetch_recovery(s3, run_prefix=run_prefix)
+        outside = {k: v - cells[k] for k, v in rec.items()}
+        if any(outside.values()):
+            failures.append(f"recovery rows outside the pinned cell set: "
+                            f"{ {k: len(v) for k, v in outside.items() if v} }")
+        flips = fetch_flip_cells(s3, run_prefix=run_prefix)
+        flip_outside = {r: v - cells[lane] for (r, lane), v in
+                        ((rl, flips[rl[0]]) for rl in FLIP_RUNS)}
+        if any(flip_outside.values()):
+            failures.append(f"flip-run cells outside the pinned cell set: "
+                            f"{ {k: len(v) for k, v in flip_outside.items() if v} }")
+        print(f"[5/5] side-runs   : recovery {sum(len(v) for v in rec.values())} cells "
+              f"(additive), flip {sum(len(v) for v in flips.values())} cells "
+              f"(not folded into headlines); "
+              f"{sum(len(v) for v in outside.values()) + sum(len(v) for v in flip_outside.values())}"
+              f" outside the pinned set")
+
+    # -- Optional: rederive the pin from its documented recipe --------
+    if args.reproduce or args.emit_manifest:
+        names, pool_size = reproduce_pin(
+            args.val_json, args.replay_jsonl, limit=args.limit, seed=args.seed)
+        digest = hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+        if args.offline:
+            print("[+  ] reproduce   : --offline set, skipping the reproduced-pin-vs-"
+                  f"spooled-set comparison (no spool to compare against); sha256={digest[:16]}")
+        else:
+            slugged = {slug_theorem(n) for n in names}
+            if slugged != inter:
+                failures.append(f"reproduced pin != spooled set "
+                                f"(missing {len(inter - slugged)}, extra {len(slugged - inter)})")
+            print(f"[+  ] reproduce   : seeded sample matches spool={slugged == inter} sha256={digest[:16]}")
+        if args.emit_manifest:
+            kind, split = args.val_json.parent.name, args.val_json.stem
+            sampled = 0 < args.limit < pool_size
+            recipe = (
+                f"random.Random({args.seed}).sample(list(corpus.iter_replay_passing"
+                f"({kind!r},{split!r})), {args.limit})"
+                if sampled else
+                f"list(corpus.iter_replay_passing({kind!r},{split!r}))"
+                f"  # limit={args.limit} did not shrink the {pool_size}-theorem pool"
+            )
+            corpus = json.loads(args.metadata.read_text())
+            args.emit_manifest.write_text(json.dumps({
+                "_comment": (
+                    "Pinned theorem set for a deduction study lane. Every lane sharing "
+                    "this manifest was evaluated on exactly these theorems. Generated "
+                    "by scripts/results/audit_lean_pinning.py --emit-manifest; "
+                    "re-derive with the same --val-json/--replay-jsonl/--limit/--seed "
+                    "(and, online, verify against the as-run S3 spool via --reproduce)."
+                ),
+                "corpus": corpus,
+                "derivation": {
+                    "source": "replay_passing",
+                    "kind": kind,
+                    "split": split,
+                    "pool_size": pool_size,
+                    "limit": args.limit,
+                    "seed": args.seed,
+                    "recipe": recipe,
+                },
+                "sha256_of_sorted_full_names": digest,
+                "count": len(names),
+                "full_names": sorted(names),
+            }, indent=2))
+            print(f"        wrote {args.emit_manifest}")
+
+    print()
+    if failures:
+        print("PINNING AUDIT FAILED:")
+        for f in failures:
+            print(f"  - {f}")
+        return 1
+    if args.offline:
+        print("OFFLINE RUN: S3 audit layers were skipped (--offline); "
+              "only --reproduce/--emit-manifest ran, if requested.")
+    else:
+        print(f"PINNING AUDIT PASSED: all {len(LANES)} lanes ran the identical "
+              f"{args.expect_theorems} theorems / {args.expect_cells} cells, byte-identical prompts.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
