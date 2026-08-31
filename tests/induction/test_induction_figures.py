@@ -30,10 +30,14 @@ def _marks(scores) -> Marks:
     [([1, 1, 1], 1.0), ([1, 1, 0, None], 0.5), ([0, 0, None], 0.0), ([], 0.0)],
 )
 def test_accuracy(scores, expected):
+    """accuracy() scores over valid marks only: None (ungraded) marks leave the
+    denominator, and an all-empty Marks reads 0.0 rather than dividing by zero."""
     assert accuracy(_marks(scores)) == expected
 
 
 def test_load_condition_accuracies_present_and_missing(tmp_path, capsys):
+    """A present YAML maps to its accuracy; a missing file maps to None (condition
+    absent from the sync, distinct from a graded 0.0) and is reported on stdout."""
     _marks([1, 1, 0, None]).dump(tmp_path / "present.yaml")
     files = {("modelA", "intens"): "present.yaml", ("modelB", "intens"): "missing.yaml"}
     data = load_condition_accuracies(tmp_path, files)
@@ -43,6 +47,9 @@ def test_load_condition_accuracies_present_and_missing(tmp_path, capsys):
 
 
 def test_plot_archetype_accuracy_smoke(tmp_path):
+    """plot_archetype_accuracy renders a grouped bar chart to disk: one bar
+    container per condition, one x tick per model, and a None accuracy drawn as
+    a zero-height bar instead of crashing."""
     data = {  # ("cot", "extens") is missing -> 0-height bar, no label
         ("decode", "intens"): 0.9, ("decode", "extens"): 0.4,
         ("cot", "intens"): 0.7, ("cot", "extens"): None,
@@ -57,3 +64,5 @@ def test_plot_archetype_accuracy_smoke(tmp_path):
     assert out_path.stat().st_size > 0
     assert len(ax.containers) == len(conditions)
     assert len(ax.get_xticks()) == len(models)
+    # The None cell must be visibly absent, not a silent zero bar.
+    assert any(t.get_text() == "n/a" for t in ax.texts)

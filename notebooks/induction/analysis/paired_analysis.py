@@ -11,26 +11,32 @@ over whole replicates, which carries the inference here as in
 variance CMH omits by summing the 9 harmonic strata as if independent.
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
-(``{model}_{info}/rep_{seed}.yaml``); as in ``power_analysis.py`` the
-``!!python/object`` tags force a regex over per-mark ``score:`` lines, and
-ascending-period serialization means position recovers the harmonic. Scoring
-matches ``load_outcomes``: ``score: 1`` correct, ``0`` and ``null`` (invalid
-completion) both fail. About 4% of marks are ``null``, so a DROP-INVALID
-sensitivity pass accompanies every headline.
+(``{model}_{info}/rep_{seed}.yaml``) through ``Marks.load`` -- the store's own
+reader, which safe-loads current files and knows the legacy-tag fallback, so a
+``score:``-shaped line inside a CoT trace can never be scraped as a phantom
+mark. Ascending-period serialization means position recovers the harmonic.
+Scoring: ``score: 1`` correct, ``0`` and ``null`` (invalid completion) both
+fail. A few percent of marks are ``null`` (the per-lane rate is measured by
+``significance_report.py``'s compliance census), so a DROP-INVALID sensitivity
+pass accompanies every headline.
 
-Run (ephemeral env via --no-project, per repo convention):
+Run (repo root):
     .venv/bin/python notebooks/induction/analysis/paired_analysis.py
 """
 
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# The analysis directory itself: needed whenever this module is loaded by
+# path rather than run as a script (only __main__ gets it added for free).
+# power_analysis inserts notebooks/ on its own for _power_common.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from scipy.stats import binom, chi2
+
+from smolbench.evals import Marks
 
 from power_analysis import (  # noqa: E402  (path shim must precede the import)
     ALPHA,
@@ -43,7 +49,12 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     build_secondary_contrasts,
 )
 
-SCORE_RE = re.compile(r"^\s*score:\s*(\S+)", re.M)
+#: The study's replicate count (run_study.N_REPLICATES, user-locked). Depth is
+#: gated against THIS, not against the deepest lane: a uniform shortfall
+#: (every lane thinned alike) leaves no lane "short" relative to the others
+#: while silently raising the sign-flip resolution floor (2/2^S) above every
+#: Holm threshold.
+EXPECTED_R = 30
 
 
 def load_marks() -> tuple[dict, dict]:
@@ -79,7 +90,7 @@ def load_marks() -> tuple[dict, dict]:
             c_by_seed, v_by_seed = {}, {}
             for path in cdir.glob("rep_*.yaml"):
                 seed = int(path.stem.split("_")[1])
-                scores = SCORE_RE.findall(path.read_text())
+                scores = [m.score for m in Marks.load(path).marks]
                 if len(scores) != N_HARMONICS:
                     # A partially-written replicate: skip it rather than
                     # silently misaligning the harmonic axis for this seed.
@@ -89,8 +100,8 @@ def load_marks() -> tuple[dict, dict]:
                         file=sys.stderr,
                     )
                     continue
-                c_by_seed[seed] = np.array([s == "1" for s in scores])
-                v_by_seed[seed] = np.array([s != "null" for s in scores])
+                c_by_seed[seed] = np.array([s == 1 for s in scores])
+                v_by_seed[seed] = np.array([s is not None for s in scores])
             correct[(model, info)] = c_by_seed
             valid[(model, info)] = v_by_seed
     return correct, valid
@@ -112,6 +123,15 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
         whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
+    if not seeds:
+        # Content gate: an empty seed intersection means one lane contributed
+        # nothing usable (every replicate skipped, or disjoint shards) -- fail
+        # with the cause, not a downstream numpy error.
+        raise SystemExit(
+            f"No common seeds between {key_a} and {key_b}; one lane has no "
+            "usable replicates. Check the load warnings above and re-run "
+            "sync_down()."
+        )
     a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
     b = np.array([correct[key_b][s] for s in seeds])
     keep = np.ones_like(a, dtype=bool)
@@ -168,8 +188,10 @@ def signflip_exact_p(diffs) -> float:
     provable no-op (``sum_s d_s^2`` is sign-flip invariant), so the unweighted
     seed sum is the natural member of the cluster-permutation family. The
     resolution floor is ``2 / 2^S`` = 1.86e-09 at S = 30 (the observed
-    assignment and its global negation always qualify); contrasts that saturate
-    it are reported at the floor, not at a fabricated smaller number.
+    assignment and its global negation always qualify); with ``z``
+    zero-difference seeds the attainable floor rises to ``2 * 2^z / 2^S``,
+    since a zero seed's sign never changes the total. Contrasts that saturate
+    the floor are reported at it, not at a fabricated smaller number.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -227,8 +249,8 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
     Controls FWER under ARBITRARY dependence. The sort is STABLE because ties
     are pervasive here -- the sign-flip test has a hard resolution floor at
-    2/2^30 and three lanes sit exactly on it -- and the rejection set must not
-    depend on contrast build order.
+    2/2^S, and lanes can sit exactly on it (three did in the 2026-08 study
+    data) -- and the rejection set must not depend on contrast build order.
     """
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -248,8 +270,10 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     d_(s,k) = a - b and per-replicate total T_s = sum_k d_(s,k), CMH assumes
     Var(T_s) = sum_k Var(d_(.,k)) while the truth adds
     2*sum_(k<k') Cov(d_(.,k), d_(.,k')). >1 means the denominator is too small
-    (anticonservative), <1 too large. ``None`` when there is no variance to
-    measure (identical arms, or fewer than 3 seeds).
+    (anticonservative), <1 too large. ``None`` uniformly means "no measurable
+    ratio", covering fewer than 3 seeds, identical arms, AND any stratum too
+    thin for a ddof=1 variance (whose NaN would otherwise slip past callers'
+    ``is not None`` filters into the summary statistics).
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
@@ -259,7 +283,7 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     per_seed_total = np.array([d[seed_idx == s].sum() for s in seeds])
     observed = per_seed_total.var(ddof=1)
     assumed = float(np.sum([d[order == k].var(ddof=1) for k in np.unique(order)]))
-    if assumed <= 0:
+    if not np.isfinite(assumed) or assumed <= 0:
         return None
     return float(observed / assumed)
 
@@ -284,6 +308,16 @@ def main() -> None:
     short = sorted({m for (m, _), n in depths.items() if n < max(depths.values())})
     if short:
         print(f"  still collecting (compared on their common seeds only): {short}")
+    if max(depths.values()) < EXPECTED_R:
+        # See EXPECTED_R: a uniform shortfall never shows up in `short`.
+        print(
+            f"  WARNING: deepest lane has {max(depths.values())} replicates, "
+            f"but the study collects {EXPECTED_R}. Every lane is short -- the "
+            f"sign-flip floor is 2/2^{max(depths.values())}, so Holm may be "
+            "unable to reject ANYTHING (including the positive controls). "
+            "This is an incomplete sync, not a null result.",
+            file=sys.stderr,
+        )
 
     contrasts = build_primary_contrasts()
     assert len(contrasts) == N_PRIMARY

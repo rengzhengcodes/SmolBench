@@ -1,7 +1,7 @@
 # Induction: family-ladder scaling study
 
-This is the INDUCTION side of the family-ladder scaling study (periodic and
-chromatic quizzes). See `smolbench/induction/README.md` for the task design
+This is the INDUCTION side of the family-ladder scaling study (periodic
+quizzes). See `smolbench/induction/README.md` for the task design
 and the shared experiment API these scripts drive, and `notebooks/README.md`
 for what is anchored where across both studies.
 
@@ -29,6 +29,14 @@ shared roster, and the driver itself does
 `notebooks/induction/results` is what `results_store.experiment_name`
 matches to derive the short S3 experiment prefix `induction`.
 
+`keys.env` carries the AWS credentials the driver's boto3 session uses plus
+any `EC2_*` / `INDUCTION_*` overrides (the override surface is catalogued in
+`run_study.py`'s module docstring; the `EC2_*` names are read at
+`smolbench.evals.providers.ec2` import time -- see "keys.env first, then
+import" in `smolbench/induction/README.md`). It is untracked by design and
+has no committed example file, because credential-shaped files never enter
+the tree.
+
 Everything else is free to be grouped, and is. The write-side S3 key comes
 from the literal `notebook_dir="induction"` argument to
 `InductionExperiment` (`run_study.py`), not from any script's `__file__`,
@@ -52,12 +60,15 @@ assuming a sibling. `tests/tooling/test_analysis_stats.py`
 ## analysis/ -- the published numbers
 
 Each of the four chained scripts inserts a `__file__`-anchored directory on
-`sys.path` -- its own (`extens_vs_noise.py`, `significance_report.py`) or
-`notebooks/` (`power_analysis.py`, which imports `_power_common` from there,
-and `paired_analysis.py`) -- and imports its siblings by bare name off the
-script directory Python adds itself; `power_analysis.py` is the root of that
-chain and the only one that resolves `results/`. `multiplicity_sim.py` is
-standalone and inserts nothing.
+`sys.path` -- its own (`extens_vs_noise.py`, `significance_report.py`,
+`paired_analysis.py`) or `notebooks/` (`power_analysis.py`, which imports
+`_power_common` from there) -- and imports its siblings by bare name;
+`power_analysis.py` is the root of that chain and the only one that resolves
+`results/`. `multiplicity_sim.py` is standalone and inserts nothing. All four
+also import ``smolbench`` (marks are read through ``Marks.load``, never
+scraped), so they run under the project venv, and `power_analysis.py` warns
+when the checkout it reads is not the one the installed package's
+`sync_down()` writes.
 
 | File | What it's for |
 | --- | --- |

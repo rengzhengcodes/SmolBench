@@ -25,7 +25,6 @@ Run:
     .venv/bin/python notebooks/induction/analysis/significance_report.py
 """
 
-import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -34,10 +33,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-from power_analysis import INFOS, MODELS, RESULTS_DIR  # noqa: E402
+from smolbench.evals import Marks
+from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
+
+# ALPHA and build_primary_contrasts are imported from the module that OWNS
+# them (power_analysis; _power_common behind it), not redeclared or routed
+# through a sibling's re-export -- one source of truth per constant.
+from power_analysis import (  # noqa: E402
+    ALPHA,
+    INFOS,
+    MODELS,
+    RESULTS_DIR,
+    build_primary_contrasts,
+)
 from paired_analysis import (  # noqa: E402
     aligned,
-    build_primary_contrasts,
     cmh_unpaired_p,
     holm,
     load_marks,
@@ -45,8 +55,6 @@ from paired_analysis import (  # noqa: E402
     seed_diffs,
     signflip_exact_p,
 )
-
-ALPHA = 0.05
 
 #: A cell at or above this share of non-compliant completions gets a mechanism
 #: annotation on every contrast it touches -- ONE number, applied symmetrically
@@ -87,31 +95,45 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 def compliance_census() -> dict:
     """Measure non-compliance per ``(model, info)`` cell, over all 84 cells.
 
-    ``compliance: null`` marks a completion that obeyed the output contract; any
-    other value names HOW it failed (``empty``, ``multiple-values``,
-    ``degenerate-repetition``, ``prefixed``, ``unparseable``, ``markup``,
-    ``truncated``, ``verbose``). Counting the modes, not just the nulls, is what
-    lets the census describe a mechanism instead of a bare rate.
+    ``compliance: null`` marks a completion that obeyed the output contract;
+    any other value names HOW it failed (the violation label set is owned by
+    ``smolbench/evals/parsing.py``, plus ``openai_compat``'s ``parser-error``
+    and the pre-field ``not-assessed`` default). Counting the modes, not just
+    the rate, is what lets the census describe a mechanism instead of a bare
+    number.
 
     Returns
     -------
     dict
-        Cell key -> ``rate`` (non-compliance share), ``n`` (mark count) and
-        ``modes`` (`collections.Counter` of non-null labels). Cells with no
-        marks are omitted.
+        Cell key -> ``rate`` (non-compliance share over ASSESSED marks), ``n``
+        (assessed mark count) and ``modes`` (`collections.Counter` of
+        violation labels). Cells with no assessed marks are omitted -- an
+        unmeasured cell must never read as either compliant or collapsed.
     """
-    rx = re.compile(r"^\s*compliance:\s*(\S+)", re.M)
     out = {}
     for model in MODELS:
         for info in INFOS:
-            vals: list[str] = []
+            vals: list = []
             for path in sorted((RESULTS_DIR / f"{model}_{info}").glob("rep_*.yaml")):
-                vals += rx.findall(path.read_text())
-            if not vals:
+                vals += [m.compliance for m in Marks.load(path).marks]
+            # NOT_ASSESSED marks predate the compliance field: unknown, not
+            # violations. Excluding them (rather than counting them
+            # non-compliant) keeps a legacy lane from being published as a
+            # collapse; the exclusion is surfaced, not silent.
+            assessed = [v for v in vals if v != NOT_ASSESSED]
+            if len(assessed) < len(vals):
+                print(
+                    f"  NOTE: {model}/{info}: {len(vals) - len(assessed)} of "
+                    f"{len(vals)} marks pre-date compliance assessment; the "
+                    "census rate covers the assessed remainder only.",
+                    file=sys.stderr,
+                )
+            if not assessed:
                 continue
-            modes = Counter(v for v in vals if v != "null")
+            modes = Counter(v for v in assessed if v != COMPLIANT)
             out[(model, info)] = dict(
-                rate=1.0 - vals.count("null") / len(vals), n=len(vals), modes=modes,
+                rate=sum(v != COMPLIANT for v in assessed) / len(assessed),
+                n=len(assessed), modes=modes,
             )
     return out
 
@@ -170,11 +192,11 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
 def main() -> None:
     """Run the significance report and print it.
 
-    Nine sections: family size and PRIMARY test statement, rejection counts,
-    the cluster-vs-item and Holm-vs-Hochberg disagreements, the Holm step-down
-    boundary, the collapse census, the significant findings, the zero-arm
-    controls, and what is NOT significant. Methodology is in the module
-    docstring.
+    Sections, in print order: family size and PRIMARY test statement,
+    rejection counts, the cluster-vs-item and Holm-vs-Hochberg disagreements,
+    the Holm step-down boundary, the collapse census, the significant
+    findings, the zero-arm controls, and what is NOT significant. Methodology
+    is in the module docstring.
     """
     correct, valid = load_marks()
     contrasts = build_primary_contrasts()
@@ -208,12 +230,15 @@ def main() -> None:
     print(f"Replicate depth: n = {min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} "
           f"matched items per contrast, over "
           f"{min(seeds)}-{max(seeds)} replicate seeds")
+    # Computed from the landed data, not hard-coded, so a short sync cannot
+    # print a depth the marks do not have (at full depth: 270 / 30 / 2^30).
+    mx_n, mx_s = max(r["n"] for r in rows), max(seeds)
     print("PRIMARY TEST: exact seed-level sign-flip randomization over the "
           "per-seed arm\n  differences. The seed is the unit the design "
           "randomizes -- one label alphabet\n  and ONE SHARED ANSWER VECTOR per "
-          "replicate, reused by all 9 harmonic items and\n  by all four info "
-          "arms -- so the 270 marks are 30 clusters of 9, not 270\n  "
-          "independent pairs. Exact (2^30 assignments enumerated by DP), "
+          f"replicate, reused by all 9 harmonic items and\n  by all four info "
+          f"arms -- so the {mx_n} marks are {mx_s} clusters of 9, not {mx_n}\n  "
+          f"independent pairs. Exact (2^{mx_s} assignments enumerated by DP), "
           "deterministic,\n  and equal to exact McNemar when every cluster is a "
           "singleton.\n")
 
@@ -225,10 +250,12 @@ def main() -> None:
         ("item McNemar (descript.)", p_item, ("Holm", "Hochberg", "Bonferroni")),
         ("unpaired CMH (descript.)", p_unp, ("Holm", "Hochberg", "Bonferroni")),
     ):
+        # One dict per test, not per procedure: each entry is a full
+        # O(m log m) correction pass.
+        rej_by = {"Holm": holm(pv, ALPHA), "Hochberg": hochberg(pv, ALPHA),
+                  "Bonferroni": pv <= ALPHA / m}
         for proc in procs:
-            rej = {"Holm": holm(pv, ALPHA), "Hochberg": hochberg(pv, ALPHA),
-                   "Bonferroni": pv <= ALPHA / m}[proc]
-            print(f"{name:26s} {proc:10s} {int(rej.sum()):9d}  "
+            print(f"{name:26s} {proc:10s} {int(rej_by[proc].sum()):9d}  "
                   f"{int((pv < ALPHA).sum()):19d}")
 
     n_lad_all = sum(1 for r in rows if r["kind_is_ladder"])
@@ -239,8 +266,9 @@ def main() -> None:
           f"{m - n_lad_all} INFO-ARM contrasts\n  (both counts include the "
           f"zero-arm controls; the findings-only split is further down).")
 
-    lost = [rows[i] for i in range(m) if holm(p_item)[i] and not hp[i]]
-    gained = [rows[i] for i in range(m) if hp[i] and not holm(p_item)[i]]
+    h_item = holm(p_item)  # hoisted: one correction pass, not one per row
+    lost = [rows[i] for i in range(m) if h_item[i] and not hp[i]]
+    gained = [rows[i] for i in range(m) if hp[i] and not h_item[i]]
     print(f"\nCost of the correction: Holm loses {len(lost)} and gains "
           f"{len(gained)} against the item-level p.")
     for r in sorted(lost, key=lambda r: r["p_item"]):

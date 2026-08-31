@@ -13,7 +13,9 @@ lanes print their measured non-compliance on both arms and are bucketed by
 LABEL-DENSITY (both arms well-formed, so enumerated evidence really is harder
 to induce from at equal length) vs PADDING-ROBUSTNESS COLLAPSE (noise arm
 largely non-compliant, so extens > noise is mechanically forced -- a padding
-finding, NOT excluded and NOT evidence about information).
+finding, NOT excluded and NOT evidence about information). The symmetric
+"extens degraded" case and an "unmeasured" guard (for cells the census could
+not measure) complete the bucketing so no lane is classified by default.
 
 PRIMARY p = the exact seed-level sign-flip test; the 30 replicate seeds are the
 independent unit, since the 9 harmonic items in a seed share one answer vector
@@ -34,7 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-from power_analysis import MODELS  # noqa: E402
+# ALPHA comes from the module that owns it (power_analysis, _power_common
+# behind it), not a local redeclaration.
+from power_analysis import ALPHA, MODELS  # noqa: E402
 from paired_analysis import (  # noqa: E402
     aligned,
     build_primary_contrasts,
@@ -51,8 +55,6 @@ from significance_report import (  # noqa: E402
     hochberg,
 )
 
-ALPHA = 0.05
-
 
 def mechanism(nc_e: float, nc_n: float) -> str:
     """Classify which of the two mechanisms a lane's contrast can speak to.
@@ -63,14 +65,21 @@ def mechanism(nc_e: float, nc_n: float) -> str:
     Parameters
     ----------
     nc_e, nc_n : float
-        Measured non-compliance rates of the `extens` and `noise_intens` arms.
+        Measured non-compliance rates of the `extens` and `noise_intens` arms;
+        NaN for a cell the census could not measure.
 
     Returns
     -------
     str
         ``"COLLAPSE"`` (noise arm at or above `COLLAPSE_THRESHOLD`),
-        ``"extens degraded"`` (only the extens arm is) or ``"information"``.
+        ``"extens degraded"`` (only the extens arm is), ``"information"``
+        (both arms well-formed) or ``"unmeasured"`` (a census cell is
+        missing). The last is load-bearing: NaN fails every ``>=`` below, so
+        without its own bucket an UNMEASURED cell would fall through to
+        "information" -- the affirmative both-arms-well-formed claim.
     """
+    if np.isnan(nc_e) or np.isnan(nc_n):
+        return "unmeasured"        # no census cell: evidence of nothing
     if nc_n >= COLLAPSE_THRESHOLD:
         return "COLLAPSE"          # noise arm broken: extens-higher is forced
     if nc_e >= COLLAPSE_THRESHOLD:
@@ -145,12 +154,15 @@ def main() -> None:
            f"{'Hoch21':>7s}  mechanism / non-compliance")
     print(hdr)
     print("-" * len(hdr))
+    def star(ok: bool) -> str:
+        """Render a yes/no table cell."""
+        return " yes " if ok else "  .  "
+
     for i, r in enumerate(rows):
         flags = [r["mech"]]
         for lbl, v in (("extens", r["nc_e"]), ("noise", r["nc_n"])):
             if v >= COLLAPSE_THRESHOLD:
                 flags.append(f"{lbl} {v:.0%} non-compliant")
-        star = lambda ok: " yes " if ok else "  .  "
         print(f"{r['model']:13s} {r['acc_e']:7.3f} {r['acc_n']:7.3f} "
               f"{r['disc']:6.3f} {r['b']:4d}/{r['c']:<4d} "
               f"{r['p_cluster']:10.2e} {r['p_item']:10.2e} "
@@ -220,6 +232,16 @@ def main() -> None:
             up = sum(1 for r in sel_sig if r["acc_n"] > r["acc_e"])
             print(f"  => direction among the significant ones: {up} "
                   f"noise-higher, {len(sel_sig) - up} extens-higher.")
+
+    # Unmeasured lanes get their own loud section rather than vanishing: a
+    # cell the census could not measure is a sync/provenance problem, never a
+    # mechanism verdict.
+    unmeasured = [r for r in rows if r["mech"] == "unmeasured"]
+    if unmeasured:
+        print(f"\n-- UNMEASURED (no census cell for one or both arms): "
+              f"{len(unmeasured)} lane{'' if len(unmeasured) == 1 else 's'} -- "
+              f"{', '.join(r['model'] for r in unmeasured)}. Fix the sync "
+              "before reading these rows as evidence.")
 
     # ---- the raw direction, unfiltered, because filtering is the hazard ----
     up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])

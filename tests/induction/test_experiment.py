@@ -39,6 +39,7 @@ def test_config_and_harness_passthrough(exp):
     assert harness.results_dir == exp.results_dir
     assert harness.archetype_tags == {"stub-model": "decode"}
     assert harness.make_quizzes is make_quizzes
+    # 1776 = InductionExperiment.base_seed's documented default epoch.
     assert harness.seeds == exp.seeds == (1776, 1777, 1778)
     assert harness.info_types == ("intens", "extens")
     assert harness.prefix == ""
@@ -189,6 +190,7 @@ def test_shard_partition():
     unsharded = InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
         make_quizzes=make_quizzes).seeds
+    # base_seed default 1776 + the default 30 replicates.
     assert unsharded == tuple(range(1776, 1806))
     for count in (1, 2, 3, 4, 7, 30):
         shards = [_sharded(count, i).seeds for i in range(count)]

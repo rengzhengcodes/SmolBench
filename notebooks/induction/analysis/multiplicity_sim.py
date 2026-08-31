@@ -1,15 +1,16 @@
 """Run a Monte Carlo study of TEST and CORRECTION choice for the induction study.
 
 Self-contained companion to the periodic-induction family-ladder scaling study
-(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every statistic here
-is simulated, never analytic-approximated. The pairwise test is byte-for-byte
+(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every POWER and
+error-rate figure here is simulated (the test statistics themselves use the
+usual chi-square reference distributions). The pairwise test is byte-for-byte
 the repo's continuity-corrected 2x2xK CMH
 (notebooks/induction/analysis/power_analysis.py::cmh_reject) and the 2-df
 general-association statistic mirrors that file's gcmh_reject. Results are
 checkpointed to multiplicity_sim_results.json after each part.
 
-Run it with:
-  .venv/bin/python multiplicity_sim.py
+Run (repo root):
+  .venv/bin/python notebooks/induction/analysis/multiplicity_sim.py
 """
 
 from __future__ import annotations
@@ -22,7 +23,10 @@ import numpy as np
 from scipy.stats import binom, chi2
 
 # ----------------------------------------------------------------------------- design
-R_DEFAULT = 30          # replicates (seeds 0..29)
+R_DEFAULT = 30          # replicates (seeds 0..29) -- run_study.N_REPLICATES,
+                        # user-locked there; see that constant's comment for
+                        # why 30 (a budget ruling checked against
+                        # power_analysis.py's prospective sizing)
 K_HARM = 9              # harmonics k = 1..9  -> CMH strata for pairwise tests
 N_PRIMARY = 210
 ALPHA = 0.05
@@ -383,9 +387,14 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=900):
                             eq_r = rr
                             break
                 else:
+                    # Pairing did not help here, so no search ran; record the
+                    # default R with the flag below rather than overloading
+                    # eq_R (30-from-search and 30-because-unsearched are
+                    # different facts; None still means "grid exhausted").
                     eq_r = 30
                 rows.append(dict(p_a=p_a, delta=delta, rho=rho, power_unpaired=unp,
-                                 power_paired=pair, eq_R=eq_r, cap=cap,
+                                 power_paired=pair, eq_R=eq_r,
+                                 eq_searched=pair > unp + 0.005, cap=cap,
                                  phi_binary=phi, agreement=agree,
                                  eq_ratio=(None if eq_r is None else eq_r / 30.0)))
                 print(f"  p_A={p_a} d={delta} rho={rho}: phi_bin={phi:.3f} "
@@ -485,7 +494,9 @@ def part4(rng, n_sims=4000):
     reduced 154-test family (28 one-df trend tests replacing the 84 pairwise
     ladder contrasts) under Bonferroni, Holm, Hochberg and BH
     (`apply_corrections`), reporting true/false rejection counts, FWER, FDR and
-    how many of the 28 non-flat ladders each procedure flags. A third
+    how many of the truly non-flat ladders each procedure flags (the rate
+    matrix fixes their count; the code computes and prints it rather than
+    trusting this docstring). A third
     "test-swap only" arm holds the family size at 210 (alpha unchanged) while
     swapping in the trend test, isolating test choice from correction. Writes
     ``OUT["part4"]``.
@@ -504,7 +515,7 @@ def part4(rng, n_sims=4000):
                 info_idx.append((f, r, a, f, r, b))
     contrasts = lad_idx + info_idx
     m_full = len(contrasts)
-    assert m_full == 210, m_full
+    assert m_full == N_PRIMARY, m_full
     # truth
     true_diff = np.array([abs(rates[c[0], c[1], c[2]] - rates[c[3], c[4], c[5]])
                           for c in contrasts])

@@ -190,6 +190,13 @@ class PeriodicConfig:
             raise ValueError(
                 f"Number of labels ({len(self.labels)}) must equal n ({self.n})."
             )
+        if len(set(self.labels)) != len(self.labels):
+            # A duplicate label states two different rules for one string, so
+            # a single prompt would carry two contradictory ground truths
+            # (e.g. two counting answers for the same "how many 'dup'"
+            # question). Auto-generated labels are unique by construction;
+            # this guards explicit label lists.
+            raise ValueError(f"Labels must be distinct, got {tuple(self.labels)}.")
         for lbl in self.labels:
             if self.sep in lbl:
                 raise ValueError(
@@ -370,7 +377,10 @@ def get_periodic_zero_info_numeric_quiz(
 # tof_membership_query_gen samples at most this many queries of EACH polarity
 # per quiz, so quiz size stays fixed as n grows. n changes task difficulty and
 # the lcm(1..n) context length; it must never silently change sample size,
-# because the replication design is powered around fixed question counts.
+# because a replication design is powered around fixed question counts. (This
+# ToF generator is pinned by the golden hashes and used by sibling studies;
+# the family-ladder driver runs numeric_count_query_gen, whose count is n by
+# construction.)
 MAX_QUERIES_PER_POLARITY: int = 10
 
 
@@ -392,8 +402,10 @@ def tof_membership_query_gen(
     true_qs: list = []
     false_qs: list = []
 
+    # Hoisted: the (period, label) ordering is position-independent.
+    period_labels = sorted(period_to_label.items())
     for pos in sorted(pos_to_compound.keys()):
-        for period, label in sorted(period_to_label.items()):
+        for period, label in period_labels:
             if period == 1:
                 continue  # true for every position -- skip this trivial query
             entry = ({"pos": str(pos), "label": label}, pos % period == 0)
@@ -401,8 +413,13 @@ def tof_membership_query_gen(
 
     n = min(len(true_qs), len(false_qs), MAX_QUERIES_PER_POLARITY)
     if n == 0:
+        # A config too small to admit both polarities yields an empty quiz
+        # rather than raising: legitimate for tiny test configs, and the
+        # balanced-polarity contract below cannot be met with n=0 of one side.
         return
 
+    # True block then False block, unshuffled: each query is a separate
+    # prompt, so order leaks nothing between questions.
     for idx in rng.choice(len(true_qs), n, replace=False):
         yield true_qs[idx]
     for idx in rng.choice(len(false_qs), n, replace=False):

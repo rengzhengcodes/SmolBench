@@ -59,7 +59,7 @@ def plot_archetype_accuracy(
     conditions: Sequence[Tuple[str, str, str]],
     *,
     title: str,
-    chance: Optional[float] = 0.5,
+    chance: Optional[float] = None,
     bar_width: float = 0.22,
     figsize: Tuple[float, float] = (9, 6),
     ylim: Tuple[float, float] = (0, 1.1),
@@ -69,13 +69,17 @@ def plot_archetype_accuracy(
 
     One group per ``models`` entry ``(model_key, label)``, one bar per
     ``conditions`` entry ``(condition_key, label, color)``, in the given order.
-    A key missing from `data` plots at 0 with no label, so a genuine 0% is
-    indistinguishable from missing data.
+    A key that is missing from `data` (or maps to ``None``) plots as a
+    0-height bar annotated "n/a", so it cannot be mistaken for a genuine 0% --
+    collapsed lanes are first-class results here and must stay
+    distinguishable from never-collected ones.
 
     Parameters
     ----------
-    chance : float or None, default 0.5
-        Y-value of the dashed, labeled "chance" line; ``None`` omits it.
+    chance : float or None, default None
+        Y-value of the dashed, labeled "chance" line; ``None`` omits it. Pass
+        the quiz's own floor explicitly (0.5 for a binary ToF quiz; a numeric
+        quiz's floor is task-specific and usually near zero).
     bar_width : float, default 0.22
         X-axis units per condition bar; the drawn bar is ``bar_width - 0.02``.
     ylim : Tuple[float, float], default (0, 1.1)
@@ -99,21 +103,25 @@ def plot_archetype_accuracy(
     fig, ax = plt.subplots(figsize=figsize)
 
     for offset, (cond_key, cond_label, color) in zip(offsets, conditions):
-        heights = [
-            data.get((model_key, cond_key)) or 0.0
-            for model_key, _ in models
-        ]
+        # `is None`, not truthiness: a genuine 0.0 accuracy is data (an
+        # unlabeled zero bar, as in the pinned figure), while None/missing is
+        # absence of data and gets an explicit "n/a" annotation. An `or 0.0`
+        # would silently conflate the two.
+        values = [data.get((model_key, cond_key)) for model_key, _ in models]
+        heights = [0.0 if v is None else v for v in values]
         bars = ax.bar(
             x + offset, heights, bar_width - 0.02,
             label=cond_label, color=color, edgecolor="white", linewidth=0.8,
         )
-        for bar, h in zip(bars, heights):
-            if h > 0:
+        for bar, h, v in zip(bars, heights, values):
+            label = "n/a" if v is None else (f"{h:.0%}" if h > 0 else None)
+            if label is not None:
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     h + 0.012,
-                    f"{h:.0%}",
+                    label,
                     ha="center", va="bottom", fontsize=8,
+                    color="grey" if v is None else "black",
                 )
 
     if chance is not None:

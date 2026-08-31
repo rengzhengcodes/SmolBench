@@ -108,9 +108,9 @@ Quiz: TypeAlias = Sequence[QnA]
 #: ``Mark.compliance`` value meaning "assessed: the response obeyed the output
 #: contract exactly". None (YAML ``null``) rather than a marker string, because
 #: the S3 results log is append-only and every reader of collected files --
-#: ``Marks.noncompliant`` and the analysis census's raw-YAML scan -- already
-#: keys on ``compliance: null`` = obeyed; a new marker would misread as a
-#: violation mode there.
+#: ``Marks.noncompliant`` and the analysis compliance census (which reads
+#: through ``Marks.load``) -- already keys on ``compliance: null`` = obeyed;
+#: a new marker would misread as a violation mode there.
 COMPLIANT = None
 #: ``Mark.compliance`` value meaning "never run through the compliance-aware
 #: parser". The field's DEFAULT, so a stored mark predating the field (loaded

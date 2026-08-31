@@ -22,7 +22,9 @@ environment-overridable.
 Environment: ``INDUCTION_SHARD`` (``"index/count"``; splits ONE model's
 replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
 unset/empty selects all 21); ``INDUCTION_FORCE_RERUN`` (``"1"`` or ``"a-b"``;
-re-collect seeds past the resume-skip); ``INDUCTION_STATE_FILE`` (the only way
+re-collect seeds past the resume-skip -- forced attempts APPEND to the S3 log,
+and earliest-wins reads mean they never supersede the originals; see the
+``force_seeds=`` comment in ``main()``); ``INDUCTION_STATE_FILE`` (the only way
 to redirect this process's repo-root-anchored EC2 state file --
 ``InductionExperiment._apply_env`` overwrites the bare ``EC2_STATE_FILE`` shell
 variable on every provision/run/teardown). The fleet MUST set a distinct state
@@ -118,6 +120,19 @@ SHARD = _parse_shard("INDUCTION_SHARD")
 # are derived from the lane rather than asking callers to remember two more
 # environment variables. Unsharded runs get an empty suffix.
 #
+# Unsharded FLEET lanes never rely on these defaults: run_fleet.lane_env
+# always exports a per-lane EC2_EXPERIMENT_TAG ("scaling-<spec-key>") and
+# INDUCTION_STATE_FILE, so the defaults here apply only to a STANDALONE
+# single-box run. The standalone default tag ("induction-scaling") sits
+# deliberately OUTSIDE the fleet's "scaling-" prefix: fleet_status and
+# fleet_teardown filter on that prefix, so a standalone box is never listed
+# by -- nor terminated by -- fleet tooling; `run_study.py --teardown` owns it.
+#
+# The env mutation below is an import-time side effect on purpose (it must
+# precede ec2's import-time freeze) but fires only when INDUCTION_SHARD is
+# set, so loaders that only want the roster (notebooks/deduction/run_study.py
+# loads this file by path) see no side effect.
+#
 # MUST execute before the ec2 import below, for the import-time freeze the
 # load_dotenv comment above describes.
 _LANE = ""
@@ -143,9 +158,13 @@ from smolbench.induction.periodic import (  # noqa: E402
 #: the module docstring's "Seeds" section.
 BASE_SEED: int = 0
 
-#: USER-LOCKED. Sibling drivers expose a ``*_N_REPLICATES`` env override; this
-#: one deliberately does NOT: the 21-checkpoint comparison is apples-to-apples
-#: only if every checkpoint collects the same replicate count.
+#: USER-LOCKED. 30 is a budget ruling, not a computed optimum: it matches every
+#: sibling induction study's R, and the prospective sizing it was checked
+#: against lives in ``analysis/power_analysis.py`` (its recommended-R section
+#: reports the r_star the seed-0 pilot implies). Sibling drivers expose a
+#: ``*_N_REPLICATES`` env override; this one deliberately does NOT: the
+#: 21-checkpoint comparison is apples-to-apples only if every checkpoint
+#: collects the same replicate count.
 N_REPLICATES: int = 30
 
 #: The four amounts-of-positive-information conditions, matching periodic_moe's
@@ -163,24 +182,37 @@ CONTEXT_LIMIT: int = 131_072
 #: deliberately excludes them -- see tokenization.py's Tokenizer protocol) and
 #: cross-seed variation in the sampled labels, compounding over a long
 #: extensional listing. Sibling studies measured that reserve at 1,500-3,700
-#: tokens on comparable listings; sized well above it, so the budget stays safe
+#: tokens on comparable listings (their trees are archived; the pointers are in
+#: ``notebooks/ARCHIVE.md``); sized well above it, so the budget stays safe
 #: when the probe below misses the longest seed, at the cost of headroom that
 #: would go unused anyway.
 TEMPLATE_RESERVE: int = 8_000
 
-#: Seeds sampled when measuring the worst-case prompt in completion_budget; see
-#: that function's docstring for why bracketed subsampling suffices.
+#: Seeds sampled when measuring the worst-case prompt in completion_budget:
+#: both endpoints plus four evenly spaced interior seeds -- enough to catch a
+#: mid-range outlier in sampled-label length at six tokenizer passes per model
+#: instead of thirty. Must be >= 2 (the pick derivation divides by
+#: ``PROBE_SEEDS - 1``); see completion_budget's docstring for why bracketed
+#: subsampling suffices.
 PROBE_SEEDS: int = 6
 
 #: Floor below which a run is not worth starting: a smaller budget is likely to
 #: truncate a CoT checkpoint's reasoning before the final integer, collecting
 #: empties (no completion AND no reasoning trace) rather than data that can be
-#: scored, marked invalid, or diagnosed after the fact.
+#: scored, marked invalid, or diagnosed after the fact. The 48k figure is
+#: judgment calibrated against the worst observed reasoning appetite, not a
+#: fitted number: periodic_moe's qwen3.5 needed a raised 65,536-token
+#: completion budget on a comparable extensional listing, so anything under
+#: ~48k is deep in truncation territory for a checkpoint like that -- while
+#: this study's healthy budgets land near 100k and never approach the floor,
+#: which exists to catch config mistakes, not to tune throughput.
 MIN_VIABLE_BUDGET: int = 48_000
 
 #: Ceiling applied AFTER the derived per-model budget below. A plain int, NOT a
 #: per-model dict -- see completion_budget's docstring for why a cross-vendor
-#: SCALING study cannot let this vary by vendor.
+#: SCALING study cannot let this vary by vendor. At its current value it never
+#: binds (the min() below always subtracts a positive reserve first); it is
+#: kept as the seam a future tighter cap would occupy.
 BUDGET_CAP: int = CONTEXT_LIMIT
 
 # Byte-identical to periodic_moe's / periodic_divisor's template: the prompt
@@ -277,6 +309,14 @@ COT_ARGS: dict[str, dict] = {
     "deepseek-v3.1": {"chat_template_kwargs": {"thinking": True}},
     "deepseek-v4-pro": {"chat_template_kwargs": {"thinking": True}},
 }
+
+# Enforce the "TOTAL over MODELS" claim at import, BEFORE provision() can
+# spend anything: a drifted key would otherwise surface as a KeyError deep in
+# main(), after the billing box is already up. (The test suite pins the same
+# equality; this guard covers direct invocations.)
+assert COT_ARGS.keys() == MODELS.keys(), (
+    sorted(COT_ARGS.keys() ^ MODELS.keys())
+)
 
 
 def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":

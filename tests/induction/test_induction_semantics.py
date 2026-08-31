@@ -90,13 +90,15 @@ def test_coprime_periods_make_sequence_length_the_product():
 def test_divisor_periods_add_harmonics_without_moving_sequence_length():
     """A divisor set adds harmonics while seq_len stays at the declared length."""
     base = tuple(range(1, 10))
+    # 2520 = lcm(1..9) = the base sequence length; the rest are its divisors
+    # (2520/2, /3, /4, /5), so each added harmonic fits the length exactly.
     added = (2520, 1260, 840, 630, 504)
     periods = base + added
     cfg = PeriodicConfig(n=len(periods), labels=len(periods), seed=17,
                          periods=periods, expect_seq_len=2520)
     period_to_label, pos_to_compound = _check_counts(cfg)
 
-    assert len(period_to_label) == 14 > len(base)
+    assert len(period_to_label) == 14 > len(base)  # 9 base + 5 added labels
     assert max(pos_to_compound) == 2520 == lcm(*base)
     for d in added:
         occurrences = sum(1 for comp in pos_to_compound.values()
@@ -112,6 +114,7 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length():
         (dict(n=4, labels=4, periods=(1, 2, 4, 5)), "pairwise coprime"),
         (dict(n=4, labels=4, periods=(1, 2, 3)), "must equal n"),
         (dict(n=4, labels=4, periods=(1, 3, 3, 5)), "distinct"),
+        # lcm(1..9) = 2520, and the extra 11 multiplies it to 27720 != 2520.
         (dict(n=10, labels=10, periods=tuple(range(1, 10)) + (11,), expect_seq_len=2520),
          r"lcm\(periods\) is 27720"),
         (dict(n=3, labels=3, periods=(1, 2, 4), expect_seq_len=2520),
@@ -123,3 +126,10 @@ def test_period_validation(kwargs, match):
     """Malformed period sets must raise at construction, not silently resize the sequence."""
     with pytest.raises(ValueError, match=match):
         PeriodicConfig(seed=3, **kwargs)
+
+
+def test_labels_must_be_distinct():
+    """A duplicate explicit label is rejected at construction: two rules for one
+    string would give a single prompt two contradictory ground truths."""
+    with pytest.raises(ValueError, match="distinct"):
+        PeriodicConfig(n=3, labels=("dup", "dup", "zzz"), seed=1)

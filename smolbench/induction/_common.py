@@ -9,7 +9,9 @@ reason.)
 The noise pad is WHITESPACE sized in TOKENS (:func:`token_matched_noise_prompt`)
 under the tokenizer of the model under test, verified to hit the target exactly.
 Characters are the wrong unit -- a character-matched pad over-pads the control
-arm ~1.6x at the periodic production config.
+arm ~1.6x at the periodic production config (an ad-hoc measurement made when
+the arm was designed; the load-bearing invariant is the per-prompt token
+exactness verified below, not that ratio).
 """
 
 import logging
@@ -32,6 +34,11 @@ class Prompter:
     ``query_gen`` and ``substitution`` produce. Rendering uses
     ``safe_substitute``, which SILENTLY leaves a misspelled placeholder verbatim
     instead of raising, so validate templates on a sample query first.
+    ``safe_substitute`` (not ``substitute``) is deliberate: a literal ``$`` in
+    quiz text must not raise mid-study, and a misrendered template cannot ship
+    unnoticed anyway -- the golden-quiz hash pins
+    (``tests/induction/test_golden_quizzes.py``) fail on any drift in the
+    rendered prompts.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
@@ -59,8 +66,11 @@ def build_substitution(
 
     The single merge point for all three renderings, so precedence is uniform:
     dict-union in the order ``query``, ``prompter.substitution``,
-    ``positive_info``, the last winning a collision. Returns a fresh dict, so
-    callers may mutate it further.
+    ``positive_info``, the last winning a collision. The static
+    ``prompter.substitution`` deliberately outranks the per-query dict so a
+    ``query_gen`` cannot silently override a study-pinned field; the arm's
+    context comes last because it is the one field every arm must control.
+    Returns a fresh dict, so callers may mutate it further.
     """
     return query | prompter.substitution | {"positive_info": positive_info}
 
@@ -112,11 +122,23 @@ def random_unique_strings(
             f"length={length} < {min_len} = ceil(log_{base}({n})): "
             f"insufficient length to generate {n} unique strings."
         )
+    if base**length > np.iinfo(np.int64).max:
+        # rng.choice needs the population to fit in int64; past that it dies
+        # with an opaque numpy OverflowError, so raise this module's own
+        # message first. Unreachable at any in-repo config (max space is 26^4).
+        raise ValueError(
+            f"{base}**{length} exceeds the int64 sample space rng.choice "
+            f"supports; reduce length (or count, which drives it)."
+        )
     indices: np.ndarray = rng.choice(base ** length, size=n, replace=False)
     digits: np.ndarray = np.empty((n, length), dtype=np.int64)
     for idx in range(length - 1, -1, -1):
         indices, digits[:, idx] = np.divmod(indices, base)
     charset_array: np.ndarray = np.asarray(charset)
+    # OrderedSet rather than a tuple: it documents the uniqueness contract in
+    # the return type while preserving draw order (a plain set would
+    # de-determinize iteration). Its dedup is provably inert -- the integers
+    # are drawn without replacement.
     return OrderedSet("".join(row) for row in charset_array[digits])
 
 
@@ -145,8 +167,12 @@ def random_labels(
     one fresh ``np.random.default_rng(seed)``, then one
     :func:`random_unique_strings` call -- so a seed always yields the same set.
     """
+    # The extra floor of 1 covers count=1 with min_length=0, where the
+    # information-theoretic minimum is 0 and the empty string would otherwise
+    # be a "label".
     length: int = max(
         min_length,
+        1,
         int(np.ceil(np.emath.logn(len(charset), count))) * LABEL_LENGTH_SAFETY_FACTOR,
     )
     return tuple(
@@ -183,10 +209,15 @@ WHITESPACE_UNITS: Tuple[str, ...] = (
 # disables truncation on load; this probe backstops tokenizers built elsewhere.
 _UNIT_PROBES: Tuple[int, ...] = (1, 64, 256, 2048)
 
-# A unit qualifies when its marginal cost stays within this factor of 1 token
-# per repetition at every probe. The slack allows a boundary token, or a unit
-# costing 2 tokens for the first repetition and 1 thereafter; it rejects any
-# unit that compresses (cost -> 0) and so would never reach the target.
+# A unit qualifies when its total cost stays within this factor of n tokens at
+# every probe. The bound is multiplicative, so what it enforces varies with the
+# probe: at the n=1 probe counts are integers and the unit must cost EXACTLY
+# one token (a unit with a 2-token first repetition is rejected there), while
+# at the larger probes merging up to 2:1 is tolerated -- acceptable because
+# exactness comes from the verified search below, and a half-density unit just
+# pads with twice the characters. What the gate exists to reject is runaway
+# merging (cost -> 0), which would leave the pad unable to reach its target at
+# any character length.
 _UNIT_COST_TOLERANCE: float = 0.5
 
 # Bounds the `token_matched_noise_prompt` search; each pass costs one full
@@ -268,7 +299,12 @@ def token_matched_noise_prompt(
     str
         ``render(context + pad)``, verified (never assumed) EXACTLY
         `target_tokens` tokens. An unreachable target -- unpadded prompt already
-        that long -- returns the unpadded render and logs a warning.
+        that long -- returns the unpadded render and logs a warning rather than
+        raising: an appended pad cannot SHRINK a prompt, and reuse sites pad
+        contexts that can legitimately exceed the target. A caller for which an
+        over-long base is a fatal confound must check the result -- the
+        induction study does (the notebook's validation cell asserts exact
+        per-question matches, and the production config leaves ~200x headroom).
 
     Raises
     ------
@@ -339,9 +375,9 @@ def quizzes_from_prompts(
     that order. ``qna_cls`` is the question type (``ToF`` / ``Numeric``); its
     ``__post_init__`` validates the answers.
     """
-    intens_quiz: list = []
-    extens_quiz: list = []
-    noise_intens_quiz: list = []
+    intens_quiz: list[QnA] = []
+    extens_quiz: list[QnA] = []
+    noise_intens_quiz: list[QnA] = []
     for intens, extens, noise_intens, answer in prompts:
         intens_quiz.append(qna_cls(prompt=intens, answer=answer))
         extens_quiz.append(qna_cls(prompt=extens, answer=answer))

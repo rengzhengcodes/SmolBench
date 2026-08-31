@@ -29,7 +29,6 @@ Run:
     .venv/bin/python notebooks/induction/analysis/power_analysis.py
 """
 
-import re
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -40,6 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 from scipy.stats import chi2
+
+from smolbench.evals import Marks
 
 from _power_common import (
     ALPHA,
@@ -89,12 +90,41 @@ PILOT_SEED = 0                                          # seed 0 -> rep_0.yaml
 
 RESULTS_DIR = results_dir(__file__, up=1)
 
-# Stratified-CMH simulation parameters (not chromatic's quiz-level design).
+# Writer/reader anchor guard: sync_down() writes through the INSTALLED
+# smolbench package's repo_root(), while this chain reads through __file__.
+# In a git-worktree workflow those can be two different checkouts -- the sync
+# then succeeds into one tree while the analysis reads (or fails on) the
+# other. Warn rather than exit: reading a deliberately copied tree is legal.
+from smolbench.evals.results_store import repo_root as _installed_repo_root
+
+_writer_results = _installed_repo_root() / "notebooks" / "induction" / "results"
+if _writer_results.resolve() != RESULTS_DIR.resolve():
+    print(
+        f"WARNING: this script reads {RESULTS_DIR}\n"
+        f"         but sync_down() writes {_writer_results}\n"
+        "         (different checkouts?). A sync from this shell will not "
+        "land where this script looks.",
+        file=sys.stderr,
+    )
+
+# Stratified-CMH simulation parameters. The simulation unit is the replicate
+# within a harmonic stratum -- never the harmonic count (adding harmonics
+# changes the task; it does not add samples) and not the quiz-level Welch
+# design the earlier, since-retired studies used.
 # The larger contrast family (210 + 63) makes the script slower, not less
 # precise, so N_SIMS is NOT reduced to compensate (see the module docstring's
 # "Contrast tiers" section).
+# 10_000 sims puts the Monte Carlo SE of a power estimate at
+# sqrt(p(1-p)/N) <= 0.005 -- fine-grained enough to place R against an 80%
+# target. MAX_REPLICATES is a search ceiling only, set far above any R the
+# study could afford; a contrast still unpowered there is reported as
+# censored, not sized.
 N_SIMS = 10_000
 MAX_REPLICATES = 200
+# c=1 pulls a one-replicate pilot rate halfway to its condition mean -- a
+# deliberately strong prior, because a 0/9-or-9/9 harmonic observed once says
+# little about its true rate, and unshrunk boundary rates degenerate the
+# sizing (zero variance).
 SHRINKAGE = 1.0  # c in p_k = (y_k + c * p_bar) / (1 + c)
 
 # ---------------------------------------------------------------------------
@@ -124,10 +154,11 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
     """Load per-condition PILOT harmonic outcome vectors.
 
-    Regexes the per-mark ``score:`` lines of
-    ``{model}_{info}/rep_{PILOT_SEED}.yaml``: those YAMLs carry !!python/object
-    tags, so a safe load is impossible. Marks are serialized in ascending-period
-    order, so position recovers the harmonic.
+    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``Marks.load`` --
+    the store's own reader (it safe-loads current files and knows the
+    legacy-tag fallback), so a ``score:``-shaped line inside a stored response
+    or reasoning trace can never be scraped as a phantom mark. Marks are
+    serialized in ascending-period order, so position recovers the harmonic.
 
     Returns
     -------
@@ -157,11 +188,17 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
                     f"{{model}}_{{info}}/rep_{{seed}}.yaml layout this script "
                     f"reads (it never talks to S3 directly)."
                 )
-            text = path.read_text()
-            scores = re.findall(r"^\s*score:\s*(\S+)", text, re.M)
-            assert len(scores) == N_HARMONICS, (model, info, len(scores))
+            scores = [m.score for m in Marks.load(path).marks]
+            if len(scores) != N_HARMONICS:
+                # A raise, not an assert: this gate must survive `python -O`,
+                # and a short pilot silently misaligns the harmonic axis.
+                raise SystemExit(
+                    f"Pilot replicate {path} has {len(scores)} marks, "
+                    f"expected {N_HARMONICS}; the sync is incomplete or the "
+                    "file is truncated."
+                )
             outcomes[(model, info)] = np.array(
-                [1.0 if s == "1" else 0.0 for s in scores]
+                [1.0 if s == 1 else 0.0 for s in scores]
             )
     return outcomes
 
@@ -466,6 +503,8 @@ def omnibus_interaction_power(
     import statsmodels.api as sm
     from scipy.stats import chi2 as chi2_dist
 
+    # SEED + 1: a distinct stream from the sizing sims, so adding or removing
+    # this diagnostic can never perturb their draws.
     rng = np.random.default_rng(SEED + 1)
     # Design matrices are fixed across sims: one weighted row per
     # (model, info, harmonic) cell, n_reps trials each.
@@ -702,7 +741,18 @@ def main() -> None:
         primary_contrasts, rates, pooled, ALPHA_PRIMARY
     )
     feasible = [n[0.80] for *_, n, _pooled in primary_results if n[0.80] is not None]
+    if not feasible:
+        raise SystemExit(
+            "No PRIMARY contrast reaches 80% power within "
+            f"R <= {MAX_REPLICATES}; the pilot cannot size R at all."
+        )
+    # Deliberately the max over the POWERED contrasts: r_star answers "what R
+    # covers every contrast this design can power", and the censored ones
+    # (never powered within MAX_REPLICATES) are counted and reported below
+    # rather than silently dropped -- they cannot be covered at any affordable
+    # R, so they must not drag the recommendation to the search ceiling.
     r_star = max(feasible)
+    n_censored = len(primary_results) - len(feasible)
     primary_label_w = max(len(name) for name, *_ in primary_results)
 
     # --- 3. Tier-1 family omnibus gates -------------------------------------
@@ -765,6 +815,15 @@ def main() -> None:
         f"more questions) per condition beyond the existing pilot run."
     )
     print(
+        f"  ({n_censored} PRIMARY contrasts never reached 80% within "
+        f"R <= {MAX_REPLICATES} and are excluded from this max.)"
+    )
+    print(
+        "  The study itself collects R=30 (user-locked in run_study.py, "
+        "uniform across checkpoints); this prospective figure is the sizing "
+        "check that decision was made against, not a superseding value."
+    )
+    print(
         "  (Tier 3 / SECONDARY contrasts are exploratory and do not drive "
         "this recommendation -- see the Tier 3 table above for their own "
         "sizing.)"
@@ -786,7 +845,14 @@ def main() -> None:
     # Equivalence (TOST) sizing for near-tie PRIMARY contrasts: assume a TRUE
     # tie and ask how many replicates show the difference within +/-delta at
     # 80% power. "Near-tie" = the difference test above needed R > 20 or was
-    # never powered (threshold unchanged from the archived script).
+    # never powered. The 20 is carried unchanged from the archived sibling
+    # sizing script (notebooks/ARCHIVE.md) so the near-tie set stays
+    # comparable across analyses; it is a report-grouping cut, not an
+    # inferential threshold.
+    # KNOWN LIMITATION: the Wald TOST degenerates at saturated rates -- a
+    # contrast whose shrunk rates are exactly 1.0 in both arms simulates a
+    # zero-width CI and reports R=1 for every delta. Read ceiling-pair rows
+    # as "indistinguishable at ceiling", not as a sized equivalence claim.
     near_ties = [
         (name, key_a, key_b)
         for name, key_a, key_b, needed, _pooled in primary_results

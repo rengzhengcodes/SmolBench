@@ -30,9 +30,10 @@ SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
 
 ## GitHub releases
 
-The same archive zips are attached to the pull request that removed them
-(`gh release view` on the repo lists them, with sha256s in the release
-notes).
+The same archive zips are attached to GitHub releases created for the pull
+requests that removed them (releases attach to tags, not PRs -- e.g.
+`gh release view pr4-regenerable-artifacts`; `gh release list` shows every
+archive tag, with sha256s in the release notes).
 
 ## What is regenerable, and what is not
 

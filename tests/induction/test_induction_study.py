@@ -100,6 +100,8 @@ def test_cot_args_table(run_study):
 
 
 def test_template_is_byte_identical_to_periodic_moe(run_study):
+    """The prompt template must stay byte-identical to periodic_moe's, so that
+    only (model, quiz generator, harmonic set) vary between the two studies."""
     assert run_study.template.template == PERIODIC_MOE_TEMPLATE
 
 
@@ -113,6 +115,7 @@ def test_experiment_constants(run_study):
     assert run_study.EXPERIMENT.info_types == run_study.INFO_TYPES
     assert run_study.EXPERIMENT.notebook_dir == "induction"
     assert run_study.EXPERIMENT.archetype_tags == run_study.MODELS
+    # 131_072 = the vLLM serving context; rationale at run_study.CONTEXT_LIMIT.
     assert run_study.BUDGET_CAP == run_study.CONTEXT_LIMIT == 131_072
     assert experiment_name(run_study.EXPERIMENT.results_dir) == "induction"
     assert run_study.EXPERIMENT.results_dir == NOTEBOOKS / "induction" / "results"
@@ -127,6 +130,7 @@ def test_completion_budget(run_study, monkeypatch):
     seeds = range(0, 2)
     quizzes = {seed: run_study.make_quizzes(seed, BUDGET_MODEL) for seed in seeds}
     assert tuple(quizzes[0]) == run_study.INFO_TYPES
+    # 9 questions per arm: one per label of the n=9 production config.
     assert {info: len(q) for info, q in quizzes[0].items()} == dict.fromkeys(run_study.INFO_TYPES, 9)
 
     tok = StubTokenizer()
@@ -136,6 +140,7 @@ def test_completion_budget(run_study, monkeypatch):
         for quiz in by_arm.values()
         for qna in quiz
     )
+    # Both constants' derivations live at their run_study definitions.
     assert run_study.CONTEXT_LIMIT == 131_072
     assert run_study.TEMPLATE_RESERVE == 8_000
     assert run_study.completion_budget(BUDGET_MODEL, seeds) == 131_072 - worst - 8_000

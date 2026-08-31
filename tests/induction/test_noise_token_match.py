@@ -97,8 +97,10 @@ def test_choose_whitespace_unit_picks_a_linear_atom(tokenizer):
     unit = choose_whitespace_unit(tokenizer)
     assert unit in WHITESPACE_UNITS
     assert unit.strip() == ""
+    # "linear atom" = >= 0.5 tokens per repetition (no runaway merging) ...
     assert tokenizer.count(unit * 256) >= 128
-    assert tokenizer.count(" " * 512) < 64  # why a naive space pad won't do
+    # ... unlike naive spaces, which BPE merges ~10:1 or worse.
+    assert tokenizer.count(" " * 512) < 64
 
 @pytest.mark.parametrize(
     "bad", (TruncatingTokenizer(cap=512), MergeEverythingTokenizer()),

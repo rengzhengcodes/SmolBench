@@ -50,6 +50,11 @@ TOKENIZER = StubTokenizer()
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_periodic_golden(seed):
+    """Hash-pin regression: numeric and ToF quiz generation must reproduce the
+    SHA-256es recorded in golden_quizzes.json, so any drift in prompt text or
+    answers is caught before it silently invalidates resumed or archived runs.
+    Seeds 1776/1777 are the first two of the default seed epoch
+    (InductionExperiment.base_seed)."""
     # The induction study's production config (notebooks/induction/run_study.py).
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     numeric = PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen)
