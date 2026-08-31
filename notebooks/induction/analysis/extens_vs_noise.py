@@ -14,8 +14,8 @@ LABEL-DENSITY (both arms well-formed, so enumerated evidence really is harder
 to induce from at equal length) vs PADDING-ROBUSTNESS COLLAPSE (noise arm
 largely non-compliant, so extens > noise is mechanically forced -- a padding
 finding, NOT excluded and NOT evidence about information). The symmetric
-"extens degraded" case and an "unmeasured" guard (for cells the census could
-not measure) complete the bucketing so no lane is classified by default.
+"extens degraded" case and an "unmeasured" guard complete the bucketing, so
+no lane is classified by default.
 
 PRIMARY p = the exact seed-level sign-flip test; the 30 replicate seeds are the
 independent unit, since the 9 harmonic items in a seed share one answer vector
@@ -36,8 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-# ALPHA comes from the module that owns it (power_analysis, _power_common
-# behind it), not a local redeclaration.
+# ALPHA comes from the module that owns it, not a local redeclaration.
 from power_analysis import ALPHA, MODELS  # noqa: E402
 from paired_analysis import (  # noqa: E402
     aligned,
@@ -74,9 +73,9 @@ def mechanism(nc_e: float, nc_n: float) -> str:
         ``"COLLAPSE"`` (noise arm at or above `COLLAPSE_THRESHOLD`),
         ``"extens degraded"`` (only the extens arm is), ``"information"``
         (both arms well-formed) or ``"unmeasured"`` (a census cell is
-        missing). The last is load-bearing: NaN fails every ``>=`` below, so
-        without its own bucket an UNMEASURED cell would fall through to
-        "information" -- the affirmative both-arms-well-formed claim.
+        missing). The last is load-bearing: NaN fails every ``>=`` below,
+        so without it an unmeasured cell would fall through to "information",
+        the affirmative both-arms-well-formed claim.
     """
     if np.isnan(nc_e) or np.isnan(nc_n):
         return "unmeasured"        # no census cell: evidence of nothing
@@ -234,8 +233,7 @@ def main() -> None:
                   f"noise-higher, {len(sel_sig) - up} extens-higher.")
 
     # Unmeasured lanes get their own loud section rather than vanishing: a
-    # cell the census could not measure is a sync/provenance problem, never a
-    # mechanism verdict.
+    # missing census cell is a sync problem, never a mechanism verdict.
     unmeasured = [r for r in rows if r["mech"] == "unmeasured"]
     if unmeasured:
         print(f"\n-- UNMEASURED (no census cell for one or both arms): "

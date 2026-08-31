@@ -12,13 +12,13 @@ variance CMH omits by summing the 9 harmonic strata as if independent.
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
 (``{model}_{info}/rep_{seed}.yaml``) through ``Marks.load`` -- the store's own
-reader, which safe-loads current files and knows the legacy-tag fallback, so a
+reader (safe-loads current files, knows the legacy-tag fallback), so a
 ``score:``-shaped line inside a CoT trace can never be scraped as a phantom
 mark. Ascending-period serialization means position recovers the harmonic.
 Scoring: ``score: 1`` correct, ``0`` and ``null`` (invalid completion) both
-fail. A few percent of marks are ``null`` (the per-lane rate is measured by
-``significance_report.py``'s compliance census), so a DROP-INVALID sensitivity
-pass accompanies every headline.
+fail. A few percent of marks are ``null`` (per-lane rate:
+``significance_report.py``'s census), so a DROP-INVALID sensitivity pass
+accompanies every headline.
 
 Run (repo root):
     .venv/bin/python notebooks/induction/analysis/paired_analysis.py
@@ -28,9 +28,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# The analysis directory itself: needed whenever this module is loaded by
-# path rather than run as a script (only __main__ gets it added for free).
-# power_analysis inserts notebooks/ on its own for _power_common.
+# The analysis dir itself: needed when this module is loaded by path (only
+# __main__ gets it for free); power_analysis inserts notebooks/ itself.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
@@ -49,11 +48,9 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     build_secondary_contrasts,
 )
 
-#: The study's replicate count (run_study.N_REPLICATES, user-locked). Depth is
-#: gated against THIS, not against the deepest lane: a uniform shortfall
-#: (every lane thinned alike) leaves no lane "short" relative to the others
-#: while silently raising the sign-flip resolution floor (2/2^S) above every
-#: Holm threshold.
+#: run_study.N_REPLICATES (user-locked). Depth gates against THIS, not the
+#: deepest lane: a uniform shortfall leaves no lane "short" while silently
+#: raising the sign-flip floor (2/2^S) above every Holm threshold.
 EXPECTED_R = 30
 
 
@@ -124,9 +121,8 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
-        # Content gate: an empty seed intersection means one lane contributed
-        # nothing usable (every replicate skipped, or disjoint shards) -- fail
-        # with the cause, not a downstream numpy error.
+        # Content gate: an empty intersection means one lane contributed
+        # nothing usable -- fail with the cause, not a downstream numpy error.
         raise SystemExit(
             f"No common seeds between {key_a} and {key_b}; one lane has no "
             "usable replicates. Check the load warnings above and re-run "
@@ -271,9 +267,8 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     Var(T_s) = sum_k Var(d_(.,k)) while the truth adds
     2*sum_(k<k') Cov(d_(.,k), d_(.,k')). >1 means the denominator is too small
     (anticonservative), <1 too large. ``None`` uniformly means "no measurable
-    ratio", covering fewer than 3 seeds, identical arms, AND any stratum too
-    thin for a ddof=1 variance (whose NaN would otherwise slip past callers'
-    ``is not None`` filters into the summary statistics).
+    ratio": fewer than 3 seeds, identical arms, or a stratum too thin for
+    ddof=1 (its NaN would otherwise slip past ``is not None`` filters).
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)

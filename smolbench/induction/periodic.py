@@ -191,11 +191,9 @@ class PeriodicConfig:
                 f"Number of labels ({len(self.labels)}) must equal n ({self.n})."
             )
         if len(set(self.labels)) != len(self.labels):
-            # A duplicate label states two different rules for one string, so
-            # a single prompt would carry two contradictory ground truths
-            # (e.g. two counting answers for the same "how many 'dup'"
-            # question). Auto-generated labels are unique by construction;
-            # this guards explicit label lists.
+            # A duplicate label states two rules for one string, giving a
+            # single prompt two contradictory ground truths. Auto-generated
+            # labels are unique by construction; this guards explicit lists.
             raise ValueError(f"Labels must be distinct, got {tuple(self.labels)}.")
         for lbl in self.labels:
             if self.sep in lbl:
@@ -413,9 +411,8 @@ def tof_membership_query_gen(
 
     n = min(len(true_qs), len(false_qs), MAX_QUERIES_PER_POLARITY)
     if n == 0:
-        # A config too small to admit both polarities yields an empty quiz
-        # rather than raising: legitimate for tiny test configs, and the
-        # balanced-polarity contract below cannot be met with n=0 of one side.
+        # Too small to admit both polarities -> empty quiz, not an error
+        # (legitimate for tiny test configs).
         return
 
     # True block then False block, unshuffled: each query is a separate

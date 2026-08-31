@@ -75,9 +75,8 @@ class InductionExperiment:
     #: model -- see the module docstring's "Seed convention" section.
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Number of replicate seeds. Every induction study to date uses 30; the
-    #: sizing evidence lives in each study's
-    #: ``notebooks/<study>/analysis/power_analysis.py``, and for the
-    #: family-ladder study the value is additionally USER-LOCKED (see
+    #: sizing evidence lives in each study's ``analysis/power_analysis.py``,
+    #: and the family-ladder value is additionally USER-LOCKED (see
     #: ``run_study.py``'s N_REPLICATES comment).
     n_replicates: int = 30
     #: First replicate's seed; replicate 0 uses it exactly. Default 1776 (the
@@ -106,13 +105,11 @@ class InductionExperiment:
     #: needed BEYOND the disjointness ``seeds`` guarantees.
     shard: Optional[Tuple[int, int]] = None
     #: Forwarded to ``ReplicateHarness.force_seeds``: seeds re-collected past
-    #: the resume-skip; ``None`` disables it. The supersede semantics differ by
-    #: store backend: against an S3 store reads resolve the EARLIEST run, so a
-    #: forced re-collection of an already-logged seed is never returned by any
-    #: reader; against a LOCAL store ``rep_{seed}.yaml`` is overwritten in
-    #: place, so the forced run replaces the original. See
-    #: ``results_store.py``'s module docstring for why the S3 log is
-    #: append-only.
+    #: the resume-skip; ``None`` disables it. Supersede semantics differ by
+    #: backend: S3 reads resolve the EARLIEST run, so a forced re-collection
+    #: is never returned by any reader; a LOCAL store overwrites
+    #: ``rep_{seed}.yaml`` in place. ``results_store.py``'s docstring says why
+    #: the S3 log is append-only.
     force_seeds: Optional[frozenset] = None
 
     def __post_init__(self) -> None:
@@ -199,9 +196,8 @@ class InductionExperiment:
         from smolbench.evals.providers import ec2
 
         state = ec2.provision_spot_instance()
-        # print, not logging: this line is the notebook/terminal operator's
-        # receipt that a billing box exists, and must be visible regardless of
-        # logging config.
+        # print, not logging: the operator's receipt that a billing box
+        # exists must be visible regardless of logging config.
         print(
             f"instance {state['instance_id']} ({state['instance_type']}) "
             f"in {state['availability_zone']} at {state['public_ip']}"
@@ -313,6 +309,5 @@ class InductionExperiment:
         # Lazy by design -- see the module docstring's CRITICAL section.
         from smolbench.evals.providers import ec2
 
-        # Discarded, matching the -> None annotation: shutdown_instance's
-        # return value is its own logging concern, not part of this facade.
+        # Return value discarded, per the -> None annotation.
         ec2.shutdown_instance()

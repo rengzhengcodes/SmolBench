@@ -9,9 +9,9 @@ reason.)
 The noise pad is WHITESPACE sized in TOKENS (:func:`token_matched_noise_prompt`)
 under the tokenizer of the model under test, verified to hit the target exactly.
 Characters are the wrong unit -- a character-matched pad over-pads the control
-arm ~1.6x at the periodic production config (an ad-hoc measurement made when
-the arm was designed; the load-bearing invariant is the per-prompt token
-exactness verified below, not that ratio).
+arm ~1.6x at the periodic production config (an ad-hoc design-time
+measurement; the load-bearing invariant is the verified per-prompt token
+exactness, not that ratio).
 """
 
 import logging
@@ -35,10 +35,9 @@ class Prompter:
     ``safe_substitute``, which SILENTLY leaves a misspelled placeholder verbatim
     instead of raising, so validate templates on a sample query first.
     ``safe_substitute`` (not ``substitute``) is deliberate: a literal ``$`` in
-    quiz text must not raise mid-study, and a misrendered template cannot ship
-    unnoticed anyway -- the golden-quiz hash pins
-    (``tests/induction/test_golden_quizzes.py``) fail on any drift in the
-    rendered prompts.
+    quiz text must not raise mid-study, and the golden-quiz hash pins
+    (``tests/induction/test_golden_quizzes.py``) already fail on any drift in
+    the rendered prompts.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
@@ -66,11 +65,11 @@ def build_substitution(
 
     The single merge point for all three renderings, so precedence is uniform:
     dict-union in the order ``query``, ``prompter.substitution``,
-    ``positive_info``, the last winning a collision. The static
-    ``prompter.substitution`` deliberately outranks the per-query dict so a
-    ``query_gen`` cannot silently override a study-pinned field; the arm's
-    context comes last because it is the one field every arm must control.
-    Returns a fresh dict, so callers may mutate it further.
+    ``positive_info``, the last winning a collision: the static
+    ``prompter.substitution`` outranks the query so a ``query_gen`` cannot
+    silently override a study-pinned field, and the arm's context comes last
+    because every arm must control it. Returns a fresh dict, so callers may
+    mutate it further.
     """
     return query | prompter.substitution | {"positive_info": positive_info}
 
@@ -135,10 +134,9 @@ def random_unique_strings(
     for idx in range(length - 1, -1, -1):
         indices, digits[:, idx] = np.divmod(indices, base)
     charset_array: np.ndarray = np.asarray(charset)
-    # OrderedSet rather than a tuple: it documents the uniqueness contract in
-    # the return type while preserving draw order (a plain set would
-    # de-determinize iteration). Its dedup is provably inert -- the integers
-    # are drawn without replacement.
+    # OrderedSet, not tuple: the type documents the uniqueness contract and
+    # keeps draw order (a plain set would de-determinize iteration); its dedup
+    # is provably inert, since the draws are without replacement.
     return OrderedSet("".join(row) for row in charset_array[digits])
 
 
@@ -167,9 +165,8 @@ def random_labels(
     one fresh ``np.random.default_rng(seed)``, then one
     :func:`random_unique_strings` call -- so a seed always yields the same set.
     """
-    # The extra floor of 1 covers count=1 with min_length=0, where the
-    # information-theoretic minimum is 0 and the empty string would otherwise
-    # be a "label".
+    # Floor of 1: at count=1, min_length=0 the information-theoretic minimum
+    # is 0 and the "label" would be the empty string.
     length: int = max(
         min_length,
         1,
@@ -209,15 +206,13 @@ WHITESPACE_UNITS: Tuple[str, ...] = (
 # disables truncation on load; this probe backstops tokenizers built elsewhere.
 _UNIT_PROBES: Tuple[int, ...] = (1, 64, 256, 2048)
 
-# A unit qualifies when its total cost stays within this factor of n tokens at
-# every probe. The bound is multiplicative, so what it enforces varies with the
-# probe: at the n=1 probe counts are integers and the unit must cost EXACTLY
-# one token (a unit with a 2-token first repetition is rejected there), while
-# at the larger probes merging up to 2:1 is tolerated -- acceptable because
-# exactness comes from the verified search below, and a half-density unit just
-# pads with twice the characters. What the gate exists to reject is runaway
-# merging (cost -> 0), which would leave the pad unable to reach its target at
-# any character length.
+# A unit qualifies when its total cost stays within this factor of n tokens
+# at every probe. The bound is multiplicative: at the n=1 probe integer
+# counts force EXACTLY one token (a 2-token first repetition is rejected),
+# while larger probes tolerate up to 2:1 merging -- harmless, since the
+# verified search below supplies exactness and a half-density unit just pads
+# with twice the characters. The gate exists to reject runaway merging
+# (cost -> 0), which no character length could compensate.
 _UNIT_COST_TOLERANCE: float = 0.5
 
 # Bounds the `token_matched_noise_prompt` search; each pass costs one full
@@ -299,12 +294,11 @@ def token_matched_noise_prompt(
     str
         ``render(context + pad)``, verified (never assumed) EXACTLY
         `target_tokens` tokens. An unreachable target -- unpadded prompt already
-        that long -- returns the unpadded render and logs a warning rather than
-        raising: an appended pad cannot SHRINK a prompt, and reuse sites pad
-        contexts that can legitimately exceed the target. A caller for which an
-        over-long base is a fatal confound must check the result -- the
-        induction study does (the notebook's validation cell asserts exact
-        per-question matches, and the production config leaves ~200x headroom).
+        that long -- returns the unpadded render and logs a warning rather
+        than raising: an appended pad cannot SHRINK a prompt, and reuse sites
+        pad contexts that legitimately exceed the target. Callers for which an
+        over-long base is a fatal confound must check the result (the study
+        notebook asserts exact matches; production has ~200x headroom).
 
     Raises
     ------

@@ -91,10 +91,9 @@ PILOT_SEED = 0                                          # seed 0 -> rep_0.yaml
 RESULTS_DIR = results_dir(__file__, up=1)
 
 # Writer/reader anchor guard: sync_down() writes through the INSTALLED
-# smolbench package's repo_root(), while this chain reads through __file__.
-# In a git-worktree workflow those can be two different checkouts -- the sync
-# then succeeds into one tree while the analysis reads (or fails on) the
-# other. Warn rather than exit: reading a deliberately copied tree is legal.
+# package's repo_root(); this chain reads through __file__. In a worktree
+# those can be different checkouts, so warn (not exit: reading a
+# deliberately copied tree is legal).
 from smolbench.evals.results_store import repo_root as _installed_repo_root
 
 _writer_results = _installed_repo_root() / "notebooks" / "induction" / "results"
@@ -115,16 +114,14 @@ if _writer_results.resolve() != RESULTS_DIR.resolve():
 # precise, so N_SIMS is NOT reduced to compensate (see the module docstring's
 # "Contrast tiers" section).
 # 10_000 sims puts the Monte Carlo SE of a power estimate at
-# sqrt(p(1-p)/N) <= 0.005 -- fine-grained enough to place R against an 80%
-# target. MAX_REPLICATES is a search ceiling only, set far above any R the
-# study could afford; a contrast still unpowered there is reported as
-# censored, not sized.
+# sqrt(p(1-p)/N) <= 0.005. MAX_REPLICATES is only a search ceiling, far above
+# any affordable R; a contrast still unpowered there is reported as censored,
+# not sized.
 N_SIMS = 10_000
 MAX_REPLICATES = 200
-# c=1 pulls a one-replicate pilot rate halfway to its condition mean -- a
-# deliberately strong prior, because a 0/9-or-9/9 harmonic observed once says
-# little about its true rate, and unshrunk boundary rates degenerate the
-# sizing (zero variance).
+# c=1 pulls a one-replicate pilot rate halfway to its condition mean: a
+# 0/9-or-9/9 harmonic seen once says little, and unshrunk boundary rates
+# degenerate the sizing (zero variance).
 SHRINKAGE = 1.0  # c in p_k = (y_k + c * p_bar) / (1 + c)
 
 # ---------------------------------------------------------------------------
@@ -154,11 +151,11 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
     """Load per-condition PILOT harmonic outcome vectors.
 
-    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``Marks.load`` --
-    the store's own reader (it safe-loads current files and knows the
-    legacy-tag fallback), so a ``score:``-shaped line inside a stored response
-    or reasoning trace can never be scraped as a phantom mark. Marks are
-    serialized in ascending-period order, so position recovers the harmonic.
+    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``Marks.load``
+    (the store's own safe reader, with the legacy-tag fallback), so a
+    ``score:``-shaped line inside a stored trace can never be scraped as a
+    phantom mark. Marks serialize in ascending-period order, so position
+    recovers the harmonic.
 
     Returns
     -------
@@ -746,11 +743,10 @@ def main() -> None:
             "No PRIMARY contrast reaches 80% power within "
             f"R <= {MAX_REPLICATES}; the pilot cannot size R at all."
         )
-    # Deliberately the max over the POWERED contrasts: r_star answers "what R
-    # covers every contrast this design can power", and the censored ones
-    # (never powered within MAX_REPLICATES) are counted and reported below
-    # rather than silently dropped -- they cannot be covered at any affordable
-    # R, so they must not drag the recommendation to the search ceiling.
+    # Deliberately the max over the POWERED contrasts: r_star answers "what
+    # R covers every contrast this design can power"; the censored rest are
+    # counted and reported below, not silently dropped -- no affordable R
+    # covers them, so they must not drag the answer to the search ceiling.
     r_star = max(feasible)
     n_censored = len(primary_results) - len(feasible)
     primary_label_w = max(len(name) for name, *_ in primary_results)
@@ -845,10 +841,9 @@ def main() -> None:
     # Equivalence (TOST) sizing for near-tie PRIMARY contrasts: assume a TRUE
     # tie and ask how many replicates show the difference within +/-delta at
     # 80% power. "Near-tie" = the difference test above needed R > 20 or was
-    # never powered. The 20 is carried unchanged from the archived sibling
-    # sizing script (notebooks/ARCHIVE.md) so the near-tie set stays
-    # comparable across analyses; it is a report-grouping cut, not an
-    # inferential threshold.
+    # never powered. The 20 carries over from the archived sibling sizing
+    # script (notebooks/ARCHIVE.md) so the near-tie set stays comparable; a
+    # report-grouping cut, not an inferential threshold.
     # KNOWN LIMITATION: the Wald TOST degenerates at saturated rates -- a
     # contrast whose shrunk rates are exactly 1.0 in both arms simulates a
     # zero-width CI and reports R=1 for every delta. Read ceiling-pair rows

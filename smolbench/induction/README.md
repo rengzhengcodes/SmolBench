@@ -12,13 +12,11 @@ information, but the extensional representation usually needs more
 tokens, and that extra length degrades performance relative to the
 intensional representation.
 
-Two control arms separate that hypothesis's confounds. `noise_intens`
-is the intensional prompt whitespace-padded to EXACTLY the extensional
+Two control arms separate the confounds. `noise_intens` is the
+intensional prompt whitespace-padded to EXACTLY the extensional
 prompt's token count under the model-under-test's own tokenizer
-(`smolbench/induction/_common.py`), so an intens-vs-extens gap cannot
-be explained by prompt length alone. `zero` is the same query with an
-empty context -- the chance floor that says what a model scores with no
-positive information at all.
+(`_common.py`), so a gap cannot be explained by prompt length alone.
+`zero` is the same query with an empty context -- the chance floor.
 
 The benchmark below follows that format: an extensional representation
 compacts into a shorter intensional representation. For induction, every

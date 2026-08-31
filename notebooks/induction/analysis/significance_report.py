@@ -36,9 +36,8 @@ import numpy as np
 from smolbench.evals import Marks
 from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
 
-# ALPHA and build_primary_contrasts are imported from the module that OWNS
-# them (power_analysis; _power_common behind it), not redeclared or routed
-# through a sibling's re-export -- one source of truth per constant.
+# ALPHA and build_primary_contrasts come from the module that OWNS them
+# (power_analysis; _power_common behind it) -- one source of truth each.
 from power_analysis import (  # noqa: E402
     ALPHA,
     INFOS,
@@ -99,8 +98,7 @@ def compliance_census() -> dict:
     any other value names HOW it failed (the violation label set is owned by
     ``smolbench/evals/parsing.py``, plus ``openai_compat``'s ``parser-error``
     and the pre-field ``not-assessed`` default). Counting the modes, not just
-    the rate, is what lets the census describe a mechanism instead of a bare
-    number.
+    the rate, lets the census name a mechanism.
 
     Returns
     -------
@@ -117,9 +115,8 @@ def compliance_census() -> dict:
             for path in sorted((RESULTS_DIR / f"{model}_{info}").glob("rep_*.yaml")):
                 vals += [m.compliance for m in Marks.load(path).marks]
             # NOT_ASSESSED marks predate the compliance field: unknown, not
-            # violations. Excluding them (rather than counting them
-            # non-compliant) keeps a legacy lane from being published as a
-            # collapse; the exclusion is surfaced, not silent.
+            # violations. Excluding them keeps a legacy lane from publishing
+            # as a collapse; the exclusion is surfaced below, not silent.
             assessed = [v for v in vals if v != NOT_ASSESSED]
             if len(assessed) < len(vals):
                 print(

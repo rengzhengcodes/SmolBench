@@ -69,10 +69,9 @@ def plot_archetype_accuracy(
 
     One group per ``models`` entry ``(model_key, label)``, one bar per
     ``conditions`` entry ``(condition_key, label, color)``, in the given order.
-    A key that is missing from `data` (or maps to ``None``) plots as a
-    0-height bar annotated "n/a", so it cannot be mistaken for a genuine 0% --
-    collapsed lanes are first-class results here and must stay
-    distinguishable from never-collected ones.
+    A key missing from `data` (or mapping to ``None``) plots as a 0-height
+    bar annotated "n/a" -- collapsed lanes are first-class results and must
+    stay distinguishable from never-collected ones.
 
     Parameters
     ----------
@@ -103,10 +102,9 @@ def plot_archetype_accuracy(
     fig, ax = plt.subplots(figsize=figsize)
 
     for offset, (cond_key, cond_label, color) in zip(offsets, conditions):
-        # `is None`, not truthiness: a genuine 0.0 accuracy is data (an
-        # unlabeled zero bar, as in the pinned figure), while None/missing is
-        # absence of data and gets an explicit "n/a" annotation. An `or 0.0`
-        # would silently conflate the two.
+        # `is None`, not truthiness: a genuine 0.0 is data (an unlabeled zero
+        # bar, as in the pinned figure); None/missing gets an explicit "n/a".
+        # An `or 0.0` would conflate the two.
         values = [data.get((model_key, cond_key)) for model_key, _ in models]
         heights = [0.0 if v is None else v for v in values]
         bars = ax.bar(
