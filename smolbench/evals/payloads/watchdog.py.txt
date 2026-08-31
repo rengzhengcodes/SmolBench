@@ -1,0 +1,134 @@
+"""smolbench idle watchdog: halts the instance after sustained inactivity."""
+import os
+import subprocess
+import time
+import urllib.request
+
+# Overridable so the repo's offline tests can run the watchdog unprivileged.
+RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
+IDLE_TIMEOUT_S = int(os.environ.get("IDLE_TIMEOUT_MIN", "30")) * 60
+# INVARIANT: must match EC2_STARTUP_GRACE_MIN's default ("180") in ec2.py.
+STARTUP_GRACE_S = int(os.environ.get("STARTUP_GRACE_MIN", "180")) * 60
+CHECK_INTERVAL_S = 60
+VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))  # see AGENT_PY
+
+
+def path(name):
+    return os.path.join(RUN_DIR, name)
+
+
+def touch(name):
+    target = path(name)
+    with open(target, "a"):
+        os.utime(target, None)
+
+
+def mtime(name):
+    try:
+        return os.path.getmtime(path(name))
+    except OSError:
+        return None
+
+
+def metrics_activity():
+    """True/False = counters moved / are still; None = vLLM not answering."""
+    try:
+        url = "http://127.0.0.1:%d/metrics" % VLLM_PORT
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    # Floats, not ints: the Prometheus text format renders every sample as a
+    # float ("vllm:prompt_tokens_total{...} 8577.0", possibly scientific
+    # notation), so int() would reject the very lines being summed.
+    total = 0.0
+    running = 0.0
+    for line in text.splitlines():
+        if line.startswith("#"):
+            continue
+        if line.startswith("vllm:prompt_tokens_total") or line.startswith("vllm:generation_tokens_total"):
+            try:
+                total += float(line.rsplit(" ", 1)[1])
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("vllm:num_requests_running"):
+            try:
+                running += float(line.rsplit(" ", 1)[1])
+            except (ValueError, IndexError):
+                pass
+    snapshot = path("tokens_snapshot")
+    previous = None
+    try:
+        with open(snapshot) as fh:
+            previous = fh.read().strip()
+    except OSError:
+        pass
+    current = repr(total)
+    if previous != current:
+        # The counter moved since the last check = tokens were processed =
+        # activity. Overwrite the snapshot so the NEXT check compares against
+        # this reading; it lives on disk (not in a global) so the baseline
+        # survives a watchdog restart, which would otherwise misread an
+        # unchanged counter as fresh activity.
+        with open(snapshot, "w") as fh:
+            fh.write(current)
+        return True
+    return running > 0
+
+
+def container_running():
+    probe = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", "vllm"],
+        capture_output=True, text=True,
+    )
+    return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+
+def check_once():
+    # The idle clock is file mtimes in RUN_DIR, not IPC or querying the
+    # control agent: the agent is a SEPARATE systemd unit that touches
+    # last_active on each authed request, and mtime files are the simplest
+    # channel that keeps this safety net independent of it -- if the agent
+    # crashes, the clock freezes and the box still gets reaped, whereas
+    # asking the agent would blind the watchdog exactly when it matters.
+    # RUN_DIR defaults under /var/run (tmpfs), so a reboot clears the files
+    # and the clock restarts cleanly (see below).
+    last = mtime("last_active")
+    if last is None:
+        touch("last_active")  # boot counts as the start of the idle clock
+        return
+    active = metrics_activity()
+    if active:
+        touch("last_active")
+        return
+    if active is None and container_running():
+        # vLLM is up but not serving metrics yet: weights are downloading or
+        # loading. Counts as activity only within the grace window so a wedged
+        # download cannot keep the instance alive forever.
+        started = mtime("serve_started")
+        if started is not None and time.time() - started < STARTUP_GRACE_S:
+            touch("last_active")
+            return
+    idle = time.time() - last
+    if idle > IDLE_TIMEOUT_S:
+        print("idle %ds > %ds; shutting down" % (idle, IDLE_TIMEOUT_S), flush=True)
+        subprocess.Popen(["shutdown", "-h", "now"])
+
+
+def main():
+    os.makedirs(RUN_DIR, exist_ok=True)
+    once = os.environ.get("SMOLBENCH_WATCHDOG_ONCE") == "1"  # test hook
+    while True:
+        try:
+            check_once()
+        except Exception as exc:
+            # A transient failure (docker hiccup, fs error) must not kill the
+            # safety net; log and keep watching.
+            print("watchdog check failed: %r" % (exc,), flush=True)
+        if once:
+            return
+        time.sleep(CHECK_INTERVAL_S)
+
+
+if __name__ == "__main__":
+    main()

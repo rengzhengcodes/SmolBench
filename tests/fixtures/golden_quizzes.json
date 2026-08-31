@@ -1,0 +1,22 @@
+{
+  "periodic_numeric_1776": {
+    "extens": "97219a2eea920b24ff990150be7662624336424d126c41a52fe22e7ca757863d",
+    "intens": "54a87d9711a819f01cac34343f530af236eceebd08a34519721dae650ae41d33",
+    "noise_intens": "079f27763143b6a8f60f923d21acc74479d2b96d77e87fdba960b2a1343c5994"
+  },
+  "periodic_numeric_1777": {
+    "extens": "b6ccdfa988d740c68e756d34c1350040ba1143f66b74f91b4a71a1c32f0eb43f",
+    "intens": "ed9cd85894ed255d260cd1e3b60f36a5bb7fb0cb772a50726da2f06e91602dc9",
+    "noise_intens": "0ce52e90351d12490808199c861711929890ac99b3b426e21908876bfaa8fb28"
+  },
+  "periodic_tof_1776": {
+    "extens": "48d395e1084cf2249799407dbd0752eab727e379ca57a10ee0b748b1b9abe595",
+    "intens": "959e0258405c71e2460964138f439b84a0f163cd4ecfdbbccc4afa26ae2a3de2",
+    "noise_intens": "f6347e4c8bbc3978f65ae09829c5c8179c7d8541ba1b57a4901b874aa3f15ba0"
+  },
+  "periodic_tof_1777": {
+    "extens": "7ed0ec605eb8461fbe60bfd5bece36df924f7e8b0922f9f9917f2d7ac9fdf568",
+    "intens": "c7d2c6e376a6c8db2cfaae0f47be69a470ca25c8257d45d8cdeaa389b991355d",
+    "noise_intens": "59e20a72a79a0d14f247cc49d62db4a4f79fe35cec738af02f1e8354ab6511b2"
+  }
+}

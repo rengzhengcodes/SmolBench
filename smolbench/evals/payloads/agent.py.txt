@@ -1,0 +1,348 @@
+"""smolbench control agent: swaps the vLLM container on request."""
+import hashlib
+import hmac
+import json
+import os
+import shlex
+import subprocess
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Overridable so the repo's offline tests can run the agent unprivileged.
+RUN_DIR = os.environ.get("SMOLBENCH_RUN_DIR", "/var/run/smolbench")
+AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
+# "8000" mirrors ec2.EC2_VLLM_PORT; governs the health probe + docker -p below.
+VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
+SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
+SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
+CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
+VLLM_API_KEY = os.environ["VLLM_API_KEY"]
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+VLLM_IMAGE = os.environ["VLLM_IMAGE"]
+# Optional S3 mirror of the HF hub cache (creds come from the instance
+# profile; empty = HF-only, the pre-S3 behavior).
+S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
+CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
+SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
+SYNC_PROC = None  # the in-flight cache upload, if any
+LAST_HF_ID = ""  # repo id of the last /serve request; drives fingerprint()'s HF lookup
+
+
+def touch(name):
+    """Create/update RUN_DIR/<name> so its mtime is now (read by the watchdog)."""
+    path = os.path.join(RUN_DIR, name)
+    with open(path, "a"):
+        os.utime(path, None)
+
+
+def docker(*args, timeout=120):
+    """Run a docker CLI command, capturing text stdout/stderr."""
+    return subprocess.run(["docker"] + list(args), capture_output=True, text=True, timeout=timeout)
+
+
+def container_state():
+    """Docker status of the "vllm" container ("running", "exited", ...) or "absent"."""
+    probe = docker("inspect", "-f", "{{.State.Status}}", "vllm")
+    return probe.stdout.strip() if probe.returncode == 0 else "absent"
+
+
+def vllm_healthy():
+    """True iff the local vLLM server answers /health with HTTP 200."""
+    try:
+        url = "http://127.0.0.1:%d/health" % VLLM_PORT
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def tail(path, limit=8000):
+    """Return the last `limit` bytes of a log file as text, "" if unreadable."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()[-limit:].decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+# Memo for fingerprint()'s two slow probes, keyed by field name ("FP" =
+# fingerprint). Both probed values are invariant for the life of this process
+# (VLLM_IMAGE never changes after boot; the GPU doesn't change under us), so
+# each is fetched once and remembered ONLY on genuine success: /status stays
+# cheap on every poll after the first, while a boot-time hiccup (driver still
+# initializing, image not pulled yet) keeps retrying on later calls instead
+# of freezing a permanent None. Explicit short timeouts on both probes below
+# (docker inspect defaults to 120s, no timeout at all is not acceptable
+# here) keep even the uncached first call from blowing past _wait_agent's 5s
+# /status read timeout during the boot poll loop.
+_FP_CACHE = {}
+
+
+def _cached_probe(key, fetch):
+    """Return _FP_CACHE[key], calling fetch() on a miss.
+
+    A truthy fetch() result is memoized for the life of the process; a falsy
+    or raising fetch() yields None WITHOUT caching, so the next /status poll
+    retries (see the _FP_CACHE note above).
+    """
+    if key in _FP_CACHE:
+        return _FP_CACHE[key]
+    try:
+        val = fetch()
+    except Exception:
+        val = None
+    if val:
+        _FP_CACHE[key] = val
+    return val
+
+
+def _probe_image_repo_digests():
+    """Registry digests of VLLM_IMAGE, or None until the image is pulled."""
+    probe = docker("inspect", "--format", "{{json .RepoDigests}}", VLLM_IMAGE, timeout=5)
+    return json.loads(probe.stdout) if probe.returncode == 0 else None
+
+
+def _probe_nvidia_smi():
+    """One CSV line per GPU (name/uuid/driver/memory/ecc), or None if no GPU."""
+    smi = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total,ecc.mode.current",
+         "--format=csv,noheader"],
+        capture_output=True, text=True, timeout=3,
+    )
+    return smi.stdout.strip() if smi.returncode == 0 else None
+
+
+def fingerprint():
+    """Best-effort serving-stack snapshot for /status.
+
+    Lets a result file record the stack that produced it (image digest, GPUs,
+    HF snapshot) instead of needing a timestamp -> config side table. Every
+    field is independently guarded so one missing probe (no GPU locally,
+    image not pulled yet, cold cache) never blanks the rest.
+    """
+    out = {}
+    out["image_repo_digests"] = _cached_probe("image_repo_digests", _probe_image_repo_digests)
+    out["nvidia_smi"] = _cached_probe("nvidia_smi", _probe_nvidia_smi)
+    out["hf_snapshots"] = None
+    if LAST_HF_ID:
+        try:
+            snaps = os.path.join(CACHE_HUB, "models--" + LAST_HF_ID.replace("/", "--"), "snapshots")
+            # dirnames only (matches the field's own name): a stray non-dir
+            # entry sorting last would otherwise feed os.listdir() below a
+            # file path and blow up the whole weights_digest computation.
+            out["hf_snapshots"] = sorted(
+                n for n in os.listdir(snaps) if os.path.isdir(os.path.join(snaps, n))
+            )
+        except Exception:
+            pass
+    # Hash of the safetensors index + per-file sizes for the LAST (sorted)
+    # snapshot dir -- cheap fingerprint of the loaded weights, not a full read.
+    # NOTE: "last in sorted order" is the spec's literal rule (lexicographic
+    # on the snapshot dirname, which is normally an HF commit-sha hex string)
+    # -- it is NOT guaranteed to be the pinned/--revision snapshot when the
+    # cache holds more than one (e.g. a stale main pull alongside a pinned
+    # sha). hf_snapshots above carries the FULL list precisely so a reader
+    # can check that ambiguity rather than trust this field blindly.
+    out["weights_digest"] = None
+    if out["hf_snapshots"]:
+        try:
+            last = os.path.join(
+                CACHE_HUB, "models--" + LAST_HF_ID.replace("/", "--"),
+                "snapshots", out["hf_snapshots"][-1],
+            )
+            h = hashlib.sha256()
+            try:
+                with open(os.path.join(last, "model.safetensors.index.json"), "rb") as fh:
+                    h.update(fh.read())
+            except OSError:
+                pass
+            sizes = []
+            for fn in os.listdir(last):
+                if fn.endswith(".safetensors"):
+                    try:
+                        # os.stat follows symlinks (HF snapshots symlink into
+                        # blobs/); one dangling/evicted link must only drop
+                        # that file from the digest, not blank the whole
+                        # thing -- same all-fields-independently-guarded
+                        # spirit as the rest of this function.
+                        sizes.append((fn, os.stat(os.path.join(last, fn)).st_size))
+                    except OSError:
+                        continue
+            h.update(repr(sorted(sizes)).encode())
+            out["weights_digest"] = h.hexdigest()
+        except Exception:
+            pass
+    return out
+
+
+class Handler(BaseHTTPRequestHandler):
+    """Token-authed control API: GET /status; POST /serve, /sync-up, /stop, /shutdown."""
+
+    def _reply(self, code, obj):
+        """Send `obj` as a JSON response with HTTP status `code`."""
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authed(self):
+        """Check the bearer token; reply 401 and return False on mismatch.
+
+        Any authenticated request also touches last_active, feeding the idle
+        watchdog.
+        """
+        got = self.headers.get("Authorization", "")
+        if not hmac.compare_digest(got, "Bearer " + CONTROL_TOKEN):
+            self._reply(401, {"error": "bad token"})
+            return False
+        touch("last_active")
+        return True
+
+    def do_GET(self):
+        if not self._authed():
+            return
+        if self.path != "/status":
+            self._reply(404, {"error": "unknown path"})
+            return
+        logs = docker("logs", "--tail", "300", "vllm")
+        self._reply(200, {
+            "container": container_state(),
+            "healthy": vllm_healthy(),
+            "serve_rc": SERVE_PROC.poll() if SERVE_PROC is not None else None,
+            "sync_rc": SYNC_PROC.poll() if SYNC_PROC is not None else None,
+            "sync_started": SYNC_PROC is not None,
+            "log_tail": (lambda s: s[:6000] + s[6000:][-8000:])(logs.stdout + logs.stderr),
+            "serve_log_tail": tail(SERVE_LOG),
+            "sync_log_tail": tail(SYNC_LOG, 2000),
+            "fingerprint": fingerprint(),
+        })
+
+    def do_POST(self):
+        if not self._authed():
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            self._reply(400, {"error": "bad json"})
+            return
+        if self.path == "/serve":
+            self._serve(payload)
+        elif self.path == "/sync-up":
+            self._sync_up(payload)
+        elif self.path == "/stop":
+            docker("rm", "-f", "vllm")
+            self._reply(200, {"ok": True})
+        elif self.path == "/shutdown":
+            # Reply first; the OS halt (=> spot termination) races the socket.
+            self._reply(200, {"ok": True, "shutting_down": True})
+            subprocess.Popen(["shutdown", "-h", "now"])
+        else:
+            self._reply(404, {"error": "unknown path"})
+
+    def _serve(self, payload):
+        """Replace the vLLM container with one serving the requested model.
+
+        Kills any in-flight launcher, then starts an async bash script that
+        stages weights (S3 mirror + HF) and LoRA adapters before `docker run`;
+        replies 202 immediately -- callers poll /status for readiness.
+        """
+        global SERVE_PROC, LAST_HF_ID
+        try:
+            name = str(payload["served_model_name"])
+            hf_id = str(payload["hf_model_id"])
+            tp = int(payload.get("tp", 1))
+            max_len = int(payload.get("max_model_len", 16384))
+            vllm_args = [str(a) for a in payload.get("vllm_args", [])]
+            adapters = payload.get("adapters") or []  # LoRA: staged from S3 below
+        except (KeyError, TypeError, ValueError) as exc:
+            self._reply(400, {"error": "bad payload: %s" % (exc,)})
+            return
+        LAST_HF_ID = hf_id  # for fingerprint()'s HF snapshot lookup, set before launching docker
+        # a stale serve script's pending docker run would race this swap
+        if SERVE_PROC and SERVE_PROC.poll() is None:
+            SERVE_PROC.kill(); SERVE_PROC.wait()
+        docker("rm", "-f", "vllm")
+        touch("serve_started")  # opens the watchdog's startup-grace window
+        cmd = [
+            "docker", "run", "-d", "--name", "vllm",
+            # --ipc=host mandatory at tp>1: NCCL needs >docker's 64 MB /dev/shm.
+            "--gpus", "all", "--ipc=host",
+            "-p", "%d:%d" % (VLLM_PORT, VLLM_PORT),
+            # HF cache + vLLM compile/CUDA-graph cache persist across swaps, so a
+            # checkpoint downloads once and RE-serving skips torch.compile.
+            "-v", "/opt/hf-cache:/root/.cache/huggingface",
+            "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
+            "-e", "HF_TOKEN=" + HF_TOKEN,
+            "-e", "HUGGING_FACE_HUB_TOKEN=" + HF_TOKEN,
+            VLLM_IMAGE,
+            "--model", hf_id,
+            "--served-model-name", name,
+            "--tensor-parallel-size", str(tp),
+            "--max-model-len", str(max_len),
+            "--api-key=" + VLLM_API_KEY,
+        ] + vllm_args
+        # Async (cold `docker run -d` blocks on the image pull; /status reports
+        # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
+        # (else legacy whole-prefix sync); HF fills any gap.
+        script = ""
+        if S3_CACHE:
+            sub = "models--" + hf_id.replace("/", "--")
+            s3p = shlex.quote(S3_CACHE + "/" + sub)
+            loc = shlex.quote(CACHE_HUB + "/" + sub)
+            script += (
+                "mkdir -p %s\n"
+                "aws s3 sync --only-show-errors --exclude '*.incomplete' %s/blobs %s/blobs || true\n"
+                "T=$(mktemp)\n"
+                "if aws s3 cp --only-show-errors %s/meta.tar $T; then tar -xf $T -C %s; "
+                "else aws s3 sync --only-show-errors --exclude '*.incomplete' %s %s || true; fi\n"
+                "rm -f $T\n"
+            ) % (loc, s3p, loc, s3p, loc, s3p, loc)
+        # Stage LoRA adapters S3 -> hub cache; --region since box may != bucket.
+        for ad in adapters:
+            d = shlex.quote("/opt/hf-cache/lora/" + str(ad["name"]))
+            rg = " --region " + shlex.quote(str(ad["region"])) if ad.get("region") else ""
+            script += "mkdir -p %s\naws s3 sync%s --only-show-errors --exclude 'checkpoint-*/*' %s %s\n" % (
+                d, rg, shlex.quote(str(ad["s3"])), d)
+        # an orphaned launcher may have re-created vllm since our rm -f above
+        script += "docker rm -f vllm >/dev/null 2>&1\n" + shlex.join(cmd)
+        log = open(SERVE_LOG, "wb")
+        SERVE_PROC = subprocess.Popen(["bash", "-c", script], stdout=log, stderr=subprocess.STDOUT)
+        self._reply(202, {"ok": True, "launching": name})
+
+    def _sync_up(self, payload):
+        """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
+        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
+        global SYNC_PROC
+        if not S3_CACHE:
+            self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
+            return
+        sub = str(payload.get("subdir", "")).strip("/")
+        dirs = "%s/%s" % (CACHE_HUB, sub) if sub else "%s/models--*" % CACHE_HUB
+        body = (
+            "for d in %s; do [ -d $d ] || continue; n=$(basename $d); "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' $d/blobs %s/$n/blobs; "
+            "if find $d/snapshots -type f -size +1M 2>/dev/null | grep -q .; then "
+            "aws s3 sync --only-show-errors --exclude '*.incomplete' --exclude 'blobs/*' $d %s/$n; "
+            "else T=$(mktemp); tar -cf $T -C $d snapshots refs 2>/dev/null && "
+            "aws s3 cp --only-show-errors $T %s/$n/meta.tar; rm -f $T; fi; done"
+        ) % (dirs, S3_CACHE, S3_CACHE, S3_CACHE)
+        log = open(SYNC_LOG, "ab")
+        SYNC_PROC = subprocess.Popen(["bash", "-c", body], stdout=log, stderr=subprocess.STDOUT)
+        self._reply(202, {"ok": True, "syncing": sub or "all"})
+
+    def log_message(self, *args):
+        pass  # systemd journals stdout; per-request noise is not useful
+
+
+def main():
+    """Serve the control API forever on AGENT_PORT."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    touch("last_active")
+    ThreadingHTTPServer(("0.0.0.0", AGENT_PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
