@@ -1,7 +1,7 @@
 """Deduction evals: deriving valid consequences from given premises.
 
-Sibling category to ``smolbench.induction`` (``chromatic``, ``periodic``), which
-instead asks a model to infer a rule from examples.
+Sibling category to ``smolbench.induction`` (``periodic``), which instead asks
+a model to infer a rule from examples.
 
 Members
 -------

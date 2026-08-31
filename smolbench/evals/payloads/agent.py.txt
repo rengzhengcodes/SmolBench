@@ -29,21 +29,25 @@ LAST_HF_ID = ""  # repo id of the last /serve request; drives fingerprint()'s HF
 
 
 def touch(name):
+    """Create/update RUN_DIR/<name> so its mtime is now (read by the watchdog)."""
     path = os.path.join(RUN_DIR, name)
     with open(path, "a"):
         os.utime(path, None)
 
 
 def docker(*args, timeout=120):
+    """Run a docker CLI command, capturing text stdout/stderr."""
     return subprocess.run(["docker"] + list(args), capture_output=True, text=True, timeout=timeout)
 
 
 def container_state():
+    """Docker status of the "vllm" container ("running", "exited", ...) or "absent"."""
     probe = docker("inspect", "-f", "{{.State.Status}}", "vllm")
     return probe.stdout.strip() if probe.returncode == 0 else "absent"
 
 
 def vllm_healthy():
+    """True iff the local vLLM server answers /health with HTTP 200."""
     try:
         url = "http://127.0.0.1:%d/health" % VLLM_PORT
         with urllib.request.urlopen(url, timeout=3) as resp:
@@ -53,26 +57,34 @@ def vllm_healthy():
 
 
 def tail(path, limit=8000):
+    """Return the last `limit` bytes of a log file as text, "" if unreadable."""
     try:
         with open(path, "rb") as fh:
-            return fh.read()[-limit:].decode("utf-8", "replace")
+            return fh.read()[-limit:].decode("utf-8", errors="replace")
     except OSError:
         return ""
 
 
-# image_repo_digests/nvidia_smi are invariant for the life of this process
-# (VLLM_IMAGE never changes after boot; the GPU doesn't change under us) --
-# cache each ONLY on a genuine success, so /status stays cheap on every poll
-# after the first, and a boot-time hiccup (driver still initializing, image
-# not pulled yet) keeps retrying on later calls instead of freezing a
-# permanent None. Explicit short timeouts on both probes below (docker
-# inspect defaults to 120s, no timeout at all is not acceptable here) keep
-# even the uncached first call from blowing past _wait_agent's 5s /status
-# read timeout during the boot poll loop.
+# Memo for fingerprint()'s two slow probes, keyed by field name ("FP" =
+# fingerprint). Both probed values are invariant for the life of this process
+# (VLLM_IMAGE never changes after boot; the GPU doesn't change under us), so
+# each is fetched once and remembered ONLY on genuine success: /status stays
+# cheap on every poll after the first, while a boot-time hiccup (driver still
+# initializing, image not pulled yet) keeps retrying on later calls instead
+# of freezing a permanent None. Explicit short timeouts on both probes below
+# (docker inspect defaults to 120s, no timeout at all is not acceptable
+# here) keep even the uncached first call from blowing past _wait_agent's 5s
+# /status read timeout during the boot poll loop.
 _FP_CACHE = {}
 
 
 def _cached_probe(key, fetch):
+    """Return _FP_CACHE[key], calling fetch() on a miss.
+
+    A truthy fetch() result is memoized for the life of the process; a falsy
+    or raising fetch() yields None WITHOUT caching, so the next /status poll
+    retries (see the _FP_CACHE note above).
+    """
     if key in _FP_CACHE:
         return _FP_CACHE[key]
     try:
@@ -85,11 +97,13 @@ def _cached_probe(key, fetch):
 
 
 def _probe_image_repo_digests():
+    """Registry digests of VLLM_IMAGE, or None until the image is pulled."""
     probe = docker("inspect", "--format", "{{json .RepoDigests}}", VLLM_IMAGE, timeout=5)
     return json.loads(probe.stdout) if probe.returncode == 0 else None
 
 
 def _probe_nvidia_smi():
+    """One CSV line per GPU (name/uuid/driver/memory/ecc), or None if no GPU."""
     smi = subprocess.run(
         ["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total,ecc.mode.current",
          "--format=csv,noheader"],
@@ -99,11 +113,13 @@ def _probe_nvidia_smi():
 
 
 def fingerprint():
-    # Best-effort serving-stack snapshot for /status, so a result file records
-    # the stack that produced it (image digest, GPUs, HF snapshot) instead of
-    # needing a timestamp -> config side table. Every field is independently
-    # guarded so one missing probe (no GPU
-    # locally, image not pulled yet, cold cache) never blanks the rest.
+    """Best-effort serving-stack snapshot for /status.
+
+    Lets a result file record the stack that produced it (image digest, GPUs,
+    HF snapshot) instead of needing a timestamp -> config side table. Every
+    field is independently guarded so one missing probe (no GPU locally,
+    image not pulled yet, cold cache) never blanks the rest.
+    """
     out = {}
     out["image_repo_digests"] = _cached_probe("image_repo_digests", _probe_image_repo_digests)
     out["nvidia_smi"] = _cached_probe("nvidia_smi", _probe_nvidia_smi)
@@ -160,7 +176,10 @@ def fingerprint():
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Token-authed control API: GET /status; POST /serve, /sync-up, /stop, /shutdown."""
+
     def _reply(self, code, obj):
+        """Send `obj` as a JSON response with HTTP status `code`."""
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -169,6 +188,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _authed(self):
+        """Check the bearer token; reply 401 and return False on mismatch.
+
+        Any authenticated request also touches last_active, feeding the idle
+        watchdog.
+        """
         got = self.headers.get("Authorization", "")
         if not hmac.compare_digest(got, "Bearer " + CONTROL_TOKEN):
             self._reply(401, {"error": "bad token"})
@@ -219,6 +243,12 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(404, {"error": "unknown path"})
 
     def _serve(self, payload):
+        """Replace the vLLM container with one serving the requested model.
+
+        Kills any in-flight launcher, then starts an async bash script that
+        stages weights (S3 mirror + HF) and LoRA adapters before `docker run`;
+        replies 202 immediately -- callers poll /status for readiness.
+        """
         global SERVE_PROC, LAST_HF_ID
         try:
             name = str(payload["served_model_name"])
@@ -308,6 +338,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    """Serve the control API forever on AGENT_PORT."""
     os.makedirs(RUN_DIR, exist_ok=True)
     touch("last_active")
     ThreadingHTTPServer(("0.0.0.0", AGENT_PORT), Handler).serve_forever()

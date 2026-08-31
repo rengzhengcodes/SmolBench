@@ -12,39 +12,33 @@ information, but the extensional representation usually needs more
 tokens, and that extra length degrades performance relative to the
 intensional representation.
 
-The types of induction below all follow the same format: an extensional
-representation compacts into a shorter intensional representation. For
-induction, every intensional representation supervenes on its
-extensional representation. A change in the extensional representation
-can, by necessity, change the intensional representation.
+The benchmark below follows that format: an extensional representation
+compacts into a shorter intensional representation. For induction, every
+intensional representation supervenes on its extensional representation.
+A change in the extensional representation can, by necessity, change the
+intensional representation.
 
-## Chromatic intervals
+## Periodic patterns
 
-A chromatic interval is an interval that has a "color", and the color of
-an interval gives it certain properties. Presidency terms are an
-example. The president is the color, the intervals lie on time, and the
-extra properties are how the office holder conducts the duties of the
-presidency.
+A periodic pattern is a set of overlapping harmonics: the k-th rule
+fires at every multiple of its period, and each position's label is the
+concatenation of every rule that fires there — a generalized FizzBuzz
+(`smolbench/induction/periodic.py`).
 
-The extensional representation for a presidency is "George Washington
-was President Apr. 30 1789, May 1 1789, May 2 1789, ... and Mar. 4
-1797." The intensional representation is "George Washington was
-President between Apr. 30 1789 and Mar. 4 1797." If the presidency had
-changed (a third term, an early retirement, a temporary incapacity),
-the extensional representation would change, and that change would
-induce a change in the intensional representation.
+The extensional representation enumerates the sequence position by
+position: "Position 2: fizz. Position 3: buzz. ... Position 6:
+fizz|buzz." The intensional representation states the rules: "Every 2
+positions write fizz. Every 3 positions write buzz." If the sequence
+had differed at any position, the rule set that fits it would have to
+change too.
 
-A query on a chromatic interval always has the form "was the interval
-[color] from [start, end]." For example, "could George Washington have
-signed the Judiciary Act of 1789" queries "was the presidency 'George
-Washington' from [Sep. 24 1789, Sep. 24 1789]."
-
-This is not a classical needle-in-a-haystack (NIAH) problem. A query is
-not limited to one date; it can span many dates. The query "could
-George Washington have signed a bill on Jan. 1 1800" takes the
-complement of the presidency interval over all of time. Both
-representations are positive-utility information there, but the
-intensional one needs fewer tokens.
+A query asks either whether a label appears at a given position
+(True/False) or how many positions across one full period contain it
+(an integer). This is not a classical needle-in-a-haystack problem: a
+count query spans the whole sequence, and a membership query at a
+position where nothing fires exercises the complement of every rule.
+Both representations are positive-utility information for either query,
+but the intensional one needs fewer tokens.
 
 ## The experiment API
 
@@ -84,9 +78,8 @@ default is `base_seed=1776` (the July 4th, 1776 nod). The current
 family-ladder study deliberately overrides this:
 `notebooks/induction/run_study.py` locks `BASE_SEED=0` (seeds 0..29) -- see
 its docstring for why. One seed
-does double duty: it drives the quiz's OWN randomness (label, interval,
-and color sampling — see `PeriodicConfig.seed` /
-`ChromaticIntervalsConfig.seed`) AND, in the same call, threads through
+does double duty: it drives the quiz's OWN randomness (label and query
+sampling — see `PeriodicConfig.seed`) AND, in the same call, threads through
 as the per-request decoding seed. This makes a replicate's on-disk
 artifact (`rep_{seed}.yaml`) fully reproducible from its filename
 alone. Regenerate `make_quizzes(seed, model)` (the model matters: the

@@ -11,23 +11,17 @@ from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenize
 
 from smolbench.induction._common import (
     WHITESPACE_UNITS, choose_whitespace_unit, context_renderer, token_matched_noise_prompt)
-from smolbench.induction.chromatic import ChromaticIntervalsConfig, get_random_exclusive_quiz
-from smolbench.induction.chromatic import Prompter as ChromaticPrompter, succession_query_gen
 from smolbench.induction.periodic import PeriodicConfig, get_periodic_numeric_quiz
 from smolbench.induction.periodic import Prompter as PeriodicPrompter, numeric_count_query_gen
 
 PERIODIC_TMPL = string.Template(
     "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
 )
-CHROM_TMPL = string.Template(
-    "ROLE $role PARADE $parade\n$positive_info\nQ: Has $color1 handed to $color2?"
+# Extens can use a different, longer template, so only a per-prompt match equalizes.
+PERIODIC_EXT_TMPL = string.Template(
+    "CTX EXTENSIONAL LISTING:\n$positive_info\n"
+    "Q: How many of positions 1..$seq_len include '$label'?"
 )
-# Extens uses a different template plus $query_years, so only a per-prompt match equalizes.
-CHROM_EXT_TMPL = string.Template(
-    "ROLE $role PARADE $parade EXTENSIONAL\n$positive_info\n$query_years\n"
-    "Q: Has $color1 handed to $color2?"
-)
-CHROM_SUB = {"role": "Twislax", "parade": "Gildane"}
 
 CONTEXT = "Every 3 positions write gerbil.\n"
 
@@ -60,15 +54,15 @@ def tokenizer(request):
             PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen),
             tokenizer=tok,
         ),
-        lambda tok: get_random_exclusive_quiz(
-            ChromaticIntervalsConfig(n=250, intervals=62, colors=45, seed=1776),
-            ChromaticPrompter(CHROM_TMPL, CHROM_SUB, succession_query_gen, CHROM_EXT_TMPL),
+        lambda tok: get_periodic_numeric_quiz(
+            PeriodicConfig(n=6, labels=6, seed=1776),
+            PeriodicPrompter(
+                PERIODIC_TMPL, {}, numeric_count_query_gen, PERIODIC_EXT_TMPL),
             tokenizer=tok,
         ),
-    ), ids=["periodic", "chromatic"])
+    ), ids=["shared_template", "extens_template"])
 def test_noise_prompt_matches_extens_token_count(tokenizer, build):
     """Every noise prompt has EXACTLY its extens prompt's token count."""
-    assert "$query_years" not in CHROM_TMPL.template
     intens, extens, noise = build(tokenizer)
     assert len(intens) == len(extens) == len(noise) > 0
     for extens_q, noise_q in zip(extens, noise):

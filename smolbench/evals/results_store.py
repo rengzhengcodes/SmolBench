@@ -143,7 +143,7 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
         unconventional tree), except ``repo_root()`` itself, which gives ``""``,
         never ``"."``. A non-empty `prefix` (e.g. ``"one_hop_"``) folds in as a
         sub-level with exactly one trailing ``"_"`` stripped:
-        ``"chromatic/one_hop"``.
+        ``"induction/one_hop"``.
 
     Raises
     ------

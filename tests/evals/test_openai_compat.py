@@ -22,12 +22,14 @@ CALL = {"seed": 1, "context_length": 100}
 
 @pytest.fixture
 def ec2_env(stub_server, monkeypatch):
+    """Point the ec2 provider's env at the loopback stub server."""
     monkeypatch.setenv("EC2_INFERENCE_BASE_URL", stub_server.base_url)
     monkeypatch.setenv("EC2_VLLM_API_KEY", "stub-key")
     return stub_server
 
 
 def _body(content, finish_reason=None, model=None, **kwargs):
+    """A chat_completion body with explicit finish_reason and model fields."""
     body = chat_completion(content, **kwargs)
     body["choices"][0]["finish_reason"] = finish_reason
     body["model"] = model
@@ -77,6 +79,7 @@ def test_collect_stream_survives_usage_only_chunk_and_stops_at_done():
 
 
 def _stream_of(frames):
+    """A minimal requests-response stand-in yielding `frames` from iter_lines."""
     return type("_R", (), {"iter_lines": lambda s, decode_unicode=False: iter(frames)})()
 
 
@@ -89,6 +92,7 @@ def _stream_of(frames):
     ['data: {"choices": [{"delta": {"content": "4"}}]}'],
 ])
 def test_collect_stream_rejects_malformed_or_truncated_streams(frames):
+    """A broken stream raises the retryable transport error, never a partial body."""
     with pytest.raises(requests.exceptions.ChunkedEncodingError):
         collect_stream(_stream_of(frames))
 

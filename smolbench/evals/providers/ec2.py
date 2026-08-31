@@ -21,6 +21,15 @@ load grace), a boot-scheduled ``shutdown -h +EC2_MAX_LIFETIME_MIN``, and
 one-time Spot with InstanceInitiatedShutdownBehavior=terminate, so any OS
 shutdown terminates the box and deletes its EBS volume.
 
+Why EC2 rather than SageMaker
+    The SageMaker path still exists (``providers/aws.py``'s
+    ``provision_endpoint``) but multi-GPU endpoint quotas default to 0 (one
+    Service Quotas ticket per instance type), endpoints bill on-demand with
+    no spot market, and its vLLM DLC is configured only through a few env
+    vars -- no argv plumbing -- so it cannot serve this module's
+    digest-pinned image, per-spec ``--revision`` pins, or
+    ``DETERMINISM_ARGS``.
+
 Env-read timing
     Provisioning ``EC2_*`` constants are captured at IMPORT time -- set them
     before the first import (e.g. keys.env). Read at CALL time:
@@ -87,7 +96,7 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
 # /opt/hf-cache) to dodge gp3's 1000 MB/s ceiling; every targeted type has
 # one (p5e/p5/p4de/g5/g6). On a type WITHOUT instance store the cache falls
 # back to the root volume -- raise EC2_ROOT_VOLUME_GB to hold your
-# checkpoints (the FP8 trio is ~1.1 TB).
+# checkpoints (the largest roster entry, deepseek-v4-pro, is ~865 GB).
 EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
 EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
@@ -111,11 +120,9 @@ EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-i
 EC2_VLLM_PORT: int = 8000
 EC2_AGENT_PORT: int = 9000
 # Value of the ``smolbench:experiment`` tag, used to find, reattach to and
-# terminate this experiment's instance. The "periodic-induction" default is
-# specific to THIS experiment; every other study sets EC2_EXPERIMENT_TAG in
-# its own env BEFORE the first `import smolbench.evals.providers.ec2`, since
-# this is an import-time capture (see "Env-read timing" in the module
-# docstring) and setting it later has no effect.
+# terminate this experiment's instance. Import-time capture: set
+# EC2_EXPERIMENT_TAG before the first import of this module (see "Env-read
+# timing" in the module docstring); setting it later has no effect.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
 # Anchored to the repo root via `repo_root()`, not the cwd and not a
 # hand-counted depth off this file. Gitignored: it holds the control token
@@ -160,9 +167,12 @@ EC2_KEY_NAME: str = os.getenv("EC2_KEY_NAME", "")
 # evaluate()'s default fan-out is the EC2_MAX_PARALLEL_REQUESTS env var
 # (default 8), which the shared ChatClient reads at call time.
 # Per-request inference READ timeout, kept generous (and overridable per
-# eval) so long CoT generations finish on attempt 1 (deterministic) instead
-# of surviving only through the retry lottery, which censors the top of the
-# CoT-length distribution.
+# eval) so long CoT generations finish on attempt 1. Retries never re-seed:
+# every attempt re-POSTs the byte-identical seeded body (openai_compat
+# merges ``seed`` after extra_args, so it can never be dropped or varied),
+# so a generation longer than the read budget just times out again on each
+# attempt -- a short budget censors the top of the CoT-length distribution
+# rather than re-rolling it.
 EC2_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("EC2_REQUEST_TIMEOUT_SECONDS", "600"))
 # Connect timeout, kept SHORT and SEPARATE from the long read timeout above,
 # because requests treats a scalar ``timeout`` as both connect AND read: a
@@ -270,6 +280,14 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 #     deepseek_v4 parser, whose initial state accepts the prompt-final
 #     <think>. DeepSeek-V3.1 DOES ship its own template (thinking kwarg), so
 #     it needs no override.
+
+# Inline stand-in for the chat template DeepSeek V4 does not ship (see the
+# DeepSeek V4 note above): renders the [system?, user] + generation-prompt
+# shapes this repo sends exactly as the repo's own encoding_dsv4.py does --
+# system text bare, user text prefixed ``<｜User｜>``, then ``<｜Assistant｜>``
+# followed by an open ``<think>`` when ``thinking`` is true/unset (CoT on,
+# the study default) or a closed ``</think>`` when false. Byte-equality with
+# the vendored encoder is pinned by tests/evals/test_dsv4_chat_template.py.
 DSV4_CHAT_TEMPLATE: str = (
     "<｜begin▁of▁sentence｜>"
     "{%- for m in messages -%}"
@@ -285,7 +303,15 @@ DSV4_CHAT_TEMPLATE: str = (
 # The Ministral-3 Reasoning template's default_system_message, verbatim
 # (the md5 of the shipped chat_template.jinja is
 # f9ce03df8c692f42b2aeb78024e29f4f, identical across the 3B/8B/14B rungs).
-# See the Ministral note above.
+# Needed because Ministral has NO native thinking toggle: the shipped
+# template exposes no enable_thinking/thinking chat_template_kwargs -- the
+# [THINK] protocol lives entirely in this default system message, which the
+# template injects ONLY when the request supplies no system message of its
+# own. Any eval that sets a system prompt (the Lean eval always does) would
+# therefore silently disable thinking; injecting the exact default text as
+# the spec-level system_prompt keeps thinking on in every case while leaving
+# no-system-prompt requests byte-identical to out-of-box behavior. See the
+# Ministral note above.
 MINISTRAL_THINK_SYSTEM: str = (
     "# HOW YOU SHOULD THINK AND ANSWER\n\n"
     "First draft your thinking process (inner monologue) until you arrive at a "
@@ -551,6 +577,14 @@ _INSTANCE_GPU_NAMES = {
 #: count, changing derived tp mid-lane. Pinning the silicon rather than the
 #: instance size keeps a same-GPU substitution legal and refuses a
 #: tp-changing one.
+#:
+#: Determinism scope: the pin is necessary but NOT sufficient. Measured
+#: (commit ac11f8c2): nemotron-3-nano-4b was 8/8 bitwise-identical at a
+#: fixed seed on one box, yet 0/8 across g6e.4xlarge vs g6e.2xlarge with
+#: the SAME 1x L40S and tp=1 -- host vCPU/RAM change batching and thus
+#: reduction order. The pin blocks silicon/tp swaps; it does not certify
+#: cross-box reproducibility, so a lane that must be bit-reproducible also
+#: needs the same instance SIZE.
 EC2_REQUIRE_GPU: str = os.getenv("EC2_REQUIRE_GPU", "")
 
 

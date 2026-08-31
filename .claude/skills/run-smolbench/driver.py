@@ -62,16 +62,13 @@ def main() -> None:
 
     from smolbench.evals import Marks
     from smolbench.evals import provider
-    from smolbench.induction.chromatic import (
-        ChromaticIntervalsConfig,
-        get_random_exclusive_quiz,
-        succession_query_gen,
-    )
     from smolbench.induction.periodic import (
         PeriodicConfig,
         Prompter,
         get_periodic_numeric_quiz,
+        get_periodic_quiz,
         numeric_count_query_gen,
+        tof_membership_query_gen,
     )
 
     # -- 2. Periodic quiz generation (offline, deterministic) ----------------
@@ -93,26 +90,24 @@ def main() -> None:
     check(tuple(intens) == tuple(intens2), "periodic generation is not seed-deterministic")
     stage("periodic", f"{len(intens)} Numeric questions, answers {[q.answer for q in intens]}, seed-stable")
 
-    # -- 3. Chromatic quiz generation (offline, deterministic) ---------------
-    chromatic_template = string.Template(
+    # -- 3. Periodic ToF quiz generation (offline, deterministic) ------------
+    tof_template = string.Template(
         "Context:\n---\n"
-        "There is a ceremonial role called the $role, whose job it is to head "
-        "the $parade parade. The following lists the people who were $role and "
-        "the years they were $role:\n$positive_info\n\n"
-        "Query:\nHas $color1 handed the sceptre to $color2? Answer with only "
-        "one word: 'True' or 'False'."
+        "There is a counting game. Count positions starting from 1. "
+        "At each position write down words according to the following rules:\n"
+        "$positive_info\n"
+        "Query:\nDoes position $pos include '$label'? Answer with only one "
+        "word: 'True' or 'False'."
     )
-    chromatic_cfg = ChromaticIntervalsConfig(n=40, intervals=10, colors=5, seed=1776)
-    chromatic_prompter = Prompter(
-        chromatic_template, {"role": "Twislax", "parade": "Gildane"}, succession_query_gen
-    )
-    chrom_intens, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter, tokenizer=StubTokenizer())
-    n_true = sum(1 for q in chrom_intens if q.answer is True)
-    n_false = sum(1 for q in chrom_intens if q.answer is False)
+    tof_cfg = PeriodicConfig(n=4, labels=["fizz", "buzz", "gerbil", "dax"], seed=1776)
+    tof_prompter = Prompter(tof_template, {}, tof_membership_query_gen)
+    tof_intens, _, _ = get_periodic_quiz(tof_cfg, tof_prompter, tokenizer=StubTokenizer())
+    n_true = sum(1 for q in tof_intens if q.answer is True)
+    n_false = sum(1 for q in tof_intens if q.answer is False)
     check(n_true >= 1 and n_true == n_false, f"expected balanced ToF polarity, got {n_true}T/{n_false}F")
-    chrom_intens2, _, _ = get_random_exclusive_quiz(chromatic_cfg, chromatic_prompter, tokenizer=StubTokenizer())
-    check(tuple(chrom_intens) == tuple(chrom_intens2), "chromatic generation is not seed-deterministic")
-    stage("chromatic", f"{len(chrom_intens)} ToF questions ({n_true} True / {n_false} False), seed-stable")
+    tof_intens2, _, _ = get_periodic_quiz(tof_cfg, tof_prompter, tokenizer=StubTokenizer())
+    check(tuple(tof_intens) == tuple(tof_intens2), "periodic ToF generation is not seed-deterministic")
+    stage("periodic-tof", f"{len(tof_intens)} ToF questions ({n_true} True / {n_false} False), seed-stable")
 
     # -- 4. Stub server + call-time provider dispatch ------------------------
     server = StubServer()
@@ -157,7 +152,7 @@ def main() -> None:
         # (thread completion order is nondeterministic).
         server.default_response = chat_completion("True")
         marks_par = provider.evaluate(
-            chrom_intens, "smolbench-smoke", seed=42, max_parallel=4, show_progress=False
+            tof_intens, "smolbench-smoke", seed=42, max_parallel=4, show_progress=False
         )
         check(
             (marks_par.correct, marks_par.incorrect, marks_par.invalid)
@@ -165,7 +160,7 @@ def main() -> None:
             f"parallel tally {(marks_par.correct, marks_par.incorrect, marks_par.invalid)} "
             f"!= {(n_true, n_false, 0)}",
         )
-        stage("evaluate-par", f"{len(chrom_intens)} ToF questions at max_parallel=4 -> {n_true} correct")
+        stage("evaluate-par", f"{len(tof_intens)} ToF questions at max_parallel=4 -> {n_true} correct")
     finally:
         server.shutdown()
         server_thread.join(timeout=5)
@@ -179,7 +174,7 @@ def main() -> None:
         check(Marks.load(out) == marks_par, "Marks YAML round trip lost data")
     stage("marks-io", "safe-YAML dump/load round trip equal")
 
-    total_qs = len(intens) + len(chrom_intens) + 1
+    total_qs = len(intens) + len(tof_intens) + 1
     print(
         f"\nPASS — smolbench offline smoke: {total_qs} stub completions served "
         f"({len(server.requests)} HTTP requests recorded), "

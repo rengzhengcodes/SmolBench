@@ -59,8 +59,8 @@ from smolbench.induction._common import (
     token_matched_noise_prompt,
 )
 
-# Re-exported for callers configuring the benchmark (the class is shared with
-# chromatic so the prompting contract stays identical across benchmarks).
+# Prompter is re-exported for callers configuring the benchmark; the class
+# itself lives in ``_common`` with the rest of the generation machinery.
 __all__ = [
     "PeriodicConfig",
     "Prompter",

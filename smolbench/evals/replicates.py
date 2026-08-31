@@ -45,8 +45,8 @@ class ReplicateHarness:
     #: (e.g. {"olmo-3.1-32b-instruct": "decode"}).
     archetype_tags: Mapping[str, str]
     #: (seed, model) -> {info type: quiz}, called on demand per outstanding seed
-    #: rather than eagerly, to keep notebook memory bounded (a chromatic
-    #: replicate embeds the full interval history in about 120 prompts). Keyed
+    #: rather than eagerly, to keep notebook memory bounded (an extens replicate
+    #: embeds the fully enumerated listing in every prompt). Keyed
     #: on the MODEL because the ``noise_intens`` arm is padded to an exact TOKEN
     #: count under the tested model's own tokenizer, so its prompts differ per
     #: model; ``intens``/``extens`` stay byte-identical across models, keeping

@@ -17,7 +17,7 @@ Tests are grouped by subsystem under test:
 
 - `evals/` -- harness infrastructure and providers (EC2, AWS, OpenAI-compat,
   results store, marks I/O, tokenization/parsing).
-- `induction/` -- the induction benchmark (periodic/chromatic quizzes,
+- `induction/` -- the induction benchmark (periodic quizzes,
   golden fixtures, figures).
 - `deduction/` -- the Lean 4 benchmark and its pipeline scripts (corpus,
   context, prompt, runner, sft, decontam, verify, S3 archive).

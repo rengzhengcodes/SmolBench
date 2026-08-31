@@ -27,11 +27,14 @@ T = TypeVar("T")
 def fresh_client(service: str, region: Optional[str] = None):
     """Build a boto3 client from a brand-new :class:`boto3.session.Session`.
 
-    Deliberately NOT ``boto3.client(...)``, which caches credentials in the
-    process-wide default session; clients are never reused either. A fresh
-    Session per call picks up a rotated ``~/.aws/credentials`` (this repo's IdP
-    sessions last ~12h) on the very next call, instead of raising
-    ``RequestExpired``/``ExpiredToken`` until the process restarts.
+    Deliberately NOT ``boto3.client(...)``: that goes through the process-wide
+    default session, which resolves ``~/.aws/credentials`` ONCE and never
+    re-reads it. The processes calling this (notebook kernels driving multi-hour
+    evals) outlive the repo's short-lived IdP sessions, so a cached session
+    would keep signing with the expired credentials -- every call raising
+    ``RequestExpired``/``ExpiredToken`` until the process restarts. A fresh
+    Session per call (clients are never reused either) re-reads the file and
+    picks up rotated credentials on the very next call.
 
     Parameters
     ----------
@@ -48,9 +51,11 @@ def error_code(err: Exception) -> str:
     """Return ``err.response["Error"]["Code"]``, or ``""`` if absent.
 
     Accepts any exception, not just ``ClientError``: a missing, ``None`` or
-    non-mapping ``.response``/``Error`` degrades to ``""`` rather than raising
-    -- callers use this inside ``except`` blocks, where a second exception
-    would replace the real failure.
+    non-mapping ``.response``/``Error`` degrades to ``""`` rather than raising.
+    Callers use this inside ``except`` blocks to classify the AWS error being
+    handled (retry? already-exists? already-gone?); if it raised there, the new
+    exception would propagate INSTEAD of the original one -- hiding the real
+    failure from logs, and in teardown paths aborting the remaining cleanup.
     """
     response = getattr(err, "response", None)
     error = response.get("Error") if isinstance(response, dict) else None

@@ -61,7 +61,11 @@ class ToF(QnA):
             raises.
         """
         # Strip everything but letters, so wrapping punctuation or markup
-        # (e.g. "**True**") does not block the match below.
+        # (e.g. "**True**") does not block the match below. Not a regex sub:
+        # measured equal at answer-sized inputs (~0.15us either way; regex only
+        # wins past ~200 chars, where this parser rejects anyway), and
+        # str.isalpha keeps the Unicode letter class without a charset to
+        # maintain.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])
         match cleaned_ans.lower():
             case "false":
@@ -101,6 +105,21 @@ class Numeric(QnA):
 Quiz: TypeAlias = Sequence[QnA]
 
 
+#: ``Mark.compliance`` value meaning "assessed: the response obeyed the output
+#: contract exactly". None (YAML ``null``) rather than a marker string, because
+#: the S3 results log is append-only and every reader of collected files --
+#: ``Marks.noncompliant`` and the analysis census's raw-YAML scan -- already
+#: keys on ``compliance: null`` = obeyed; a new marker would misread as a
+#: violation mode there.
+COMPLIANT = None
+#: ``Mark.compliance`` value meaning "never run through the compliance-aware
+#: parser". The field's DEFAULT, so a stored mark predating the field (loaded
+#: via ``Mark(**m)`` with no ``compliance`` key, or a legacy tagged file whose
+#: attribute lookup falls back to the class attribute) reads as not-assessed
+#: instead of masquerading as `COMPLIANT`.
+NOT_ASSESSED = "not-assessed"
+
+
 @dataclass(frozen=True)
 class Mark:
     """One question's grading result."""
@@ -115,15 +134,14 @@ class Mark:
     score: Optional[int]
     #: Chain-of-thought reasoning returned by the model, or None.
     reasoning: Optional[str] = None
-    #: How the response broke the prompt's output contract; None means it obeyed
-    #: the contract exactly. Label values live in `smolbench.evals.parsing`.
-    #: Separate from ``score`` so an analysis can tell "the model was wrong" from
-    #: "right but broke the format".
-    #:
-    #: MUST stay optional: stored marks written without it are still read
-    #: (``Marks.load`` builds each mark with ``Mark(**m)``), where None means
-    #: "not assessed", not "compliant".
-    compliance: Optional[str] = None
+    #: How the response broke the prompt's output contract: a violation label
+    #: from `smolbench.evals.parsing`, `COMPLIANT` (None) when it obeyed the
+    #: contract exactly, or `NOT_ASSESSED` when nothing ever judged it -- the
+    #: default, so legacy stored marks that lack the field load as
+    #: not-assessed rather than as compliant. Separate from ``score`` so an
+    #: analysis can tell "the model was wrong" from "right but broke the
+    #: format".
+    compliance: Optional[str] = NOT_ASSESSED
 
 
 @dataclass(frozen=True)
@@ -162,9 +180,12 @@ class Marks:
 
         Independent of ``correct``/``incorrect``/``invalid``: a correct response
         can still break the format, so this separates degraded instruction
-        following from degraded reasoning.
+        following from degraded reasoning. `NOT_ASSESSED` marks (legacy files)
+        count as neither compliant nor noncompliant.
         """
-        return sum(1 for m in self.marks if m.compliance is not None)
+        return sum(
+            1 for m in self.marks if m.compliance not in (COMPLIANT, NOT_ASSESSED)
+        )
 
     # -- Serialization ------------------------------------------------------
     # A result file is plain-dict YAML (safe_dump of dataclasses.asdict), NOT

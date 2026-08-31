@@ -45,10 +45,10 @@ def test_config_and_harness_passthrough(exp):
     assert harness.force_seeds is None
 
     custom = InductionExperiment(
-        notebook_dir="chromatic", archetype_tags={"m": "decode"}, make_quizzes=make_quizzes,
+        notebook_dir="divisor", archetype_tags={"m": "decode"}, make_quizzes=make_quizzes,
         n_replicates=4, base_seed=100, prefix="one_hop_", force_seeds=frozenset({100}),
     )
-    assert custom.results_dir == repo_root() / "notebooks" / "chromatic" / "results"
+    assert custom.results_dir == repo_root() / "notebooks" / "divisor" / "results"
     assert custom.seeds == (100, 101, 102, 103)
     assert custom.harness.prefix == "one_hop_"
     assert custom.harness.force_seeds == frozenset({100})
@@ -59,12 +59,12 @@ def test_apply_env(monkeypatch, exp):
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     monkeypatch.delenv("EC2_STATE_FILE", raising=False)
     namespaced = InductionExperiment(
-        notebook_dir="chromatic", archetype_tags={}, make_quizzes=make_quizzes,
-        state_file=".ec2_state_chromatic.json",
+        notebook_dir="divisor", archetype_tags={}, make_quizzes=make_quizzes,
+        state_file=".ec2_state_divisor.json",
     )
     namespaced._apply_env()
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
-    assert os.environ["EC2_STATE_FILE"] == str(repo_root() / ".ec2_state_chromatic.json")
+    assert os.environ["EC2_STATE_FILE"] == str(repo_root() / ".ec2_state_divisor.json")
 
     monkeypatch.setenv("EC2_STATE_FILE", "/tmp/some_other_experiments_state.json")
     exp._apply_env()

@@ -82,7 +82,7 @@ class InductionExperiment:
     base_seed: int = 1776
     #: Info types evaluated per replicate, in serialization order. Forwarded to
     #: ``ReplicateHarness``. The default is the original three-condition set
-    #: (see ``periodic.py`` / ``chromatic.py``'s "Information conditions"
+    #: (see ``periodic.py``'s "Information conditions"
     #: module docstring section); the family-ladder study adds ``"zero"`` for
     #: :func:`~smolbench.induction.periodic.get_periodic_zero_info_numeric_quiz`.
     info_types: Tuple[str, ...] = ("intens", "extens", "noise_intens")

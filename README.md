@@ -7,8 +7,7 @@ in this repository:
 
 - **Induction** (`smolbench/induction/`): asks a model to infer a rule
   from examples. The `periodic` benchmark uses a generalized FizzBuzz
-  sequence; the `chromatic` benchmark uses interval "sceptre handoff"
-  sequences. Both compare an intensional (compact rule) representation
+  sequence, comparing an intensional (compact rule) representation
   against an extensional (fully enumerated) one, plus a token-matched
   noise-padded control. See `smolbench/induction/README.md` for the full
   task design.
@@ -34,9 +33,9 @@ smolbench/                 the installable library
     openai_compat.py         the shared HTTP + response-parsing engine
     _aws.py                  AWS primitives shared by providers/aws.py, providers/ec2.py, results_store.py
     parsing.py, tokenization.py, replicates.py, results_store.py
-  induction/                the periodic/chromatic benchmarks (see smolbench/induction/README.md)
-    _common.py                shared generation machinery
-    periodic.py, chromatic.py the two benchmark families
+  induction/                the periodic benchmark (see smolbench/induction/README.md)
+    _common.py                generation machinery (labels, token-matched noise pad)
+    periodic.py                the benchmark family
     experiment.py              replicated-evaluation + EC2-lifecycle facade
     figures.py                 analysis plotting helpers
   deduction/lean/           the Lean 4 theorem-proving benchmark

@@ -1,8 +1,8 @@
 """Separate "wrong" from "wrongly formatted" when extracting an answer.
 
 The eval prompts carry an explicit output contract ("exactly one of True/False
-and nothing else" for chromatic, "exactly one integer and nothing else" for the
-periodic studies). The strict graders in ``smolbench.evals.quiz`` conflate a
+and nothing else" for ToF quizzes, "exactly one integer and nothing else" for
+the periodic studies). The strict graders in ``smolbench.evals.quiz`` conflate a
 wrong answer with a right answer in the wrong format, in both directions:
 ``ToF.condition`` raises on ``"Answer: False"``, while ``Numeric.condition``
 takes the FIRST integer, silently scoring ``"2520 // 8 = 315\\n\\n315"`` as 2520.
@@ -62,6 +62,12 @@ EXPRESSION = "unevaluated-expression"
 _LONG_RESPONSE = 200
 #: How much of the tail counts as "the concluding statement".
 _TAIL_WINDOW = 60
+# Collapse is detected by these alphabet/vocabulary thresholds, NOT by a
+# repeated-substring regex like (.+?)\1{9,}: a backreference only sees EXACT
+# repeats, so it false-positives on benign formatting runs ("-" rules, "\n"
+# pads -- shapes test_not_degenerate pins) yet misses vocabulary collapse that
+# never repeats verbatim, and on long genuine prose (the common case) its
+# backtracking measured ~100x slower than these set-size counts.
 #: A long response built from this few distinct characters is collapse.
 _DEGENERATE_ALPHABET = 3
 _DEGENERATE_MIN_LEN = 500
@@ -189,6 +195,9 @@ def _eval_arithmetic(text: str) -> Optional[int]:
 
     Walks a validated AST instead of calling ``eval``, honoring only numeric
     literals and `_ARITHMETIC_BINOPS`, so a hostile response cannot run code.
+    Deliberately not a third-party evaluator (simpleeval, asteval): those
+    accept a far wider surface (pow, names, comprehensions) than the "one
+    integer" contract wants, and the repo keeps runtime dependencies minimal.
 
     Returns
     -------

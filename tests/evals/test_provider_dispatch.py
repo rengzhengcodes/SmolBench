@@ -32,7 +32,16 @@ def test_provider_module_resolution(monkeypatch, env_value, name, expected):
 
 @pytest.mark.parametrize("name", [None, "sagemaker"])
 def test_sagemaker_requires_base_url(monkeypatch, name):
-    """Selecting sagemaker without a base URL would silently hit Bedrock."""
+    """provider_module() refuses "sagemaker" until AWS_INFERENCE_BASE_URL is set.
+
+    "sagemaker" is an alias for the SAME providers.aws module that serves
+    Bedrock ("aws"/"bedrock"): SageMaker inference and provisioning live in
+    aws.py, and that module's default base URL is Bedrock's, so without this
+    dispatcher-level guard a sagemaker selection with no endpoint URL would
+    silently run the eval against Bedrock. Pins, for both selection routes
+    (explicit name and INFERENCE_PROVIDER): the ValueError names the missing
+    variable, and setting the URL resolves to providers.aws.
+    """
     if name is None:
         monkeypatch.setenv("INFERENCE_PROVIDER", "sagemaker")
     else:

@@ -1,8 +1,10 @@
-"""Share generation machinery between the induction benchmarks (periodic, chromatic).
+"""Generation machinery behind the induction benchmark (periodic).
 
-The benchmarks must stay CALIBRATED: the noise-padding ablation is comparable
-across evals only when the noise profile is identical, and a seed must map to
-the same label set in both.
+Kept separate from ``periodic.py`` so the calibration invariants live in one
+place: the noise-padding ablation is comparable across evals only when the
+noise profile is identical, and a seed must always map to the same label set.
+(``smolbench.deduction.lean.context`` reuses the pad search below for the same
+reason.)
 
 The noise pad is WHITESPACE sized in TOKENS (:func:`token_matched_noise_prompt`)
 under the tokenizer of the model under test, verified to hit the target exactly.
@@ -41,8 +43,7 @@ class Prompter:
     #: benchmark-specific (see each benchmark's built-in query generators).
     query_gen: Callable[..., Iterable[Tuple[Dict[str, str], Any]]]
     #: Optional extensional-prompt template, so the query representation can
-    #: match the extensional context (e.g. chromatic's $query_years). Falls
-    #: back to ``template`` when None.
+    #: match the extensional context. Falls back to ``template`` when None.
     extens_template: Optional[string.Template] = None
 
     @property
@@ -56,11 +57,10 @@ def build_substitution(
 ) -> Dict[str, str]:
     """Merge a query's substitutions with the prompter's, plus positive_info.
 
-    The single merge point for all three renderings in both benchmarks, so
-    precedence is uniform: dict-union in the order ``query``,
-    ``prompter.substitution``, ``positive_info``, the last winning a collision.
-    Returns a fresh dict, so callers may mutate it further (chromatic's
-    extensional renderer adds ``query_years``).
+    The single merge point for all three renderings, so precedence is uniform:
+    dict-union in the order ``query``, ``prompter.substitution``,
+    ``positive_info``, the last winning a collision. Returns a fresh dict, so
+    callers may mutate it further.
     """
     return query | prompter.substitution | {"positive_info": positive_info}
 
@@ -124,9 +124,9 @@ def random_unique_strings(
 # (ceil(log_base(count))) for auto-generated labels. At exactly that minimum the
 # space is full once `count` labels are drawn, leaving `random_unique_strings`
 # zero slack; doubling the length gives headroom, since base**l grows
-# exponentially in l. A calibration invariant shared by both benchmarks'
-# auto-generated labels and colors -- changing it changes label length, and so
-# prompt length, for every benchmark at once.
+# exponentially in l. A calibration invariant for every auto-generated label
+# set -- changing it changes label length, and so prompt length, for every
+# config at once.
 LABEL_LENGTH_SAFETY_FACTOR: int = 2
 
 
@@ -138,10 +138,9 @@ def random_labels(
 ) -> Tuple[str, ...]:
     """Auto-generate ``count`` unique random labels for a benchmark config.
 
-    Shared by both benchmarks' configs, which keeps their label lengths
-    calibrated. Length is
+    Length is
     ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``;
-    ``min_length=0`` (chromatic) adds no floor, periodic passes 2 so
+    ``min_length=0`` adds no floor, periodic passes 2 so
     single-character labels are never auto-generated. RNG call order is fixed --
     one fresh ``np.random.default_rng(seed)``, then one
     :func:`random_unique_strings` call -- so a seed always yields the same set.
@@ -242,12 +241,12 @@ def token_matched_noise_prompt(
 ) -> str:
     """Render `context` padded with whitespace to hit an exact token count.
 
-    The noise-padded ("length control") arm of both benchmarks. The pad is
-    APPENDED, keeping the rules where the unpadded intensional arm puts them,
-    and the match is on the whole RENDERED prompt, per query: query text length
-    varies and chromatic's extensional arm renders from a different template, so
-    equal-token CONTEXTS would still give unequal-token PROMPTS. Consumes no RNG
-    and takes no seed, so a replicate stays regenerable from its seed alone.
+    The noise-padded ("length control") arm. The pad is APPENDED, keeping the
+    rules where the unpadded intensional arm puts them, and the match is on the
+    whole RENDERED prompt, per query: query text length varies (and an
+    ``extens_template`` can render from a different template), so equal-token
+    CONTEXTS would still give unequal-token PROMPTS. Consumes no RNG and takes
+    no seed, so a replicate stays regenerable from its seed alone.
 
     Parameters
     ----------

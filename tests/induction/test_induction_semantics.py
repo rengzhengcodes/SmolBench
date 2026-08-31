@@ -12,13 +12,6 @@ import pytest
 
 from conftest import StubTokenizer
 
-from smolbench.induction.chromatic import (
-    ChromaticIntervalsConfig,
-    anneal_intervals,
-    duration_query_gen,
-    get_random_exclusive_chromatic_intervals,
-    succession_query_gen,
-)
 from smolbench.induction.periodic import (
     PeriodicConfig,
     Prompter,
@@ -130,46 +123,3 @@ def test_period_validation(kwargs, match):
     """Malformed period sets must raise at construction, not silently resize the sequence."""
     with pytest.raises(ValueError, match=match):
         PeriodicConfig(seed=3, **kwargs)
-
-
-def test_chromatic_succession_answers_match_interval_map():
-    """succession answers must equal "pair is consecutive in the interval tiling"."""
-    cfg = ChromaticIntervalsConfig(n=20, intervals=6, colors=4, seed=99)
-    label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(cfg)
-    sorted_intervals = sorted(intervals_to_labels.items(), key=lambda item: item[0][0])
-    true_pairs = {
-        (color1, color2)
-        for (_interval1, color1), (_interval2, color2)
-        in zip(sorted_intervals, sorted_intervals[1:])
-    }
-
-    seen_true = seen_false = 0
-    for query, answer in succession_query_gen(label_to_intervals, intervals_to_labels, cfg.seed):
-        pair = (query["color1"], query["color2"])
-        assert answer == (pair in true_pairs)
-        seen_true += bool(answer)
-        seen_false += not answer
-    assert seen_true > 0
-    assert seen_false > 0
-
-
-def test_chromatic_duration_query_gen_totals_and_zero_interval_color():
-    """Durations equal annealed-span sums; zero-interval colors yield no query at all."""
-    cfg = ChromaticIntervalsConfig(n=40, intervals=8, colors=4, seed=1776)
-    label_to_intervals, intervals_to_labels = get_random_exclusive_chromatic_intervals(cfg)
-
-    interval_counts = [len(intervals) for intervals in label_to_intervals.values()]
-    assert any(count == 0 for count in interval_counts)
-    assert any(count > 1 for count in interval_counts)
-
-    queried_totals = {
-        query["color"]: total
-        for query, total in duration_query_gen(label_to_intervals, intervals_to_labels, cfg.seed)
-    }
-
-    for color, intervals in label_to_intervals.items():
-        if len(intervals) == 0:
-            assert color not in queried_totals
-            continue
-        annealed = tuple(anneal_intervals(intervals))
-        assert queried_totals[color] == sum(end - start for start, end in annealed)

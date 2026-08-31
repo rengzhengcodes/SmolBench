@@ -30,7 +30,6 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
 
 .venv/bin/python -m smolbench.induction.periodic              # quiz-generation demo
-.venv/bin/python -m smolbench.induction.chromatic | tail -25  # prints ~120 prompt blocks
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
 bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real REPL replay (see below)

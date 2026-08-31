@@ -131,6 +131,10 @@ def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
     if reasoning is not None:
         message["reasoning"] = reasoning
     body = {"choices": [{"message": message}]}
+    # Three-way `usage` switch, with Ellipsis as the "unspecified" sentinel
+    # (None is a meaningful value here, so it cannot be the default): omitted
+    # -> a small default usage stanza, usage=None -> no usage key at all (a
+    # server that reports nothing), any dict -> passed through verbatim.
     if usage is ...:
         usage = {"total_tokens": 10}
     if usage is not None:

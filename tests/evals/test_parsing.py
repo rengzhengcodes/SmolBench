@@ -57,8 +57,11 @@ def test_numeric_extraction(text, value, violation):
 
 @pytest.mark.parametrize("text", ["9**9**9", "2520/0", "2520/7.5abc"])
 def test_numeric_refuses_unsafe_or_ill_formed_expressions(text):
-    """Exponentiation, division by zero, and junk never evaluate."""
-    assert parse_numeric(text).violation != EXPRESSION
+    """Exponentiation, division by zero, and junk never evaluate -- but a
+    violation is still recorded (integer-picking labels them MULTIPLE_VALUES)."""
+    result = parse_numeric(text)
+    assert result.violation != EXPRESSION
+    assert result.violation is not None
 
 
 def test_arithmetic_evaluation_cannot_execute_code():

@@ -191,7 +191,7 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
     assert isinstance(resolve_store(tmp_path / "results"), LocalResultsStore)
     for uri, rel, prefix, base, exp in [
         (URI, "notebooks/periodic_moe/results", "", "", "periodic_moe"),
-        (URI, "notebooks/chromatic/results", "one_hop_", "", "chromatic/one_hop"),
+        (URI, "notebooks/divisor/results", "one_hop_", "", "divisor/one_hop"),
         (URI, "notebooks/brand_new/results", "", "", "brand_new"),  # need not exist
         (f"{URI}/archive/2026-08", "notebooks/periodic/results", "", "archive/2026-08",
          "periodic"),
@@ -229,14 +229,14 @@ def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3
     assert sync_down(results, TAGS) == 2
     assert (results / "moe_extens" / "rep_1776.yaml").read_bytes() == body
     assert (results / "decode_intens" / "rep_1777.yaml").read_bytes() == body
-    chromatic = fake_repo / "notebooks/chromatic/results"
-    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1, "chromatic/one_hop")] = body
-    fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1, "chromatic/one_hop")] = body
-    argv = [str(chromatic), "--tag", "stub-model=decode", "--tag", "gpt-oss-120b=moe",
+    divisor = fake_repo / "notebooks/divisor/results"
+    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1, "divisor/one_hop")] = body
+    fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1, "divisor/one_hop")] = body
+    argv = [str(divisor), "--tag", "stub-model=decode", "--tag", "gpt-oss-120b=moe",
             "--prefix", "one_hop_"]
     assert rs.main(argv) == 0  # the CLI re-types the repeatable tag map, then calls sync_down
-    assert (chromatic / "one_hop_decode_intens" / "rep_1776.yaml").read_bytes() == body
-    assert (chromatic / "one_hop_moe_extens" / "rep_1776.yaml").read_bytes() == body
+    assert (divisor / "one_hop_decode_intens" / "rep_1776.yaml").read_bytes() == body
+    assert (divisor / "one_hop_moe_extens" / "rep_1776.yaml").read_bytes() == body
     with pytest.raises(SystemExit):
         rs.main([str(results), "--tag", "no-equals-sign"])
     # Refetch unless a local copy's MD5 verifies against the ETag: an in-place regrade
