@@ -1,0 +1,3 @@
+{"path": "Mini/Prem.lean", "imports": [], "premises": [{"full_name": "Mini.premiseA", "code": "theorem premiseA : True", "start": [3, 1], "end": [3, 30], "kind": "commanddeclaration"}]}
+{"path": "Mini/Old.lean", "imports": ["Mini/Prem.lean"], "premises": []}
+{"path": "Mini/New.lean", "imports": ["Mini/Prem.lean"], "premises": []}

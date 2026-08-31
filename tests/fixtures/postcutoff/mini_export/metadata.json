@@ -1,0 +1,9 @@
+{
+  "dataset_name": "LeanDojo Benchmark (synthetic v2 export fixture)",
+  "creation_time": "2026-08-30 12:00:00.000000",
+  "from_repo": {
+    "url": "/mnt/data/mathlib4",
+    "commit": "2ca39e62989124794bd8405bb2e60805f63d37bc"
+  },
+  "leandojo_version": "2.0.0"
+}
