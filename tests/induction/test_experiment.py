@@ -13,11 +13,19 @@ from smolbench.evals.replicates import ReplicateHarness
 from smolbench.induction.experiment import InductionExperiment, repo_root
 
 
-def make_quizzes(seed: int):
-    """One-question-per-info-type stub quiz factory, keyed by seed."""
+def make_quizzes(seed: int, model: str):
+    """One-question-per-info-type stub quiz factory, keyed by seed AND model.
+
+    The signature is the contract ``InductionExperiment.make_quizzes``
+    declares (``Callable[[int, str], Dict[str, Quiz]]``) and the one
+    ``ReplicateHarness.run_replicates`` calls with -- ``make_quizzes(seed,
+    model)``. It used to take ``seed`` alone, which nothing caught because no
+    test ever invoked it (12-20); ``test_run_replicates_calls_make_quizzes_
+    with_seed_and_model`` below now does.
+    """
     return {
-        "intens": (Numeric(prompt=f"i/{seed}", answer=1),),
-        "extens": (Numeric(prompt=f"e/{seed}", answer=2),),
+        "intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),),
+        "extens": (Numeric(prompt=f"e/{seed}/{model}", answer=2),),
     }
 
 
@@ -209,3 +217,56 @@ def test_invalid_shards_are_rejected(bad):
     """A malformed shard must fail at construction, not collect a wrong slice."""
     with pytest.raises(ValueError, match="shard"):
         _sharded(bad[1], bad[0])
+
+
+def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp, tmp_path):
+    """The harness really drives ``make_quizzes(seed, model)`` and stores per arm.
+
+    Closes 12-20: every prior test only asserted ``harness.make_quizzes is
+    make_quizzes`` and monkeypatched ``run_replicates`` away, so inserting
+    ``raise AssertionError`` as the stub's first statement left all 16 tests
+    passing -- the stub's wrong arity was invisible. This drives the real
+    ``run_replicates`` against a real ``LocalResultsStore`` on tmp_path with
+    only the provider stubbed, so the call arity, the per-info split of the
+    pooled marks, and the stored layout are all exercised.
+    """
+    from smolbench.evals import Mark, Marks
+    from smolbench.evals import replicates as replicates_mod
+    from smolbench.evals.results_store import LocalResultsStore
+
+    calls: list[tuple[int, str]] = []
+    real_make = make_quizzes
+
+    def recording_make(seed, model):
+        calls.append((seed, model))
+        return real_make(seed, model)
+
+    harness = exp.harness
+    # cached_property on a frozen dataclass: write through __dict__, as
+    # InductionExperiment.harness itself documents.
+    harness.__dict__["store"] = LocalResultsStore(tmp_path)
+    object.__setattr__(harness, "make_quizzes", recording_make)
+
+    def fake_evaluate(quiz, model, seed, **kwargs):
+        return Marks(
+            model=model,
+            marks=tuple(
+                Mark(query=q.prompt, answer=q.answer, response="1", score=1)
+                for q in quiz
+            ),
+        )
+
+    monkeypatch.setattr(replicates_mod.provider, "evaluate", fake_evaluate)
+
+    harness.run_replicates("stub-model")
+
+    # Called once per seed, with (seed, model) -- not (seed,).
+    assert calls == [(1776, "stub-model"), (1777, "stub-model"), (1778, "stub-model")]
+    # Both arms landed, one mark each, under the archetype tag.
+    for info in ("intens", "extens"):
+        for seed in (1776, 1777, 1778):
+            stored = tmp_path / f"decode_{info}" / f"rep_{seed}.yaml"
+            assert stored.exists(), stored
+            marks = Marks.load(stored)
+            assert len(marks.marks) == 1
+            assert marks.marks[0].query == f"{info[0]}/{seed}/stub-model"

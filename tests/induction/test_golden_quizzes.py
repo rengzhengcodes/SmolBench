@@ -57,8 +57,8 @@ def test_periodic_golden(seed):
     (InductionExperiment.base_seed)."""
     # The induction study's production config (notebooks/induction/run_study.py).
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
-    numeric = PeriodicPrompter(PERIODIC_TMPL, {}, numeric_count_query_gen)
-    tof = PeriodicPrompter(PERIODIC_TOF_TMPL, {}, tof_membership_query_gen)
+    numeric = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
+    tof = PeriodicPrompter(PERIODIC_TOF_TMPL, tof_membership_query_gen)
     assert_matches(f"periodic_numeric_{seed}",
                    get_periodic_numeric_quiz(cfg, numeric, tokenizer=TOKENIZER))
     assert_matches(f"periodic_tof_{seed}",

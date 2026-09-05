@@ -79,20 +79,39 @@ A driver that imports `smolbench.induction.experiment` ahead of its
 ### Seed conventions
 
 A "replicate" is the SAME quiz regenerated under a fresh seed, not a
-different quiz. `InductionExperiment.seeds` is always
-`tuple(base_seed + r for r in range(n_replicates))`. The constructor's
-default is `base_seed=1776` (the July 4th, 1776 nod). The current
-family-ladder study deliberately overrides this:
-`notebooks/induction/run_study.py` locks `BASE_SEED=0` (seeds 0..29) -- see
-its docstring for why. One seed
-does double duty: it drives the quiz's OWN randomness (label and query
-sampling — see `PeriodicConfig.seed`) AND, in the same call, threads through
-as the per-request decoding seed. This makes a replicate's on-disk
-artifact (`rep_{seed}.yaml`) fully reproducible from its filename
-alone. Regenerate `make_quizzes(seed, model)` (the model matters: the
-noise arm pads under that model's own tokenizer) and you get
-byte-identical prompts, and the filename's seed is exactly the decoding
-seed used against them.
+different quiz. Unsharded, `InductionExperiment.seeds` is
+`tuple(base_seed + r for r in range(n_replicates))`. Under
+`shard=(index, count)` it is NOT that tuple: it STRIDES it, keeping the
+entries whose replicate number satisfies `r % count == index`, so N
+shards partition the same seed set between them without overlapping
+(`shard=(1, 4)` with `base_seed=0`, `n_replicates=30` gives seeds 1, 5,
+9, ... 29). A shard also needs its own EC2 state file and experiment
+tag — see the `shard` field's docstring for the failure mode when it
+does not get them. The constructor's default is `base_seed=1776` (the
+July 4th, 1776 nod). The current family-ladder study deliberately
+overrides this: `notebooks/induction/run_study.py` locks `BASE_SEED=0`
+(seeds 0..29) -- see its docstring for why.
+
+One seed does double duty: it drives the quiz's OWN randomness (see
+`PeriodicConfig.seed`) AND, in the same call, threads through as the
+per-request decoding seed. What "the quiz's own randomness" covers
+depends on the query generator:
+
+- `numeric_count_query_gen` (the generator the live study wires): the
+  seed drives the LABELS ONLY. The query set is one query per label, in
+  ascending-period order, and is fully deterministic — the generator
+  consumes no randomness at all and ignores its `seed` argument. Across
+  30 replicates the 9 label strings change and nothing else about the
+  queries does.
+- `tof_membership_query_gen`: the seed drives labels AND query sampling
+  proper — it draws up to `MAX_QUERIES_PER_POLARITY` True and False
+  queries without replacement under that seed.
+
+This makes a replicate's on-disk artifact (`rep_{seed}.yaml`) fully
+reproducible from its filename alone. Regenerate
+`make_quizzes(seed, model)` (the model matters: the noise arm pads under
+that model's own tokenizer) and you get byte-identical prompts, and the
+filename's seed is exactly the decoding seed used against them.
 
 ### Offline vs. billed methods
 
@@ -111,8 +130,18 @@ driver.
 ### Figures
 
 `smolbench/induction/figures.py` (`accuracy`, `load_condition_accuracies`,
-`plot_archetype_accuracy`) reads the FLAT, single-run result layout -- not
-the per-replicate `results/<tag>/rep_<seed>.yaml` tree `InductionExperiment`
-writes. Matplotlib imports lazily inside `plot_archetype_accuracy` only, so
+`plot_archetype_accuracy`) is layout-agnostic: `load_condition_accuracies`
+takes a flat `{(model, condition): filename}` mapping and resolves each
+filename against a `results_dir` you pass. It walks no directory tree of its
+own, so the caller decides the layout.
+
+`accuracy` RAISES on a `Marks` that graded nothing rather than scoring it
+0.0, because a genuine 0% and an ungraded replicate are different results.
+`load_condition_accuracies` maps that raise to `None` — the same value it
+uses for a missing file, and the value `plot_archetype_accuracy` renders as
+"n/a" — and prints a distinct line for each case so the two stay
+distinguishable.
+
+Matplotlib imports lazily inside `plot_archetype_accuracy` only, so
 importing `figures.py` (or the rest of `smolbench.induction`) does not
 require the `notebook` extra.

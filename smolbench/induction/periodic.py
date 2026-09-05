@@ -12,11 +12,28 @@ plus a ``_common.Prompter`` determine a run; the canonical eval configs live in
 Information conditions, all built from one sequence by
 :func:`get_periodic_prompts`: **intensional** = the compact rules ("Every 3
 positions write gerbil."); **extensional** = the enumerated position ->
-compound-label table ("Position 6: fizz|buzz|gerbil."), always at least as long;
-**noise_intens** = the intensional text plus whitespace until the RENDERED
-PROMPT hits its extensional counterpart's token count, isolating length as a
-confound. :func:`get_periodic_zero_info_numeric_quiz` is a standalone fourth
-condition (EMPTY context) returning ONE Quiz, not the three-condition tuple.
+compound-label table ("Position 6: fizz|buzz|gerbil."); **noise_intens** = the
+intensional text plus whitespace until the RENDERED PROMPT hits its extensional
+counterpart's token count, isolating length as a confound.
+:func:`get_periodic_zero_info_numeric_quiz` is a standalone fourth condition
+(EMPTY context) returning ONE Quiz, not the three-condition tuple.
+
+Noise-arm PRECONDITION -- a requirement on the config, not a property the
+benchmark guarantees: for every query, the extensional prompt must be STRICTLY
+longer in tokens than the intensional one. The pad is appended, so it can only
+GROW a prompt; a config that violates this raises out of
+:func:`get_periodic_prompts` rather than emitting a "control" arm identical to
+the arm it controls for. The enumeration is NOT always at least as long.
+Measured with cl100k_base under the production template: at n=1 the intensional
+prompt costs 105 tokens against the extensional 104 (extens strictly SHORTER),
+and at n=2 every query ties exactly (113 against 113, 114 against 114 -- EQUAL
+also fails a strict inequality). On the DEFAULT 1..n pathway the rule list is
+overtaken from n=3 on (120 against 150), and the production configs (n=9, lcm
+2,520) clear the precondition by a wide margin. n alone does not settle it,
+though: the divisor pathway below deliberately adds rules while pinning the
+listing, so an explicit small-lcm ``periods`` set can violate the precondition
+at any n. Hence a precondition CHECKED at generation time, not a property the
+config shape guarantees.
 
 Period sets: the default 1..n makes sequence length the step function lcm(1..n)
 -- lcm(1..10) == lcm(1..9) == 2520, then n=11 leaps to 27,720 positions (~341k
@@ -202,7 +219,30 @@ class PeriodicConfig:
                 )
 
 
-# Lowercase letters only, so the default '|' separator is always safe.
+# Design: lowercase letters only (26), not letters + digits (62). The choice is
+# free in PROMPT LENGTH at every count this benchmark uses. `random_labels`
+# sizes a label at max(min_length, 1, ceil(log_base(count)) *
+# LABEL_LENGTH_SAFETY_FACTOR); for any count <= 26 that ceiling is 1 under BOTH
+# bases, so both charsets yield the same length-2 label (the min_length=2 floor
+# `PeriodicConfig` passes coincides with that computed value here, rather than
+# overriding it). The two only diverge
+# from count=27 up, where base 26 needs a second digit and the safety factor
+# doubles it to 4 against the alphanumeric 2 -- past every in-repo harmonic set
+# (production is n=9; the largest set the module docstring contemplates is 26
+# divisors, still length 2 either way).
+#
+# What the restriction actually buys is READABILITY of the rendered rules.
+# Labels are drawn for exact-string distinctness, which is NOT case-folded, so a
+# mixed-case charset could legitimately draw "aQ" and "Aq" as two different
+# labels -- visually confusable, and ambiguous to a reader or model matching a
+# query's label against the rule list case-insensitively. Excluding digits keeps
+# a label from reading as a position number in "Every 3 positions write 3x." or
+# "Position 6: ...". Uniform lowercase makes every label the same shape.
+#
+# Separately: the charset must contain no separator character, since a label
+# holding `sep` would split into two on render. That is enforced, not assumed --
+# `PeriodicConfig.__post_init__` rejects any label containing `sep`, covering
+# explicit label lists as well as these auto-generated ones.
 _LABEL_CHARSET: str = string.ascii_lowercase
 
 
@@ -280,11 +320,27 @@ def get_periodic_prompts(
     """Generate intensional, extensional, and noise-padded intensional prompts.
 
     Yields ``(intens, extens, noise_intens, answer)`` per query, the noise arm
-    padded to the token count of the SAME query's extensional prompt. The
-    extensional prompt uses ``extens_template`` when the prompter sets one;
-    otherwise all three share ``template``. ``tokenizer`` defines the noise arm's
-    token target and must be the model's own -- see the module docstring's
-    tokenizer discipline.
+    padded to the token count of the SAME query's extensional prompt. All three
+    arms render from the prompter's single ``template``, differing only in
+    ``positive_info``. ``tokenizer`` defines the noise arm's token target and
+    must be the model's own -- see the module docstring's tokenizer discipline.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`~smolbench.induction._common.token_matched_noise_prompt`
+        when the noise arm's precondition fails for some query -- that query's
+        extensional prompt is not STRICTLY longer, in tokens, than its
+        intensional one, so no appended pad can reach the target (see the module
+        docstring's "Noise-arm PRECONDITION"; measured to happen at n <= 2).
+        Deliberately NOT caught here: a fallback to the unpadded render would
+        ship a length control byte-identical to the arm it controls for, and no
+        caller checked for that. Failing at quiz-construction time keeps the
+        confound out of collected data.
+    ValueError
+        Also propagated from ``token_matched_noise_prompt`` (or
+        :func:`~smolbench.induction._common.choose_whitespace_unit`) when no
+        whitespace pad can hit the target exactly under `tokenizer`.
     """
     period_to_label, pos_to_compound = generate_sequence(config)
 
@@ -298,7 +354,7 @@ def get_periodic_prompts(
         intens = prompter.template.safe_substitute(
             build_substitution(query, prompter, intension)
         )
-        extens = prompter.resolved_extens_template.safe_substitute(
+        extens = prompter.template.safe_substitute(
             build_substitution(query, prompter, extension)
         )
         # Match per query on the RENDERED prompt (why: token_matched_noise_prompt).
@@ -433,8 +489,19 @@ def numeric_count_query_gen(
     Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label, the
     answer being floor(seq_len / period) -- always exact, since seq_len is the
     lcm of the harmonic periods on every pathway. Reads only ``pos_to_compound``'s
-    KEYS (to find ``seq_len``) and ignores ``seed``: count queries need no
-    sampling, but every ``query_gen`` here shares one signature.
+    KEYS (to find ``seq_len``).
+
+    The query SET is deterministic: one query per label, in ascending-period
+    order, so this generator consumes no randomness and IGNORES `seed`. The
+    parameter stays because ``Prompter.query_gen`` is one interchangeable
+    protocol -- ``(period_to_label, pos_to_compound, seed)`` -- that
+    :func:`get_periodic_prompts` calls without knowing which generator it holds,
+    and the sibling :func:`tof_membership_query_gen` genuinely samples under it.
+    Dropping the argument here would make the two generators non-substitutable
+    and push a hasattr/try-except call shim into the shared caller for no gain.
+    A seed still reaches this generator's OUTPUT indirectly, through the labels:
+    ``PeriodicConfig`` draws them with the same seed, so across replicates the
+    label strings change while the query structure does not.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
@@ -470,7 +537,7 @@ if __name__ == "__main__":
 
     for intens, extens, noise_intens, answer in get_periodic_prompts(
         cfg,
-        Prompter(template, {}, numeric_count_query_gen),
+        Prompter(template, numeric_count_query_gen),
         tokenizer=demo_tokenizer,
     ):
         print("-- intensional --")
