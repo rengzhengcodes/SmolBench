@@ -106,9 +106,10 @@ def load_marks() -> tuple[dict, dict, dict]:
         Same keys; False where the score is ``null``.
     compliance : dict
         Same keys -> ``{seed: tuple of length 9}``, each mark's ``compliance``
-        value in serialization order (``COMPLIANT`` is ``None``, `NOT_ASSESSED`
-        for a mark predating the field, otherwise a violation label owned by
-        ``smolbench/evals/parsing.py``). Returned so that
+        value in serialization order (`COMPLIANT` is the explicit
+        ``"compliant"`` label, `NOT_ASSESSED` for a mark predating the field,
+        otherwise a violation label owned by ``smolbench/evals/parsing.py``).
+        Returned so that
         ``significance_report.compliance_census`` reads THE SAME PARSE the
         contrasts do, instead of re-walking and re-YAML-parsing the tree a
         second time: the census and the contrasts can then never disagree about

@@ -23,12 +23,12 @@
     "extens": "72cdb1c7e56cd4de9efda0f5d73f61672162027af2ffe3d2e82df5723028c79f",
     "intens": "445d8b5d7b218b5611ab626d5dc66b7d339c6c63f8a6543abc181030b4213aa5",
     "noise_intens": "bca8304a25c8b1e3c0c28bb4d7f3031d6f0d0566136fffa341382e696fd950e4",
-    "zero": "6e85a5a0266e215961ccd9c8736bfccfc5aeab176647fcba5b2ea2c1d8b4887d"
+    "zero": "b4e0fb6f9e7ca4e3f2d1e9980ec55fa1a2899cdf81e706388c45d16903805610"
   },
   "production_seed_1": {
     "extens": "eda7566948bd1a5416e25d2c0673bbf02f6e1b281dfb16bc8f4b6ea3a8792704",
     "intens": "35644e3f4873de9bef9ff00267b7c531d02be11551042c0925d1dcb0b86a4b69",
     "noise_intens": "19dcbc6cf255ff58dbb83c8f03fb20ab74adc29cf56f83df3ac7bab6d7aad18c",
-    "zero": "9cb8f5c0e3fcc9ae8a9b6593e638c5f738b4ef89771fd9546f22d94df08af525"
+    "zero": "0ef503f888ba57f44ee2cbaf03f2984a1cbf78497015630e7204cc73dae2055d"
   }
 }

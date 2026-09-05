@@ -1,0 +1,115 @@
+# Single committed source for the induction family-ladder study's results
+# bucket, fleet regions/tags, and the 21-checkpoint roster.
+#
+# Parsed by smolbench/evals/study_config.py (stdlib tomllib; no new
+# dependency) and read by:
+#   - smolbench/evals/providers/ec2.py       ([fleet].regions -> _DEFAULT_REGIONS)
+#   - smolbench/evals/results_store.py       ([results] -> default_results_uri(),
+#                                              resolve_store's region fallback)
+#   - notebooks/induction/run_study.py       ([roster] -> MODELS,
+#                                              [fleet].standalone_tag)
+#   - notebooks/induction/analysis/power_analysis.py
+#                                             ([roster] -> MODELS, FAMILIES,
+#                                              rendered into analysis tags)
+#
+# This file is the audit surface for all of the above: it is meant to be
+# read by a human checking "what bucket/regions/roster does the study
+# actually use", not just by the parser, hence the generous comments below.
+#
+# study_config.py deliberately reads NOTHING from the environment -- every
+# environment-variable override (SMOLBENCH_RESULTS_S3, SMOLBENCH_RESULTS_S3_
+# REGION, EC2_REGIONS) is applied by the CONSUMER that owns that variable, at
+# whatever time that consumer normally reads its environment. See
+# study_config.py's module docstring for why baking env-awareness into this
+# file's loader would be actively wrong (ec2.py freezes constants at import,
+# results_store.py reads at call time; a shared cached object would weld the
+# two together).
+
+[results]
+# Provisioned once by scripts/results/provision_results_bucket.py (see
+# smolbench/evals/README.md's "Provisioning the bucket" section). `region` is
+# the region THAT BUCKET lives in -- results_store.resolve_store only ever
+# falls back to it when the URI in play names THIS bucket; a URI naming some
+# other bucket keeps resolving through boto3's own region chain, because that
+# bucket may live anywhere.
+bucket = "smolbench-results-414266451290"
+region = "us-west-2"
+# The live log sits at the bucket root: every key starts with
+# "<experiment>/...", with no extra namespace segment in front of it.
+base_prefix = ""
+
+[fleet]
+# Spot-capacity hunt regions for scripts/fleet/run_fleet.py and
+# providers/ec2.py's own provisioning retries. Overridable per-process via
+# the EC2_REGIONS environment variable (ec2.py applies that override itself;
+# this list is only the DEFAULT).
+regions = ["us-east-1", "us-east-2", "us-west-2"]
+# Prefix run_fleet.py gives each lane's EC2_EXPERIMENT_TAG ("scaling-<spec-key>"),
+# so fleet_status/fleet_teardown can recognize and enumerate fleet-owned boxes.
+tag_prefix = "scaling-"
+# Default EC2_EXPERIMENT_TAG for a STANDALONE (non-fleet) run of
+# notebooks/induction/run_study.py. Deliberately OUTSIDE the "scaling-"
+# prefix above, so fleet_status/fleet_teardown never list -- or terminate --
+# a standalone box; `run_study.py --teardown` owns it instead. A fleet-
+# exported EC2_EXPERIMENT_TAG still wins over this default (run_study.py
+# applies it with os.environ.setdefault, never an unconditional write).
+standalone_tag = "induction-scaling"
+
+# The 21-checkpoint family ladder: 7 vendor families x 3 parameter-count
+# rungs. This is every EC2_DEPLOY_SPECS entry EXCEPT "qwen2.5-1.5b" -- that
+# smoke-test spec exercises the EC2 provisioning lifecycle end-to-end on a
+# cheap single-GPU box (see providers/ec2.py's EC2_DEPLOY_SPECS comment) and
+# is not a rung of any family; the study's accuracy-vs-parameter-count
+# question has nothing to compare it against, so it is deliberately absent
+# from the roster below.
+[roster.families]
+# Declaration order here IS the study's canonical ladder order: it is what
+# notebooks/induction/run_study.py's MODELS and
+# notebooks/induction/analysis/power_analysis.py's MODELS/FAMILIES both
+# derive their own order from (families concatenated, each family's rungs in
+# the order listed). Reordering a family or a rung reorders every downstream
+# consumer's iteration order.
+# Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8)
+qwen35 = ["qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]
+# Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B, all BF16
+nemo3  = ["nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b"]
+# Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned
+gemma4 = ["gemma-4-e2b", "gemma-4-12b", "gemma-4-31b"]
+# GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-generation, flagged)
+glm    = ["glm-4.7-flash", "glm-4.5-air", "glm-4.7"]
+# Ministral-3 Reasoning 2512 (Mistral, FR): 3B / 8B / 14B
+min3   = ["ministral-3-3b", "ministral-3-8b", "ministral-3-14b"]
+# EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B-A23B (cross-gen, flagged)
+exaone = ["exaone-4.0-32b", "exaone-4.5-33b", "k-exaone-236b-a23b"]
+# DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template)
+ds     = ["deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro"]
+
+# Spec key (an EC2_DEPLOY_SPECS key, also vLLM's --served-model-name) -> short
+# analysis tag, used in result directory names and figure legends. Every key
+# above MUST appear here exactly once, and every tag MUST be unique (two
+# checkpoints sharing a tag would put two lanes' results into one analysis
+# directory) -- study_config.py validates both at load, raising ValueError
+# and naming the offending key/tag rather than letting the drift surface
+# later as a mysteriously merged results directory.
+[roster.tags]
+"qwen3.5-27b" = "qwen35_27b"
+"qwen3.5-122b-a10b" = "qwen35_122b"
+"qwen3.5-397b-a17b" = "qwen35_397b"
+"nemotron-3-nano-4b" = "nemo3_4b"
+"nemotron-3-nano-30b-a3b" = "nemo3_30b"
+"nemotron-3-super-120b-a12b" = "nemo3_120b"
+"gemma-4-e2b" = "gemma4_e2b"
+"gemma-4-12b" = "gemma4_12b"
+"gemma-4-31b" = "gemma4_31b"
+"glm-4.7-flash" = "glm_flash"
+"glm-4.5-air" = "glm_air"
+"glm-4.7" = "glm_47"
+"ministral-3-3b" = "min3_3b"
+"ministral-3-8b" = "min3_8b"
+"ministral-3-14b" = "min3_14b"
+"exaone-4.0-32b" = "exaone_32b"
+"exaone-4.5-33b" = "exaone_33b"
+"k-exaone-236b-a23b" = "exaone_236b"
+"deepseek-v4-flash" = "ds_flash"
+"deepseek-v3.1" = "ds_v31"
+"deepseek-v4-pro" = "ds_pro"

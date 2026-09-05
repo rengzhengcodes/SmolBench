@@ -120,6 +120,67 @@ def test_roster(run_study):
     assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
 
 
+def test_the_roster_is_built_from_the_committed_study_config(run_study):
+    """MODELS is the config's roster, in the config's ladder order.
+
+    ``EXPECTED_TAGS`` above stays vendored as the drift guard on the TOML
+    itself; this pins that the driver READS the file instead of carrying a
+    22nd copy of the table.
+    """
+    from smolbench.evals import study_config
+
+    assert tuple(run_study.MODELS) == study_config.roster_keys()
+    assert run_study.MODELS == {
+        key: study_config.tag_for(key) for key in study_config.roster_keys()
+    }
+
+
+def test_cot_args_is_validated_against_the_config_roster(run_study):
+    """COT_ARGS stays a literal table (it is the audit surface against ec2.py's
+    reasoning wiring) but its KEYS are checked against the config's roster, so
+    a roster edit that COT_ARGS misses cannot reach a billing box."""
+    from smolbench.evals import study_config
+
+    assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
+
+
+def test_the_retired_tag_is_refused_behind_a_lane_suffix(monkeypatch):
+    """A sharded lane appends its own suffix, so an EXACT-match guard on the
+    retired tag never fires for the sharded invocations -- exactly the ones
+    that run unattended. The guard must compare the tag with its lane suffix
+    stripped."""
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
+    module, exc, env_after = import_run_study(
+        "retired_lane_probe",
+        {"EC2_EXPERIMENT_TAG": "periodic-induction", "INDUCTION_SHARD": "0/2",
+         "INDUCTION_MODELS": ""},
+    )
+    assert module is None
+    assert isinstance(exc, SystemExit)
+    assert "periodic-induction" in str(exc)
+    # ... and the suffix it was hiding behind is named too, so the operator
+    # can see WHICH lane's tag resolved to the retired study's.
+    assert "-s0of2" in str(exc)
+
+
+def test_the_standalone_tag_comes_from_the_config(monkeypatch):
+    """The standalone EC2 experiment tag is the config's, not a local literal.
+
+    Only observable by re-importing with ``EC2_EXPERIMENT_TAG`` ABSENT: the
+    driver's ``setdefault`` is what the config value has to reach.
+    """
+    from smolbench.evals import study_config
+
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
+    _module, exc, env_after = import_run_study(
+        "standalone_tag_probe", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
+    )
+    assert exc is None, exc
+    assert env_after["EC2_EXPERIMENT_TAG"] == (
+        study_config.load_study_config().fleet.standalone_tag
+    )
+
+
 def test_cot_args_table(run_study):
     """Every model carries a CoT toggle: Ministral rides its system prompt, DeepSeek's key differs."""
     def toggle(key):
@@ -144,6 +205,11 @@ def test_experiment_constants(run_study):
     assert run_study.EXPERIMENT.base_seed == 0
     assert run_study.EXPERIMENT.seeds == tuple(range(30))
     assert run_study.INFO_TYPES == ("intens", "extens", "noise_intens", "zero")
+    # ... and they are DERIVED from the condition mapping the renderer walks,
+    # not a fifth hand-maintained spelling of the arm names.
+    from smolbench.induction.periodic import CONDITIONS
+
+    assert run_study.INFO_TYPES == tuple(CONDITIONS)
     assert run_study.EXPERIMENT.info_types == run_study.INFO_TYPES
     assert run_study.EXPERIMENT.notebook_dir == "induction"
     assert run_study.EXPERIMENT.archetype_tags == run_study.MODELS
@@ -182,19 +248,77 @@ def test_completion_budget(run_study, monkeypatch):
 
 def test_completion_budget_exits_below_the_viability_floor(run_study, monkeypatch):
     """A prompt leaving <48k completion tokens must abort before provisioning."""
-
-    class _Question:
-        def __init__(self, prompt: str) -> None:
-            self.prompt = prompt
+    from smolbench.induction._common import RenderedQuery
 
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(
-        run_study, "make_quizzes",
-        lambda seed, model: {"intens": (_Question("word " * 200_000),)},
+        run_study, "rendered_queries",
+        lambda seed, model: [RenderedQuery(
+            prompts={"intens": "word " * 200_000},
+            token_counts={"intens": 200_000},
+            answer=1,
+        )],
     )
     assert run_study.MIN_VIABLE_BUDGET == 48_000
     with pytest.raises(SystemExit):
         run_study.completion_budget(BUDGET_MODEL, range(0, 1))
+
+
+class CountingTokenizer(StubTokenizer):
+    """`StubTokenizer` that records how many times `count` was called."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def count(self, text: str) -> int:
+        self.calls += 1
+        return super().count(text)
+
+
+def test_completion_budget_consumes_generations_counts(run_study, monkeypatch):
+    """The budget is sized from the counts GENERATION already produced.
+
+    `completion_budget` used to re-run `make_quizzes` for its probe seeds --
+    each one re-running the noise-pad search -- and then re-tokenize every
+    prompt it got back, so the same 36 prompts were tokenized twice and the
+    regenerated quizzes were thrown away. It must now make no `count` call of
+    its own beyond what rendering the probe seeds costs.
+    """
+    tokenizer = CountingTokenizer()
+    monkeypatch.setattr(run_study, "for_model", lambda model: tokenizer)
+    seeds = range(0, 30)
+    probes = run_study.probe_seeds(seeds)
+
+    tokenizer.calls = 0
+    rendered = {seed: run_study.rendered_queries(seed, BUDGET_MODEL) for seed in probes}
+    generation_calls = tokenizer.calls
+    # The control can fail: generation really does tokenize (the noise arm is
+    # padded to an exact count), so equality below is not 0 == 0.
+    assert generation_calls > 0
+
+    tokenizer.calls = 0
+    budget = run_study.completion_budget(BUDGET_MODEL, seeds)
+    assert tokenizer.calls == generation_calls
+
+    worst = max(count for queries in rendered.values()
+                for query in queries for count in query.token_counts.values())
+    assert budget == run_study.CONTEXT_LIMIT - worst - run_study.TEMPLATE_RESERVE
+    # Every arm is covered by that maximum, not just the informative ones.
+    assert set(rendered[probes[0]][0].token_counts) == set(run_study.INFO_TYPES)
+
+
+def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(run_study):
+    """The zero arm's question is the study's, minus the range clause -- one
+    template with one edit, not a second full copy that can drift from it."""
+    assert run_study.RANGE_CLAUSE == " 1 through $seq_len"
+    assert run_study.RANGE_CLAUSE in run_study.template.template
+    assert run_study.zero_template.template == run_study.template.template.replace(
+        run_study.RANGE_CLAUSE, ""
+    )
+    assert "$seq_len" not in run_study.zero_template.template
+    assert run_study.zero_template.template.endswith(
+        "How many of the positions include '$label'?"
+    )
 
 
 def test_selected_models(run_study, monkeypatch):

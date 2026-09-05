@@ -16,6 +16,7 @@ import pytest
 from conftest import StubTokenizer
 
 from smolbench.induction.periodic import (
+    CONDITIONS,
     PeriodicConfig,
     Prompter as PeriodicPrompter,
     get_periodic_numeric_quiz,
@@ -41,9 +42,16 @@ def quiz_hash(quiz) -> str:
     return h.hexdigest()
 
 
-def assert_matches(key: str, quizzes) -> None:
-    got = {k: quiz_hash(q) for k, q in zip(("intens", "extens", "noise_intens"), quizzes)}
+def assert_matches(key: str, quizzes: dict) -> None:
+    got = {arm: quiz_hash(quiz) for arm, quiz in quizzes.items()}
     assert got == GOLDEN[key], f"generation drifted from golden {key}"
+
+
+#: The three information arms these library pins cover. The fourth condition
+#: (``zero``) renders from a range-free template a caller supplies, and the
+#: minimal templates below carry none -- the production pins further down
+#: cover all four through the study's own prompter.
+POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 
 # The fixed, offline tokenizer the noise arm is sized against.
@@ -65,9 +73,11 @@ def test_periodic_golden(seed):
     numeric = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
     tof = PeriodicPrompter(PERIODIC_TOF_TMPL, tof_membership_query_gen)
     assert_matches(f"periodic_numeric_{seed}",
-                   get_periodic_numeric_quiz(cfg, numeric, tokenizer=TOKENIZER))
+                   get_periodic_numeric_quiz(cfg, numeric, tokenizer=TOKENIZER,
+                                             conditions=POSITIVE_ARMS))
     assert_matches(f"periodic_tof_{seed}",
-                   get_periodic_quiz(cfg, tof, tokenizer=TOKENIZER))
+                   get_periodic_quiz(cfg, tof, tokenizer=TOKENIZER,
+                                     conditions=POSITIVE_ARMS))
 
 
 # ---------------------------------------------------------------------------
