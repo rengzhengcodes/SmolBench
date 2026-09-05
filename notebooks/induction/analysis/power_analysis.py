@@ -30,6 +30,7 @@ Run:
 """
 
 import sys
+from collections import namedtuple
 from itertools import combinations
 from pathlib import Path
 
@@ -356,15 +357,55 @@ def simulated_power(
     return cmh_reject(succ_a, succ_b, n_reps, alpha).mean()
 
 
+_SizingScan = tuple[dict[float, int | None], dict[int, float]]
+
+#: `replicates_needed`'s memo: ``(rates_a bytes, rates_b bytes, alpha)`` -> scan.
+_SIZING_CACHE: dict[tuple[bytes, bytes, float], _SizingScan] = {}
+_SIZING_CACHE_HITS = 0
+_SIZING_CACHE_MISSES = 0
+#: Field-for-field `functools.lru_cache`'s CacheInfo, so a caller (or an audit)
+#: can read `replicates_needed.cache_info()` the way it would read any other
+#: memoized function's. `lru_cache` itself cannot be used here: `rng` is
+#: unhashable AND deliberately outside the key, and `lru_cache` keys on the
+#: whole argument list.
+SizingCacheInfo = namedtuple("SizingCacheInfo", "hits misses maxsize currsize")
+
+
+def _sizing_cache_info() -> SizingCacheInfo:
+    """Report `replicates_needed`'s memo statistics (`maxsize` is `None`: unbounded)."""
+    return SizingCacheInfo(_SIZING_CACHE_HITS, _SIZING_CACHE_MISSES, None,
+                           len(_SIZING_CACHE))
+
+
+def _sizing_cache_clear() -> None:
+    """Empty `replicates_needed`'s memo and zero its statistics."""
+    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
+    _SIZING_CACHE.clear()
+    _SIZING_CACHE_HITS = _SIZING_CACHE_MISSES = 0
+
+
 def replicates_needed(
     rates_a: np.ndarray,
     rates_b: np.ndarray,
     rng: np.random.Generator,
     alpha: float = ALPHA_PRIMARY,
-) -> tuple[dict[float, int | None], dict[int, float]]:
+) -> _SizingScan:
     """Find the smallest replicate count R reaching each `POWER_TARGETS` entry.
 
-    Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is met.
+    Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is
+    met. MEMOIZED on the rate vectors and `alpha` (see Notes).
+
+    Parameters
+    ----------
+    rates_a, rates_b : ndarray
+        The two conditions' assumed true per-harmonic rates.
+    rng : numpy.random.Generator
+        Drawn from only on a cache MISS. Every caller re-seeds
+        ``np.random.default_rng(SEED)`` immediately before the call, so a
+        generator is never carried across calls and a hit that consumes no
+        draws cannot shift a later result.
+    alpha : float
+        The tier's per-test threshold.
 
     Returns
     -------
@@ -372,8 +413,43 @@ def replicates_needed(
         Power target -> smallest R reaching it, `None` if no R within
         `MAX_REPLICATES` does.
     curve : dict of int -> float
-        Each scanned R -> its simulated power.
+        Each scanned R -> its simulated power. Freshly copied per call, so a
+        caller mutating it cannot corrupt the memo.
+
+    Raises
+    ------
+    ValueError
+        If `rates_a` and `rates_b` differ in shape: the memo key is their raw
+        bytes, and two different shapes flattening to the same buffer would
+        collide.
+
+    Notes
+    -----
+    The key is ``(rates_a.tobytes(), rates_b.tobytes(), alpha)`` -- the VALUES,
+    not the array identities, since `_compute_sizing_results` builds a new array
+    object per contrast. `rng` is deliberately NOT part of the key: it is
+    unhashable, and (per the Parameters note above) every caller re-seeds it, so
+    keying on it would be keying on a constant while making the cache useless.
+
+    The scan is the expensive part of `main` -- `N_SIMS` binomial draws per
+    candidate R, per contrast -- and the inputs repeat heavily: the pooled
+    (condition-mean) rate assumption admits only ~10 distinct rate vectors
+    across the 273 primary + secondary contrasts, so an uncached scan is
+    recomputed up to ~27x per distinct input for a bit-identical answer.
     """
+    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
+    if rates_a.shape != rates_b.shape:
+        raise ValueError(
+            f"rates_a and rates_b must have the same shape, got "
+            f"{rates_a.shape} and {rates_b.shape}"
+        )
+    key = (rates_a.tobytes(), rates_b.tobytes(), float(alpha))
+    if key in _SIZING_CACHE:
+        _SIZING_CACHE_HITS += 1
+        needed, curve = _SIZING_CACHE[key]
+        return dict(needed), dict(curve)
+    _SIZING_CACHE_MISSES += 1
+
     needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
@@ -384,7 +460,15 @@ def replicates_needed(
                 needed[target] = n_reps
         if all(needed[t] is not None for t in POWER_TARGETS):
             break
+    _SIZING_CACHE[key] = (dict(needed), dict(curve))
     return needed, curve
+
+
+# Attached after the definition so `replicates_needed` reads like any other
+# memoized callable at the call site, and so the memo is auditable (and
+# resettable between test cases) without reaching for the module globals.
+replicates_needed.cache_info = _sizing_cache_info
+replicates_needed.cache_clear = _sizing_cache_clear
 
 
 def fisher_check(
@@ -492,8 +576,21 @@ def omnibus_power(
     return gcmh_reject(succ, n_reps, alpha).mean()
 
 
+#: `omnibus_interaction_power`'s default `n_sims`. Two GLM fits per sim and two
+#: calls per `main` run made the old default of 1,000 the single most expensive
+#: thing in this script (~4,000 fits, minutes of wall clock) for a number that
+#: is explicitly NOT a gate. At 200 the Monte Carlo SE of the reported power is
+#: at most sqrt(0.25 / 200) = 0.035, which is finer than the diagnostic is read
+#: to. Cutting it TRUNCATES the fixed `SEED + 1` stream rather than re-seeding
+#: it, so the 200 sims kept are exactly the first 200 the old default ran and
+#: the estimate is the old one's running mean, not a different draw.
+N_SIMS_OMNIBUS_DIAGNOSTIC = 200
+
+
 def omnibus_interaction_power(
-    rates: dict[tuple[str, str], np.ndarray], n_reps: int, n_sims: int = 1000
+    rates: dict[tuple[str, str], np.ndarray],
+    n_reps: int,
+    n_sims: int = N_SIMS_OMNIBUS_DIAGNOSTIC,
 ) -> float:
     """Power of the model x info-type interaction (logit LR test) at `n_reps` replicates.
 
@@ -502,6 +599,13 @@ def omnibus_interaction_power(
     (21-1) * (4-1) = 60 df -- too coarse to localize WHICH model/info
     combination drives a rejection -- so it is a design-level diagnostic, not a
     gate: no contrast family depends on it.
+
+    Parameters
+    ----------
+    n_sims : int
+        Simulations to run; defaults to `N_SIMS_OMNIBUS_DIAGNOSTIC`, NOT to the
+        study-wide `N_SIMS`, because this is a diagnostic rather than a sizing
+        input. Pass a larger value for a one-off precise read.
 
     Returns
     -------

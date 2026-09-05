@@ -1,13 +1,18 @@
 """Run a Monte Carlo study of TEST and CORRECTION choice for the induction study.
 
-Self-contained companion to the periodic-induction family-ladder scaling study
-(21 models x 4 info arms, R=30 replicates x 9 harmonics). Every POWER and
-error-rate figure here is simulated (the test statistics themselves use the
-usual chi-square reference distributions). The pairwise test is byte-for-byte
-the repo's continuity-corrected 2x2xK CMH
+Companion to the periodic-induction family-ladder scaling study (21 models x 4
+info arms, R=30 replicates x 9 harmonics). Every POWER and error-rate figure
+here is simulated (the test statistics themselves use the usual chi-square
+reference distributions). The pairwise test is byte-for-byte the repo's
+continuity-corrected 2x2xK CMH
 (notebooks/induction/analysis/power_analysis.py::cmh_reject) and the 2-df
-general-association statistic mirrors that file's gcmh_reject. Results are
-checkpointed to multiplicity_sim_results.json after each part.
+general-association statistic mirrors that file's gcmh_reject. The design
+constants the simulation is priced against are IMPORTED from the modules that
+own them (`_power_common` and `power_analysis`) rather than re-declared here,
+so a re-sizing of the study cannot apply to the report and not to this
+simulation. It is still the only script in `analysis/` that reads no replicate
+tree: it consumes constants, never results. Results are checkpointed to
+`notebooks/induction/results/multiplicity_sim_results.json` after each part.
 
 Run (repo root):
   .venv/bin/python notebooks/induction/analysis/multiplicity_sim.py
@@ -16,30 +21,94 @@ Run (repo root):
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
+
+# Two __file__-anchored inserts, never cwd-relative, so the sibling imports
+# below resolve however this file is invoked (as __main__, by path, or from any
+# working directory). This module's own directory carries `power_analysis`
+# (only __main__ gets that directory for free); `notebooks/`, two levels up,
+# carries `_power_common`. `power_analysis` also inserts `notebooks/` itself,
+# but relying on that would make the `_power_common` import depend on a
+# sibling's side effect and on statement order.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from scipy.stats import binom, chi2
 
+from _power_common import ALPHA, SEED, results_dir
+from power_analysis import ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY
+
 # ----------------------------------------------------------------------------- design
+# Local ALIASES for two imported constants. Both spellings are kept because the
+# short names are used throughout this file and renaming every use would be
+# churn; the point is that the VALUES now have exactly one owner.
+K_HARM = N_HARMONICS            # power_analysis owns the harmonic count
+                                # (k = 1..9 -> CMH strata for pairwise tests)
+ALPHA_BONF = ALPHA_PRIMARY      # power_analysis owns the PRIMARY per-test alpha
+                                # (ALPHA over the pairwise family; 2.381e-4)
+
 R_DEFAULT = 30          # replicates (seeds 0..29) -- run_study.N_REPLICATES,
                         # user-locked there; see that constant's comment for
                         # why 30 (a budget ruling checked against
-                        # power_analysis.py's prospective sizing)
-K_HARM = 9              # harmonics k = 1..9  -> CMH strata for pairwise tests
-N_PRIMARY = 210
-ALPHA = 0.05
-ALPHA_BONF = ALPHA / N_PRIMARY          # 2.381e-4
+                        # power_analysis.py's prospective sizing).
+                        # Deliberately NOT imported, unlike its neighbours
+                        # above: there is no import-safe home for the replicate
+                        # count. run_study.py owns it, but that module is a
+                        # driver -- importing it runs load_dotenv and the ec2
+                        # import-time constant freeze -- so importing it from an
+                        # offline Monte Carlo would drag live deployment config
+                        # into this script.
+
+# PART 2's equivalent-R search ladder: the replicate counts at which the
+# UNPAIRED test is re-simulated while hunting for the smallest R that matches
+# the paired test's power at R_DEFAULT. It starts AT R_DEFAULT by construction
+# (a ratio of 1 is the "pairing bought nothing" answer) and then climbs roughly
+# geometrically to its final rung, so the ladder is a design constant of the
+# comparison rather than an implementation detail of the loop that walks it.
+EQ_R_GRID = (R_DEFAULT, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210,
+             250, 300, 360, 430, 520, 620, 750, 900)
+
+# PART 4's reduced contrast family: 28 one-df trend tests replacing the 84
+# pairwise ladder contrasts, plus the 126 info contrasts that are common to
+# both families. PART 4 re-derives and checks this count against the family it
+# actually builds; PART 5 prices its trend row at ALPHA / N_REDUCED so trend and
+# pairwise are corrected in comparable families.
+N_REDUCED = 154
+
 OUT = {}
-# Anchored on __file__, not the cwd, so the output lands next to this script
-# whatever directory it is invoked from (repo convention -- see
-# notebooks/_power_common.py's results_dir).
-OUT_PATH = Path(__file__).resolve().parent / "multiplicity_sim_results.json"
+# Anchored on __file__, not the cwd, so the output lands in the study's own
+# results/ tree whatever directory this script is invoked from (repo
+# convention -- see notebooks/_power_common.py's results_dir). That tree is
+# where the rest of the study's results live and is already covered by the
+# general `notebooks/*/results/` gitignore rule, so the checkpoint needs no
+# one-off ignore entry of its own.
+OUT_PATH = results_dir(__file__, up=1) / "multiplicity_sim_results.json"
 
 
 def dump(tag: str) -> None:
-    """Write the accumulated `OUT` results to the checkpoint JSON, logging `tag`."""
+    """Write the accumulated `OUT` results to the checkpoint JSON, logging `tag`.
+
+    Creates ``OUT_PATH``'s parent directory if it is missing.
+
+    Parameters
+    ----------
+    tag : str
+        Name of the part just finished, echoed in the progress line.
+
+    Notes
+    -----
+    Writes to disk. The mkdir lives HERE rather than at module import so that
+    merely importing this module (as the sibling tests and any REPL session do)
+    writes nothing: the directory appears only when a checkpoint is actually
+    taken. It is required because ``results/`` is gitignored and S3-mirrored, so
+    it is absent from a fresh checkout -- without the mkdir every checkpoint
+    would raise `FileNotFoundError` AFTER its Monte Carlo had already run, the
+    most expensive possible place to fail.
+    """
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as fh:
         json.dump(OUT, fh, indent=2, default=float)
     print(f"[checkpoint written after {tag}]", flush=True)
@@ -301,12 +370,29 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
 
     Six rate scenarios (monotone and non-monotone, at small, mid and ceiling
     effect sizes), one simulated 3-rung ladder each, reporting every test's
-    rejection rate under the pre-registered study-wide alphas and again under
-    local uncorrected-family alphas, which isolates test choice from
-    correction. Writes ``OUT["part5"]``.
+    rejection rate under the study-wide alphas and again under local
+    uncorrected-family alphas, which isolates test choice from correction.
+    Writes ``OUT["part5"]``.
+
+    Notes
+    -----
+    The trend test is priced TWICE, and the distinction is the point of this
+    part. The headline `trend_studywide` uses ``ALPHA / N_REDUCED``, the family
+    PART 4 actually puts these 28 trend tests in, so it is comparable with the
+    pairwise row's ``ALPHA / N_PRIMARY``. The `trend_trend_only_family` row
+    keeps the narrower ``ALPHA / 28`` -- correcting only within the trend tests
+    themselves -- as a labelled SENSITIVITY figure. That narrower family is
+    not pre-registered anywhere (nothing outside this file registers any trend
+    test at all), and at 7.5x the headline alpha it would hand the trend test a
+    threshold no pairwise contrast is judged at, which is precisely the
+    comparison this part exists to make honestly.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
-    alpha_fam_trend = ALPHA / 28          # 28 one-df trend tests
+    # Study-wide: the same 28 trend tests as PART 4's reduced family, corrected
+    # over that whole family, so trend and pairwise are corrected comparably.
+    alpha_trend_studywide = ALPHA / N_REDUCED
+    # Sensitivity only: correcting the 28 one-df trend tests among themselves.
+    alpha_trend_only = ALPHA / 28
     alpha_pair = ALPHA_BONF               # pairwise inside the 210 family
     rows = []
     for label, rates in (("monotone 0.60/0.75/0.88", (0.60, 0.75, 0.88)),
@@ -322,8 +408,12 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
         pair_stats = [cmh_stat(succ[:, i, :], succ[:, j, :], R_DEFAULT)
                       for i, j in ((0, 1), (1, 2), (0, 2))]
         res = dict(label=label, rates=rates)
-        # study-wide alphas (pre-registered)
-        res["trend_studywide"] = float((tr > chi2.isf(alpha_fam_trend, 1)).mean())
+        # study-wide alphas
+        res["trend_studywide"] = float((tr > chi2.isf(alpha_trend_studywide, 1)).mean())
+        # ... and the same trend statistic at the narrower, not pre-registered,
+        # trend-only family alpha, reported beside it rather than instead of it.
+        res["trend_trend_only_family"] = float(
+            (tr > chi2.isf(alpha_trend_only, 1)).mean())
         res["gcmh_studywide"] = float((gc > chi2.isf(ALPHA / 7, 2)).mean())
         res["pairwise_any_studywide"] = float(
             np.any([s > chi2.isf(alpha_pair, 1) for s in pair_stats], axis=0).mean())
@@ -334,30 +424,52 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
             np.any([s > chi2.isf(ALPHA / 3, 1) for s in pair_stats], axis=0).mean())
         rows.append(res)
         print(f"  {label}", flush=True)
-        print(f"    study-wide: trend={res['trend_studywide']:.4f} "
-              f"gcmh(2df)={res['gcmh_studywide']:.4f} "
-              f"any-pairwise={res['pairwise_any_studywide']:.4f}", flush=True)
+        print(f"    study-wide: trend[a=.05/{N_REDUCED}]="
+              f"{res['trend_studywide']:.4f} "
+              f"gcmh(2df)[a=.05/7]={res['gcmh_studywide']:.4f} "
+              f"any-pairwise[a=.05/{N_PRIMARY}]="
+              f"{res['pairwise_any_studywide']:.4f}", flush=True)
+        print(f"    sensitivity: trend[a=.05/28, trend-only family, "
+              f"not pre-registered]={res['trend_trend_only_family']:.4f}",
+              flush=True)
         print(f"    local a=.05: trend={res['trend_local05']:.4f} "
               f"gcmh={res['gcmh_local05']:.4f} any-pairwise={res['pairwise_any_local']:.4f}",
               flush=True)
     OUT["part5"] = dict(rows=rows, n_sims=n_sims,
-                        alpha_trend_studywide=alpha_fam_trend,
+                        alpha_trend_studywide=alpha_trend_studywide,
+                        alpha_trend_only=alpha_trend_only,
                         alpha_pairwise=ALPHA_BONF, alpha_gcmh=ALPHA / 7)
 
 
 # ================================================================== PART 2: pairing gain
-def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
+def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True):
     """Compute unpaired-CMH and paired-McNemar power on the SAME simulated marks.
 
     Arm B's rate is ``p_a - delta``; `rho` is the latent (tetrachoric)
     correlation between the arms' marks.
 
+    Parameters
+    ----------
+    stats : bool, default True
+        Also compute the two mark-level DIAGNOSTICS (`phi_binary`,
+        `agreement`). Pass ``False`` from callers that read only the powers.
+
     Returns
     -------
-    tuple of float
+    tuple
         ``(power_unpaired, power_paired, phi_binary, agreement)`` -- the two
-        powers (both at `ALPHA_BONF`), the realized binary (phi) correlation
-        between the arms' marks, and their raw agreement rate.
+        powers (both at `ALPHA_BONF`, always floats), the realized binary (phi)
+        correlation between the arms' marks, and their raw agreement rate. The
+        last two are `None` when ``stats=False``.
+
+    Notes
+    -----
+    The two powers do NOT depend on `stats`: the diagnostics consume no
+    randomness, so a ``stats=False`` call returns exactly the powers the
+    ``stats=True`` call on the same `rng` state would. `stats` exists purely for
+    cost. Computing `phi` upcasts BOTH boolean mark arrays to float64, which at
+    the top of `EQ_R_GRID` is ~1.55 GB of temporaries -- paid, in `part2`'s
+    equivalent-R search, for two numbers the search then discards.
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng)
@@ -367,28 +479,39 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng):
     b = (ma & ~mb).sum(axis=(1, 2))
     c = (~ma & mb).sum(axis=(1, 2))
     pv = mcnemar_exact_p(b, c)
+    powers = float(unp), float((pv < ALPHA_BONF).mean())
+    if not stats:
+        # Explicit Nones, not zeros: "not measured" must not be mistakable for
+        # "measured as uncorrelated" if a caller ever stores the result.
+        return powers[0], powers[1], None, None
     # realized BINARY (phi) correlation between the two arms' marks, and agreement
     xa, xb = ma.astype(np.float64), mb.astype(np.float64)
     va, vb = xa.mean() * (1 - xa.mean()), xb.mean() * (1 - xb.mean())
     phi = ((xa * xb).mean() - xa.mean() * xb.mean()) / np.sqrt(max(va * vb, 1e-12))
     agree = float((ma == mb).mean())
-    return float(unp), float((pv < ALPHA_BONF).mean()), float(phi), agree
+    return powers[0], powers[1], float(phi), agree
 
 
-def part2(rng, n_sims=20000, search_sims=8000, cap=900):
+def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
     Over a grid of baseline rates, accuracy gaps and latent correlations,
     compares unpaired CMH against paired exact McNemar on the same matched
-    marks (`_paired_powers`). Where pairing helps, searches `grid_r` (largest
+    marks (`_paired_powers`). Where pairing helps, searches `EQ_R_GRID` (largest
     entry `cap`) with `search_sims` sims for the smallest unpaired replicate
     count matching the paired test's power at `R_DEFAULT`. Also reports
     null-calibration Type I error for both tests. Writes ``OUT["part2"]``.
+
+    Parameters
+    ----------
+    cap : int
+        Search ceiling recorded on every row. Defaults to `EQ_R_GRID`'s last
+        rung, so the docstring's "largest entry `cap`" holds by construction
+        rather than by two literals agreeing.
     """
     print("\n=== PART 2: pairing gain (matched items) ===", flush=True)
     rows = []
-    grid_r = [30, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250, 300, 360,
-              430, 520, 620, 750, 900]
+    grid_r = list(EQ_R_GRID)
     for p_a in (0.95, 0.70):
         for delta in (0.05, 0.10):
             for rho in (0.0, 0.3, 0.5, 0.7, 0.9):
@@ -397,32 +520,41 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=900):
                 unp, pair, phi, agree = _paired_powers(p_a, delta, rho, R_DEFAULT,
                                                        n_sims, rng)
                 # equivalent R: smallest R at which the UNPAIRED test matches the
-                # paired test's R=30 power (paired data throughout).
+                # paired test's power at R_DEFAULT (paired data throughout).
                 eq_r = None
                 if pair > unp + 0.005:
                     for rr in grid_r:
-                        u2 = _paired_powers(p_a, delta, rho, rr, search_sims, rng)[0]
+                        # stats=False: the search reads only the unpaired power,
+                        # so the phi/agreement diagnostics would be computed and
+                        # thrown away once per rung (see `_paired_powers`).
+                        u2 = _paired_powers(p_a, delta, rho, rr, search_sims, rng,
+                                            stats=False)[0]
                         if u2 >= pair:
                             eq_r = rr
                             break
                 else:
                     # Pairing did not help here, so no search ran; record the
                     # default R with the flag below rather than overloading
-                    # eq_R (30-from-search and 30-because-unsearched are
-                    # different facts; None still means "grid exhausted").
-                    eq_r = 30
+                    # eq_R (R_DEFAULT-from-search and R_DEFAULT-because-
+                    # unsearched are different facts; None still means "grid
+                    # exhausted").
+                    eq_r = R_DEFAULT
                 rows.append(dict(p_a=p_a, delta=delta, rho=rho, power_unpaired=unp,
                                  power_paired=pair, eq_R=eq_r,
                                  eq_searched=pair > unp + 0.005, cap=cap,
                                  phi_binary=phi, agreement=agree,
-                                 eq_ratio=(None if eq_r is None else eq_r / 30.0)))
+                                 eq_ratio=(None if eq_r is None
+                                           else eq_r / R_DEFAULT)))
                 print(f"  p_A={p_a} d={delta} rho={rho}: phi_bin={phi:.3f} "
                       f"agree={agree:.3f} unpaired={unp:.4f} "
                       f"paired={pair:.4f} eqR={eq_r}", flush=True)
     # null calibration of both tests under matched data (rho=0.5)
     nulls = {}
     for rho in (0.0, 0.5, 0.9):
-        u, p = _paired_powers(0.90, 0.0, rho, R_DEFAULT, 60000, rng)[:2]
+        # stats=False for the same reason as the search above: `[:2]` already
+        # says the diagnostics are unread, and this is the largest n_sims here.
+        u, p = _paired_powers(0.90, 0.0, rho, R_DEFAULT, 60000, rng,
+                              stats=False)[:2]
         nulls[rho] = dict(unpaired_t1=u, mcnemar_t1=p)
         print(f"  NULL rho={rho}: unpaired T1={u:.6f} mcnemar T1={p:.6f}", flush=True)
     OUT["part2"] = dict(rows=rows, n_sims=n_sims, nulls=nulls,
@@ -534,7 +666,15 @@ def part4(rng, n_sims=4000):
                 info_idx.append((f, r, a, f, r, b))
     contrasts = lad_idx + info_idx
     m_full = len(contrasts)
-    assert m_full == N_PRIMARY, m_full
+    # A raise, not an assert: `python -O` strips asserts, and this gate is what
+    # ties the simulated family to the study's real PRIMARY family size -- the
+    # denominator every alpha in this part divides by.
+    if m_full != N_PRIMARY:
+        raise RuntimeError(
+            f"PART 4 built {m_full} full-family contrasts but power_analysis "
+            f"declares N_PRIMARY = {N_PRIMARY}; the simulated family no longer "
+            "matches the study's, so its Bonferroni alpha is wrong."
+        )
     # truth
     true_diff = np.array([abs(rates[c[0], c[1], c[2]] - rates[c[3], c[4], c[5]])
                           for c in contrasts])
@@ -569,7 +709,14 @@ def part4(rng, n_sims=4000):
     pv_red = np.concatenate([trend_p, pv[:, 84:]], axis=1)
     null_red = np.concatenate([~ladder_nonflat, is_null[84:]])
     m_red = pv_red.shape[1]
-    assert m_red == 154
+    # Same reasoning as the m_full gate above, against the module constant PART
+    # 5 prices its study-wide trend row at.
+    if m_red != N_REDUCED:
+        raise RuntimeError(
+            f"PART 4 built {m_red} reduced-family tests but N_REDUCED is "
+            f"{N_REDUCED}; PART 5's alpha_trend_studywide (ALPHA / N_REDUCED) "
+            "would then correct the trend test in a family that does not exist."
+        )
 
     def summarize(name, rejmap, nullmask, ladder_flag_fn):
         res = {}
@@ -621,14 +768,28 @@ def part4(rng, n_sims=4000):
 def main():
     """Run PARTs 1, 3, 5, 2, 4 in that order (not PART-number order), checkpointing each.
 
-    Each part uses its own fixed RNG seed, so a re-run is reproducible.
+    Each part gets its OWN generator, derived from `_power_common.SEED` as
+    ``SEED + <part number>``, so a re-run is reproducible.
+
+    Notes
+    -----
+    Per-part offsets rather than one shared stream: each part then draws from a
+    stream of its own, so adding, removing or reordering a part cannot perturb
+    another part's draws. (That is the same rationale
+    `power_analysis.omnibus_interaction_power` gives for its ``SEED + 1``.)
+    The offset is the PART NUMBER, not the position in the run order above, so
+    the mapping survives the reordering.
+
+    ``SEED`` is 0, so ``SEED + 1 .. SEED + 5`` are the seeds 1..5 these parts
+    were previously given as literals: this is a readability change with no
+    numerical effect on any published figure.
     """
     t0 = time.time()
-    part1(np.random.default_rng(1)); dump("part1")
-    part3(np.random.default_rng(3)); dump("part3")
-    part5(np.random.default_rng(5)); dump("part5")
-    part2(np.random.default_rng(2)); dump("part2")
-    part4(np.random.default_rng(4)); dump("part4")
+    part1(np.random.default_rng(SEED + 1)); dump("part1")
+    part3(np.random.default_rng(SEED + 3)); dump("part3")
+    part5(np.random.default_rng(SEED + 5)); dump("part5")
+    part2(np.random.default_rng(SEED + 2)); dump("part2")
+    part4(np.random.default_rng(SEED + 4)); dump("part4")
     print(f"\nTOTAL {time.time() - t0:.1f}s", flush=True)
 
 

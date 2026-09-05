@@ -21,7 +21,16 @@ the top of the CoT-length distribution instead of re-rolling it.
 
 Seeds: ``BASE_SEED = 0``, not the sibling studies' 1776, so this study's seed
 range (0..29) can never alias theirs; ``N_REPLICATES = 30``, and neither is
-environment-overridable.
+environment-overridable. A replicate's seed reaches two things: the quiz's
+LABEL sampling, via ``PeriodicConfig``, and the per-request decoding seed. It
+does NOT reach query sampling for the generator this study wires,
+``numeric_count_query_gen``, whose query set is one count query per label in
+ascending-period order and therefore deterministic -- so what varies in the
+prompt text across the 30 replicates is the label strings, not the questions.
+(The sibling ``tof_membership_query_gen`` does sample under the seed; that is
+why the shared ``query_gen`` signature keeps the parameter.) See
+``smolbench/induction/README.md``'s "Seed conventions" for the same
+clarification.
 
 Environment: ``INDUCTION_SHARD`` (``"index/count"``; splits ONE model's
 replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;

@@ -68,7 +68,10 @@ Each of the four chained scripts inserts a `__file__`-anchored directory on
 `paired_analysis.py`) or `notebooks/` (`power_analysis.py`, which imports
 `_power_common` from there) -- and imports its siblings by bare name;
 `power_analysis.py` is the root of that chain and the only one that resolves
-`results/`. `multiplicity_sim.py` is standalone and inserts nothing. All four
+`results/`. `multiplicity_sim.py` inserts BOTH (its own directory and
+`notebooks/`) and imports its design constants from `_power_common` and
+`power_analysis` instead of re-declaring them, but it remains the only script
+in `analysis/` that reads no results tree. All four
 read marks through ``Marks.load`` (never scraped), so they run under the
 project venv; `power_analysis.py` warns when the checkout it reads is not the
 one the installed package's `sync_down()` writes.
@@ -79,7 +82,7 @@ one the installed package's `sync_down()` writes.
 | `paired_analysis.py` | Paired re-analysis of the family-ladder induction study. |
 | `significance_report.py` | Holm and Hochberg significance report over the primary contrast family. |
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
-| `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Standalone -- imports nothing from its siblings. |
+| `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `power_analysis`; reads no results tree. |
 
 ## audits/ -- archived
 
