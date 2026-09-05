@@ -316,13 +316,34 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(report, shallow_tree,
     info-arm contrast, i.e. the exact opposite of the claim. On the collapse
     tree n_lad is 2 of 4, so the claim is earned and must still print.
     """
+    #: The one-sided claim as it was hard-coded at f3a13c9a. This exact
+    #: sentence is the defect: it names the family-scaling story as the
+    #: operative one AND denies the info-arm story, whatever n_lad is.
+    one_sided = "bites the family-scaling story, not the info-arm story"
+
+    # Floor-bound: Holm rejects nothing, so `lost` carries no information about
+    # clustering at all and NO story claim is earned -- not even a two-sided one.
     shallow = report(shallow_tree)
-    assert "0 of the 63 losses" not in shallow or \
-        "bites the family-scaling story" not in shallow
+    assert one_sided not in shallow
     assert "bites the family-scaling story" not in shallow
 
+    # Not floor-bound: the claim must track the count printed beside it.
     collapse = report(collapse_tree)
-    assert "bites the family-scaling story" in collapse
+    match = re.search(r"(\d+) of the (\d+) losses are LADDER contrasts", collapse)
+    assert match, collapse
+    n_lad, n_lost = int(match.group(1)), int(match.group(2))
+    assert n_lost > 0, "fixture no longer produces any Holm losses"
+    tail = collapse[match.start():match.start() + 600]
+    if n_lad:
+        assert "bites the family-scaling story" in tail, tail
+    else:
+        # The zero branch may still EXPLAIN the mechanism two-sidedly, but it
+        # must not assert the family-scaling side, and it must name the side
+        # the data actually shows. Asserting only `"bites the family-scaling
+        # story" in collapse` would be satisfied by the original one-sided
+        # sentence, so it is not the pin.
+        assert one_sided not in tail, tail
+        assert "info-arm story" in tail, tail
 
 
 def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
