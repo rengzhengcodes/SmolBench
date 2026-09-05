@@ -19,7 +19,11 @@ mirror that OVERWRITES the local tree, so a local-only regrade is clobbered back
 to the stale S3 copy on the next sync -- invisibly, since a score flip preserves
 byte length. `main` therefore refuses -- before touching a file, and regardless
 of ``--write`` -- if `_s3_backed_studies` finds any requested study resolving to
-an ``S3ResultsStore``, printing the recovery sequence instead.
+an ``S3ResultsStore``. There is no supported recovery: ``results_store`` has no
+upload path (the only S3 write is ``S3ResultsStore.dump_marks``'s
+``put_object``), and the S3 log is append-only with earliest-wins reads, so a
+re-appended regrade would sit behind the original and never be read back.
+`main` prints an explicit refusal instead of a workaround.
 
 Run from the repo root:
     .venv/bin/python scripts/results/regrade.py [--study induction] [--write]
@@ -30,7 +34,7 @@ import sys
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -41,8 +45,8 @@ from smolbench.evals.parsing import parse_numeric  # noqa: E402
 STUDIES = {
     # The family-ladder scaling study (notebooks/induction) is S3-backed
     # (SMOLBENCH_RESULTS_S3), so the module docstring's "S3-backed results
-    # guard" refuses a local regrade until the operator syncs down and
-    # unsets the env var.
+    # guard" refuses to regrade it locally -- there is no supported recovery
+    # (see the module docstring for why).
     "induction": "notebooks/induction/results",
 }
 
@@ -76,10 +80,12 @@ def regrade_file(path: Path, parse) -> Dict:
     Returns
     -------
     dict
-        ``marks`` (a new `Marks` carrying the re-parsed score and compliance per
-        mark), ``n``, ``before_correct``, ``before_invalid``, ``changed``,
-        ``recovered`` (invalid -> real verdict), ``broke`` (real verdict ->
-        invalid), ``violations`` (`Counter` of output-contract violations).
+        ``marks`` -- the SAME result as `path`, with only the per-mark score
+        and compliance re-parsed; every other field (``model``, ``date``,
+        ``server_config``) is preserved unchanged. Also ``n``,
+        ``before_correct``, ``before_invalid``, ``changed``, ``recovered``
+        (invalid -> real verdict), ``broke`` (real verdict -> invalid),
+        ``violations`` (`Counter` of output-contract violations).
     """
     marks = Marks.load(path)
     new_marks = []
@@ -103,7 +109,12 @@ def regrade_file(path: Path, parse) -> Dict:
         new_marks.append(replace(mark, score=score, compliance=result.violation))
 
     return {
-        "marks": Marks(model=marks.model, marks=tuple(new_marks), date=marks.date),
+        # Design: `replace` instead of naming `model`/`marks`/`date` by hand --
+        # a per-field re-construction silently drops any field added to
+        # `Marks` later, and it already dropped `server_config` (the serving-
+        # stack snapshot), so every --write blanked hardware provenance that
+        # a re-fetch cannot restore.
+        "marks": replace(marks, marks=tuple(new_marks)),
         "n": len(marks.marks),
         "before_correct": marks.correct,
         "before_invalid": marks.invalid,
@@ -114,17 +125,27 @@ def regrade_file(path: Path, parse) -> Dict:
     }
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     """Re-grade every requested study and return a process exit code.
 
-    ``1`` if any requested study is S3-backed (see the module docstring's
-    "S3-backed results guard") or any mark regressed to invalid; ``0`` otherwise.
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments, excluding the program name. ``None`` (the
+        default) reads ``sys.argv``, matching normal CLI invocation; a list
+        is used verbatim, which is how the offline tests drive this function.
+
+    Returns
+    -------
+    int
+        ``1`` if any requested study is S3-backed (see the module docstring's
+        "S3-backed results guard") or any mark regressed to invalid; ``0`` otherwise.
     """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")
     argp.add_argument("--arm", action="append", help="only conditions ending in this arm")
     argp.add_argument("--write", action="store_true", help="rewrite YAMLs in place")
-    args = argp.parse_args()
+    args = argp.parse_args(argv)
     studies = args.study or sorted(STUDIES)
 
     # Guard (see the module docstring's "S3-backed results guard"). It fires
@@ -143,11 +164,19 @@ def main() -> int:
             "on the next sync_down -- a score flip is byte-length "
             "preserving, so nothing would catch the loss."
         )
+        # Design: no "unset the guard and re-run" workaround. results_store has
+        # no upload path (the only S3 write is S3ResultsStore.dump_marks's
+        # put_object), and the S3 log is append-only with earliest-wins reads,
+        # so re-appending a regraded copy would sit behind the original entry
+        # and never be read back -- there is nothing for an operator to do here.
         print(
-            "\nTo proceed:\n"
-            "  1. Sync down: python -m smolbench.evals.results_store <results_dir>\n"
-            "  2. Unset SMOLBENCH_RESULTS_S3\n"
-            "  3. Re-run this regrade"
+            "\nAn S3-backed tree cannot be regraded in place, and there is no "
+            "supported recovery today: smolbench.evals.results_store has no "
+            "upload path (the only S3 write is S3ResultsStore.dump_marks's "
+            "put_object), and the S3 log is append-only with earliest-wins "
+            "reads, so a re-appended regrade would sit behind the original "
+            "entry and never be read back "
+            "(see the regrade-through-the-store issue)."
         )
         return 1
 
