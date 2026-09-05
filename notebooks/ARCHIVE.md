@@ -8,7 +8,7 @@ and docstrings across the repo that cite `notebooks/README.md` or
 This repo lands as a five-slice PR stack; this commit is slice 2 (induction
 only). A few rows and commands below name paths that don't exist yet:
 `scripts/fleet/*` -- slice 4; anything under `deduction/` /
-`smolbench/deduction/` / `tests/deduction/` -- slice 5;
+`smolbench/deduction/` / `tests/deduction/` -- slice 3;
 `statistical_analyses.ipynb` / `scripts/results/snapshot_analysis_data.py`
 -- slice 3. Each is marked inline below.
 
@@ -20,7 +20,7 @@ Everything is under `s3://smolbench-results-414266451290/` (`us-west-2`):
 | --- | --- |
 | `<study>/<model>/seed=<seed>/<info>--<run_ts>.yaml` | the live append-only experiment log (`smolbench.evals.results_store`); reads are earliest-wins |
 | `deduction/runs/scaling_<spec-key>/` | per-lane deduction spools (`all_rows.jsonl`, `verified_rows.jsonl`) |
-| `analysis/<date>/` | frozen analysis snapshots the report scripts render from (`scripts/results/snapshot_analysis_data.py`, slice 3) |
+| `analysis/<date>/` | frozen analysis snapshots the report scripts render from (`scripts/results/snapshot_analysis_data.py`, slice 4) |
 | `archives/<date>/` | dated archives of what left the tree: zips at the prefix root, plus the unpacked evidence tree, data sidecars, LeanDojo corpus (`notebooks/deduction/`), record files (`notebooks/`), and concluded scripts/tests (`scripts/`, `tests/`) |
 | `archives/2026-08-30/notebooks/induction/audits/` | the three concluded induction audit probes (`check_currency.py`, `verify_survivorship.py`, `response_audit.py`); also `pr4_induction_audits_2026-08-30.zip` on the PR #4 release |
 
@@ -29,7 +29,7 @@ taken; they are never rewritten to match today's grouped layout.
 
 The tests that pin archived evidence stream it from S3 and never write a
 local copy (archived data is read on AWS, not pulled down). `tests/deduction/`
-lands in slice 5; once it does, the check will be:
+lands in slice 3; once it does, the check will be:
 
 ```bash
 SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
@@ -48,9 +48,9 @@ archive tag, with sha256s in the release notes).
 | Kind | Regenerate with |
 | --- | --- |
 | Report `.txt` files (`*_REPORT.txt`) | the matching script under `notebooks/<study>/analysis/`, against an analysis snapshot (needs AWS credentials) |
-| `replay_passing_*.jsonl` sidecars | `.venv/bin/python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>` (~70 min per split); restore under `data_root().parent` -- `smolbench.deduction` lands in slice 5 |
-| LeanDojo corpus | re-download from Zenodo; see `notebooks/deduction/README.md`, "Data bootstrap" -- `notebooks/deduction/` lands in slice 5 |
+| `replay_passing_*.jsonl` sidecars | `.venv/bin/python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>` (~70 min per split); restore under `data_root().parent` -- `smolbench.deduction` lands in slice 3 |
+| LeanDojo corpus | re-download from Zenodo; see `notebooks/deduction/README.md`, "Data bootstrap" -- `notebooks/deduction/` lands in slice 3 |
 | Evidence trees (`results/**`, `EVIDENCE.json` manifests, raw generations, logs) | NOT regenerable -- live GPU measurements; the archive is the record |
-| Analysis writeups, correction verdicts, probe scripts | NOT regenerable; their live conclusions are in the code they shaped (`smolbench.evals.providers.ec2.DETERMINISM_ARGS`, the streaming transport, `notebooks/statistical_analyses.ipynb` once it lands in slice 3) |
+| Analysis writeups, correction verdicts, probe scripts | NOT regenerable; their live conclusions are in the code they shaped (`smolbench.evals.providers.ec2.DETERMINISM_ARGS`, the streaming transport, `notebooks/statistical_analyses.ipynb` once it lands in slice 5) |
 
 Nothing regenerable is tracked under `notebooks/` or `scripts/`.
