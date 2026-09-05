@@ -225,6 +225,43 @@ def body_with_proof(p: Premise) -> str:
     return sliced or p.code
 
 
+def has_full_source(p: Premise) -> bool:
+    """True iff `body_with_proof(p)` returns a real traced-repo slice, not the corpus fallback.
+
+    `body_with_proof` cannot tell its two possible sources apart in its return
+    value alone (a corpus `code` field that happens to already include a proof
+    -- common for `def`s -- looks identical to a genuine slice). This asks the
+    question `context._render_hint_parts`'s `hint:2` needs answered directly,
+    so it can label the section it renders accurately (``"## Premise full
+    source (with proof)"`` vs. a signature-only heading) instead of always
+    claiming "full source".
+
+    Calling `slice_full_decl` a second time here is cheap: it is
+    `lru_cache`d, so this does not re-read the source file when
+    `body_with_proof` already resolved (or failed to resolve) the same
+    ``(file_path, start, end)`` key. Deliberately a new function rather than
+    a change to `body_with_proof`'s signature or fallback behaviour -- several
+    callers (`referenced_premises`, `context._render_hint_parts`'s hint:3+
+    closure rendering) depend on `body_with_proof` always returning usable
+    text, never a bool.
+
+    Parameters
+    ----------
+    p : Premise
+        Premise to check.
+
+    Returns
+    -------
+    bool
+        True if `slice_full_decl(p.file_path, p.start[0], p.end[0])` returned
+        non-empty text (a real slice from the traced repo); False if it
+        returned ``""`` (no traced repo, or the source file/line range was not
+        found), meaning `body_with_proof(p)` fell back to the corpus's stored
+        `Premise.code`.
+    """
+    return bool(slice_full_decl(p.file_path, p.start[0], p.end[0]))
+
+
 # ---------------------------------------------------------------------------
 # Per-premise dependency graph (proper transitive closure for hint:3 / hint:4)
 # ---------------------------------------------------------------------------
@@ -251,11 +288,20 @@ _LEAN_NOISE = frozenset({
     "cases", "rcases", "obtain", "use", "constructor", "refine", "refine'",
     "split", "and", "or", "not", "iff", "exists", "forall", "all_goals",
     "any_goals", "tauto", "ring", "field_simp", "linarith", "nlinarith",
-    "omega", "decide", "rfl", "trivial", "trivial!", "assumption",
-    # very common short ids that would explode the graph
+    "omega", "decide", "rfl", "trivial", "assumption",
+    # Very common short ids that would explode the graph if they reached the
+    # set test below -- but they never do: `referenced_premises` checks
+    # ``len(tok) <= 1`` BEFORE the `_LEAN_NOISE` membership test, so every
+    # single-character identifier (`a`, `b`, ..., `z`) is already filtered out
+    # upstream of this set. 13-30 removed 22 such single-character entries
+    # (plus `"trivial!"`, unmatchable by `_IDENT_RE` since `!` is outside its
+    # character class) as dead: 23 lines of documentation asserting a filter
+    # that never ran. Do NOT restore single-character entries here -- add the
+    # `len(tok) <= 1` guard's removal to `referenced_premises` first, if that
+    # is ever what's wanted -- and any entry added below must be a real
+    # `_IDENT_RE` token (`_IDENT_RE.fullmatch(entry)`) to have any effect.
     "id", "le", "lt", "ge", "gt", "eq", "ne", "of", "to", "from",
-    "n", "m", "k", "x", "y", "z", "a", "b", "c", "d", "e", "f", "g",
-    "h", "h1", "h2", "h3", "p", "q", "r", "s", "t", "u", "v", "w",
+    "h1", "h2", "h3",
 })
 
 
