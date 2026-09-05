@@ -250,16 +250,20 @@ def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback():
     lazily via the shared pad search. `tokenization.py`'s rule is NO SILENT
     FALLBACKS, and an approximate count cannot satisfy an EXACT length control.
 
-    `_count_tokens` deliberately survives WITH its fallback: it also serves the
-    hint:3 50k-token budget and the non-noise trivial checks, where a rough
-    count is fine and raising would be scope creep.
+    `_count_tokens` deliberately survives WITH its fallback, for the callers
+    where a rough count is fine and raising would be scope creep:
+    `is_trivial_rung`'s non-noise branches, plus `cli.py` and
+    `tests/deduction/test_s3_archive.py`. (`_render_hint_parts`'s hint:3+ 50k
+    budget applies the same tiktoken-or-`len(s) // 4` policy through its own
+    inline `tok()`, not by calling this function -- a pre-existing duplicate
+    that 13-21 deliberately left alone.)
     """
     source = (
         __import__("pathlib").Path(context.__file__).read_text()
     )
     assert "class _TokenCounter" not in source
     assert "TiktokenTokenizer" in source
-    assert "def _count_tokens" in source, "the hint:3 budget counter must survive"
+    assert "def _count_tokens" in source, "the tolerant budget counter must survive"
     assert "len(s) // 4" in source, "_count_tokens keeps its graceful degrade"
     # The instruction suffix must be obtained from prompt.build_user_prompt,
     # never copied into this module -- a copy is the drift 13-11 closes.

@@ -765,3 +765,180 @@ def test_dedupe_cell_rows_keys_on_the_full_row_key():
     # Order of the surviving rows follows the input, not the key ordering.
     kept = runner.dedupe_cell_rows([row(1, "success"), row(0, "success")])
     assert [r["replicate_idx"] for r in kept] == [1, 0]
+
+
+# ---------------------------------------------------------------------------
+# 13-12 / 13-09 / 13-17 / 13-18: sweep reconciliation, provenance, constants
+# ---------------------------------------------------------------------------
+
+
+def _manifest(run_dir):
+    return json.loads((run_dir / "manifest.json").read_text())
+
+
+def test_unreachable_whitelist_keys_are_reported_and_fatal(sweep_ctx, monkeypatch):
+    """13-12: a requested cell the sweep cannot reach must not exit 0.
+
+    Membership was only ever tested in the direction "is this GENERATED cell
+    wanted", so a requested key naming a theorem/rung the sweep never produces
+    was skipped, counted in the same `n_skipped` as resumed cells, and the
+    sweep returned normally -- while `run_study` stamped the whitelist's
+    sha256 into manifest.json as a claim that this exact set of cells was
+    collected. Exit 0 made that claim false.
+
+    The ORDERING assertions are the load-bearing half: manifest.json must
+    record `whitelist_missed` and analysis.txt must exist BEFORE the raise, or
+    the only record of what went wrong dies with the exception.
+    """
+    cfg = _make_config()
+    reachable = sorted(_key(r)
+                       for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
+    wanted = [list(reachable[0]), ["m", "Mini.ghostTheorem", 0, "stepk:0", 0]]
+    path = sweep_ctx.tmp / "whitelist.json"
+    path.write_text(json.dumps(wanted))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(path))
+
+    run_dir = sweep_ctx.tmp / "missed"
+    with pytest.raises(RuntimeError, match="(?i)whitelist"):
+        runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+
+    manifest = _manifest(run_dir)
+    assert manifest["whitelist_missed"] == [["m", "Mini.ghostTheorem", 0, "stepk:0", 0]]
+    assert (run_dir / "analysis.txt").exists(), (
+        "the analysis must be written before the raise, not lost with it"
+    )
+
+
+def test_a_fully_reachable_whitelist_records_an_empty_missed_list(sweep_ctx, monkeypatch):
+    """13-12: "reconciled, nothing missed" and "this run predates the check" differ.
+
+    An absent key and an empty list must not be confusable, so the key is
+    written whenever a whitelist is active -- otherwise a reader of an
+    archived manifest cannot tell a clean reconciliation from no
+    reconciliation at all.
+    """
+    cfg = _make_config()
+    reachable = sorted(_key(r)
+                       for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
+    path = sweep_ctx.tmp / "whitelist.json"
+    path.write_text(json.dumps([list(k) for k in reachable[:2]]))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(path))
+    run_dir = sweep_ctx.tmp / "clean"
+    assert runner.sweep(cfg, run_dir, verifier=FakeVerifier()) == 2
+    assert _manifest(run_dir)["whitelist_missed"] == []
+
+
+def test_no_whitelist_leaves_the_manifest_key_absent(sweep_ctx):
+    """13-12: the reconciliation record only exists when a whitelist was in effect."""
+    _, run_dir = _sweep(sweep_ctx, name="nowl")
+    assert "whitelist_missed" not in _manifest(run_dir)
+
+
+def test_manifest_records_whether_the_traced_repo_was_present(sweep_ctx):
+    """13-09: which cells a run produces depends on a directory outside results/.
+
+    `premises.body_with_proof` falls back to the corpus's stored signature when
+    `premises._traced_root()` is None, and under `skip_trivial` that can make
+    `is_trivial_rung` judge hint:2/hint:3/noise:3 trivial -- so the SET OF
+    CELLS a lane produces differs between a box with the traced mathlib4
+    checkout and one without. `traced_root_present` is provenance about the
+    BOX, recorded unconditionally so an archived run can be read years later
+    without re-deriving which regime it came from.
+    """
+    _, run_dir = _sweep(sweep_ctx, name="prov")
+    assert isinstance(_manifest(run_dir)["traced_root_present"], bool)
+
+
+def test_dojo_timeout_has_one_default_across_all_three_entry_points():
+    """13-17: `dojo_timeout` had three defaults (600 / 600 / 300) and no owner.
+
+    Unified on 600, deliberately NOT on 300: `notebooks/deduction/run_study.py`
+    passes 300 explicitly, so the production sweep is unaffected either way,
+    while unifying downward would TIGHTEN `run_cell` and `cli --timeout` -- and
+    a REPL request that times out is recorded as an `"exception"` verdict, so
+    tightening silently converts slow theorems into infrastructure failures.
+
+    Checked through the actual signature/parser defaults, not by grepping for
+    the number, so a stray literal that bypasses the constant fails here.
+    """
+    import inspect
+
+    assert runner.DEFAULT_DOJO_TIMEOUT == 600
+    assert (inspect.signature(runner.run_cell).parameters["dojo_timeout"].default
+            == runner.DEFAULT_DOJO_TIMEOUT)
+
+    from smolbench.deduction.lean import cli
+
+    # `--timeout` is defined on the SUBparsers, not the top-level parser, so
+    # scanning `parser._actions` finds nothing and would make this check pass
+    # vacuously (it only failed loudly here because `.get` returned None).
+    # Walk into the subcommand instead.
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if a.dest == "cmd")
+    for name in ("run-cell", "replay"):
+        timeout = next(a for a in sub.choices[name]._actions if a.dest == "timeout")
+        assert timeout.default == runner.DEFAULT_DOJO_TIMEOUT, (name, timeout.default)
+    # `filter`'s --timeout is deliberately NOT this constant: it is documented
+    # separately at its own call site. Pinned so a future "tidy-up" that folds
+    # it in has to change this line and argue for it.
+    filt = next(a for a in sub.choices["filter"]._actions if a.dest == "timeout")
+    assert filt.default != runner.DEFAULT_DOJO_TIMEOUT
+
+
+def test_sweep_seed_default_is_zero(sweep_ctx):
+    """13-18: an omitted `seed` must not silently disagree with the driver.
+
+    `theorems.seed` (which theorems are measured) defaulted to 0 while
+    `cfg.seed` (the decode seed on the wire) defaulted to 1776, so a sweep
+    config omitting `seed` decoded at a seed no driver ever chose.
+    `run_cell`'s own 1776 default is a different entry point and is
+    deliberately unchanged.
+    """
+    cfg = _make_config(run_name="seedless", rungs=["stepk:0"], n_replicates=1,
+                       theorems={"source": "explicit", "kind": "random",
+                                 "split": "val", "full_names": ["Mini.theoremA"]})
+    del cfg["seed"]
+    _, run_dir = _sweep(sweep_ctx, cfg, name="seedless")
+    assert {r["seed"] for r in _rows(run_dir, "cell")} == {0}
+
+
+def test_resume_truncates_a_torn_final_line_before_appending(sweep_ctx):
+    """13-07: a torn FINAL line must not become a corrupt MIDDLE line.
+
+    `all_rows.jsonl` is opened in APPEND mode on resume, and `_existing_keys`
+    merely SKIPS an unparseable line -- so a row half-written when a box was
+    SIGKILLed stayed in the file and the resumed writer appended onto its torn
+    prefix, welding two records into one line:
+
+        {"kind": "cel{"kind": "cell", "n": 3}
+
+    A torn FINAL line is recoverable (both merge_lean_shards.py and
+    split_lean_run_into_shards.py drop it with a warning, and the driver's own
+    docstring promises it "regenerates on resume"); a corrupt MIDDLE line is
+    not -- both scripts hard-abort on one. So the damage is done by the
+    APPEND, and the fix is to truncate before appending.
+    """
+    cfg = _make_config(run_name="torn", rungs=["stepk:0"], n_replicates=1,
+                       theorems={"source": "explicit", "kind": "random",
+                                 "split": "val", "full_names": ["Mini.theoremA"]})
+    written, run_dir = _sweep(sweep_ctx, cfg, name="torn")
+    assert written > 0
+    path = run_dir / "all_rows.jsonl"
+    good = _rows(run_dir)
+
+    # SIGKILL mid-write: a partial record with no trailing newline.
+    with path.open("a") as f:
+        f.write('{"kind": "cell", "theorem_id": "Mini.theo')
+
+    # Resume. The truncated cell must be regenerated, not appended onto.
+    _write_rows(run_dir, good[:-1])
+    with path.open("a") as f:
+        f.write('{"kind": "cell", "theorem_id": "Mini.theo')
+    runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+
+    lines = path.read_text().splitlines()
+    for i, line in enumerate(lines):
+        json.loads(line)  # every line must parse -- a torn weld raises here
+    assert lines, "the file must not have been emptied"
+    assert not any('{"kind": "cel' in line and line.count('"kind"') > 1
+                   for line in lines), "two records welded into one line"
