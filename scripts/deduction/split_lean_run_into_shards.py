@@ -16,8 +16,11 @@ MIDDLE line; a key with at most one surviving row plus any number of
 ``"exception"`` rows is the ORDINARY resume case (``runner._existing_keys``
 deliberately re-runs an exception-only cell and the sweep appends the retry)
 and every one of its rows still lands in its shard, uncollapsed -- only the
-abort is gone; a torn FINAL line (SIGKILL mid-write) is
-dropped with a warning and regenerates on resume. ``server_config.yaml`` and
+abort is gone; a torn FINAL line (SIGKILL mid-write) is dropped with a
+warning, and the row it belongs to really is regenerated on resume, because
+the resumed sweep TRUNCATES that torn tail before appending -- so the retry
+writes a fresh, complete line rather than landing after a corrupt prefix.
+``server_config.yaml`` and
 ``manifest.json`` (as ``manifest_prelude.json``, the unsharded phase's provenance;
 the shard's sweep writes a fresh ``manifest.json``) go to shard 0, which relaunches
 against the ORIGINAL box via the original state file, keeping the sidecar chain one
