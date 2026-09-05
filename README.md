@@ -109,4 +109,10 @@ requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 
 The suite needs no AWS credentials or network access: it drives the real
 quiz-generation, provider-dispatch, and grading code paths against a local
-OpenAI-compatible stub server.
+OpenAI-compatible stub server. This prints `847 passed, 5 skipped`.
+
+All 5 skips are the same opt-in gate: `tests/deduction/test_s3_archive.py`
+pins archived evidence that lives only on S3, so it skips unless
+`SMOLBENCH_ARCHIVE_S3` is set. See `notebooks/ARCHIVE.md` under `## S3` for
+the worked invocation, and its `## GitHub releases` section for the archive
+sha256s.

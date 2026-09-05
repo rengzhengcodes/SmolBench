@@ -1,4 +1,8 @@
-"""The root README's package map and Lean-backend prose, pinned against the tree.
+"""The root README's claims about the tree, pinned against the tree itself.
+
+Three of them: that the package map names every module it indexes, that the
+Lean prose credits the backend that actually runs, and that the test section's
+skip count matches the module those skips come from.
 
 The map in ``README.md`` calls itself "an annotated tree of the whole
 repository ... this section is the map". A map is only useful if it is
@@ -111,3 +115,47 @@ def test_pyproject_lean_comment_does_not_credit_lean_dojo_with_verification():
     assert "lean-interact" in header, header
     # The entry comment below is the authority this header must agree with.
     assert "`lean-dojo` stays ONLY because corpus tracing" in text
+
+
+# --- the "Run the tests" section -------------------------------------------
+
+S3_ARCHIVE_TESTS = REPO_ROOT / "tests" / "deduction" / "test_s3_archive.py"
+
+
+def _s3_gated_test_count() -> int:
+    """Count tests in ``test_s3_archive.py`` that depend on the ``s3_archive`` fixture.
+
+    Transitive: the module defines its own ``tracked`` fixture on top of
+    ``s3_archive``, and a test requesting only ``tracked`` skips just the same.
+    """
+    import ast
+
+    tree = ast.parse(S3_ARCHIVE_TESTS.read_text())
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    gated = {"s3_archive"}
+    for _ in range(len(functions)):          # closure; the chain is short
+        for node in functions:
+            params = {a.arg for a in node.args.args}
+            if node.name.startswith("test_") or not (params & gated):
+                continue
+            gated.add(node.name)
+    return sum(1 for node in functions
+               if node.name.startswith("test_") and ({a.arg for a in node.args.args} & gated))
+
+
+def test_readme_skip_count_matches_the_gated_module():
+    """The README's "All N skips" must be the number of tests actually gated.
+
+    The PASS count in that section cannot be pinned from inside the suite --
+    any test that pinned it would change it -- so this pins the half that can
+    be: adding a sixth archive gate must not leave the README claiming five.
+    """
+    text = README.read_text()
+    stated = re.search(r"All (\d+) skips", text)
+    assert stated, "README's test section no longer states a skip count"
+    assert int(stated.group(1)) == _s3_gated_test_count()
+    # and the same number must appear in the quoted pytest summary line
+    summary = re.search(r"`\d+ passed, (\d+) skipped`", text)
+    assert summary, "README's test section no longer quotes a pytest summary line"
+    assert int(summary.group(1)) == int(stated.group(1))
+    assert "test_s3_archive.py" in text and "SMOLBENCH_ARCHIVE_S3" in text
