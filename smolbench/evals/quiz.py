@@ -106,19 +106,59 @@ Quiz: TypeAlias = Sequence[QnA]
 
 
 #: ``Mark.compliance`` value meaning "assessed: the response obeyed the output
-#: contract exactly". None (YAML ``null``) rather than a marker string, because
-#: the S3 results log is append-only: files already written cannot be rewritten,
-#: so a new marker string would sit in old files' place and read as one more
-#: violation mode to every reader that classifies by label. Both readers key on
-#: ``compliance: null`` == obeyed -- ``Marks.noncompliant`` (the census
-#: numerator) and ``Marks.assessed`` (its denominator).
-COMPLIANT = None
+#: contract exactly". Spelled out as its own string rather than left as
+#: ``None``: a stored row should say what it means on its own, without a
+#: reader having to recall which of two sentinels means which, and
+#: ``if mark.compliance:`` used to read a `COMPLIANT` mark as falsy and a
+#: `NOT_ASSESSED` one as truthy -- backwards for exactly the two outcomes a
+#: census most needs to keep apart. The append-only results log already holds
+#: rows written under the old scheme, which spelled this value
+#: ``compliance: null``; those rows are never rewritten, so `Marks.loads`
+#: reads a stored ``null`` back in as `COMPLIANT` (see its load-time shim)
+#: rather than this constant trying to mean two spellings at once.
+COMPLIANT = "compliant"
 #: ``Mark.compliance`` value meaning "never run through the compliance-aware
 #: parser". The field's DEFAULT, so a stored mark predating the field (loaded
 #: via ``Mark(**m)`` with no ``compliance`` key, or a legacy tagged file whose
 #: attribute lookup falls back to the class attribute) reads as not-assessed
 #: instead of masquerading as `COMPLIANT`.
 NOT_ASSESSED = "not-assessed"
+
+
+def _mark_kwargs(stored: dict) -> dict:
+    """Translate one stored mark mapping into ``Mark``'s constructor kwargs.
+
+    Read-compat shim, to retire together with the legacy ``!!python/object``
+    tagged-file path (see `Marks.loads`): the append-only results log holds
+    rows written before `COMPLIANT` was spelled out as a string, which stored
+    "obeyed the contract" as ``compliance: null`` -- the key is PRESENT, its
+    value ``None``. Those rows are translated here to `COMPLIANT` so they
+    compare equal to a mark written today. A row from before the
+    `Mark.compliance` field existed at all carries no ``compliance`` key,
+    which is a DIFFERENT case -- unassessed, not compliant -- and is left
+    untouched so the class's own default (`NOT_ASSESSED`) applies through
+    ``Mark(**kwargs)``. Collapsing the two cases into one
+    ``stored.get("compliance") or COMPLIANT``-style read would make a
+    pre-field mark indistinguishable from a compliant one, which is exactly
+    the ambiguity `COMPLIANT` was split out from `None` to remove.
+
+    Parameters
+    ----------
+    stored : dict
+        One element of a parsed document's ``marks`` list, keyed exactly as
+        `Mark`'s fields.
+
+    Returns
+    -------
+    dict
+        A shallow copy of `stored`, with ``compliance: None`` rewritten to
+        ``compliance: COMPLIANT`` when the key is present; otherwise
+        unchanged.
+    """
+    kwargs = dict(stored)
+    if "compliance" in kwargs and kwargs["compliance"] is None:
+        kwargs["compliance"] = COMPLIANT
+    return kwargs
 
 
 @dataclass(frozen=True)
@@ -136,13 +176,15 @@ class Mark:
     #: Chain-of-thought reasoning returned by the model, or None.
     reasoning: Optional[str] = None
     #: How the response broke the prompt's output contract: a violation label
-    #: from `smolbench.evals.parsing`, `COMPLIANT` (None) when it obeyed the
-    #: contract exactly, or `NOT_ASSESSED` when nothing ever judged it -- the
-    #: default, so legacy stored marks that lack the field load as
-    #: not-assessed rather than as compliant. Separate from ``score`` so an
-    #: analysis can tell "the model was wrong" from "right but broke the
-    #: format".
-    compliance: Optional[str] = NOT_ASSESSED
+    #: from `smolbench.evals.parsing`, `COMPLIANT` when it obeyed the contract
+    #: exactly, or `NOT_ASSESSED` when nothing ever judged it -- the default,
+    #: so legacy stored marks that lack the field load as not-assessed rather
+    #: than as compliant. Separate from ``score`` so an analysis can tell "the
+    #: model was wrong" from "right but broke the format". `None` is not a
+    #: legal value here: the legacy `compliance: null` spelling is translated
+    #: to `COMPLIANT` at load time by the `_mark_kwargs` shim, so it never
+    #: reaches this field.
+    compliance: str = NOT_ASSESSED
 
 
 @dataclass(frozen=True)
@@ -255,14 +297,19 @@ class Marks:
         # code.
         if text.startswith("!!python/object:smolbench.evals.Marks"):
             # The tags name this module's class paths, so unsafe_load
-            # reconstructs the objects.
+            # reconstructs the ``Mark`` objects directly, bypassing the
+            # `_mark_kwargs` shim below entirely. That is safe here only
+            # because these files predate the compliance field altogether:
+            # attribute lookup on a `Mark` with no stored `compliance` falls
+            # back to the class attribute, `NOT_ASSESSED`, not to a stored
+            # ``null`` that would need translating to `COMPLIANT`.
             return yaml.unsafe_load(text)
         # libyaml's C loader when available: summaries scan hundreds of MB of
         # result YAML, and the pure-Python loader runs about 10x slower.
         data = yaml.load(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
         return cls(
             model=data["model"],
-            marks=tuple(Mark(**m) for m in data["marks"]),
+            marks=tuple(Mark(**_mark_kwargs(m)) for m in data["marks"]),
             date=data["date"],
             # .get: a file written before the field existed has no key.
             server_config=data.get("server_config"),
