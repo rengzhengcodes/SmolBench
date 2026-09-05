@@ -3,11 +3,16 @@
 The 21-checkpoint study (``scripts/fleet/run_fleet.py``) records how each
 checkpoint was SERVED, nothing about what it IS. This pulls every rung's own
 ``config.json`` (and ``generation_config.json``) from the Hugging Face repo it
-was served from: ``config.json`` is the only artefact guaranteed to agree with
-the weights vLLM loaded, so where a model card disagrees the config wins and the
-disagreement is itself a finding. Every record carries the resolved commit SHA
-(the ``x-repo-commit`` response header) and a UTC fetch timestamp, so a later
-reader can tell a stale note from a moved checkpoint.
+was served from, at the exact commit its deploy spec pinned with
+``--revision`` -- never the moving branch tip, since a vendor force-push to
+the tip would silently re-base every KV figure derived from these configs
+while nothing here would notice. ``config.json`` is the only artefact
+guaranteed to agree with the weights vLLM loaded, so where a model card
+disagrees the config wins and the disagreement is itself a finding. Every
+record carries both the pinned SHA (what the study served) and the SHA the
+hub actually resolved that pin to, plus a UTC fetch timestamp, so a later
+reader can tell a stale note from a moved checkpoint -- or catch the pin
+itself having been moved or deleted upstream.
 
 The roster is :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS` minus the
 ``qwen2.5-1.5b`` smoke entry -- the same subset ``run_fleet`` pins its tiers
@@ -21,9 +26,15 @@ motif, fields grouped by attention / positional encoding / MoE / state space).
 Unrecognised keys go to ``derived.unclassified`` rather than being dropped: an
 unfamiliar field on a 2026 architecture is a finding.
 
-``--check`` also cross-checks against ``tests/fixtures/roster_configs.json`` (the
-deploy-spec test's ground truth) on the four fields both hold, exiting non-zero
-on any mismatch or fetch failure.
+``--check`` cross-checks two independent things and exits non-zero, WITHOUT
+writing either output, if either fails: (1) the fetched configs against
+``tests/fixtures/roster_configs.json`` (the deploy-spec test's ground truth)
+on the four fields both hold, and (2) each record's own pinned SHA against
+the SHA the hub resolved -- a mismatch there means the pin moved or vanished
+upstream since the study ran. Deferring both writes until after ``--check``
+passes means a failed cross-check leaves the previous, known-good
+``arch_configs_raw.json`` / ``arch_facts.json`` as the audit trail, rather
+than being overwritten by the very fetch that failed to agree.
 """
 
 from __future__ import annotations
@@ -31,11 +42,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+# Design: huggingface_hub is a core dependency (see pyproject `dependencies`)
+# already relied on by smolbench/evals/tokenization.py -- using it here in
+# place of hand-rolled urllib buys auth, retry, and local caching for free,
+# and it is the only client that can resolve a revision pin to a commit SHA
+# via a documented API (HfApi.repo_info) rather than an undocumented header.
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
@@ -50,8 +67,6 @@ _SMOKE_KEY = "qwen2.5-1.5b"
 _RAW_PATH = _HERE / "arch_configs_raw.json"
 _FACTS_PATH = _HERE / "arch_facts.json"
 _FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "roster_configs.json"
-
-_TIMEOUT_SECONDS = 60
 
 # --------------------------------------------------------------------------
 # Field groupings
@@ -120,27 +135,88 @@ _IGNORED_KEYS = frozenset({
 })
 
 
-def _fetch(repo: str, filename: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
-    """Fetch one JSON file from a Hugging Face repo's main revision.
+def _fetch(repo: str, filename: str, revision: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
+    """Fetch one JSON file from a Hugging Face repo at a pinned revision.
+
+    This is the one seam the offline tests monkeypatch (by name and by this
+    exact signature), so ``collect`` never calls ``huggingface_hub`` directly.
+
+    Parameters
+    ----------
+    repo : str
+        The Hugging Face repo id the checkpoint was served from.
+    filename : str
+        The file to fetch, e.g. ``"config.json"`` or ``"generation_config.json"``.
+    revision : str
+        The commit SHA to fetch -- taken from the deploy spec's own
+        ``--revision`` flag by :func:`spec_revision`, never the moving branch
+        tip, since a vendor force-push to the tip would silently re-base
+        every KV figure derived from these configs.
 
     Returns
     -------
     tuple
-        ``(payload, revision, error)``: the parsed JSON or ``None``, the commit
-        SHA from the ``x-repo-commit`` response header, and a failure reason
-        (``None`` on success). A 404 reports ``"absent"``, so callers can tell
-        "this repo ships no generation_config" from "the network broke".
+        ``(payload, resolved_revision, error)``:
+
+        - ``payload``: the parsed JSON, or ``None`` if the file could not be
+          fetched at all.
+        - ``resolved_revision``: the commit SHA the hub actually resolved
+          ``revision`` to, from a separate :meth:`HfApi.repo_info` call made
+          *after* the payload fetch (so a 404 on the file itself is still
+          reported as ``"absent"`` rather than being pre-empted by a metadata
+          lookup). ``None`` when that lookup fails -- always paired with a
+          non-``None`` ``error`` in that case; never silently ``None`` with
+          ``error is None``.
+        - ``error``: ``None`` on full success; the literal string
+          ``"absent"`` when the repo ships no such file at this revision (an
+          expected, informative absence -- not every repo ships a
+          ``generation_config.json``), so callers can tell that apart from
+          "the network broke"; otherwise ``f"{type(exc).__name__}: {exc}"``.
+
+    Notes
+    -----
+    Never raises. Every exception this function can encounter -- missing
+    file, auth failure, network error, a moved/deleted revision -- is caught
+    and reported via the ``error`` slot instead, because one rung's fetch
+    failure must not abort the whole roster sweep; the caller still wants the
+    other 20/21 records.
     """
-    url = f"https://huggingface.co/{repo}/resolve/main/{filename}"
-    request = urllib.request.Request(url, headers={"User-Agent": "smolbench-arch-facts"})
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-            revision = response.headers.get("x-repo-commit")
-            return json.loads(response.read().decode("utf-8")), revision, None
-    except urllib.error.HTTPError as exc:
-        return None, None, "absent" if exc.code == 404 else f"HTTP {exc.code}"
+        path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
+        payload = json.loads(Path(path).read_text())
+    except EntryNotFoundError:
+        # Design: huggingface_hub.errors.EntryNotFoundError is the common base
+        # of both RemoteEntryNotFoundError (404 from the hub) and
+        # LocalEntryNotFoundError (missing from an offline cache) in the
+        # installed huggingface-hub version -- catching the base class covers
+        # both without guessing which one a given call path raises.
+        return None, None, "absent"
     except Exception as exc:  # noqa: BLE001 -- report, never abort the sweep
         return None, None, f"{type(exc).__name__}: {exc}"
+
+    try:
+        # Design: instantiated per call, not at module scope, so importing
+        # this module (and `--help`) makes no network call. A separate call
+        # from the payload fetch above, and made only after it succeeds, so a
+        # metadata-lookup failure never masks a plain 404 on the file.
+        resolved_revision = HfApi().repo_info(repo_id=repo, revision=revision).sha
+    except Exception as exc:  # noqa: BLE001 -- report, never abort the sweep
+        # NOTE: the payload is kept (it is real data the file fetch already
+        # produced) even though the SHA lookup failed; the missing revision
+        # is surfaced here as an error rather than returned as a silent
+        # `None` with no explanation, and is caught again downstream by
+        # cross_check's missing-revision problem.
+        return payload, None, f"{type(exc).__name__}: {exc}"
+
+    if not resolved_revision:
+        # Guard: an empty/falsy `.sha` (never observed, but the API makes no
+        # non-emptiness guarantee) must not slip through as a *silent*
+        # `resolved_revision=None, error=None` -- that is precisely the
+        # "returning None silently" the no-silent-fallback rule forbids, and
+        # it would otherwise contradict this function's own Returns section.
+        return payload, None, "repo_info returned no commit sha for this revision"
+
+    return payload, resolved_revision, None
 
 
 def _rle(items: List[Any]) -> List[Dict[str, Any]]:
@@ -260,8 +336,70 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
     return view
 
 
-def collect() -> Dict[str, Any]:
-    """Fetch every roster rung and build both the raw and normalised records."""
+def spec_revision(spec: Dict[str, Any]) -> str:
+    """Return the commit SHA a deploy spec pins with its ``--revision`` flag.
+
+    Parameters
+    ----------
+    spec : dict
+        One entry of :data:`smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS`;
+        the SHA is read from ``spec["vllm_args"]``, the list of CLI flags the
+        study served this rung with.
+
+    Returns
+    -------
+    str
+        The SHA immediately following ``"--revision"`` in ``vllm_args``.
+
+    Raises
+    ------
+    ValueError
+        ``vllm_args`` has no ``"--revision"`` flag, or ``"--revision"`` is
+        the last element with no value after it. Design: this deliberately
+        does NOT fall back to ``"main"`` -- silently auditing an unpinned
+        rung against a moving branch is exactly the defect this function
+        exists to prevent. As of this writing all 22 entries of
+        ``EC2_DEPLOY_SPECS`` carry ``--revision``, so this raise is a guard
+        against a future unpinned entry, not a path any current rung takes.
+    """
+    vllm_args = spec.get("vllm_args", [])
+    repo = spec.get("hf_model_id", "<unknown repo>")
+    try:
+        flag_index = vllm_args.index("--revision")
+    except ValueError as exc:
+        raise ValueError(
+            f"{repo}: deploy spec has no --revision pin in vllm_args; "
+            "cannot audit an unpinned rung against a moving branch"
+        ) from exc
+    if flag_index + 1 >= len(vllm_args):
+        raise ValueError(
+            f"{repo}: --revision is the last vllm_args element with no SHA "
+            "after it; cannot audit an unpinned rung against a moving branch"
+        )
+    return vllm_args[flag_index + 1]
+
+
+_FetchFn = Callable[[str, str, str], Tuple[Optional[Any], Optional[str], Optional[str]]]
+
+
+def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
+    """Fetch every roster rung and build both the raw and normalised records.
+
+    Parameters
+    ----------
+    fetch : callable, optional
+        A ``(repo, filename, revision) -> (payload, resolved_revision, error)``
+        callable to use in place of :func:`_fetch`. Defaults to :func:`_fetch`
+        itself. Design: accepting this as a parameter (rather than requiring
+        callers to monkeypatch module state) lets the offline tests inject a
+        fake with no network access and no reach into this module's globals.
+
+    Returns
+    -------
+    dict
+        ``{"fetched_at": ..., "raw": ..., "facts": ...}``.
+    """
+    fetch = fetch or _fetch
     roster = {
         key: spec for key, spec in EC2_DEPLOY_SPECS.items() if key != _SMOKE_KEY
     }
@@ -272,13 +410,21 @@ def collect() -> Dict[str, Any]:
     for spec_key in sorted(roster):
         spec = roster[spec_key]
         repo = spec["hf_model_id"]
-        config, revision, error = _fetch(repo, "config.json")
-        generation, _, generation_error = _fetch(repo, "generation_config.json")
-        print(f"{'ok ' if config else 'FAIL'}  {spec_key:<28} {repo}"
-              f"{'' if config else '  <- ' + str(error)}", flush=True)
+        # Fail loudly here (not caught) -- an unpinned spec is a defect in the
+        # roster itself, not a per-rung fetch failure to record and move on.
+        pinned = spec_revision(spec)
+        config, revision, error = fetch(repo, "config.json", pinned)
+        generation, _, generation_error = fetch(repo, "generation_config.json", pinned)
+        status = "ok " if config else "FAIL"
+        detail = "" if error is None else f"  <- {error}"
+        print(f"{status}  {spec_key:<28} {repo}{detail}", flush=True)
 
         raw[spec_key] = {
             "repo": repo,
+            # Design: both SHAs are kept side by side because that pair *is*
+            # the check -- they agree unless the pin was moved or deleted
+            # upstream since the study served this rung.
+            "pinned_revision": pinned,
             "revision": revision,
             "fetched_at": fetched_at,
             "config": config,
@@ -287,12 +433,19 @@ def collect() -> Dict[str, Any]:
             "generation_config_error": generation_error,
         }
         if config is None:
-            facts[spec_key] = {"repo": repo, "error": error}
+            # `revision` is included (as None) even on failure so every
+            # record -- not just the successful ones -- carries both keys;
+            # cross_check's missing-revision check relies on the key being
+            # present rather than absent.
+            facts[spec_key] = {
+                "repo": repo, "pinned_revision": pinned, "revision": revision, "error": error,
+            }
             continue
 
         hoisted, siblings = _hoist(config)
         facts[spec_key] = {
             "repo": repo,
+            "pinned_revision": pinned,
             "revision": revision,
             "fetched_at": fetched_at,
             "architecture": (config.get("architectures") or [None])[0],
@@ -310,64 +463,94 @@ def collect() -> Dict[str, Any]:
 
 
 def cross_check(facts: Dict[str, Any]) -> List[str]:
-    """Compare fetched configs against ``tests/fixtures/roster_configs.json``.
+    """Run both cross-checks: fixture agreement and pin-vs-resolved revision.
 
-    A mismatch means the upstream checkpoint moved under the study.
+    Two independent checks, both against ``facts``:
+
+    1. Fetched configs vs. ``tests/fixtures/roster_configs.json`` (the
+       deploy-spec test's ground truth) on the four fields both hold. A
+       mismatch means the upstream checkpoint moved under the study.
+    2. Each record's own ``pinned_revision`` (what the deploy spec asked for)
+       vs. its ``revision`` (what the hub actually resolved that pin to). A
+       mismatch here is the vendor-force-push case this whole fix targets:
+       the pin itself moved or was deleted upstream since the study ran.
+       Design: this is a self-consistency check on ``facts`` alone, not a
+       fixture comparison -- the fixture has no revision field to compare
+       against, and the invariant ("a record's own two SHAs agree") is
+       actually stronger than a fixture comparison would be, since it holds
+       for every record regardless of what is or isn't in the fixture.
 
     Returns
     -------
     list[str]
-        One line per mismatch; empty when everything agrees.
+        One line per problem, from either check; empty when everything
+        agrees.
     """
-    if not _FIXTURE_PATH.exists():
-        return [f"fixture missing: {_FIXTURE_PATH}"]
-    fixture = json.loads(_FIXTURE_PATH.read_text())
     problems: List[str] = []
 
-    missing = set(fixture) ^ set(facts)
-    if missing:
-        problems.append(f"roster key mismatch vs fixture: {sorted(missing)}")
+    # Check 1: fixture agreement on shape/attention/positional fields.
+    if not _FIXTURE_PATH.exists():
+        problems.append(f"fixture missing: {_FIXTURE_PATH}")
+    else:
+        fixture = json.loads(_FIXTURE_PATH.read_text())
+        missing = set(fixture) ^ set(facts)
+        if missing:
+            problems.append(f"roster key mismatch vs fixture: {sorted(missing)}")
 
-    for spec_key, expected in sorted(fixture.items()):
-        actual = facts.get(spec_key)
-        if not actual or "derived" not in actual:
-            problems.append(f"{spec_key}: no config fetched")
-            continue
-        merged = {
-            "architecture": actual["architecture"],
-            **actual["derived"]["shape"],
-            **actual["derived"]["attention"],
-            **actual["derived"]["positional"],
-        }
-        for field in ("architecture", "num_attention_heads", "num_key_value_heads",
-                      "max_position_embeddings"):
-            if merged.get(field) != expected.get(field):
-                problems.append(
-                    f"{spec_key}.{field}: fixture={expected.get(field)!r} "
-                    f"fetched={merged.get(field)!r}"
-                )
+        for spec_key, expected in sorted(fixture.items()):
+            actual = facts.get(spec_key)
+            if not actual or "derived" not in actual:
+                problems.append(f"{spec_key}: no config fetched")
+                continue
+            merged = {
+                "architecture": actual["architecture"],
+                **actual["derived"]["shape"],
+                **actual["derived"]["attention"],
+                **actual["derived"]["positional"],
+            }
+            for field in ("architecture", "num_attention_heads", "num_key_value_heads",
+                          "max_position_embeddings"):
+                if merged.get(field) != expected.get(field):
+                    problems.append(
+                        f"{spec_key}.{field}: fixture={expected.get(field)!r} "
+                        f"fetched={merged.get(field)!r}"
+                    )
+
+    # Check 2: pinned vs. resolved revision, over every fetched record --
+    # deliberately its own loop over `facts` rather than folded into the
+    # fixture loop above, so it still runs (and can fail) on roster keys the
+    # fixture doesn't happen to cover.
+    for spec_key, record in sorted(facts.items()):
+        pinned = record.get("pinned_revision")
+        resolved = record.get("revision")
+        if pinned is None or resolved is None:
+            problems.append(
+                f"{spec_key}: missing revision (pinned={pinned!r}, resolved={resolved!r})"
+            )
+        elif pinned != resolved:
+            problems.append(
+                f"{spec_key}: pinned revision {pinned!r} != resolved {resolved!r} "
+                "-- the pin moved or was deleted upstream since the study ran"
+            )
     return problems
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true",
-                        help="cross-check against tests/fixtures/roster_configs.json")
+                        help="cross-check against tests/fixtures/roster_configs.json "
+                             "and each record's pinned vs. resolved revision")
     args = parser.parse_args()
 
     bundle = collect()
-    _RAW_PATH.write_text(json.dumps(bundle["raw"], indent=1, sort_keys=True) + "\n")
-    _FACTS_PATH.write_text(json.dumps(
-        {"fetched_at": bundle["fetched_at"], "models": bundle["facts"]},
-        indent=1, sort_keys=True) + "\n")
-
     failures = [k for k, v in bundle["facts"].items() if "error" in v]
-    print(f"\nwrote {_FACTS_PATH.relative_to(_REPO_ROOT)} and "
-          f"{_RAW_PATH.relative_to(_REPO_ROOT)} "
-          f"({len(bundle['facts']) - len(failures)}/{len(bundle['facts'])} ok)")
-    if failures:
-        print(f"FAILED to fetch: {failures}")
 
+    # Design: --check runs BEFORE either output is written. A failed
+    # cross-check must leave the previous, known-good arch_configs_raw.json
+    # and arch_facts.json exactly as they were, so the audit trail is not
+    # overwritten by the very fetch that failed to agree -- writing first and
+    # checking after (the prior behaviour) destroyed that trail on every
+    # failed run.
     if args.check:
         problems = cross_check(bundle["facts"])
         if problems:
@@ -376,6 +559,27 @@ def main() -> int:
                 print(f"  {line}")
             return 1
         print(f"cross-check vs tests/fixtures/roster_configs.json: all {len(bundle['facts'])} agree")
+
+    _RAW_PATH.write_text(json.dumps(bundle["raw"], indent=1, sort_keys=True) + "\n")
+    _FACTS_PATH.write_text(json.dumps(
+        {"fetched_at": bundle["fetched_at"], "models": bundle["facts"]},
+        indent=1, sort_keys=True) + "\n")
+
+    # Design: relative_to(_REPO_ROOT) is purely cosmetic for the summary
+    # print; fall back to the raw path if the two don't share a root (e.g. a
+    # test monkeypatches _RAW_PATH/_FACTS_PATH to a tmp dir), so a passing run
+    # never crashes on a path computation that has nothing to do with
+    # correctness.
+    try:
+        facts_display = _FACTS_PATH.relative_to(_REPO_ROOT)
+        raw_display = _RAW_PATH.relative_to(_REPO_ROOT)
+    except ValueError:
+        facts_display, raw_display = _FACTS_PATH, _RAW_PATH
+    print(f"\nwrote {facts_display} and {raw_display} "
+          f"({len(bundle['facts']) - len(failures)}/{len(bundle['facts'])} ok)")
+    if failures:
+        print(f"FAILED to fetch: {failures}")
+
     return 1 if failures else 0
 
 
