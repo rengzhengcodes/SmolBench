@@ -7,7 +7,7 @@ for what is anchored where across both studies.
 
 This repo lands as a five-slice PR stack; this commit is slice 2, so it
 ships the induction side only. Paths marked `(slice 4)` (`scripts/fleet/*`),
-`(slice 5)` (`notebooks/deduction/*`) or `(slice 3)`
+`(slice 3)` (`notebooks/deduction/*`) or `(slice 4)`
 (`tests/tooling/test_analysis_stats.py`) below don't exist in the tree yet.
 
 ```
@@ -26,7 +26,7 @@ root because things outside this directory will reach them by literal path:
 `scripts/fleet/run_fleet.py` (slice 4) will build a lane's argv from
 `notebooks/induction/run_study.py`, `scripts/fleet/run_shards.py` (slice 4)
 will find running shards with `pgrep -f` on that same string, and
-`notebooks/deduction/run_study.py` (slice 5) will load this driver by file
+`notebooks/deduction/run_study.py` (slice 3) will load this driver by file
 path for the shared roster once it lands. The driver itself already does
 `load_dotenv(__file__.parent / "keys.env")`.
 
@@ -47,14 +47,14 @@ and nothing under `analysis/` writes to the store -- they are
 read-only consumers of a synced-down local tree. Their depth affects only
 where they READ from, so the ones that need `results/` anchor it explicitly
 (`_power_common.results_dir(__file__, up=1)`) rather than
-assuming a sibling. `tests/tooling/test_analysis_stats.py` (slice 3)
+assuming a sibling. `tests/tooling/test_analysis_stats.py` (slice 4)
 (`test_shared_scaffolding_wiring`) will pin that.
 
 ## Study driver
 
 - `run_study.py` -- headless driver for the family-ladder scaling study.
   Defines the roster (`MODELS`, `COT_ARGS`) and sweep config.
-  `notebooks/deduction/run_study.py` (slice 5) will load it by file path
+  `notebooks/deduction/run_study.py` (slice 3) will load it by file path
   once it lands. The analysis scripts do NOT -- they take their own
   `MODELS` from `analysis/power_analysis.py`.
 - `induction_eval.ipynb` -- the fleet-aware notebook for exploring and

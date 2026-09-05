@@ -222,7 +222,7 @@ MODELS: dict[str, str] = {
 # fire only under INDUCTION_SHARD, which left the documented STANDALONE
 # invocation on ec2.py's own "periodic-induction" fallback -- a RETIRED
 # study's tag. A roster-only importer (notebooks/deduction/run_study.py, lands
-# in slice 5) therefore now also sees EC2_EXPERIMENT_TAG set as a side effect.
+# in slice 3) therefore now also sees EC2_EXPERIMENT_TAG set as a side effect.
 # That is the safe direction: such an importer provisions nothing, and it can
 # no longer inherit the retired default either.
 #
