@@ -33,10 +33,23 @@ why the shared ``query_gen`` signature keeps the parameter.) See
 clarification.
 
 Environment: ``INDUCTION_SHARD`` (``"index/count"``; splits ONE model's
-replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
+replicates -- shard membership is DERIVED from the seed's INDEX in
+``range(N_REPLICATES)``, ``r % count == index`` (see
+``InductionExperiment.seeds``), and is never stored anywhere: a shard's seed
+set is reproducible from its own ``(index, count)`` alone, and no state file
+records which seeds a shard owns -- the per-lane state file is EC2 instance
+bookkeeping only, unrelated to which seeds are sharded where);
+``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
 unset/empty selects all 21); ``INDUCTION_FORCE_RERUN`` (``"1"`` or ``"a-b"``;
-re-collect seeds past the resume-skip -- forced attempts APPEND to the S3 log
-and earliest-wins reads never return them; see ``force_seeds=`` in ``main()``); ``INDUCTION_STATE_FILE`` (the only way
+re-collect seeds past the resume-skip -- ``force_seeds=`` is set on
+``EXPERIMENT`` at module scope below, not in ``main()``. A forced
+re-collection now SUPERSEDES every existing run for each of that seed's
+addresses before collecting its replacement (see
+``ReplicateHarness.run_replicates``'s Notes), so the re-run IS what every
+reader returns, on either backend. Forcing is per-SEED, not per (info, seed):
+it re-collects ALL of that seed's info arms (``INFO_TYPES``: ``intens``,
+``extens``, ``noise_intens``, ``zero``) in one pooled call; there is no way to
+force just one arm); ``INDUCTION_STATE_FILE`` (the only way
 to redirect this process's repo-root-anchored EC2 state file --
 ``InductionExperiment._apply_env`` overwrites the bare ``EC2_STATE_FILE`` shell
 variable on every provision/run/teardown). The fleet MUST set a distinct state
@@ -681,9 +694,9 @@ EXPERIMENT = InductionExperiment(
     shard=SHARD,
     # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip (syntax
     # in _parse_force_seeds); combines with INDUCTION_SHARD, a shard forcing
-    # only the seeds it owns. Reads are EARLIEST-wins (see
-    # smolbench/evals/results_store.py), so a forced re-run appends to the S3
-    # log but does NOT supersede the original on read.
+    # only the seeds it owns. The re-run supersedes and replaces what was
+    # there before, on either backend -- see ReplicateHarness.run_replicates's
+    # Notes for the mechanism and ordering guarantee.
     force_seeds=_parse_force_seeds(
         os.environ.get("INDUCTION_FORCE_RERUN", ""),
         range(BASE_SEED, BASE_SEED + N_REPLICATES),

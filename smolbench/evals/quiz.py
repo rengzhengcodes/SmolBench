@@ -204,6 +204,20 @@ class Marks:
     #: predating the field. A plain default, not a default_factory, so a tagged
     #: file missing the attribute falls back to the class attribute on access.
     server_config: Optional[dict] = None
+    #: The ``run_ts`` (see ``results_store.format_run_ts``) of the run this one
+    #: RE-GRADES, or ``None`` for an original collection. Set only by
+    #: ``ResultsStore.regrade``, never by ``ReplicateHarness.run_replicates``,
+    #: which only ever collects originals. The append-only S3 log can never be
+    #: edited in place, so a re-graded row has to carry its own provenance to
+    #: stay self-describing -- a reader sees a ``Marks`` and can always tell
+    #: whether it replaces an earlier judgement of the SAME collected
+    #: responses (a regrade) versus a fresh collection, with no side table to
+    #: consult. LAST field (after `server_config`): a pure tail addition, so
+    #: nothing about the existing plain-dict document's shape changes for it.
+    #: A plain default, not a default_factory, so a stored file predating this
+    #: field falls back to the class attribute, `None`, exactly as
+    #: `server_config` does above.
+    regraded_from: Optional[str] = None
 
     @property
     def correct(self) -> int:
@@ -313,6 +327,7 @@ class Marks:
             date=data["date"],
             # .get: a file written before the field existed has no key.
             server_config=data.get("server_config"),
+            regraded_from=data.get("regraded_from"),
         )
 
     @classmethod

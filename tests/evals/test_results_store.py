@@ -1,5 +1,6 @@
 """Replicate results store: local tree, S3 append-only log, env resolution, sync_down."""
 
+import dataclasses
 import hashlib
 import io
 from datetime import datetime, timezone
@@ -344,3 +345,164 @@ def test_harness_runs_summarizes_and_syncs_down(s3_harness, fake_s3, monkeypatch
     stamps_of = {s: {k.rsplit("--", 1)[1] for k in v} for s, v in keys.items()}
     assert len(stamps_of[1]) == len(stamps_of[2]) == 1 and stamps_of[1] != stamps_of[2]
 
+
+
+# ===========================================================================
+# Supersede: the one marker convention both legs read
+# ===========================================================================
+
+SUPERSEDED_REASON = "re-collected past the resume-skip"
+
+
+def s3_store():
+    """The log store the supersede tests below share."""
+    return S3ResultsStore(BUCKET, "", "periodic_moe", "us-west-2")
+
+
+def marker_key(seed=1776, info="intens", ts=TS1, model="stub-model"):
+    return (f"periodic_moe/{model}/seed={seed}/{info}--{format_run_ts(ts)}"
+            f".superseded")
+
+
+def test_supersede_writes_a_json_marker_beside_the_run(fake_s3):
+    """The marker is a SIBLING key, so the run itself is never mutated or deleted.
+
+    The log is append-only -- a written object cannot be rewritten -- so
+    retiring a run has to be expressed by adding something, not by changing
+    what is there.
+    """
+    import json
+
+    store = s3_store()
+    store.dump_marks(sample_marks(score=1), addr(), TS1)
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+
+    assert marker_key() in fake_s3.objects
+    # The run object is untouched, byte for byte.
+    assert (fake_s3.objects[f"periodic_moe/stub-model/seed=1776/intens--"
+                            f"{format_run_ts(TS1)}.yaml"]
+            == sample_marks(score=1).dumps().encode())
+    body = json.loads(fake_s3.objects[marker_key()].decode())
+    assert body["reason"] == SUPERSEDED_REASON
+    # An ISO-8601 UTC instant, parseable back into an aware datetime.
+    assert datetime.fromisoformat(body["superseded_at"]).tzinfo is not None
+
+
+def test_reads_skip_a_superseded_run_and_take_the_earliest_survivor(fake_s3):
+    """Earliest-wins applies over the SURVIVORS, not over every logged run."""
+    store = s3_store()
+    store.dump_marks(sample_marks(score=1), addr(), TS1)   # the run to retire
+    store.dump_marks(sample_marks(score=0), addr(), TS2)   # its replacement
+    assert store.load_marks(addr()).marks[0].score == 1
+
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_runs(addr()) == [format_run_ts(TS2)]
+    assert store.load_marks(addr()).marks[0].score == 0
+
+
+def test_a_marker_is_not_itself_a_run(fake_s3):
+    """A ``.superseded`` key must never be listed, loaded or counted as a run."""
+    store = s3_store()
+    store.dump_marks(sample_marks(), addr(), TS1)
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_runs(addr()) == []
+    # exists()/list_seeds() stay marker-BLIND on purpose: they are the
+    # resume-skip's cheap presence probes, and superseding is only ever done
+    # paired with writing a replacement run (see supersede's docstring).
+    assert store.exists(addr())
+    assert store.list_seeds("stub-model", "decode", "intens") == [1776]
+    # ... but a read that has nothing left to return says so, loudly, naming
+    # the prefix an operator would have to look at.
+    with pytest.raises(FileNotFoundError) as exc:
+        store.load_marks(addr())
+    assert "periodic_moe/stub-model/seed=1776/intens--" in str(exc.value)
+    assert "superseded" in str(exc.value)
+
+
+def test_supersede_all_retires_every_surviving_run(fake_s3):
+    """The harness's one call: however many runs an address has, retire them all."""
+    store = s3_store()
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0  # nothing logged yet
+    store.dump_marks(sample_marks(), addr(), TS1)
+    store.dump_marks(sample_marks(), addr(), TS2)
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 2
+    assert store.list_runs(addr()) == []
+    # Each marker sits beside its own run (sorted: stamp first, then suffix).
+    assert sorted(fake_s3.objects) == [
+        marker_key(ts=TS1),
+        f"periodic_moe/stub-model/seed=1776/intens--{format_run_ts(TS1)}.yaml",
+        marker_key(ts=TS2),
+        f"periodic_moe/stub-model/seed=1776/intens--{format_run_ts(TS2)}.yaml",
+    ]
+    # Idempotent: a second call finds no survivors and writes nothing new.
+    before = dict(fake_s3.objects)
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0
+    assert fake_s3.objects == before
+
+
+def test_sync_down_skips_superseded_runs(fake_repo, s3_env, fake_s3):
+    """The synced local tree must agree with load_marks, superseding included.
+
+    ``sync_down`` lists a whole model prefix rather than one ``<info>--``
+    prefix, so it has to collect the markers in their own pass; missing that,
+    it would land the retired run's bytes locally while ``load_marks``
+    returned the replacement.
+    """
+    results = fake_repo / "notebooks/periodic_moe/results"
+    _log(fake_s3, 1, "intens", TS1, sample_marks(score=1).dumps().encode())
+    _log(fake_s3, 1, "intens", TS2, sample_marks(score=0).dumps().encode())
+    store = resolve_store(results)
+    store.supersede(ReplicateAddress(tag="decode", info="intens", seed=1,
+                                     model="stub-model"),
+                    format_run_ts(TS1), SUPERSEDED_REASON)
+
+    assert sync_down(results, {"stub-model": "decode"}) == 1
+    landed = Marks.load(results / "decode_intens" / "rep_1.yaml")
+    assert landed.marks[0].score == 0
+    assert landed == store.load_marks(
+        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model")
+    )
+
+
+def test_local_supersede_renames_and_every_reader_ignores_the_file(tmp_path, monkeypatch):
+    """The local convention: rename in place, so the bytes survive but nothing reads them."""
+    patch_utcnow(monkeypatch, lambda: TS1)
+    store = LocalResultsStore(tmp_path)
+    store.dump_marks(sample_marks(), addr(), TS1)
+    live = tmp_path / "decode_intens" / "rep_1776.yaml"
+    body = live.read_bytes()
+
+    retired = store.supersede(addr(), SUPERSEDED_REASON)
+    assert not live.exists()
+    assert retired.name == f"rep_1776.SUPERSEDED-{format_run_ts(TS1)}.yaml"
+    assert retired.read_bytes() == body
+    assert store.list_seeds(None, "decode", "intens") == []
+    assert not store.exists(addr())
+    with pytest.raises(FileNotFoundError):
+        store.load_marks(addr())
+
+    # Superseding an address with nothing stored is a no-op, not an error:
+    # the harness calls it uniformly for every forced (info, seed).
+    assert store.supersede(addr(seed=999), SUPERSEDED_REASON) is None
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0
+
+
+def test_regrade_writes_a_self_describing_run_and_retires_the_old_one(fake_s3):
+    """A regrade is a NEW run that names the run it replaces, plus a marker."""
+    store = s3_store()
+    store.dump_marks(sample_marks(score=1), addr(), TS1)
+    regraded = dataclasses.replace(
+        sample_marks(score=0), regraded_from=format_run_ts(TS1)
+    )
+    store.regrade(regraded, addr(), TS2, reason="re-graded with the fixed parser")
+
+    assert store.list_runs(addr()) == [format_run_ts(TS2)]
+    loaded = store.load_marks(addr())
+    assert loaded.marks[0].score == 0
+    assert loaded.regraded_from == format_run_ts(TS1)
+    assert marker_key(ts=TS1) in fake_s3.objects
+
+    # A regrade that does not say what it regraded is refused: the whole point
+    # is that the replacement row is self-describing in the log.
+    with pytest.raises(ValueError):
+        store.regrade(sample_marks(score=1), addr(seed=1777), TS2, reason="x")

@@ -118,11 +118,10 @@ class InductionExperiment:
     #: than defaulting them; see its own ``run_study.py``'s shard handling.
     shard: Optional[Tuple[int, int]] = None
     #: Forwarded to ``ReplicateHarness.force_seeds``: seeds re-collected past
-    #: the resume-skip; ``None`` disables it. Supersede semantics differ by
-    #: backend: S3 reads resolve the EARLIEST run, so a forced re-collection
-    #: is never returned by any reader; a LOCAL store overwrites
-    #: ``rep_{seed}.yaml`` in place. ``results_store.py``'s docstring says why
-    #: the S3 log is append-only.
+    #: the resume-skip; ``None`` disables it. On EITHER backend the re-run now
+    #: supersedes and replaces whatever was stored before, so it is what every
+    #: reader returns -- see ``ReplicateHarness.force_seeds``'s own docstring
+    #: for the mechanism.
     force_seeds: Optional[frozenset] = None
 
     def __post_init__(self) -> None:

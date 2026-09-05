@@ -65,14 +65,19 @@ class ReplicateHarness:
     #: Seeds counted as outstanding even when the store already has them: the
     #: ``store.exists`` resume-skip is bypassed for exactly these, each being
     #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (default)
-    #: disables forcing entirely.
+    #: disables forcing entirely. Forcing is PER-SEED, not per (info, seed):
+    #: it re-collects ALL of that seed's info arms in one pooled call, never
+    #: just one arm.
     #:
-    #: WARNING: against an S3-backed store this cannot SUPERSEDE anything. Reads
-    #: resolve the EARLIEST logged run, so forcing an already-logged seed spends
-    #: real GPU money appending an object no reader here will return. Forcing is
-    #: meaningful only for a seed with no logged run, or against a LOCAL store
-    #: (which overwrites in place). Replacing logged data is an
-    #: explicit-exclusion problem -- see the results_store module docstring.
+    #: On EITHER backend, `run_replicates` now supersedes every existing run
+    #: for a forced address BEFORE collecting its replacement (see that
+    #: method's Notes), so the re-run is what every reader returns. Against
+    #: S3 this used to be false: reads resolved the EARLIEST logged run, so
+    #: forcing an already-logged seed spent real GPU money appending an
+    #: object no reader ever returned. Against a local store the old run is
+    #: still overwritten in place, but now as a supersede-then-write (a
+    #: ``SUPERSEDED-<ts>`` rename survives on disk) rather than a silent
+    #: overwrite that left no trace of what came before.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
@@ -102,7 +107,9 @@ class ReplicateHarness:
         Lets a caller skip SERVING a model it has no work for. `model` must be a
         key of ``archetype_tags``. The store is consulted on every call (against
         S3, one listing request per (info type, seed)); ANY logged S3 run counts
-        as "not outstanding", a seed in ``force_seeds`` always as outstanding.
+        as "not outstanding", INCLUDING a superseded one (``exists`` is
+        marker-blind by design -- see ``S3ResultsStore``'s class docstring),
+        a seed in ``force_seeds`` always as outstanding regardless.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -136,6 +143,20 @@ class ReplicateHarness:
         ``run_ts`` is captured ONCE PER SEED, before that seed's pooled
         ``evaluate()``, so one collection event gets one timestamp in the S3 log
         (``LocalResultsStore`` ignores ``run_ts``).
+
+        A forced seed's outstanding addresses are each superseded via
+        ``self.store.supersede_all`` BEFORE that seed's replacement is
+        collected -- ORDER IS DELIBERATE. While the re-run is in flight the
+        address deliberately reads as "no surviving run" (S3: ``load_marks``
+        raises; local: the file is already renamed away) rather than as the
+        stale run it is about to replace, so nothing can observe half-forced
+        state as if it were the old, unforced result. A crash between the
+        supersede and the write leaves a retired-but-unreplaced address: on
+        S3, ``load_marks`` raises loudly, naming how many runs were
+        superseded, and the recovery is either re-running this seed (to
+        write the missing replacement) or deleting the marker(s) by hand to
+        restore the prior run; locally, the ``SUPERSEDED-<ts>`` file is the
+        prior run, recoverable the same way.
         """
         tag: str = self.archetype_tags[model]
         # Before the resume-skip loop, so a direct call still names the
@@ -158,6 +179,16 @@ class ReplicateHarness:
             ]
             if not outstanding:
                 continue
+            if seed in forced:
+                # Retire whatever is already there BEFORE collecting the
+                # replacement (see this method's Notes for why this order is
+                # deliberate). Only forced addresses are touched: a
+                # non-forced info type only appears in `outstanding` because
+                # nothing was stored for it yet, so there is nothing to
+                # supersede.
+                reason = f"force_seeds: re-collecting seed={seed}"
+                for info in outstanding:
+                    self.store.supersede_all(self._address(model, tag, info, seed), reason)
             # One timestamp per SEED (see this method's "Notes" section),
             # captured before make_quizzes/evaluate so it dates the start of the
             # collection event, not the end of serialization.
