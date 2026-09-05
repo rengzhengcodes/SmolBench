@@ -28,8 +28,9 @@ from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
 )
 
 #: The chain, in the order the driver must run it. `multiplicity_sim` is
-#: deliberately absent: it reads no results tree and is a Monte Carlo study,
-#: so it runs only behind an explicit flag.
+#: deliberately absent: its simulation consumes design constants rather than
+#: results (it reads the study's measured design effect for context, and
+#: nothing else), and it costs minutes, so it runs only behind an explicit flag.
 CHAIN = ("power_analysis", "paired_analysis", "significance_report",
          "extens_vs_noise")
 
@@ -85,9 +86,9 @@ def test_the_driver_runs_the_chain_in_order(run_all, recorded):
 
 
 def test_the_simulation_runs_only_behind_its_flag(run_all, recorded):
-    """`multiplicity_sim` is a Monte Carlo study that reads no results tree, so
-    a default run must not spend minutes on it -- and a caller who wants it
-    must not have to invoke a second script by hand."""
+    """`multiplicity_sim` is a Monte Carlo study whose figures do not come from
+    the results tree, so a default run must not spend minutes on it -- and a
+    caller who wants it must not have to invoke a second script by hand."""
     run_all.main([])
     assert "multiplicity_sim" not in recorded
     recorded.clear()

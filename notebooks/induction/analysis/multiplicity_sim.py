@@ -10,9 +10,30 @@ general-association statistic mirrors that file's gcmh_reject. The design
 constants the simulation is priced against are IMPORTED from the modules that
 own them (`_power_common` and `power_analysis`) rather than re-declared here,
 so a re-sizing of the study cannot apply to the report and not to this
-simulation. It is still the only script in `analysis/` that reads no replicate
-tree: it consumes constants, never results. Results are checkpointed to
+simulation. The SIMULATION still consumes constants only, never results --
+that claim is unchanged. `study_design_effect` is the one exception: it reads
+the study's own measured design effect (`paired_analysis.design_effect`, a
+variance ratio on binary per-seed differences) from the real results tree
+when one exists, purely so PART 2's icc rows below can be interpreted against
+it. A fresh checkout ships no results tree, so `study_design_effect` returns
+``None`` there, and PART 2 prints that as `unknown` -- this repository is in
+that state. Results are checkpointed to
 `notebooks/induction/results/multiplicity_sim_results.json` after each part.
+
+PART 2 (pairing gain) runs at three intraclass correlations (`ICC_GRID`:
+0.0, 0.2, 0.4), modelling the within-replicate clustering the real study's
+items have -- a replicate's `K_HARM` items share a seed and so rise and fall
+together -- which PART 2's marks did not model before. Each icc block reports
+the design effect its OWN simulated marks produce, under the exact same
+`design_effect` estimator the study's paired report uses, so a reader holding
+their own study's measured design effect compares LIKE WITH LIKE against a
+row that actually used that estimator, rather than against a formula. The
+textbook shortcut `1 + (k-1)*icc` is deliberately NOT used to relate an `icc`
+to a design effect: `icc` is a knob on the LATENT scale (a share of latent
+variance shared within a replicate) while `design_effect` measures a variance
+RATIO on the observed binary per-seed differences the CMH denominator omits;
+relating the two by that formula would compare two different scales as if
+they were one.
 
 Run (repo root):
   .venv/bin/python notebooks/induction/analysis/multiplicity_sim.py
@@ -70,6 +91,15 @@ R_DEFAULT = 30          # replicates (seeds 0..29) -- run_study.N_REPLICATES,
 # comparison rather than an implementation detail of the loop that walks it.
 EQ_R_GRID = (R_DEFAULT, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210,
              250, 300, 360, 430, 520, 620, 750, 900)
+
+# PART 2's clustering grid: the intraclass correlations at which the whole
+# pairing-gain block is re-run. 0.0 is the published un-clustered baseline
+# (every PART 2 figure already published assumes it implicitly); 0.2 and 0.4
+# bracket the clustering the study's own measured design effect
+# (`study_design_effect`) can plausibly show, so a reader with a measured
+# design effect in hand lands between two rows rather than off the end of the
+# grid.
+ICC_GRID = (0.0, 0.2, 0.4)
 
 # PART 4's reduced contrast family: 28 one-df trend tests replacing the 84
 # pairwise ladder contrasts, plus the 126 info contrasts that are common to
@@ -249,18 +279,86 @@ def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
 
 
 def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
-                 rng: np.random.Generator):
+                 rng: np.random.Generator, icc: float = 0.0):
     """Simulate matched marks from a latent bivariate normal (tetrachoric `rho`).
+
+    Optionally clusters each arm's items within a replicate at intraclass
+    correlation `icc`, modelling the fact that a replicate's `K_HARM` items
+    share a seed and so rise and fall together -- the same latent model PART 3
+    calls its "independent" variant (an arm-specific per-replicate latent, not
+    a single latent shared by both arms).
+
+    Parameters
+    ----------
+    p_a, p_b : float
+        Marginal success rate of arm A and arm B.
+    rho : float
+        Tetrachoric (latent-scale) correlation between the two arms' marks.
+    n_sims : int
+        Number of independent Monte Carlo simulations to draw at once.
+    reps : int
+        Number of replicates (seeds) per simulation.
+    rng : numpy.random.Generator
+        Source of randomness, consumed in a fixed order (see Notes).
+    icc : float, default 0.0
+        Intraclass correlation: the share of each arm's latent variance
+        contributed by a per-replicate latent shared by that replicate's
+        `K_HARM` items, rather than drawn fresh per item. Must lie in
+        ``[0.0, 1.0)``; ``1.0`` is excluded because it would make every item
+        within a replicate identical, collapsing the `K_HARM` axis.
 
     Returns
     -------
     tuple of ndarray
         ``(marks_a, marks_b)``, bool arrays of shape ``(n_sims, reps, K_HARM)``
-        with marginal success rates `p_a` and `p_b`.
+        with marginal success rates `p_a` and `p_b` regardless of `icc` (see
+        Notes: the mix is variance-preserving).
+
+    Raises
+    ------
+    ValueError
+        If `icc` is outside ``[0.0, 1.0)``.
+
+    Notes
+    -----
+    `z1`, `z2` and their mix `zb` are drawn in exactly the order this function
+    used before `icc` existed. This is load-bearing: it is what makes an
+    `icc=0.0` call consume `rng` identically to the pre-`icc` code, so every
+    PART 2 figure already published (all produced at the implicit icc=0) is
+    reproduced byte-for-byte by an explicit `icc=0.0` call. The
+    icc-clustering draw below is skipped ENTIRELY when `icc == 0.0` -- not
+    performed and then multiplied by a zero weight -- for exactly that
+    reason: a zero-weighted draw still advances `rng`'s state, which would
+    silently change every draw downstream of this call even though the
+    weight makes its OWN contribution zero.
+
+    When `icc > 0.0`, one per-replicate latent is drawn per ARM (`u_a`, `u_b`),
+    INDEPENDENTLY of each other, each shape ``(n_sims, reps, 1)`` broadcasting
+    over the `K_HARM` items of a replicate. The two latents are never shared
+    between arms: a single latent shared by both arms would couple them
+    through the back door, inflating the paired test's apparent correlation
+    and hence its apparent power advantage over the unpaired test -- the
+    opposite of the effect `icc` exists to expose.
+
+    Each arm's mixed latent is ``w1 * u + w2 * z`` with
+    ``w1, w2 = sqrt(icc), sqrt(1 - icc)``. Because ``w1**2 + w2**2 == icc +
+    (1 - icc) == 1`` and `u` and `z` are independent unit-variance normals,
+    the mix is itself unit-variance, so thresholding it at ``norm.ppf(p_a)``
+    (resp. `p_b`) reproduces the SAME marginal success rate as icc=0 -- an
+    icc row is the same task with clustering added, not a different task with
+    a different rate.
     """
+    if not (0.0 <= icc < 1.0):
+        raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
     z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     zb = rho * z1 + np.sqrt(max(1.0 - rho * rho, 0.0)) * z2
+    if icc > 0.0:
+        u_a = rng.standard_normal((n_sims, reps, 1), dtype=np.float32)
+        u_b = rng.standard_normal((n_sims, reps, 1), dtype=np.float32)
+        w1, w2 = np.sqrt(icc), np.sqrt(1.0 - icc)
+        z1 = w1 * u_a + w2 * z1
+        zb = w1 * u_b + w2 * zb
     from scipy.stats import norm
     return z1 < norm.ppf(p_a), zb < norm.ppf(p_b)
 
@@ -442,7 +540,8 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
 
 
 # ================================================================== PART 2: pairing gain
-def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True):
+def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True,
+                   icc: float = 0.0):
     """Compute unpaired-CMH and paired-McNemar power on the SAME simulated marks.
 
     Arm B's rate is ``p_a - delta``; `rho` is the latent (tetrachoric)
@@ -453,6 +552,9 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True):
     stats : bool, default True
         Also compute the two mark-level DIAGNOSTICS (`phi_binary`,
         `agreement`). Pass ``False`` from callers that read only the powers.
+    icc : float, default 0.0
+        Forwarded verbatim to `paired_marks`: the within-replicate intraclass
+        correlation to simulate before computing either power.
 
     Returns
     -------
@@ -472,7 +574,7 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True):
     equivalent-R search, for two numbers the search then discards.
     """
     p_b = p_a - delta
-    ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng)
+    ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng, icc=icc)
     sa = ma.sum(axis=1)
     sb = mb.sum(axis=1)
     unp = (cmh_stat(sa, sb, reps) > chi2.isf(ALPHA_BONF, 1)).mean()
@@ -492,6 +594,57 @@ def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True):
     return powers[0], powers[1], float(phi), agree
 
 
+def study_design_effect() -> float | None:
+    """Read the induction study's OWN measured design effect from the real tree.
+
+    Median, over the 210 PRIMARY contrasts (`power_analysis.build_primary_contrasts`),
+    of `paired_analysis.design_effect` computed on each contrast's item-matched
+    marks (`paired_analysis.aligned`, ``drop_invalid=False``) -- the exact same
+    estimator each of `part2`'s icc blocks reports on its own simulated marks,
+    so the two numbers are directly comparable.
+
+    Returns
+    -------
+    float or None
+        `None` means exactly one of two things, both benign: no results tree
+        exists at `paired_analysis.RESULTS_DIR` (the normal state of a fresh
+        checkout -- this repository's own state), or every one of the 210
+        contrasts came back with its own `design_effect` `None` (too few
+        shared seeds, identical arms, or a degenerate stratum). There is no
+        third case: any OTHER failure while reading an existing tree is
+        allowed to propagate (see Notes).
+
+    Notes
+    -----
+    `paired_analysis` and `power_analysis` are imported HERE, inside the
+    function, rather than at module scope. This module's SIMULATION consumes
+    constants only, never results (see the module docstring); importing a
+    results-reading sibling at module scope would make every other function
+    in this file -- and a bare ``import multiplicity_sim`` with no results
+    tree present -- depend on that sibling's import-time side effects.
+
+    Nothing here is wrapped in a bare ``except``. If a tree exists but a
+    replicate in it is malformed, `paired_analysis.load_marks` raises, and
+    that exception is left to propagate: silently swallowing it would let
+    this function report a design effect computed from a silently partial
+    read, which is precisely the failure mode a printed banner must not have.
+    """
+    import paired_analysis
+    import power_analysis
+
+    if not paired_analysis.RESULTS_DIR.exists():
+        return None
+    correct, valid, _compliance = paired_analysis.load_marks()
+    deffs = []
+    for _label, key_a, key_b in power_analysis.build_primary_contrasts():
+        a, b, seed_idx = paired_analysis.aligned(correct, valid, key_a, key_b,
+                                                  drop_invalid=False)
+        d = paired_analysis.design_effect(a, b, seed_idx)
+        if d is not None:
+            deffs.append(d)
+    return float(np.median(deffs)) if deffs else None
+
+
 def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
@@ -500,7 +653,18 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
     marks (`_paired_powers`). Where pairing helps, searches `EQ_R_GRID` (largest
     entry `cap`) with `search_sims` sims for the smallest unpaired replicate
     count matching the paired test's power at `R_DEFAULT`. Also reports
-    null-calibration Type I error for both tests. Writes ``OUT["part2"]``.
+    null-calibration Type I error for both tests.
+
+    The whole comparison above is run once per `icc` in `ICC_GRID` (0.0, 0.2,
+    0.4), simulating the within-replicate clustering the real study's items
+    have but earlier runs of this comparison did not model. Every printed
+    block's header names its `icc`; every row dict carries an `icc` field;
+    and every block additionally reports `design_effect_simulated`, the
+    median `paired_analysis.design_effect` its own null-configuration marks
+    (`p_a=p_b=0.90`, `rho=0.5`, the calibration row's configuration) produce,
+    so a reader can compare that number against the study's own measured
+    design effect (`study_design_effect`, printed once up front) and pick the
+    icc row that describes their study. Writes ``OUT["part2"]``.
 
     Parameters
     ----------
@@ -508,57 +672,111 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
         Search ceiling recorded on every row. Defaults to `EQ_R_GRID`'s last
         rung, so the docstring's "largest entry `cap`" holds by construction
         rather than by two literals agreeing.
+
+    Notes
+    -----
+    `paired_analysis` is imported HERE, inside the function, for the same
+    reason `study_design_effect` imports it locally: this module's SIMULATION
+    consumes constants only, and a results-reading sibling must not become an
+    import-time dependency of it.
     """
+    import paired_analysis
+
+    measured = study_design_effect()
+    measured_str = (f"{measured:.3f}" if measured is not None
+                    else f"unknown (no results tree at {paired_analysis.RESULTS_DIR})")
     print("\n=== PART 2: pairing gain (matched items) ===", flush=True)
-    rows = []
+    print(f"  study's own measured design effect: {measured_str} -- compare "
+          f"against each icc block's design_effect_simulated below", flush=True)
     grid_r = list(EQ_R_GRID)
-    for p_a in (0.95, 0.70):
-        for delta in (0.05, 0.10):
-            for rho in (0.0, 0.3, 0.5, 0.7, 0.9):
-                if p_a == 0.70 and rho not in (0.5, 0.7):
-                    continue
-                unp, pair, phi, agree = _paired_powers(p_a, delta, rho, R_DEFAULT,
-                                                       n_sims, rng)
-                # equivalent R: smallest R at which the UNPAIRED test matches the
-                # paired test's power at R_DEFAULT (paired data throughout).
-                eq_r = None
-                if pair > unp + 0.005:
-                    for rr in grid_r:
-                        # stats=False: the search reads only the unpaired power,
-                        # so the phi/agreement diagnostics would be computed and
-                        # thrown away once per rung (see `_paired_powers`).
-                        u2 = _paired_powers(p_a, delta, rho, rr, search_sims, rng,
-                                            stats=False)[0]
-                        if u2 >= pair:
-                            eq_r = rr
-                            break
-                else:
-                    # Pairing did not help here, so no search ran; record the
-                    # default R with the flag below rather than overloading
-                    # eq_R (R_DEFAULT-from-search and R_DEFAULT-because-
-                    # unsearched are different facts; None still means "grid
-                    # exhausted").
-                    eq_r = R_DEFAULT
-                rows.append(dict(p_a=p_a, delta=delta, rho=rho, power_unpaired=unp,
-                                 power_paired=pair, eq_R=eq_r,
-                                 eq_searched=pair > unp + 0.005, cap=cap,
-                                 phi_binary=phi, agreement=agree,
-                                 eq_ratio=(None if eq_r is None
-                                           else eq_r / R_DEFAULT)))
-                print(f"  p_A={p_a} d={delta} rho={rho}: phi_bin={phi:.3f} "
-                      f"agree={agree:.3f} unpaired={unp:.4f} "
-                      f"paired={pair:.4f} eqR={eq_r}", flush=True)
-    # null calibration of both tests under matched data (rho=0.5)
-    nulls = {}
-    for rho in (0.0, 0.5, 0.9):
-        # stats=False for the same reason as the search above: `[:2]` already
-        # says the diagnostics are unread, and this is the largest n_sims here.
-        u, p = _paired_powers(0.90, 0.0, rho, R_DEFAULT, 60000, rng,
-                              stats=False)[:2]
-        nulls[rho] = dict(unpaired_t1=u, mcnemar_t1=p)
-        print(f"  NULL rho={rho}: unpaired T1={u:.6f} mcnemar T1={p:.6f}", flush=True)
-    OUT["part2"] = dict(rows=rows, n_sims=n_sims, nulls=nulls,
-                        alpha=ALPHA_BONF, grid_r=grid_r)
+    icc_blocks: dict[str, dict] = {}
+    for icc in ICC_GRID:
+        print(f"\n--- PART 2 table, icc={icc} ---", flush=True)
+        rows = []
+        for p_a in (0.95, 0.70):
+            for delta in (0.05, 0.10):
+                for rho in (0.0, 0.3, 0.5, 0.7, 0.9):
+                    if p_a == 0.70 and rho not in (0.5, 0.7):
+                        continue
+                    unp, pair, phi, agree = _paired_powers(
+                        p_a, delta, rho, R_DEFAULT, n_sims, rng, icc=icc)
+                    # equivalent R: smallest R at which the UNPAIRED test matches
+                    # the paired test's power at R_DEFAULT (paired data throughout).
+                    eq_r = None
+                    if pair > unp + 0.005:
+                        for rr in grid_r:
+                            # stats=False: the search reads only the unpaired
+                            # power, so the phi/agreement diagnostics would be
+                            # computed and thrown away once per rung (see
+                            # `_paired_powers`).
+                            u2 = _paired_powers(p_a, delta, rho, rr, search_sims,
+                                                rng, stats=False, icc=icc)[0]
+                            if u2 >= pair:
+                                eq_r = rr
+                                break
+                    else:
+                        # Pairing did not help here, so no search ran; record the
+                        # default R with the flag below rather than overloading
+                        # eq_R (R_DEFAULT-from-search and R_DEFAULT-because-
+                        # unsearched are different facts; None still means "grid
+                        # exhausted").
+                        eq_r = R_DEFAULT
+                    rows.append(dict(p_a=p_a, delta=delta, rho=rho,
+                                     power_unpaired=unp, power_paired=pair,
+                                     eq_R=eq_r, eq_searched=pair > unp + 0.005,
+                                     cap=cap, phi_binary=phi, agreement=agree,
+                                     eq_ratio=(None if eq_r is None
+                                               else eq_r / R_DEFAULT),
+                                     icc=icc))
+                    print(f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
+                          f"phi_bin={phi:.3f} agree={agree:.3f} "
+                          f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}",
+                          flush=True)
+        # null calibration of both tests under matched data
+        nulls = {}
+        for rho in (0.0, 0.5, 0.9):
+            # stats=False for the same reason as the search above: `[:2]` already
+            # says the diagnostics are unread, and this is the largest n_sims here.
+            u, p = _paired_powers(0.90, 0.0, rho, R_DEFAULT, 60000, rng,
+                                  stats=False, icc=icc)[:2]
+            nulls[rho] = dict(unpaired_t1=u, mcnemar_t1=p)
+            print(f"  icc={icc} NULL rho={rho}: unpaired T1={u:.6f} "
+                  f"mcnemar T1={p:.6f}", flush=True)
+
+        # This block's OWN measured design effect: draw the same null
+        # configuration the calibration row above uses (p_a=p_b=0.90, rho=0.5),
+        # then run the study's own `design_effect` estimator over each of the
+        # `n_sims` simulated replicate blocks and report the median of the
+        # measurable ones -- the same summary `study_design_effect` reports
+        # over real contrasts, so the two numbers describe the same quantity.
+        ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, R_DEFAULT, rng, icc=icc)
+        seed_idx = np.repeat(np.arange(R_DEFAULT), K_HARM)
+        deffs = [paired_analysis.design_effect(ma[i].ravel(), mb[i].ravel(), seed_idx)
+                 for i in range(n_sims)]
+        measurable = [d for d in deffs if d is not None]
+        if measurable:
+            deff_sim = float(np.median(measurable))
+            print(f"  icc={icc} design_effect_simulated: {deff_sim:.3f} "
+                  f"(median of {len(measurable)}/{n_sims} measurable)", flush=True)
+        else:
+            # No placeholder number: a genuinely unmeasurable block says so.
+            deff_sim = None
+            print(f"  icc={icc} design_effect_simulated: no measurable ratio "
+                  f"in {n_sims} simulations", flush=True)
+
+        icc_blocks[str(icc)] = dict(rows=rows, nulls=nulls,
+                                    design_effect_simulated=deff_sim)
+
+    # Backward-compatible top level: `rows`/`nulls` keep meaning exactly the
+    # icc=0.0 run, as they always have, while the clustered levels arrive
+    # under the new `icc` key rather than by changing the shape underneath an
+    # existing reader. The `icc` sub-keys are STRINGS (`str(icc)`) because
+    # this dict is checkpointed to JSON and JSON has no float keys, so the
+    # in-memory shape here is already the on-disk shape.
+    OUT["part2"] = dict(rows=icc_blocks["0.0"]["rows"],
+                        nulls=icc_blocks["0.0"]["nulls"],
+                        n_sims=n_sims, alpha=ALPHA_BONF, grid_r=grid_r,
+                        icc=icc_blocks)
 
 
 # ============================================================== PART 4: correction cost
