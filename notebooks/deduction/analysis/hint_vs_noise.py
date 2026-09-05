@@ -51,6 +51,18 @@ def load_rungs(path: Path) -> dict:
     ``power_analysis.grade_verdicts``, the single implementation of this study's row
     rules -- in particular the EARLIEST measurable row for a cell+rung wins.
 
+    The ``replicate_idx == 0`` restriction is an ASSUMPTION that this study
+    collects R=1, not a harmless filter: any row with ``replicate_idx > 0`` is
+    DROPPED here, not aggregated with the cell+rung's other replicate(s). If a
+    later run starts writing real replicates, this still grades only the first
+    attempt per cell+rung and discards the rest silently unless warned (see
+    below). ``power_analysis.N_REPLICATES_GRID`` / ``needed_replicates`` size
+    how many replicates a FUTURE experiment would need for a target power --
+    they do not give this function the ability to analyse replicates once
+    collected; that would be a separate follow-up. Because the drop would
+    otherwise be invisible, this function prints one stderr WARNING per call
+    naming the dropped-row count and `path` whenever it fires.
+
     Returns
     -------
     dict
@@ -68,8 +80,12 @@ def load_rungs(path: Path) -> dict:
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
     reject_unverified_verdicts(rows, "verdict", path)
     out: dict = defaultdict(dict)
+    dropped_replicates = 0
     for row in rows:
-        if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
+        if row.get("kind") != "cell":
+            continue
+        if row.get("replicate_idx", 0) != 0:
+            dropped_replicates += 1
             continue
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
             continue
@@ -81,6 +97,13 @@ def load_rungs(path: Path) -> dict:
         if row["rung"] in out[cell]:
             continue  # earliest surviving attempt already recorded
         out[cell][row["rung"]] = grade
+    if dropped_replicates:
+        print(
+            f"WARNING: load_rungs dropped {dropped_replicates} row(s) with "
+            f"replicate_idx > 0 from {path} (this study collects R=1; rows "
+            f"past replicate_idx == 0 are DISCARDED, not aggregated).",
+            file=sys.stderr,
+        )
     return out
 
 
@@ -200,16 +223,58 @@ def main(argv=None) -> int:
         print("  Provenance: mde80 is a deterministic bisection on the CLOSED-FORM binomial power,\n  so it does not move between runs.")
         print(f"Largest observed |difference|: "
               f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}.")
-        print("So this null rules out LARGE effects of 1-hop transitive premise "
-              "background,\nnot small ones. For scale, the induction leg's five "
-              "well-formed extens-vs-noise\neffects run 0.155-0.866 -- far above "
-              "either column here.")
+        # Design: "this null rules out large effects" is only a true reading of a
+        # NULL result. Gate it on `sig` (the Holm-significant rows, computed at
+        # :149) instead of printing it unconditionally: with sig non-empty at
+        # least one model already cleared Holm, so the leg as a whole is not a
+        # null, even though the MDE numbers above are still valid sensitivity
+        # figures for the models that did not reach significance.
+        #
+        # NOTE: this paragraph used to close by quoting the induction leg's
+        # extens-vs-noise effect-size range as a for-scale comparison. That
+        # literal is deleted: it is a different manipulation (the induction
+        # contrast swaps the encoding of the WHOLE evidence set; this leg only
+        # adds a trailing block on top of an already-complete direct-premise
+        # context, see the module docstring), measured on different rows, and it
+        # was never computed by this script -- a hard-coded number copied from
+        # another study's report can go stale here with nothing to catch it. It
+        # could come back if the induction leg starts writing a machine-readable
+        # summary (e.g. a results manifest with a per-contrast effect-size field,
+        # checked at analysis time) that this script could load and cite by path;
+        # no such file exists in the repo today (checked notebooks/induction/ and
+        # smolbench/induction/ -- only analysis *scripts*, no saved results).
+        if not sig:
+            print("So this null rules out LARGE effects of 1-hop transitive "
+                  "premise background,\nnot small ones.")
+        else:
+            print(f"{len(sig)} of {len(rows)} model(s) already reached "
+                  f"significance under Holm (see above), so this leg is not a "
+                  f"null\nresult overall -- the MDE numbers above describe the "
+                  f"sensitivity of only the\n{len(rows) - len(sig)} model(s) "
+                  f"that did not reach significance.")
     n_neg = sum(1 for r in rows if r["acc_i"] < r["acc_n"])
     n_pos = sum(1 for r in rows if r["acc_i"] > r["acc_n"])
     print(f"\nDirection of the point estimates, ignoring significance: "
           f"{n_pos} favour hint:3,\n  {n_neg} favour noise:3, "
-          f"{len(rows) - n_pos - n_neg} exactly tied -- consistent with no "
-          f"effect rather than\n  a real effect this design cannot resolve.")
+          f"{len(rows) - n_pos - n_neg} exactly tied.")
+    # Design: whether this split reads as "no effect" is a conclusion computed
+    # from `sig` (whether ANY model already rejects the null under Holm), not a
+    # constant string. With sig empty, no model rejects the null, so the split
+    # above -- however lopsided -- is the kind pure noise produces just as
+    # easily as a real, undetectable effect would; with sig non-empty, at least
+    # one model already demonstrates a real effect, so "no effect" would
+    # misdescribe the leg even if the unsigned point-estimate split still leans
+    # the other way.
+    if not sig:
+        print("  -- consistent with no effect rather than a real effect this "
+              "design cannot\n  resolve.")
+    else:
+        majority = ("hint:3" if n_pos > n_neg else
+                    "noise:3" if n_neg > n_pos else "neither rung")
+        print(f"  -- {len(sig)} of {len(rows)} model(s) already reject the "
+              f"null under Holm (see above), so\n  a real effect is present in "
+              f"at least those models; the unsigned split above leans\n  "
+              f"toward {majority}.")
     print(f"\nNot significant: {len(rows) - len(sig)} -- listed so a null is not "
           f"mistaken for an untested contrast:")
     for i, r in enumerate(rows):
