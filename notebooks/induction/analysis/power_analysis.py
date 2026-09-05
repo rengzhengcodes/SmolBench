@@ -73,13 +73,12 @@ FAMILIES: dict[str, tuple[str, str, str]] = {
     "ds":      ("ds_flash", "ds_v31", "ds_pro"),
 }
 
-# Drift guard: MODELS (iteration order) and FAMILIES (ladder/omnibus structure)
-# are hand-maintained and must never disagree about which 21 models exist or in
-# what order. At MODULE scope so importers get the guard too; `main` re-asserts
-# it, per the spec's "assert BOTH" requirement.
-assert MODELS == tuple(rung for rungs in FAMILIES.values() for rung in rungs), (
-    "MODELS must equal the concatenation of FAMILIES' rungs, in FAMILIES order"
-)
+# MODELS (iteration order) and FAMILIES (ladder/omnibus structure) are
+# hand-maintained and must never disagree about which 21 models exist or in what
+# order. That drift guard now lives in `check_design_invariants` near the bottom
+# of this module, alongside the two family-size guards it belongs with: it
+# cannot sit here because that function also calls the contrast builders, which
+# are defined further down. It is a raise, not an assert, and it runs at import.
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
 N_HARMONICS = 9
@@ -671,20 +670,110 @@ def _print_sizing_rows(
         )
 
 
+def check_design_invariants() -> None:
+    """Check the hand-written design constants against what the builders emit.
+
+    Three structural facts of the pre-registered design are maintained by hand
+    and must never drift apart: `MODELS` against `FAMILIES`, `N_PRIMARY`
+    against `build_primary_contrasts`, and `N_SECONDARY` against
+    `build_secondary_contrasts`. The two counts are what `ALPHA_PRIMARY`
+    (``ALPHA / N_PRIMARY``) and `ALPHA_SECONDARY`
+    (``Q_SECONDARY / N_SECONDARY``) divide by, and every correction in the
+    study -- here, in ``paired_analysis``, in ``significance_report`` and in
+    ``extens_vs_noise`` -- is taken at one of those thresholds. A count that no
+    longer matches its builder therefore does not produce a broken report; it
+    produces a well-formed report whose every published correction was computed
+    at the wrong threshold.
+
+    Reads the module globals on each call, capturing nothing at definition
+    time, so patching a constant and calling again re-checks the patched value.
+
+    Returns
+    -------
+    None
+        When all three invariants hold.
+
+    Raises
+    ------
+    RuntimeError
+        If any of the three disagree. The message names both sides of the
+        disagreement and states the consequence for the study's thresholds.
+
+    Notes
+    -----
+    A raise and never an ``assert``: these are pre-registration gates on
+    published numbers, and ``python -O`` strips assertions outright.
+    `load_outcomes` already argues the same point for its own gate; run under
+    ``python -O``, the assertions this replaced let the module import with
+    `MODELS` disagreeing with `FAMILIES` and `ALPHA_PRIMARY` still ``0.05/210``.
+
+    A function rather than inline module-scope code, for two reasons an inline
+    block cannot serve: it is CALLED at module scope below, so an importer gets
+    the gate whether or not it ever calls `main`, AND it can be re-run by a test
+    after patching one constant, which is the only way to demonstrate that the
+    gate actually fires.
+    """
+    # Guard 1 -- structure. Both contrast builders walk MODELS and FAMILIES, so
+    # a disagreement changes WHICH contrasts the study tests and how many there
+    # are; the size guards below are downstream of this one.
+    expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
+    if MODELS != expected_models:
+        raise RuntimeError(
+            f"MODELS disagrees with FAMILIES. MODELS is {MODELS!r}, but the "
+            f"concatenation of FAMILIES' rungs in FAMILIES order is "
+            f"{expected_models!r}. Both contrast builders walk these two "
+            f"structures, so a disagreement changes which contrasts exist and "
+            f"how many of them there are -- and those counts are exactly what "
+            f"ALPHA_PRIMARY and ALPHA_SECONDARY divide by, so every published "
+            f"correction would have been computed at the wrong threshold."
+        )
+
+    # Guard 2 -- PRIMARY family size (Bonferroni denominator).
+    n_primary = len(build_primary_contrasts())
+    if n_primary != N_PRIMARY:
+        raise RuntimeError(
+            f"build_primary_contrasts() returns {n_primary} contrasts but "
+            f"N_PRIMARY is {N_PRIMARY}. ALPHA_PRIMARY was frozen at import as "
+            f"ALPHA / N_PRIMARY = {ALPHA_PRIMARY:.6g}, and every PRIMARY "
+            f"Bonferroni and Holm decision in this study is taken at that "
+            f"threshold, so a mismatch means the family is not the size its "
+            f"threshold assumes and every published correction was computed at "
+            f"the wrong one."
+        )
+
+    # Guard 3 -- SECONDARY family size (BH denominator and rank-1 sizing alpha).
+    n_secondary = len(build_secondary_contrasts())
+    if n_secondary != N_SECONDARY:
+        raise RuntimeError(
+            f"build_secondary_contrasts() returns {n_secondary} contrasts but "
+            f"N_SECONDARY is {N_SECONDARY}. ALPHA_SECONDARY was frozen at "
+            f"import as Q_SECONDARY / N_SECONDARY = {ALPHA_SECONDARY:.6g} (the "
+            f"conservative rank-1 BH threshold this tier is sized at), and the "
+            f"Benjamini-Hochberg thresholds q * i / m applied downstream use m "
+            f"= the family size, so a mismatch means every SECONDARY discovery "
+            f"was declared at the wrong threshold."
+        )
+
+
+# Called HERE rather than beside N_PRIMARY, where the counts it checks are
+# defined: the gate calls `build_primary_contrasts` / `build_secondary_contrasts`,
+# so it can only run AFTER their definitions -- at module scope a call placed
+# earlier would be a forward reference and raise NameError on import. It runs on
+# IMPORT, so `paired_analysis`, `significance_report` and `extens_vs_noise` get
+# it without ever calling `main`, and it runs before any pilot data is touched,
+# so a structural regression is caught even with nothing synced down.
+check_design_invariants()
+
+
 def main() -> None:
     """Run the full family-ladder power analysis and print the report.
 
     Prints the eight numbered sections marked in the body; the recommended R
     comes from Tier 2 alone.
     """
-    # Drift guards: a silent change to the pre-registered family sizes would
-    # invalidate the Bonferroni/BH corrections baked into ALPHA_PRIMARY /
-    # ALPHA_SECONDARY. They run before any pilot data is touched, so a
-    # structural regression is caught even with no results synced down.
-    assert MODELS == tuple(rung for rungs in FAMILIES.values() for rung in rungs)
-    assert len(build_primary_contrasts()) == N_PRIMARY == 210
-    assert len(build_secondary_contrasts()) == N_SECONDARY == 63
-
+    # The pre-registered design invariants (MODELS vs FAMILIES, and both family
+    # sizes against their builders) were already checked by
+    # `check_design_invariants`, which ran at import; nothing to re-check here.
     outcomes = load_outcomes()
     rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
     pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}

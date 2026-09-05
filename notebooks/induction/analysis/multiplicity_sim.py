@@ -141,21 +141,40 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
 
 
 def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
-    """Compute the two-sided exact conditional (binomial) McNemar p-value.
+    """Compute the two-sided exact conditional (binomial) McNemar p-value, BATCHED.
+
+    ``paired_analysis.mcnemar_exact_p`` holds the SCALAR reference
+    implementation of this test; this is the batched form of the IDENTICAL
+    test, on the same conditional-binomial definition
+    ``min(1, 2 * P[Bin(b + c, 1/2) <= min(b, c)])`` and through the same
+    ``scipy.stats.binom``. It exists separately only because this module
+    evaluates it over whole simulation batches (shape ``(n_sims,)`` and larger)
+    where a Python-level loop over the reference would dominate the runtime.
 
     Parameters
     ----------
     b, c : ndarray
-        Counts of A-succeeds/B-fails pairs and the reverse.
+        Counts of A-succeeds/B-fails pairs and the reverse, broadcast together.
 
     Returns
     -------
     ndarray
-        The p-value; 1.0 where ``b + c == 0`` (no discordant pairs).
+        The p-value; 1.0 where ``b + c == 0`` (no discordant pairs), the same
+        convention the scalar reference uses.
     """
     nd = b + c
     lo = np.minimum(b, c)
+    # `np.maximum(nd, 1)` is NOT a silent fallback answer. Unlike the scalar
+    # reference, which returns early, numpy evaluates `binom.cdf` across the
+    # WHOLE array before `np.where` selects per entry, so the no-discordance
+    # entries are computed and then thrown away. Flooring their trial count at
+    # 1 makes that dead branch a well-defined Bin(1, 1/2) rather than leaning
+    # on scipy's convention for a zero-trial binomial; the nd == 0 answer comes
+    # from `np.where` below, never from this line.
     p = 2.0 * binom.cdf(lo, np.maximum(nd, 1), 0.5)
+    # The vectorized spelling of the reference's `min(1.0, ...)`: doubling a
+    # one-sided tail exceeds 1 whenever b == c. The 0.0 lower bound is inert (a
+    # CDF is never negative) and is kept only so the bound reads as a range.
     p = np.clip(p, 0.0, 1.0)
     return np.where(nd == 0, 1.0, p)
 

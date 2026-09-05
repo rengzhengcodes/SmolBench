@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
+from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks
 from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
@@ -68,27 +69,46 @@ TOTAL_COLLAPSE = 0.95
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Hochberg (1988) step-up rejections at familywise level `alpha`.
 
-    Same critical values as Holm but stepping UP from the largest p: reject the
-    k smallest, k = max{i : p_(i) <= alpha / (m - i + 1)}. Uniformly at least as
-    powerful as Holm, but valid only under Simes-type positive dependence. The
-    sort is stable for the same reason as ``paired_analysis.holm``: the cluster
-    test's hard 2/2^30 resolution floor puts several contrasts in an exact tie,
-    and the rejection set must not depend on contrast build order.
+    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
+    ``method="simes-hochberg"``: the same critical values as Holm but stepping
+    UP from the largest p, rejecting the k smallest for
+    ``k = max{i : p_(i) <= alpha / (m - i + 1)}`` over 1-based ranks. Uniformly
+    at least as powerful as Holm, but valid only under SIMES-TYPE POSITIVE
+    DEPENDENCE (MTP2; Sarkar 1998), which is NOT verified for 210 statistics
+    sharing models, seeds and harmonics. It is therefore a SENSITIVITY CHECK
+    only -- ``paired_analysis.holm`` carries the headline, because Holm holds
+    under arbitrary dependence and needs no such condition.
+
+    Parameters
+    ----------
+    pvals : ndarray
+        One p-value per contrast in the family, in any order.
+    alpha : float, optional
+        Familywise error rate. Defaults to `ALPHA` (0.05).
 
     Returns
     -------
     ndarray of bool
         Rejection mask, in `pvals` order.
     """
-    m = pvals.size
-    order = np.argsort(pvals, kind="stable")
-    sorted_p = pvals[order]
-    reject = np.zeros(m, dtype=bool)
-    for i in range(m - 1, -1, -1):          # i = 0-based rank
-        if sorted_p[i] <= alpha / (m - i):
-            reject[order[: i + 1]] = True
-            break
-    return reject
+    # WHY THE LOST STABLE SORT IS SAFE (the same argument `paired_analysis.holm`
+    # makes for its own thresholds, restated here because the procedure differs).
+    # Ties are pervasive: the cluster test's hard 2/2^S resolution floor puts
+    # several contrasts at an exactly equal p (three lanes sat on it in the
+    # 2026-08 study data), so the predecessor sorted with kind="stable" to keep
+    # the rejection set independent of contrast build order. `multipletests`
+    # sorts with a bare `np.argsort`, and that is fine: Hochberg's per-rank
+    # threshold alpha / (m - i) is MONOTONE INCREASING in rank, so if one member
+    # of a tied group clears its own threshold, every later member of that group
+    # clears a looser one. A tie can never straddle the accept/reject boundary,
+    # so tie ORDER cannot move the rejection SET. (Stepping up then rejects the
+    # whole tied group below the largest passing rank in any case.) The argument
+    # is executed, not asserted, by tests/analysis/test_analysis_statistics.py
+    # (``test_rejection_sets_do_not_depend_on_contrast_build_order``).
+    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
+        pvals, alpha=alpha, method="simes-hochberg"
+    )
+    return np.asarray(reject, dtype=bool)
 
 
 def compliance_census() -> dict:

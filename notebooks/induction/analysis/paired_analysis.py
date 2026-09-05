@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from scipy.stats import binom, chi2
+from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks
 
@@ -243,20 +244,97 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Holm (1979) step-down rejection mask over one family, at FWER `alpha`.
 
-    Controls FWER under ARBITRARY dependence. The sort is STABLE because ties
-    are pervasive here -- the sign-flip test has a hard resolution floor at
-    2/2^S, and lanes can sit exactly on it (three did in the 2026-08 study
-    data) -- and the rejection set must not depend on contrast build order.
+    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
+    ``method="holm"``: the identical step-down procedure, walking the sorted
+    p-values from the smallest and rejecting while ``p_(i) <= alpha / (m - i)``
+    at 0-based rank ``i``. Holm controls FWER under ARBITRARY dependence, which
+    is why it carries the headline here: the 210 PRIMARY contrasts share
+    models, seeds and harmonics, so no positive-dependence assumption is
+    available to buy the extra power of a step-up procedure
+    (`significance_report.hochberg` is a labelled sensitivity check only).
+
+    Parameters
+    ----------
+    pvals : ndarray
+        One p-value per contrast in the family, in any order.
+    alpha : float, optional
+        Familywise error rate. Defaults to `ALPHA` (0.05).
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask in `pvals` order, so it indexes the caller's contrast
+        list directly.
     """
-    m = pvals.size
-    order = np.argsort(pvals, kind="stable")
-    reject = np.zeros(m, dtype=bool)
-    for i, idx in enumerate(order):
-        if pvals[idx] <= alpha / (m - i):
-            reject[idx] = True
-        else:
-            break
-    return reject
+    # Delegating instead of hand-rolling: statsmodels is already declared for
+    # this analysis chain (pyproject.toml's `notebook` extra, for
+    # power_analysis.omnibus_interaction_power's GLMs), and a step loop
+    # reimplemented once per module is a step loop that can drift per module.
+    # Imported at module top, unlike power_analysis's lazy import of
+    # statsmodels.api: `multipletests` is on the main path of every report run,
+    # whereas the GLM fit backs one optional diagnostic.
+    #
+    # WHY THE LOST STABLE SORT IS SAFE. Ties are pervasive here -- the
+    # sign-flip test has a hard resolution floor at 2/2^S and lanes can sit
+    # exactly on it (three did in the 2026-08 study data), and 1.0 is returned
+    # verbatim for any contrast with no discordant pairs -- so the predecessor
+    # sorted with kind="stable" to keep the rejection set independent of
+    # contrast build order. `multipletests` sorts with a bare `np.argsort`, so
+    # that explicit stability is gone. It is not needed: Holm's per-rank
+    # threshold alpha/(m - i) is MONOTONE INCREASING in rank, so if one member
+    # of a tied group clears its own threshold, every later member of that
+    # group clears a looser one. A tie can therefore never straddle the
+    # accept/reject boundary, and tie ORDER cannot move the rejection SET. The
+    # unstable sort is safe for that reason, not by luck; the argument is
+    # executed, not asserted, by tests/analysis/test_analysis_statistics.py
+    # (``test_rejection_sets_do_not_depend_on_contrast_build_order``).
+    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
+        pvals, alpha=alpha, method="holm"
+    )
+    return np.asarray(reject, dtype=bool)
+
+
+def bh(pvals: np.ndarray, q: float = 0.05) -> np.ndarray:
+    """Benjamini-Hochberg step-up mask over one family, controlling FDR at `q`.
+
+    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
+    ``method="fdr_bh"``: reject the `k` smallest p-values for
+    ``k = max{i : p_(i) <= q * i / m}`` over 1-based ranks. BH controls the
+    FALSE DISCOVERY RATE -- the expected share of rejections that are null --
+    at `q`, NOT the familywise rate, and that weaker guarantee is the
+    pre-registered choice for the SECONDARY (Tier 3) family only; the PRIMARY
+    family stays on `holm`.
+
+    Parameters
+    ----------
+    pvals : ndarray
+        One p-value per SECONDARY contrast, in any order.
+    q : float, optional
+        Target FDR level, defaulting to 0.05 (``power_analysis.Q_SECONDARY``).
+        `multipletests` spells this level ``alpha``; the name differs, the
+        quantity is the FDR level q.
+
+    Returns
+    -------
+    ndarray of bool
+        Rejection mask in `pvals` order.
+    """
+    # Module scope, not a closure inside `main`: it is one of the three
+    # multiplicity corrections this analysis chain applies, and the other two
+    # are importable and separately testable, so this one is too.
+    #
+    # The same tie argument as `holm` covers BH's own thresholds: q * i / m is
+    # MONOTONE INCREASING in rank i, so a tied group cannot straddle the
+    # accept/reject boundary and tie order cannot move the rejection set.
+    # (BH steps UP to the largest passing rank and rejects everything at or
+    # below it, so a tied group is swept in whole either way.) The predecessor
+    # closure sorted with a bare `np.argsort` while documenting a stable sort
+    # as load-bearing in its two siblings -- an inconsistency that never bit
+    # only because of exactly this monotonicity.
+    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
+        pvals, alpha=q, method="fdr_bh"
+    )
+    return np.asarray(reject, dtype=bool)
 
 
 def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float | None:
@@ -315,7 +393,19 @@ def main() -> None:
         )
 
     contrasts = build_primary_contrasts()
-    assert len(contrasts) == N_PRIMARY
+    if len(contrasts) != N_PRIMARY:
+        # Not a restatement of `power_analysis.check_design_invariants`, which
+        # already ran at import: this guards the LOCAL list that drives the row
+        # loop below, whose Bonferroni columns divide ALPHA by N_PRIMARY rather
+        # than by len(contrasts). A raise, not an assert, so it survives
+        # `python -O` like every other gate on a published number.
+        raise RuntimeError(
+            f"build_primary_contrasts() returned {len(contrasts)} contrasts "
+            f"but N_PRIMARY is {N_PRIMARY}. This report's Bonferroni columns "
+            f"are taken at ALPHA/N_PRIMARY and its Holm passes are sized by "
+            f"the length of this list, so a mismatch means every correction "
+            f"printed below was computed at the wrong threshold."
+        )
 
     for drop_invalid in (False, True):
         tag = "DROP-INVALID pairs" if drop_invalid else "null == incorrect (pre-registered)"
@@ -434,16 +524,6 @@ def main() -> None:
         p_pair_s.append(mcnemar_exact_p(int((a & ~b).sum()), int((~a & b).sum())))
         p_unp_s.append(cmh_unpaired_p(a, b, sidx))
     p_pair_s, p_unp_s = np.array(p_pair_s), np.array(p_unp_s)
-
-    def bh(p, q=0.05):
-        m = p.size
-        order = np.argsort(p)
-        thresh = q * (np.arange(1, m + 1)) / m
-        passed = p[order] <= thresh
-        k = np.max(np.nonzero(passed)[0]) + 1 if passed.any() else 0
-        rej = np.zeros(m, dtype=bool)
-        rej[order[:k]] = True
-        return rej
 
     print(
         f"\n{'=' * 78}\nSECONDARY family ({len(sec)} cross-family size-matched "
