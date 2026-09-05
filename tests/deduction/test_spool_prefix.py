@@ -164,13 +164,17 @@ def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(monkeypatch)
         monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
         monkeypatch.delenv("LEAN_ALLOW_LEGACY_PREFIX", raising=False)
 
-        rows = snap.iter_source_keys(_fake_s3(keys))
+        # `bucket` became an explicit keyword argument when the module stopped
+        # reading a hard-coded BUCKET literal (PR #14 finding 14-15); this test
+        # is about the prefix-slice arithmetic, so any bucket name serves.
+        rows = snap.iter_source_keys(_fake_s3(keys), bucket="test-bucket")
         assert sorted((leg, model) for leg, model, _k, _s in rows) == [
             ("deduction", "gemma-4-12b"), ("deduction", "glm-4.7"),
             ("induction", "glm-4.7")]
 
         # The published study is still reachable by passing the prefix explicitly.
-        legacy_rows = snap.iter_source_keys(_fake_s3(keys), deduction_prefix=LEGACY + "/")
+        legacy_rows = snap.iter_source_keys(
+            _fake_s3(keys), bucket="test-bucket", deduction_prefix=LEGACY + "/")
         assert ("deduction", "glm-4.7") in [(leg, m) for leg, m, _k, _s in legacy_rows]
         assert all(m for _l, m, _k, _s in legacy_rows), "a model name lost its prefix slice"
     finally:
