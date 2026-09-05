@@ -120,6 +120,48 @@ def test_roster(run_study):
     assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
 
 
+def test_the_roster_is_built_from_the_committed_study_config(run_study):
+    """MODELS is the config's roster, in the config's ladder order (#46).
+
+    ``EXPECTED_TAGS`` above stays vendored as the drift guard on the TOML
+    itself; this pins that the driver READS the file instead of carrying a
+    22nd copy of the table.
+    """
+    from smolbench.evals import study_config
+
+    assert tuple(run_study.MODELS) == study_config.roster_keys()
+    assert run_study.MODELS == {
+        key: study_config.tag_for(key) for key in study_config.roster_keys()
+    }
+
+
+def test_cot_args_is_validated_against_the_config_roster(run_study):
+    """COT_ARGS stays a literal table (it is the audit surface against ec2.py's
+    reasoning wiring) but its KEYS are checked against the config's roster, so
+    a roster edit that COT_ARGS misses cannot reach a billing box."""
+    from smolbench.evals import study_config
+
+    assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
+
+
+def test_the_standalone_tag_comes_from_the_config(monkeypatch):
+    """The standalone EC2 experiment tag is the config's, not a local literal.
+
+    Only observable by re-importing with ``EC2_EXPERIMENT_TAG`` ABSENT: the
+    driver's ``setdefault`` is what the config value has to reach.
+    """
+    from smolbench.evals import study_config
+
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
+    _module, exc, env_after = import_run_study(
+        "standalone_tag_probe", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
+    )
+    assert exc is None, exc
+    assert env_after["EC2_EXPERIMENT_TAG"] == (
+        study_config.load_study_config().fleet.standalone_tag
+    )
+
+
 def test_cot_args_table(run_study):
     """Every model carries a CoT toggle: Ministral rides its system prompt, DeepSeek's key differs."""
     def toggle(key):

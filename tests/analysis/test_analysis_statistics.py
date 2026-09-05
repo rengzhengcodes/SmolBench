@@ -45,6 +45,28 @@ def multiplicity_sim(power_analysis):
 
 
 # ===========================================================================
+# #46 -- the roster is read from the committed study config, not re-declared
+# ===========================================================================
+
+def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
+    """MODELS/FAMILIES are the config's roster rendered into ANALYSIS TAGS.
+
+    They used to be a second hand-maintained copy of the 21-model ladder with
+    nothing pinning them to the driver's; the tags and the family grouping now
+    have one owner (``smolbench/evals/study_config.toml``).
+    """
+    from smolbench.evals import study_config
+
+    assert power_analysis.MODELS == tuple(
+        study_config.tag_for(key) for key in study_config.roster_keys()
+    )
+    assert power_analysis.FAMILIES == {
+        family: tuple(study_config.tag_for(key) for key in rungs)
+        for family, rungs in study_config.families().items()
+    }
+
+
+# ===========================================================================
 # 12-25 -- Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
 # ===========================================================================
 

@@ -145,6 +145,12 @@ include-package-data = false
 # non-.py extensions are deliberate: they keep black/isort/pylint and the
 # import machinery away from files whose bytes are a production contract.
 "smolbench.evals.payloads" = ["*.sh", "*.py.txt"]
+# study_config.toml (the committed results-bucket/fleet/roster config every
+# evals consumer reads): same reasoning as the payloads entry above --
+# include-package-data = false means setuptools picks up only *.py, so
+# without this entry a non-editable install would drop the .toml and every
+# importer of smolbench.evals.study_config would fail at import.
+"smolbench.evals" = ["*.toml"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.

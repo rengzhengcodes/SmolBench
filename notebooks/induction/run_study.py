@@ -87,8 +87,12 @@ logging.basicConfig(level=logging.INFO)
 #   3. ``SHARD`` -- parsed here because block 5 needs it.
 #   4. ``MODELS`` -- moved ABOVE the tag block (it used to sit next to
 #      ``COT_ARGS``): block 5 derives the lane label from the CANONICAL model
-#      order, so it needs ``MODELS`` already bound. The dict is a plain
-#      literal with no imports and no dependencies, so it can sit anywhere.
+#      order, so it needs ``MODELS`` already bound. Built from
+#      ``smolbench.evals.study_config`` (``roster_keys``/``tag_for``), the ONE
+#      place the roster is written down. That module reads only the stdlib
+#      and never imports ``ec2`` or touches an ``EC2_*`` variable, so
+#      importing it here -- ahead of block 6's smolbench imports -- does not
+#      disturb the env-freeze ordering this block exists to protect.
 #   5. The EC2 tag / ``_LANE`` / ``_DEFAULT_STATE_FILE`` block -- WRITES
 #      ``os.environ["EC2_EXPERIMENT_TAG"]``, hence must precede step 6.
 #   6. ``from smolbench.evals.providers import ec2`` and the other smolbench
@@ -170,38 +174,16 @@ SHARD = _parse_shard("INDUCTION_SHARD")
 # study's canonical order -- see selected_models' docstring.
 #
 # Declared HERE, above the tag block, rather than beside COT_ARGS: the lane
-# label below must be built in this canonical order (see block 5), and this
-# literal has no imports and no dependencies, so hoisting it costs nothing.
-MODELS: dict[str, str] = {
-    # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (FP8) --
-    "qwen3.5-27b": "qwen35_27b",
-    "qwen3.5-122b-a10b": "qwen35_122b",
-    "qwen3.5-397b-a17b": "qwen35_397b",
-    # -- Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B --
-    "nemotron-3-nano-4b": "nemo3_4b",
-    "nemotron-3-nano-30b-a3b": "nemo3_30b",
-    "nemotron-3-super-120b-a12b": "nemo3_120b",
-    # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
-    "gemma-4-e2b": "gemma4_e2b",
-    "gemma-4-12b": "gemma4_12b",
-    "gemma-4-31b": "gemma4_31b",
-    # -- GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-gen) --
-    "glm-4.7-flash": "glm_flash",
-    "glm-4.5-air": "glm_air",
-    "glm-4.7": "glm_47",
-    # -- Ministral-3 Reasoning (Mistral, FR): 3B / 8B / 14B --
-    "ministral-3-3b": "min3_3b",
-    "ministral-3-8b": "min3_8b",
-    "ministral-3-14b": "min3_14b",
-    # -- EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B (x-gen) --
-    "exaone-4.0-32b": "exaone_32b",
-    "exaone-4.5-33b": "exaone_33b",
-    "k-exaone-236b-a23b": "exaone_236b",
-    # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-generation) --
-    "deepseek-v4-flash": "ds_flash",
-    "deepseek-v3.1": "ds_v31",
-    "deepseek-v4-pro": "ds_pro",
-}
+# label below must be built in this canonical order (see block 5). Read from
+# the committed study config (smolbench/evals/study_config.toml) instead of a
+# second hand-maintained literal -- study_config.roster_keys() walks the
+# config's families in ladder order, and study_config.tag_for() is total over
+# them (both validated at the config's own load time), so this dict is
+# exactly what the old literal spelled out, sourced from one place instead of
+# several.
+from smolbench.evals.study_config import load_study_config, roster_keys, tag_for  # noqa: E402
+
+MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
 # --- 5. EC2 tag, lane suffix and default state file -----------------------
 # A shard needs its OWN AWS tag and state file -- without that, shard 1
@@ -210,12 +192,13 @@ MODELS: dict[str, str] = {
 # are derived from the lane rather than asking callers to remember two more
 # environment variables. Unsharded runs get an empty suffix.
 #
-# FLEET lanes never hit the "induction-scaling" default (run_fleet.lane_env
+# FLEET lanes never hit the config's standalone_tag default (run_fleet.lane_env
 # exports a per-lane EC2_EXPERIMENT_TAG "scaling-<spec-key>" +
 # INDUCTION_STATE_FILE); it covers STANDALONE runs only. The standalone tag
-# sits outside the fleet's "scaling-" prefix on purpose, so
+# sits outside the fleet's tag_prefix namespace on purpose, so
 # fleet_status/fleet_teardown never list -- or terminate -- a standalone box;
-# `--teardown` owns it.
+# `--teardown` owns it. Both the standalone tag and the fleet's tag_prefix are
+# read from the committed study config rather than duplicated here.
 #
 # The import-time env mutation is deliberate (it must precede ec2's
 # import-time freeze) and now fires on EVERY run, sharded or not. It used to
@@ -256,8 +239,9 @@ if SHARD is not None:
 # setdefault, NOT an unconditional write: a fleet-exported EC2_EXPERIMENT_TAG
 # must still win. The lane suffix is then appended to whichever tag resolved,
 # fleet-exported or defaulted, which is exactly the behaviour the sharded
-# branch already had ("get(..., 'induction-scaling') + _LANE").
-os.environ.setdefault("EC2_EXPERIMENT_TAG", "induction-scaling")
+# branch already had ("get(..., <config's standalone_tag>) + _LANE"). The
+# default itself comes from the committed study config, not a local literal.
+os.environ.setdefault("EC2_EXPERIMENT_TAG", load_study_config().fleet.standalone_tag)
 if _LANE:
     os.environ["EC2_EXPERIMENT_TAG"] += _LANE
 
@@ -500,16 +484,27 @@ COT_ARGS: dict[str, dict] = {
     "deepseek-v4-pro": {"chat_template_kwargs": {"thinking": True}},
 }
 
-# Enforce "TOTAL over MODELS" at import, BEFORE provision() can spend: a
-# drifted key would otherwise surface as a KeyError on a billing box. A
-# `raise`, not the `assert` this used to be: asserts are stripped under
-# `python -O`, which would delete the gate on exactly the automated
-# invocations that most need it. The test suite pins the same equality; this
-# covers direct invocations.
-if COT_ARGS.keys() != MODELS.keys():
+# Enforce COT_ARGS against the STUDY CONFIG's roster, key-for-key and in the
+# same ladder order, at import -- BEFORE provision() can spend: a drifted key
+# would otherwise surface as a KeyError on a billing box. COT_ARGS itself
+# stays a literal table on purpose (it is the audit surface against ec2.py's
+# "Reasoning wiring" comment -- see the comment above it), but checking it
+# against MODELS alone would let COT_ARGS and MODELS drift TOGETHER away from
+# the committed roster; checking against study_config.roster_keys() directly
+# closes that gap. A `raise`, not the `assert` this used to be: asserts are
+# stripped under `python -O`, which would delete the gate on exactly the
+# automated invocations that most need it. The test suite pins the same
+# equality; this covers direct invocations.
+if tuple(COT_ARGS) != roster_keys():
+    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
     raise RuntimeError(
-        "COT_ARGS must be total over MODELS; keys in exactly one of them: "
-        f"{sorted(COT_ARGS.keys() ^ MODELS.keys())}"
+        "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
+        "the same ladder order. "
+        + (
+            f"Keys in exactly one of them: {_cot_args_roster_diff}"
+            if _cot_args_roster_diff
+            else "Same keys, but in a different order."
+        )
     )
 
 

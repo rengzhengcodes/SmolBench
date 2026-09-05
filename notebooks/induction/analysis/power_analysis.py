@@ -42,6 +42,8 @@ import numpy as np
 from scipy.stats import chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
+from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import roster_keys, tag_for
 
 from _power_common import (
     ALPHA,
@@ -52,34 +54,34 @@ from _power_common import (
 )
 
 # ---------------------------------------------------------------------------
-# Experiment design; MODELS and FAMILIES are given verbatim by the study spec.
+# Experiment design: MODELS and FAMILIES are the committed study config
+# (smolbench/evals/study_config.toml, the same file
+# notebooks/induction/run_study.py's own MODELS reads) rendered into ANALYSIS
+# TAGS. The config stores spec keys (EC2_DEPLOY_SPECS keys, also vLLM's
+# --served-model-name); everything below this point in this module -- the
+# contrast builders, per-model result directories -- is keyed on the short
+# analysis tag instead, so both are passed through study_config.tag_for()
+# exactly once, here.
 # ---------------------------------------------------------------------------
-MODELS = (
-    "qwen35_27b", "qwen35_122b", "qwen35_397b",
-    "nemo3_4b", "nemo3_30b", "nemo3_120b",
-    "gemma4_e2b", "gemma4_12b", "gemma4_31b",
-    "glm_flash", "glm_air", "glm_47",
-    "min3_3b", "min3_8b", "min3_14b",
-    "exaone_32b", "exaone_33b", "exaone_236b",
-    "ds_flash", "ds_v31", "ds_pro",
-)
+MODELS = tuple(tag_for(key) for key in roster_keys())
 
-FAMILIES: dict[str, tuple[str, str, str]] = {
-    "qwen35":  ("qwen35_27b", "qwen35_122b", "qwen35_397b"),
-    "nemo3":   ("nemo3_4b", "nemo3_30b", "nemo3_120b"),
-    "gemma4":  ("gemma4_e2b", "gemma4_12b", "gemma4_31b"),
-    "glm":     ("glm_flash", "glm_air", "glm_47"),
-    "min3":    ("min3_3b", "min3_8b", "min3_14b"),
-    "exaone":  ("exaone_32b", "exaone_33b", "exaone_236b"),
-    "ds":      ("ds_flash", "ds_v31", "ds_pro"),
+FAMILIES: dict[str, tuple[str, ...]] = {
+    family: tuple(tag_for(key) for key in rungs)
+    for family, rungs in _study_families().items()
 }
 
-# MODELS (iteration order) and FAMILIES (ladder/omnibus structure) are
-# hand-maintained and must never disagree about which 21 models exist or in what
-# order. That drift guard now lives in `check_design_invariants` near the bottom
-# of this module, alongside the two family-size guards it belongs with: it
-# cannot sit here because that function also calls the contrast builders, which
-# are defined further down. It is a raise, not an assert, and it runs at import.
+# MODELS and FAMILIES used to be a SECOND hand-maintained copy of the
+# 21-model family ladder, its agreement with run_study.py's own MODELS (which
+# models exist, and in what order) enforced only by a runtime guard here. Both
+# now derive from the ONE committed config run_study.py itself reads, so that
+# drift is structurally impossible rather than merely caught. What
+# `check_design_invariants` (near the bottom of this module) still guards is
+# narrower but still real: that THIS module's own MODELS and FAMILIES agree
+# with EACH OTHER (a rendering bug could still desync the tuple from the
+# dict), and the two pre-registered family sizes the contrast builders below
+# are sized against. It cannot sit here because it also calls the contrast
+# builders, which are defined further down. It is a raise, not an assert, and
+# it runs at import.
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
 N_HARMONICS = 9

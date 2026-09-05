@@ -7,11 +7,15 @@ Store replicate results in S3, with local files as the offline/test fallback.
 
 Env contract: ``SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]`` selects the
 S3 store, unset/empty/whitespace-only the local store rooted at ``results_dir``;
-region is ``SMOLBENCH_RESULTS_S3_REGION``, else ``AWS_REGION``, else ``None``.
+region is ``SMOLBENCH_RESULTS_S3_REGION``, else ``AWS_REGION``, else -- ONLY
+when the URI's bucket is the project's own (the one named in the committed
+``smolbench.evals.study_config``) -- that config's region, else ``None``.
 :func:`resolve_store` reads both at CALL time, never as module constants (a
 notebook runs ``load_dotenv(keys.env)`` AFTER ``import smolbench``), and falls
 back to local whenever ``results_dir`` is not under ``repo_root()``, which keeps
-the offline suite's ``tmp_path`` runs hermetic.
+the offline suite's ``tmp_path`` runs hermetic. :func:`default_results_uri`
+renders the project bucket's canonical ``s3://...`` spelling, for error
+messages, docs and CLI help -- the one place that string is written down.
 
 Earliest-wins: S3 is an append-only LOG keyed
 ``<base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml`` with a
@@ -36,6 +40,7 @@ from typing import Mapping, Optional, Sequence
 import smolbench
 from smolbench.evals import Marks
 from smolbench.evals import _aws
+from smolbench.evals.study_config import load_study_config
 
 
 def repo_root() -> Path:
@@ -92,6 +97,32 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     bucket, *prefix_segments = segments
     base_prefix = "/".join(prefix_segments)
     return bucket, base_prefix
+
+
+def default_results_uri() -> str:
+    """Return the project results bucket's canonical ``s3://...`` spelling.
+
+    Reads ``smolbench.evals.study_config``'s committed ``[results]`` section
+    (bucket + ``base_prefix``), so this is the ONE place that URI is written
+    down -- used in error messages (:func:`sync_down`), CLI help
+    (:func:`main`), and documentation, instead of each of those re-spelling
+    the bucket name as its own literal.
+
+    Returns
+    -------
+    str
+        ``f"s3://{bucket}"`` when the config's ``base_prefix`` is empty
+        (today's actual value), else ``f"s3://{bucket}/{base_prefix}"``.
+
+    Notes
+    -----
+    This is NOT what a caller should set ``SMOLBENCH_RESULTS_S3`` to reach a
+    different bucket -- it names the project's OWN provisioned bucket only.
+    """
+    results = load_study_config().results
+    if not results.base_prefix:
+        return f"s3://{results.bucket}"
+    return f"s3://{results.bucket}/{results.base_prefix}"
 
 
 def utcnow() -> datetime:
@@ -537,6 +568,15 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     4-6. Derive :func:`experiment_name`, resolve the region, and return the
        ``S3ResultsStore``.
 
+    Region resolution (step 5) is ``SMOLBENCH_RESULTS_S3_REGION``, else
+    ``AWS_REGION``, else -- ONLY when `uri`'s bucket equals the project's own
+    provisioned bucket (``smolbench.evals.study_config``'s ``[results]``
+    section) -- that config's region, else ``None`` (boto3's own chain
+    decides). The config's region describes the config's BUCKET; a URI
+    naming somebody else's bucket must keep resolving through boto3, because
+    that bucket may live in any region, and this module has no business
+    guessing one for it.
+
     Parameters
     ----------
     results_dir : Path
@@ -566,11 +606,16 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
 
     experiment = experiment_name(results_dir, prefix)
 
-    # None lets boto3's own chain decide.
+    # None lets boto3's own chain decide. The config fallback applies ONLY
+    # when `bucket` is the project's own (see the docstring's "Region
+    # resolution" paragraph) -- it is not a general-purpose region default
+    # for an arbitrary bucket.
+    results_config = load_study_config().results
+    config_region = results_config.region if bucket == results_config.bucket else None
     region = (
         os.environ.get("SMOLBENCH_RESULTS_S3_REGION")
         or os.environ.get("AWS_REGION")
-        or None
+        or config_region
     )
 
     return S3ResultsStore(
@@ -671,13 +716,16 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
         if not uri:
             raise RuntimeError(
                 "sync_down: SMOLBENCH_RESULTS_S3 is unset or empty -- there is "
-                "no S3 log to sync down from."
+                f"no S3 log to sync down from. Export it, e.g. "
+                f"SMOLBENCH_RESULTS_S3={default_results_uri()!r}."
             )
         raise RuntimeError(
             f"sync_down: {results_dir} is not under repo_root() "
             f"({repo_root()}), so resolve_store falls back to the local "
             "store for it (see resolve_store's hermeticity fallback) -- "
-            "there is no S3 log to sync down from."
+            f"there is no S3 log to sync down from. (SMOLBENCH_RESULTS_S3 is "
+            f"set to {uri!r}; the project's default is "
+            f"{default_results_uri()!r}.)"
         )
 
     # An empty log prefix (which would mirror the whole bucket) can never get
@@ -757,7 +805,8 @@ def main(argv: "Sequence[str] | None" = None) -> int:
             "Sync one results directory down from its S3-backed experiment "
             "log (see resolve_store/sync_down). ReplicateHarness.sync_down() "
             "is the primary path for this; this CLI is for out-of-notebook "
-            "use."
+            "use. Reads SMOLBENCH_RESULTS_S3 from the environment; the "
+            f"project's own bucket is {default_results_uri()!r}."
         ),
     )
     parser.add_argument(
