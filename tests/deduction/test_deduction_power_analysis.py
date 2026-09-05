@@ -70,3 +70,28 @@ def test_verdict_classification(tmp_path):
     )
     assert blocks["thm.incomplete"][(1, "stepk:1")] == {"m1": 0, "m2": 1}
     assert blocks["thm.ok"][(1, "stepk:1")] == {"m1": 1, "m2": 1}
+
+
+def test_no_answer_is_measurable_and_scores_zero(tmp_path):
+    """13-01: `no_answer` is a real 0, not an unmeasurable cell.
+
+    The new verdict marks "the model was asked and returned nothing
+    extractable". That IS a measurement -- the request completed -- so it must
+    score 0 and enter the paired denominator, unlike `exception` /
+    `replay_failed`, which mean the model was never actually tested. Pins both
+    halves: the exact `UNMEASURABLE_VERDICTS` membership (so a later edit
+    cannot quietly add `no_answer` and silently shrink every denominator), and
+    the resulting grade.
+    """
+    assert pa.UNMEASURABLE_VERDICTS == frozenset({"exception", "replay_failed"})
+    assert pa.grade_verdicts(["no_answer"]) == 0
+    assert pa.grade_verdicts(["exception", "no_answer"]) == 0, (
+        "earliest SURVIVING attempt wins: the exception is skipped, the "
+        "no_answer is the measurement"
+    )
+    rows = [
+        _cell("m1", "thm.silent", "no_answer"),
+        _cell("m2", "thm.silent", "success"),
+    ]
+    _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
+    assert blocks["thm.silent"][(1, "stepk:1")] == {"m1": 0, "m2": 1}

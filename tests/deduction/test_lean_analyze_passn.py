@@ -167,3 +167,99 @@ def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
         cmd_analyze(Namespace(path=str(p)))
     assert "SUPERSEDED" in str(excinfo.value)
     assert p.name in str(excinfo.value)
+
+
+def test_analyze_reports_no_answer_in_its_own_column(tmp_path, capsys):
+    """13-01: `analyze`'s table separates `noans` from `lerr`.
+
+    An empty candidate used to be recorded as `lean_error`, so `analyze` showed
+    a lane of truncated reasoning traces as a lane of wrong Lean proofs. Pins
+    the new column by NAME and by value (not by position), and pins header/row
+    width agreement so the `"-" * len(header)` rule cannot drift from the rows
+    it underlines.
+    """
+    rows = [
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", verdict="no_answer",
+             raw_response=""),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T3", verdict="success"),
+    ]
+    rc, out = _run_analyze(tmp_path, rows, capsys)
+    assert rc == 0
+    lines = out.splitlines()
+    hdr = _header_index(lines, "lerr", "noans", "trunc")
+    header = lines[hdr].split()
+    detail = _table_rows(lines, hdr)
+    assert len(detail) == 1, detail
+    row = detail[0].split()
+    assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
+    assert row[header.index("noans")] == "1"
+    assert row[header.index("lerr")] == "1"
+    assert row[2] == "1/3"
+
+
+def test_analyze_collapses_an_exception_then_retry_duplicate(tmp_path, capsys):
+    """13-04: a resumed cell is ONE cell, not a 50% pass rate and an N=2 pass@N.
+
+    `runner._existing_keys` re-runs a cell whose only row is an ``"exception"``
+    and the sweep appends the retry, so a resumed lane holds two rows for one
+    key. `cmd_analyze` counted ROWS: the retried cell read as ``1/2 50.0%``,
+    and pass@N's ``N`` -- derived from the max group size -- became the row
+    count, so a single-replicate run grew a spurious pass@N table.
+
+    Deduping must happen BEFORE the pass@N groups are built, which is what the
+    "no pass@N" assertion pins; a dedupe applied only to the rate table would
+    still leave N=2 here.
+    """
+    rows = [
+        _row(theorem_id="T1", verdict="exception"),
+        _row(theorem_id="T1", verdict="success"),
+    ]
+    rc, out = _run_analyze(tmp_path, rows, capsys)
+    assert rc == 0
+    assert "# 1 cells from" in out
+    lines = out.splitlines()
+    hdr = _header_index(lines, "lerr", "noans", "trunc")
+    row = _table_rows(lines, hdr)[0].split()
+    assert row[2] == "1/1"
+    assert "100.0%" in row[3]
+    assert "pass@N" not in out, "N must be the replicate count, not the row count"
+
+
+def test_analyze_keeps_an_exception_only_cell_visible(tmp_path, capsys):
+    """13-04: collapsing must not make a never-measured cell vanish.
+
+    With no surviving row the earliest-surviving rule has nothing to pick, so
+    the FIRST row stands in and the cell is still counted once, in `exc`.
+    Dropping it instead would shrink the denominator silently.
+    """
+    rows = [
+        _row(theorem_id="T1", verdict="exception"),
+        _row(theorem_id="T1", verdict="exception"),
+    ]
+    rc, out = _run_analyze(tmp_path, rows, capsys)
+    assert rc == 0
+    assert "# 1 cells from" in out
+    lines = out.splitlines()
+    hdr = _header_index(lines, "lerr", "noans", "trunc")
+    header, row = lines[hdr].split(), _table_rows(lines, hdr)[0].split()
+    assert row[2] == "0/1"
+    assert row[header.index("exc")] == "1"
+
+
+def test_analyze_still_sees_real_replicates(tmp_path, capsys):
+    """13-04: dedupe is keyed on the FULL row key, so replicates are untouched.
+
+    `replicate_idx` is part of `runner._row_key`, so two genuine replicates of
+    one cell remain two cells and pass@N still reports N=2. A dedupe keyed on
+    (model, theorem, k, rung) alone would silently collapse the replication
+    axis this study is designed around.
+    """
+    rows = [
+        _row(theorem_id="T1", replicate_idx=0, verdict="lean_error"),
+        _row(theorem_id="T1", replicate_idx=1, verdict="success"),
+    ]
+    rc, out = _run_analyze(tmp_path, rows, capsys)
+    assert rc == 0
+    assert "# 2 cells from" in out
+    assert "# pass@N per rung × model (N=2)" in out

@@ -172,32 +172,62 @@ def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit):
         audit.fetch_recovery(_S3(denied))
 
 
-def test_expected_shape_constants_come_from_one_place():
-    """The new pool may not be 300/944, so every consumer reads ONE definition.
+def test_expected_shape_constants_are_a_coherent_definition():
+    """`runner`'s EXPECTED_* are the ONE definition; pin their shape, not their values.
 
-    Checked through each script's own ``--help``: a drift then surfaces as a
-    visible default mismatch rather than a silent re-baselining of a shrunken
-    pool. `--help` also proves the shared import is not import-time-fatal.
+    13-20: this used to assert the literal ``(300, 944, 300)`` in a test whose
+    stated subject is single-sourcing. That is the wrong pin in both
+    directions -- a legitimate re-baselining to a smaller post-cutoff pool
+    (say 250/800/250) fails HERE, for a reason that has nothing to do with
+    single-sourcing, while the tuple would still pass if a consumer had
+    stopped reading these constants at all. The pinned VALUE of the drawn
+    theorem set lives where it belongs, in `EXPECTED_COUNT` /
+    `EXPECTED_SHA256` above, over the actual manifest.
     """
     from smolbench.deduction.lean import runner
 
-    assert (runner.EXPECTED_THEOREMS, runner.EXPECTED_CELLS,
-            runner.EXPECTED_SANITY_ROWS) == (300, 944, 300)
+    shape = (runner.EXPECTED_THEOREMS, runner.EXPECTED_CELLS,
+             runner.EXPECTED_SANITY_ROWS)
+    assert all(isinstance(v, int) and v > 0 for v in shape), shape
+    assert runner.EXPECTED_SANITY_ROWS == runner.EXPECTED_THEOREMS, (
+        "one sanity row per theorem is the sweep's invariant"
+    )
+    assert runner.EXPECTED_CELLS >= runner.EXPECTED_THEOREMS, (
+        "each theorem yields at least one cell"
+    )
 
-    for path, flag, want in (
-        ("results/audit_lean_pinning.py", "--expect-theorems", runner.EXPECTED_THEOREMS),
-        ("results/audit_lean_pinning.py", "--expect-cells", runner.EXPECTED_CELLS),
-        ("results/audit_run_completeness.py", "--expect-cells", runner.EXPECTED_CELLS),
-        ("deduction/merge_lean_shards.py", "--expect-cells", runner.EXPECTED_CELLS),
-        ("deduction/merge_lean_shards.py", "--expect-sanity", runner.EXPECTED_SANITY_ROWS),
-        ("deduction/split_lean_run_into_shards.py", "--limit", runner.EXPECTED_THEOREMS),
-    ):
-        if not (SCRIPTS / path).exists():
-            continue  # a later stack slice; the full tree checks every consumer
-        proc = subprocess.run(
-            [sys.executable, str(SCRIPTS / path), "--help"], capture_output=True,
-            text=True, cwd=str(REPO_ROOT), timeout=300,
-            env={**os.environ, "PYTHONPATH": str(REPO_ROOT)})
-        assert proc.returncode == 0, proc.stderr
-        assert flag in proc.stdout, f"{path} lacks {flag}\n{proc.stdout}"
-        assert str(want) in proc.stdout, f"{path} {flag} does not show {want}\n{proc.stdout}"
+
+@pytest.mark.parametrize("path,flag,attr", [
+    ("results/audit_lean_pinning.py", "--expect-theorems", "EXPECTED_THEOREMS"),
+    ("results/audit_lean_pinning.py", "--expect-cells", "EXPECTED_CELLS"),
+    ("results/audit_run_completeness.py", "--expect-cells", "EXPECTED_CELLS"),
+    ("deduction/merge_lean_shards.py", "--expect-cells", "EXPECTED_CELLS"),
+    ("deduction/merge_lean_shards.py", "--expect-sanity", "EXPECTED_SANITY_ROWS"),
+    ("deduction/split_lean_run_into_shards.py", "--limit", "EXPECTED_THEOREMS"),
+])
+def test_every_consumer_shows_runners_expected_default(path, flag, attr):
+    """Each consumer's ``--help`` must show `runner`'s value, not a literal of its own.
+
+    Checked through ``--help`` rather than by importing: a drift surfaces as a
+    visible default mismatch, and ``--help`` also proves the shared import is
+    not import-time-fatal on a box where these scripts run.
+
+    13-20: was a loop with a bare ``continue`` for consumers that live in a
+    later stack slice, so a slice missing ALL of them passed vacuously and
+    silently. Parametrised and `pytest.skip`ped instead, so an absent consumer
+    is visible in the run summary as a SKIP and cannot be mistaken for a check
+    that ran.
+    """
+    from smolbench.deduction.lean import runner
+
+    script = SCRIPTS / path
+    if not script.exists():
+        pytest.skip(f"{path} lives in a later stack slice")
+    want = getattr(runner, attr)
+    proc = subprocess.run(
+        [sys.executable, str(script), "--help"], capture_output=True,
+        text=True, cwd=str(REPO_ROOT), timeout=300,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)})
+    assert proc.returncode == 0, proc.stderr
+    assert flag in proc.stdout, f"{path} lacks {flag}\n{proc.stdout}"
+    assert str(want) in proc.stdout, f"{path} {flag} does not show {want}\n{proc.stdout}"

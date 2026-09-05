@@ -15,11 +15,40 @@ from smolbench.evals import Marks
 def accuracy(marks: Marks) -> float:
     """Fraction correct: ``correct / (correct + incorrect + invalid)``.
 
-    Invalids count against the model. An empty ``Marks`` returns ``0.0`` rather
-    than raising, so it cannot abort a table build.
+    Invalids count against the model: an unparseable response stays in the
+    denominator and scores as a miss.
+
+    Returns
+    -------
+    float
+        ``correct / (correct + incorrect + invalid)``, in ``[0.0, 1.0]``. Only
+        ever computed from at least one graded mark -- see `Raises`.
+
+    Raises
+    ------
+    ValueError
+        If ``correct + incorrect + invalid == 0``: the ``Marks`` graded nothing.
+        A genuine 0% and an ungraded replicate are DIFFERENT results and this
+        function cannot represent the second, so it refuses rather than
+        returning ``0.0`` for both. (It used to return ``0.0`` "so it cannot
+        abort a table build"; the cost was that an existing-but-empty replicate
+        stored as a real zero and ``plot_archetype_accuracy``'s ``None ->
+        "n/a"`` branch became unreachable from disk. Empty quizzes are produced
+        BY DESIGN -- ``periodic.tof_membership_query_gen`` yields none at a
+        config too small to admit both polarities.) Table builders map this to
+        their own "not a measurement" value; see
+        :func:`load_condition_accuracies`.
     """
     total = marks.correct + marks.incorrect + marks.invalid
-    return marks.correct / total if total > 0 else 0.0
+    if total == 0:
+        raise ValueError(
+            f"Marks for model {marks.model!r} graded nothing: 0 correct, 0 "
+            "incorrect and 0 invalid, so there is no accuracy to report. A "
+            "genuine 0% and an ungraded replicate are different results; "
+            "callers that must tolerate the second should map this error to "
+            "their own 'no measurement' value rather than to 0.0."
+        )
+    return marks.correct / total
 
 
 def load_condition_accuracies(
@@ -31,22 +60,43 @@ def load_condition_accuracies(
     Parameters
     ----------
     results_dir : Path
-        Flat, single-run ``result2/`` archive -- NOT the per-replicate
-        ``results/<tag>/rep_<seed>.yaml`` tree the current experiment writes.
+        Directory each `files` value is resolved against; the function joins
+        ``results_dir / filename`` and does not walk any directory tree of its
+        own. `files` supplies the whole layout, so a caller wanting a
+        per-replicate file just puts a relative path in the mapping.
     files : Mapping[Tuple[str, str], str]
         ``(model_key, condition_key) -> filename`` under `results_dir`.
 
     Returns
     -------
     Dict[Tuple[str, str], Optional[float]]
-        One entry per `files` key, in `files` order; ``None`` for a missing
-        file, also printed to stdout as ``Missing result file: <path>``.
+        One entry per `files` key, in `files` order. ``None`` marks "not a
+        measurement", for either of two reasons, each printed to stdout under
+        its own distinct prefix so an operator can tell them apart: the file
+        does not exist (``Missing result file: <path>``), or it exists and
+        graded nothing (``Ungraded (empty) result file: <path>``).
+        :func:`plot_archetype_accuracy` renders both as "n/a".
     """
     data: Dict[Tuple[str, str], Optional[float]] = {}
     for (model_key, cond_key), fname in files.items():
         fpath = results_dir / fname
         if fpath.exists():
-            data[(model_key, cond_key)] = accuracy(Marks.load(fpath))
+            try:
+                data[(model_key, cond_key)] = accuracy(Marks.load(fpath))
+            except ValueError:
+                # Not a silent fallback: this function's declared return type is
+                # Optional[float] and None is its DOCUMENTED "not a measurement"
+                # value, already used for a missing file and already rendered as
+                # "n/a". An empty replicate is exactly that -- no measurement --
+                # so mapping it onto the existing sentinel preserves information
+                # rather than discarding it, and the distinct print below keeps
+                # it distinguishable from the missing-file case. The catch is
+                # narrowed to ValueError (never a bare except) because that is
+                # the ONE failure `accuracy` raises; an IO or YAML error from
+                # `Marks.load` still propagates, since a corrupt file is a bug,
+                # not a result.
+                data[(model_key, cond_key)] = None
+                print(f"Ungraded (empty) result file: {fpath}")
         else:
             data[(model_key, cond_key)] = None
             print(f"Missing result file: {fpath}")
@@ -71,7 +121,10 @@ def plot_archetype_accuracy(
     ``conditions`` entry ``(condition_key, label, color)``, in the given order.
     A key missing from `data` (or mapping to ``None``) plots as a 0-height
     bar annotated "n/a" -- collapsed lanes are first-class results and must
-    stay distinguishable from never-collected ones.
+    stay distinguishable from unmeasured ones. ``None`` means "not a
+    measurement" generally, not specifically "never collected":
+    :func:`load_condition_accuracies` produces it both for a result file that
+    does not exist and for one that exists but graded nothing.
 
     Parameters
     ----------

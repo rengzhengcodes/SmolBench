@@ -44,6 +44,24 @@ def test_pyproject_lean_extra_still_declares_lean_dojo():
     assert "lean-dojo" in _lean_extra()
 
 
+def test_verify_module_has_no_lean_dojo_import():
+    """13-19: the retired backend is gone from `verify.py`'s SOURCE, checked here.
+
+    Moved out of `test_lean_repl_verifier.py`, which opens with
+    ``pytest.importorskip("lean_interact")``: the check that a `lean_dojo`
+    import has not crept back would have vanished exactly when the packaging
+    failure this module exists to catch occurs. Reads the file by PATH rather
+    than importing it, so it needs neither `lean_interact` nor a Lean
+    toolchain. The runtime half -- that a cold import does not pull `lean_dojo`
+    in transitively -- stays in that sibling module, which can actually import
+    the verifier.
+    """
+    src = (REPO_ROOT / "smolbench" / "deduction" / "lean" / "verify.py").read_text()
+    assert src, "verify.py not found at the expected path"
+    assert "import lean_dojo" not in src
+    assert "from lean_dojo" not in src
+
+
 def test_readme_documents_the_mathlib_root_env_var():
     text = (NOTEBOOKS / "deduction" / "README.md").read_text()
     assert "SMOLBENCH_MATHLIB_ROOT" in text
@@ -55,9 +73,26 @@ def test_readme_keeps_the_traced_cache_claim_narrow():
 
     An over-broad "the LeanDojo cache is obsolete" would send an operator to
     delete a tree that hint/noise context rendering still reads.
+
+    13-20: this used to assert only ``"premises" in text and
+    "~/.cache/lean_dojo/" in text``. Both substrings occur a dozen times
+    apiece across the README for unrelated reasons, so the guard passed on
+    prose saying the OPPOSITE of what it claims to protect (verified: an
+    over-broad "the cache is obsolete" sentence still gave 7 passed). It now
+    anchors on the narrowing SENTENCE itself, in one paragraph, and on the
+    named function that keeps the claim narrow, so an edit that widens the
+    claim has to delete something this test names.
     """
     text = (NOTEBOOKS / "deduction" / "README.md").read_text()
-    assert "premises" in text and "~/.cache/lean_dojo/" in text
+    assert "~/.cache/lean_dojo/" in text
+    idx = text.index("That cache is NOT obsolete")
+    paragraph = text[idx:text.index("\n\n", idx)]
+    for token in ("premises", "_traced_root", "hint/noise",
+                  "Only VERIFICATION has stopped depending on it."):
+        assert token in paragraph, (
+            f"{token!r} missing from the traced-cache narrowing paragraph; the "
+            "claim must stay scoped to verification"
+        )
 
 
 def test_smoke_skill_documents_the_lean_interact_backend():

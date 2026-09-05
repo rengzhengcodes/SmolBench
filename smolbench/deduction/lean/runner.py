@@ -1,26 +1,52 @@
 """Run the eval loop: theorem × step k × context rung × N replicates.
 
-Two entry points, both used by `cli.py`: `run_cell` (one cell, own Dojo
-session) and `sweep` (YAML-described sweep, one Dojo session per (theorem, k)).
+Two entry points, both used by `cli.py`: `run_cell` (one cell, own Lean REPL
+session) and `sweep` (YAML-described sweep, one REPL session per (theorem, k)).
 
 Generation goes through `ChatClient.complete` on a provider module resolved by
 `models[i].provider` per entry (`_provider_for`), NOT the `INFERENCE_PROVIDER`
 env var, so one sweep can mix providers. Other optional config keys: `seed`
-(default 1776; replicate `i` uses `seed + i`); `request_timeout` (default 1800s,
-since `ChatClient`'s 120s default truncates long CoT mid-stream); `max_retries`
-(default 4, so a wedged endpoint cannot spin forever inside an open Dojo
-session). `SMOLBENCH_LEAN_RESULTS` overrides the output root (`results_root()`).
+(sweep config default 0, matching `theorems.seed`'s own default -- see
+`_select_theorems` -- and `notebooks/deduction/run_study.py`'s driver config,
+so an omitted key cannot silently disagree with either; replicate `i` uses
+`seed + i`; `run_cell`'s own `seed` PARAMETER is a different entry point and
+keeps its separate documented default of 1776); `dojo_timeout` (config key
+spelling kept for backwards compatibility -- see `DEFAULT_DOJO_TIMEOUT`'s
+Design comment -- default `DEFAULT_DOJO_TIMEOUT` = 600s for the Lean REPL
+session per (theorem, k); see that constant's Design comment for why 600,
+not 300); `request_timeout` (default 1800s, since `ChatClient`'s 120s default
+truncates long CoT mid-stream); `max_retries` (default 4, so a wedged
+endpoint cannot spin forever inside an open REPL session).
+`SMOLBENCH_LEAN_RESULTS` overrides the output root (`results_root()`).
 
 Output layout (`run_dir`):
 
     manifest.json        config + run_name + start/finish timestamps + counts
-    all_rows.jsonl       source of truth, append-only across resumes
+    all_rows.jsonl       source of truth, append-only across resumes; `sweep`
+                         truncates (and logs) a torn or unparseable final
+                         line before reopening for append, since appending
+                         onto it would weld it into a corrupt MIDDLE line
+                         (`_repair_torn_tail`)
     analysis.txt         `write_run_analysis` output, regenerated at end of sweep
     theorems/<theorem_slug>/
         meta.json        full_name, file_path, k, ground_truth, premises
         prompts/<rung-slug>.md                    rendered prompt per rung
         outputs/<rung-slug>__<model-slug>.jsonl   one row per replicate
         summary.md       human-readable rollup, regenerated at end
+
+Dependency split: this module never verifies Lean proofs itself -- `.verify`
+does, through `_default_verifier()` -- so `run_cell`/`sweep` only need a Lean
+toolchain when `verifier=None` (the default) resolves the real one. That
+needs `lean_interact` (the `lean` extra, `uv sync --all-extras`), `elan` on
+`PATH`, and a mathlib4 checkout built with `elan`/`lake` and pointed to by
+`SMOLBENCH_MATHLIB_ROOT` (`replbackend.mathlib_root`, read at call time).
+Tests and generation-only callers pass a fake/`NullVerifier` instead and need
+none of that. `lean_dojo` -- the old, deprecated `Dojo` interaction layer,
+unable to drive Lean >= v4.20 and so unable to reach this corpus's mathlib4
+at Lean v4.34.0-rc2 -- is NOT what the verifier needs any more; it remains a
+declared dependency of the `lean` extra only for corpus tracing and for
+`premises`' source slicing out of its traced-repo cache at
+`~/.cache/lean_dojo` (`premises._traced_root`, read by `skip_trivial` below).
 """
 
 from __future__ import annotations
@@ -60,8 +86,34 @@ from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 # column, so there is no lazy-import seam to preserve.
 
 # Design: NO top-level `from .verify import ...`. `.verify` imports
-# `lean_dojo`, which is not always installed; `_default_verifier` below is
-# the lazy seam that resolves those names at call time.
+# `lean_interact`, which is not always installed; `_default_verifier` below
+# is the lazy seam that resolves those names at call time.
+
+
+#: Default `dojo_timeout` (seconds): `run_cell`'s parameter default, `sweep`'s
+#: `config.get("dojo_timeout", ...)` fallback, and `cli.py`'s `run-cell
+#: --timeout` default all resolve to this one constant. Before this constant
+#: existed, the three disagreed -- 600 in `run_cell` and
+#: `cli --timeout`, 300 in `sweep` and in
+#: `notebooks/deduction/run_study.py`'s sweep config.
+#:
+#: Design: 600, not 300 -- deliberately NOT "unify downward" to the smaller
+#: value. `notebooks/deduction/run_study.py` passes `dojo_timeout: 300`
+#: EXPLICITLY in its sweep config, so the production sweep's effective
+#: timeout is unchanged by this constant either way. `run_cell` and
+#: `cli --timeout` are already 600; unifying on 300 would TIGHTEN them, and a
+#: Lean REPL request that times out is recorded as an `"exception"` verdict
+#: (see `_execute_one_cell`) -- i.e. tightening would silently convert
+#: slow-but-real theorems into infrastructure failures. Unifying on 600
+#: instead only changes `sweep`'s default for a config that OMITS the key,
+#: and only by allowing it MORE time. So: 600 preserves every existing
+#: production path; 300 would not.
+#:
+#: The config key stays spelled `"dojo_timeout"` -- kept for backwards
+#: compatibility with existing sweep YAML files and archived `manifest.json`
+#: config blocks -- even though the verifier this sweeps against is no
+#: longer LeanDojo-backed.
+DEFAULT_DOJO_TIMEOUT: int = 600
 
 
 def results_root() -> Path:
@@ -78,11 +130,11 @@ def results_root() -> Path:
 
 
 def _default_verifier():
-    """Import `.verify` at call time and return it; raises `ImportError` without `lean_dojo`.
+    """Import `.verify` at call time and return it; raises `ImportError` without `lean_interact`.
 
     The verifier protocol is `open_at_step`, `try_tail`, `replay_ground_truth`,
     `verify_proof_tail`, `ProofResult`. The lazy import keeps `runner` usable
-    without `lean_dojo`; such callers pass a verifier explicitly (the tests'
+    without `lean_interact`; such callers pass a verifier explicitly (the tests'
     `FakeVerifier`, or `NullVerifier` for generation-only sweeps).
     """
     from smolbench.deduction.lean import verify
@@ -110,7 +162,7 @@ def slug_model(model: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Single cell — used by `run-cell`. Opens its own Dojo session.
+# Single cell — used by `run-cell`. Opens its own Lean REPL session.
 # ---------------------------------------------------------------------------
 
 
@@ -125,7 +177,7 @@ def run_cell(
     n_replicates: int,
     temperature: float = 0.7,
     max_tokens: int = 4096,
-    dojo_timeout: int = 600,
+    dojo_timeout: int = DEFAULT_DOJO_TIMEOUT,
     seed: int = 1776,
     request_timeout: int = 1800,
     max_retries: int = 4,
@@ -133,9 +185,9 @@ def run_cell(
 ) -> Iterable[dict]:
     """Yield one JSONL-serializable row per replicate for one (theorem, k, chain, level) cell.
 
-    Opens its own Dojo session. Unlike `sweep`, this wraps `complete()` in no
-    try/except: it is single-shot and non-resuming, so generation failures
-    propagate rather than becoming exception rows.
+    Opens its own Lean REPL session. Unlike `sweep`, this wraps `complete()`
+    in no try/except: it is single-shot and non-resuming, so generation
+    failures propagate rather than becoming exception rows.
 
     Parameters
     ----------
@@ -145,13 +197,15 @@ def run_cell(
     theorem, k, chain, level
         As in `context.render`.
     dojo_timeout : int
-        Seconds for the Dojo session (prefix replay plus tail check).
+        Seconds for the Lean REPL session (prefix replay plus tail check).
+        Parameter/config-key spelling kept as `dojo_timeout` for backwards
+        compatibility (see `DEFAULT_DOJO_TIMEOUT`'s Design comment).
     seed : int
         Base decoding seed; replicate `i` uses ``seed + i``, so the replicate
         index -- not theorem/rung/model -- is the seed-varying axis.
     verifier : optional
         Must expose `verify_proof_tail`; `None` resolves `_default_verifier()`
-        (tests pass a fake to run without `lean_dojo`).
+        (tests pass a fake to run without `lean_interact`).
 
     Yields
     ------
@@ -232,7 +286,7 @@ def run_cell(
 
 
 # ---------------------------------------------------------------------------
-# Sweep — multi-cell loop with per-theorem dirs and shared Dojo sessions.
+# Sweep — multi-cell loop with per-theorem dirs and shared Lean REPL sessions.
 # ---------------------------------------------------------------------------
 
 
@@ -372,7 +426,7 @@ def _select_theorems(
     # applied LAST and at the THEOREM level, mirroring the shard above.
     # Dropping whole theorems here, not only per-cell in
     # `_run_cells_at_step[_concurrent]`, skips the sanity-gate replay and
-    # the per-(theorem, k) Dojo session for every untouched theorem -- the
+    # the per-(theorem, k) Lean REPL session for every untouched theorem -- the
     # efficiency an n=200-cell rerun needs against a 300-theorem pool.
     if cell_whitelist is not None:
         whitelisted_theorems = {key[1] for key in cell_whitelist}
@@ -478,6 +532,107 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+#: Cap on how many unreachable `LEAN_CELL_WHITELIST` keys `sweep` logs
+#: individually at ERROR level when it reconciles the whitelist at the end of
+#: a run. Bounds only the LOG stream -- the full list is always
+#: recorded in `manifest.json["whitelist_missed"]` regardless of this cap, so
+#: nothing is lost, only kept off an operator's screen for a large miss.
+WHITELIST_MISS_LOG_CAP: int = 50
+
+
+def _repair_torn_tail(jsonl_path: Path) -> int:
+    """Truncate a torn or unparseable FINAL line off `jsonl_path`, in place.
+
+    `sweep` opens `all_rows.jsonl` in APPEND mode on
+    resume (see the ``with all_rows_path.open("a")`` below), and a box
+    SIGKILLed mid-write leaves a half-written final line with no trailing
+    ``"\\n"``. `_existing_keys` already treats such a line as if it were never
+    written -- it catches `json.JSONDecodeError` per line and skips -- so a
+    torn FINAL line is harmless on its own and this module's docstring's
+    promise that it "regenerates on resume" is true right up to the moment
+    something appends past it. That is exactly what opening in append mode
+    does: the next write lands immediately after the torn bytes with no
+    separating newline, WELDING the next record onto the torn prefix into one
+    line, e.g. ``{"kind": "cel{"kind": "cell", "n": 3}``. A torn FINAL line is
+    recoverable -- both ``scripts/deduction/merge_lean_shards.py`` and
+    ``scripts/deduction/split_lean_run_into_shards.py`` drop it with a
+    warning -- but the welded MIDDLE line it turns into is not: both scripts
+    hard-abort on a line that fails to parse anywhere but at the very end of
+    the file. So the corruption is caused by the append, not by the crash,
+    and the fix has to run before the file is reopened for append, not at
+    read time (by which point `_existing_keys` has already silently
+    forgiven the very state this function must not let survive).
+
+    Parameters
+    ----------
+    jsonl_path : Path
+        Path to a JSONL file (typically ``all_rows.jsonl``). Not required to
+        exist.
+
+    Returns
+    -------
+    int
+        Number of bytes discarded from the end of the file. ``0`` when the
+        file does not exist, is empty, or its final line was already both
+        newline-terminated and valid JSON -- i.e. ``0`` means "untouched",
+        not "no file".
+
+    Notes
+    -----
+    Repairs at most the trailing run of bad lines, checked one at a time from
+    the end: first, whether the file ends with ``"\\n"`` at all (an
+    UNTERMINATED tail -- the half-write case above); then, once terminated,
+    whether the last complete line parses as JSON (a torn write can also land
+    exactly on a newline boundary and still leave unparseable or empty
+    bytes, e.g. mid-`json.dumps` flush). Each failing check truncates back to
+    the newline before it and re-checks, so a pathological multi-line tear
+    -- documented here as possible even though a single SIGKILL normally
+    produces at most one -- is still fully repaired rather than only
+    partially. The loop is bounded because each iteration strictly shrinks
+    the candidate length, terminating at 0 if every line on disk were bad.
+
+    Reads the whole file once and truncates with a single `os.path`-relative
+    `io.IOBase.truncate` call (never rewrites the file's surviving content
+    back out): `all_rows.jsonl` is this run's source of truth, and turning a
+    cheap trim into a read-modify-rewrite would open a window where a second
+    crash loses rows that were never torn in the first place.
+
+    Logs a WARNING naming the path and the byte count on any repair, since
+    silently discarding bytes from the source of truth would hide that a row
+    is being regenerated from an operator who has no other way to notice.
+    """
+    if not jsonl_path.exists():
+        return 0
+    with jsonl_path.open("r+b") as f:
+        data = f.read()
+        end = len(data)
+        while end > 0:
+            if data[end - 1] != 0x0A:  # last byte is not '\n': tail is UNTERMINATED
+                newline_before = data.rfind(b"\n", 0, end)
+                end = newline_before + 1  # 0 if no newline at all: whole file was torn
+                continue
+            # Terminated: isolate the last complete line (excluding its own
+            # trailing "\n") and see if it parses.
+            newline_before = data.rfind(b"\n", 0, end - 1)
+            last_line = data[newline_before + 1 : end - 1]
+            try:
+                json.loads(last_line.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                end = newline_before + 1
+                continue
+            break  # terminated and parses: nothing left to repair
+        discarded = len(data) - end
+        if discarded:
+            f.truncate(end)
+    if discarded:
+        logging.warning(
+            "%s: discarded %d torn/unparseable byte(s) from the final line(s) "
+            "on resume -- the row(s) they held will be regenerated",
+            jsonl_path, discarded,
+        )
+    return discarded
+
+
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
     """Read existing JSONL rows; return cell keys for cells that must NOT re-run.
 
@@ -521,12 +676,90 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     return keys
 
 
+def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
+    """Collapse ``kind: "cell"`` rows to one row per cell key: earliest surviving attempt.
+
+    ``_existing_keys`` deliberately re-runs a cell whose only recorded row is an
+    ``"exception"`` verdict (the exception may have come from the VERIFIER, so
+    the candidate proof was never checked), and a resumed sweep APPENDS that
+    retry rather than replacing the row -- so a lane that resumed past even one
+    exception legitimately carries more than one row for the same cell key.
+    Counting rows instead of cells makes a retried cell read as pass 1/2 (50%)
+    instead of 1/1, and inflates ``cmd_analyze``'s pass@N ``N`` to the row count
+    rather than the replicate count. This function is the single place that
+    undoes that: callers aggregate over its output instead of over raw rows.
+
+    Grouping mirrors `_existing_keys`' own field names and ``.get`` defaults
+    exactly (not this module's stricter ``_row_key`` call sites elsewhere,
+    which coerce types and use different sentinels) so the two agree on what
+    counts as "the same cell" for exactly the rows `_existing_keys` itself
+    would re-run.
+
+    Parameters
+    ----------
+    rows : iterable of dict
+        Already-parsed ``kind: "cell"`` rows, in file order. Passing a row of
+        any other ``kind`` is a caller error this function does not guard
+        against -- sanity rows have no cell identity and are the callers'
+        business (see the module's callers, which filter by ``kind`` first).
+
+    Returns
+    -------
+    list of dict
+        One row per distinct cell key, in the RELATIVE order the surviving
+        (or, failing that, first) row for that key appeared in `rows`. For a
+        key with at least one non-``"exception"`` row: the EARLIEST such row,
+        matching ``notebooks/deduction/analysis/power_analysis.grade_verdicts``'s
+        earliest-surviving-attempt-wins rule. For a key whose every row is an
+        ``"exception"``: the FIRST row, so an exception-only cell still counts
+        once (in the ``exc`` column) rather than vanishing from the aggregate
+        entirely.
+
+    Notes
+    -----
+    Does not mutate `rows` or its dict elements. O(n) in the number of rows.
+    """
+    rows_by_key: dict[tuple, list[dict]] = {}
+    order: list[tuple] = []  # first-seen order of keys, for a stable return order
+    for row in rows:
+        key = _row_key(
+            row.get("model", ""), row.get("theorem_id", ""),
+            int(row.get("k", -1)), row.get("rung", ""),
+            int(row.get("replicate_idx", -1)),
+        )
+        if key not in rows_by_key:
+            order.append(key)
+        rows_by_key.setdefault(key, []).append(row)
+
+    deduped: list[dict] = []
+    for key in order:
+        group = rows_by_key[key]
+        surviving = next((r for r in group if r.get("verdict") != "exception"), None)
+        deduped.append(surviving if surviving is not None else group[0])
+    return deduped
+
+
 def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     """Map theorem name to its recorded sanity verdict from the JSONL (last wins).
 
     Verdicts, not just names, so a resumed sweep can RE-APPLY the gate: a
-    theorem whose ground truth failed to replay stays excluded rather than
-    falling through to cell generation because its gate row exists.
+    theorem whose ground truth failed to replay (`SANITY_FAILURE_VERDICTS`)
+    stays excluded rather than falling through to cell generation because its
+    gate row exists.
+
+    A recorded ``"exception"`` sanity row is the one case that does NOT stay
+    excluded on resume, since `SANITY_FAILURE_VERDICTS` no longer contains it
+    (see that constant's Design comment) -- an infrastructure hiccup on a past
+    sweep must not permanently blank the theorem out of the study. This
+    function still returns that row's verdict faithfully; it is the caller's
+    gate-membership check, not this function, that now lets it through. Note
+    also this function does NOT trigger a re-replay of an already-recorded
+    ``"exception"`` (or any other) sanity row -- resume never re-runs
+    `replay_ground_truth` for a theorem with an existing row of ANY verdict,
+    only the cell-generation decision changes. Re-replaying would append a
+    second sanity row per theorem, which would break
+    `scripts/deduction/merge_lean_shards.py`'s gate on the total sanity-row
+    count against `EXPECTED_SANITY_ROWS`.
     """
     if not jsonl_path.exists():
         return {}
@@ -600,6 +833,11 @@ _VERDICT_GLYPH = {
     "lean_error": "✘",
     "incomplete": "·",
     "given_up": "?",
+    # Distinct from "·"/"?"/"X": a glyph of its own so a summary reader can
+    # tell "the model answered and Lean judged it incomplete/given-up" apart
+    # from "the model answered nothing" at a glance, without reading the
+    # verdict column.
+    "no_answer": "∅",
     "replay_failed": "!",
     "exception": "X",
     # Generation-only sweeps (NullVerifier): cells awaiting the deferred
@@ -617,8 +855,50 @@ _CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
 # `smolbench.deduction.lean.nullverify.NullVerifier` produces, since a
 # generation-only sweep defers the real verification pass. Membership in
 # this frozenset, rather than `!= "success"`, makes that distinction.
+#
+# "exception" ALSO passes through now (it did not before). An exception from
+# `replay_ground_truth` is a statement about the INFRASTRUCTURE that tried to
+# replay the ground truth -- an unset `SMOLBENCH_MATHLIB_ROOT`, a REPL start
+# race, a transient connection drop -- never a positive finding that the
+# recorded ground truth itself is unreplayable; contrast "lean_error" (Lean
+# read the proof and rejected a step). ("replay_failed" is not reachable here
+# at all -- see `verify.ReplayResult`'s docstring: a full-proof replay never
+# produces it.) Gating on "exception" used to punish exactly the wrong failure: a
+# theorem sanity-failed once with "exception" was excluded from cell
+# generation FOREVER, on every later resume (`_sanity_done` re-applies this
+# frozenset, it does not just skip a re-replay), with no escape short of
+# `--force-rerun` on the whole lane -- so a single unset env var on one launch
+# could permanently blank a theorem out of the study. See
+# `replbackend.open_session`'s own Design comment (~lines 908-917), which
+# makes the identical argument for why an unset `SMOLBENCH_MATHLIB_ROOT` must
+# be translated to `ReplError` (-> "exception") rather than left as the
+# `RuntimeError` that `verify.verify_proof_tail` would read as
+# "replay_failed": both call sites agree an infrastructure misconfiguration
+# must not be recorded as -- or treated as -- a broken ground truth. This
+# frozenset leaving "exception" out is what actually delivers on that
+# agreement for the sanity gate; before this change it did not.
+#
+# Deliberately NOT changed: a recorded "exception" sanity row is NOT
+# re-replayed on resume -- the gate below simply no longer EXCLUDES the
+# theorem because of it, so cell generation runs the next time the theorem is
+# reached in a sweep. Re-replaying it would append a SECOND sanity row for
+# the same theorem, and `scripts/deduction/merge_lean_shards.py` gates the
+# merge on the total sanity-row count against `EXPECTED_SANITY_ROWS` -- a
+# duplicate would trip that gate. See `_sanity_done`'s docstring for where a
+# reader of the resume path will find this.
+#
+# What remains in the set: verdicts that POSITIVELY say the recorded ground
+# truth is broken (Lean rejected or could not close a REPLAYED step of the
+# theorem's OWN recorded proof) -- not verdicts that merely say the attempt to
+# find that out failed.
+#
+# "no_answer" is deliberately NOT a member either, but for an unrelated
+# reason: it is unreachable from `replay_ground_truth` (a ground-truth replay
+# has no LLM candidate tail to be empty -- see `verify.Verdict`'s taxonomy
+# comment), so it has no meaning as a sanity verdict at all. This frozenset's
+# exact contents are pinned by a test.
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
-    {"lean_error", "incomplete", "given_up", "exception", "replay_failed"}
+    {"lean_error", "incomplete", "given_up", "replay_failed"}
 )
 
 
@@ -830,14 +1110,19 @@ def write_run_analysis(run_dir: Path) -> None:
 
     Regenerates wholesale (never merges with a prior analysis.txt); a no-op when
     ``all_rows.jsonl`` does not exist. Columns per cell: pass/N, rate, verdict
-    breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``), ``l3``, then average
-    prompt/completion tokens and wall time. ``l3`` counts CELLS whose
+    breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``/``noans``), ``l3``,
+    then average prompt/completion tokens and wall time. ``l3`` counts CELLS whose
     ``candidate_proof`` holds at least one Lean 3 relic (`lean3.find_relics`),
     regardless of verdict — the endpoint `lean3.corrupt_tail`'s SFT intervention
     aims to drive to zero.
 
     Notes
     -----
+    Cell rows are deduped through `dedupe_cell_rows` before counting (a resumed
+    lane may carry an exception row and its retry for the same cell key; see
+    that function's docstring), so the header's "N cells" and every per-cell
+    ``n`` already reflect distinct cells, not raw rows.
+
     Name-level ``l3`` detection also needs the ``lean3_align.json.gz`` asset
     (`lean3.AlignMap.load`); without it ``l3`` degrades to parse-level syntax
     relics only, and a marker line goes after the table header so an old run is
@@ -855,6 +1140,7 @@ def write_run_analysis(run_dir: Path) -> None:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0,
             "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
         }
@@ -862,7 +1148,13 @@ def write_run_analysis(run_dir: Path) -> None:
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    n_rows = 0
+    # Cell rows are collected here, not aggregated inline, so `dedupe_cell_rows`
+    # can collapse an exception-then-retry pair for the same cell key (see its
+    # docstring) BEFORE this table's "N cells" header count and per-cell tallies
+    # below ever see the raw row count. A run's all_rows.jsonl is thousands of
+    # rows, not millions, so materializing the cell subset is cheap next to the
+    # gzip+JSON `AlignMap.load` above.
+    cell_rows: list[dict] = []
     with all_rows.open() as f:
         for line in f:
             try:
@@ -876,24 +1168,34 @@ def write_run_analysis(run_dir: Path) -> None:
                 elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
                     n_sanity_fail += 1
                 else:
-                    # "skipped" (NullVerifier) and any future pass-through
-                    # verdict: the gate deferred, nothing positively failed.
+                    # "skipped" (NullVerifier), "exception" (infrastructure --
+                    # SANITY_FAILURE_VERDICTS deliberately excludes it, see
+                    # that constant's Design comment), and any future
+                    # pass-through verdict: the gate deferred or the attempt
+                    # to check it failed, but nothing POSITIVELY failed.
                     n_sanity_skipped += 1
                 continue
-            n_rows += 1
-            key = (r.get("rung", "?"), r.get("model", "?"))
-            c = cells[key]
-            c["n"] += 1
-            v = r.get("verdict", "exception")
-            if v in c:
-                c[v] += 1
-            else:
-                c["exception"] += 1
-            c["tok_in"] += r.get("prompt_tokens", 0)
-            c["tok_out"] += r.get("completion_tokens", 0)
-            c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-            if lean3.find_relics(r.get("candidate_proof") or "", align):
-                c["l3"] += 1
+            cell_rows.append(r)
+
+    # `n_rows` (this function's "N cells" header count) is the DEDUPED cell
+    # count -- a lane that resumed past an exception must read as one cell,
+    # not two. See `dedupe_cell_rows`'s docstring for the full rationale.
+    n_rows = 0
+    for r in dedupe_cell_rows(cell_rows):
+        n_rows += 1
+        key = (r.get("rung", "?"), r.get("model", "?"))
+        c = cells[key]
+        c["n"] += 1
+        v = r.get("verdict", "exception")
+        if v in c:
+            c[v] += 1
+        else:
+            c["exception"] += 1
+        c["tok_in"] += r.get("prompt_tokens", 0)
+        c["tok_out"] += r.get("completion_tokens", 0)
+        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+        if lean3.find_relics(r.get("candidate_proof") or "", align):
+            c["l3"] += 1
 
     out: list[str] = []
     out.append(
@@ -914,7 +1216,7 @@ def write_run_analysis(run_dir: Path) -> None:
 
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'l3':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} {'l3':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
     )
     out.append(header)
@@ -933,7 +1235,8 @@ def write_run_analysis(run_dir: Path) -> None:
         out.append(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['l3']:>5} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['no_answer']:>5} {c['l3']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
         )
 
@@ -965,8 +1268,9 @@ def regenerate_run_artifacts(run_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inner cell loop — shares one Dojo session across all rungs/models/replicates
-# at a single (theorem, k). Caller wraps in a try/except for open failures.
+# Inner cell loop — shares one Lean REPL session across all rungs/models/
+# replicates at a single (theorem, k). Caller wraps in a try/except for open
+# failures.
 # ---------------------------------------------------------------------------
 
 
@@ -993,7 +1297,7 @@ def _run_cells_at_step(
     print_lock: threading.Lock | None = None,
     cell_whitelist: frozenset[tuple] | None = None,
 ) -> tuple[int, int, int]:
-    """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped).
+    """Open a Lean REPL session at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped).
 
     `cell_whitelist=None` applies no extra filtering; otherwise a cell whose row
     key is not a member is skipped exactly like an already-`done_keys` one and
@@ -1002,7 +1306,7 @@ def _run_cells_at_step(
 
     Filtering happens BEFORE `verifier.open_at_step`, and an empty pending list
     returns without opening it (as `_run_cells_at_step_concurrent` does): a
-    resumed sweep whose cells are all done would otherwise pay a full Dojo
+    resumed sweep whose cells are all done would otherwise pay a full REPL
     session -- tens of seconds of Lean startup -- per (theorem, k) to do nothing.
     """
     n_written = n_ok = n_skipped = 0
@@ -1105,10 +1409,10 @@ def _run_cells_at_step_concurrent(
     cell_whitelist: frozenset[tuple] | None = None,
 ) -> tuple[int, int, int]:
     """Concurrent variant: fire all (rung, model, replicate) gen calls in parallel,
-    then verify each on the shared Dojo session as the API responses arrive.
+    then verify each on the shared Lean REPL session as the API responses arrive.
 
-    Verify still serializes on the single Lean server, since Dojo is
-    single-threaded; gen -- the dominant cost at ~1.3-3s/cell versus
+    Verify still serializes on the single Lean server, since the REPL session
+    is single-threaded; gen -- the dominant cost at ~1.3-3s/cell versus
     ~0.4s/verify -- fans out. `cell_whitelist` is as in `_run_cells_at_step`.
     """
     n_written = n_ok = n_skipped = 0
@@ -1145,9 +1449,9 @@ def _run_cells_at_step_concurrent(
     if not pending:
         return n_written, n_ok, n_skipped
 
-    # Submit the longest-running cells first: the Dojo session stays open
-    # until the last gen completes, so front-loading slow reasoning models
-    # cuts per-theorem wall-clock.
+    # Submit the longest-running cells first: the Lean REPL session stays
+    # open until the last gen completes, so front-loading slow reasoning
+    # models cuts per-theorem wall-clock.
     # Sort key (asc): (rung_order, is_non_reasoning, model_order, replicate_idx)
     rung_order = {r: i for i, r in enumerate(rungs)}
     model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
@@ -1197,7 +1501,7 @@ def _run_cells_at_step_concurrent(
                 )
                 future_to_pending[fut] = p
 
-            # Verify each gen as it arrives (serial through shared Dojo).
+            # Verify each gen as it arrives (serial through the shared REPL session).
             for fut in as_completed(future_to_pending):
                 p = future_to_pending[fut]
                 gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
@@ -1421,9 +1725,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     """Run a sweep described by `config`; write per-theorem dirs under `run_dir`.
 
     Loops theorem, then k, then rung, then model, then replicate. Per
-    (theorem, k) it opens ONE Dojo session, shared by every rung/model/replicate
-    branching from it; per theorem it opens ONE further sanity-gate session that
-    re-runs the full ground-truth proof.
+    (theorem, k) it opens ONE Lean REPL session, shared by every
+    rung/model/replicate branching from it; per theorem it opens ONE further
+    sanity-gate session that re-runs the full ground-truth proof.
 
     Seed threading: replicate `i` decodes at ``config["seed"] + i``, so the
     replicate index -- not theorem/k/rung/model -- is the replication axis, and
@@ -1433,22 +1737,34 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     ----------
     config : dict
         Keys `theorems`, `rungs`, `models`, `k`, `n_replicates`, `temperature`,
-        `max_tokens`, `dojo_timeout`, `concurrent_gen`, `max_concurrency`,
-        `skip_trivial`, `theorem_workers`, plus the generation defaults in the
-        module docstring (`seed`, `request_timeout`, `max_retries`,
-        `models[i].provider`).
+        `max_tokens`, `concurrent_gen`, `max_concurrency`, `skip_trivial`,
+        `theorem_workers`, plus the generation defaults documented in the
+        module docstring (`seed`, `dojo_timeout`, `request_timeout`,
+        `max_retries`, `models[i].provider`).
     resume : bool
         Skip cells already recorded in `all_rows.jsonl` under their row key
         (model, theorem, k, rung, replicate_idx); `_existing_keys` defines what
         counts as recorded.
     verifier : optional
         `None` lazily resolves `_default_verifier()`; tests pass a fake to
-        exercise the whole dispatch/schema/resume path without `lean_dojo`.
+        exercise the whole dispatch/schema/resume path without `lean_interact`.
 
     Returns
     -------
     int
         Cell rows written this call, excluding skipped and sanity rows.
+        Returned only when every requested `LEAN_CELL_WHITELIST` key (if any)
+        was reconciled -- see Raises.
+
+    Raises
+    ------
+    RuntimeError
+        When ``LEAN_CELL_WHITELIST`` is active and, after this call's writer
+        has closed, one or more requested cell keys are still absent from
+        `all_rows.jsonl` (see the whitelist paragraph under Notes). Raised
+        only after `manifest.json` (with a populated ``whitelist_missed``)
+        and `analysis.txt` have both been (re)written, so the record of what
+        went missing survives the exception that reports it.
 
     Notes
     -----
@@ -1460,6 +1776,37 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     the whitelist narrows WHICH cells generate, not whether a surviving theorem
     is re-checked. A missing or malformed file raises `ValueError` before any
     theorem is selected, rather than degrading into a costly full-lane run.
+
+    A requested key can still be UNREACHABLE even after a well-formed
+    whitelist is accepted -- e.g. it names a theorem outside the configured
+    `theorems` selection, a rung this sweep's config never renders, or a
+    theorem whose sanity gate fails. After the generation loop, `sweep`
+    reconciles the whitelist against `_existing_keys(all_rows_path)`
+    (recomputed fresh, AFTER the writer has closed) and raises `RuntimeError`
+    if any requested key is still missing, rather than returning 0 silently.
+    This is fatal, not a warning: `notebooks/deduction/run_study.py` stamps
+    ``hash_cell_keys(cell_whitelist)`` into `manifest.json` as a claim that
+    THIS EXACT SET of cells was collected, and a silent exit-0 on an
+    unreachable key would make that stamped claim false with no record of the
+    discrepancy. Every missed key is logged individually at ERROR level
+    (capped at `WHITELIST_MISS_LOG_CAP`) and recorded verbatim, sorted, under
+    ``manifest.json["whitelist_missed"]`` -- present (possibly empty)
+    whenever a whitelist is active at all, so a reconciled-clean run
+    (``[]``) is distinguishable from an older manifest that predates this
+    check (key absent entirely).
+
+    `traced_root_present` (bool) is always recorded in `manifest.json`,
+    whether or not a whitelist or `skip_trivial` is active: it is provenance
+    about the BOX this run executed on (whether `premises._traced_root()`
+    resolved a cached, traced mathlib4 checkout), not about `config`, since a
+    reader of an archived run has no other way to tell which regime the run
+    executed under. When `skip_trivial` is on and no traced root is present,
+    `sweep` also logs a WARNING at start: `premises.body_with_proof` then
+    degrades to the corpus's stored `Premise.code`, under which
+    `is_trivial_rung` can judge hint:2, hint:3, and noise:3 trivial, and this
+    sweep will NOT generate those cells -- so which cells a run produces can
+    depend on a directory (``~/.cache/lean_dojo``, independent of
+    ``SMOLBENCH_LEAN_DATA``) outside the results tree.
     """
     if verifier is None:
         verifier = _default_verifier()
@@ -1486,20 +1833,53 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     # Fail fast on unknown provider names. Pure module resolution, no
     # network call, so a typo aborts with provider_module's actionable
     # ValueError instead of after the first theorem has burned a real
-    # sanity replay inside a Dojo session.
+    # sanity replay inside a Lean REPL session.
     for mc in models_cfg:
         _provider_for(mc)
     n_replicates = int(config.get("n_replicates", 1))
     temperature = float(config.get("temperature", 0.7))
     max_tokens = int(config.get("max_tokens", 4096))
-    dojo_timeout = int(config.get("dojo_timeout", 300))
+    dojo_timeout = int(config.get("dojo_timeout", DEFAULT_DOJO_TIMEOUT))
     concurrent_gen = bool(config.get("concurrent_gen", True))
     max_concurrency = int(config.get("max_concurrency", 12))
     skip_trivial = bool(config.get("skip_trivial", True))
     theorem_workers = int(config.get("theorem_workers", 1))
-    base_seed = int(config.get("seed", 1776))
+    # Default 0, matching `theorems.seed`'s own default (see
+    # `_select_theorems`) and `notebooks/deduction/run_study.py`'s driver
+    # config -- NOT `run_cell`'s separate `seed` PARAMETER, a different entry
+    # point with its own callers, which keeps its documented default of 1776
+    # (see this module's docstring). A driver-side `LEAN_SEED` (landing in a
+    # different package) is meant to derive BOTH the theorem-selection seed
+    # and this decode seed from one value; this default exists so a config
+    # that omits `seed` cannot silently disagree with that single value.
+    base_seed = int(config.get("seed", 0))
     request_timeout = int(config.get("request_timeout", 1800))
     max_retries = int(config.get("max_retries", 4))
+
+    # Whether the traced mathlib4 checkout that lets
+    # `premises.body_with_proof` render full premise source -- and therefore
+    # lets `is_trivial_rung` correctly judge a rung trivial -- is present on
+    # THIS box, right now. Lazy import: `premises` is otherwise reached in
+    # this package only through `context`'s own lazy imports (see that
+    # module's Design comments on `.premises`), so a top-level import here
+    # would add a new eager dependency edge this module doesn't otherwise
+    # have.
+    from . import premises
+    traced_root_present = premises._traced_root() is not None
+    if skip_trivial and not traced_root_present:
+        logging.warning(
+            "skip_trivial is on but premises._traced_root() found no cached, "
+            "traced mathlib4 checkout (expected a "
+            "leanprover-community-mathlib4-<commit>/mathlib4 directory under "
+            "~/.cache/lean_dojo -- a cache independent of SMOLBENCH_LEAN_DATA, "
+            "which only controls the corpus.jsonl dataset dir). Without it, "
+            "body_with_proof() degrades to the corpus's stored Premise.code, "
+            "under which is_trivial_rung can judge hint:2, hint:3, and "
+            "noise:3 trivial -- so this sweep will NOT generate those cells. "
+            "The set of cells a run produces therefore depends on a "
+            "directory outside the results tree, and two boxes running the "
+            "identical config can disagree about which cells exist."
+        )
 
     run_dir.mkdir(parents=True, exist_ok=True)
     all_rows_path = run_dir / "all_rows.jsonl"
@@ -1513,6 +1893,12 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     manifest = {
         "run_name": config.get("run_name") or run_dir.name,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        # Provenance about the BOX this run executed on, not about `config`
+        # (see this function's Notes) -- recorded unconditionally, at the top
+        # level alongside run_name/started_at, so an archived run's reader
+        # can tell which regime it was collected under without re-deriving
+        # it.
+        "traced_root_present": traced_root_present,
         "config": config,
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -1582,6 +1968,15 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         flush=True,
     )
 
+    # Repair a torn final line BEFORE opening for append, not
+    # after -- see `_repair_torn_tail`'s docstring for why an append onto an
+    # unrepaired torn tail welds two records into one corrupt MIDDLE line.
+    # Unconditional (not gated on `resume`): `notebooks/deduction/run_study.py`
+    # renames the old file aside before a `resume=False` run, which normally
+    # makes this a no-op there, but if that rename is ever skipped, appending
+    # onto a torn prefix would be just as wrong under `resume=False`.
+    _repair_torn_tail(all_rows_path)
+
     with all_rows_path.open("a") as all_rows:
         write_lock = threading.Lock()
         print_lock = threading.Lock()
@@ -1592,7 +1987,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
             tdir = _theorem_dir(run_dir, theorem)
             tdir.mkdir(parents=True, exist_ok=True)
 
-            # ---- sanity gate per theorem (separate Dojo session) ----
+            # ---- sanity gate per theorem (separate Lean REPL session) ----
             prev_sanity = sanity_done.get(theorem.full_name)
             if prev_sanity is None:
                 t0 = time.monotonic()
@@ -1688,9 +2083,17 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                             cell_whitelist=cell_whitelist,
                         )
                 except Exception as exc:  # noqa: BLE001
+                    # Design: log marker renamed from the old `DOJO-OPEN-FAIL`
+                    # -- checked `scripts/`, `.claude/skills/`,
+                    # `notebooks/`, and every `README*.md` for a dependency on
+                    # the old spelling before renaming; none matched anything
+                    # but this line itself, unlike `dojo_timeout` (kept:
+                    # see `DEFAULT_DOJO_TIMEOUT`'s Design comment) which is
+                    # load-bearing in committed sweep YAML and archived
+                    # `manifest.json` config blocks.
                     with print_lock:
                         print(
-                            f"  DOJO-OPEN-FAIL {theorem.full_name} k={k}: "
+                            f"  REPL-OPEN-FAIL {theorem.full_name} k={k}: "
                             f"{type(exc).__name__}: {exc}",
                             flush=True,
                         )
@@ -1727,9 +2130,67 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
 
     manifest["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     manifest["counts"] = {"written": n_written, "skipped": n_skipped, "success": n_ok}
+
+    # Reconcile LEAN_CELL_WHITELIST against what `all_rows.jsonl`
+    # now accounts for. `_existing_keys` is recomputed HERE -- after the
+    # `with all_rows_path.open("a") as all_rows:` block above has exited and
+    # the file is closed -- rather than reusing `done_keys` (a snapshot taken
+    # BEFORE this call's own writes). Recomputing fresh is the simplest
+    # correct source of truth: it is exactly "which cells the rows file now
+    # accounts for", covering both this run's fresh writes and any prior
+    # resume in one measurement, which is precisely what "was every
+    # whitelisted cell actually collected" needs to ask. Deliberately at the
+    # END, not checked early and aborted: cells that ARE reachable must still
+    # get generated and banked even when others in the same whitelist are
+    # not (see this function's Notes).
+    whitelist_missed: list[tuple] = []
+    if cell_whitelist is not None:
+        actually_present = _existing_keys(all_rows_path)
+        whitelist_missed = sorted(cell_whitelist - actually_present)
+        # Canonical list-of-lists encoding, matching `hash_cell_keys`'s own
+        # convention, so a tuple key and its JSON round-trip compare equal.
+        # Recorded even when empty (`[]`) -- an ABSENT key (an older run
+        # predating this check, or a whitelist-free run) must not be
+        # confused with a RECONCILED-and-clean one; see this function's
+        # Notes.
+        manifest["whitelist_missed"] = [list(k) for k in whitelist_missed]
+
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     write_run_analysis(run_dir)
+
+    if whitelist_missed:
+        # Log every missed key so an operator can see WHICH cells were
+        # unreachable, not just how many; capped because a whitelist can
+        # legitimately name thousands of cells and dumping all of them into
+        # the log is unreadable. The full list survives the cap regardless,
+        # in `manifest.json["whitelist_missed"]` (already written above).
+        shown = whitelist_missed[:WHITELIST_MISS_LOG_CAP]
+        for key in shown:
+            logging.error("whitelist cell unreachable: %s", list(key))
+        n_suppressed = len(whitelist_missed) - len(shown)
+        if n_suppressed > 0:
+            logging.error(
+                "... %d more unreachable whitelist cell(s) suppressed above "
+                "(full list in manifest.json['whitelist_missed'])",
+                n_suppressed,
+            )
+        # Fatal, not a warning: `notebooks/deduction/run_study.py` stamps
+        # `hash_cell_keys(cell_whitelist)` into manifest.json as a claim that
+        # this exact set of cells was collected. Returning 0 here (the prior
+        # behaviour) would make that stamped claim false with no record of
+        # the discrepancy -- so this raises instead, but only AFTER
+        # manifest.json (with whitelist_missed populated) and analysis.txt
+        # have both been (re)written above, so the record of what went wrong
+        # is not itself lost with the exception.
+        raise RuntimeError(
+            f"LEAN_CELL_WHITELIST={cell_whitelist_path!r}: "
+            f"{len(whitelist_missed)} of {len(cell_whitelist)} requested "
+            "cell(s) were never generated (unreachable by this sweep's "
+            "theorems/rungs/models or dropped by a failed sanity gate); "
+            f"full list recorded in {run_dir / 'manifest.json'} under "
+            "'whitelist_missed'"
+        )
 
     print(
         f"\n{n_ok}/{n_written} success  ({n_skipped} skipped)\n"

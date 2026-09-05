@@ -214,33 +214,6 @@ def test_ram_cap_and_s3_path_mapping():
     assert "//" not in key and not key.startswith("/")
 
 
-def test_verify_imports_with_its_lean_backend():
-    """A cold import of the verifier needs `lean_interact`, not `lean_dojo`.
-
-    The verifier's backend was swapped to `lean_interact` (which drives
-    leanprover-community/repl); `lean_dojo` is still a declared dependency, but
-    only for corpus tracing and premise slicing, so importorskipping on it here
-    would pin a relationship that no longer exists.
-
-    The pop is restored on the way out: re-executing the module binds a NEW
-    object onto the `smolbench.deduction.lean` package, and leaving that in
-    place makes `runner._default_verifier()` return something no longer
-    identical to another module's imported `verify` -- an order-dependent
-    failure. See tests/deduction/test_lean_repl_verifier.py, which pins that
-    identity.
-    """
-    pytest.importorskip("lean_interact")
-    from smolbench.deduction import lean as lean_pkg
-
-    saved = sys.modules.pop("smolbench.deduction.lean.verify", None)
-    try:
-        import smolbench.deduction.lean.verify  # noqa: F401
-    finally:
-        if saved is not None:
-            sys.modules["smolbench.deduction.lean.verify"] = saved
-            lean_pkg.verify = saved
-
-
 def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
     """The `--s3-prefix` DEFAULT is built after parsing; nothing else exercises it.
 
@@ -278,3 +251,112 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_pa
     legacy = lvr._build_arg_parser().parse_args(
         ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/deduction/runs"])
     assert lvr.parse_s3_uri(legacy.s3_prefix) == (lvr.SPOOL_BUCKET, "deduction/runs")
+
+
+# ---------------------------------------------------------------------------
+# 13-06: a group of only replay_failed/exception cells is NOT done
+# ---------------------------------------------------------------------------
+
+
+def test_resume_treats_an_all_replay_failed_group_as_pending():
+    """13-06: "no cell still says unverified" is not the same as "graded".
+
+    `resume_done_groups` marked a group done whenever no cell read
+    ``"unverified"`` -- including when EVERY cell read ``"replay_failed"``,
+    which `_verify_one_group` fans over the whole group on any exception
+    opening the REPL (the failure hint for that path says "usually
+    infrastructure"). A box with an unset `SMOLBENCH_MATHLIB_ROOT` therefore
+    wrote `replay_failed` across a lane and every later pass reported it
+    already done, while `error_bars.build_pool`'s `count_as_failure` scored
+    those cells 0 for that lane. Phase 1's own resume takes the opposite view
+    of the same verdict class.
+
+    Graded verdicts -- including a single `success`, `lean_error`,
+    `incomplete`, `given_up` or `no_answer` anywhere in the group -- still
+    make it done: only a group where NOTHING was measured is retried.
+    """
+    unmeasured = [_cell("T", rung="stepk:1", verdict="replay_failed"),
+                  _cell("T", rung="hint:2", verdict="exception")]
+    assert lvr.resume_done_groups(unmeasured) == set(), (
+        "a group whose every cell is replay_failed/exception was never measured"
+    )
+    mixed = unmeasured + [_cell("T", rung="hint:3", verdict="lean_error")]
+    assert lvr.resume_done_groups(mixed) == {("T", 1)}, (
+        "one real verdict is a measurement; do not retry the whole group"
+    )
+    graded = [_cell("U", rung="stepk:1", verdict="success")]
+    assert lvr.resume_done_groups(graded) == {("U", 1)}
+    pending_sentinel = [_cell("V", rung="stepk:1", verdict="unverified")]
+    assert lvr.resume_done_groups(pending_sentinel) == set()
+
+
+# ---------------------------------------------------------------------------
+# 13-07: a torn final line, and per-run isolation
+# ---------------------------------------------------------------------------
+
+
+def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path):
+    """13-07: a half-written last line must not abort the whole verification pass.
+
+    `all_rows.jsonl` is written by an append-only sweep on a spot box, so a
+    SIGKILL mid-write leaves a torn FINAL line. The loader called
+    `json.loads` on every line with no tolerance, so one torn tail took down
+    the run -- while `merge_lean_shards.py` and
+    `split_lean_run_into_shards.py` both already drop exactly this and say so.
+    Dropped AND reported: a silent drop would hide real mid-file corruption
+    behind the same code path.
+    """
+    fake = _Fake()
+    good = [_cell("T", rung="stepk:1"), _sanity("T")]
+    fake.objects["k"] = _dump(good)[:-1] + b'\n{"kind": "cell", "theo'
+
+    with caplog.at_level(0):
+        rows = lvr.download_rows(fake, "b", "k", tmp_path / "rows.jsonl")
+
+    assert _ids(rows) == _ids(good), "the intact rows must survive"
+    assert "torn" in caplog.text.lower() or "truncat" in caplog.text.lower(), (
+        "the drop must be reported, not silent:\n" + caplog.text
+    )
+
+
+def test_download_rows_still_refuses_mid_file_corruption(tmp_path):
+    """13-07's other half: only the FINAL line is recoverable.
+
+    A corrupt line anywhere else is real damage -- resume regenerates a torn
+    tail, it cannot regenerate a row from the middle of a file it will not
+    re-derive -- so it must still propagate rather than silently shrink the
+    pass's input.
+    """
+    fake = _Fake()
+    fake.objects["k"] = b'{"kind": "cell", "theo\n' + _dump([_cell("T")])
+
+    with pytest.raises(json.JSONDecodeError):
+        lvr.download_rows(fake, "b", "k", tmp_path / "rows.jsonl")
+
+
+def test_one_run_failing_does_not_abort_the_others(monkeypatch, tmp_path):
+    """13-07: `_verify_every_run` loops over runs; one bad run must not kill the rest.
+
+    A pass over 21 lanes that dies on lane 3 leaves 18 lanes unverified and
+    reports an exception rather than a per-run status, so an operator cannot
+    tell which lanes were actually checked. Each run is isolated and counted
+    as failed instead.
+    """
+    seen = []
+
+    def _verify_run(*, run, **kw):
+        seen.append(run)
+        if run == "scaling_bad":
+            raise RuntimeError("REPL exploded on this lane")
+        return 0
+
+    monkeypatch.setattr(lvr, "_build_s3_client", lambda: object())
+    monkeypatch.setattr(lvr, "list_runs",
+                        lambda *a, **k: ["scaling_a", "scaling_bad", "scaling_c"])
+    monkeypatch.setattr(lvr, "verify_run", _verify_run)
+
+    rc = lvr.main(["--dry-run", "--workdir", str(tmp_path)])
+    assert seen == ["scaling_a", "scaling_bad", "scaling_c"], (
+        f"the pass stopped at the failing lane: {seen}"
+    )
+    assert rc != 0, "a lane that raised must be reported as failed, not as success"

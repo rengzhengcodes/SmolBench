@@ -30,6 +30,7 @@ before this backend was specified:
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import dataclass, field
 
@@ -443,24 +444,34 @@ def test_repl_session_step_sends_the_proof_state_and_tactic():
 
 
 # ---------------------------------------------------------------------------
-# verify: the six-verdict taxonomy is unchanged
+# verify: the verdict taxonomy, and its agreement with runner's glyph map
 # ---------------------------------------------------------------------------
-def test_verdict_taxonomy_keeps_exactly_the_six_recorded_strings():
-    """No seventh verdict (notably no ``"timeout"``): `runner` maps only these six."""
+def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings():
+    """The taxonomy is exactly these seven, and `runner` can render every one.
+
+    13-01 added ``"no_answer"``; this test previously pinned SIX and named the
+    absence of a seventh as the point. The point is unchanged in substance --
+    still no ``"timeout"`` verdict, a REPL timeout stays an ``"exception"`` --
+    but the count is now seven, and ``"no_answer"`` is the newcomer: an empty
+    candidate tail is a real, scoreable miss, not a Lean rejection.
+
+    The second half is what makes this more than a spelling pin: `runner` owns
+    the verdict->glyph map, and an unmapped verdict silently renders as
+    ``"?"``, which is `given_up`'s glyph -- so a new verdict added to `verify`
+    alone would print as a DIFFERENT real verdict rather than as anything
+    obviously wrong.
+    """
     from typing import get_args
 
+    from smolbench.deduction.lean import runner
+
     assert set(get_args(verify.Verdict)) == {
-        "success", "lean_error", "incomplete", "given_up", "exception", "replay_failed",
+        "success", "lean_error", "incomplete", "given_up", "no_answer",
+        "exception", "replay_failed",
     }
-
-
-def test_verify_no_longer_imports_lean_dojo():
-    """The backend swap is only real if the deprecated interaction layer is gone."""
-    from pathlib import Path
-
-    src = Path(verify.__file__).read_text()
-    assert "import lean_dojo" not in src
-    assert "from lean_dojo" not in src
+    assert "timeout" not in get_args(verify.Verdict)
+    unmapped = set(get_args(verify.Verdict)) - set(runner._VERDICT_GLYPH)
+    assert not unmapped, f"runner._VERDICT_GLYPH cannot render {sorted(unmapped)}"
 
 
 def test_verify_imports_with_lean_interact():
@@ -482,6 +493,32 @@ def test_verify_imports_with_lean_interact():
         if saved is not None:
             sys.modules["smolbench.deduction.lean.verify"] = saved
             lean_pkg.verify = saved
+
+
+def test_verify_cold_import_does_not_pull_in_lean_dojo():
+    """13-19: a cold import of `verify` must not drag `lean_dojo` in with it.
+
+    Runs in a SUBPROCESS rather than asserting on this interpreter's
+    `sys.modules`: `lean_dojo` is installed in the project venv, so an in-process
+    assertion would pass or fail purely on whether some earlier test in the
+    session happened to import it. Only a fresh interpreter can witness what a
+    cold import of the verifier actually pulls in.
+
+    Pairs with `test_lean_verify_docs.py::test_verify_module_has_no_lean_dojo_import`,
+    which greps the source and, unlike this file, runs unconditionally -- this
+    module's `importorskip("lean_interact")` would delete a guarantee placed
+    here exactly when the packaging failure it guards against occurs.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "import sys\n"
+         "import smolbench.deduction.lean.verify\n"
+         "assert 'lean_interact' in sys.modules\n"
+         "assert 'lean_dojo' not in sys.modules, "
+         "sorted(m for m in sys.modules if m.startswith('lean_dojo'))\n"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
 
 
 def test_verify_dataclass_fields_are_unchanged():
@@ -546,10 +583,21 @@ def test_try_tail_reports_incomplete_with_the_final_state_when_tactics_run_out()
     assert res.final_state_pp == "⊢ Q n"
 
 
-def test_try_tail_reports_an_empty_tail_as_lean_error():
+def test_try_tail_reports_an_empty_tail_as_no_answer():
+    """13-01: an empty tail is `no_answer`, NOT `lean_error`.
+
+    Was pinned to `lean_error` / "empty tail". That conflated "the model
+    returned nothing extractable" (typically a reasoning model truncated at
+    max_tokens inside an unclosed <think>, which `prompt.extract_tactic_block`
+    deliberately renders as "") with "Lean rejected this proof" -- on exactly
+    the axis this study measures. Now pins the distinct verdict; the error
+    text stays descriptive but is no longer asserted verbatim, only that it
+    still names the empty tail.
+    """
     res = verify.try_tail(FakeSession(), 0, "   \n\n  ", "t")
-    assert res.verdict == "lean_error"
-    assert res.error == "empty tail"
+    assert res.verdict == "no_answer"
+    assert "empty tail" in res.error
+    assert "no_answer" in verify.Verdict.__args__
 
 
 def test_try_tail_ignores_blank_lines_when_splitting_tactics():
@@ -670,11 +718,18 @@ def test_verify_proof_tail_reports_an_out_of_range_k_as_exception_without_openin
     assert session.closed == 0
 
 
-def test_verify_proof_tail_reports_an_empty_tail_as_lean_error_without_opening(monkeypatch):
+def test_verify_proof_tail_reports_an_empty_tail_as_no_answer_without_opening(monkeypatch):
+    """13-01: the one-shot wrapper agrees with `try_tail` -- `no_answer`, no session.
+
+    Was pinned to `("lean_error", "empty tail")`. The "without opening" half of
+    the guarantee is unchanged and still asserted: an empty candidate costs no
+    Lean startup.
+    """
     session = FakeSession()
     _install_session(monkeypatch, session)
     res = verify.verify_proof_tail(_bt(["a", "b"]), 0, "\n \n")
-    assert (res.verdict, res.error) == ("lean_error", "empty tail")
+    assert res.verdict == "no_answer"
+    assert "empty tail" in res.error
     assert session.closed == 0
 
 

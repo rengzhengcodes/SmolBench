@@ -31,7 +31,7 @@ def _check_counts(cfg):
     period_to_label, pos_to_compound = generate_sequence(cfg)
     label_to_period = {label: period for period, label in period_to_label.items()}
     intens_quiz, _extens, _noise = get_periodic_numeric_quiz(
-        cfg, Prompter(NUM_TMPL, {}, numeric_count_query_gen), tokenizer=StubTokenizer()
+        cfg, Prompter(NUM_TMPL, numeric_count_query_gen), tokenizer=StubTokenizer()
     )
     assert len(intens_quiz) == cfg.n
     for qna in intens_quiz:
@@ -50,7 +50,7 @@ def test_periodic_tof_answers_match_divisibility_rule():
     label_to_period = {label: period for period, label in period_to_label.items()}
 
     intens, extens, noise_intens = get_periodic_quiz(
-        cfg, Prompter(TOF_TMPL, {}, tof_membership_query_gen), tokenizer=StubTokenizer()
+        cfg, Prompter(TOF_TMPL, tof_membership_query_gen), tokenizer=StubTokenizer()
     )
     assert len(intens) > 0
     for qna in intens:
