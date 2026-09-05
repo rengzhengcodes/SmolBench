@@ -1077,10 +1077,17 @@ def verify_run(
         # total, so `main` would report non-zero on the documented healthy flow. A
         # signal that always fires carries no information; it would train an
         # operator to ignore this gate exactly when it matters.
+        # Restricted to `pending` (this pass's ATTEMPTED groups), not every group in
+        # `out_rows`: an all-never-measured ORPHAN (a prior-pass row `seed_out_rows`
+        # appended with no counterpart in `all_rows.jsonl`, see its docstring) was
+        # never in `pending` and nothing was attempted against it this pass -- the
+        # rc=2 gate above already accounts for an orphan separately (it can carry an
+        # "unverified" sentinel), and this diagnostic would otherwise describe a
+        # group as "ended this pass" that this pass never touched.
         never_measured_groups = {
             key
             for key, cell_rows in _group_cell_rows_by_key(out_rows).items()
-            if _never_measured(cell_rows)
+            if key in pending and _never_measured(cell_rows)
         }
         if never_measured_groups:
             affected = sorted(never_measured_groups)
@@ -1096,10 +1103,10 @@ def verify_run(
                 "PERMANENT property of the corpus (no *.ast.json for that theorem "
                 "in the traced mathlib4 cache): nothing recorded on a row "
                 "distinguishes the two. The discriminator: diff THIS pass's "
-                "affected (theorem_id, k) set, logged below, against a PRIOR "
-                "pass's. A box problem MOVES the set -- different theorems fail "
-                "depending on what broke this time -- while a corpus property "
-                "does NOT: the same theorems fail on every pass. See "
+                "affected (theorem_id, k) set, listed at the end of this message, "
+                "against a PRIOR pass's. A box problem MOVES the set -- different "
+                "theorems fail depending on what broke this time -- while a corpus "
+                "property does NOT: the same theorems fail on every pass. See "
                 "notebooks/deduction/analysis/power_analysis.UNMEASURABLE_VERDICTS "
                 "for why cells confirmed corpus-stable are excluded from analysis "
                 f"entirely rather than scored 0. Affected groups: {affected}"
@@ -1245,11 +1252,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
             except Exception as exc:  # noqa: BLE001 -- isolate this run; never abort the pass.
                 # `Exception`, not `BaseException`: an operator's Ctrl-C
-                # (`KeyboardInterrupt`) or a deliberate `SystemExit` (e.g.
-                # `check_workers`'s refusal, `_dojo_cache_lock`'s "already held")
-                # must still stop the whole pass -- those are not per-run failures,
-                # they are "stop now" signals, and swallowing them here would make
-                # this script un-interruptible.
+                # (`KeyboardInterrupt`) must still stop the whole pass -- that is a
+                # "stop now" signal, not a per-run failure, and swallowing it here
+                # would make an unattended multi-hour pass un-interruptible. (A
+                # `SystemExit` from `check_workers` or `_dojo_cache_lock` cannot
+                # reach this `except` in the first place -- both run in `main`,
+                # around this whole loop, before any run is attempted -- but the
+                # same "let it stop the pass" reasoning would apply if that ever
+                # changed.)
                 logging.exception(
                     f"lean_verify_rows[{run}]: verify_run raised "
                     f"{type(exc).__name__}: {exc} -- counting this run as FAILED "
