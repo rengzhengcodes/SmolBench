@@ -16,7 +16,21 @@ Two control arms separate the confounds. `noise_intens` is the
 intensional prompt whitespace-padded to EXACTLY the extensional
 prompt's token count under the model-under-test's own tokenizer
 (`_common.py`), so a gap cannot be explained by prompt length alone.
-`zero` is the same query with an empty context -- the chance floor.
+`zero` is the same query with an empty context AND a range-free
+question (no `$seq_len`) -- the chance floor. The range must be
+omitted there specifically: on the default 1..n harmonic set the
+period-1 harmonic's answer IS `seq_len`, so a `zero` prompt stating
+"positions 1 through $seq_len" would hand that one answer away for
+free, in the very arm meant to measure the floor a model reaches with
+NO positive information at all. `zero`-arm rows collected before this
+question changed must be re-collected, not compared against new ones
+-- they measured a leakier floor.
+
+All four conditions (`intens`, `extens`, `noise_intens`, `zero`) are
+declared once, as `periodic.CONDITIONS`, and rendered by
+`periodic.get_periodic_prompts` in one loop; `get_periodic_quiz` /
+`get_periodic_numeric_quiz` return a `dict` keyed by condition name (in
+`CONDITIONS`'s order), not a positional tuple.
 
 The benchmark below follows that format: an extensional representation
 compacts into a shorter intensional representation. For induction, every

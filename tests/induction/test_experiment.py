@@ -270,3 +270,17 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
             marks = Marks.load(stored)
             assert len(marks.marks) == 1
             assert marks.marks[0].query == f"{info[0]}/{seed}/stub-model"
+
+
+def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one():
+    """The lifecycle lives in ``smolbench.evals.experiment``; this class only
+    supplies induction's defaults, so a sibling study's driver inherits the
+    same provision/run/teardown code instead of re-implementing it inline."""
+    from smolbench.evals.experiment import Experiment
+
+    assert issubclass(InductionExperiment, Experiment)
+    # Every lifecycle method is INHERITED, not redefined here -- except
+    # cot_chain_lengths, which the subclass overrides only to default `tag`.
+    for name in ("provision", "run", "summarize", "agent_status", "teardown",
+                 "_apply_env", "harness", "seeds", "results_dir"):
+        assert name not in vars(InductionExperiment), name

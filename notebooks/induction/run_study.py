@@ -13,7 +13,10 @@ below instead of re-declaring it; the constants themselves are pinned by
 The four info arms match ``periodic_moe``'s: ``intens``, ``extens``,
 ``noise_intens`` (``intens`` whitespace-padded to ``extens``'s token count under
 the SERVED model's own tokenizer -- a length control, not a content control) and
-``zero`` (empty context, chance floor). CoT is ON for all 21 checkpoints, and
+``zero`` (empty context, chance floor -- rendered from ``zero_template``, the
+RANGE-FREE counterpart of ``template`` below, so the prompt cannot leak
+``seq_len`` -- see ``smolbench.induction.periodic``'s module docstring for why
+that matters). CoT is ON for all 21 checkpoints, and
 each model's per-request read timeout is DERIVED from its completion budget by
 ``request_timeout_seconds`` rather than left at the provider's 600 s default: a
 ~100k-token budget cannot finish inside 600 s, and a too-short timeout censors
@@ -33,10 +36,23 @@ why the shared ``query_gen`` signature keeps the parameter.) See
 clarification.
 
 Environment: ``INDUCTION_SHARD`` (``"index/count"``; splits ONE model's
-replicates); ``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
+replicates -- shard membership is DERIVED from the seed's INDEX in
+``range(N_REPLICATES)``, ``r % count == index`` (see
+``InductionExperiment.seeds``), and is never stored anywhere: a shard's seed
+set is reproducible from its own ``(index, count)`` alone, and no state file
+records which seeds a shard owns -- the per-lane state file is EC2 instance
+bookkeeping only, unrelated to which seeds are sharded where);
+``INDUCTION_MODELS`` (comma-separated SPEC KEYS, not analysis tags;
 unset/empty selects all 21); ``INDUCTION_FORCE_RERUN`` (``"1"`` or ``"a-b"``;
-re-collect seeds past the resume-skip -- forced attempts APPEND to the S3 log
-and earliest-wins reads never return them; see ``force_seeds=`` in ``main()``); ``INDUCTION_STATE_FILE`` (the only way
+re-collect seeds past the resume-skip -- ``force_seeds=`` is set on
+``EXPERIMENT`` at module scope below, not in ``main()``. A forced
+re-collection now SUPERSEDES every existing run for each of that seed's
+addresses before collecting its replacement (see
+``ReplicateHarness.run_replicates``'s Notes), so the re-run IS what every
+reader returns, on either backend. Forcing is per-SEED, not per (info, seed):
+it re-collects ALL of that seed's info arms (``INFO_TYPES``: ``intens``,
+``extens``, ``noise_intens``, ``zero``) in one pooled call; there is no way to
+force just one arm); ``INDUCTION_STATE_FILE`` (the only way
 to redirect this process's repo-root-anchored EC2 state file --
 ``InductionExperiment._apply_env`` overwrites the bare ``EC2_STATE_FILE`` shell
 variable on every provision/run/teardown). The fleet MUST set a distinct state
@@ -77,8 +93,8 @@ logging.basicConfig(level=logging.INFO)
 # MODULE-LEVEL ORDER IS LOAD-BEARING. Do not reorder the numbered blocks below.
 # ---------------------------------------------------------------------------
 # ``smolbench.evals.providers.ec2`` freezes every ``EC2_*`` module constant
-# from ``os.environ`` at IMPORT time (see InductionExperiment's module
-# docstring, CRITICAL section), so anything that MUTATES an ``EC2_*``
+# from ``os.environ`` at IMPORT time (see ``smolbench.evals.experiment``'s
+# module docstring, CRITICAL section), so anything that MUTATES an ``EC2_*``
 # environment variable must run before ``ec2`` is imported anywhere in this
 # process. That single constraint fixes the whole order:
 #
@@ -87,10 +103,19 @@ logging.basicConfig(level=logging.INFO)
 #   3. ``SHARD`` -- parsed here because block 5 needs it.
 #   4. ``MODELS`` -- moved ABOVE the tag block (it used to sit next to
 #      ``COT_ARGS``): block 5 derives the lane label from the CANONICAL model
-#      order, so it needs ``MODELS`` already bound. The dict is a plain
-#      literal with no imports and no dependencies, so it can sit anywhere.
+#      order, so it needs ``MODELS`` already bound. Built from
+#      ``smolbench.evals.study_config`` (``roster_keys``/``tag_for``), the ONE
+#      place the roster is written down. That module reads only the stdlib
+#      and never imports ``ec2`` or touches an ``EC2_*`` variable, so
+#      importing it here -- ahead of block 6's smolbench imports -- does not
+#      disturb the env-freeze ordering this block exists to protect.
 #   5. The EC2 tag / ``_LANE`` / ``_DEFAULT_STATE_FILE`` block -- WRITES
-#      ``os.environ["EC2_EXPERIMENT_TAG"]``, hence must precede step 6.
+#      ``os.environ["EC2_EXPERIMENT_TAG"]``, hence must precede step 6. Also
+#      imports ``validate_experiment_tag`` from ``smolbench.evals.experiment``
+#      here, ahead of block 6: that module imports ``providers.ec2`` only
+#      INSIDE method bodies, never at module scope, and touches no ``EC2_*``
+#      variable, so importing it before step 6 does not disturb the
+#      env-freeze ordering this block exists to protect.
 #   6. ``from smolbench.evals.providers import ec2`` and the other smolbench
 #      imports -- legal at module scope ONLY because steps 1 and 5 have
 #      already resolved every ``EC2_*`` variable ec2 is about to freeze.
@@ -102,9 +127,9 @@ logging.basicConfig(level=logging.INFO)
 # --- 1. dotenv ------------------------------------------------------------
 # Anchored via __file__, never cwd. MUST land before
 # smolbench.evals.providers.ec2 is imported anywhere: ec2.py freezes its EC2_*
-# constants at import time (see InductionExperiment's module docstring,
-# CRITICAL section). NOT override=True: under the fleet the supervisor exports a
-# per-lane environment (INDUCTION_MODELS, INDUCTION_STATE_FILE,
+# constants at import time (see ``smolbench.evals.experiment``'s module
+# docstring, CRITICAL section). NOT override=True: under the fleet the
+# supervisor exports a per-lane environment (INDUCTION_MODELS, INDUCTION_STATE_FILE,
 # EC2_EXPERIMENT_TAG, ...) before this file runs, and keys.env must not clobber
 # it with this file's local defaults.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
@@ -170,38 +195,16 @@ SHARD = _parse_shard("INDUCTION_SHARD")
 # study's canonical order -- see selected_models' docstring.
 #
 # Declared HERE, above the tag block, rather than beside COT_ARGS: the lane
-# label below must be built in this canonical order (see block 5), and this
-# literal has no imports and no dependencies, so hoisting it costs nothing.
-MODELS: dict[str, str] = {
-    # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (FP8) --
-    "qwen3.5-27b": "qwen35_27b",
-    "qwen3.5-122b-a10b": "qwen35_122b",
-    "qwen3.5-397b-a17b": "qwen35_397b",
-    # -- Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B --
-    "nemotron-3-nano-4b": "nemo3_4b",
-    "nemotron-3-nano-30b-a3b": "nemo3_30b",
-    "nemotron-3-super-120b-a12b": "nemo3_120b",
-    # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
-    "gemma-4-e2b": "gemma4_e2b",
-    "gemma-4-12b": "gemma4_12b",
-    "gemma-4-31b": "gemma4_31b",
-    # -- GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-gen) --
-    "glm-4.7-flash": "glm_flash",
-    "glm-4.5-air": "glm_air",
-    "glm-4.7": "glm_47",
-    # -- Ministral-3 Reasoning (Mistral, FR): 3B / 8B / 14B --
-    "ministral-3-3b": "min3_3b",
-    "ministral-3-8b": "min3_8b",
-    "ministral-3-14b": "min3_14b",
-    # -- EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B (x-gen) --
-    "exaone-4.0-32b": "exaone_32b",
-    "exaone-4.5-33b": "exaone_33b",
-    "k-exaone-236b-a23b": "exaone_236b",
-    # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-generation) --
-    "deepseek-v4-flash": "ds_flash",
-    "deepseek-v3.1": "ds_v31",
-    "deepseek-v4-pro": "ds_pro",
-}
+# label below must be built in this canonical order (see block 5). Read from
+# the committed study config (smolbench/evals/study_config.toml) instead of a
+# second hand-maintained literal -- study_config.roster_keys() walks the
+# config's families in ladder order, and study_config.tag_for() is total over
+# them (both validated at the config's own load time), so this dict is
+# exactly what the old literal spelled out, sourced from one place instead of
+# several.
+from smolbench.evals.study_config import load_study_config, roster_keys, tag_for  # noqa: E402
+
+MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
 # --- 5. EC2 tag, lane suffix and default state file -----------------------
 # A shard needs its OWN AWS tag and state file -- without that, shard 1
@@ -210,12 +213,13 @@ MODELS: dict[str, str] = {
 # are derived from the lane rather than asking callers to remember two more
 # environment variables. Unsharded runs get an empty suffix.
 #
-# FLEET lanes never hit the "induction-scaling" default (run_fleet.lane_env
+# FLEET lanes never hit the config's standalone_tag default (run_fleet.lane_env
 # exports a per-lane EC2_EXPERIMENT_TAG "scaling-<spec-key>" +
 # INDUCTION_STATE_FILE); it covers STANDALONE runs only. The standalone tag
-# sits outside the fleet's "scaling-" prefix on purpose, so
+# sits outside the fleet's tag_prefix namespace on purpose, so
 # fleet_status/fleet_teardown never list -- or terminate -- a standalone box;
-# `--teardown` owns it.
+# `--teardown` owns it. Both the standalone tag and the fleet's tag_prefix are
+# read from the committed study config rather than duplicated here.
 #
 # The import-time env mutation is deliberate (it must precede ec2's
 # import-time freeze) and now fires on EVERY run, sharded or not. It used to
@@ -256,45 +260,51 @@ if SHARD is not None:
 # setdefault, NOT an unconditional write: a fleet-exported EC2_EXPERIMENT_TAG
 # must still win. The lane suffix is then appended to whichever tag resolved,
 # fleet-exported or defaulted, which is exactly the behaviour the sharded
-# branch already had ("get(..., 'induction-scaling') + _LANE").
-os.environ.setdefault("EC2_EXPERIMENT_TAG", "induction-scaling")
+# branch already had ("get(..., <config's standalone_tag>) + _LANE"). The
+# default itself comes from the committed study config, not a local literal.
+os.environ.setdefault("EC2_EXPERIMENT_TAG", load_study_config().fleet.standalone_tag)
 if _LANE:
     os.environ["EC2_EXPERIMENT_TAG"] += _LANE
 
-# Refuse to run under the RESOLVED retired tag rather than proceed with it: on
-# a lost or absent state file, ec2's tag-based recovery reattaches to ANY live
-# box carrying the tag and serve_model swaps that box's model out from under
-# whatever driver owns it, while `--teardown` terminates it. Compared against
-# the literal instead of ec2.EC2_EXPERIMENT_TAG on purpose -- importing ec2
-# here would freeze its constants against the environment as it stood BEFORE
-# the lines above (see the ordering block at the top of this file).
+# Refuse to run under an UNSAFE resolved tag rather than proceed with it: on a
+# lost or absent state file, ec2's tag-based recovery reattaches `provision()`
+# to ANY live box carrying the tag, and `--teardown` terminates it -- unsafe
+# tags include the retired periodic-induction default and a bare shared fleet
+# prefix (see validate_experiment_tag's own docstring for the full list and the
+# reasoning behind each). Checked against the RESOLVED tag, not by importing
+# ec2, on purpose -- importing ec2 here would freeze its constants against the
+# environment as it stood BEFORE the lines above (see the ordering block at
+# the top of this file). Imported here, ahead of block 6, because
+# smolbench.evals.experiment does not import providers.ec2 at module scope, so
+# doing so before the EC2_* environment is fully resolved is safe.
+from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
+
 _RESOLVED_TAG = os.environ["EC2_EXPERIMENT_TAG"]
-if _RESOLVED_TAG == "periodic-induction":
-    raise SystemExit(
-        f"EC2_EXPERIMENT_TAG={_RESOLVED_TAG!r} is the RETIRED periodic-induction "
-        "study's default tag (smolbench.evals.providers.ec2's own fallback), not "
-        "this study's. Running under it would let tag-based recovery reattach to "
-        "any live box carrying it -- swapping that box's served model out from "
-        "under another driver -- and would make `--teardown` terminate it. Export "
-        "a distinct EC2_EXPERIMENT_TAG (or unset it to get 'induction-scaling')."
-    )
+try:
+    validate_experiment_tag(_RESOLVED_TAG, _LANE)
+except ValueError as exc:
+    # SystemExit, not a bare traceback: this is a config error like every
+    # other SystemExit in this file (_parse_shard, _parse_force_seeds, ...).
+    raise SystemExit(str(exc)) from exc
 
 _DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
 
 # --- 6. smolbench imports -------------------------------------------------
-# ec2 at MODULE scope is normally forbidden (InductionExperiment's CRITICAL
-# note) precisely because of the import-time freeze; it is safe HERE, and only
+# ec2 at MODULE scope is normally forbidden (smolbench.evals.experiment's
+# CRITICAL note) precisely because of the import-time freeze; it is safe HERE, and only
 # here, because blocks 1 and 5 above have already resolved every EC2_*
 # variable it captures. Do not move this line up, and do not add an EC2_*
 # mutation below it.
 from smolbench.evals.providers import ec2  # noqa: E402
+from smolbench.evals import Numeric  # noqa: E402
 from smolbench.evals.tokenization import for_model  # noqa: E402
+from smolbench.induction._common import RenderedQuery, quizzes_from_prompts  # noqa: E402
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
 from smolbench.induction.periodic import (  # noqa: E402
+    CONDITIONS,
     PeriodicConfig,
     Prompter,
-    get_periodic_numeric_quiz,
-    get_periodic_zero_info_numeric_quiz,
+    get_periodic_prompts,
     numeric_count_query_gen,
 )
 
@@ -394,8 +404,15 @@ BASE_SEED: int = 0
 N_REPLICATES: int = 30
 
 #: The four amounts-of-positive-information conditions, matching periodic_moe's
-#: exactly. See the module docstring's "The four info arms" section.
-INFO_TYPES: tuple[str, ...] = ("intens", "extens", "noise_intens", "zero")
+#: exactly: intens (compact rules), extens (full enumeration), noise_intens
+#: (intens padded to extens's token count -- a length control) and zero (no
+#: context, rendered from a range-free question -- the chance floor). See the
+#: module docstring's "The four info arms" section, and
+#: ``smolbench.induction.periodic.CONDITIONS`` for the ONE declaration of
+#: these names and what each measures. Derived, not restated: a fifth,
+#: hand-maintained spelling of the arm names here could drift from
+#: ``CONDITIONS`` silently.
+INFO_TYPES: tuple[str, ...] = tuple(CONDITIONS)
 
 #: Tokens withheld from the completion budget, covering what a count() on one
 #: seed's prompt cannot see: the chat template's special/BOS tokens (count()
@@ -462,6 +479,51 @@ template = string.Template(
     "How many of the positions 1 through $seq_len include '$label'?"
 )
 
+#: The position-range clause `zero_template` strips out of `template`. Named
+#: as its own constant, rather than inlined into the `.replace()` call below,
+#: so the substring being removed is documented at its own definition instead
+#: of buried inside an expression.
+RANGE_CLAUSE: str = " 1 through $seq_len"
+
+if RANGE_CLAUSE not in template.template:
+    # Fails LOUDLY at import, not silently: if a future edit to `template`
+    # renames or rephrases this clause, `zero_template` would otherwise still
+    # "succeed" (`.replace()` on a missing substring is a no-op) and quietly
+    # become byte-identical to `template` -- i.e. `zero` would leak `seq_len`
+    # again, silently reintroducing the exact leak this rewrite removes (see
+    # `smolbench.induction.periodic`'s module docstring, "Information
+    # conditions").
+    raise RuntimeError(
+        f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template; "
+        "the study template's range clause was edited without updating "
+        "RANGE_CLAUSE, which would silently make zero_template leak seq_len."
+    )
+
+def _zero_template(base: string.Template) -> string.Template:
+    """Derive the zero condition's range-free question from `base`.
+
+    ONE edit applied to `base` (`RANGE_CLAUSE` stripped out), never a second,
+    independently written copy of the whole prompt that could drift out of
+    sync with it at every OTHER word. Takes `base` as a parameter, rather than
+    closing over the module-level `template` directly, so a caller computes it
+    fresh against whichever `string.Template` is CURRENTLY bound to `template`
+    -- see `rendered_queries`, which calls this on every invocation rather
+    than reusing the frozen `zero_template` below, precisely so that
+    substituting `template` (as `tests/induction/test_golden_quizzes.py::
+    test_the_production_pins_catch_a_one_byte_template_change` does) is
+    reflected in what the `zero` arm renders too.
+    """
+    return string.Template(base.template.replace(RANGE_CLAUSE, ""))
+
+
+#: The zero condition's question at IMPORT time, against the module's own
+#: `template` -- exposed as a plain attribute so a caller (or a test) can
+#: inspect the production range-free template directly. `rendered_queries`
+#: itself does NOT read this frozen value; see `_zero_template`'s docstring
+#: for why it recomputes instead. Supplied to `Prompter` as
+#: `range_free_template` (see that field's docstring in `_common.py`).
+zero_template = _zero_template(template)
+
 # Per-request extra args that turn CoT ON for each of the 21 checkpoints.
 # TOTAL over MODELS by construction (written out literally, not built from a
 # prefix rule): that makes the table itself the audit surface against ec2.py's
@@ -500,21 +562,32 @@ COT_ARGS: dict[str, dict] = {
     "deepseek-v4-pro": {"chat_template_kwargs": {"thinking": True}},
 }
 
-# Enforce "TOTAL over MODELS" at import, BEFORE provision() can spend: a
-# drifted key would otherwise surface as a KeyError on a billing box. A
-# `raise`, not the `assert` this used to be: asserts are stripped under
-# `python -O`, which would delete the gate on exactly the automated
-# invocations that most need it. The test suite pins the same equality; this
-# covers direct invocations.
-if COT_ARGS.keys() != MODELS.keys():
+# Enforce COT_ARGS against the STUDY CONFIG's roster, key-for-key and in the
+# same ladder order, at import -- BEFORE provision() can spend: a drifted key
+# would otherwise surface as a KeyError on a billing box. COT_ARGS itself
+# stays a literal table on purpose (it is the audit surface against ec2.py's
+# "Reasoning wiring" comment -- see the comment above it), but checking it
+# against MODELS alone would let COT_ARGS and MODELS drift TOGETHER away from
+# the committed roster; checking against study_config.roster_keys() directly
+# closes that gap. A `raise`, not the `assert` this used to be: asserts are
+# stripped under `python -O`, which would delete the gate on exactly the
+# automated invocations that most need it. The test suite pins the same
+# equality; this covers direct invocations.
+if tuple(COT_ARGS) != roster_keys():
+    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
     raise RuntimeError(
-        "COT_ARGS must be total over MODELS; keys in exactly one of them: "
-        f"{sorted(COT_ARGS.keys() ^ MODELS.keys())}"
+        "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
+        "the same ladder order. "
+        + (
+            f"Keys in exactly one of them: {_cot_args_roster_diff}"
+            if _cot_args_roster_diff
+            else "Same keys, but in a different order."
+        )
     )
 
 
-def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
-    """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
+def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
+    """Render one replicate's queries, all four ``CONDITIONS`` arms of each.
 
     Uses the plain ``periodic_moe`` baseline config (``n=9`` harmonics, default
     periods 1..9, lcm==2,520), unmodified: the study's independent variable is
@@ -523,20 +596,41 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     spec key, needed because ``noise_intens`` is padded under THIS model's
     tokenizer; the other three arms stay byte-identical across checkpoints.
     ``for_model`` is looked up as a plain module global, so
-    ``tests/induction/test_induction_study.py`` can monkeypatch it (and this
-    function) to keep the offline suite from downloading a tokenizer.
+    ``tests/induction/test_induction_study.py`` can monkeypatch it (and
+    ``make_quizzes``/``completion_budget``, which call this) to keep the
+    offline suite from downloading a tokenizer.
+
+    This is the single generation call both ``make_quizzes`` (turns the
+    result into per-condition ``Quiz`` tuples for collection) and
+    ``completion_budget`` (reads the already-computed token counts off it)
+    build on, so a replicate's prompts are generated exactly once per call
+    site instead of once for collection and again for budget-sizing.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
-    # Two positional fields (template, query_gen): Prompter's third
-    # `substitution` field was removed as dead -- every construction site
-    # passed `{}`, and its only consumer was chromatic's retired query_years
-    # mechanism -- so the old `Prompter(template, {}, ...)` no longer type-checks.
-    prompter = Prompter(template, numeric_count_query_gen)
-    intens, extens, noise_intens = get_periodic_numeric_quiz(
-        cfg, prompter, tokenizer=for_model(model)
+    # Three positional/keyword fields: Prompter's old `substitution` field was
+    # removed as dead (every construction site passed `{}`, and its only
+    # consumer was chromatic's retired query_years mechanism), and
+    # `range_free_template` came back live for the `zero` condition -- see
+    # `_common.Prompter`'s class comment. `_zero_template(template)`, not the
+    # frozen `zero_template` global: see that helper's docstring for why this
+    # must read the CURRENT `template` fresh on every call.
+    prompter = Prompter(
+        template, numeric_count_query_gen, range_free_template=_zero_template(template)
     )
-    zero = get_periodic_zero_info_numeric_quiz(cfg, prompter)
-    return {"intens": intens, "extens": extens, "noise_intens": noise_intens, "zero": zero}
+    return list(
+        get_periodic_prompts(cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS)
+    )
+
+
+def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
+    """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
+
+    Thin wrapper over :func:`rendered_queries`, turning its per-query
+    ``RenderedQuery`` list into one ``Quiz`` (a tuple of ``Numeric`` QnAs) per
+    condition -- see :func:`rendered_queries` for what actually drives
+    generation (the config, the model-keyed tokenizer, the seed's role).
+    """
+    return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
 
 def probe_seeds(seeds: range) -> "list[int]":
@@ -592,9 +686,17 @@ def completion_budget(model: str, seeds: range) -> int:
     Only ``PROBE_SEEDS`` of `seeds` are probed (see ``probe_seeds``), always
     including both endpoints: every structural driver of prompt length is
     identical across seeds, only the sampled labels vary, and
-    ``TEMPLATE_RESERVE`` covers far more than that residual. Pure CPU plus a
-    HuggingFace tokenizer fetch, so it runs before anything is provisioned and
-    billing.
+    ``TEMPLATE_RESERVE`` covers far more than that residual.
+
+    The counts come from :func:`rendered_queries`, i.e. from GENERATION
+    itself, not from a second tokenizer pass over regenerated prompts: every
+    condition's rendered prompt is already tokenized while it is built (the
+    padded arm's pad search runs the tokenizer to verify it hit its target
+    exactly, and every other arm is counted so a padded arm has something to
+    pad against -- see ``smolbench.induction.periodic.get_periodic_prompts``),
+    so this function makes no ``count`` call of its own. Still pure CPU plus a
+    HuggingFace tokenizer fetch (inside ``rendered_queries``'s ``for_model``
+    call), so it runs before anything is provisioned and billing.
 
     The result is ONE number for every model, deliberately not a per-vendor
     dict: a tighter cap on one family would make its accuracy gap inseparable
@@ -604,11 +706,10 @@ def completion_budget(model: str, seeds: range) -> int:
     Raises ``SystemExit`` below ``MIN_VIABLE_BUDGET``, which would truncate CoT
     and collect empties.
     """
-    tok = for_model(model)
     worst = 0
     for seed in probe_seeds(seeds):
-        for quiz in make_quizzes(seed, model).values():
-            worst = max(worst, max(tok.count(q.prompt) for q in quiz))
+        for query in rendered_queries(seed, model):
+            worst = max(worst, max(query.token_counts.values()))
     budget = CONTEXT_LIMIT - worst - TEMPLATE_RESERVE
     if budget < MIN_VIABLE_BUDGET:
         raise SystemExit(
@@ -686,9 +787,9 @@ EXPERIMENT = InductionExperiment(
     shard=SHARD,
     # INDUCTION_FORCE_RERUN: re-collect replicates past the resume-skip (syntax
     # in _parse_force_seeds); combines with INDUCTION_SHARD, a shard forcing
-    # only the seeds it owns. Reads are EARLIEST-wins (see
-    # smolbench/evals/results_store.py), so a forced re-run appends to the S3
-    # log but does NOT supersede the original on read.
+    # only the seeds it owns. The re-run supersedes and replaces what was
+    # there before, on either backend -- see ReplicateHarness.run_replicates's
+    # Notes for the mechanism and ordering guarantee.
     force_seeds=_parse_force_seeds(
         os.environ.get("INDUCTION_FORCE_RERUN", ""),
         range(BASE_SEED, BASE_SEED + N_REPLICATES),

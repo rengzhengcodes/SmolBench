@@ -76,6 +76,15 @@ read marks through ``Marks.load`` (never scraped), so they run under the
 project venv; `power_analysis.py` warns when the checkout it reads is not the
 one the installed package's `sync_down()` writes.
 
+`run_all.py` is the one driver over the four-script chain: it follows the
+same `__file__`-anchored `sys.path` convention to reach its siblings, then
+calls each one's `main()` in process, in dependency order, printing a banner
+before each so a long combined log says whose numbers are whose. It runs
+`multiplicity_sim.main()` too, LAST, but only behind `--with-sim` (default
+off) -- unlike the four report scripts, `multiplicity_sim` reads no results
+tree, and its Monte Carlo takes far longer than the rest of the chain
+combined.
+
 | File | What it's for |
 | --- | --- |
 | `power_analysis.py` | Power analysis for the family-ladder scaling study. Owns `MODELS`, `INFOS` and `RESULTS_DIR` for the whole `analysis/` chain. |
@@ -83,6 +92,7 @@ one the installed package's `sync_down()` writes.
 | `significance_report.py` | Holm and Hochberg significance report over the primary contrast family. |
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
 | `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `power_analysis`; reads no results tree. |
+| `run_all.py` | The one driver over the chain above: runs the four report scripts in process, in order, plus `multiplicity_sim.py` behind `--with-sim`. |
 
 ## audits/ -- archived
 
