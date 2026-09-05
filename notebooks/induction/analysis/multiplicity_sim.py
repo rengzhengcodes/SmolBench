@@ -589,52 +589,111 @@ def build_rate_matrix():
     return rates
 
 
-def apply_corrections(pv: np.ndarray, is_null: np.ndarray, m: int):
+def _stepup(
+    sortedp: np.ndarray, order: np.ndarray, thresholds: np.ndarray
+) -> np.ndarray:
+    """Apply a step-up multiple-testing procedure and scatter it back to input order.
+
+    A step-up procedure (Hochberg; Benjamini-Hochberg) walks the SORTED
+    p-values from the largest rank down, rejects at the first (largest) rank
+    whose sorted p-value is at or below its own per-rank threshold, and then
+    rejects every rank at or below that one too. Hochberg and BH differ only
+    in `thresholds`' formula (``alpha / (m - i + 1)`` vs ``alpha * i / m``);
+    this helper is that shared mechanics, parameterized on the threshold
+    array so both callers share one implementation. Holm is a step-DOWN
+    procedure (walks from the SMALLEST p-value up, stops at the first
+    VIOLATION) and is different enough in direction and stopping rule that it
+    keeps its own loop in `apply_corrections` rather than reusing this one.
+
+    Parameters
+    ----------
+    sortedp : ndarray, shape (S, m)
+        p-values sorted ascending along axis 1 (`np.take_along_axis(pv, order,
+        axis=1)`), across `S` simulated families of `m` tests each.
+    order : ndarray, shape (S, m)
+        The permutation that produced `sortedp` from the original array
+        (`np.argsort(pv, axis=1)`); used here only to scatter the rejection
+        mask back to `pv`'s original column order.
+    thresholds : ndarray, shape (m,)
+        Per-rank threshold, rank 1 first (the smallest p-value's rank), in
+        the same units as `sortedp` (i.e. already includes `alpha`).
+
+    Returns
+    -------
+    ndarray of bool, shape (S, m)
+        Per-simulation, per-test rejection mask, in `pv`'s ORIGINAL column
+        order (not sorted order).
+
+    Notes
+    -----
+    ``ok[:, ::-1].argmax(axis=1)`` finds the LAST True along axis 1 by
+    reversing and taking the first True from the end; ``m - 1 - ...`` maps
+    that reversed index back to the original (ascending-rank) position. Rows
+    with no True at all (``ok.any(axis=1)`` False) get sentinel index -1, so
+    ``keep = ranks <= idx`` is all-False for that row -- nothing rejected,
+    without a separate branch.
+    """
+    m = sortedp.shape[1]
+    ok = sortedp <= thresholds
+    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
+    keep = np.arange(m)[None, :] <= idx[:, None]
+    rej = np.zeros_like(sortedp, dtype=bool)
+    np.put_along_axis(rej, order, keep, axis=1)
+    return rej
+
+
+def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     """Apply Bonferroni, Holm, Hochberg, and BH(q=0.05) to a batch of p-value families.
 
     Parameters
     ----------
     pv : ndarray, shape (S, m)
-        p-values for `m` tests, across `S` simulations.
-    is_null : ndarray of bool, shape (m,)
-        Unused here; callers combine it with the returned masks to get Type I
-        error and power.
+        p-values for `m` tests, across `S` simulations. `m` is read from
+        `pv.shape[1]` rather than taken as a parameter: a caller passing a
+        wrong `m` here would get every threshold below computed from it and
+        every returned mask silently mis-corrected, with nothing to signal
+        the mistake.
 
     Returns
     -------
     dict of str -> ndarray of bool, shape (S, m)
-        Procedure name -> per-simulation, per-test rejection mask.
+        Procedure name -> per-simulation, per-test rejection mask, in `pv`'s
+        original column order.
+
+    Notes
+    -----
+    This used to also take `is_null`, a per-test truth vector -- but the
+    function never read it (only `part4`'s caller did, combining the masks
+    returned here with its OWN truth vector to compute FWER/FDR/power), so it
+    was dead weight on every call site.
+
+    Holm (step-down) keeps its own loop: it walks sorted p-values from
+    smallest to largest and stops at the first VIOLATION of its threshold,
+    the opposite traversal and stopping rule from Hochberg and BH (both
+    step-up), which now share the `_stepup` helper.
     """
+    m = pv.shape[1]
     out = {}
     order = np.argsort(pv, axis=1)
     sortedp = np.take_along_axis(pv, order, axis=1)
     ranks = np.arange(1, m + 1)
     # Bonferroni
     out["Bonferroni"] = pv < ALPHA / m
-    # Holm (step-down)
+    # Holm (step-down): first VIOLATION of alpha/(m-i+1) stops the walk; every
+    # rank strictly before it is rejected.
     thr = ALPHA / (m - ranks + 1)
     viol = sortedp > thr
     first = np.where(viol.any(axis=1), viol.argmax(axis=1), m)
     keep = np.arange(m)[None, :] < first[:, None]
-    rej_sorted = keep
     rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, rej_sorted, axis=1)
+    np.put_along_axis(rej, order, keep, axis=1)
     out["Holm"] = rej
-    # Hochberg (step-up, alpha/(m-i+1))
-    ok = sortedp <= thr
-    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
-    keep = np.arange(m)[None, :] <= idx[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["Hochberg"] = rej
-    # BH
+    # Hochberg (step-up, alpha/(m-i+1) -- the SAME per-rank thresholds as
+    # Holm's, but the last-passing-rank stopping rule `_stepup` implements).
+    out["Hochberg"] = _stepup(sortedp, order, thr)
+    # BH (step-up, alpha*i/m)
     bh_thr = ALPHA * ranks / m
-    ok = sortedp <= bh_thr
-    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
-    keep = np.arange(m)[None, :] <= idx[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["BH(q=0.05)"] = rej
+    out["BH(q=0.05)"] = _stepup(sortedp, order, bh_thr)
     return out
 
 
@@ -748,9 +807,8 @@ def part4(rng, n_sims=4000):
         nf = np.where(ladder_nonflat)[0]
         return rej[:, :28][:, nf].sum(axis=1)
 
-    full = summarize("m=210", apply_corrections(pv, is_null, m_full), is_null, flag_full)
-    red2 = summarize("m=154", apply_corrections(pv_red, null_red, m_red), null_red,
-                     flag_red)
+    full = summarize("m=210", apply_corrections(pv), is_null, flag_full)
+    red2 = summarize("m=154", apply_corrections(pv_red), null_red, flag_red)
     # DECOMPOSITION: hold the family size at 210 (alpha unchanged) but swap the TEST
     # (3 pairwise -> 1 trend per ladder). Difference vs the m=154 arm isolates the
     # correction's contribution from the test's.
