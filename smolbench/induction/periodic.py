@@ -65,15 +65,18 @@ from typing import TypeAlias, Collection, Iterable, Tuple, Dict
 import numpy as np
 
 from smolbench.evals import Quiz, ToF, Numeric, Answer
-from smolbench.evals.tokenization import TiktokenTokenizer, Tokenizer
+from smolbench.evals.tokenization import (
+    TiktokenTokenizer,
+    Tokenizer,
+    choose_whitespace_unit,
+    token_matched_noise_prompt,
+)
 from smolbench.induction._common import (
     Prompter,
     build_substitution,
-    choose_whitespace_unit,
     context_renderer,
     quizzes_from_prompts,
     random_labels,
-    token_matched_noise_prompt,
 )
 
 # Prompter is re-exported for callers configuring the benchmark; the class
@@ -328,7 +331,7 @@ def get_periodic_prompts(
     Raises
     ------
     ValueError
-        Propagated from :func:`~smolbench.induction._common.token_matched_noise_prompt`
+        Propagated from :func:`~smolbench.evals.tokenization.token_matched_noise_prompt`
         when the noise arm's precondition fails for some query -- that query's
         extensional prompt is not STRICTLY longer, in tokens, than its
         intensional one, so no appended pad can reach the target (see the module
@@ -339,7 +342,7 @@ def get_periodic_prompts(
         confound out of collected data.
     ValueError
         Also propagated from ``token_matched_noise_prompt`` (or
-        :func:`~smolbench.induction._common.choose_whitespace_unit`) when no
+        :func:`~smolbench.evals.tokenization.choose_whitespace_unit`) when no
         whitespace pad can hit the target exactly under `tokenizer`.
     """
     period_to_label, pos_to_compound = generate_sequence(config)

@@ -90,8 +90,8 @@ logging.basicConfig(level=logging.INFO)
 # MODULE-LEVEL ORDER IS LOAD-BEARING. Do not reorder the numbered blocks below.
 # ---------------------------------------------------------------------------
 # ``smolbench.evals.providers.ec2`` freezes every ``EC2_*`` module constant
-# from ``os.environ`` at IMPORT time (see InductionExperiment's module
-# docstring, CRITICAL section), so anything that MUTATES an ``EC2_*``
+# from ``os.environ`` at IMPORT time (see ``smolbench.evals.experiment``'s
+# module docstring, CRITICAL section), so anything that MUTATES an ``EC2_*``
 # environment variable must run before ``ec2`` is imported anywhere in this
 # process. That single constraint fixes the whole order:
 #
@@ -107,7 +107,12 @@ logging.basicConfig(level=logging.INFO)
 #      importing it here -- ahead of block 6's smolbench imports -- does not
 #      disturb the env-freeze ordering this block exists to protect.
 #   5. The EC2 tag / ``_LANE`` / ``_DEFAULT_STATE_FILE`` block -- WRITES
-#      ``os.environ["EC2_EXPERIMENT_TAG"]``, hence must precede step 6.
+#      ``os.environ["EC2_EXPERIMENT_TAG"]``, hence must precede step 6. Also
+#      imports ``validate_experiment_tag`` from ``smolbench.evals.experiment``
+#      here, ahead of block 6: that module imports ``providers.ec2`` only
+#      INSIDE method bodies, never at module scope, and touches no ``EC2_*``
+#      variable, so importing it before step 6 does not disturb the
+#      env-freeze ordering this block exists to protect.
 #   6. ``from smolbench.evals.providers import ec2`` and the other smolbench
 #      imports -- legal at module scope ONLY because steps 1 and 5 have
 #      already resolved every ``EC2_*`` variable ec2 is about to freeze.
@@ -119,9 +124,9 @@ logging.basicConfig(level=logging.INFO)
 # --- 1. dotenv ------------------------------------------------------------
 # Anchored via __file__, never cwd. MUST land before
 # smolbench.evals.providers.ec2 is imported anywhere: ec2.py freezes its EC2_*
-# constants at import time (see InductionExperiment's module docstring,
-# CRITICAL section). NOT override=True: under the fleet the supervisor exports a
-# per-lane environment (INDUCTION_MODELS, INDUCTION_STATE_FILE,
+# constants at import time (see ``smolbench.evals.experiment``'s module
+# docstring, CRITICAL section). NOT override=True: under the fleet the
+# supervisor exports a per-lane environment (INDUCTION_MODELS, INDUCTION_STATE_FILE,
 # EC2_EXPERIMENT_TAG, ...) before this file runs, and keys.env must not clobber
 # it with this file's local defaults.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
@@ -258,29 +263,32 @@ os.environ.setdefault("EC2_EXPERIMENT_TAG", load_study_config().fleet.standalone
 if _LANE:
     os.environ["EC2_EXPERIMENT_TAG"] += _LANE
 
-# Refuse to run under the RESOLVED retired tag rather than proceed with it: on
-# a lost or absent state file, ec2's tag-based recovery reattaches to ANY live
-# box carrying the tag and serve_model swaps that box's model out from under
-# whatever driver owns it, while `--teardown` terminates it. Compared against
-# the literal instead of ec2.EC2_EXPERIMENT_TAG on purpose -- importing ec2
-# here would freeze its constants against the environment as it stood BEFORE
-# the lines above (see the ordering block at the top of this file).
+# Refuse to run under an UNSAFE resolved tag rather than proceed with it: on a
+# lost or absent state file, ec2's tag-based recovery reattaches `provision()`
+# to ANY live box carrying the tag, and `--teardown` terminates it -- unsafe
+# tags include the retired periodic-induction default and a bare shared fleet
+# prefix (see validate_experiment_tag's own docstring for the full list and the
+# reasoning behind each). Checked against the RESOLVED tag, not by importing
+# ec2, on purpose -- importing ec2 here would freeze its constants against the
+# environment as it stood BEFORE the lines above (see the ordering block at
+# the top of this file). Imported here, ahead of block 6, because
+# smolbench.evals.experiment does not import providers.ec2 at module scope, so
+# doing so before the EC2_* environment is fully resolved is safe.
+from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
+
 _RESOLVED_TAG = os.environ["EC2_EXPERIMENT_TAG"]
-if _RESOLVED_TAG == "periodic-induction":
-    raise SystemExit(
-        f"EC2_EXPERIMENT_TAG={_RESOLVED_TAG!r} is the RETIRED periodic-induction "
-        "study's default tag (smolbench.evals.providers.ec2's own fallback), not "
-        "this study's. Running under it would let tag-based recovery reattach to "
-        "any live box carrying it -- swapping that box's served model out from "
-        "under another driver -- and would make `--teardown` terminate it. Export "
-        "a distinct EC2_EXPERIMENT_TAG (or unset it to get 'induction-scaling')."
-    )
+try:
+    validate_experiment_tag(_RESOLVED_TAG, _LANE)
+except ValueError as exc:
+    # SystemExit, not a bare traceback: this is a config error like every
+    # other SystemExit in this file (_parse_shard, _parse_force_seeds, ...).
+    raise SystemExit(str(exc)) from exc
 
 _DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
 
 # --- 6. smolbench imports -------------------------------------------------
-# ec2 at MODULE scope is normally forbidden (InductionExperiment's CRITICAL
-# note) precisely because of the import-time freeze; it is safe HERE, and only
+# ec2 at MODULE scope is normally forbidden (smolbench.evals.experiment's
+# CRITICAL note) precisely because of the import-time freeze; it is safe HERE, and only
 # here, because blocks 1 and 5 above have already resolved every EC2_*
 # variable it captures. Do not move this line up, and do not add an EC2_*
 # mutation below it.
