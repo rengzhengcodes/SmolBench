@@ -121,7 +121,7 @@ def test_roster(run_study):
 
 
 def test_the_roster_is_built_from_the_committed_study_config(run_study):
-    """MODELS is the config's roster, in the config's ladder order (#46).
+    """MODELS is the config's roster, in the config's ladder order.
 
     ``EXPECTED_TAGS`` above stays vendored as the drift guard on the TOML
     itself; this pins that the driver READS the file instead of carrying a

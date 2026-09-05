@@ -203,7 +203,7 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
         assert store.describe() == f"s3://{BUCKET}/" + "/".join(p for p in (base, exp) if p)
     results = fake_repo / "notebooks/periodic/results"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
-    # #46: with no region in the environment, the PROJECT bucket falls back to
+    # With no region in the environment, the PROJECT bucket falls back to
     # the region study_config records for it -- but only for that bucket. A URI
     # naming somebody else's bucket keeps resolving through boto3's own chain
     # (None), because the config's region describes the config's bucket.
