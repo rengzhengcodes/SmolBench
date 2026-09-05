@@ -40,7 +40,7 @@ smolbench/                 the installable library
     figures.py                 analysis plotting helpers
   deduction/lean/           the Lean 4 theorem-proving benchmark
     corpus.py, premises.py, context.py, prompt.py   corpus loading + prompt rendering
-    runner.py, verify.py                            the sweep runner and lean-dojo verification
+    runner.py, verify.py, replbackend.py            the sweep runner and lean-interact verification
     decontam.py, lean3.py, sft.py, nullverify.py, cli.py
 
 notebooks/                 experiment drivers and analysis, one directory per study (see notebooks/README.md)
@@ -56,7 +56,7 @@ notebooks/                 experiment drivers and analysis, one directory per st
 
 scripts/                   operational scripts, grouped by job (see scripts/README.md)
   fleet/                     launch and babysit the 21-lane EC2 fleet
-  deduction/                 Lean run sharding, merging, and the deferred lean-dojo verify pass
+  deduction/                 Lean run sharding, merging, and the deferred lean-interact verify pass
   results/                   results-store admin: bucket provisioning, regrading, completeness audits, evidence manifests
   smoke/                     live-AWS smoke tests (spend real money -- opt-in only)
   arch/                      the model-architecture facts pipeline (see scripts/arch/README.md)
@@ -91,7 +91,8 @@ uv sync --all-extras
 ```
 
 This builds a single `.venv` holding every extra, including the Lean
-verification path's `lean-dojo` dependency.
+verification path's `lean-interact` dependency. `lean-dojo` is still
+installed too, but for corpus tracing and premise slicing, not verification.
 
 `pyproject.toml` declares four optional extras: `dev` (pytest, linters),
 `aws` (boto3/botocore, for the EC2 and SageMaker/Bedrock providers),
