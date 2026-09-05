@@ -24,11 +24,16 @@ LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
 and build the sweep config -- this ALSO validates the corpus (see
 ``build_config``'s post-cutoff gate) before any AWS call; (3) resolve
 ``LEAN_VERIFY`` -- steps 1-3 run BEFORE any AWS call, so a configuration
-mistake never lands on a billing box; (4) provision (idempotent: reattaches);
-(5) serve the checkpoint; (6) sweep, then spool to S3 once at the end; (7)
-tear down, from a ``finally`` and only under ``--teardown``, which is for
-STANDALONE runs (under the fleet the supervisor owns instance lifecycle).
-COST: steps 4-6 make live AWS calls, billed for as long as the box stays up.
+mistake never lands on a billing box; (4) compute this lane's outstanding-cell
+set (see :func:`outstanding_cell_keys`) -- skipped, and treated as
+unconditionally non-empty, under ``--force-rerun`` or when ``all_rows.jsonl``
+does not exist yet -- and return NORMALLY, still BEFORE any AWS call, when it
+is empty, so a lane with nothing left to do never provisions a box for
+nothing; (5) provision (idempotent: reattaches); (6) serve the checkpoint;
+(7) sweep, then spool to S3 once at the end; (8) tear down, from a
+``finally`` and only under ``--teardown``, which is for STANDALONE runs
+(under the fleet the supervisor owns instance lifecycle).
+COST: steps 5-7 make live AWS calls, billed for as long as the box stays up.
 
 Environment: ``LEAN_MODEL`` (required; one key of ``MODELS``);
 ``LEAN_STATE_FILE`` (optional EC2 state file, default
@@ -38,7 +43,13 @@ against ``REPO_ROOT``, which is how both phases find the same box);
 (optional, read at ``build_config`` call time, not at import); ``LEAN_CORPUS_KIND``
 (default ``"random"``) and ``LEAN_CORPUS_SPLIT`` (default ``"val"``), also read
 at ``build_config`` call time, select the split family within the active
-post-cutoff corpus; ``LEAN_VERIFY`` -- ``"defer"`` (the
+post-cutoff corpus; ``LEAN_SEED`` (default ``0``, read at ``build_config``
+call time -- see :func:`resolve_lean_seed`) drives BOTH theorem selection and
+decoding from one knob, where they used to be two independent literals with
+disagreeing library defaults; setting it to anything other than ``0``
+re-draws the pinned 300-theorem sample and makes the run INCOMPARABLE with
+the published lanes -- see that function's WARNING before touching it;
+``LEAN_VERIFY`` -- ``"defer"`` (the
 default) records every verdict ``"unverified"``, leaving real checking to the
 later ``scripts/deduction/lean_verify_rows.py`` pass, while ``"real"`` verifies
 inline (see :func:`select_verifier`).
@@ -238,6 +249,70 @@ def selected_model() -> str:
     return key
 
 
+def resolve_lean_seed() -> int:
+    """Resolve the ONE seed shared by theorem selection and decoding, from ``LEAN_SEED``.
+
+    Before this function existed, ``build_config`` wrote two independent seed
+    literals with two different library defaults -- ``theorems["seed"]``
+    (``runner._select_theorems``'s own default, 0) and ``cfg["seed"]``
+    (``runner.sweep``'s own default, also 0, though it was 1776 when this
+    study's config was first written) -- and neither was overridable although
+    five neighbouring knobs (``LEAN_SHARD``, ``LEAN_RUN_NAME``,
+    ``LEAN_CELL_WHITELIST``, ``LEAN_CORPUS_KIND``, ``LEAN_CORPUS_SPLIT``) were.
+    This function is the single knob both now read, so "the experiment's seed"
+    means one thing.
+
+    Read at CALL time, like ``LEAN_CORPUS_KIND``/``LEAN_CORPUS_SPLIT`` --
+    never at import and never cached -- so a caller can flip ``LEAN_SEED``
+    between ``build_config`` calls within one process (as the test suite
+    does) without re-importing this module.
+
+    These two seeds do two DIFFERENT things, coupled only by sharing this one
+    value:
+
+    - ``theorems["seed"]`` feeds ``random.Random(seed).sample(pool, limit)``
+      inside ``runner._select_theorems`` -- it decides WHICH theorems this
+      lane measures.
+    - ``cfg["seed"]`` is the decode seed ``runner.sweep`` puts on the wire;
+      replicate ``i`` decodes at ``seed + i`` (see that function's "Seed
+      threading" docstring paragraph).
+
+    WARNING -- what changing this away from the default costs: a non-zero
+    ``LEAN_SEED`` re-draws ``theorems["seed"]``'s sample, so the lane no
+    longer measures ``notebooks/deduction/pinned_theorems.json``'s pinned 300
+    theorems (that manifest's ``sha256_of_sorted_full_names`` was computed at
+    seed 0, and ``tests/deduction/test_lean_pinning_audit.py`` pins that
+    digest) and its results are NOT comparable with the published lanes that
+    used the default. Do not set ``LEAN_SEED`` for anything other than a
+    deliberate, clearly-labelled re-sampling experiment.
+
+    Returns
+    -------
+    int
+        ``0`` when ``LEAN_SEED`` is unset or blank (matching both
+        ``runner._select_theorems``'s and ``runner.sweep``'s own defaults);
+        otherwise the parsed integer, whatever sign or magnitude.
+
+    Raises
+    ------
+    SystemExit
+        ``LEAN_SEED`` is set to a non-integer string -- fails loudly rather
+        than silently falling back to 0, since a typo here would otherwise
+        look identical to an intentional, comparable run.
+    """
+    raw = os.environ.get("LEAN_SEED", "").strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(
+            f"LEAN_SEED={raw!r} is not a valid integer. This seed drives BOTH "
+            "theorem selection (theorems.seed) and decoding (cfg.seed); unset "
+            "it to use the pinned default (0), or set it to an integer."
+        ) from None
+
+
 def build_config(key: str) -> dict:
     """Build this lane's ``runner.sweep`` configuration.
 
@@ -290,9 +365,11 @@ def build_config(key: str) -> dict:
     Notes
     -----
     ``LEAN_SHARD``, ``LEAN_RUN_NAME``, ``LEAN_CELL_WHITELIST``,
-    ``LEAN_CORPUS_KIND`` and ``LEAN_CORPUS_SPLIT`` are all read at CALL time,
-    never at import and never cached. ``run_name`` defaults to
-    ``f"scaling_{key}"`` plus a ``_shard<i>of<n>`` suffix when sharding (matching
+    ``LEAN_CORPUS_KIND``, ``LEAN_CORPUS_SPLIT`` and ``LEAN_SEED`` (the shared
+    theorem-selection/decode seed; see :func:`resolve_lean_seed`) are all read
+    at CALL time, never at import
+    and never cached. ``run_name`` defaults to ``f"scaling_{key}"`` plus a
+    ``_shard<i>of<n>`` suffix when sharding (matching
     ``scripts/fleet/run_fleet.py``'s ``Lane`` naming); an explicit
     ``LEAN_RUN_NAME`` wins verbatim. With ``LEAN_CELL_WHITELIST`` set this also
     does file I/O and can raise ``ValueError`` from
@@ -346,6 +423,15 @@ def build_config(key: str) -> dict:
     if shard:
         shard_suffix = "_shard" + shard.replace("/", "of")
     run_name = os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}{shard_suffix}"
+    # Theorem-selection seed and decode seed are the SAME knob -- see
+    # resolve_lean_seed()'s docstring for the coupling and the cost of moving
+    # it off its pinned default (0).
+    seed = resolve_lean_seed()
+
+    # Every value below carries a one-line rationale comment: anywhere a real
+    # derivation could not be found in the repo, the comment says so
+    # explicitly rather than inventing one.
+    #
     # kind/split default to "random"/"val" -- the new post-cutoff corpus has a
     # single `random` split family, unlike LeanDojo Benchmark 4's `random`/
     # `novel_premises` pair, but LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT stay
@@ -354,11 +440,30 @@ def build_config(key: str) -> dict:
     # gate this function already ran, at the point the pool is actually
     # sampled (see that function's docstring for why both checks exist).
     theorems: dict[str, Any] = {
+        # Quality filter, not a data-leak concern: only theorems whose
+        # ground-truth proof is CONFIRMED to replay (corpus.iter_replay_passing
+        # membership) enter the pool at all -- excludes rows whose recorded
+        # tactic trace does not actually check.
         "source": "replay_passing",
+        # See the paragraph above this dict.
         "kind": os.environ.get("LEAN_CORPUS_KIND", "random").strip() or "random",
+        # See the paragraph above this dict.
         "split": os.environ.get("LEAN_CORPUS_SPLIT", "val").strip() or "val",
+        # Matches notebooks/deduction/pinned_theorems.json's own `count` (300)
+        # and runner.EXPECTED_THEOREMS: this reproduces the ORIGINAL published
+        # study's theorem-pool SIZE. It is not, once require_postcutoff draws
+        # from the new corpus, the same theorem IDENTITIES as that study.
         "limit": 300,
-        "seed": 0,
+        # LEAN_SEED (default 0) -- see resolve_lean_seed(). This is the seed
+        # `runner._select_theorems` feeds to `random.Random(seed).sample(pool,
+        # limit)`, so it decides WHICH theorems this lane measures; changing
+        # it off 0 desyncs from the pinned 300 in
+        # notebooks/deduction/pinned_theorems.json (its digest is asserted in
+        # tests/deduction/test_lean_pinning_audit.py).
+        "seed": seed,
+        # Re-enforced at sweep time by runner._select_theorems -- see the
+        # "Post-cutoff corpus gate" section above for why this check also
+        # needs to run again there, not just here.
         "require_postcutoff": True,
     }
     if shard:
@@ -366,19 +471,92 @@ def build_config(key: str) -> dict:
 
     cfg: dict[str, Any] = {
         "run_name": run_name,
-        "seed": 0,
+        # LEAN_SEED (default 0) -- the SAME value as theorems["seed"] above,
+        # but a different role: this is the decode seed runner.sweep puts on
+        # the wire (replicate `i` decodes at `seed + i`). One env var drives
+        # both so "the experiment's seed" means one thing; see
+        # resolve_lean_seed()'s docstring for the full
+        # coupling and the WARNING about changing it.
+        "seed": seed,
+        # Matches runner.sweep's OWN library default
+        # (`config.get("temperature", 0.7)`) and cli.py's `--temperature`
+        # default -- pinned here as an explicit literal so a future change to
+        # that library default cannot silently drift this study's decoding.
         "temperature": 0.7,
+        # No recorded derivation found for this specific number. Real
+        # cross-study discrepancy: notebooks/induction/run_study.py's
+        # completion_budget() computes a PER-MODEL budget (floor 48,000,
+        # cap up to CONTEXT_LIMIT=131,072 tokens) rather than a fixed
+        # literal, and typically lands well above this value. Carried from
+        # this study's first sweep, not re-derived against the current
+        # roster -- flagged here rather than silently accepted.
         "max_tokens": 32768,
+        # runner.py's own module docstring: ChatClient's 120s HTTP default
+        # truncates long CoT mid-stream. 1800s is that module's own
+        # documented default (`request_timeout: int = 1800` at
+        # `run_cell`/`sweep`); made explicit here rather than relied on
+        # implicitly, so a future change to that default cannot silently
+        # retime this study.
         "request_timeout": 1800,
+        # Tighter than runner.sweep's OWN default of 4 (module docstring:
+        # "so a wedged endpoint cannot spin forever inside an open Dojo
+        # session"). No recorded reason for 2 specifically here -- plausibly
+        # tighter because a stuck retry holds a live, billable Dojo session
+        # open for its whole duration, but that connection is not written
+        # down anywhere; carried from the first sweep, not re-derived.
         "max_retries": 2,
+        # Deliberately tighter than the library-wide fallback a parallel
+        # package is introducing as `runner.DEFAULT_DOJO_TIMEOUT = 600` (for
+        # `run_cell`, `cli --timeout` and `sweep`'s own default): this
+        # explicit 300 is what keeps THIS production sweep's timeout pinned
+        # independently of wherever that shared default moves.
         "dojo_timeout": 300,
+        # Fans out generation calls per (theorem, k) instead of serializing
+        # them -- see _run_cells_at_step_concurrent's docstring: gen
+        # (~1.3-3s/cell) dominates verify (~0.4s/cell), so this is where the
+        # wall-clock win is.
         "concurrent_gen": True,
+        # Matches context.is_trivial_rung's own stated purpose ("keeps
+        # per-rung pass rates apples-to-apples: every counted cell saw a real
+        # context expansion") -- without it, a trivial rung's guaranteed-
+        # identical output would pad the denominator with cells that measure
+        # nothing new.
         "skip_trivial": True,
+        # smolbench/deduction/lean/sft.py calls this exactly "the headline
+        # sweep" (`k.strategy: last`): the final tactic step only -- the
+        # deepest / hardest proof state -- not every intermediate step.
         "k": {"strategy": "last"},
+        # This study collects R=1 by design:
+        # notebooks/deduction/analysis/{power_analysis,error_bars}.py both
+        # hard-code that assumption today (reading only `replicate_idx == 0`
+        # rows and DISCARDING anything past it) and compute a
+        # `needed_replicates` figure for a possible future expansion, rather
+        # than analysing more than one draw per cell right now.
         "n_replicates": 1,
         "theorems": theorems,
+        # Reproduces the ORIGINAL published study's shape verbatim:
+        # runner.py's own EXPECTED_THEOREMS/EXPECTED_CELLS comment records
+        # "300 theorems x 4 rungs ... -> 944 cells" for exactly this rung
+        # list. Changing it would break comparability with that baseline.
         "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
+        # Parallel theorem-level workers, each opening its OWN Dojo session
+        # (an independent Lean process) -- real parallelism for
+        # verification, unlike max_concurrency below. No recorded derivation
+        # for 4 specifically; runner.sweep's own default is 1 (serial).
         "theorem_workers": 4,
+        # Bounds each (theorem, k) step's own ThreadPoolExecutor (max_workers)
+        # for concurrent generation calls -- how many of that step's pending
+        # (rung, model, replicate) cells fire at once (4 rungs x 1 model x 1
+        # replicate = 4 pending per step here; this cap mostly matters
+        # stacked with theorem_workers above, up to 4 x 8 = 32 requests in
+        # flight sweep-wide). BUT: smolbench/evals/providers/ec2.py
+        # unconditionally appends DETERMINISM_ARGS' `--max-num-seqs 1` to
+        # EVERY EC2_DEPLOY_SPECS entry (ec2.py, the `_spec["vllm_args"] =
+        # _args + DETERMINISM_ARGS` loop), so the served vLLM box itself
+        # processes exactly ONE sequence at a time regardless of this value
+        # -- concurrency here hides HTTP round-trip latency between calls,
+        # it does not achieve real server-side batching. No recorded
+        # derivation for 8 specifically; runner.sweep's own default is 12.
         "max_concurrency": 8,
         "models": [
             {
@@ -445,9 +623,33 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     Two-phase, and the ordering is load-bearing: upload and verify EVERY file
     (in sorted, deterministic order) before pruning ANY, so a part-way failure
     cannot already have deleted files whose uploads are unconfirmed. Pruning
-    keeps ``run_dir / "manifest.json"`` (so a later resume recognises the run
-    without re-downloading the spool), then removes now-empty subdirectories
-    deepest-first, swallowing ``OSError``; ``run_dir`` is never removed.
+    keeps ``run_dir / "manifest.json"``, ``run_dir / "all_rows.jsonl"`` and any
+    sibling row-archive file matching ``runner.RETIRED_MARKERS`` by name (the
+    ``all_rows_SUPERSEDED-<stamp>.jsonl`` files ``--force-rerun`` creates) --
+    see "Why all_rows.jsonl survives the prune" below -- then removes now-empty
+    subdirectories deepest-first, swallowing ``OSError``; ``run_dir`` is never
+    removed.
+
+    Why all_rows.jsonl survives the prune
+    --------------------------------------
+    A relaunched lane's resume path (``runner.sweep``'s
+    ``resume=True`` branch, via ``runner._existing_keys`` and
+    ``runner._sanity_done``) reads ONLY ``all_rows.jsonl`` to decide what is
+    already recorded -- ``manifest.json`` carries `config`/`run_name`/counts,
+    never per-cell state, and resume does not consult it. An earlier version
+    of this function pruned everything but ``manifest.json``, so a lane that
+    reached this call once (crashed or not, it does not matter) had its ONLY
+    resume input deleted: the next relaunch's ``_existing_keys`` and
+    ``_sanity_done`` both saw an empty file, `runner.sweep` provisioned a
+    fresh box, re-served the checkpoint, and regenerated every cell -- on
+    different hardware, and at real additional spend -- even though the
+    original rows were already durably uploaded to S3 moments earlier. The
+    ``kind: "sanity"`` rows recording each theorem's ground-truth replay
+    verdict live INSIDE this same ``all_rows.jsonl`` (there is no separate
+    sanity file), so keeping this one file is what keeps them too. Do not
+    "optimise" this into uploading a cells-only file later -- the sanity gate
+    depends on ``all_rows.jsonl`` surviving exactly as much as cell resume
+    does.
 
     Parameters
     ----------
@@ -512,10 +714,21 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
             )
 
     # Phase 2: every upload is verified, so pruning is safe.
+    # KEEP manifest.json (run metadata) AND all_rows.jsonl plus any
+    # RETIRED_MARKERS-named sibling (all_rows_SUPERSEDED-<stamp>.jsonl etc.) --
+    # see the docstring's "Why all_rows.jsonl survives the prune" section.
+    # `manifest.json` alone is NOT enough: resume reads all_rows.jsonl, never
+    # manifest.json, so deleting the former (as this used to) silently blinds
+    # every future resume even though the upload above already durably copied
+    # it to S3.
     manifest_path = run_dir / "manifest.json"
+    all_rows_path = run_dir / "all_rows.jsonl"
     for path in files:
-        if path != manifest_path:
-            path.unlink()
+        if path == manifest_path or path == all_rows_path:
+            continue
+        if any(marker in path.name for marker in runner.RETIRED_MARKERS):
+            continue
+        path.unlink()
 
     subdirs = sorted(
         (p for p in run_dir.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True
@@ -533,16 +746,187 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     return len(files)
 
 
+def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
+    """Return the cell keys `runner.sweep(config, run_dir, resume=True, ...)` would still write.
+
+    Before ``main`` spends real money provisioning a box and serving a
+    checkpoint, it needs to know whether there is anything left for this
+    lane to do. This function answers that WITHOUT any AWS call, by
+    enumerating the same "would this cell be skipped on resume?" predicate
+    ``runner.sweep`` applies internally, and diffing it against what
+    ``runner._existing_keys`` already finds recorded on disk.
+
+    DEPENDS ON ``spool_to_s3`` keeping ``all_rows.jsonl`` across its
+    end-of-run prune (see that function's docstring): an earlier version of
+    ``spool_to_s3`` deleted ``run_dir / "all_rows.jsonl"`` at the end of every
+    successful spool, so this function would have seen an empty file after
+    every completed lane and always returned "everything is outstanding" --
+    the check this function exists for would never have anything to compare
+    against, and would never come back empty. Keeping ``all_rows.jsonl``
+    across the prune is what makes this function's answer meaningful at all;
+    it is not an independent tidy-up.
+
+    Algorithm -- mirrors ``runner.sweep``'s own nesting exactly, by calling
+    the SAME functions that sweep calls (not a re-implementation of their
+    logic):
+
+    1. ``runner._select_theorems(config["theorems"], cell_whitelist=...)`` for
+       the theorem pool -- the same ``LEAN_CELL_WHITELIST`` env var
+       ``runner.sweep`` itself reads, loaded here the same way.
+    2. Drop any theorem whose RECORDED sanity verdict (from
+       ``runner._sanity_done`` over ``all_rows.jsonl``) is in
+       ``runner.SANITY_FAILURE_VERDICTS`` -- ``sweep``'s per-theorem worker
+       skips cell generation entirely for such a theorem on resume (see its
+       ``elif prev_sanity in SANITY_FAILURE_VERDICTS`` branch), so no cell of
+       its would ever be written even if attempted. A theorem with NO
+       recorded sanity row is KEPT (sweep would still replay its sanity gate
+       and, on success, generate its cells): only a *recorded failure*
+       removes a theorem here.
+    3. For each surviving theorem, ``runner._k_indices(theorem, k_strategy)``.
+    4. For each ``k``, each configured rung, skipped when
+       ``config["skip_trivial"]`` and ``runner.is_trivial_rung(theorem, k,
+       chain, level)`` -- exactly ``sweep``'s own trivial-rung skip.
+    5. For each surviving rung, each model entry's ``display_name``, each
+       ``replicate_idx`` in ``range(n_replicates)``, filtered by the cell
+       whitelist when one is active -- exactly
+       ``_run_cells_at_step[_concurrent]``'s own per-cell loop.
+    6. Build the row key with ``runner._row_key`` (so it compares equal to
+       ``runner._existing_keys``' keys) and collect it into `expected`.
+
+    `outstanding` is then ``expected - runner._existing_keys(all_rows_path)``.
+
+    Parameters
+    ----------
+    config : dict
+        A ``build_config``-shaped sweep config (or an equivalent dict for
+        testing); must contain ``theorems``, ``rungs``, ``models`` and,
+        optionally, ``k``, ``skip_trivial`` and ``n_replicates`` (all default
+        exactly as ``runner.sweep`` defaults them).
+    run_dir : Path
+        The run directory whose ``all_rows.jsonl`` records what is already
+        done; need not exist (an absent file reads as "nothing done", so
+        `expected` itself is returned unchanged as `outstanding`).
+
+    Returns
+    -------
+    set of tuple
+        Row keys (``runner._row_key``-shaped) that are in `expected` but not
+        yet recorded. Empty exactly when this lane has nothing left to
+        generate.
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``runner._select_theorems`` (an invalid
+        ``theorems.source``/``theorems.shard``, or a ``require_postcutoff``
+        refusal) or from ``runner.load_cell_whitelist`` under
+        ``LEAN_CELL_WHITELIST`` -- the same conditions that would make
+        ``runner.sweep`` itself raise before doing any work.
+
+    Notes
+    -----
+    Performs corpus I/O (via ``runner._select_theorems``) and reads
+    ``run_dir / "all_rows.jsonl"`` from disk; makes no AWS call, so it is
+    callable from an offline test.
+
+    DRIFT RISK -- read before touching either this function or
+    ``runner.sweep``'s skip logic: this enumerates ``sweep``'s cell predicate
+    at a SECOND site, by calling the same ``runner`` functions ``sweep``
+    calls rather than importing one shared predicate function (none exists
+    today). A future change to ``sweep``'s own skip logic (trivial-rung
+    rules, sanity-failure handling, cell-whitelist filtering, or the
+    rung/model/replicate nesting itself) that is not mirrored here would make
+    this function's `expected` set UNDER-count what `sweep` would actually
+    attempt -- the UNSAFE direction: this check would then conclude a lane
+    has nothing outstanding and skip provisioning it, when `sweep` would in
+    fact still have written real cells. There is no test that can catch this
+    class of drift other than an end-to-end comparison against a live
+    `sweep` run; treat any change to `sweep`'s cell-selection logic as
+    requiring a matching review of this function.
+    """
+    all_rows_path = run_dir / "all_rows.jsonl"
+
+    # Same LEAN_CELL_WHITELIST env read runner.sweep itself performs, loaded
+    # the same way (see that function's Notes) -- a whitelist narrows BOTH
+    # which theorems survive step 1 (via _select_theorems) and which
+    # individual cells survive step 5 below.
+    cell_whitelist_path = os.environ.get("LEAN_CELL_WHITELIST", "").strip()
+    cell_whitelist: frozenset[tuple] | None = (
+        runner.load_cell_whitelist(cell_whitelist_path) if cell_whitelist_path else None
+    )
+
+    theorems = runner._select_theorems(config["theorems"], cell_whitelist=cell_whitelist)
+    sanity_done = runner._sanity_done(all_rows_path)
+    k_strategy = config.get("k", {}).get("strategy", "last")
+    rungs: list[str] = list(config.get("rungs", []))
+    models_cfg: list[dict] = list(config["models"])
+    n_replicates = int(config.get("n_replicates", 1))
+    skip_trivial = bool(config.get("skip_trivial", True))
+
+    expected: set[tuple] = set()
+    for theorem in theorems:
+        # Step 2: a RECORDED sanity failure means sweep's per-theorem worker
+        # returns before generating any cell for this theorem on resume (see
+        # runner.sweep's `elif prev_sanity in SANITY_FAILURE_VERDICTS`
+        # branch) -- no recorded verdict at all is NOT a failure, and falls
+        # through to cell enumeration below exactly as sweep would still
+        # attempt it.
+        if sanity_done.get(theorem.full_name) in runner.SANITY_FAILURE_VERDICTS:
+            continue
+        for k in runner._k_indices(theorem, k_strategy):
+            for rung in rungs:
+                chain, level_str = rung.split(":", 1)
+                level = int(level_str)
+                # Step 4: identical to runner.sweep's own trivial-rung skip.
+                if skip_trivial and runner.is_trivial_rung(
+                    theorem, k, chain, level  # type: ignore[arg-type]
+                ):
+                    continue
+                for mc in models_cfg:
+                    display_name = mc.get("display_name", mc["model"])
+                    for replicate_idx in range(n_replicates):
+                        key = runner._row_key(
+                            display_name, theorem.full_name, k, rung, replicate_idx
+                        )
+                        if cell_whitelist is not None and key not in cell_whitelist:
+                            continue
+                        expected.add(key)
+
+    done = runner._existing_keys(all_rows_path)
+    outstanding = expected - done
+    logging.info(
+        f"outstanding_cell_keys[{config.get('run_name', run_dir.name)}]: "
+        f"{len(expected)} expected, {len(expected & done)} done, "
+        f"{len(outstanding)} outstanding"
+    )
+    return outstanding
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point: resolve the lane, provision/serve/sweep, spool, maybe teardown.
 
     ``SystemExit`` comes from argument parsing, ``selected_model()`` (unset or
     unknown ``LEAN_MODEL``), ``LEAN_SHARD`` without ``--no-s3`` (see the GUARD)
-    or ``select_verifier()`` (invalid ``LEAN_VERIFY``) -- all BEFORE any AWS call. Past those checks every path makes live,
-    billable AWS calls (``ec2.provision_spot_instance()``, ``ec2.serve_model()``,
-    and ``ec2.shutdown_instance()`` under ``--teardown``). The sweep runs with
-    ``resume=not --force-rerun``, so a relaunched lane picks up from the on-disk
-    ``all_rows.jsonl`` whether or not the crashed attempt reached the S3 spool.
+    or ``select_verifier()`` (invalid ``LEAN_VERIFY``) -- all BEFORE any AWS call.
+
+    Also before any AWS call, and NOT a ``SystemExit``: unless
+    ``--force-rerun`` was passed or ``all_rows.jsonl`` does not exist yet, this
+    calls :func:`outstanding_cell_keys` to recompute ``runner.sweep``'s own
+    cell-selection predicate against what is already recorded, and returns
+    NORMALLY -- no provisioning, no serving, no sweep, no spool -- when that
+    set is empty. A lane with nothing left to generate no longer provisions a
+    box just to immediately tear it down having done nothing.
+
+    Past those checks every path makes live, billable AWS calls
+    (``ec2.provision_spot_instance()``, ``ec2.serve_model()``, and
+    ``ec2.shutdown_instance()`` under ``--teardown``). The sweep runs with
+    ``resume=not --force-rerun``, so a relaunched lane picks up from the
+    on-disk ``all_rows.jsonl`` whether or not the crashed attempt reached the
+    S3 spool -- true BECAUSE ``spool_to_s3`` (see its docstring) now keeps
+    ``all_rows.jsonl`` across its end-of-run prune.
+    Before that fix the prune deleted the file on every completed spool,
+    silently discarding resume's only input, so this same claim used to be
+    false for any lane that had already reached the spool once.
     `argv` is a parameter so tests can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
@@ -617,6 +1001,48 @@ def main(argv: list[str] | None = None) -> None:
     # Resolved -- and any SystemExit raised -- BEFORE provisioning: see the
     # module docstring's "LIFECYCLE" step 3.
     verifier = select_verifier()
+
+    # Module docstring "LIFECYCLE" step 4: before spending real money (a
+    # fresh box, a served checkpoint, a whole sweep), check whether this lane
+    # has anything LEFT to do. Two cases bypass the check entirely rather
+    # than computing it:
+    #   - --force-rerun exists specifically to regenerate every cell, so the
+    #     answer would always be "provision anyway"; computing it first would
+    #     just be wasted corpus I/O.
+    #   - No all_rows.jsonl yet means nothing has ever been recorded for this
+    #     run_dir, so every expected cell is trivially outstanding -- there is
+    #     nothing on disk for outstanding_cell_keys to read, and calling it
+    #     would do a full theorem-selection pass just to reach that same
+    #     conclusion the hard way.
+    # DEPENDS ON spool_to_s3 keeping all_rows.jsonl across its prune (see that
+    # function's docstring): before that fix, a completed lane's
+    # all_rows.jsonl was deleted at the end of every successful spool, so
+    # this branch would ALWAYS have taken the "nothing recorded yet" path and
+    # ALWAYS provisioned -- that fix is what makes this check reachable at all.
+    all_rows_path = run_dir / "all_rows.jsonl"
+    if args.force_rerun:
+        logging.info(
+            f"main[{key}]: --force-rerun set; skipping the outstanding-cell "
+            "check and provisioning unconditionally to regenerate every cell."
+        )
+    elif not all_rows_path.exists():
+        logging.info(
+            f"main[{key}]: no {all_rows_path} yet; nothing recorded for this "
+            "run, so the whole lane is outstanding -- provisioning."
+        )
+    else:
+        outstanding = outstanding_cell_keys(config, run_dir)
+        if not outstanding:
+            logging.info(
+                f"main[{key}]: 0 cells outstanding in {run_dir} -- every "
+                "expected cell is already recorded. Nothing to do; exiting "
+                "WITHOUT provisioning, serving, sweeping or spooling."
+            )
+            return
+        logging.info(
+            f"main[{key}]: {len(outstanding)} cell(s) outstanding in "
+            f"{run_dir}; provisioning to generate them."
+        )
 
     logging.info(
         f"main[{key}]: provisioning (idempotent -- reattaches to this "

@@ -263,7 +263,13 @@ def test_spool_uploads_preserving_paths_then_prunes(driver, tmp_path):
         (str(run_dir / rel), BUCKET, f"{SPOOL_PREFIX}/scaling_{KEY}/{rel}")
         for rel in RUN_FILES)
     assert run_dir.is_dir() and (run_dir / "manifest.json").is_file()
-    assert not (run_dir / "all_rows.jsonl").exists()
+    # 13-05: all_rows.jsonl now SURVIVES the prune. It is the only file resume
+    # reads (`runner._existing_keys` and `runner._sanity_done` both parse it);
+    # pruning it meant a relaunched lane saw an empty run, re-provisioned a GPU
+    # box, re-served the checkpoint and regenerated every cell it had already
+    # collected. manifest.json -- which the old docstring claimed resume used --
+    # is overwritten by `sweep` before `done_keys` is ever read.
+    assert (run_dir / "all_rows.jsonl").is_file()
     assert not (run_dir / "theorems").exists()
     assert driver.spool_to_s3(tmp_path / "nope", KEY, client=FakeS3()) == 0
     run_dir = populate(tmp_path / "runs" / f"scaling_{KEY}")
@@ -509,3 +515,143 @@ def test_end_to_end_sweep_renders_every_rung_when_the_closure_is_non_empty(
         assert any("noise-3" in n for n in prompts), prompts
     finally:
         corpus.reset_caches()
+
+
+# ---------------------------------------------------------------------------
+# 13-05: no outstanding work -> no box
+# ---------------------------------------------------------------------------
+
+
+def _no_aws(monkeypatch, driver, tmp_path, **extra):
+    """Make every billable call a test failure; keep the corpus + results dirs local."""
+    monkeypatch.setattr(driver.runner, "results_root", lambda: tmp_path)
+    monkeypatch.setattr(driver, "selected_model", lambda: KEY)
+    for obj, name in ((driver.ec2, "provision_spot_instance"),
+                      (driver.ec2, "serve_model"), (driver, "spool_to_s3")):
+        monkeypatch.setattr(obj, name, lambda *a, _n=name, **k: pytest.fail(
+            f"{_n} ran although there was no outstanding work"))
+    for obj, name, value in extra.get("allow", []):
+        monkeypatch.setattr(obj, name, value)
+
+
+def _sweep_to_completion(driver, sweep_env):
+    """Run the production-knob sweep over one fixture theorem; return (cfg, run_dir)."""
+    cfg = _explicit(driver.build_config(KEY), "Mini.theoremA")
+    run_dir = sweep_env / "runs" / cfg["run_name"]
+    assert runner.sweep(cfg, run_dir, verifier=NullVerifier()) > 0
+    return cfg, run_dir
+
+
+def test_a_completed_lane_reports_no_outstanding_cells(driver, sweep_env):
+    """13-05: after a full sweep, the outstanding set is EMPTY.
+
+    This is the assertion that makes the fix live rather than dead code. A
+    naive `theorems x rungs x models x replicates` product would be 1200
+    against the study's 944 actually-rendered cells (`runner.py` records that
+    shape: "300 theorems x 4 rungs, unevenly rendered"), so `expected - done`
+    would never empty and the no-provision path would never execute. Running
+    the REAL sweep to completion and demanding an empty result is the only
+    check that catches that.
+    """
+    cfg, run_dir = _sweep_to_completion(driver, sweep_env)
+    assert driver.outstanding_cell_keys(cfg, run_dir) == set()
+
+
+def test_a_lane_missing_one_cell_reports_exactly_that_cell(driver, sweep_env):
+    """13-05, the other direction: the check must still see real remaining work.
+
+    Deleting one cell's rows must surface exactly that key -- not zero (which
+    would strand the lane) and not everything (which would defeat the point).
+    """
+    cfg, run_dir = _sweep_to_completion(driver, sweep_env)
+    rows = [json.loads(x)
+            for x in (run_dir / "all_rows.jsonl").read_text().splitlines()]
+    victim = next(r for r in rows if r.get("kind") == "cell")
+    key = (victim["model"], victim["theorem_id"], victim["k"], victim["rung"],
+           victim["replicate_idx"])
+    (run_dir / "all_rows.jsonl").write_text("".join(
+        json.dumps(r) + "\n" for r in rows if r is not victim))
+    assert driver.outstanding_cell_keys(cfg, run_dir) == {key}
+
+
+def test_main_does_not_provision_when_nothing_is_outstanding(
+        driver, sweep_env, monkeypatch, tmp_path):
+    """13-05: a relaunch of a finished lane must not touch AWS at all.
+
+    `main` had no outstanding-work check (the induction sibling's
+    `InductionExperiment.run` does), so relaunching a spooled lane
+    re-provisioned a spot box, re-served the checkpoint and regenerated every
+    cell -- real money, and the regenerated rows come from a different box
+    than the ones they replace.
+
+    The stubs `pytest.fail`, so this checks ORDERING as well as the return
+    value: an implementation that provisions first and exits afterwards fails
+    here, while one that merely returns 0 would not.
+    """
+    cfg, run_dir = _sweep_to_completion(driver, sweep_env)
+    monkeypatch.setattr(driver.runner, "results_root", lambda: sweep_env)
+    monkeypatch.setattr(driver, "selected_model", lambda: KEY)
+    # `main` rebuilds its config, and the production `theorems` block draws
+    # from a `replay_passing` sidecar the fixture tree does not carry. Hand it
+    # back the very config the sweep above ran, so the outstanding-work check
+    # is measured against the rows that sweep actually wrote.
+    monkeypatch.setattr(driver, "build_config", lambda key: cfg)
+    monkeypatch.setattr(driver.runner, "sweep", lambda *a, **k: pytest.fail(
+        "swept a lane with no outstanding cells"))
+    for obj, name in ((driver.ec2, "provision_spot_instance"),
+                      (driver.ec2, "serve_model"), (driver, "spool_to_s3")):
+        monkeypatch.setattr(obj, name, lambda *a, _n=name, **k: pytest.fail(
+            f"{_n} ran although there was no outstanding work"))
+    driver.main([])
+
+
+def test_force_rerun_provisions_even_with_nothing_outstanding(
+        driver, sweep_env, monkeypatch):
+    """13-05: `--force-rerun` exists to regenerate everything; it must bypass the check."""
+    cfg, run_dir = _sweep_to_completion(driver, sweep_env)
+    seen = {}
+    monkeypatch.setattr(driver.runner, "results_root", lambda: sweep_env)
+    monkeypatch.setattr(driver, "selected_model", lambda: KEY)
+    monkeypatch.setattr(driver, "build_config", lambda key: cfg)  # see the test above
+    monkeypatch.setattr(driver, "select_verifier", lambda: NullVerifier())
+    monkeypatch.setattr(driver.ec2, "provision_spot_instance",
+                        lambda *a, **k: seen.setdefault("provisioned", True))
+    monkeypatch.setattr(driver.ec2, "server_config", lambda *a, **k: None)
+    monkeypatch.setattr(driver.ec2, "serve_model", lambda k: contextlib.nullcontext())
+    monkeypatch.setattr(driver.runner, "sweep",
+                        lambda *a, **k: seen.setdefault("swept", True) or 0)
+    driver.main(["--force-rerun", "--no-s3"])
+    assert seen.get("provisioned") and seen.get("swept")
+
+
+# ---------------------------------------------------------------------------
+# 13-18: one seed for the experiment
+# ---------------------------------------------------------------------------
+
+
+def test_lean_seed_drives_both_seeds(driver, postcutoff_corpus, monkeypatch):
+    """13-18: LEAN_SEED couples theorem selection and decoding; default 0.
+
+    `theorems.seed` (which theorems are measured, via
+    `random.Random(seed).sample`) and `cfg.seed` (the decode seed on the wire,
+    replicate `i` at `seed + i`) were independent literals, neither
+    env-overridable although five neighbouring knobs are, and their LIBRARY
+    defaults disagreed (0 vs 1776). One knob now drives both, so "the
+    experiment's seed" means one thing.
+    """
+    cfg = driver.build_config(KEY)
+    assert (cfg["seed"], cfg["theorems"]["seed"]) == (0, 0)
+    monkeypatch.setenv("LEAN_SEED", "7")
+    cfg = driver.build_config(KEY)
+    assert (cfg["seed"], cfg["theorems"]["seed"]) == (7, 7)
+
+
+def test_a_non_integer_lean_seed_is_refused(driver, postcutoff_corpus, monkeypatch):
+    """13-18: a typo'd LEAN_SEED must abort, never silently fall back to 0.
+
+    Falling back would produce a run that looks like the pinned experiment and
+    is not -- the failure mode this whole knob exists to prevent.
+    """
+    monkeypatch.setenv("LEAN_SEED", "abc")
+    with pytest.raises(SystemExit):
+        driver.build_config(KEY)
