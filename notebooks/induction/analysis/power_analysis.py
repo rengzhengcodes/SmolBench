@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from scipy.stats import chi2
 
-from smolbench.evals import Marks
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 from _power_common import (
     ALPHA,
@@ -150,11 +150,11 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
     """Load per-condition PILOT harmonic outcome vectors.
 
-    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``Marks.load``
-    (the store's own safe reader, with the legacy-tag fallback), so a
-    ``score:``-shaped line inside a stored trace can never be scraped as a
-    phantom mark. Marks serialize in ascending-period order, so position
-    recovers the harmonic.
+    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``LocalResultsStore``,
+    which owns that layout and reads each file with ``Marks.load`` (the store's
+    own safe reader, with the legacy-tag fallback), so a ``score:``-shaped line
+    inside a stored trace can never be scraped as a phantom mark. Marks
+    serialize in ascending-period order, so position recovers the harmonic.
 
     Returns
     -------
@@ -168,10 +168,24 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
         If a pilot replicate file is missing.
     """
     outcomes: dict[tuple[str, str], np.ndarray] = {}
+    # Built here rather than by a module-level helper: this is the ONLY reader
+    # of the replicate tree in this module, so a helper would be a one-caller
+    # indirection. It cannot reuse `paired_analysis.results_store` either --
+    # that module imports THIS one, so the dependency only runs one way, and
+    # its helper reads ITS OWN `RESULTS_DIR` binding, not this module's.
+    # Constructed inside the call so a rebound `RESULTS_DIR` is honoured.
+    store = LocalResultsStore(RESULTS_DIR)
     for model in MODELS:
         for info in INFOS:
-            path = RESULTS_DIR / f"{model}_{info}" / f"rep_{PILOT_SEED}.yaml"
-            if not path.exists():
+            # tag=model (the local directory key); model=None because
+            # LocalResultsStore ignores that field and this script never talks
+            # to S3 -- it reads the tree sync_down() produced.
+            addr = ReplicateAddress(tag=model, info=info, seed=PILOT_SEED)
+            # `store._path` is the store's own renderer of the layout this fix
+            # exists to stop hand-building; used read-only, to name a path in
+            # the operator instructions below.
+            path = store._path(addr)
+            if not store.exists(addr):
                 raise SystemExit(
                     f"No pilot replicate for ({model}, {info}); expected\n  {path}\n"
                     f"This analysis SIZES R from the pilot (seed {PILOT_SEED}) -- "
@@ -184,7 +198,7 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
                     f"{{model}}_{{info}}/rep_{{seed}}.yaml layout this script "
                     f"reads (it never talks to S3 directly)."
                 )
-            scores = [m.score for m in Marks.load(path).marks]
+            scores = [m.score for m in store.load_marks(addr).marks]
             if len(scores) != N_HARMONICS:
                 # A raise, not an assert: this gate must survive `python -O`,
                 # and a short pilot silently misaligns the harmonic axis.
@@ -673,9 +687,10 @@ def _print_sizing_rows(
 def check_design_invariants() -> None:
     """Check the hand-written design constants against what the builders emit.
 
-    Three structural facts of the pre-registered design are maintained by hand
-    and must never drift apart: `MODELS` against `FAMILIES`, `N_PRIMARY`
-    against `build_primary_contrasts`, and `N_SECONDARY` against
+    Four facts of the pre-registered design are maintained by hand and must
+    never drift apart: the two family sizes against their PRE-REGISTERED
+    literals, `MODELS` against `FAMILIES`, `N_PRIMARY` against
+    `build_primary_contrasts`, and `N_SECONDARY` against
     `build_secondary_contrasts`. The two counts are what `ALPHA_PRIMARY`
     (``ALPHA / N_PRIMARY``) and `ALPHA_SECONDARY`
     (``Q_SECONDARY / N_SECONDARY``) divide by, and every correction in the
@@ -691,12 +706,12 @@ def check_design_invariants() -> None:
     Returns
     -------
     None
-        When all three invariants hold.
+        When all four invariants hold.
 
     Raises
     ------
     RuntimeError
-        If any of the three disagree. The message names both sides of the
+        If any of the four disagree. The message names both sides of the
         disagreement and states the consequence for the study's thresholds.
 
     Notes
@@ -713,7 +728,34 @@ def check_design_invariants() -> None:
     after patching one constant, which is the only way to demonstrate that the
     gate actually fires.
     """
-    # Guard 1 -- structure. Both contrast builders walk MODELS and FAMILIES, so
+    # Guard 1 -- the PRE-REGISTERED family sizes, as LITERALS.
+    #
+    # 210 and 63 are pre-registration values, not merely internal constants:
+    # they were fixed before the data existed, and every published correction
+    # is taken at a threshold derived from them. Guards 3 and 4 below only
+    # check the constants against their BUILDERS, which a CONSISTENT redesign
+    # satisfies -- change the builder and the constant together and the study
+    # silently re-registers itself under a different family size. The
+    # predecessor of this function asserted
+    # ``len(build_primary_contrasts()) == N_PRIMARY == 210``; restating the
+    # literals restores that anchor.
+    #
+    # Changing either number is therefore a PROTOCOL decision that has to be
+    # made deliberately -- and updating these literals on purpose is how it is
+    # recorded. It must never ride along with a refactor.
+    if N_PRIMARY != 210 or N_SECONDARY != 63:
+        raise RuntimeError(
+            f"The pre-registered family sizes have changed: N_PRIMARY is "
+            f"{N_PRIMARY} (pre-registered 210) and N_SECONDARY is "
+            f"{N_SECONDARY} (pre-registered 63). These were fixed before any "
+            f"data was collected, and every PRIMARY and SECONDARY threshold "
+            f"this study publishes divides by them. Re-sizing a family is a "
+            f"protocol decision, not a refactor: if it is genuinely intended, "
+            f"update these literals in check_design_invariants deliberately, "
+            f"and re-state the pre-registration alongside the change."
+        )
+
+    # Guard 2 -- structure. Both contrast builders walk MODELS and FAMILIES, so
     # a disagreement changes WHICH contrasts the study tests and how many there
     # are; the size guards below are downstream of this one.
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
@@ -728,7 +770,7 @@ def check_design_invariants() -> None:
             f"correction would have been computed at the wrong threshold."
         )
 
-    # Guard 2 -- PRIMARY family size (Bonferroni denominator).
+    # Guard 3 -- PRIMARY family size (Bonferroni denominator).
     n_primary = len(build_primary_contrasts())
     if n_primary != N_PRIMARY:
         raise RuntimeError(
@@ -741,7 +783,7 @@ def check_design_invariants() -> None:
             f"the wrong one."
         )
 
-    # Guard 3 -- SECONDARY family size (BH denominator and rank-1 sizing alpha).
+    # Guard 4 -- SECONDARY family size (BH denominator and rank-1 sizing alpha).
     n_secondary = len(build_secondary_contrasts())
     if n_secondary != N_SECONDARY:
         raise RuntimeError(

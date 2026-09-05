@@ -94,8 +94,8 @@ def main() -> None:
     correction, the three mechanism buckets, and the unfiltered raw direction
     across all 21 lanes.
     """
-    correct, valid = load_marks()
-    census = compliance_census()
+    correct, valid, compliance = load_marks()
+    census = compliance_census(compliance)
 
     def nc(key) -> float:
         cell = census.get(key)
@@ -103,28 +103,50 @@ def main() -> None:
 
     # p-values for the FULL pre-registered family, so the m=210 Holm decision
     # for these 21 is the real one, not a recomputation on a subset.
+    #
+    # This pass now stores EVERY per-contrast figure the 21-row table needs,
+    # not just the two p-values, so the table can look its rows up instead of
+    # rebuilding them. The 21 focused contrasts are a SUBSET of these 210, and
+    # `signflip_exact_p` is an exact randomization test: recomputing 21 of them
+    # was 231 enumerations where 210 suffice, for numbers guaranteed identical.
+    # Scalars are kept, not the `aligned` arrays -- the table prints summaries,
+    # and holding 210 item-matched mark arrays would trade the saved time for
+    # memory the report never reads.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
         a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
-        full.append((label, key_a, key_b,
-                     signflip_exact_p(seed_diffs(a, b, sidx)),
-                     mcnemar_exact_p(int((a & ~b).sum()), int((~a & b).sum()))))
-    holm_full = holm(np.array([r[3] for r in full]), ALPHA)
-    holm_full_item = holm(np.array([r[4] for r in full]), ALPHA)
-    full_idx = {(r[1], r[2]): i for i, r in enumerate(full)}
+        nb, ncd = int((a & ~b).sum()), int((~a & b).sum())
+        full.append(dict(
+            label=label, key_a=key_a, key_b=key_b,
+            p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
+            p_item=mcnemar_exact_p(nb, ncd),
+            acc_a=a.mean(), acc_b=b.mean(), n=a.size, b=nb, c=ncd,
+            n_seeds=int(np.unique(sidx).size),
+            disc=(nb + ncd) / max(a.size, 1),
+        ))
+    holm_full = holm(np.array([r["p_cluster"] for r in full]), ALPHA)
+    holm_full_item = holm(np.array([r["p_item"] for r in full]), ALPHA)
+    full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
 
     rows = []
     for model in MODELS:
         ka, kb = (model, "extens"), (model, "noise_intens")
-        a, b, sidx = aligned(correct, valid, ka, kb, drop_invalid=False)
-        nb, ncd = int((a & ~b).sum()), int((~a & b).sum())
+        # Arm A is `extens` and arm B is `noise_intens`, matching the order
+        # `build_primary_contrasts` emits this pair in -- so the family pass's
+        # acc_a/acc_b ARE this table's acc_e/acc_n, with no re-derivation.
         i_full = full_idx[(ka, kb)]
+        fr = full[i_full]
+        # `cmh_unpaired_p` is NOT part of the family pass (that pass computes
+        # only the two p-values the m=210 Holm decisions need), so it is
+        # computed here for these 21 rows alone, where it is a DESCRIPTIVE
+        # column. That needs the item-matched arrays back, hence the `aligned`
+        # call -- cheap array work, not a second randomization test.
+        a, b, sidx = aligned(correct, valid, ka, kb, drop_invalid=False)
         rows.append(dict(
-            model=model, acc_e=a.mean(), acc_n=b.mean(), n=a.size, b=nb, c=ncd,
-            n_seeds=int(np.unique(sidx).size),
-            disc=(nb + ncd) / max(a.size, 1),
-            p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
-            p_item=mcnemar_exact_p(nb, ncd),
+            model=model, acc_e=fr["acc_a"], acc_n=fr["acc_b"], n=fr["n"],
+            b=fr["b"], c=fr["c"], n_seeds=fr["n_seeds"], disc=fr["disc"],
+            p_cluster=fr["p_cluster"],
+            p_item=fr["p_item"],
             p_unp=cmh_unpaired_p(a, b, sidx),
             holm210=bool(holm_full[i_full]),
             holm210_item=bool(holm_full_item[i_full]),

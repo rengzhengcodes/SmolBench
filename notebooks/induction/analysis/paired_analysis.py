@@ -11,10 +11,11 @@ over whole replicates, which carries the inference here as in
 variance CMH omits by summing the 9 harmonic strata as if independent.
 
 Reads the local tree ``InductionExperiment.harness.sync_down()`` produces
-(``{model}_{info}/rep_{seed}.yaml``) through ``Marks.load`` -- the store's own
-reader (safe-loads current files, knows the legacy-tag fallback), so a
-``score:``-shaped line inside a CoT trace can never be scraped as a phantom
-mark. Ascending-period serialization means position recovers the harmonic.
+(``{model}_{info}/rep_{seed}.yaml``) through ``LocalResultsStore``, which owns
+that layout and reads each file with ``Marks.load`` -- the store's own reader
+(safe-loads current files, knows the legacy-tag fallback), so a ``score:``-shaped
+line inside a CoT trace can never be scraped as a phantom mark.
+Ascending-period serialization means position recovers the harmonic.
 Scoring: ``score: 1`` correct, ``0`` and ``null`` (invalid completion) both
 fail. A few percent of marks are ``null`` (per-lane rate:
 ``significance_report.py``'s census), so a DROP-INVALID sensitivity pass
@@ -36,7 +37,7 @@ import numpy as np
 from scipy.stats import binom, chi2
 from statsmodels.stats.multitest import multipletests
 
-from smolbench.evals import Marks
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 from power_analysis import (  # noqa: E402  (path shim must precede the import)
     ALPHA,
@@ -44,6 +45,7 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     MODELS,
     N_HARMONICS,
     N_PRIMARY,
+    Q_SECONDARY,
     RESULTS_DIR,
     build_primary_contrasts,
     build_secondary_contrasts,
@@ -55,11 +57,40 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
 EXPECTED_R = 30
 
 
-def load_marks() -> tuple[dict, dict]:
+def results_store() -> LocalResultsStore:
+    """Return a store over the CURRENT `RESULTS_DIR`, rooted at this module's global.
+
+    The one walker for this whole analysis chain: ``LocalResultsStore`` owns the
+    ``{prefix}{tag}_{info}/rep_{seed}.yaml`` layout, so no reader here rebuilds
+    it by hand. ``prefix`` is left at its default ``""``, which is the layout
+    this study writes -- but it is the store's knob now, not an inlined literal,
+    so a prefixed tree becomes a one-line change here rather than a re-spelled
+    glob in three modules.
+
+    Returns
+    -------
+    LocalResultsStore
+        A FRESH store on every call, reading the module global `RESULTS_DIR` at
+        CALL time. Deliberately not a module-level singleton: `RESULTS_DIR` is
+        rebindable (the report tests repoint it per fixture tree), and a store
+        built at import would capture the real results tree and keep reading it
+        no matter what the global was later set to.
+
+    Notes
+    -----
+    Constructing a store is free -- a frozen dataclass holding a `Path` -- so
+    the per-call rebuild costs nothing measurable next to the YAML parsing.
+    """
+    return LocalResultsStore(RESULTS_DIR)
+
+
+def load_marks() -> tuple[dict, dict, dict]:
     """Read every landed replicate into per-condition (seed -> 9-vector) maps.
 
     Seeds are whatever ``rep_*.yaml`` files exist, so a still-collecting lane
-    contributes fewer; `aligned` intersects seeds per contrast.
+    contributes fewer; `aligned` intersects seeds per contrast. Each replicate
+    is opened EXACTLY ONCE, and the three returned maps are three views of that
+    one parse.
 
     Returns
     -------
@@ -67,42 +98,96 @@ def load_marks() -> tuple[dict, dict]:
         ``(model, info)`` -> ``{seed: length-9 bool array}``, True == score 1.
     valid : dict
         Same keys; False where the score is ``null``.
+    compliance : dict
+        Same keys -> ``{seed: tuple of length 9}``, each mark's ``compliance``
+        value in serialization order (``COMPLIANT`` is ``None``, `NOT_ASSESSED`
+        for a mark predating the field, otherwise a violation label owned by
+        ``smolbench/evals/parsing.py``). Returned so that
+        ``significance_report.compliance_census`` reads THE SAME PARSE the
+        contrasts do, instead of re-walking and re-YAML-parsing the tree a
+        second time: the census and the contrasts can then never disagree about
+        which replicates a cell contains.
+
+    All three maps carry exactly the same ``(cell, seed)`` pairs: a replicate
+    skipped as short below is skipped from all three at once, so a census taken
+    over `compliance` covers precisely the replicates the contrasts used.
 
     Raises
     ------
     SystemExit
-        If a condition's results directory is missing (call
+        If a condition yields NO replicate seeds at all (call
         ``InductionExperiment.harness.sync_down()`` first).
     """
     correct: dict = {}
     valid: dict = {}
+    compliance: dict = {}
+    store = results_store()
     for model in MODELS:
         for info in INFOS:
-            cdir = RESULTS_DIR / f"{model}_{info}"
-            if not cdir.is_dir():
+            # `tag=model` because THIS study's local directory key is the model
+            # id; `model=None` is the right address shape here -- LocalResultsStore
+            # ignores `addr.model` entirely, and this chain never talks to S3
+            # (the module docstring already says so: it reads the tree sync_down()
+            # produced). The S3-only field is therefore left unset rather than
+            # filled with a value nothing would read.
+            def addr_of(seed: int, _m=model, _i=info) -> ReplicateAddress:
+                """Address one replicate of the cell this iteration is on.
+
+                `_m`/`_i` are default-bound rather than closed over, so the
+                function cannot capture a later iteration's cell.
+                """
+                return ReplicateAddress(tag=_m, info=_i, seed=seed)
+
+            # `list_seeds` owns the walk: it globs `rep_*.yaml` and SKIPS any
+            # name whose seed segment does not parse as an int, which the
+            # hand-rolled `int(path.stem.split("_")[1])` here used to raise on.
+            seeds = store.list_seeds(None, model, info)
+            if not seeds:
+                # Gate on the SEED LIST, not on the directory: `list_seeds`
+                # returns [] for a missing directory rather than raising, and
+                # gating here additionally catches an EXISTING-but-EMPTY
+                # directory -- a case that used to slip past the old
+                # `is_dir()` check and die later inside `aligned` with the far
+                # vaguer "no common seeds between ..." message.
+                #
+                # `store._path` is the store's OWN renderer of the layout, and
+                # using it here is the point of this fix: the alternative is
+                # re-inlining `f"{model}_{info}"`, which is exactly the
+                # hand-rolled duplication being removed. Read-only, and only to
+                # name a directory for a human. (Seed 0 is arbitrary -- only
+                # the PARENT is used, and every seed renders the same one.)
+                cdir = store._path(addr_of(0)).parent
                 raise SystemExit(
-                    f"No results directory for ({model}, {info}); expected\n  {cdir}\n"
+                    f"No replicates for ({model}, {info}); expected "
+                    f"rep_{{seed}}.yaml files in\n  {cdir}\n"
+                    f"(the directory is missing, empty, or holds no file whose "
+                    f"name parses as a seed).\n"
                     f"Call InductionExperiment.harness.sync_down() to pull the "
                     f"S3-backed log into the local rep_{{seed}}.yaml layout."
                 )
-            c_by_seed, v_by_seed = {}, {}
-            for path in cdir.glob("rep_*.yaml"):
-                seed = int(path.stem.split("_")[1])
-                scores = [m.score for m in Marks.load(path).marks]
+            c_by_seed, v_by_seed, k_by_seed = {}, {}, {}
+            for seed in seeds:
+                # ONE load per replicate, reused for all three maps: reloading
+                # per view is what made the census cost a second full walk.
+                marks = store.load_marks(addr_of(seed)).marks
+                scores = [m.score for m in marks]
                 if len(scores) != N_HARMONICS:
                     # A partially-written replicate: skip it rather than
                     # silently misaligning the harmonic axis for this seed.
                     print(
-                        f"  WARNING: {path} has {len(scores)} scores, "
-                        f"expected {N_HARMONICS} -- skipping this replicate",
+                        f"  WARNING: {store._path(addr_of(seed))} has "
+                        f"{len(scores)} scores, expected {N_HARMONICS} "
+                        f"-- skipping this replicate",
                         file=sys.stderr,
                     )
                     continue
                 c_by_seed[seed] = np.array([s == 1 for s in scores])
                 v_by_seed[seed] = np.array([s is not None for s in scores])
+                k_by_seed[seed] = tuple(m.compliance for m in marks)
             correct[(model, info)] = c_by_seed
             valid[(model, info)] = v_by_seed
-    return correct, valid
+            compliance[(model, info)] = k_by_seed
+    return correct, valid, compliance
 
 
 def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
@@ -294,7 +379,7 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     return np.asarray(reject, dtype=bool)
 
 
-def bh(pvals: np.ndarray, q: float = 0.05) -> np.ndarray:
+def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     """Benjamini-Hochberg step-up mask over one family, controlling FDR at `q`.
 
     Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
@@ -310,7 +395,10 @@ def bh(pvals: np.ndarray, q: float = 0.05) -> np.ndarray:
     pvals : ndarray
         One p-value per SECONDARY contrast, in any order.
     q : float, optional
-        Target FDR level, defaulting to 0.05 (``power_analysis.Q_SECONDARY``).
+        Target FDR level. Defaults to `Q_SECONDARY` (0.05) -- imported from
+        ``power_analysis``, which OWNS the SECONDARY tier's level, rather than
+        re-spelled as a literal here: a re-registration of the tier would
+        otherwise move `ALPHA_SECONDARY` while leaving this default behind.
         `multipletests` spells this level ``alpha``; the name differs, the
         quantity is the FDR level q.
 
@@ -372,7 +460,9 @@ def main() -> None:
     SECONDARY (Benjamini-Hochberg) discoveries under both tests.
     """
     print("Loading marks ...", flush=True)
-    correct, valid = load_marks()
+    # The compliance view is unused here: this report makes no census. It is
+    # still loaded (one parse, three views) for `significance_report`'s benefit.
+    correct, valid, _compliance = load_marks()
     depths = {k: len(v) for k, v in correct.items()}
     print(
         f"  {len(correct)} conditions; replicate depth "

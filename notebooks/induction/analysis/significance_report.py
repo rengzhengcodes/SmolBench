@@ -34,16 +34,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from statsmodels.stats.multitest import multipletests
 
-from smolbench.evals import Marks
 from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
+# The violation-label set is owned by parsing.py; EMPTY is imported rather than
+# spelled "empty" here, because a literal would keep parsing cleanly and
+# silently read 0 if that module ever renamed the label -- turning a padding
+# collapse into an apparently empty-free arm.
+from smolbench.evals.parsing import EMPTY
 
 # ALPHA and build_primary_contrasts come from the module that OWNS them
 # (power_analysis; _power_common behind it) -- one source of truth each.
 from power_analysis import (  # noqa: E402
     ALPHA,
-    INFOS,
     MODELS,
-    RESULTS_DIR,
     build_primary_contrasts,
 )
 from paired_analysis import (  # noqa: E402
@@ -111,8 +113,8 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     return np.asarray(reject, dtype=bool)
 
 
-def compliance_census() -> dict:
-    """Measure non-compliance per ``(model, info)`` cell, over all 84 cells.
+def compliance_census(compliance: dict) -> dict:
+    """Measure non-compliance per ``(model, info)`` cell, from an ALREADY-PARSED tree.
 
     ``compliance: null`` marks a completion that obeyed the output contract;
     any other value names HOW it failed (the violation label set is owned by
@@ -120,39 +122,114 @@ def compliance_census() -> dict:
     and the pre-field ``not-assessed`` default). Counting the modes, not just
     the rate, lets the census name a mechanism.
 
+    Touches the FILESYSTEM NOT AT ALL. It consumes `paired_analysis.load_marks`'s
+    third return value, so the census and the contrasts read one and the same
+    parse of one and the same set of replicates. The predecessor re-walked and
+    re-YAML-parsed every ``rep_*.yaml`` that `load_marks` had just opened -- 504
+    redundant opens on a 6-seed tree, 2,520 at full depth -- and, walking
+    independently, could disagree with the contrasts about which replicates a
+    cell even contains.
+
+    Parameters
+    ----------
+    compliance : dict
+        ``(model, info)`` -> ``{seed: tuple of per-mark compliance values}``,
+        exactly as `load_marks` returns it.
+
     Returns
     -------
     dict
-        Cell key -> ``rate`` (non-compliance share over ASSESSED marks), ``n``
-        (assessed mark count) and ``modes`` (`collections.Counter` of
-        violation labels). Cells with no assessed marks are omitted -- an
-        unmeasured cell must never read as either compliant or collapsed.
+        Cell key -> a dict with
+
+        ``rate``
+            Non-compliant share over ASSESSED marks, whole cell.
+        ``n``
+            Assessed mark count over the whole cell. Because `load_marks` keeps
+            only full-length replicates, this is ``n_seeds * N_HARMONICS``
+            whenever the cell carries no `NOT_ASSESSED` marks; in general it
+            equals the sum of `per_seed`'s second components.
+        ``modes``
+            `collections.Counter` of violation labels among assessed marks.
+        ``per_seed``
+            ``{seed: (noncompliant_count, assessed_count)}`` for EVERY seed the
+            cell has, so a caller can re-take the rate over any seed subset --
+            which is what the padding table does, since a delta between two
+            arms is only attributable to the arm difference on the seeds both
+            arms cover.
+
+        Cells with no assessed marks are OMITTED -- an unmeasured cell must
+        never read as either compliant or collapsed.
+
+    Notes
+    -----
+    Non-compliance is `Marks.noncompliant`'s rule (neither `COMPLIANT` nor
+    `NOT_ASSESSED`) over `Marks.assessed`'s denominator, applied here to the
+    same values those properties read.
     """
     out = {}
-    for model in MODELS:
-        for info in INFOS:
-            vals: list = []
-            for path in sorted((RESULTS_DIR / f"{model}_{info}").glob("rep_*.yaml")):
-                vals += [m.compliance for m in Marks.load(path).marks]
-            # NOT_ASSESSED marks predate the compliance field: unknown, not
-            # violations. Excluding them keeps a legacy lane from publishing
-            # as a collapse; the exclusion is surfaced below, not silent.
-            assessed = [v for v in vals if v != NOT_ASSESSED]
-            if len(assessed) < len(vals):
-                print(
-                    f"  NOTE: {model}/{info}: {len(vals) - len(assessed)} of "
-                    f"{len(vals)} marks pre-date compliance assessment; the "
-                    "census rate covers the assessed remainder only.",
-                    file=sys.stderr,
-                )
-            if not assessed:
-                continue
-            modes = Counter(v for v in assessed if v != COMPLIANT)
-            out[(model, info)] = dict(
-                rate=sum(v != COMPLIANT for v in assessed) / len(assessed),
-                n=len(assessed), modes=modes,
+    # Iterates the loader's own mapping, so cell order (and therefore the order
+    # of the NOTEs below) follows MODELS x INFOS exactly as before.
+    for key, by_seed in compliance.items():
+        vals = [v for seed_vals in by_seed.values() for v in seed_vals]
+        # NOT_ASSESSED marks predate the compliance field: unknown, not
+        # violations. Excluding them keeps a legacy lane from publishing
+        # as a collapse; the exclusion is surfaced below, not silent.
+        assessed = [v for v in vals if v != NOT_ASSESSED]
+        if len(assessed) < len(vals):
+            print(
+                f"  NOTE: {key[0]}/{key[1]}: {len(vals) - len(assessed)} of "
+                f"{len(vals)} marks pre-date compliance assessment; the "
+                "census rate covers the assessed remainder only.",
+                file=sys.stderr,
             )
+        if not assessed:
+            continue
+        modes = Counter(v for v in assessed if v != COMPLIANT)
+        # Every seed of the cell appears, including one whose marks are all
+        # NOT_ASSESSED: it contributes (0, 0), which a subset rate must count
+        # as "nothing measured here" rather than silently skip.
+        per_seed = {
+            seed: (
+                sum(1 for v in seed_vals if v not in (COMPLIANT, NOT_ASSESSED)),
+                sum(1 for v in seed_vals if v != NOT_ASSESSED),
+            )
+            for seed, seed_vals in by_seed.items()
+        }
+        out[key] = dict(
+            rate=sum(v != COMPLIANT for v in assessed) / len(assessed),
+            n=len(assessed), modes=modes, per_seed=per_seed,
+        )
     return out
+
+
+def common_seed_rate(cell: dict, seeds) -> float | None:
+    """Non-compliance rate of one census `cell`, restricted to `seeds`.
+
+    Pools the counts before dividing -- ``sum(noncompliant) / sum(assessed)``
+    over the subset -- rather than averaging per-seed rates, so the result is
+    the same quantity as the cell's whole-cell ``rate``, merely taken over
+    fewer replicates. A mean of per-seed rates would weight a seed with 2
+    assessed marks like one with 9.
+
+    Parameters
+    ----------
+    cell : dict
+        One value of `compliance_census`'s output; only ``per_seed`` is read.
+    seeds : iterable
+        Seeds to restrict to. Seeds absent from the cell contribute nothing.
+
+    Returns
+    -------
+    float or None
+        The restricted rate, or ``None`` when the subset has NO assessed marks
+        at all -- there is no rate to report, and returning 0.0 would publish
+        an unmeasured subset as perfectly compliant.
+    """
+    counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
+    assessed = sum(a for _nc, a in counts)
+    if assessed == 0:
+        return None
+    return sum(nc for nc, _a in counts) / assessed
 
 
 def collapse_note(key, census: dict) -> str:
@@ -215,9 +292,10 @@ def main() -> None:
     findings, the zero-arm controls, and what is NOT significant. Methodology
     is in the module docstring.
     """
-    correct, valid = load_marks()
+    # ONE walk of the tree: the census reads the same parse as the contrasts.
+    correct, valid, compliance = load_marks()
     contrasts = build_primary_contrasts()
-    census = compliance_census()
+    census = compliance_census(compliance)
 
     rows = []
     for label, key_a, key_b in contrasts:
@@ -316,41 +394,78 @@ def main() -> None:
     noise_over = [k for k in over if k[1] == "noise_intens"]
     print(f"\n{'=' * 78}\nCOLLAPSE CENSUS -- padding robustness, stated as a "
           f"result\n{'=' * 78}")
-    print("The `noise_intens` arm is the compact rule form padded with "
-          "WHITESPACE to exactly\nthe extensional arm's token count under the "
-          "model's own tokenizer. It adds no\ninformation and no content -- so a "
-          "model that obeys the output contract on\n`intens` should obey it "
-          "here. In "
-          f"{len(noise_over)} of {len(MODELS)} lanes it does not, and the table "
-          f"below separates the\nlanes where the PAD is responsible from the "
-          f"lanes that were already failing the\ncontract unpadded. That is a "
-          f"finding about padding robustness in its own right,\nand it is "
-          f"reported here rather than used as grounds for exclusion.\n")
 
-    print("PADDING EFFECT ON COMPLIANCE, all 21 lanes (`intens` is the same "
-          "rule text,\nunpadded -- so the delta is attributable to the "
-          "whitespace and nothing else):\n")
-    print(f"{'lane':13s} {'intens':>8s} {'noise':>8s} {'delta':>8s} "
-          f"{'noise empty':>12s}  verdict")
-    print("-" * 78)
+    # Built BEFORE the prose, because every count printed in this section is
+    # taken from the rows actually built -- including the intro sentence's
+    # denominator. A lane can be ABSENT from this table: it needs a census cell
+    # for BOTH arms, and a wholly pre-compliance-field arm has none (its marks
+    # are all NOT_ASSESSED, so `compliance_census` omits the cell). The roster
+    # size `len(MODELS)` is therefore the wrong denominator -- it counts lanes
+    # this comparison was never able to make.
     pad_rows = []
     for model in MODELS:
         ci = census.get((model, "intens"))
         cn = census.get((model, "noise_intens"))
         if ci is None or cn is None:
             continue
-        pad_rows.append((cn["rate"] - ci["rate"], model, ci, cn))
-    for delta, model, ci, cn in sorted(pad_rows, reverse=True):
-        empty = cn["modes"].get("empty", 0) / cn["n"]
-        if cn["rate"] >= COLLAPSE_THRESHOLD:
+        # Both rates over the seeds the two arms SHARE. The delta is a
+        # within-lane difference attributed to the pad, but the two cells are
+        # censused independently and can cover different seed sets, so a
+        # whole-cell subtraction can difference two disjoint samples. Every
+        # contrast elsewhere in this chain uses the per-contrast seed
+        # INTERSECTION (`paired_analysis.aligned`); this now matches.
+        common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
+        rate_i = common_seed_rate(ci, common)
+        rate_n = common_seed_rate(cn, common)
+        if rate_i is None or rate_n is None:
+            # No assessed marks on the shared seeds: there is no rate to
+            # report, so the lane is skipped exactly as a missing census cell
+            # already is -- never published as 0% with a 0-seed basis.
+            continue
+        pad_rows.append(dict(model=model, delta=rate_n - rate_i, rate_i=rate_i,
+                             rate_n=rate_n, n_common=len(common), cn=cn))
+
+    print("The `noise_intens` arm is the compact rule form padded with "
+          "WHITESPACE to exactly\nthe extensional arm's token count under the "
+          "model's own tokenizer. It adds no\ninformation and no content -- so a "
+          "model that obeys the output contract on\n`intens` should obey it "
+          "here. In "
+          f"{len(noise_over)} of {len(pad_rows)} lanes it does not, and the table "
+          f"below separates the\nlanes where the PAD is responsible from the "
+          f"lanes that were already failing the\ncontract unpadded. That is a "
+          f"finding about padding robustness in its own right,\nand it is "
+          f"reported here rather than used as grounds for exclusion.\n")
+
+    # The causal claim is scoped to what is actually computed: matched seeds.
+    print(f"PADDING EFFECT ON COMPLIANCE, over the {len(pad_rows)} lanes with "
+          "both arms measured\n(`intens` is the same rule text, unpadded) -- so "
+          "the delta is attributable to the\nwhitespace, ON THE SEEDS BOTH ARMS "
+          "COVER. `n` is how many matched replicates\nthat is:\n")
+    print(f"{'lane':13s} {'intens':>8s} {'noise':>8s} {'delta':>8s} "
+          f"{'noise empty':>12s} {'n':>4s}  verdict")
+    print("-" * 78)
+    # delta descending, ties broken by lane name so the order is deterministic.
+    for row in sorted(pad_rows, key=lambda r: (-r["delta"], r["model"])):
+        cn, delta = row["cn"], row["delta"]
+        # Mixed basis, deliberately: the two rates are common-seed (above),
+        # while this mode share stays WHOLE-CELL -- `modes` is a Counter over
+        # the cell, not decomposed per seed. It is a descriptive "what broke"
+        # column, not an input to the delta or the verdict, so it is left on
+        # the broader basis rather than given a per-seed breakdown it would
+        # need a second pass to build.
+        empty = cn["modes"].get(EMPTY, 0) / cn["n"]
+        # Verdict logic and thresholds unchanged; only the rates feeding it
+        # are now taken over the matched seeds.
+        if row["rate_n"] >= COLLAPSE_THRESHOLD:
             verdict = "COLLAPSE" if delta >= COLLAPSE_THRESHOLD else \
                       "collapsed, but not padding-specific"
         else:
             verdict = "contract holds"
-        print(f"{model:13s} {ci['rate']:8.1%} {cn['rate']:8.1%} {delta:+8.1%} "
-              f"{empty:12.1%}  {verdict}")
-    n_pad = sum(1 for d, _, _, cn in pad_rows
-                if cn["rate"] >= COLLAPSE_THRESHOLD and d >= COLLAPSE_THRESHOLD)
+        print(f"{row['model']:13s} {row['rate_i']:8.1%} {row['rate_n']:8.1%} "
+              f"{delta:+8.1%} {empty:12.1%} {row['n_common']:4d}  {verdict}")
+    n_pad = sum(1 for r in pad_rows
+                if r["rate_n"] >= COLLAPSE_THRESHOLD
+                and r["delta"] >= COLLAPSE_THRESHOLD)
     print(f"\n=> The pad itself pushes {n_pad} of {len(pad_rows)} lanes over the "
           f"{COLLAPSE_THRESHOLD:.0%} criterion. This is a\n   RESULT: "
           f"whitespace padding to a matched token count is not inert, it "
