@@ -18,5 +18,17 @@
     "extens": "7ed0ec605eb8461fbe60bfd5bece36df924f7e8b0922f9f9917f2d7ac9fdf568",
     "intens": "c7d2c6e376a6c8db2cfaae0f47be69a470ca25c8257d45d8cdeaa389b991355d",
     "noise_intens": "59e20a72a79a0d14f247cc49d62db4a4f79fe35cec738af02f1e8354ab6511b2"
+  },
+  "production_seed_0": {
+    "extens": "72cdb1c7e56cd4de9efda0f5d73f61672162027af2ffe3d2e82df5723028c79f",
+    "intens": "445d8b5d7b218b5611ab626d5dc66b7d339c6c63f8a6543abc181030b4213aa5",
+    "noise_intens": "bca8304a25c8b1e3c0c28bb4d7f3031d6f0d0566136fffa341382e696fd950e4",
+    "zero": "6e85a5a0266e215961ccd9c8736bfccfc5aeab176647fcba5b2ea2c1d8b4887d"
+  },
+  "production_seed_1": {
+    "extens": "eda7566948bd1a5416e25d2c0673bbf02f6e1b281dfb16bc8f4b6ea3a8792704",
+    "intens": "35644e3f4873de9bef9ff00267b7c531d02be11551042c0925d1dcb0b86a4b69",
+    "noise_intens": "19dcbc6cf255ff58dbb83c8f03fb20ab74adc29cf56f83df3ac7bab6d7aad18c",
+    "zero": "9cb8f5c0e3fcc9ae8a9b6593e638c5f738b4ef89771fd9546f22d94df08af525"
   }
 }
