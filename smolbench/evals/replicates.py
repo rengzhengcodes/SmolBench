@@ -55,7 +55,17 @@ class ReplicateHarness:
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Replicate seeds; each doubles as the per-request decoding seed.
     seeds: Sequence[int]
-    #: Info types evaluated per replicate, in serialization order.
+    #: Info types evaluated per replicate, in serialization order. The
+    #: authoritative declaration of these arm names is
+    #: ``smolbench.induction.periodic.CONDITIONS`` (three of its four
+    #: entries; this default omits ``"zero"``, added by induction's own
+    #: study driver). This module cannot import that mapping to derive the
+    #: default the way ``smolbench.induction.experiment.InductionExperiment``
+    #: does: the dependency runs the other way -- ``smolbench.induction``
+    #: imports ``smolbench.evals`` (for ``Quiz``/``ToF``/``Numeric``/
+    #: tokenization), so ``smolbench.evals`` importing back from
+    #: ``smolbench.induction`` would be a cycle. Hence a literal here, kept in
+    #: sync with ``CONDITIONS`` by hand.
     info_types: Sequence[str] = ("intens", "extens", "noise_intens")
     #: Optional namespace so experiments can share one results_dir (e.g.
     #: "one_hop_" -> results/one_hop_{tag}_{info}/; readers of the unprefixed

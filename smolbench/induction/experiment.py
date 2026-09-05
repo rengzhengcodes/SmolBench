@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 from smolbench.evals.experiment import Experiment, repo_root  # noqa: F401 -- re-exported
+from smolbench.induction import periodic
 
 
 @dataclass(frozen=True)
@@ -25,13 +26,13 @@ class InductionExperiment(Experiment):
     ``smolbench.evals.experiment.Experiment`` for everything else.
     """
 
-    #: Info types evaluated per replicate, in serialization order. The default
-    #: is the original three-condition set (see ``periodic.py``'s "Information
-    #: conditions" module docstring section); a study adding a fourth
-    #: condition -- e.g. ``"zero"`` for
-    #: :func:`~smolbench.induction.periodic.get_periodic_zero_info_numeric_quiz`
-    #: -- passes the longer tuple here.
-    info_types: Tuple[str, ...] = ("intens", "extens", "noise_intens")
+    #: Info types evaluated per replicate, in serialization order. Derived
+    #: from ``periodic.CONDITIONS`` -- the ONE declaration of the arm names
+    #: (see that mapping's own docstring in ``periodic.py``'s "Information
+    #: conditions" module docstring section) -- rather than a second literal
+    #: here that could drift from it. A study wanting a different subset or
+    #: order passes its own tuple.
+    info_types: Tuple[str, ...] = tuple(periodic.CONDITIONS)
 
     def cot_chain_lengths(self, tag: str = "cot") -> None:
         """Print reasoning-chain word-count stats from the stored CoT replicates.

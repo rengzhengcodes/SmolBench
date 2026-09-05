@@ -12,13 +12,18 @@ from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenize
 
 from smolbench.induction._common import (
     WHITESPACE_UNITS, choose_whitespace_unit, context_renderer, token_matched_noise_prompt)
-from smolbench.induction.periodic import PeriodicConfig, get_periodic_numeric_quiz
+from smolbench.induction.periodic import (
+    CONDITIONS, PeriodicConfig, get_periodic_numeric_quiz)
 from smolbench.induction.periodic import Prompter as PeriodicPrompter, numeric_count_query_gen
 
 PERIODIC_TMPL = string.Template(
     "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
 )
 CONTEXT = "Every 3 positions write gerbil.\n"
+
+#: The arms whose question text states the range; the zero arm needs a
+#: range-free template these minimal fixtures do not carry.
+POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 def tiktoken_tokenizer(encoding_name: str):
     """Return a `TiktokenTokenizer`, or skip if it cannot be built offline."""
@@ -49,22 +54,25 @@ def test_noise_prompt_matches_extens_token_count(tokenizer):
     itself (12-32): all three arms now render from the ONE ``template``, so
     there is a single build to pin.
     """
-    intens, extens, noise = get_periodic_numeric_quiz(
+    quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=6, labels=6, seed=1776),
         PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-        tokenizer=tokenizer,
+        tokenizer=tokenizer, conditions=POSITIVE_ARMS,
     )
+    intens, extens, noise = (
+        quizzes["intens"], quizzes["extens"], quizzes["noise_intens"])
     assert len(intens) == len(extens) == len(noise) > 0
     for extens_q, noise_q in zip(extens, noise):
         assert tokenizer.count(noise_q.prompt) == tokenizer.count(extens_q.prompt)
 
 def test_pad_adds_only_whitespace(tokenizer):
     """The noise prompt is its intensional twin plus whitespace, nothing else."""
-    intens, _extens, noise = get_periodic_numeric_quiz(
+    quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=5, labels=5, seed=99),
         PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-        tokenizer=tokenizer,
+        tokenizer=tokenizer, conditions=POSITIVE_ARMS,
     )
+    intens, noise = quizzes["intens"], quizzes["noise_intens"]
     assert len(intens) == len(noise) > 0
     for intens_q, noise_q in zip(intens, noise):
         assert "".join(noise_q.prompt.split()) == "".join(intens_q.prompt.split())
@@ -76,11 +84,14 @@ def test_other_arms_are_independent_of_the_tokenizer():
         PeriodicConfig(n=5, labels=5, seed=7),
         PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
     )
-    stub = get_periodic_numeric_quiz(*args, tokenizer=StubTokenizer())
-    other = get_periodic_numeric_quiz(*args, tokenizer=tiktoken_tokenizer("cl100k_base"))
-    assert [q.prompt for q in stub[0]] == [q.prompt for q in other[0]]  # intens
-    assert [q.prompt for q in stub[1]] == [q.prompt for q in other[1]]  # extens
-    assert [q.prompt for q in stub[2]] != [q.prompt for q in other[2]]  # noise
+    stub = get_periodic_numeric_quiz(*args, tokenizer=StubTokenizer(),
+                                     conditions=POSITIVE_ARMS)
+    other = get_periodic_numeric_quiz(*args, tokenizer=tiktoken_tokenizer("cl100k_base"),
+                                      conditions=POSITIVE_ARMS)
+    for arm in ("intens", "extens"):
+        assert [q.prompt for q in stub[arm]] == [q.prompt for q in other[arm]]
+    assert ([q.prompt for q in stub["noise_intens"]]
+            != [q.prompt for q in other["noise_intens"]])
 
 def test_choose_whitespace_unit_picks_a_linear_atom(tokenizer):
     """The chosen atom is whitespace costing ~1 token per repetition."""
@@ -142,7 +153,7 @@ def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(tokenizer, n)
         get_periodic_numeric_quiz(
             PeriodicConfig(n=n, labels=n, seed=0),
             PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-            tokenizer=tokenizer,
+            tokenizer=tokenizer, conditions=POSITIVE_ARMS,
         )
 
 
@@ -159,4 +170,9 @@ def test_prompter_has_no_legacy_chromatic_hooks():
     assert not hasattr(prompter, "substitution")
     assert not hasattr(prompter, "extens_template")
     assert not hasattr(prompter, "resolved_extens_template")
-    assert [f.name for f in dataclasses.fields(prompter)] == ["template", "query_gen"]
+    # `range_free_template` is the ONE field that came back, and unlike the two
+    # above it is LIVE: the zero condition renders from it, and the production
+    # study supplies it (see run_study.zero_template). The field list stays an
+    # exact pin so a fourth, unused hook cannot appear unnoticed.
+    assert [f.name for f in dataclasses.fields(prompter)] == [
+        "template", "query_gen", "range_free_template"]

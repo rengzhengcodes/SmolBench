@@ -21,7 +21,16 @@ the random label/string generators.
 
 import string
 from dataclasses import dataclass
-from typing import Any, Callable, Collection, Dict, Iterable, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    Mapping,
+    Optional,
+    Tuple,
+)
 
 import numpy as np
 from ordered_set import OrderedSet
@@ -45,16 +54,27 @@ from smolbench.evals.tokenization import (  # noqa: F401 -- re-exported
 )
 
 
-# Design: exactly TWO fields. `Prompter` previously also carried
-# `substitution: Dict[str, str]` and `extens_template: Optional[Template]`
-# (plus a `resolved_extens_template` property). Both were hooks for the
-# `query_years` mechanism of the chromatic benchmark, which has been deleted:
-# `substitution` was `{}` at every construction site in the repo, and no
-# production caller ever set `extens_template`. They were dead weight that made
-# TWO render paths (template vs extens_template) and a three-term substitution
-# precedence look live when only one path and two terms ever executed -- a
-# reader had to check every call site to learn that. Removing them makes the
-# single live path the only path.
+# Design: THREE fields, two dead ones removed and one live one added back.
+# `Prompter` previously also carried `substitution: Dict[str, str]` and
+# `extens_template: Optional[Template]` (plus a `resolved_extens_template`
+# property). Both were hooks for the `query_years` mechanism of the chromatic
+# benchmark, which has been deleted: `substitution` was `{}` at every
+# construction site in the repo, and no production caller ever set
+# `extens_template`. They were dead weight that made TWO render paths
+# (template vs extens_template) and a three-term substitution precedence look
+# live when only one path and two terms ever executed -- a reader had to check
+# every call site to learn that. Removing them made the single live path the
+# only path.
+#
+# `range_free_template` is NOT a third revival of that dead weight: unlike
+# `substitution`/`extens_template`, it is exercised in production.
+# `notebooks/induction/run_study.py` supplies it (`zero_template`, derived from
+# the study's own template with its range clause stripped -- see that module's
+# `RANGE_CLAUSE`), and `smolbench.induction.periodic.get_periodic_prompts`
+# RAISES when a condition needs it (``omit_range=True``) and it is ``None``:
+# there is no silent fallback to the range-stating ``template``, because that
+# fallback is exactly the answer-leaking prompt this field exists to avoid
+# (see ``periodic.py``'s module docstring, "Information conditions").
 @dataclass(frozen=True, slots=True)
 class Prompter:
     """Bundle everything needed to prompt an LLM with a generated context.
@@ -65,13 +85,18 @@ class Prompter:
     the whole substitution (see :func:`build_substitution`). For the built-in
     periodic generators that means ``$positive_info`` plus ``$label`` and
     ``$seq_len`` (``numeric_count_query_gen``) or ``$label`` and ``$pos``
-    (``tof_membership_query_gen``). Rendering uses ``safe_substitute``, which
-    SILENTLY leaves a misspelled placeholder verbatim instead of raising, so
-    validate templates on a sample query first. ``safe_substitute`` (not
-    ``substitute``) is deliberate: a literal ``$`` in quiz text must not raise
-    mid-study, and the golden-quiz hash pins
-    (``tests/induction/test_golden_quizzes.py``) already fail on any drift in
-    the rendered prompts.
+    (``tof_membership_query_gen``). ``range_free_template``, when supplied,
+    MUST hold to the exact same contract MINUS any placeholder that states a
+    position range (e.g. ``$seq_len``): it is the question a range-omitting
+    condition renders from instead of ``template``, so it still needs
+    ``$positive_info`` plus every OTHER key ``query_gen`` produces (``$label``
+    for both built-in generators), just none that would let the range leak
+    back in. Rendering uses ``safe_substitute``, which SILENTLY leaves a
+    misspelled placeholder verbatim instead of raising, so validate templates
+    on a sample query first. ``safe_substitute`` (not ``substitute``) is
+    deliberate: a literal ``$`` in quiz text must not raise mid-study, and the
+    golden-quiz hash pins (``tests/induction/test_golden_quizzes.py``) already
+    fail on any drift in the rendered prompts.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
@@ -80,6 +105,45 @@ class Prompter:
     #: (substitution_dict, answer) pairs; the mapping arguments are
     #: benchmark-specific (see each benchmark's built-in query generators).
     query_gen: Callable[..., Iterable[Tuple[Dict[str, str], Any]]]
+    #: Template for a condition that must not reveal the position range (see
+    #: the class comment above and ``periodic.py``'s ``RANGE_KEYS``). ``None``
+    #: (the default) is fine for any run that never asks for such a
+    #: condition; a benchmark that does (the periodic ``zero`` arm) raises
+    #: at generation time -- not here -- naming this field, rather than
+    #: falling back to ``template`` and shipping the leak silently.
+    range_free_template: Optional[string.Template] = None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedQuery:
+    """One query's rendered prompt and token count, per information condition.
+
+    Emitted by ``smolbench.induction.periodic.get_periodic_prompts`` (and any
+    sibling generator following the same one-loop-per-condition shape): one
+    ``RenderedQuery`` per underlying query, holding every condition's rendered
+    text and the token count generation already computed for it.
+
+    The counts are not a convenience re-tokenization -- they are the SAME
+    counts generation needed to build the prompts in the first place. Every
+    condition's rendered prompt is tokenized during rendering regardless of
+    whether a caller ever asks for the count: the conditions without
+    ``match_tokens_to`` are counted so a padded condition has a target to pad
+    against, and the padded condition's own count is exact by construction
+    (the pad search verifies it hits the target precisely). Carrying those
+    counts here means a caller sizing a completion budget (see
+    ``notebooks/induction/run_study.py``'s ``completion_budget``) can read
+    them off an already-generated ``RenderedQuery`` instead of regenerating
+    the quiz and re-running every prompt through the tokenizer a second time.
+    """
+
+    #: condition name -> that condition's rendered prompt for this query.
+    prompts: Mapping[str, str]
+    #: condition name -> ``tokenizer.count(prompts[name])`` under the
+    #: tokenizer generation ran with. Same keys as `prompts`.
+    token_counts: Mapping[str, int]
+    #: This query's ground-truth answer -- identical across every condition,
+    #: since only the amount of positive information shown varies.
+    answer: Answer
 
 
 def build_substitution(
@@ -213,20 +277,55 @@ def random_labels(
 
 
 def quizzes_from_prompts(
-    prompts: Iterable[Tuple[str, str, str, Answer]],
+    prompts: Iterable[RenderedQuery],
     qna_cls: type[QnA],
-) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap (intens, extens, noise_intens, answer) tuples into three quizzes.
+    conditions: Iterable[str],
+) -> Dict[str, Quiz]:
+    """Wrap ``RenderedQuery`` instances into one ``Quiz`` per condition.
 
-    Returns the intensional, extensional and noise-padded intensional Quiz, in
-    that order. ``qna_cls`` is the question type (``ToF`` / ``Numeric``); its
-    ``__post_init__`` validates the answers.
+    Parameters
+    ----------
+    prompts : Iterable[RenderedQuery]
+        One entry per underlying query, as yielded by
+        ``smolbench.induction.periodic.get_periodic_prompts``.
+    qna_cls : type[QnA]
+        The question type to wrap each rendered prompt in (``ToF`` /
+        ``Numeric``); its ``__post_init__`` validates the answer.
+    conditions : Iterable[str]
+        The condition names, in the order the returned dict's keys should
+        appear. Typed structurally (any string iterable) rather than as
+        ``smolbench.induction.periodic.CONDITIONS``'s key type, because
+        importing ``periodic`` here -- the module that already imports this
+        one for ``Prompter``/``build_substitution``/``context_renderer``/this
+        function -- would be a cycle. A caller with the condition MAPPING in
+        hand (the common case) passes it directly: iterating a ``Mapping``
+        yields its keys, which is exactly the order wanted here.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        ``{condition: quiz}``, in `conditions`'s iteration order, each quiz
+        holding one ``qna_cls`` instance per entry of `prompts`, in the same
+        order `prompts` was iterated.
+
+    Raises
+    ------
+    ValueError
+        If some ``RenderedQuery`` in `prompts` lacks one of `conditions`'s
+        names in its ``prompts`` mapping; names the missing condition, since a
+        `RenderedQuery` silently missing an arm would otherwise surface much
+        later as a confusing ``KeyError`` deep in the returned dict's use.
     """
-    intens_quiz: list[QnA] = []
-    extens_quiz: list[QnA] = []
-    noise_intens_quiz: list[QnA] = []
-    for intens, extens, noise_intens, answer in prompts:
-        intens_quiz.append(qna_cls(prompt=intens, answer=answer))
-        extens_quiz.append(qna_cls(prompt=extens, answer=answer))
-        noise_intens_quiz.append(qna_cls(prompt=noise_intens, answer=answer))
-    return tuple(intens_quiz), tuple(extens_quiz), tuple(noise_intens_quiz)
+    condition_names = tuple(conditions)
+    quizzes: Dict[str, list] = {name: [] for name in condition_names}
+    for rendered in prompts:
+        for name in condition_names:
+            if name not in rendered.prompts:
+                raise ValueError(
+                    f"RenderedQuery is missing condition {name!r}: it only "
+                    f"carries {sorted(rendered.prompts)}."
+                )
+            quizzes[name].append(
+                qna_cls(prompt=rendered.prompts[name], answer=rendered.answer)
+            )
+    return {name: tuple(qnas) for name, qnas in quizzes.items()}
