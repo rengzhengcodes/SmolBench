@@ -13,8 +13,8 @@ deduction a level deeper. Republished as analysis reads them:
     <dest>/deduction/<model>/all_rows.jsonl         # raw candidates, pre-verification
     <dest>/deduction/<model>/server_config.yaml     # hardware provenance
     <dest>/deduction/<model>/theorems/...           # prompts + per-theorem outputs
-    <dest>/provenance/*.md                          # how to read the data
-    <dest>/MANIFEST.json                            # what was copied, with byte counts
+    <dest>/provenance/*.md                          # incl. SNAPSHOT_NOTES.md: how to read the rows
+    <dest>/MANIFEST.json                            # purely computed -- byte counts, no prose notes
 
 A SNAPSHOT, NOT A MOVE: no source object is ever modified or deleted (the study
 bucket is an append-only experiment log); everything is written under ``--dest``.
@@ -36,17 +36,31 @@ import logging
 import pathlib
 from typing import Dict, List, Optional, Tuple
 
+from smolbench.evals.results_store import resolve_results_location
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-BUCKET = "smolbench-results-414266451290"
+# NOTE: no bucket literal here. `main` resolves the bucket at call time via
+# `resolve_results_location()` (the same seam `provision_results_bucket.py`
+# and `audit_run_completeness.py` use), so a redirected `SMOLBENCH_RESULTS_S3`
+# is honored instead of silently missing this script. `iter_source_keys` and
+# `copy_one` each take `bucket` explicitly rather than reaching for a module
+# global.
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents copied alongside the data, so the snapshot explains
-#: itself: README.md indexes the tree, ARCHIVE.md locates the archived docs.
+#: itself: README.md indexes the tree, ARCHIVE.md locates the archived docs,
+#: and SNAPSHOT_NOTES.md documents how to READ the rows (verdict semantics,
+#: the earliest-surviving-row rule, and this dataset's measured counts). That
+#: last doc replaces the manifest's old `notes` field: it is a dated,
+#: version-controlled document that gets copied next to the data, instead of
+#: one dataset's measured counts being re-emitted as literal prose on every
+#: run regardless of `--dest`/`--spool-prefix`.
 PROVENANCE_DOCS = (
     "notebooks/README.md",
     "notebooks/ARCHIVE.md",
     "notebooks/deduction/README.md",
+    "notebooks/deduction/analysis/SNAPSHOT_NOTES.md",
 )
 
 
@@ -57,7 +71,7 @@ def _s3():
 
 
 def iter_source_keys(
-    client, *, deduction_prefix: Optional[str] = None
+    client, *, bucket: str, deduction_prefix: Optional[str] = None
 ) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
@@ -66,6 +80,13 @@ def iter_source_keys(
 
     Parameters
     ----------
+    bucket : str
+        Bucket to list, keyword-only alongside `deduction_prefix` so a caller
+        cannot pass it positionally and mix it up with `client`. Read from a
+        parameter, not a module constant, so `main`'s
+        ``resolve_results_location()`` result (which may point at a
+        redirected ``SMOLBENCH_RESULTS_S3`` bucket) is what actually gets
+        listed.
     deduction_prefix : str, optional
         S3 key prefix the deduction leg lives under, WITH a trailing "/".
         ``None`` (the default) resolves it lazily via `runner.spool_prefix()`
@@ -83,7 +104,7 @@ def iter_source_keys(
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
     for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
-        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 if any(s in key for s in SKIP_SUBSTRINGS):
@@ -99,11 +120,19 @@ def iter_source_keys(
     return out
 
 
-def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
-    """Copy one object server-side within `BUCKET`, and verify its size.
+def copy_one(client, bucket: str, src_key: str, dest_key: str, size: int) -> str:
+    """Copy one object server-side within `bucket`, and verify its size.
 
     Parameters
     ----------
+    bucket : str
+        Bucket holding both `src_key` and `dest_key`. Positional, right after
+        `client`: it mirrors the ``(Bucket, Key)`` argument order of every S3
+        call it wraps below, and this function has exactly one call site
+        (inside `main`), so there is no ambiguity to buy back with a keyword.
+        This is a WITHIN-BUCKET copy -- source and destination are the SAME
+        resolved bucket, which is why one resolved name serves both
+        `CopySource` and the destination `Bucket`.
     size : int
         Expected source size in bytes: decides whether an already-present
         destination object can be skipped.
@@ -119,19 +148,19 @@ def copy_one(client, src_key: str, dest_key: str, size: int) -> str:
         The copied object's size does not match `size`.
     """
     try:
-        head = client.head_object(Bucket=BUCKET, Key=dest_key)
+        head = client.head_object(Bucket=bucket, Key=dest_key)
         if head["ContentLength"] == size:
             return "skipped"
     except Exception:  # noqa: BLE001 -- an absent destination is the normal case
         pass
     client.copy_object(
-        Bucket=BUCKET, Key=dest_key,
-        CopySource={"Bucket": BUCKET, "Key": src_key},
+        Bucket=bucket, Key=dest_key,
+        CopySource={"Bucket": bucket, "Key": src_key},
         # REPLACE, not the default COPY: the default reads the source's tags,
         # needing s3:GetObjectTagging, which the scoped operator key lacks.
         TaggingDirective="REPLACE",
     )
-    got = client.head_object(Bucket=BUCKET, Key=dest_key)["ContentLength"]
+    got = client.head_object(Bucket=bucket, Key=dest_key)["ContentLength"]
     if got != size:
         raise RuntimeError(f"size mismatch copying {src_key}: {got} != {size}")
     return "copied"
@@ -162,8 +191,15 @@ def main() -> int:
 
     deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
 
+    # Resolved at call time, same as `runner.spool_prefix()` above: this is
+    # the study bucket (via SMOLBENCH_RESULTS_S3, or the account default), and
+    # source/destination are the SAME bucket -- a within-bucket server-side
+    # copy -- so one resolved name threads through every call below instead of
+    # a module-level literal that would silently miss a redirected bucket.
+    bucket, _base_prefix = resolve_results_location()
+
     client = _s3()
-    rows = iter_source_keys(client, deduction_prefix=deduction_prefix)
+    rows = iter_source_keys(client, bucket=bucket, deduction_prefix=deduction_prefix)
     per_model: Dict[Tuple[str, str], Dict[str, int]] = collections.defaultdict(
         lambda: {"objects": 0, "bytes": 0}
     )
@@ -175,7 +211,7 @@ def main() -> int:
     total_bytes = sum(r[3] for r in rows)
     logging.info(
         f"{total_objects} object(s), {total_bytes/1e9:.2f} GB across "
-        f"{len({m for _l, m in per_model})} model(s), 2 legs -> s3://{BUCKET}/{args.dest}/"
+        f"{len({m for _l, m in per_model})} model(s), 2 legs -> s3://{bucket}/{args.dest}/"
     )
     for (leg, model), agg in sorted(per_model.items()):
         logging.info(f"  {leg:<10} {model:<30} {agg['objects']:>6} obj  {agg['bytes']/1e6:>9.1f} MB")
@@ -194,7 +230,7 @@ def main() -> int:
         leg, model, key, size = item
         prefix = "induction/" if leg == "induction" else deduction_prefix
         tail = key[len(prefix):].split("/", 1)[1]
-        return copy_one(client, key, f"{args.dest}/{leg}/{model}/{tail}", size)
+        return copy_one(client, bucket, key, f"{args.dest}/{leg}/{model}/{tail}", size)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         for result in pool.map(_one, rows):
@@ -203,46 +239,46 @@ def main() -> int:
             if done % 5000 == 0:
                 logging.info(f"  {done}/{total_objects} ... ({dict(counts)})")
 
+    # Track the provenance keys we actually WROTE, not `PROVENANCE_DOCS` itself:
+    # the copy loop below already skips a doc that doesn't exist on disk, and
+    # the manifest must agree with what was actually copied -- so a missing
+    # doc is visible in MANIFEST.json rather than silently claimed as present.
+    provenance_keys: List[str] = []
     for doc in PROVENANCE_DOCS:
         path = REPO_ROOT / doc
         if path.exists():
+            dest_key = f"{args.dest}/provenance/{path.name}"
             client.put_object(
-                Bucket=BUCKET, Key=f"{args.dest}/provenance/{path.name}",
+                Bucket=bucket, Key=dest_key,
                 Body=path.read_bytes(),
             )
             counts["provenance"] += 1
+            provenance_keys.append(dest_key)
 
+    # NOTE: no `notes` field. Every other field here is computed from the
+    # walk this run actually did; the previous `notes` list instead asserted
+    # one specific dataset's measured multi-attempt-cell and
+    # verification-failure counts verbatim for any `--dest`/`--spool-prefix`,
+    # which is wrong for any snapshot other than the one they were measured
+    # on. The reading rules -- both the parts that are invariant rules and the
+    # parts that are that dataset's measured findings -- now live in a dated,
+    # version-controlled document (`notebooks/deduction/analysis/
+    # SNAPSHOT_NOTES.md`) that is copied next to the data via
+    # `PROVENANCE_DOCS`/`provenance_keys` above, instead of being re-emitted
+    # as literals here.
     manifest = {
         "snapshot_prefix": args.dest,
-        "source_bucket": BUCKET,
+        "source_bucket": bucket,
         "total_objects": total_objects,
         "total_bytes": total_bytes,
         "copied": counts["copied"],
         "skipped_already_present": counts["skipped"],
         "provenance_docs": counts["provenance"],
         "per_model": {f"{leg}/{model}": agg for (leg, model), agg in sorted(per_model.items())},
-        "notes": [
-            "Snapshot of an append-only experiment log; sources unmodified.",
-            "deduction/<model>/verified_rows.jsonl is the ANALYSIS INPUT; "
-            "all_rows.jsonl is pre-verification candidates.",
-            "Take the EARLIEST SURVIVING (non-exception) row per cell: 74 cells "
-            "across 3 lanes hold more than one surviving attempt, and last-wins "
-            "inflates ministral-3-3b by 5.9 points.",
-            "'exception' verdicts mean the attempt never reached the model "
-            "(infrastructure), not a model failure -- exclude, never score 0.",
-            "'replay_failed' means VERIFICATION could not be set up -- LeanDojo "
-            "could not open the theorem, or the ground-truth prefix would not "
-            "replay. It is the SAME 232 cells in every lane (151 DojoInit + 81 "
-            "prefix), so no model was ever tested on them. Exclude, never score "
-            "0: doing so deflates every marginal rate by up to 24.6%. The "
-            "measurable denominator is 944 - 232 = 712 cells per lane.",
-            "'incomplete' IS model-dependent (68/30/50 across three lanes) and "
-            "stays in the denominator as a genuine failure.",
-            "*_SUPERSEDED-*/*_STALE-*/*_BROKEN-* are the repair audit trail, not current data.",
-        ],
+        "provenance_keys": provenance_keys,
     }
     client.put_object(
-        Bucket=BUCKET, Key=f"{args.dest}/MANIFEST.json",
+        Bucket=bucket, Key=f"{args.dest}/MANIFEST.json",
         Body=json.dumps(manifest, indent=2).encode(),
     )
     logging.info(f"done: {dict(counts)}; MANIFEST.json written to {args.dest}/")
