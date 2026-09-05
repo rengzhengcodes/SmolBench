@@ -30,11 +30,11 @@ non-fleet callers (e.g. a lone ``notebooks/induction/run_study.py`` launch),
 where "closest region first" is the right hunt order. That spelling is out
 of scope for this file; do not fold it in here.
 
-NOTE (rollout): as of this change, ``fleet_status.py`` reads
-``SCALING_TAG_PREFIX``/``STATUS_REGIONS`` from here. ``run_fleet.py``'s own
-switch-over (its ``DEFAULT_REGIONS`` constant and ``Lane.experiment_tag``) is
-a separate, concurrent change and may not have landed yet -- see that file's
-history before assuming the two are already reading the identical object.
+Every fleet script now reads these from here: ``fleet_status.py``
+(``SCALING_TAG_PREFIX``/``STATUS_REGIONS``), ``run_fleet.py`` (its
+``DEFAULT_REGIONS`` constant, ``TIER_REGIONS`` and ``Lane.experiment_tag``),
+``run_shards.py`` (via its own ``_load_fleet_config``) and
+``fleet_teardown.py`` (transitively, through ``fleet_status``).
 """
 
 from __future__ import annotations

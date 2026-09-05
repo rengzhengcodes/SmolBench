@@ -33,7 +33,7 @@ fleet, status, shards, teardown = (
     _load(s) for s in ("run_fleet", "fleet_status", "run_shards", "fleet_teardown"))
 
 TIERS = {  # tier -> instance types, then that tier's lane keys
-    "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge nemotron-3-nano-4b gemma-4-e2b ministral-3-3b",
+    "A": "g6e.4xlarge,g6e.8xlarge nemotron-3-nano-4b gemma-4-e2b ministral-3-3b",
     "B": "g6e.12xlarge,g6e.24xlarge qwen3.5-27b nemotron-3-nano-30b-a3b gemma-4-12b gemma-4-31b"
          " glm-4.7-flash ministral-3-8b ministral-3-14b exaone-4.0-32b exaone-4.5-33b",
     "C": "p5.48xlarge,p5e.48xlarge qwen3.5-122b-a10b qwen3.5-397b-a17b"
@@ -57,12 +57,17 @@ def test_lane_env_and_commands():
     env = fleet.lane_env(fleet.LANES["gemma-4-e2b"], "induction",
                          base_env={**_CREDS, "IRRELEVANT": "dropped"})
     assert fleet.TIER_REGIONS["D"] == "us-east-1,us-east-2,us-west-2"
+    # EXACT equality, so a key added to lane_env has to be accounted for here.
+    # Note what is NOT present: EC2_VLLM_IMAGE, which lane_env no longer sets
+    # for a lane with no LANE_IMAGE_OVERRIDES entry (14-12) -- the lane's own
+    # ec2.py resolves it, so a digest bump there cannot be overridden by a
+    # stale copy in run_fleet.
     assert env == {
         **_CREDS, "INFERENCE_PROVIDER": "ec2", "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
         "INDUCTION_STATE_FILE": ".ec2_state_scaling_gemma-4-e2b.json",
         "INDUCTION_MODELS": "gemma-4-e2b", "EC2_REGIONS": "us-east-1,us-east-2,us-west-2",
-        "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
-        "EC2_VLLM_IMAGE": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
+        "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge",
+        "EC2_REQUIRE_GPU": "L40S:1", "EC2_MAX_PARALLEL_REQUESTS": "1",
         "EC2_MAX_LIFETIME_MIN": "2160", "EC2_REQUEST_TIMEOUT_SECONDS": "3600"}
     ded = fleet.lane_env(fleet.LANES["glm-4.7"], "deduction", base_env={})
     assert ded["LEAN_MODEL"] == "glm-4.7"
@@ -253,7 +258,86 @@ def test_shard_state_files_stay_out_of_the_fleet_teardown_glob():
 def test_regions_and_tag_prefix_are_declared_once():
     """14-15: fleet_status/run_shards/run_fleet read one _config, not three literals."""
     config = status._config
-    assert config is shards._config          # one module object, not three copies
+    assert config is shards._config is fleet._config   # one object, not three copies
     assert status.SCALING_TAG_PREFIX == config.SCALING_TAG_PREFIX == "scaling-"
     assert status.STATUS_REGIONS == config.REGION_TUPLE
     assert config.REGION_TUPLE == tuple(config.DEFAULT_REGIONS.split(","))
+
+
+# ---------------------------------------------------------------------------
+# 14-06 / 14-10 / 14-12: the per-lane environment is what makes a lane reproducible
+# ---------------------------------------------------------------------------
+def test_a_tier_hunt_list_cannot_change_derived_tp_mid_lane():
+    """14-06: the pin is a DETERMINISM specifier, so assert the mechanism.
+
+    tier A used to hunt g6e.4xlarge,g6e.8xlarge,g6e.12xlarge -- 1, 1 and 4
+    GPUs -- and ec2.derive_tp is gcd(attention heads, landed GPU count), so a
+    capacity reclaim onto the fallback changed a lane's tp from 1 to 4 partway
+    through, making rows before and after incomparable.
+    """
+    from smolbench.evals.providers import ec2
+
+    assert fleet.TIER_REQUIRE_GPU == {
+        "A": "L40S:1", "B": "L40S:4", "C": ":8", "D": "B200:8"}
+    for tier, types in fleet.TIER_INSTANCE_TYPES.items():
+        hunt = types.split(",")
+        # One GPU count per tier is what the pin encodes...
+        assert len({ec2._INSTANCE_GPU_COUNTS[t] for t in hunt}) == 1, tier
+        # ...and the property that buys: every lane in the tier derives the
+        # SAME tp on every type it could land on.
+        for key, lane in fleet.LANES.items():
+            if lane.tier != tier:
+                continue
+            tps = {ec2.derive_tp(key, t, ec2.EC2_DEPLOY_SPECS[key]) for t in hunt}
+            assert len(tps) == 1, (key, tier, tps)
+    # Tier C's pin is count-only: p5 (H100) and p5e (H200) are different
+    # silicon the study accepts at the same GPU count, so the name substring is
+    # empty and only the count is enforced.
+    assert fleet.TIER_REQUIRE_GPU["C"].startswith(":")
+    for lane in fleet.LANES.values():
+        env = fleet.lane_env(lane, "induction", base_env={})
+        assert env["EC2_REQUIRE_GPU"] == fleet.TIER_REQUIRE_GPU[lane.tier]
+
+
+def test_every_lane_override_key_is_a_roster_key_and_reaches_lane_env():
+    """14-10: both override tables are .get() lookups no test covered.
+
+    The reviewer typo'd all five keys and the suite still passed, so a lane
+    silently losing its image pin or its timeout was invisible.
+    """
+    for table in (fleet.LANE_IMAGE_OVERRIDES, fleet.LANE_REQUEST_TIMEOUT_OVERRIDES):
+        assert table, "an empty override table would make this test vacuous"
+        assert set(table) <= set(fleet.LANES), sorted(set(table) - set(fleet.LANES))
+    for key, image in fleet.LANE_IMAGE_OVERRIDES.items():
+        assert fleet.lane_env(fleet.LANES[key], "induction", base_env={})[
+            "EC2_VLLM_IMAGE"] == image
+    for key, timeout in fleet.LANE_REQUEST_TIMEOUT_OVERRIDES.items():
+        assert fleet.lane_env(fleet.LANES[key], "induction", base_env={})[
+            "EC2_REQUEST_TIMEOUT_SECONDS"] == timeout
+    # Every other lane takes the fleet default, recomputed for one request in
+    # flight: the two 10800s entries are gone (see LANE_REQUEST_TIMEOUT_OVERRIDES).
+    assert set(fleet.LANE_REQUEST_TIMEOUT_OVERRIDES) == {"deepseek-v4-pro"}
+    others = {fleet.lane_env(lane, "induction", base_env={})["EC2_REQUEST_TIMEOUT_SECONDS"]
+              for key, lane in fleet.LANES.items()
+              if key not in fleet.LANE_REQUEST_TIMEOUT_OVERRIDES}
+    assert others == {fleet.REQUEST_TIMEOUT_SECONDS} == {"3600"}
+    # ...and the client fan-out that invalidated the old arithmetic is pinned.
+    assert all(fleet.lane_env(lane, "induction", base_env={})["EC2_MAX_PARALLEL_REQUESTS"] == "1"
+               for lane in fleet.LANES.values())
+
+
+def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence():
+    """14-12: FLEET_IMAGE was a byte-identical COPY of ec2's default digest."""
+    from smolbench.evals.providers import ec2
+
+    assert fleet.FLEET_IMAGE is ec2.EC2_VLLM_IMAGE
+    plain, pinned = fleet.LANES["gemma-4-e2b"], fleet.LANES["deepseek-v4-pro"]
+    # lowest: no key at all -> the lane's own ec2.py resolves the image.
+    assert "EC2_VLLM_IMAGE" not in fleet.lane_env(plain, "induction", base_env={})
+    # middle: an operator export is carried through PASSTHROUGH_ENV...
+    assert "EC2_VLLM_IMAGE" in fleet.PASSTHROUGH_ENV
+    assert fleet.lane_env(plain, "induction", base_env={"EC2_VLLM_IMAGE": "op/img"})[
+        "EC2_VLLM_IMAGE"] == "op/img"
+    # highest: ...but a lane's own pin still wins over it.
+    assert fleet.lane_env(pinned, "induction", base_env={"EC2_VLLM_IMAGE": "op/img"})[
+        "EC2_VLLM_IMAGE"] == fleet.LANE_IMAGE_OVERRIDES["deepseek-v4-pro"]

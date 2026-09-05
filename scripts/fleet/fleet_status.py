@@ -40,12 +40,11 @@ def _load_fleet_config():
 _config = _load_fleet_config()
 
 #: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``). Sourced from `_config`, which is
-#: meant to be the ONE place this prefix is declared for every fleet script
-#: that needs it, including `run_fleet.py` (that file's own switch-over is a
-#: separate, concurrent change -- see `_config`'s "NOTE (rollout)"). Reading
-#: from the same file, rather than each module spelling its own literal, is
-#: what makes the two unable to drift apart, once both are wired up.
+#: (see ``run_fleet.Lane.experiment_tag``). Sourced from `_config`, the ONE
+#: place this prefix is declared for every fleet script that needs it,
+#: including `run_fleet.py`. Reading from the same file, rather than each
+#: module spelling its own literal, is what makes the two unable to drift
+#: apart.
 SCALING_TAG_PREFIX = _config.SCALING_TAG_PREFIX
 #: Every region a lane might have provisioned in. Sourced from `_config` --
 #: see the note on `SCALING_TAG_PREFIX` just above; tier D's override still
