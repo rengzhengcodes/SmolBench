@@ -137,8 +137,8 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     The induction leg's sibling, ``notebooks/induction/analysis
     /paired_analysis.holm``, still carries a byte-identical hand-rolled copy
     of the algorithm this function used to implement directly; migrating it
-    to `multipletests` too is out of scope for this fix (13-26 covers only
-    the deduction leg's analysis scripts).
+    to `multipletests` too is out of scope for this change, which covers only
+    the deduction leg's analysis scripts.
     """
     reject, _pvals_corrected, _alpha_sidak, _alpha_bonf = multipletests(
         pvals, alpha=alpha, method="holm"

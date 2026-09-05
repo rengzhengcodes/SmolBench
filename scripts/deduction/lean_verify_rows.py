@@ -274,15 +274,15 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
         :data:`_NEVER_MEASURED_VERDICTS` (:func:`_never_measured`). Non-cell rows
         are ignored and can never make a group done. ``k`` is ``int()``-coerced.
 
-        (b) is the 13-06 fix. The OLD rule was (a) alone: "no cell still reads
-        unverified", which a group of ALL ``"replay_failed"``/``"exception"`` cells
-        also satisfies -- so a group whose REPL session never even opened read as
-        "done" forever after, and `error_bars.build_pool`'s ``count_as_failure``
-        then permanently scored those never-tested cells 0. Phase 1's own resume
-        (`runner._existing_keys`) takes the opposite view of this exact verdict
-        class -- it deliberately RE-RUNS an exception-only cell -- so this was also
-        an inconsistency between the two phases' definitions of "done", not just an
-        internal bug.
+        (b) is what stops a never-measured group from counting as done. The OLD rule was
+        (a) alone: "no cell still reads unverified", which a group of ALL
+        ``"replay_failed"``/``"exception"`` cells also satisfies -- so a group whose
+        REPL session never even opened read as "done" forever after, and
+        `error_bars.build_pool`'s ``count_as_failure`` then permanently scored those
+        never-tested cells 0. Phase 1's own resume (`runner._existing_keys`) takes the
+        opposite view of this exact verdict class -- it deliberately RE-RUNS an
+        exception-only cell -- so this was also an inconsistency between the two phases'
+        definitions of "done", not just an internal bug.
 
         A group with at least one GENUINELY GRADED cell -- ``"success"``,
         ``"lean_error"``, ``"incomplete"``, ``"given_up"``, or ``"no_answer"``
@@ -830,10 +830,10 @@ def verify_run(
     int
         ``0`` on success, including "nothing to do", partial passes (``--limit``,
         ``--theorem``, ``--dry-run``), AND a full pass whose only unresolved groups
-        ended entirely on :data:`_NEVER_MEASURED_VERDICTS` verdicts (13-06 / 13-07:
-        deliberately NOT folded into the ``2`` below -- see the gate comment in the
-        body for why a corpus-stable population must not flip the return code --
-        that case instead logs its own diagnostic, distinct from the sentinel gate);
+        ended entirely on :data:`_NEVER_MEASURED_VERDICTS` verdicts (deliberately NOT
+        folded into the ``2`` below -- see the gate comment in the body for why a
+        corpus-stable population must not flip the return code -- that case instead
+        logs its own diagnostic, distinct from the sentinel gate);
         ``1`` if the run has no ``all_rows.jsonl`` (logged, skipped); ``2`` if a
         FULL pass left a cell on the ``"unverified"`` sentinel after its final
         upload (see the gate comment in the body; the output is uploaded
@@ -1061,7 +1061,7 @@ def verify_run(
             )
             return 2
 
-        # Never-measured diagnostic -- 13-06/13-07. This is DELIBERATELY separate
+        # Never-measured diagnostic. This is DELIBERATELY separate
         # from the sentinel gate above and DELIBERATELY does not change the return
         # code. The review's fix_spec asked for these groups to be folded into
         # `n_sentinel` ("count such groups as unverified"); that is wrong against
@@ -1196,9 +1196,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     int
         ``0`` when every matching run was processed (even with nothing to verify);
         otherwise the COUNT of runs that either had :func:`verify_run` return
-        non-zero OR raised an exception (13-07: `_verify_every_run` isolates each
-        run, so one lane's exception is logged and counted, never left to abort
-        the runs after it).
+        non-zero OR raised an exception (`_verify_every_run` isolates each run, so
+        one lane's exception is logged and counted, never left to abort the runs
+        after it).
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -1227,8 +1227,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     def _verify_every_run() -> int:
         """Run :func:`verify_run` over every matched run, isolating one run's failure.
 
-        13-07: this loop used to let a `verify_run` exception propagate straight out
-        of `main`, so a pass over (say) 21 lanes that died on lane 3 left the other
+        This loop used to let a `verify_run` exception propagate straight out of
+        `main`, so a pass over (say) 21 lanes that died on lane 3 left the other
         18 completely unchecked and reported a bare traceback instead of a per-run
         status -- worse than useless for an unattended overnight pass, since the
         operator cannot even tell which lanes were actually verified. Each run now

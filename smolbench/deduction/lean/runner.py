@@ -26,7 +26,7 @@ Output layout (`run_dir`):
                          truncates (and logs) a torn or unparseable final
                          line before reopening for append, since appending
                          onto it would weld it into a corrupt MIDDLE line
-                         (`_repair_torn_tail`, fix 13-07)
+                         (`_repair_torn_tail`)
     analysis.txt         `write_run_analysis` output, regenerated at end of sweep
     theorems/<theorem_slug>/
         meta.json        full_name, file_path, k, ground_truth, premises
@@ -92,8 +92,8 @@ from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 
 #: Default `dojo_timeout` (seconds): `run_cell`'s parameter default, `sweep`'s
 #: `config.get("dojo_timeout", ...)` fallback, and `cli.py`'s `run-cell
-#: --timeout` default all resolve to this one constant (fix 13-17). Before
-#: this constant existed, the three disagreed -- 600 in `run_cell` and
+#: --timeout` default all resolve to this one constant. Before this constant
+#: existed, the three disagreed -- 600 in `run_cell` and
 #: `cli --timeout`, 300 in `sweep` and in
 #: `notebooks/deduction/run_study.py`'s sweep config.
 #:
@@ -534,7 +534,7 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
 
 #: Cap on how many unreachable `LEAN_CELL_WHITELIST` keys `sweep` logs
 #: individually at ERROR level when it reconciles the whitelist at the end of
-#: a run (fix 13-12). Bounds only the LOG stream -- the full list is always
+#: a run. Bounds only the LOG stream -- the full list is always
 #: recorded in `manifest.json["whitelist_missed"]` regardless of this cap, so
 #: nothing is lost, only kept off an operator's screen for a large miss.
 WHITELIST_MISS_LOG_CAP: int = 50
@@ -543,7 +543,7 @@ WHITELIST_MISS_LOG_CAP: int = 50
 def _repair_torn_tail(jsonl_path: Path) -> int:
     """Truncate a torn or unparseable FINAL line off `jsonl_path`, in place.
 
-    Fix 13-07 (runner half). `sweep` opens `all_rows.jsonl` in APPEND mode on
+    `sweep` opens `all_rows.jsonl` in APPEND mode on
     resume (see the ``with all_rows_path.open("a")`` below), and a box
     SIGKILLed mid-write leaves a half-written final line with no trailing
     ``"\\n"``. `_existing_keys` already treats such a line as if it were never
@@ -1409,10 +1409,10 @@ def _run_cells_at_step_concurrent(
     cell_whitelist: frozenset[tuple] | None = None,
 ) -> tuple[int, int, int]:
     """Concurrent variant: fire all (rung, model, replicate) gen calls in parallel,
-    then verify each on the shared Dojo session as the API responses arrive.
+    then verify each on the shared Lean REPL session as the API responses arrive.
 
-    Verify still serializes on the single Lean server, since Dojo is
-    single-threaded; gen -- the dominant cost at ~1.3-3s/cell versus
+    Verify still serializes on the single Lean server, since the REPL session
+    is single-threaded; gen -- the dominant cost at ~1.3-3s/cell versus
     ~0.4s/verify -- fans out. `cell_whitelist` is as in `_run_cells_at_step`.
     """
     n_written = n_ok = n_skipped = 0
@@ -1449,9 +1449,9 @@ def _run_cells_at_step_concurrent(
     if not pending:
         return n_written, n_ok, n_skipped
 
-    # Submit the longest-running cells first: the Dojo session stays open
-    # until the last gen completes, so front-loading slow reasoning models
-    # cuts per-theorem wall-clock.
+    # Submit the longest-running cells first: the Lean REPL session stays
+    # open until the last gen completes, so front-loading slow reasoning
+    # models cuts per-theorem wall-clock.
     # Sort key (asc): (rung_order, is_non_reasoning, model_order, replicate_idx)
     rung_order = {r: i for i, r in enumerate(rungs)}
     model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
@@ -1501,7 +1501,7 @@ def _run_cells_at_step_concurrent(
                 )
                 future_to_pending[fut] = p
 
-            # Verify each gen as it arrives (serial through shared Dojo).
+            # Verify each gen as it arrives (serial through the shared REPL session).
             for fut in as_completed(future_to_pending):
                 p = future_to_pending[fut]
                 gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
@@ -1725,9 +1725,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     """Run a sweep described by `config`; write per-theorem dirs under `run_dir`.
 
     Loops theorem, then k, then rung, then model, then replicate. Per
-    (theorem, k) it opens ONE Dojo session, shared by every rung/model/replicate
-    branching from it; per theorem it opens ONE further sanity-gate session that
-    re-runs the full ground-truth proof.
+    (theorem, k) it opens ONE Lean REPL session, shared by every
+    rung/model/replicate branching from it; per theorem it opens ONE further
+    sanity-gate session that re-runs the full ground-truth proof.
 
     Seed threading: replicate `i` decodes at ``config["seed"] + i``, so the
     replicate index -- not theorem/k/rung/model -- is the replication axis, and
@@ -1747,7 +1747,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         counts as recorded.
     verifier : optional
         `None` lazily resolves `_default_verifier()`; tests pass a fake to
-        exercise the whole dispatch/schema/resume path without `lean_dojo`.
+        exercise the whole dispatch/schema/resume path without `lean_interact`.
 
     Returns
     -------
@@ -1833,7 +1833,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     # Fail fast on unknown provider names. Pure module resolution, no
     # network call, so a typo aborts with provider_module's actionable
     # ValueError instead of after the first theorem has burned a real
-    # sanity replay inside a Dojo session.
+    # sanity replay inside a Lean REPL session.
     for mc in models_cfg:
         _provider_for(mc)
     n_replicates = int(config.get("n_replicates", 1))
@@ -1844,7 +1844,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     max_concurrency = int(config.get("max_concurrency", 12))
     skip_trivial = bool(config.get("skip_trivial", True))
     theorem_workers = int(config.get("theorem_workers", 1))
-    # Fix 13-18: default 0, matching `theorems.seed`'s own default (see
+    # Default 0, matching `theorems.seed`'s own default (see
     # `_select_theorems`) and `notebooks/deduction/run_study.py`'s driver
     # config -- NOT `run_cell`'s separate `seed` PARAMETER, a different entry
     # point with its own callers, which keeps its documented default of 1776
@@ -1856,7 +1856,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     request_timeout = int(config.get("request_timeout", 1800))
     max_retries = int(config.get("max_retries", 4))
 
-    # Fix 13-09 (runner half): whether the traced mathlib4 checkout that lets
+    # Whether the traced mathlib4 checkout that lets
     # `premises.body_with_proof` render full premise source -- and therefore
     # lets `is_trivial_rung` correctly judge a rung trivial -- is present on
     # THIS box, right now. Lazy import: `premises` is otherwise reached in
@@ -1968,8 +1968,8 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
         flush=True,
     )
 
-    # Fix 13-07: repair a torn final line BEFORE opening for append, not
-    # after -- see `_repair_torn_tail`'s docstring for why a append onto an
+    # Repair a torn final line BEFORE opening for append, not
+    # after -- see `_repair_torn_tail`'s docstring for why an append onto an
     # unrepaired torn tail welds two records into one corrupt MIDDLE line.
     # Unconditional (not gated on `resume`): `notebooks/deduction/run_study.py`
     # renames the old file aside before a `resume=False` run, which normally
@@ -1987,7 +1987,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
             tdir = _theorem_dir(run_dir, theorem)
             tdir.mkdir(parents=True, exist_ok=True)
 
-            # ---- sanity gate per theorem (separate Dojo session) ----
+            # ---- sanity gate per theorem (separate Lean REPL session) ----
             prev_sanity = sanity_done.get(theorem.full_name)
             if prev_sanity is None:
                 t0 = time.monotonic()
@@ -2084,7 +2084,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
                         )
                 except Exception as exc:  # noqa: BLE001
                     # Design: log marker renamed from the old `DOJO-OPEN-FAIL`
-                    # (fix 13-22) -- checked `scripts/`, `.claude/skills/`,
+                    # -- checked `scripts/`, `.claude/skills/`,
                     # `notebooks/`, and every `README*.md` for a dependency on
                     # the old spelling before renaming; none matched anything
                     # but this line itself, unlike `dojo_timeout` (kept:
@@ -2131,7 +2131,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) ->
     manifest["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     manifest["counts"] = {"written": n_written, "skipped": n_skipped, "success": n_ok}
 
-    # Fix 13-12: reconcile LEAN_CELL_WHITELIST against what `all_rows.jsonl`
+    # Reconcile LEAN_CELL_WHITELIST against what `all_rows.jsonl`
     # now accounts for. `_existing_keys` is recomputed HERE -- after the
     # `with all_rows_path.open("a") as all_rows:` block above has exited and
     # the file is closed -- rather than reusing `done_keys` (a snapshot taken

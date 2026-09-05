@@ -444,7 +444,7 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
             parts.append("## Premise signatures\n" + "\n\n".join(sigs))
 
     if level >= 2:
-        # 13-09: `body_with_proof` silently falls back to the corpus's stored
+        # `body_with_proof` silently falls back to the corpus's stored
         # `Premise.code` (a signature, usually with no proof body) whenever
         # `premises.slice_full_decl` can't find a traced-repo source slice --
         # true on any box without `premises._traced_root()` (CI, an analysis

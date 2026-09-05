@@ -293,7 +293,7 @@ _LEAN_NOISE = frozenset({
     # set test below -- but they never do: `referenced_premises` checks
     # ``len(tok) <= 1`` BEFORE the `_LEAN_NOISE` membership test, so every
     # single-character identifier (`a`, `b`, ..., `z`) is already filtered out
-    # upstream of this set. 13-30 removed 22 such single-character entries
+    # upstream of this set. 22 such single-character entries were removed
     # (plus `"trivial!"`, unmatchable by `_IDENT_RE` since `!` is outside its
     # character class) as dead: 23 lines of documentation asserting a filter
     # that never ran. Do NOT restore single-character entries here -- add the
