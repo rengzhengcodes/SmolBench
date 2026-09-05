@@ -152,6 +152,102 @@ def test_synth_iid_path_draws_exactly_what_it_used_to(nb, posterior_ns):
     assert np.random.default_rng(4).random() != reference.random()
 
 
+def test_clustered_synth_reaches_the_target_design_effect(nb, posterior_ns):
+    """The clustered arm must actually be clustered, measured by the live metric.
+
+    ``paired_analysis.design_effect`` is the same statistic section 2 reports
+    on the real data. A clustered case whose deff is ~1 would be an i.i.d. case
+    with a different name, and the diagnostic below would prove nothing.
+    """
+    import numpy as np
+
+    namespace = dict(posterior_ns)
+    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    synth, paired = namespace["synth"], posterior_ns["paired"]
+    cluster_sd = namespace["CLUSTER_SD"]
+
+    def median_deff(sd):
+        gen = np.random.default_rng(3)
+        deffs = []
+        for _ in range(40):
+            a, seed_idx = synth(0.5, 40, gen, cluster_sd=sd)
+            b, _ = synth(0.5, 40, gen, cluster_sd=sd)
+            value = paired.design_effect(a, b, seed_idx)
+            if value is not None:
+                deffs.append(value)
+        return float(np.median(deffs))
+
+    assert median_deff(0.0) == pytest.approx(1.0, abs=0.2)
+    assert 2.5 <= median_deff(cluster_sd) <= 4.0, median_deff(cluster_sd)
+
+
+def test_clustering_inflates_the_decided_rate_on_a_true_null(nb, posterior_ns):
+    """The diagnostic must be able to come out the other way, and does not.
+
+    This is the PR #12 ``multiplicity_sim`` finding recurring: with an
+    arm-specific replicate effect the unpaired CMH denominator is too small, so
+    a TRUE NULL is 'DECIDED' far more often than alpha allows. A diagnostic
+    whose two columns agreed would be evidence of nothing.
+    """
+    namespace = dict(posterior_ns)
+    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    exec(compile(_cell_source(nb, "def verdict_distribution"), str(STATS_NB), "exec"),
+         namespace)
+    verdict_distribution = namespace["verdict_distribution"]
+
+    n_sim = 60
+    iid = verdict_distribution(cluster_sd=0.0, n_sim=n_sim)
+    clustered = verdict_distribution(cluster_sd=namespace["CLUSTER_SD"], n_sim=n_sim)
+    assert sum(iid["verdicts"].values()) == n_sim, iid
+    assert sum(clustered["verdicts"].values()) == n_sim, clustered
+
+    # The diagnostic must MEASURE the clustering it reports, not assert it.
+    assert iid["median_deff"] == pytest.approx(1.0, abs=0.2), iid
+    assert 2.5 <= clustered["median_deff"] <= 4.0, clustered
+
+    # i.i.d. false rejections stay near alpha = 0.05; clustered blow past it.
+    iid_decided = iid["verdicts"]["DECIDED"]
+    assert iid_decided <= 0.10 * n_sim, iid
+    assert clustered["verdicts"]["DECIDED"] >= 2 * max(iid_decided, 1), (iid, clustered)
+    assert clustered["verdicts"]["EQUIVALENT"] < iid["verdicts"]["EQUIVALENT"], \
+        (iid, clustered)
+
+
+def test_self_test_asserts_no_equivalence_under_clustering(nb):
+    """The clustered case is reported, never asserted.
+
+    Asserting EQUIVALENT on clustered data is exactly the defect: the reviewer
+    measured that assertion failing 38 times in 60 at deff 3.19.
+    """
+    import ast
+
+    source = _cell_source(nb, "self-test PASSED")
+    tree = ast.parse(source)
+    offenders = [
+        ast.get_source_segment(source, node) for node in ast.walk(tree)
+        if isinstance(node, ast.Assert)
+        and "cluster" in (ast.get_source_segment(source, node) or "").lower()
+    ]
+    assert not offenders, offenders
+
+
+def test_section_7_markdown_names_the_recurrence(nb):
+    """The reviewer drew the parallel to PR #12; the section has to acknowledge it.
+
+    It must also name ``design_effect`` -- the live metric section 2 already
+    reports on the real data, and the one this diagnostic is calibrated against
+    -- so a reader can check the clustered case against the study's own numbers
+    instead of taking the notebook's word for it.
+    """
+    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
+               for cell in nb["cells"]]
+    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
+    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
+    joined = "\n".join(sources[start:end])
+    for token in ("design_effect", "multiplicity_sim", "PR #12"):
+        assert token in joined, f"section 7 markdown never mentions {token!r}"
+
+
 def test_resample_sweep_reuses_error_bars_grid_and_tolerance(nb):
     """The sweep must not fork ``B_GRID``/``DRIFT_TOL`` into local literals.
 
