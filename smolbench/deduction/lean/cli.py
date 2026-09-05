@@ -337,6 +337,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0,
             "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
@@ -365,6 +366,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     n_sanity_fail += 1
                 else:
                     # "skipped": a generation-only sweep deferred the replay.
+                    # "exception": an infrastructure failure (unset
+                    # SMOLBENCH_MATHLIB_ROOT, REPL start race, ...), not a
+                    # positive finding that the ground truth is broken --
+                    # SANITY_FAILURE_VERDICTS deliberately excludes it (see
+                    # `runner.py`'s Design comment on that constant), so it
+                    # counts as deferred/unresolved here too, not a fail.
                     n_sanity_skipped += 1
                 continue
             n_rows += 1
@@ -445,7 +452,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print()
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'unvf':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
+        f"{'noans':>5} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     print(header)
@@ -460,7 +468,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['unverified']:>5} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['no_answer']:>5} {c['unverified']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 

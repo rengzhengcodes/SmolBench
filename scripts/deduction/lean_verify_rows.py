@@ -216,6 +216,15 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
         Every ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows ALL carry a
         non-``"unverified"`` verdict; non-cell rows are ignored and can never make
         a group done. ``k`` is ``int()``-coerced.
+
+        This includes rows carrying ``verdict == "no_answer"``
+        (`smolbench.deduction.lean.verify`'s verdict for a candidate tail that
+        split to zero tactics). That is deliberate: the group WAS measured --
+        `try_tail`/`verify_proof_tail` ran and reported that the model
+        answered with nothing extractable -- so it counts as done, same as any
+        other real verdict. Do not special-case it into "not yet graded, retry
+        it": there is nothing left to retry against Lean for an empty
+        candidate, and treating it as pending would loop this group forever.
     """
     groups: dict[tuple[str, int], list[dict]] = {}
     for row in verified_rows:

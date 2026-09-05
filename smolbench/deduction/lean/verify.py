@@ -50,38 +50,65 @@ from .corpus import BenchmarkTheorem
 # Verdict taxonomy
 # ---------------------------------------------------------------------------
 #
-# All 6 values below are valid for `ProofResult.verdict`, produced by
+# All 7 values below are valid for `ProofResult.verdict`, produced by
 # `try_tail` / `verify_proof_tail` or constructed directly by
 # `smolbench.deduction.lean.runner`'s exception-handling paths.
 # `ReplayResult.verdict` (`replay_ground_truth`) takes only 5: replaying the
-# FULL ground-truth proof has no prefix/tail split, so it never produces
-# `"replay_failed"`.
+# FULL ground-truth proof has no prefix/tail split, and there is no LLM
+# candidate to be empty, so it never produces `"replay_failed"` NOR
+# `"no_answer"` -- both describe a CANDIDATE tail, and a ground-truth replay
+# has none to judge.
 #
 #   success         -- `proofStatus == "Completed"`: every goal was closed.
-#   lean_error      -- Lean rejected a tactic (an error-severity message, or
+#   lean_error      -- Lean REJECTED a tactic (an error-severity message, or
 #                      a `proofStatus` of `Error`); `error` holds Lean's
-#                      message. Warnings never count.
+#                      message. Warnings never count. A tail that splits to
+#                      no tactics is deliberately NOT this verdict -- Lean
+#                      never saw anything to reject -- see `"no_answer"`
+#                      below.
 #   incomplete      -- every tactic ran without error, but a goal remained
 #                      open when tactics ran out (`proofStatus` never reached
 #                      `Completed` and no `sorry` appeared).
 #   given_up        -- a tactic left a `sorry` behind (`sorries` non-empty, or
 #                      a `proofStatus` such as `Incomplete: contains sorry`,
 #                      e.g. an LLM emitting `sorry`).
+#   no_answer       -- (`ProofResult` only) `tail` split to ZERO tactics: the
+#                      model returned nothing extractable. Most often a
+#                      reasoning model truncated at `max_tokens` inside an
+#                      unclosed `<think>` block, which
+#                      `prompt.extract_tactic_block` deliberately renders as
+#                      `""` rather than as a Lean rejection (see that
+#                      function's docstring). It IS a real, scoreable MISS --
+#                      `power_analysis.grade_verdicts` scores it 0, since it
+#                      is not in `UNMEASURABLE_VERDICTS` -- but it is NOT a
+#                      claim that Lean rejected the candidate, which is why it
+#                      no longer shares `lean_error`'s bucket: overloading
+#                      "Lean said no" onto "there was nothing to say" silently
+#                      mis-attributes a truncated-generation failure to the
+#                      very axis (candidate proof quality) this study
+#                      measures.
 #   exception       -- an unexpected Python exception (network, REPL, or
 #                      parsing) rather than a Lean-reported outcome; `error`
 #                      holds `f"{type(exc).__name__}: {exc}"`. A REPL TIMEOUT
 #                      lands here too, as a `replbackend.ReplError` whose
-#                      message is `timeout:`-shaped -- deliberately NOT a
-#                      seventh `"timeout"` verdict, since `runner.py` owns the
+#                      message is `timeout:`-shaped -- deliberately NOT an
+#                      eighth `"timeout"` verdict, since `runner.py` owns the
 #                      verdict->glyph map and the sanity-failure set and both
-#                      enumerate exactly these six.
+#                      enumerate exactly these seven. The reasoning holds:
+#                      infrastructure state (a wedged or overloaded REPL), not
+#                      a Lean judgement on the candidate -- and distinct from
+#                      `"no_answer"` too, since here the candidate was never
+#                      actually run to a verdict, whereas `"no_answer"` means
+#                      there was nothing to run.
 #   replay_failed   -- (`ProofResult` only) `open_at_step`'s prefix replay
 #                      (tactics `0..k-1`) failed to leave an open goal state
 #                      before the tail was attempted. `verify_proof_tail`
 #                      catches that `RuntimeError` and reports this rather
 #                      than `"exception"`, so a broken *prefix* (ground-truth
 #                      problem) stays distinguishable from a broken *tail*.
-Verdict = Literal["success", "lean_error", "incomplete", "given_up", "exception", "replay_failed"]
+Verdict = Literal[
+    "success", "lean_error", "incomplete", "given_up", "no_answer", "exception", "replay_failed",
+]
 
 
 @dataclass
@@ -96,7 +123,8 @@ class ReplayResult:
     #: The theorem's `full_name`.
     theorem: str
     #: Replay outcome; see the module's verdict taxonomy comment, which lists
-    #: the 5 values this takes (never ``"replay_failed"``).
+    #: the 5 values this takes (never ``"replay_failed"`` nor ``"no_answer"``
+    #: -- both describe a candidate tail, and a ground-truth replay has none).
     verdict: Verdict
     #: Tactics successfully applied before `verdict` was reached. Equals
     #: `tactics_total` for ``"success"``/``"incomplete"``, less for
@@ -199,8 +227,9 @@ class ProofResult:
     tail_tried: str
     #: Lean's error message, prefixed with which tail step failed (see
     #: `try_tail`, ``"lean_error"``); the prefix-replay failure message
-    #: (``"replay_failed"``); or ``f"{type(exc).__name__}: {exc}"``
-    #: (``"exception"``). None for every other verdict.
+    #: (``"replay_failed"``); ``f"{type(exc).__name__}: {exc}"``
+    #: (``"exception"``); or a fixed explanatory string naming the tail as
+    #: empty (``"no_answer"``, see `try_tail`). None for every other verdict.
     error: str | None = None
     #: Pretty-printed final tactic state, only when the tail ends
     #: ``"incomplete"`` with goals still open; None otherwise.
@@ -234,9 +263,11 @@ def try_tail(session, state_at_k, tail: str, theorem_name: str) -> ProofResult:
     -------
     ProofResult
         Verdict ``"success"``, ``"given_up"``, ``"incomplete"``
-        (`final_state_pp` holds the last state's goals), or ``"lean_error"``
-        (also when `tail` splits to no tactics; `error` names which step Lean
-        rejected). Never ``"exception"`` or ``"replay_failed"`` -- wrappers
+        (`final_state_pp` holds the last state's goals), ``"lean_error"``
+        (`error` names which step Lean rejected), or ``"no_answer"`` (`tail`
+        splits to no tactics -- Lean never saw anything to reject, so this is
+        deliberately not `"lean_error"`; see the module's verdict taxonomy
+        comment). Never ``"exception"`` or ``"replay_failed"`` -- wrappers
         produce those.
 
     Raises
@@ -251,7 +282,14 @@ def try_tail(session, state_at_k, tail: str, theorem_name: str) -> ProofResult:
     """
     tactics = _split_tactics(tail)
     if not tactics:
-        return ProofResult(theorem_name, "lean_error", tail, error="empty tail")
+        # Design: NOT "lean_error" -- Lean was never handed a tactic to reject,
+        # so recording a Lean rejection here would misattribute a truncated or
+        # empty generation to the candidate's Lean-checkable quality. See the
+        # module's verdict taxonomy comment for "no_answer".
+        return ProofResult(
+            theorem_name, "no_answer", tail,
+            error="empty tail: the response contained no extractable tactic lines",
+        )
 
     state = state_at_k
     outcome = None
@@ -330,14 +368,21 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
     -------
     ProofResult
         ``"exception"`` without opening a session if `k` is out of range,
-        ``"lean_error"`` if `tail` splits to no tactics, ``"replay_failed"`` if
-        `open_at_step`'s prefix replay raises `RuntimeError`, ``"exception"`` if
-        anything else raises; otherwise `try_tail`'s result.
+        ``"no_answer"`` if `tail` splits to no tactics (checked before a session
+        is opened, same as the out-of-range case, since there is nothing for a
+        session to try), ``"replay_failed"`` if `open_at_step`'s prefix replay
+        raises `RuntimeError`, ``"exception"`` if anything else raises;
+        otherwise `try_tail`'s result.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         return ProofResult(bt.full_name, "exception", tail, error=f"k={k} out of range")
     if not _split_tactics(tail):
-        return ProofResult(bt.full_name, "lean_error", tail, error="empty tail")
+        # Mirrors `try_tail`'s own empty-tail check (see its Design comment):
+        # not "lean_error", since Lean never saw a tactic to reject.
+        return ProofResult(
+            bt.full_name, "no_answer", tail,
+            error="empty tail: the response contained no extractable tactic lines",
+        )
     try:
         with open_at_step(bt, k, timeout=timeout) as (session, state):
             return try_tail(session, state, tail, bt.full_name)

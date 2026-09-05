@@ -548,6 +548,19 @@ def load_joint_cells(
     #    "incomplete" is NOT in this set: its cell sets differ per model
     #    (68 / 30 / 50 across three lanes, 8 shared), so it is real behaviour.
     #
+    #    "no_answer" is ALSO deliberately NOT in this set, though it sounds like
+    #    it should belong next to "exception". The two are not the same claim:
+    #    "no_answer" (smolbench.deduction.lean.verify's verdict for a candidate
+    #    tail that splits to zero tactics) means the request COMPLETED and the
+    #    model answered with nothing extractable -- most often a reasoning model
+    #    truncated at max_tokens inside an unclosed <think> block. That is a
+    #    real failure to answer, not a missing measurement: the model was asked,
+    #    had its turn, and produced nothing usable. Scoring it 0 (via
+    #    grade_verdicts's fallthrough, `1 if verdict == "success" else 0`)
+    #    correctly counts it as a miss on the axis this study measures, exactly
+    #    like "lean_error" or "given_up" -- unlike "exception"/"replay_failed",
+    #    which mean the ATTEMPT to measure the model never completed at all.
+    #
     #    Unmeasurable cells are left ABSENT, so the paired filter below drops
     #    them from every model's block -- what "not measured" means in a paired
     #    design.

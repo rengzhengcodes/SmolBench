@@ -167,3 +167,32 @@ def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
         cmd_analyze(Namespace(path=str(p)))
     assert "SUPERSEDED" in str(excinfo.value)
     assert p.name in str(excinfo.value)
+
+
+def test_analyze_reports_no_answer_in_its_own_column(tmp_path, capsys):
+    """13-01: `analyze`'s table separates `noans` from `lerr`.
+
+    An empty candidate used to be recorded as `lean_error`, so `analyze` showed
+    a lane of truncated reasoning traces as a lane of wrong Lean proofs. Pins
+    the new column by NAME and by value (not by position), and pins header/row
+    width agreement so the `"-" * len(header)` rule cannot drift from the rows
+    it underlines.
+    """
+    rows = [
+        _row(model="model-a", rung="stepk:0", theorem_id="T1", verdict="no_answer",
+             raw_response=""),
+        _row(model="model-a", rung="stepk:0", theorem_id="T2", verdict="lean_error"),
+        _row(model="model-a", rung="stepk:0", theorem_id="T3", verdict="success"),
+    ]
+    rc, out = _run_analyze(tmp_path, rows, capsys)
+    assert rc == 0
+    lines = out.splitlines()
+    hdr = _header_index(lines, "lerr", "noans", "trunc")
+    header = lines[hdr].split()
+    detail = _table_rows(lines, hdr)
+    assert len(detail) == 1, detail
+    row = detail[0].split()
+    assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
+    assert row[header.index("noans")] == "1"
+    assert row[header.index("lerr")] == "1"
+    assert row[2] == "1/3"

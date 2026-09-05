@@ -380,10 +380,25 @@ def test_sweep_skips_trivial_rungs(sweep_ctx):
 @pytest.mark.parametrize("verdict", ["lean_error", "incomplete", "given_up",
                                      "exception", "replay_failed", "skipped"])
 def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(sweep_ctx, verdict):
-    """Failure verdicts gate a theorem out, "skipped" passes through, and the
-    recorded gate is authoritative on resume (no re-replay, no re-generation)."""
+    """Failure verdicts gate a theorem out; "skipped" AND "exception" pass through.
+
+    13-03 moved ``"exception"`` out of `SANITY_FAILURE_VERDICTS`, so this test
+    now pins it in the pass-through group beside ``"skipped"``: a Python
+    exception during the ground-truth replay (an unset SMOLBENCH_MATHLIB_ROOT,
+    a REPL start race) is a statement about the INFRASTRUCTURE, not a positive
+    finding that the recorded ground truth is unreplayable, and gating on it
+    dropped the theorem from every later resume with no escape short of
+    ``--force-rerun`` on the whole lane. It previously sat in the excluded
+    group.
+
+    The recorded gate stays authoritative on resume for the four verdicts that
+    remain, and -- for the two pass-through verdicts -- the resume path still
+    performs NO second replay: the ``len(_rows(run_dir, "sanity")) == 2``
+    assertions below are what pins that, and they matter because a duplicate
+    sanity row would break `merge_lean_shards.py`'s ``--expect-sanity`` count.
+    """
     cfg = _make_config(concurrent=False)
-    excluded = verdict != "skipped"
+    excluded = verdict not in ("skipped", "exception")
     expected = EXPECTED_CELLS // 2 if excluded else EXPECTED_CELLS
     first = FakeVerifier(sanity={"Mini.theoremA": verdict})
     written, run_dir = _sweep(sweep_ctx, cfg, verifier=first)
@@ -623,3 +638,66 @@ def test_require_postcutoff_checks_the_pool_before_sampling(monkeypatch, tmp_pat
     with pytest.raises(ValueError, match="Mini.theoremB"):
         runner._select_theorems({**sharded, "require_postcutoff": True})
     corpus.reset_caches()
+
+
+# ---------------------------------------------------------------------------
+# 13-01 / 13-03: the verdict vocabulary itself
+# ---------------------------------------------------------------------------
+
+
+def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set():
+    """Pin `SANITY_FAILURE_VERDICTS` membership by value, in both directions.
+
+    Two fixes edit this frozenset in opposite directions and must not undo one
+    another: 13-03 REMOVES ``"exception"`` (infrastructure, not a broken ground
+    truth), and 13-01 adds the ``"no_answer"`` verdict, which must NOT be added
+    here -- `replay_ground_truth` has no candidate tail, so `no_answer` is
+    unreachable as a sanity verdict and its presence would be meaningless.
+    An equality assertion, not two membership checks, so any future addition
+    has to come here and argue for itself.
+    """
+    assert runner.SANITY_FAILURE_VERDICTS == frozenset(
+        {"lean_error", "incomplete", "given_up", "replay_failed"}
+    )
+    assert "exception" not in runner.SANITY_FAILURE_VERDICTS
+    assert "no_answer" not in runner.SANITY_FAILURE_VERDICTS
+    assert "skipped" not in runner.SANITY_FAILURE_VERDICTS
+
+
+def test_no_answer_has_its_own_glyph():
+    """13-01: `no_answer` is renderable and does not collide with another verdict.
+
+    `_glyph` falls back to ``"?"`` for an unknown verdict -- which is
+    `given_up`'s glyph -- so an unregistered verdict would render as a
+    DIFFERENT real verdict rather than as something obviously wrong.
+    """
+    assert "no_answer" in runner._VERDICT_GLYPH
+    assert runner._glyph("no_answer") != runner._glyph("__not_a_verdict__")
+    glyphs = list(runner._VERDICT_GLYPH.values())
+    assert len(glyphs) == len(set(glyphs)), f"duplicate glyph: {glyphs}"
+
+
+def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeypatch):
+    """13-01: `noans` is a real column, counted separately from `lerr`.
+
+    Before the fix an empty candidate landed in `lean_error`, so a lane of
+    truncated reasoning traces read as a lane of wrong Lean proofs. Asserts
+    the split by value on a mixed run: one of each, in different columns.
+    """
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    _write_rows(run_dir, [
+        {"kind": "cell", "rung": "stepk:0", "model": "m", "verdict": v,
+         "candidate_proof": p}
+        for v, p in [("no_answer", ""), ("lean_error", "bogus"), ("success", "rfl")]
+    ])
+    runner.write_run_analysis(run_dir)
+    lines = (run_dir / "analysis.txt").read_text().splitlines()
+    header = next(line for line in lines if "noans" in line and "exc" in line).split()
+    sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
+    assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
+    assert row[header.index("noans")] == "1"
+    assert row[header.index("lerr")] == "1"
+    assert row[2] == "1/3"

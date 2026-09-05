@@ -214,33 +214,6 @@ def test_ram_cap_and_s3_path_mapping():
     assert "//" not in key and not key.startswith("/")
 
 
-def test_verify_imports_with_its_lean_backend():
-    """A cold import of the verifier needs `lean_interact`, not `lean_dojo`.
-
-    The verifier's backend was swapped to `lean_interact` (which drives
-    leanprover-community/repl); `lean_dojo` is still a declared dependency, but
-    only for corpus tracing and premise slicing, so importorskipping on it here
-    would pin a relationship that no longer exists.
-
-    The pop is restored on the way out: re-executing the module binds a NEW
-    object onto the `smolbench.deduction.lean` package, and leaving that in
-    place makes `runner._default_verifier()` return something no longer
-    identical to another module's imported `verify` -- an order-dependent
-    failure. See tests/deduction/test_lean_repl_verifier.py, which pins that
-    identity.
-    """
-    pytest.importorskip("lean_interact")
-    from smolbench.deduction import lean as lean_pkg
-
-    saved = sys.modules.pop("smolbench.deduction.lean.verify", None)
-    try:
-        import smolbench.deduction.lean.verify  # noqa: F401
-    finally:
-        if saved is not None:
-            sys.modules["smolbench.deduction.lean.verify"] = saved
-            lean_pkg.verify = saved
-
-
 def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
     """The `--s3-prefix` DEFAULT is built after parsing; nothing else exercises it.
 

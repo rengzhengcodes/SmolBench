@@ -525,8 +525,23 @@ def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     """Map theorem name to its recorded sanity verdict from the JSONL (last wins).
 
     Verdicts, not just names, so a resumed sweep can RE-APPLY the gate: a
-    theorem whose ground truth failed to replay stays excluded rather than
-    falling through to cell generation because its gate row exists.
+    theorem whose ground truth failed to replay (`SANITY_FAILURE_VERDICTS`)
+    stays excluded rather than falling through to cell generation because its
+    gate row exists.
+
+    A recorded ``"exception"`` sanity row is the one case that does NOT stay
+    excluded on resume, since `SANITY_FAILURE_VERDICTS` no longer contains it
+    (see that constant's Design comment) -- an infrastructure hiccup on a past
+    sweep must not permanently blank the theorem out of the study. This
+    function still returns that row's verdict faithfully; it is the caller's
+    gate-membership check, not this function, that now lets it through. Note
+    also this function does NOT trigger a re-replay of an already-recorded
+    ``"exception"`` (or any other) sanity row -- resume never re-runs
+    `replay_ground_truth` for a theorem with an existing row of ANY verdict,
+    only the cell-generation decision changes. Re-replaying would append a
+    second sanity row per theorem, which would break
+    `scripts/deduction/merge_lean_shards.py`'s gate on the total sanity-row
+    count against `EXPECTED_SANITY_ROWS`.
     """
     if not jsonl_path.exists():
         return {}
@@ -600,6 +615,11 @@ _VERDICT_GLYPH = {
     "lean_error": "✘",
     "incomplete": "·",
     "given_up": "?",
+    # Distinct from "·"/"?"/"X": a glyph of its own so a summary reader can
+    # tell "the model answered and Lean judged it incomplete/given-up" apart
+    # from "the model answered nothing" at a glance, without reading the
+    # verdict column.
+    "no_answer": "∅",
     "replay_failed": "!",
     "exception": "X",
     # Generation-only sweeps (NullVerifier): cells awaiting the deferred
@@ -617,8 +637,50 @@ _CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
 # `smolbench.deduction.lean.nullverify.NullVerifier` produces, since a
 # generation-only sweep defers the real verification pass. Membership in
 # this frozenset, rather than `!= "success"`, makes that distinction.
+#
+# "exception" ALSO passes through now (it did not before). An exception from
+# `replay_ground_truth` is a statement about the INFRASTRUCTURE that tried to
+# replay the ground truth -- an unset `SMOLBENCH_MATHLIB_ROOT`, a REPL start
+# race, a transient connection drop -- never a positive finding that the
+# recorded ground truth itself is unreplayable; contrast "lean_error" (Lean
+# read the proof and rejected a step). ("replay_failed" is not reachable here
+# at all -- see `verify.ReplayResult`'s docstring: a full-proof replay never
+# produces it.) Gating on "exception" used to punish exactly the wrong failure: a
+# theorem sanity-failed once with "exception" was excluded from cell
+# generation FOREVER, on every later resume (`_sanity_done` re-applies this
+# frozenset, it does not just skip a re-replay), with no escape short of
+# `--force-rerun` on the whole lane -- so a single unset env var on one launch
+# could permanently blank a theorem out of the study. See
+# `replbackend.open_session`'s own Design comment (~lines 908-917), which
+# makes the identical argument for why an unset `SMOLBENCH_MATHLIB_ROOT` must
+# be translated to `ReplError` (-> "exception") rather than left as the
+# `RuntimeError` that `verify.verify_proof_tail` would read as
+# "replay_failed": both call sites agree an infrastructure misconfiguration
+# must not be recorded as -- or treated as -- a broken ground truth. This
+# frozenset leaving "exception" out is what actually delivers on that
+# agreement for the sanity gate; before this change it did not.
+#
+# Deliberately NOT changed: a recorded "exception" sanity row is NOT
+# re-replayed on resume -- the gate below simply no longer EXCLUDES the
+# theorem because of it, so cell generation runs the next time the theorem is
+# reached in a sweep. Re-replaying it would append a SECOND sanity row for
+# the same theorem, and `scripts/deduction/merge_lean_shards.py` gates the
+# merge on the total sanity-row count against `EXPECTED_SANITY_ROWS` -- a
+# duplicate would trip that gate. See `_sanity_done`'s docstring for where a
+# reader of the resume path will find this.
+#
+# What remains in the set: verdicts that POSITIVELY say the recorded ground
+# truth is broken (Lean rejected or could not close a REPLAYED step of the
+# theorem's OWN recorded proof) -- not verdicts that merely say the attempt to
+# find that out failed.
+#
+# "no_answer" is deliberately NOT a member either, but for an unrelated
+# reason: it is unreachable from `replay_ground_truth` (a ground-truth replay
+# has no LLM candidate tail to be empty -- see `verify.Verdict`'s taxonomy
+# comment), so it has no meaning as a sanity verdict at all. This frozenset's
+# exact contents are pinned by a test.
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
-    {"lean_error", "incomplete", "given_up", "exception", "replay_failed"}
+    {"lean_error", "incomplete", "given_up", "replay_failed"}
 )
 
 
@@ -830,8 +892,8 @@ def write_run_analysis(run_dir: Path) -> None:
 
     Regenerates wholesale (never merges with a prior analysis.txt); a no-op when
     ``all_rows.jsonl`` does not exist. Columns per cell: pass/N, rate, verdict
-    breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``), ``l3``, then average
-    prompt/completion tokens and wall time. ``l3`` counts CELLS whose
+    breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``/``noans``), ``l3``,
+    then average prompt/completion tokens and wall time. ``l3`` counts CELLS whose
     ``candidate_proof`` holds at least one Lean 3 relic (`lean3.find_relics`),
     regardless of verdict — the endpoint `lean3.corrupt_tail`'s SFT intervention
     aims to drive to zero.
@@ -855,6 +917,7 @@ def write_run_analysis(run_dir: Path) -> None:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0,
             "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
         }
@@ -876,8 +939,11 @@ def write_run_analysis(run_dir: Path) -> None:
                 elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
                     n_sanity_fail += 1
                 else:
-                    # "skipped" (NullVerifier) and any future pass-through
-                    # verdict: the gate deferred, nothing positively failed.
+                    # "skipped" (NullVerifier), "exception" (infrastructure --
+                    # SANITY_FAILURE_VERDICTS deliberately excludes it, see
+                    # that constant's Design comment), and any future
+                    # pass-through verdict: the gate deferred or the attempt
+                    # to check it failed, but nothing POSITIVELY failed.
                     n_sanity_skipped += 1
                 continue
             n_rows += 1
@@ -914,7 +980,7 @@ def write_run_analysis(run_dir: Path) -> None:
 
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'l3':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} {'l3':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
     )
     out.append(header)
@@ -933,7 +999,8 @@ def write_run_analysis(run_dir: Path) -> None:
         out.append(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['l3']:>5} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['no_answer']:>5} {c['l3']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
         )
 

@@ -295,7 +295,10 @@ interaction has been exercised against a real Lean toolchain.
   against Lean yet) and each per-theorem sanity row with `verdict ==
   "skipped"`. By default it uses `NullVerifier` (`LEAN_VERIFY=defer`), which
   never imports `smolbench.deduction.lean.verify` or its `lean_interact`
-  dependency.
+  dependency. Once verification (below) assigns a real verdict, a candidate
+  that extracted to zero tactic lines (typically a reasoning model truncated
+  mid-`<think>`) is graded `no_answer`, not `lean_error`: Lean never saw a
+  tactic to reject, so it must not read as "the model wrote a wrong proof."
 - **Phase 2 (verification)** also runs on `.venv`, via
   `scripts/deduction/lean_verify_rows.py`. It downloads a run's
   `all_rows.jsonl` from S3, replays every recorded candidate proof against a
@@ -369,7 +372,9 @@ Use `--no-resume` for any regenerated lane, and archive the superseded file firs
 Compare `all_rows.jsonl`'s LastModified against `verified_rows.jsonl`'s to find them.
 
 **Gate on the verdicts, not on the exit status.** A healthy pass writes a mix of
-`success` / `lean_error` with `verify_ms > 0`. A broken one writes
+`success` / `lean_error` / `no_answer` (the last for a candidate that split to
+zero tactic lines -- a real miss, but not a Lean rejection) with
+`verify_ms > 0`. A broken one writes
 `replay_failed` almost everywhere with `verify_ms == 0` and a REPL-open error
 attached -- read that error rather than the verdict, per trap 1: one naming
 `SMOLBENCH_MATHLIB_ROOT` is a misconfigured box, one quoting Lean's own messages
