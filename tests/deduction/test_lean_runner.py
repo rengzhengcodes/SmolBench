@@ -380,10 +380,25 @@ def test_sweep_skips_trivial_rungs(sweep_ctx):
 @pytest.mark.parametrize("verdict", ["lean_error", "incomplete", "given_up",
                                      "exception", "replay_failed", "skipped"])
 def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(sweep_ctx, verdict):
-    """Failure verdicts gate a theorem out, "skipped" passes through, and the
-    recorded gate is authoritative on resume (no re-replay, no re-generation)."""
+    """Failure verdicts gate a theorem out; "skipped" AND "exception" pass through.
+
+    13-03 moved ``"exception"`` out of `SANITY_FAILURE_VERDICTS`, so this test
+    now pins it in the pass-through group beside ``"skipped"``: a Python
+    exception during the ground-truth replay (an unset SMOLBENCH_MATHLIB_ROOT,
+    a REPL start race) is a statement about the INFRASTRUCTURE, not a positive
+    finding that the recorded ground truth is unreplayable, and gating on it
+    dropped the theorem from every later resume with no escape short of
+    ``--force-rerun`` on the whole lane. It previously sat in the excluded
+    group.
+
+    The recorded gate stays authoritative on resume for the four verdicts that
+    remain, and -- for the two pass-through verdicts -- the resume path still
+    performs NO second replay: the ``len(_rows(run_dir, "sanity")) == 2``
+    assertions below are what pins that, and they matter because a duplicate
+    sanity row would break `merge_lean_shards.py`'s ``--expect-sanity`` count.
+    """
     cfg = _make_config(concurrent=False)
-    excluded = verdict != "skipped"
+    excluded = verdict not in ("skipped", "exception")
     expected = EXPECTED_CELLS // 2 if excluded else EXPECTED_CELLS
     first = FakeVerifier(sanity={"Mini.theoremA": verdict})
     written, run_dir = _sweep(sweep_ctx, cfg, verifier=first)
@@ -521,8 +536,14 @@ def test_l3_counts_relics(tmp_path, monkeypatch, align, proofs, expected_verifie
             json.dump({"lean3_to_lean4": align}, f)
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
+    # Distinct theorem_id per row: `write_run_analysis` now deduplicates on the
+    # full `runner._row_key` (13-04), so rows sharing an identity collapse to
+    # one cell. Production rows always carry these fields; this fixture did not,
+    # and three identity-less rows would fold into a single 1/1 cell.
     _write_rows(run_dir, [{"kind": "cell", "rung": "stepk:0", "model": "m",
-                           "verdict": v, "candidate_proof": p} for v, p in proofs])
+                           "theorem_id": f"T{i}", "k": 1, "replicate_idx": 0,
+                           "verdict": v, "candidate_proof": p}
+                          for i, (v, p) in enumerate(proofs)])
     runner.write_run_analysis(run_dir)
     text = (run_dir / "analysis.txt").read_text()
     marker = "# l3 = parse-level only (lean3_align.json.gz not built)"
@@ -623,3 +644,301 @@ def test_require_postcutoff_checks_the_pool_before_sampling(monkeypatch, tmp_pat
     with pytest.raises(ValueError, match="Mini.theoremB"):
         runner._select_theorems({**sharded, "require_postcutoff": True})
     corpus.reset_caches()
+
+
+# ---------------------------------------------------------------------------
+# 13-01 / 13-03: the verdict vocabulary itself
+# ---------------------------------------------------------------------------
+
+
+def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set():
+    """Pin `SANITY_FAILURE_VERDICTS` membership by value, in both directions.
+
+    Two fixes edit this frozenset in opposite directions and must not undo one
+    another: 13-03 REMOVES ``"exception"`` (infrastructure, not a broken ground
+    truth), and 13-01 adds the ``"no_answer"`` verdict, which must NOT be added
+    here -- `replay_ground_truth` has no candidate tail, so `no_answer` is
+    unreachable as a sanity verdict and its presence would be meaningless.
+    An equality assertion, not two membership checks, so any future addition
+    has to come here and argue for itself.
+    """
+    assert runner.SANITY_FAILURE_VERDICTS == frozenset(
+        {"lean_error", "incomplete", "given_up", "replay_failed"}
+    )
+    assert "exception" not in runner.SANITY_FAILURE_VERDICTS
+    assert "no_answer" not in runner.SANITY_FAILURE_VERDICTS
+    assert "skipped" not in runner.SANITY_FAILURE_VERDICTS
+
+
+def test_no_answer_has_its_own_glyph():
+    """13-01: `no_answer` is renderable and does not collide with another verdict.
+
+    `_glyph` falls back to ``"?"`` for an unknown verdict -- which is
+    `given_up`'s glyph -- so an unregistered verdict would render as a
+    DIFFERENT real verdict rather than as something obviously wrong.
+    """
+    assert "no_answer" in runner._VERDICT_GLYPH
+    assert runner._glyph("no_answer") != runner._glyph("__not_a_verdict__")
+    glyphs = list(runner._VERDICT_GLYPH.values())
+    assert len(glyphs) == len(set(glyphs)), f"duplicate glyph: {glyphs}"
+
+
+def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeypatch):
+    """13-01: `noans` is a real column, counted separately from `lerr`.
+
+    Before the fix an empty candidate landed in `lean_error`, so a lane of
+    truncated reasoning traces read as a lane of wrong Lean proofs. Asserts
+    the split by value on a mixed run: one of each, in different columns.
+    """
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    # Distinct theorem_id per row -- see `test_l3_counts_relics`: the analysis
+    # deduplicates on the full row key (13-04).
+    _write_rows(run_dir, [
+        {"kind": "cell", "rung": "stepk:0", "model": "m", "theorem_id": f"T{i}",
+         "k": 1, "replicate_idx": 0, "verdict": v, "candidate_proof": p}
+        for i, (v, p) in enumerate(
+            [("no_answer", ""), ("lean_error", "bogus"), ("success", "rfl")])
+    ])
+    runner.write_run_analysis(run_dir)
+    lines = (run_dir / "analysis.txt").read_text().splitlines()
+    header = next(line for line in lines if "noans" in line and "exc" in line).split()
+    sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
+    assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
+    assert row[header.index("noans")] == "1"
+    assert row[header.index("lerr")] == "1"
+    assert row[2] == "1/3"
+
+
+def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
+        tmp_path, monkeypatch):
+    """13-04: analysis.txt counts CELLS, not rows, for a resumed lane.
+
+    `_existing_keys` re-runs an exception-only cell and the sweep appends the
+    retry, so one key legitimately owns two rows. Counting rows made the
+    retried cell read as 1/2 = 50%. Earliest SURVIVING attempt wins, matching
+    `power_analysis.grade_verdicts`; the superseded exception row stays in
+    all_rows.jsonl and is simply not counted twice.
+
+    The second cell pins the other direction: with no surviving row the first
+    row stands in, so a never-measured cell is counted once under `exc` rather
+    than disappearing from the denominator.
+    """
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    base = {"kind": "cell", "rung": "stepk:0", "model": "m", "k": 1,
+            "candidate_proof": "rfl"}
+    _write_rows(run_dir, [
+        {**base, "theorem_id": "T1", "replicate_idx": 0, "verdict": "exception"},
+        {**base, "theorem_id": "T1", "replicate_idx": 0, "verdict": "success"},
+        {**base, "theorem_id": "T2", "replicate_idx": 0, "verdict": "exception"},
+        {**base, "theorem_id": "T2", "replicate_idx": 0, "verdict": "exception"},
+    ])
+    runner.write_run_analysis(run_dir)
+    lines = (run_dir / "analysis.txt").read_text().splitlines()
+    assert lines[0].startswith("# 2 cells;"), lines[0]
+    header = next(line for line in lines if "noans" in line and "exc" in line).split()
+    sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
+    assert row[2] == "1/2", row
+    assert row[header.index("exc")] == "1", row
+
+
+def test_dedupe_cell_rows_keys_on_the_full_row_key():
+    """13-04: replicates are a real axis; only the SAME key collapses.
+
+    `replicate_idx` is part of `runner._row_key`, so genuine replicates survive
+    deduplication. A helper keyed on (model, theorem, k, rung) alone would
+    silently collapse the replication axis the sweep is built around.
+    """
+    def row(rep, verdict):
+        return {"kind": "cell", "model": "m", "theorem_id": "T", "k": 1,
+                "rung": "stepk:0", "replicate_idx": rep, "verdict": verdict}
+
+    kept = runner.dedupe_cell_rows([row(0, "exception"), row(0, "success"),
+                                    row(1, "lean_error")])
+    assert [(r["replicate_idx"], r["verdict"]) for r in kept] == [
+        (0, "success"), (1, "lean_error")]
+    # Order of the surviving rows follows the input, not the key ordering.
+    kept = runner.dedupe_cell_rows([row(1, "success"), row(0, "success")])
+    assert [r["replicate_idx"] for r in kept] == [1, 0]
+
+
+# ---------------------------------------------------------------------------
+# 13-12 / 13-09 / 13-17 / 13-18: sweep reconciliation, provenance, constants
+# ---------------------------------------------------------------------------
+
+
+def _manifest(run_dir):
+    return json.loads((run_dir / "manifest.json").read_text())
+
+
+def test_unreachable_whitelist_keys_are_reported_and_fatal(sweep_ctx, monkeypatch):
+    """13-12: a requested cell the sweep cannot reach must not exit 0.
+
+    Membership was only ever tested in the direction "is this GENERATED cell
+    wanted", so a requested key naming a theorem/rung the sweep never produces
+    was skipped, counted in the same `n_skipped` as resumed cells, and the
+    sweep returned normally -- while `run_study` stamped the whitelist's
+    sha256 into manifest.json as a claim that this exact set of cells was
+    collected. Exit 0 made that claim false.
+
+    The ORDERING assertions are the load-bearing half: manifest.json must
+    record `whitelist_missed` and analysis.txt must exist BEFORE the raise, or
+    the only record of what went wrong dies with the exception.
+    """
+    cfg = _make_config()
+    reachable = sorted(_key(r)
+                       for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
+    wanted = [list(reachable[0]), ["m", "Mini.ghostTheorem", 0, "stepk:0", 0]]
+    path = sweep_ctx.tmp / "whitelist.json"
+    path.write_text(json.dumps(wanted))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(path))
+
+    run_dir = sweep_ctx.tmp / "missed"
+    with pytest.raises(RuntimeError, match="(?i)whitelist"):
+        runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+
+    manifest = _manifest(run_dir)
+    assert manifest["whitelist_missed"] == [["m", "Mini.ghostTheorem", 0, "stepk:0", 0]]
+    assert (run_dir / "analysis.txt").exists(), (
+        "the analysis must be written before the raise, not lost with it"
+    )
+
+
+def test_a_fully_reachable_whitelist_records_an_empty_missed_list(sweep_ctx, monkeypatch):
+    """13-12: "reconciled, nothing missed" and "this run predates the check" differ.
+
+    An absent key and an empty list must not be confusable, so the key is
+    written whenever a whitelist is active -- otherwise a reader of an
+    archived manifest cannot tell a clean reconciliation from no
+    reconciliation at all.
+    """
+    cfg = _make_config()
+    reachable = sorted(_key(r)
+                       for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
+    path = sweep_ctx.tmp / "whitelist.json"
+    path.write_text(json.dumps([list(k) for k in reachable[:2]]))
+    monkeypatch.setenv("LEAN_CELL_WHITELIST", str(path))
+    run_dir = sweep_ctx.tmp / "clean"
+    assert runner.sweep(cfg, run_dir, verifier=FakeVerifier()) == 2
+    assert _manifest(run_dir)["whitelist_missed"] == []
+
+
+def test_no_whitelist_leaves_the_manifest_key_absent(sweep_ctx):
+    """13-12: the reconciliation record only exists when a whitelist was in effect."""
+    _, run_dir = _sweep(sweep_ctx, name="nowl")
+    assert "whitelist_missed" not in _manifest(run_dir)
+
+
+def test_manifest_records_whether_the_traced_repo_was_present(sweep_ctx):
+    """13-09: which cells a run produces depends on a directory outside results/.
+
+    `premises.body_with_proof` falls back to the corpus's stored signature when
+    `premises._traced_root()` is None, and under `skip_trivial` that can make
+    `is_trivial_rung` judge hint:2/hint:3/noise:3 trivial -- so the SET OF
+    CELLS a lane produces differs between a box with the traced mathlib4
+    checkout and one without. `traced_root_present` is provenance about the
+    BOX, recorded unconditionally so an archived run can be read years later
+    without re-deriving which regime it came from.
+    """
+    _, run_dir = _sweep(sweep_ctx, name="prov")
+    assert isinstance(_manifest(run_dir)["traced_root_present"], bool)
+
+
+def test_dojo_timeout_has_one_default_across_all_three_entry_points():
+    """13-17: `dojo_timeout` had three defaults (600 / 600 / 300) and no owner.
+
+    Unified on 600, deliberately NOT on 300: `notebooks/deduction/run_study.py`
+    passes 300 explicitly, so the production sweep is unaffected either way,
+    while unifying downward would TIGHTEN `run_cell` and `cli --timeout` -- and
+    a REPL request that times out is recorded as an `"exception"` verdict, so
+    tightening silently converts slow theorems into infrastructure failures.
+
+    Checked through the actual signature/parser defaults, not by grepping for
+    the number, so a stray literal that bypasses the constant fails here.
+    """
+    import inspect
+
+    assert runner.DEFAULT_DOJO_TIMEOUT == 600
+    assert (inspect.signature(runner.run_cell).parameters["dojo_timeout"].default
+            == runner.DEFAULT_DOJO_TIMEOUT)
+
+    from smolbench.deduction.lean import cli
+
+    # `--timeout` is defined on the SUBparsers, not the top-level parser, so
+    # scanning `parser._actions` finds nothing and would make this check pass
+    # vacuously (it only failed loudly here because `.get` returned None).
+    # Walk into the subcommand instead.
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if a.dest == "cmd")
+    for name in ("run-cell", "replay"):
+        timeout = next(a for a in sub.choices[name]._actions if a.dest == "timeout")
+        assert timeout.default == runner.DEFAULT_DOJO_TIMEOUT, (name, timeout.default)
+    # `filter`'s --timeout is deliberately NOT this constant: it is documented
+    # separately at its own call site. Pinned so a future "tidy-up" that folds
+    # it in has to change this line and argue for it.
+    filt = next(a for a in sub.choices["filter"]._actions if a.dest == "timeout")
+    assert filt.default != runner.DEFAULT_DOJO_TIMEOUT
+
+
+def test_sweep_seed_default_is_zero(sweep_ctx):
+    """13-18: an omitted `seed` must not silently disagree with the driver.
+
+    `theorems.seed` (which theorems are measured) defaulted to 0 while
+    `cfg.seed` (the decode seed on the wire) defaulted to 1776, so a sweep
+    config omitting `seed` decoded at a seed no driver ever chose.
+    `run_cell`'s own 1776 default is a different entry point and is
+    deliberately unchanged.
+    """
+    cfg = _make_config(run_name="seedless", rungs=["stepk:0"], n_replicates=1,
+                       theorems={"source": "explicit", "kind": "random",
+                                 "split": "val", "full_names": ["Mini.theoremA"]})
+    del cfg["seed"]
+    _, run_dir = _sweep(sweep_ctx, cfg, name="seedless")
+    assert {r["seed"] for r in _rows(run_dir, "cell")} == {0}
+
+
+def test_resume_truncates_a_torn_final_line_before_appending(sweep_ctx):
+    """13-07: a torn FINAL line must not become a corrupt MIDDLE line.
+
+    `all_rows.jsonl` is opened in APPEND mode on resume, and `_existing_keys`
+    merely SKIPS an unparseable line -- so a row half-written when a box was
+    SIGKILLed stayed in the file and the resumed writer appended onto its torn
+    prefix, welding two records into one line:
+
+        {"kind": "cel{"kind": "cell", "n": 3}
+
+    A torn FINAL line is recoverable (both merge_lean_shards.py and
+    split_lean_run_into_shards.py drop it with a warning, and the driver's own
+    docstring promises it "regenerates on resume"); a corrupt MIDDLE line is
+    not -- both scripts hard-abort on one. So the damage is done by the
+    APPEND, and the fix is to truncate before appending.
+    """
+    cfg = _make_config(run_name="torn", rungs=["stepk:0"], n_replicates=1,
+                       theorems={"source": "explicit", "kind": "random",
+                                 "split": "val", "full_names": ["Mini.theoremA"]})
+    written, run_dir = _sweep(sweep_ctx, cfg, name="torn")
+    assert written > 0
+    path = run_dir / "all_rows.jsonl"
+    good = _rows(run_dir)
+
+    # SIGKILL mid-write: a partial record with no trailing newline.
+    with path.open("a") as f:
+        f.write('{"kind": "cell", "theorem_id": "Mini.theo')
+
+    # Resume. The truncated cell must be regenerated, not appended onto.
+    _write_rows(run_dir, good[:-1])
+    with path.open("a") as f:
+        f.write('{"kind": "cell", "theorem_id": "Mini.theo')
+    runner.sweep(cfg, run_dir, verifier=FakeVerifier())
+
+    lines = path.read_text().splitlines()
+    for i, line in enumerate(lines):
+        json.loads(line)  # every line must parse -- a torn weld raises here
+    assert lines, "the file must not have been emptied"
+    assert not any('{"kind": "cel' in line and line.count('"kind"') > 1
+                   for line in lines), "two records welded into one line"

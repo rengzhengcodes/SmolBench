@@ -107,10 +107,11 @@ Quiz: TypeAlias = Sequence[QnA]
 
 #: ``Mark.compliance`` value meaning "assessed: the response obeyed the output
 #: contract exactly". None (YAML ``null``) rather than a marker string, because
-#: the S3 results log is append-only and every reader of collected files --
-#: ``Marks.noncompliant`` and the analysis compliance census (which reads
-#: through ``Marks.load``) -- already keys on ``compliance: null`` = obeyed;
-#: a new marker would misread as a violation mode there.
+#: the S3 results log is append-only: files already written cannot be rewritten,
+#: so a new marker string would sit in old files' place and read as one more
+#: violation mode to every reader that classifies by label. Both readers key on
+#: ``compliance: null`` == obeyed -- ``Marks.noncompliant`` (the census
+#: numerator) and ``Marks.assessed`` (its denominator).
 COMPLIANT = None
 #: ``Mark.compliance`` value meaning "never run through the compliance-aware
 #: parser". The field's DEFAULT, so a stored mark predating the field (loaded
@@ -186,6 +187,29 @@ class Marks:
         return sum(
             1 for m in self.marks if m.compliance not in (COMPLIANT, NOT_ASSESSED)
         )
+
+    @property
+    def assessed(self) -> int:
+        """Count the marks a compliance-aware parser actually judged.
+
+        The DENOMINATOR for a non-compliance rate,
+        ``noncompliant / assessed``. A mark is assessed when it carries either
+        `COMPLIANT` (it obeyed the contract) or a violation label; every
+        `noncompliant` mark is therefore assessed, so a rate taken over this
+        can never exceed 1.0.
+
+        `NOT_ASSESSED` marks are UNKNOWN, not compliant: it is the field's
+        default, so stored results predating the field load as not-assessed.
+        They are excluded from BOTH numerator and denominator, which is what
+        keeps a wholly legacy lane from publishing as a 100% collapse (it would
+        otherwise look like every mark violated the contract, or like every
+        mark obeyed it, depending on which way the default were read).
+
+        Callers MUST guard the division: a `Marks` whose every mark is
+        `NOT_ASSESSED` returns 0, and there is no meaningful rate to report for
+        it -- the right output is "unmeasured", not a number.
+        """
+        return sum(1 for m in self.marks if m.compliance != NOT_ASSESSED)
 
     # -- Serialization ------------------------------------------------------
     # A result file is plain-dict YAML (safe_dump of dataclasses.asdict), NOT

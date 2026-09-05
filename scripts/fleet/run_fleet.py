@@ -12,8 +12,9 @@ S3 spool sync plus shutdown.
   ``GATE_MODELS`` tier-A lanes -- one per reasoning-toggle style -- log a
   healthy serve, turning a 21-way bet on the digest-pinned ``FLEET_IMAGE`` into
   a 3-way bet.
-- Restart policy: :func:`classify_exit` gives a reclaim unlimited relaunches and
-  a crash ``MAX_CRASH_RELAUNCHES``, then HALTS that lane; the fleet continues.
+- Restart policy: :func:`classify_exit` gives a reclaim ``MAX_RECLAIM_RELAUNCHES``
+  BACKED-OFF relaunches and a crash ``MAX_CRASH_RELAUNCHES`` immediate ones, then
+  HALTS that lane either way; the fleet continues.
 - CoT-ON: :func:`reasoning_fraction` HALTS any lane whose first landed replicate
   falls below ``COT_MIN_FRACTION``; non-thinking data is indistinguishable later.
 - Phases: ``--phase induction`` (default) never shuts a box down; ``deduction``
@@ -69,17 +70,64 @@ _run_study_spec.loader.exec_module(run_study)
 # `run_study`'s import of `smolbench.induction.experiment` already pulled in
 # `smolbench.evals.providers.ec2`, AFTER its own `load_dotenv` ran, so this is a
 # `sys.modules` cache hit, not a second, differently-timed import of `ec2.py`.
-from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
+#
+# `_INSTANCE_GPU_COUNTS`/`_INSTANCE_GPU_NAMES` are private to ec2.py (leading
+# underscore); imported here on purpose, not re-declared, so `_tier_gpu_pin`
+# below can never drift from that module's own hardware tables -- see
+# `EC2_REQUIRE_GPU`'s docstring in ec2.py for what the resulting pin defends
+# against.
+from smolbench.evals.providers.ec2 import (  # noqa: E402
+    EC2_DEPLOY_SPECS,
+    EC2_VLLM_IMAGE,
+    _INSTANCE_GPU_COUNTS as _EC2_INSTANCE_GPU_COUNTS,
+    _INSTANCE_GPU_NAMES as _EC2_INSTANCE_GPU_NAMES,
+)
+
+_CONFIG_MODULE_NAME = "smolbench_fleet_config"
+
+
+def _load_fleet_config():
+    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    module = sys.modules.get(_CONFIG_MODULE_NAME)
+    if module is None:
+        path = Path(__file__).resolve().parent / "_config.py"
+        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+# By file path, not a bare `import _config`: `scripts/fleet` has no
+# `__init__.py` (it is not a package), and every module in it is already
+# loaded under a private module name by its own callers (this file itself is
+# loaded under a private name by `tests/tooling/test_run_fleet.py`), so a
+# bare import name would be ambiguous at best and simply absent from
+# `sys.path` at worst -- see `_config.py`'s own module docstring for the
+# fuller argument. Cached under the shared `_CONFIG_MODULE_NAME` key in
+# `sys.modules`: if `fleet_status.py` (loaded lazily below, by the identical
+# pattern, in `_fleet_status_module`) has already loaded `_config.py` this
+# process, this is a cache hit, not a second, independent module object.
+_config = _load_fleet_config()
 
 # ---------------------------------------------------------------------------
 # Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
 # ---------------------------------------------------------------------------
-DEFAULT_REGIONS = "us-east-1,us-east-2,us-west-2"
-# Digest-pinned, certified-deterministic build: vLLM 0.27.2rc1.dev122+g8efa13b70,
-# Docker Hub tag nightly-8efa13b700f1836657699cae2503dc2feab27fa0. Mirrors
-# ec2.py's EC2_VLLM_IMAGE default, which the fleet's per-lane env would
-# otherwise render dead letter. Bump only on purpose.
-FLEET_IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
+#: Sourced from ``scripts/fleet/_config.py`` (loaded above), the ONE place
+#: this string is now declared for every fleet script that needs it --
+#: previously an independently-typed copy here could silently drift from
+#: ``fleet_status.STATUS_REGIONS`` (finding 14-15).
+DEFAULT_REGIONS = _config.DEFAULT_REGIONS
+# ec2.py's OWN resolved value: `EC2_VLLM_IMAGE` there defaults to a
+# digest-pinned, certified-deterministic vLLM nightly build and is read from
+# the environment at ec2.py's IMPORT time. This constant used to carry an
+# independently-typed COPY of that digest, and `lane_env` set `EC2_VLLM_IMAGE`
+# unconditionally FROM this copy -- so bumping the digest in ec2.py alone left
+# every lane silently pinned to the stale one here (finding 14-12). Aliasing
+# it means an operator's export reaches every lane through the ONE
+# resolution -- this module's, via ec2.py -- instead of two that could
+# disagree. Bump only on purpose, and bump it in ec2.py.
+FLEET_IMAGE = EC2_VLLM_IMAGE
 # Per-lane image pins (default: FLEET_IMAGE). The V4 lanes run the tagged
 # v0.27.1 release, digest-pinned: that version's SM90 serving path (Marlin
 # MXFP4 + FLASHMLA_SPARSE_DSV4, see the DeepSeek block in EC2_DEPLOY_SPECS) is
@@ -91,28 +139,49 @@ LANE_IMAGE_OVERRIDES = {
 MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
 # deepseek-v4-pro serves --enforce-eager (see EC2_DEPLOY_SPECS): a
-# budget-burning 87k-token generation takes >1h at eager Pro throughput, so
+# budget-burning 87k-token generation takes >1h at eager Pro throughput -- a
+# SINGLE-request figure, independent of how many requests are in flight -- so
 # under the fleet-wide 3600s timeout those cells retry forever; 14400s lets a
-# worst-case cell finish in ONE attempt. The box-side idle watchdog keys on vLLM
-# metrics activity, so an hours-long in-flight generation cannot trip it.
-# NOTE: every timeout here was computed against BATCHED serving; ec2.py's
-# DETERMINISM_ARGS serve --max-num-seqs 1 fleet-wide, so concurrent requests
-# serialize and per-request wall time multiplies by the in-flight count.
-# Recompute before the next paid fleet run.
+# worst-case cell finish in ONE attempt. The box-side idle watchdog keys on
+# vLLM metrics activity, so an hours-long in-flight generation cannot trip it.
+#
+# NOTE (finding 14-10, recomputed): this dict used to also carry 10800s
+# entries for gemma-4-12b and ministral-3-14b, derived as "~90 min at 3
+# concurrent with 2x headroom". That assumed 3 requests in flight; the real
+# client fan-out is `ChatClient.evaluate`'s `EC2_MAX_PARALLEL_REQUESTS`
+# default of 8, against ec2.py's `--max-num-seqs 1` serving, so requests
+# actually SERIALIZE and the in-flight count that matters is whatever
+# `lane_env` pins -- see that function's `EC2_MAX_PARALLEL_REQUESTS` comment.
+# `lane_env` now pins it to "1" for every lane, so the values below all
+# assume in-flight 1. Recomputed from this comment's own two anchors:
+#   anchor 1 (per-cell wall time): ~90 min at 3 concurrent -> ~30 min
+#     (1800s) for one cell alone. At in-flight 1: 1 x 1800s x 2 (headroom)
+#     = 3600s -- exactly REQUEST_TIMEOUT_SECONDS, the fleet-wide default --
+#     so a per-lane override for these two lanes is now redundant. REMOVED.
+#   anchor 2 (aggregate throughput): an 87k-token cell at ~146 tok/s
+#     aggregate -> ~596s alone -- an even smaller number, so 3600s is safe
+#     under either reading.
 LANE_REQUEST_TIMEOUT_OVERRIDES = {
+    # >1h at eager Pro throughput (see the comment above) is a SINGLE-request
+    # figure that does not depend on the in-flight count, so it is unaffected
+    # by the EC2_MAX_PARALLEL_REQUESTS pin.
     "deepseek-v4-pro": "14400",
-    # gemma-4-12b and ministral-3-14b serve on g6e.12xl (4x L40S) at ~146
-    # tok/s AGGREGATE, so concurrent 87k-token budget-burner cells run
-    # >1h each and die at the 3600s read timeout. 10800s covers the worst
-    # case (~90 min at 3 concurrent) with 2x headroom.
-    "gemma-4-12b": "10800",
-    "ministral-3-14b": "10800",
 }
 
 TIER_INSTANCE_TYPES = {
-    # g6e.12xlarge is the fallback when small-G spot is reclaimed in the
-    # hunt AZs: a 3x-cost fallback beats an idle lane.
-    "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge",
+    # NARROWED to one GPU count (finding 14-06): this list used to also hunt
+    # g6e.12xlarge (4x L40S) as a capacity fallback, mixing it with the
+    # 1-GPU types it hunts alongside (g6e.4xlarge, g6e.8xlarge).
+    # `ec2.derive_tp` = gcd(attention heads, landed GPU count), so a reclaim
+    # onto that fallback changed a tier-A lane's derived tp from 1 to 4
+    # MID-LANE -- rows collected before and after the fallback are not
+    # comparable. The TRADE: dropping the 4-GPU fallback means a reclaimed
+    # tier-A lane now waits for 1-GPU g6e capacity instead of silently
+    # switching tp -- the residual cost is that such a lane can idle longer
+    # when 1-GPU g6e capacity is tight. g6e.8xlarge remains as a same-tp,
+    # larger-host fallback. `TIER_REQUIRE_GPU` below pins this tier's GPU
+    # count/silicon so a mixed-count hunt list here cannot recur unnoticed.
+    "A": "g6e.4xlarge,g6e.8xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
     # D is p6-b200 (8x B200, SM100). deepseek-v4-pro's spec drops its
@@ -120,11 +189,102 @@ TIER_INSTANCE_TYPES = {
     # NOT serve on p5e/p5en (see the spec comment in ec2.py).
     "D": "p6-b200.48xlarge",
 }
+
+
+def _tier_gpu_pin(tier: str) -> str:
+    """Derive tier `tier`'s ``ec2.EC2_REQUIRE_GPU`` pin from its hunt list.
+
+    Maps every instance type in ``TIER_INSTANCE_TYPES[tier]`` through ec2.py's
+    OWN ``_INSTANCE_GPU_COUNTS``/``_INSTANCE_GPU_NAMES`` tables (imported
+    above, deliberately, so this pin can never drift from that module's
+    hardware data). DERIVED, never a hand-written literal table: the tier's
+    hunt list is the single source of truth, and an edit to
+    ``TIER_INSTANCE_TYPES`` that is not also safe for this function to run
+    against is exactly the drift ``EC2_REQUIRE_GPU`` exists to catch (see
+    ``TIER_INSTANCE_TYPES["A"]``'s comment for the incident that motivated it).
+
+    Parameters
+    ----------
+    tier : str
+        A key of ``TIER_INSTANCE_TYPES``.
+
+    Returns
+    -------
+    str
+        ``"<gpu-name-substring>:<count>"`` (e.g. ``"L40S:1"``) when every
+        type in the tier's hunt list shares both one GPU count and one GPU
+        name; ``":<count>"`` (e.g. ``":8"``) when the count agrees but the
+        names differ -- see Notes for why that is still a meaningful pin.
+
+    Raises
+    ------
+    SystemExit
+        Raised explicitly, never via ``assert`` (which ``python -O`` strips),
+        naming `tier` and the offending type(s), when: (a) any type in the
+        tier's hunt list is absent from ec2.py's ``_INSTANCE_GPU_COUNTS`` or
+        ``_INSTANCE_GPU_NAMES``, so its silicon cannot be verified; or (b) the
+        tier's types do not share exactly one GPU count. Both are the
+        unmappable-or-mixed-count hunt list this pin exists to prevent from
+        ever reaching a lane's environment unnoticed.
+
+    Notes
+    -----
+    A count-only pin (empty name substring) is weaker by construction:
+    ``ec2._assert_required_gpu`` checks membership of the pin's name
+    substring in the landed box's GPU name string, and an empty substring is
+    trivially "in" any string -- so an empty name matches any silicon while
+    the count is still enforced. This is deliberate for tier C, whose hunt
+    list (``p5.48xlarge`` = 8x H100 80GB, ``p5e.48xlarge`` = 8x H200 141GB)
+    is genuinely different silicon that this study accepts as interchangeable
+    at the same 8-GPU count: the pin still blocks the tp-changing
+    substitution it was added for (a capacity reclaim landing on a DIFFERENT
+    GPU COUNT), but it does not -- and, per ``EC2_REQUIRE_GPU``'s own
+    "Determinism scope" note, cannot -- pin the reduction-order-changing one
+    (same GPU count, different silicon, same tp, different numerics).
+    """
+    types = TIER_INSTANCE_TYPES[tier].split(",")
+    unmapped = [
+        t for t in types
+        if t not in _EC2_INSTANCE_GPU_COUNTS or t.split(".", 1)[0] not in _EC2_INSTANCE_GPU_NAMES
+    ]
+    if unmapped:
+        raise SystemExit(
+            f"run_fleet: _tier_gpu_pin: tier {tier!r} hunts instance type(s) "
+            f"{unmapped} that ec2.py's _INSTANCE_GPU_COUNTS/_INSTANCE_GPU_NAMES "
+            "cannot map -- an unmappable hunt list cannot be pinned. Add the "
+            "type(s) to those tables in ec2.py, or drop them from "
+            "TIER_INSTANCE_TYPES."
+        )
+    counts = {_EC2_INSTANCE_GPU_COUNTS[t] for t in types}
+    if len(counts) != 1:
+        raise SystemExit(
+            f"run_fleet: _tier_gpu_pin: tier {tier!r}'s hunt list {types} spans "
+            f"GPU counts {sorted(counts)} -- exactly the tp-changing "
+            "capacity-reclaim defect EC2_REQUIRE_GPU exists to prevent. Narrow "
+            "TIER_INSTANCE_TYPES so every type in one tier shares one GPU count."
+        )
+    count = counts.pop()
+    names = {_EC2_INSTANCE_GPU_NAMES[t.split(".", 1)[0]] for t in types}
+    if len(names) == 1:
+        # One shared GPU name across the tier: pin both silicon and count.
+        return f"{names.pop().split()[0]}:{count}"
+    # Names differ (e.g. tier C's H100 vs H200) but the count still agrees:
+    # a count-only pin -- see this function's Notes for why that is safe.
+    return f":{count}"
+
+
+#: Per-tier ``EC2_REQUIRE_GPU`` pin, set for every lane by `lane_env`. See
+#: `_tier_gpu_pin` for how each value is derived (never a hand-written
+#: literal) and what a count-only entry (e.g. tier C's) means.
+TIER_REQUIRE_GPU: dict[str, str] = {tier: _tier_gpu_pin(tier) for tier in TIER_INSTANCE_TYPES}
+
 # Tier D only; every other tier falls back to DEFAULT_REGIONS. All 3 study
 # regions stay in the p6-b200 hunt: unlike p5e (us-east-2/us-west-2 only),
 # B200 placement is still shifting, so excluding a region risks starving
-# the experiment.
-TIER_REGIONS = {"D": "us-east-1,us-east-2,us-west-2"}
+# the experiment. Built FROM `DEFAULT_REGIONS` (itself `_config.DEFAULT_REGIONS`)
+# rather than its own literal, so this cannot spell a second, independently
+# drifting copy of the same three regions.
+TIER_REGIONS = {"D": DEFAULT_REGIONS}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 
 TIER_MEMBERS = {
@@ -149,6 +309,27 @@ TIER_MEMBERS = {
 
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
 MAX_CRASH_RELAUNCHES = 2
+# Finding 14-02: a RECLAIM verdict used to get unlimited relaunches, on the
+# theory that a spot reclaim is never the lane's fault. But an empty or
+# failed `describe_instances` sweep (see `_Presence`) made EVERY exit look
+# like a reclaim, so "unlimited" meant a lane could relaunch forever with no
+# crash counting and no budget alert ever firing (`_monitor_tick`'s 2x-budget
+# check keys on `lane_started_at`, which a relaunch never resets, but nothing
+# stopped the relaunches themselves). Bounding it, with backoff so a lane
+# genuinely fighting spot capacity is not hammered every tick:
+#   delay before relaunch n = min(RECLAIM_BACKOFF_CAP_SECONDS,
+#                                  RECLAIM_BACKOFF_BASE_SECONDS * 2 ** (n - 1))
+#   = 60, 120, 240, 480, 960, then 1800s thereafter.
+# MAX_RECLAIM_RELAUNCHES=12 relaunches therefore span about 4h of backoff
+# (60+120+240+480+960+1800*7 ~= 4.15h) against a 9-14h tier budget
+# (TIER_BUDGET_HOURS), so a lane fighting genuine capacity pressure still
+# gets most of its budget, while the pathological misclassification above
+# stops at 12 relaunches instead of running for the fleet's whole lifetime.
+# `run_shards.py`'s flat `CAPACITY_BACKOFF_SECONDS = 300` is the analogous
+# existing policy for its own capacity-shaped retries.
+MAX_RECLAIM_RELAUNCHES = 12
+RECLAIM_BACKOFF_BASE_SECONDS = 60
+RECLAIM_BACKOFF_CAP_SECONDS = 1800
 # A DEAD toggle measures ~0-11% (bare integers everywhere); a
 # working-but-variable soft protocol measures 78-100%. 0.5 cleanly
 # separates the two regimes. (With only 9 intens marks, a 0.9 threshold
@@ -192,12 +373,24 @@ class Lane:
 
     @property
     def experiment_tag(self) -> str:
-        """This lane's ``smolbench:experiment`` tag value: ``f"scaling-{key}"``."""
-        return f"scaling-{self.key}"
+        """This lane's ``smolbench:experiment`` tag value: ``f"{prefix}{key}"``.
+
+        `prefix` is ``_config.SCALING_TAG_PREFIX`` (``"scaling-"``), the same
+        constant ``fleet_status.py`` reads, so the two scripts cannot spell
+        this prefix differently.
+        """
+        return f"{_config.SCALING_TAG_PREFIX}{self.key}"
 
     @property
     def state_file(self) -> str:
-        """This lane's private EC2 state-file basename (repo-root-anchored by the driver)."""
+        """This lane's private EC2 state-file basename (repo-root-anchored by the driver).
+
+        Spelled ``.ec2_state_scaling_<key>.json`` literally, NOT derived from
+        `experiment_tag`'s ``_config.SCALING_TAG_PREFIX``: ``fleet_teardown.py``'s
+        glob depends on this exact ``.ec2_state_scaling_`` spelling, and the
+        two prefixes (``"scaling-"`` for the tag, ``"scaling_"`` here) are
+        independent strings by construction, not a typo needing to be unified.
+        """
         return f".ec2_state_scaling_{self.key}.json"
 
     @property
@@ -274,6 +467,19 @@ LANES: dict[str, Lane] = {
 # sibling study or a leftover manual run in this shell, and a whole-environment
 # copy would let those silently override `lane_env`'s per-lane config. Nothing
 # not named here ever crosses into a lane's environment.
+#
+# This module deliberately OWNS, and therefore does NOT list here, the keys
+# `lane_env` computes per lane: `EC2_REQUIRE_GPU` (the tier's hardware pin,
+# see `TIER_REQUIRE_GPU`), `EC2_MAX_PARALLEL_REQUESTS` (pinned to "1" -- see
+# `lane_env`'s body) and the `EC2_EXPERIMENT_TAG`/`EC2_INSTANCE_TYPES`/
+# `EC2_REGIONS` family already set below. A stale export from a sibling study
+# or an earlier manual run must not silently re-pin a lane's silicon or
+# re-widen its request fan-out -- the same argument that makes this whole
+# list an allowlist rather than an environment copy. `EC2_VLLM_IMAGE` is the
+# deliberate EXCEPTION: it is a fleet-wide artefact an operator may
+# legitimately want to bump without editing this file, and a lane's own
+# `LANE_IMAGE_OVERRIDES` entry still wins over it (see `lane_env`'s
+# Precedence note).
 PASSTHROUGH_ENV: tuple[str, ...] = (
     "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR",
     "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION",
@@ -282,6 +488,7 @@ PASSTHROUGH_ENV: tuple[str, ...] = (
     "HF_TOKEN",
     "SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION",
     "EC2_S3_MODEL_CACHE", "EC2_S3_CACHE_REGION",
+    "EC2_VLLM_IMAGE",
 )
 
 
@@ -307,7 +514,8 @@ def lane_env(
         value as ``INDUCTION_STATE_FILE`` -- the reattach contract) and
         ``LEAN_RUN_NAME`` = ``scaling_<key>``, which
         ``notebooks/deduction/run_study.py`` defaults to and
-        :func:`sync_deduction_spool` looks the local spool up under.
+        `_advance_finished` builds the same ``scaling_<key>`` run directory
+        name from, to hand to that driver's own ``spool_to_s3``.
 
     Notes
     -----
@@ -315,6 +523,16 @@ def lane_env(
     ``os.environ`` across 21 lanes launched from one parent would let lane N+1
     inherit lane N's tag and state file, and the two would then reattach to ONE
     instance, swapping each other's checkpoint out.
+
+    Precedence for ``EC2_VLLM_IMAGE``: a lane's own ``LANE_IMAGE_OVERRIDES``
+    entry (highest) beats an operator's ``EC2_VLLM_IMAGE`` export, carried
+    through ``PASSTHROUGH_ENV`` (middle), beats ec2.py's own digest-pinned
+    default (lowest -- this function sets NO key at all for a non-overridden
+    lane with no such export in `base_env`, so that lane's own ``ec2.py``
+    import resolves the image exactly as this supervisor's did). By contrast,
+    ``EC2_REQUIRE_GPU`` and ``EC2_MAX_PARALLEL_REQUESTS`` are set
+    UNCONDITIONALLY for every lane and are deliberately NOT in
+    ``PASSTHROUGH_ENV`` -- see that tuple's comment for why.
     """
     if base_env is None:
 
@@ -329,13 +547,28 @@ def lane_env(
             "INDUCTION_MODELS": lane.key,
             "EC2_INSTANCE_TYPES": lane.instance_types,
             "EC2_REGIONS": lane.regions,
-            "EC2_VLLM_IMAGE": LANE_IMAGE_OVERRIDES.get(lane.key, FLEET_IMAGE),
+            "EC2_REQUIRE_GPU": TIER_REQUIRE_GPU[lane.tier],
+            # ec2.py's DETERMINISM_ARGS serve --max-num-seqs 1, so the server
+            # executes one request at a time regardless; an 8-way client
+            # fan-out (ChatClient.evaluate's EC2_MAX_PARALLEL_REQUESTS
+            # default) therefore buys no throughput and multiplies every
+            # request's wall-clock by the number in flight -- which is what
+            # invalidated LANE_REQUEST_TIMEOUT_OVERRIDES's old 3-concurrent
+            # arithmetic (see that dict's comment). Pinning this to 1 makes
+            # per-request wall time equal to generation time.
+            "EC2_MAX_PARALLEL_REQUESTS": "1",
             "EC2_MAX_LIFETIME_MIN": MAX_LIFETIME_MIN,
             "EC2_REQUEST_TIMEOUT_SECONDS": LANE_REQUEST_TIMEOUT_OVERRIDES.get(
                 lane.key, REQUEST_TIMEOUT_SECONDS
             ),
         }
     )
+    if lane.key in LANE_IMAGE_OVERRIDES:
+        # Per-lane override wins over any operator EC2_VLLM_IMAGE passthrough
+        # already copied into `env` above (see this function's Precedence
+        # note): a V4 lane must never silently pick up a stray fleet-wide
+        # export meant for the other 19 lanes.
+        env["EC2_VLLM_IMAGE"] = LANE_IMAGE_OVERRIDES[lane.key]
     if phase == "deduction":
         env.update(
             {
@@ -626,14 +859,45 @@ def fleet_image_digest() -> Optional[str]:
 # enter a commit either way.
 LOG_DIR: Path = REPO_ROOT / "notebooks" / "induction" / "results" / "fleet_logs"
 
+#: Byte budget `_tail_log` reads from the END of a lane's log file. Finding
+#: 14-03: `_apply_restart_policy` calls `_tail_log` every tick for every lane
+#: whose subprocess just exited, and a live lane's log can reach gigabytes
+#: over a multi-hour vLLM serve, so reading the WHOLE file every tick does
+#: not scale. 256 KiB is deliberately generous relative to the ~40 lines
+#: callers ask for: UNDER-reading is not neutral here -- a `RECLAIM_PATTERNS`
+#: match that falls outside the read window would silently reclassify a
+#: reclaim as a crash, halting a lane that should have been relaunched.
+TAIL_MAX_BYTES = 262144
 
-def _tail_log(log_dir: Path, key: str, n: int = 40) -> str:
-    """Returns the last `n` lines of lane `key`'s log file, or ``""`` if unreadable."""
+
+def _tail_log(log_dir: Path, key: str, n: int = 40, *, max_bytes: int = TAIL_MAX_BYTES) -> str:
+    """Return the last `n` lines of lane `key`'s log file, or ``""`` if unreadable.
+
+    Reads at most `max_bytes` (default `TAIL_MAX_BYTES`) from the END of the
+    file (seek-from-end), never the whole file -- see `TAIL_MAX_BYTES`'s
+    comment for why that budget is generous rather than tight.
+
+    Notes
+    -----
+    When the file is bigger than `max_bytes`, the read does not start at byte
+    0, so its first line is very likely PARTIAL (the seek landed mid-line);
+    that line is dropped rather than returned, since a partial line could
+    spuriously match or fail to match a pattern a caller checks lines
+    against (`is_serve_healthy`, `RECLAIM_PATTERNS`).
+    """
     path = log_dir / f"{key}.log"
     try:
-        lines = path.read_text(errors="replace").splitlines()
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - max_bytes)
+            f.seek(start)
+            chunk = f.read()
     except OSError:
         return ""
+    lines = chunk.decode("utf-8", errors="replace").splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]  # drop the partial first line -- see docstring
     return "\n".join(lines[-n:])
 
 
@@ -653,6 +917,10 @@ def _start_phase(run: "_LaneRun", log_dir: Path) -> None:
     with open(log_path, "a") as log_file:
         run.proc = subprocess.Popen(cmd, stdout=log_file, stderr=log_file, env=env)
     run.started_at = time.monotonic()
+    if not run.lane_started_at:
+        # FIRST launch only -- see `_LaneRun.lane_started_at`'s docstring for
+        # why the 2x-budget alert must key on this instead of `started_at`.
+        run.lane_started_at = run.started_at
 
 
 def _launch_batch(runs: dict, keys: Sequence[str], log_dir: Path) -> None:
@@ -661,85 +929,6 @@ def _launch_batch(runs: dict, keys: Sequence[str], log_dir: Path) -> None:
         if i:
             time.sleep(LAUNCH_STAGGER_SECONDS)
         _start_phase(runs[key], log_dir)
-
-
-# ---------------------------------------------------------------------------
-# S3 spool sync (deduction lanes only)
-# ---------------------------------------------------------------------------
-SPOOL_BUCKET = "smolbench-results-414266451290"
-SPOOL_REGION = "us-west-2"
-
-
-def sync_deduction_spool(lane: Lane, *, client: Any = None) -> int:
-    """Upload one lane's local deduction spool to S3, then prune it.
-
-    Parameters
-    ----------
-    client : Any, optional
-        boto3 S3 client; ``None`` builds one lazily, so importing ``run_fleet``
-        needs no AWS SDK. Pass a fake to test without AWS.
-
-    Returns
-    -------
-    int
-        Files uploaded; ``0``, nothing uploaded or deleted, when the source
-        directory does not exist (not an error).
-
-    Notes
-    -----
-    ``notebooks/deduction/results/runs/scaling_<key>/`` (repo-root anchored) ->
-    ``s3://smolbench-results-414266451290/<runner.spool_prefix()>/scaling_<key>/<rel>``
-    in ``us-west-2``. The destination prefix is resolved via
-    ``smolbench.deduction.lean.runner.spool_prefix()`` at CALL time (imported
-    lazily below, matching this function's existing ``boto3`` lazy import),
-    never a module constant here -- it defaults to the re-collection's prefix
-    and refuses the published pre-cutoff study's ``deduction/runs`` unless
-    ``LEAN_ALLOW_LEGACY_PREFIX=1`` is set, so this writer cannot silently
-    overwrite that unrecoverable record. Once every file uploads the local
-    spool is PRUNED (uploaded files deleted, now-empty subdirectories removed)
-    EXCEPT ``manifest.json`` at the run root -- the config/run-id record, kept
-    so a later resume recognises the run.
-    """
-    source = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs" / f"scaling_{lane.key}"
-    if not source.is_dir():
-        logging.info(f"sync_deduction_spool[{lane.key}]: no spool at {source}; nothing to sync.")
-        return 0
-
-    # Lazy import: `smolbench.deduction.lean.runner` pulls in `tiktoken` (via
-    # `.context`), which this fleet supervisor otherwise never needs -- match
-    # the file's existing lazy-`boto3` pattern just below.
-    from smolbench.deduction.lean.runner import spool_prefix
-
-    if client is None:
-        import boto3  # lazy -- see docstring
-
-        client = boto3.client("s3", region_name=SPOOL_REGION)
-
-    dest_prefix = f"{spool_prefix()}/scaling_{lane.key}/"
-    files = sorted(p for p in source.rglob("*") if p.is_file())
-    for path in files:
-        rel = path.relative_to(source).as_posix()
-        client.upload_file(str(path), SPOOL_BUCKET, dest_prefix + rel)
-
-    manifest_path = source / "manifest.json"
-    for path in files:
-        if path != manifest_path:
-            path.unlink()
-
-    # Deepest-first, so a parent is only attempted once its children are
-    # cleared. `source` itself is never removed; it still holds manifest.json.
-    subdirs = sorted(
-        (p for p in source.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True
-    )
-    for subdir in subdirs:
-        try:
-            subdir.rmdir()
-        except OSError:
-            pass  # not empty -- fine, leave it
-
-    logging.info(f"sync_deduction_spool[{lane.key}]: uploaded {len(files)} file(s) to "
-                 f"s3://{SPOOL_BUCKET}/{dest_prefix}")
-    return len(files)
 
 
 # ---------------------------------------------------------------------------
@@ -763,6 +952,132 @@ def _fleet_status_module():
     return module
 
 
+@functools.lru_cache(maxsize=1)
+def _deduction_driver():
+    """Lazily load ``notebooks/deduction/run_study.py`` by file path; cached.
+
+    Finding 14-11: this supervisor used to re-implement the S3 spool upload
+    itself (`sync_deduction_spool`, now DELETED), without the driver's own
+    ``head_object``/``ContentLength`` verification -- an unverified upload
+    followed by a local delete can lose rows silently. Loading the driver and
+    calling its OWN ``spool_to_s3`` instead means one verified implementation,
+    not two that can drift.
+
+    LAZY on purpose, never imported at module scope: that module pulls in
+    ``smolbench.deduction.lean.runner`` (which pulls ``tiktoken``, unneeded by
+    every OTHER path through this supervisor) and, at MODULE SCOPE, runs
+    ``os.environ.setdefault`` work keyed on ``LEAN_MODEL`` plus a guard that
+    raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is not exactly
+    ``f"scaling-{LEAN_MODEL}"`` (see that file's module docstring). Neither
+    variable is set in THIS process's environment (they are per-lane
+    subprocess env, built by `lane_env` and never written to `os.environ`
+    here), so that guard's ``if _RAW_LEAN_MODEL:`` gate is false and the
+    whole block -- setdefaults and guard alike -- is skipped on load,
+    regardless of which lane's `_advance_finished` call triggers it first.
+    Called only from `_advance_finished`.
+
+    Registered in `sys.modules` under a distinct private name BEFORE
+    ``exec_module``, exactly as the induction loader at the top of this file
+    does (a ``@dataclass`` applied inside a module not yet in `sys.modules`
+    raises ``AttributeError`` -- see that loader's comment).
+    """
+    path = REPO_ROOT / "notebooks" / "deduction" / "run_study.py"
+    spec = importlib.util.spec_from_file_location("run_fleet_deduction_run_study_dep", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@dataclass
+class _Presence:
+    """Last describe sweep's lane set, plus whether any lane has EVER been seen.
+
+    Distinguishes three states a `fleet_status.fleet_rows()` sweep can leave a
+    lane's presence in: seen THIS sweep (`lanes` is the fresh set), seen
+    BEFORE and now gone (`lanes` is an explicit empty ``set()`` -- the fleet
+    really is empty), and never seen YET (`lanes` is ``None`` -- unknown).
+    Collapsing the last two into "empty" is finding 14-02: a fleet that has
+    not finished provisioning its first box looks IDENTICAL, via
+    `fleet_rows`, to every region's ``describe_instances`` raising -- both
+    return ``[]`` -- so reading an early empty sweep as "everything is gone"
+    turned every lane's exit into an unlimited-retry reclaim before a single
+    box had even been described successfully.
+
+    Attributes
+    ----------
+    lanes : set or None
+        Lane keys from the most recent sweep that did not raise; ``None``
+        means no such sweep has landed yet (or every one so far has come back
+        empty with nothing ever seen -- see `observe`).
+    ever_seen : bool
+        Whether any past sweep has returned a NON-EMPTY lane set.
+    """
+
+    lanes: Optional[set] = None
+    ever_seen: bool = False
+
+    def observe(self, swept: set) -> None:
+        """Update presence from one sweep's raw lane set.
+
+        Parameters
+        ----------
+        swept : set
+            Lane keys ``fleet_status.fleet_rows()`` returned THIS sweep. Call
+            only for a sweep that did NOT raise -- see `_monitor_tick`, which
+            treats a raising sweep as a separate case (logged and skipped,
+            `observe` never runs, `lanes` keeps its last value).
+
+        Notes
+        -----
+        PURE: no I/O, no AWS, no monitor-loop dependency -- directly
+        unit-testable against a bare ``set``. Semantics:
+
+        * non-empty `swept` -> ``lanes = set(swept)``, ``ever_seen = True``.
+        * empty `swept` and `ever_seen` -> ``lanes = set()``: a fleet that HAS
+          been seen non-empty before and is now empty really is empty -- a
+          lane exiting now IS a reclaim.
+        * empty `swept` and NOT `ever_seen` -> `lanes` is left UNCHANGED
+          (``None`` on the first such call). On a fleet's very first sweeps,
+          "not yet provisioned" and "describe_instances failed everywhere"
+          both present as an empty list from `fleet_rows`, with no way to
+          tell them apart from here; treating either as "everything is gone"
+          is exactly the defect this type exists to prevent.
+        """
+        if swept:
+            self.lanes = set(swept)
+            self.ever_seen = True
+        elif self.ever_seen:
+            self.lanes = set()
+        # else: nothing has ever been seen and this sweep was also empty --
+        # leave `lanes` as-is (unknown), per the docstring above.
+
+    def present(self, key: str) -> bool:
+        """Whether lane `key` should be treated as present right now.
+
+        Keys off `ever_seen`, NOT merely ``lanes is None``: nothing has been
+        CONFIRMED yet whenever ``ever_seen`` is ``False``, regardless of
+        whatever placeholder `lanes` happens to hold, so that state is
+        UNKNOWN and must default to present -- the same "unknown counts as
+        present" rule the ``None`` case exists for (see `observe`'s
+        docstring, third bullet). Only once `ever_seen` is ``True`` -- a real
+        sweep has actually seen this fleet non-empty at least once -- does an
+        empty `lanes` mean the fleet is genuinely gone, and only then is a
+        lane's absence from `lanes` allowed to mean "not present".
+
+        Returns
+        -------
+        bool
+            ``True`` when `ever_seen` is ``False`` (preserves the historical
+            first-tick behaviour, so an unchecked lane is never wrongly
+            reclassified as reclaimed), or when `lanes` is ``None`` or `key`
+            is in `lanes`; ``False`` otherwise.
+        """
+        if not self.ever_seen:
+            return True
+        return self.lanes is None or key in self.lanes
+
+
 @dataclass
 class _LaneRun:
     """Mutable per-lane runtime state, carried across monitor-loop ticks."""
@@ -773,12 +1088,39 @@ class _LaneRun:
     phases: tuple[str, ...]
     phase_index: int = 0
     proc: Optional[subprocess.Popen] = None
+    #: Timestamp of the most recent (re)launch; reset by every relaunch.
     started_at: float = 0.0
+    #: Timestamp of this lane's FIRST launch ONLY -- never reset by a
+    #: relaunch. `_monitor_tick`'s 2x-budget alert keys on THIS, not
+    #: `started_at`: an alert keyed on a value every relaunch resets could
+    #: never fire for the one lane it exists to catch -- one being relaunched
+    #: over and over (see `_start_phase`).
+    lane_started_at: float = 0.0
     crash_relaunches: int = 0
+    #: Reclaim relaunches so far this invocation; bounded by
+    #: `MAX_RECLAIM_RELAUNCHES` (see that constant's comment for why a
+    #: reclaim is no longer unlimited).
+    reclaim_relaunches: int = 0
+    #: `time.monotonic()` deadline for a pending backed-off reclaim relaunch;
+    #: ``None`` means nothing is pending. Set by `_apply_restart_policy` on a
+    #: reclaim verdict, cleared when that relaunch fires.
+    pending_relaunch_at: Optional[float] = None
     cot_checked: bool = False
+    #: Latches True once `_lane_gate_passed` has found the healthy-serve line
+    #: for this lane; makes every later gate check an O(1) no-I/O return.
+    gate_passed: bool = False
+    #: Byte offset `_lane_gate_passed` has already scanned up to, so each
+    #: call reads only newly appended bytes. Reset to 0 if the log file is
+    #: ever found shorter than this (truncated/replaced).
+    gate_scan_offset: int = 0
     halted: bool = False
     halt_reason: str = ""
     done: bool = False
+    #: Non-empty when this lane's post-deduction S3 spool failed; surfaced in
+    #: `_run_fleet`'s closing report. A spool failure does NOT halt the lane
+    #: (its data is already collected; this is a reporting matter -- see
+    #: `_advance_finished`).
+    spool_error: str = ""
 
     @property
     def current_phase(self) -> Optional[str]:
@@ -815,14 +1157,76 @@ def _phase_sequence(phase: str) -> tuple[str, ...]:
 
 
 def _lane_gate_passed(run: _LaneRun, log_dir: Path) -> bool:
-    """Check whether `run`'s log has a healthy-serve line (see `is_serve_healthy`)."""
-    tail = _tail_log(log_dir, run.lane.key, n=100_000)
-    return any(is_serve_healthy(line) for line in tail.splitlines())
+    """Check whether `run`'s log has ever produced a healthy-serve line.
+
+    STICKY and INCREMENTAL -- deliberately NOT a plain `_tail_log` bounded
+    read (finding 14-03): the healthy-serve line (`is_serve_healthy`) is a
+    ONE-TIME event near the start of a lane's log, which scrolls out of any
+    fixed byte window under gigabytes of later vLLM/CoT chatter, so a bounded
+    tail would silently stop finding it. Instead:
+
+    * once found, `run.gate_passed` latches ``True`` and every later call for
+      this lane is an O(1) return with no file I/O at all;
+    * until then, only the bytes APPENDED since `run.gate_scan_offset` are
+      read and scanned, so total work across many calls is O(log size), not
+      O(calls x log size);
+    * the offset only ever advances over WHOLE lines: if the newly read
+      chunk does not end in a newline (a write may be mid-flight), the scan
+      trims back to the last complete newline and advances the offset only
+      that far -- so a healthy-serve line split across two reads is not
+      half-consumed on the first call and then missed (already past the
+      offset) on the second;
+    * if the log file is found SHORTER than `gate_scan_offset` (truncated or
+      replaced under the same name), the offset resets to 0 and the scan
+      restarts from the beginning, rather than seeking past EOF and reading
+      nothing forever.
+    """
+    if run.gate_passed:
+        return True
+
+    path = log_dir / f"{run.lane.key}.log"
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+
+    offset = run.gate_scan_offset
+    if size < offset:
+        offset = 0  # file shrank -- rescan from the start, see docstring
+
+    try:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            chunk = f.read()
+    except OSError:
+        return False
+
+    if not chunk:
+        run.gate_scan_offset = offset
+        return False
+
+    consumed = len(chunk)
+    if not chunk.endswith(b"\n"):
+        last_newline = chunk.rfind(b"\n")
+        if last_newline == -1:
+            # No complete line yet at all; do not advance the offset -- the
+            # next call re-reads this same (still-growing) partial line.
+            run.gate_scan_offset = offset
+            return False
+        consumed = last_newline + 1
+        chunk = chunk[:consumed]
+
+    run.gate_scan_offset = offset + consumed
+    text = chunk.decode("utf-8", errors="replace")
+    if any(is_serve_healthy(line) for line in text.splitlines()):
+        run.gate_passed = True
+        return True
+    return False
 
 
 def _monitor_tick(
-    runs: dict[str, _LaneRun], log_dir: Path, tick: int, present_lanes: Optional[set]
-) -> Optional[set]:
+    runs: dict[str, _LaneRun], log_dir: Path, tick: int, presence: _Presence
+) -> None:
     """Run one polling pass over every lane: refresh presence, print the table, alert.
 
     Parameters
@@ -831,22 +1235,22 @@ def _monitor_tick(
         1-based. The ``describe_instances`` sweep (read-only
         ``fleet_status.fleet_rows``) runs on tick 1 -- so the table has instance
         data immediately -- and every ``DESCRIBE_EVERY_N_TICKS``-th tick after.
-    present_lanes : set or None
-        Lane keys from the last sweep; ``None`` if none has run yet.
-
-    Returns
-    -------
-    set or None
-        The possibly refreshed `present_lanes`. A failed sweep is logged and
-        SKIPPED, leaving the last-known value, rather than reading "could not
-        check" as "everything is gone".
+    presence : _Presence
+        Mutated in place. A sweep that RAISES is logged and skipped, leaving
+        `presence` untouched -- the previous "could not check" behaviour. A
+        sweep that RETURNS, even with an empty result, calls
+        ``presence.observe`` and lets that type's own rules (see its
+        docstring) decide whether an empty result means unknown or genuinely
+        gone -- these are different cases: a failed sweep tells you nothing,
+        while an empty but successful one is real information.
     """
     if tick == 1 or tick % DESCRIBE_EVERY_N_TICKS == 0:
         try:
             rows = _fleet_status_module().fleet_rows()
-            present_lanes = {row["lane"] for row in rows}
         except Exception as exc:  # noqa: BLE001 -- one bad sweep must not crash the monitor
             logging.warning(f"run_fleet: describe_instances sweep failed this tick: {exc}")
+        else:
+            presence.observe({row["lane"] for row in rows})
 
     print(f"\n=== fleet tick {tick} ({time.strftime('%Y-%m-%d %H:%M:%S')}) ===")
     for key in sorted(runs):
@@ -861,46 +1265,74 @@ def _monitor_tick(
             if rc not in (0, None):
                 print(f"ALERT [{key}]: process exited non-zero (rc={rc}).")
 
-        if present_lanes is not None and alive and key not in present_lanes:
+        if presence.lanes is not None and alive and key not in presence.lanes:
             print(f"ALERT [{key}]: subprocess is still running but its instance is "
                   "gone or shutting down.")
 
-        if run.started_at:
-            age_hours = (time.monotonic() - run.started_at) / 3600
+        if run.lane_started_at:
+            # `lane_started_at`, NOT `started_at`: see `_LaneRun.lane_started_at`'s
+            # docstring for why this alert must key on the lane's CUMULATIVE
+            # age across relaunches, not the most recent launch's timestamp.
+            age_hours = (time.monotonic() - run.lane_started_at) / 3600
             budget = 2 * run.lane.budget_hours
             if age_hours > budget:
                 print(f"ALERT [{key}]: wall clock {age_hours:.1f}h exceeds 2x budget "
                       f"({budget}h).")
-    return present_lanes
 
 
-def _apply_restart_policy(
-    runs: dict[str, _LaneRun], log_dir: Path, present_lanes: Optional[set]
-) -> None:
+def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _Presence) -> None:
     """Relaunch or halt every lane whose subprocess exited non-zero this tick.
 
-    Enforces `classify_exit`'s verdict: unlimited relaunches for a reclaim,
-    `MAX_CRASH_RELAUNCHES` for a crash, then a halt.
+    Enforces `classify_exit`'s verdict: a CRASH gets `MAX_CRASH_RELAUNCHES`
+    immediate relaunches then a halt; a RECLAIM gets `MAX_RECLAIM_RELAUNCHES`
+    BACKED-OFF relaunches (see that constant's comment for the schedule) then
+    a halt too. Reclaims are no longer unlimited -- finding 14-02: an empty or
+    failed describe sweep used to make every exit look like a reclaim, so an
+    unbounded retry policy on that misclassification meant a lane could
+    relaunch forever with no crash counting and no budget alert ever firing.
+
+    A lane whose previous reclaim verdict is still waiting out its backoff
+    (`pending_relaunch_at` in the future) is left alone this tick: neither
+    relaunched early nor re-classified against a log tail that has not
+    changed.
     """
+    now = time.monotonic()
     for key, run in runs.items():
         if run.halted or run.done or run.proc is None:
             continue
+
+        if run.pending_relaunch_at is not None:
+            if now < run.pending_relaunch_at:
+                continue  # still backing off; do not touch this lane this tick
+            run.pending_relaunch_at = None
+            _start_phase(run, log_dir)
+            continue
+
         rc = run.proc.poll()
         if rc is None or rc == 0:
             continue  # still running, or a clean exit (handled by _advance_finished)
 
         tail = _tail_log(log_dir, key)
-        # No describe sweep has landed yet. Default to "present": treating an
-        # unchecked lane as reclaimed would force a relaunch on every lane's
-        # very first tick, with no signal.
-        instance_present = present_lanes is None or key in present_lanes
-        verdict = classify_exit(tail, instance_present)
+        verdict = classify_exit(tail, presence.present(key))
         if verdict == "reclaim":
-            logging.warning(
-                f"run_fleet[{key}]: exited rc={rc}, classified RECLAIM -- relaunching "
-                "(unlimited retries)."
-            )
-            _start_phase(run, log_dir)
+            run.reclaim_relaunches += 1
+            if run.reclaim_relaunches > MAX_RECLAIM_RELAUNCHES:
+                run.halted = True
+                run.halt_reason = (
+                    f"reclaimed {run.reclaim_relaunches} time(s) (last rc={rc}); exceeded "
+                    f"MAX_RECLAIM_RELAUNCHES={MAX_RECLAIM_RELAUNCHES}"
+                )
+                logging.error(f"run_fleet[{key}]: HALTED -- {run.halt_reason}")
+            else:
+                delay = min(
+                    RECLAIM_BACKOFF_CAP_SECONDS,
+                    RECLAIM_BACKOFF_BASE_SECONDS * 2 ** (run.reclaim_relaunches - 1),
+                )
+                run.pending_relaunch_at = now + delay
+                logging.warning(
+                    f"run_fleet[{key}]: exited rc={rc}, classified RECLAIM -- relaunch "
+                    f"{run.reclaim_relaunches}/{MAX_RECLAIM_RELAUNCHES} in {delay:.0f}s."
+                )
         else:
             run.crash_relaunches += 1
             if run.crash_relaunches > MAX_CRASH_RELAUNCHES:
@@ -969,10 +1401,38 @@ def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
 
         finished_phase = run.current_phase
         if finished_phase == "deduction":
+            # `run_dir` is built from `REPO_ROOT` EXPLICITLY, not from the
+            # driver's own `runner.results_root()`: that helper reads
+            # `SMOLBENCH_LEAN_RESULTS` from whatever process calls it -- here,
+            # THIS supervisor, whose environment is not the lane's.
+            # `SMOLBENCH_LEAN_RESULTS` is not in `PASSTHROUGH_ENV`, so the lane
+            # subprocess resolved the repo-root-anchored default; anchoring
+            # here on `REPO_ROOT` reproduces exactly that, while
+            # `results_root()` would instead follow a stray supervisor-side
+            # export to a directory no lane ever wrote to.
+            run_dir = (
+                REPO_ROOT / "notebooks" / "deduction" / "results" / "runs" / f"scaling_{run.lane.key}"
+            )
             try:
-                sync_deduction_spool(run.lane)
-            except Exception as exc:  # noqa: BLE001 -- a failed spool sync must not crash the monitor
-                logging.error(f"run_fleet[{key}]: spool sync failed: {exc}")
+                # WHY spool again here, given the driver already spools before
+                # it can exit 0 (`lane_command` passes no `--no-s3`): its own
+                # prune leaves only `manifest.json`, so this is normally a
+                # cheap re-upload of one file -- but it is the LAST thing
+                # between "the lane process exited 0" and this supervisor
+                # shutting that instance down under `--phase deduction`/`both`.
+                # Going through the driver's OWN verified implementation
+                # (upload, head_object ContentLength check, only then prune)
+                # confirms the spool before destroying the box, rather than
+                # trusting an already-exited process's own earlier attempt.
+                #
+                # `SystemExit` explicitly, alongside `Exception`: the
+                # deduction driver's module-scope guard raises `SystemExit`
+                # (not caught by a bare `except Exception`), and a failure
+                # loading or running it here must not kill this supervisor.
+                _deduction_driver().spool_to_s3(run_dir, run.lane.key)
+            except (Exception, SystemExit) as exc:  # noqa: BLE001 -- see docstring above
+                run.spool_error = f"{type(exc).__name__}: {exc}"
+                logging.error(f"run_fleet[{key}]: spool sync failed: {run.spool_error}")
 
         run.phase_index += 1
         if run.current_phase is not None:
@@ -1016,15 +1476,15 @@ def _run_fleet(
     _launch_batch(runs, tier_d, log_dir)
     _launch_batch(runs, tier_a, log_dir)
 
-    present_lanes: Optional[set] = None
+    presence = _Presence()
     tick = 0
 
     gate_keys = [k for k in GATE_MODELS if k in runs] if gate else []
     while gate_keys and not all(_lane_gate_passed(runs[k], log_dir) for k in gate_keys):
         tick += 1
         time.sleep(MONITOR_INTERVAL_SECONDS)
-        present_lanes = _monitor_tick(runs, log_dir, tick, present_lanes)
-        _apply_restart_policy(runs, log_dir, present_lanes)
+        _monitor_tick(runs, log_dir, tick, presence)
+        _apply_restart_policy(runs, log_dir, presence)
         _check_cot(runs)
         _advance_finished(runs, log_dir)
         if all(runs[k].halted for k in gate_keys):
@@ -1032,6 +1492,20 @@ def _run_fleet(
                 "run_fleet: FAMILY GATE FAILED -- every GATE_MODELS lane halted; NOT "
                 "launching tiers B/C. Investigate FLEET_IMAGE before retrying."
             )
+            # Finding 14-03: these tier B/C lanes were never launched (proc is
+            # still None), so without marking them HALTED here they sit
+            # forever with halted=False, done=False -- `_all_terminal` never
+            # returns True, both policy loops `continue` on `proc is None`,
+            # and the supervisor spins with the tier-D boxes still up,
+            # printing ticks forever and never reaching the closing report or
+            # the teardown reminder below. HALT, not `done`: these lanes
+            # produced no data and the operator must see them in the closing
+            # summary, not have them silently disappear from it.
+            for bc_key in tier_bc:
+                runs[bc_key].halted = True
+                runs[bc_key].halt_reason = (
+                    "never launched: family gate failed (every GATE_MODELS lane halted)"
+                )
             gate_keys = []  # stop waiting; skip the else-clause launch below
             break
     else:
@@ -1041,14 +1515,23 @@ def _run_fleet(
     while not _all_terminal(runs):
         tick += 1
         time.sleep(MONITOR_INTERVAL_SECONDS)
-        present_lanes = _monitor_tick(runs, log_dir, tick, present_lanes)
-        _apply_restart_policy(runs, log_dir, present_lanes)
+        _monitor_tick(runs, log_dir, tick, presence)
+        _apply_restart_policy(runs, log_dir, presence)
         _check_cot(runs)
         _advance_finished(runs, log_dir)
 
     halted = {key: run.halt_reason for key, run in runs.items() if run.halted}
     if halted:
         logging.error(f"run_fleet: fleet finished with {len(halted)} halted lane(s): {halted}")
+    # Printed unconditionally -- even when no lane halted -- because a spool
+    # failure (finding 14-11) does not halt a lane; it is the only place this
+    # would otherwise surface.
+    spool_errors = {key: run.spool_error for key, run in runs.items() if run.spool_error}
+    if spool_errors:
+        logging.error(
+            f"run_fleet: {len(spool_errors)} lane(s) had a post-deduction spool failure "
+            f"(data is collected locally, NOT confirmed in S3): {spool_errors}"
+        )
     if phase_name == "induction":
         print(
             "\nrun_fleet: induction-only run complete. Boxes are left RUNNING on purpose "

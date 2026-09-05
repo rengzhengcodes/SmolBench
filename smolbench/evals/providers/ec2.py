@@ -228,14 +228,20 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 #
 # Instance tiers (chosen from weights-size and 128k-KV arithmetic; the
 # fleet supervisor maps these to EC2_INSTANCE_TYPES per lane):
-#   tier A g6e.4xlarge  (1x L40S 48 GB):  nano-4b, gemma e2b, ministral-3b
-#   tier B g6e.12xlarge (4x L40S 192 GB): qwen 27b, nano-30b, gemma 12b/31b,
-#                                         glm-4.7-flash, ministral 8b/14b,
-#                                         exaone 32b/33b
-#   tier C p5.48xlarge  (8x H100 640 GB): qwen 122b/397b-fp8, super-120b,
+#   tier A g6e.4xlarge,g6e.8xlarge (1x L40S 48 GB): nano-4b, gemma e2b,
+#                                         ministral-3b
+#   tier B g6e.12xlarge,g6e.24xlarge (4x L40S 192 GB): qwen 27b, nano-30b,
+#                                         gemma 12b/31b, glm-4.7-flash,
+#                                         ministral 8b/14b, exaone 32b/33b
+#   tier C p5.48xlarge,p5e.48xlarge (8x H100 640 GB / H200 1128 GB): qwen
+#                                         122b/397b-fp8, super-120b,
 #                                         glm-4.5-air, k-exaone-236b
 #   tier D p6-b200.48xlarge (8x B200 1440 GB): glm-4.7, deepseek-v3.1,
 #                                         deepseek-v4-pro, deepseek-v4-flash
+# Each tier's hunt list is ONE GPU COUNT by construction, pinned per lane
+# through EC2_REQUIRE_GPU (see run_fleet.TIER_REQUIRE_GPU/_tier_gpu_pin), so a
+# capacity reclaim onto a same-tier fallback type can never change a lane's
+# derived tp mid-lane.
 #
 # tp notes: GLM-4.7-Flash has 20 attention heads, so tp must divide 20; it
 # runs tp=4 on tier B (a p5 would idle half its GPUs). Nemotron-Nano-30B has
@@ -359,11 +365,14 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
                                   "--tokenizer-revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7"]},
-    # tp=4: tier A's g6e.12xlarge capacity fallback lands this lane on 4x
-    # L40S in practice, and a 12B model with ~95k-token thinking budgets on
-    # ONE L40S hit the 3600s read timeout on long arms. 16 attention heads
-    # and 8 KV heads shard cleanly across 4; tp=4 does require that 4-GPU
-    # box, which the fallback list provides.
+    # tp=4: gemma-4-12b is a TIER B lane (see run_fleet.TIER_MEMBERS), and
+    # tier B's hunt list is ALL 4-GPU (g6e.12xlarge, g6e.24xlarge -- see
+    # run_fleet.TIER_INSTANCE_TYPES), which is what provides the 4x L40S box:
+    # a 12B model with ~95k-token thinking budgets on ONE L40S hit the read
+    # timeout on long arms. 16 attention heads and 8 KV heads shard cleanly
+    # across 4; tp=4 does require that 4-GPU box, which tier B's hunt list
+    # guarantees (tier A no longer hunts a 4-GPU box at all, see
+    # run_fleet.TIER_INSTANCE_TYPES).
     "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",

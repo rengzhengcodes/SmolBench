@@ -1,10 +1,17 @@
 """Command-line entry points: `python -m smolbench.deduction.lean.cli <subcommand>`.
 
 Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs
-against Lean and so need `.verify`, which requires `lean_dojo` (the `lean`
-extra, plus elan and a traced-repo cache at runtime); every other subcommand
-needs none of that. To keep the split real, `.verify` is imported lazily inside
-`cmd_replay` and `cmd_filter`, and `run-cell`/`run-sweep` reach it only through
+against Lean and so need `.verify`, which requires `lean_interact` (the `lean`
+extra, `uv sync --all-extras`) plus `elan` on `PATH` plus a mathlib4 checkout
+built with `elan`/`lake` and pointed to by `SMOLBENCH_MATHLIB_ROOT` at
+runtime (`replbackend.mathlib_root`); every other subcommand needs none of
+that. `lean_dojo` is NOT part of this split any more -- the deprecated `Dojo`
+interaction layer it provides cannot drive Lean >= v4.20 and so cannot reach
+this corpus's mathlib4 at Lean v4.34.0-rc2 -- but it remains a declared
+dependency of the `lean` extra for corpus tracing and for `premises`' source
+slicing out of `~/.cache/lean_dojo`, neither of which this CLI drives. To
+keep the split real, `.verify` is imported lazily inside `cmd_replay` and
+`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
 `runner._default_verifier()`.
 """
 
@@ -19,8 +26,9 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    SANITY_FAILURE_VERDICTS, new_run_id, regenerate_run_artifacts,
-    reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
+    DEFAULT_DOJO_TIMEOUT, SANITY_FAILURE_VERDICTS, dedupe_cell_rows, new_run_id,
+    regenerate_run_artifacts, reject_superseded_rows, results_root, run_cell, sweep,
+    write_jsonl,
 )
 
 
@@ -50,11 +58,12 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    """Replay ground-truth tactics through Dojo for a sample of theorems.
+    """Replay ground-truth tactics through a Lean REPL session for a sample of theorems.
 
-    Requires `lean_dojo` (opens real Dojo sessions). ``--full-name`` replays that
-    theorem instead of sampling ``-n`` from the ``--max-tactics`` filtered pool
-    under ``--seed``; ``--timeout`` is per-theorem seconds.
+    Requires `lean_interact` (opens real REPL sessions via `.verify`).
+    ``--full-name`` replays that theorem instead of sampling ``-n`` from the
+    ``--max-tactics`` filtered pool under ``--seed``; ``--timeout`` is
+    per-theorem seconds.
 
     Returns
     -------
@@ -62,8 +71,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         2 if ``--full-name`` matches no theorem, 0 if every replay verdict is
         ``"success"``, else 1.
     """
-    # Local import: `.verify` requires `lean_dojo`, so deferring it here
-    # keeps every OTHER subcommand importable without lean_dojo installed.
+    # Local import: `.verify` requires `lean_interact`, so deferring it here
+    # keeps every OTHER subcommand importable without lean_interact installed.
     from .verify import replay_ground_truth
 
     pool = list(iter_with_proof(args.kind, args.split))
@@ -105,7 +114,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_filter(args: argparse.Namespace) -> int:
     """Replay every theorem with traced tactics; persist a passing list to JSONL.
 
-    Requires `lean_dojo`. Appends to `corpus.replay_passing_path(kind, split)`,
+    Requires `lean_interact`. Appends to `corpus.replay_passing_path(kind, split)`,
     flushing after each theorem and resuming by skipping theorems already
     recorded there, so an interrupt loses at most the in-flight theorem.
     ``--fresh`` deletes the sidecar; ``--limit 0`` means no cap. Always 0.
@@ -175,7 +184,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
 def cmd_run_cell(args: argparse.Namespace) -> int:
     """Run one (theorem, k, rung) cell with N replicates and write a JSONL row file.
 
-    Requires `lean_dojo`, reached through `runner.run_cell`'s lazily-resolved
+    Requires `lean_interact`, reached through `runner.run_cell`'s lazily-resolved
     default verifier. ``--k -1`` means the last step; ``--rung`` is
     ``<chain>:<level>``, validated via `context.validate`; ``--seed`` is the base
     decoding seed, replicate ``i`` using ``seed + i``. Writes one row per
@@ -317,14 +326,19 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
     Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file with
-    the same row schema): no Lean toolchain, no Dojo session, no writes. The
-    ``trunc`` column counts rows that opened a ``<think>`` block without closing
-    it, or died in the reasoning channel. A pass@N table follows only when some
-    cell recorded more than one replicate: a cell passes if ANY replicate
-    verified, and N is the max replicate count seen IN THE DATA, not the sweep
-    config -- so N is reported honestly for a partially-generated run, but a
-    mixed-replicate file still pools cells of unequal N under that one heading. `path` is checked against
-    `runner.reject_superseded_rows` before it is opened.
+    the same row schema): no Lean toolchain, no REPL session, no writes. Cell
+    rows are deduped through `runner.dedupe_cell_rows` before any counting (a
+    resumed lane may carry an exception row and its retry for the same cell
+    key; see that function's docstring) -- both the plain pass/N table and the
+    pass@N table below count DISTINCT cells, never raw rows. The ``trunc``
+    column counts rows that opened a ``<think>`` block without closing it, or
+    died in the reasoning channel. A pass@N table follows only when some cell
+    recorded more than one distinct ``replicate_idx`` after deduping: a cell
+    passes if ANY replicate verified, and N is the max number of distinct
+    replicate indices seen IN THE DATA, not the sweep config -- so N is
+    reported honestly for a partially-generated run, but a mixed-replicate file
+    still pools cells of unequal N under that one heading. `path` is checked
+    against `runner.reject_superseded_rows` before it is opened.
 
     Returns
     -------
@@ -337,6 +351,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         lambda: {
             "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
             "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0,
             "unverified": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
@@ -354,6 +369,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     # unfiltered upstream -- the likeliest place to point at a retired
     # `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
     reject_superseded_rows([args.path])
+    # Cell rows are collected here, not aggregated inline: `runner.dedupe_cell_rows`
+    # must run on the whole set BEFORE `cells`/`groups` are built, or a lane that
+    # resumed past one exception counts its retried cell twice -- both as 1/2 in
+    # `cells` and as an inflated pass@N `N` (see `groups`, below). Sanity rows
+    # have no cell identity and stay a single streaming pass.
+    cell_rows: list[dict] = []
     with open(args.path) as f:
         for line in f:
             r = json.loads(line)
@@ -365,44 +386,53 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     n_sanity_fail += 1
                 else:
                     # "skipped": a generation-only sweep deferred the replay.
+                    # "exception": an infrastructure failure (unset
+                    # SMOLBENCH_MATHLIB_ROOT, REPL start race, ...), not a
+                    # positive finding that the ground truth is broken --
+                    # SANITY_FAILURE_VERDICTS deliberately excludes it (see
+                    # `runner.py`'s Design comment on that constant), so it
+                    # counts as deferred/unresolved here too, not a fail.
                     n_sanity_skipped += 1
                 continue
-            n_rows += 1
-            key = (r.get("rung", "?"), r.get("model", "?"))
-            c = cells[key]
-            c["n"] += 1
-            v = r.get("verdict", "exception")
-            if v in c:
-                c[v] += 1
-            else:
-                c["exception"] += 1
-            c["tok_in"] += r.get("prompt_tokens", 0)
-            c["tok_out"] += r.get("completion_tokens", 0)
-            c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+            cell_rows.append(r)
 
-            # Truncation smell: a reasoning model cut off mid-<think> emits
-            # no tactic block, which otherwise looks like an ordinary
-            # `incomplete`/`given_up` verdict; counting it separately keeps
-            # a wave of truncations from reading as reasoning dead ends.
-            # `raw_response` is the field runner.py writes; `content` is a
-            # fallback for row variants using the provider SDK's key name.
-            raw_text = r.get("raw_response", "") or r.get("content", "")
-            unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-            # Parser-path case: under a vLLM --reasoning-parser the server
-            # splits <think> into `reasoning_content`, so a generation that
-            # died in the think channel leaves `raw_response` EMPTY rather
-            # than unclosed, and the check above reads 0. Deliberately tests
-            # `raw_response` alone, not the `content`-fallback `raw_text`,
-            # matching the row schema runner.py writes in that mode.
-            died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
-            if unclosed_think_in_raw or died_in_reasoning_channel:
-                c["trunc"] += 1
+    for r in dedupe_cell_rows(cell_rows):
+        n_rows += 1
+        key = (r.get("rung", "?"), r.get("model", "?"))
+        c = cells[key]
+        c["n"] += 1
+        v = r.get("verdict", "exception")
+        if v in c:
+            c[v] += 1
+        else:
+            c["exception"] += 1
+        c["tok_in"] += r.get("prompt_tokens", 0)
+        c["tok_out"] += r.get("completion_tokens", 0)
+        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
 
-            group_key = (
-                r.get("model", "?"), r.get("rung", "?"),
-                r.get("theorem_id", "?"), r.get("k", -1),
-            )
-            groups[group_key].append(v)
+        # Truncation smell: a reasoning model cut off mid-<think> emits
+        # no tactic block, which otherwise looks like an ordinary
+        # `incomplete`/`given_up` verdict; counting it separately keeps
+        # a wave of truncations from reading as reasoning dead ends.
+        # `raw_response` is the field runner.py writes; `content` is a
+        # fallback for row variants using the provider SDK's key name.
+        raw_text = r.get("raw_response", "") or r.get("content", "")
+        unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
+        # Parser-path case: under a vLLM --reasoning-parser the server
+        # splits <think> into `reasoning_content`, so a generation that
+        # died in the think channel leaves `raw_response` EMPTY rather
+        # than unclosed, and the check above reads 0. Deliberately tests
+        # `raw_response` alone, not the `content`-fallback `raw_text`,
+        # matching the row schema runner.py writes in that mode.
+        died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
+        if unclosed_think_in_raw or died_in_reasoning_channel:
+            c["trunc"] += 1
+
+        group_key = (
+            r.get("model", "?"), r.get("rung", "?"),
+            r.get("theorem_id", "?"), r.get("k", -1),
+        )
+        groups[group_key].append(v)
 
     if not cells:
         print(f"empty: no rows in {args.path}", file=sys.stderr)
@@ -445,7 +475,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print()
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'unvf':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
+        f"{'noans':>5} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     print(header)
@@ -460,7 +491,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} {c['unverified']:>5} "
+            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['no_answer']:>5} {c['unverified']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
@@ -515,7 +547,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_run_sweep(args: argparse.Namespace) -> int:
-    """Run a YAML-described sweep with resumability; requires `lean_dojo`.
+    """Run a YAML-described sweep with resumability; requires `lean_interact`.
 
     ``--config`` is `yaml.safe_load`ed into `runner.sweep`'s `config`; ``--out``
     defaults to ``results_root()/runs/<config["run_name"] or new_run_id()>``;
@@ -728,13 +760,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--limit", type=int, default=10)
     p_list.set_defaults(func=cmd_list)
 
-    p_replay = sub.add_parser("replay", help="replay ground-truth tactics in Dojo")
+    p_replay = sub.add_parser("replay", help="replay ground-truth tactics via a Lean REPL session")
     p_replay.add_argument("--kind", choices=["random", "novel_premises"], default="random")
     p_replay.add_argument("--split", choices=["train", "val", "test"], default="val")
     p_replay.add_argument("-n", type=int, default=5, help="number of theorems to replay")
     p_replay.add_argument("--seed", type=int, default=0)
     p_replay.add_argument("--max-tactics", type=int, default=5)
-    p_replay.add_argument("--timeout", type=int, default=600)
+    # Same quantity as `run-cell`'s --timeout (both feed
+    # `verify.replay_ground_truth`/`run_cell`'s per-theorem REPL session
+    # timeout) -- use the named constant instead of a second literal `600`
+    # a few lines from it. The config/constant/CLI spelling stays
+    # `dojo_timeout`/`DEFAULT_DOJO_TIMEOUT` regardless (see that constant's
+    # Design comment in runner.py): committed sweep YAML and archived
+    # `manifest.json` config blocks already use that key.
+    p_replay.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_replay.add_argument("--full-name", default=None, help="replay this specific theorem")
     p_replay.set_defaults(func=cmd_replay)
 
@@ -742,6 +781,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_filter.add_argument("--kind", choices=["random", "novel_premises"], default="random")
     p_filter.add_argument("--split", choices=["train", "val", "test"], default="val")
     p_filter.add_argument("--limit", type=int, default=0, help="cap number of theorems (0 = no cap)")
+    # Deliberately NOT `DEFAULT_DOJO_TIMEOUT`: no recorded derivation for 300
+    # specifically was found (git history back to this file's introduction
+    # carries no comment or commit-message note on this value). Left at 300
+    # rather than silently widened to match `run-cell`/`replay`, because
+    # `cmd_filter` replays EVERY theorem with traced tactics in the corpus
+    # pool (potentially hundreds), unlike `cmd_replay`'s small `-n`-sized
+    # sample or `run-cell`'s single theorem -- so a stalled-theorem timeout
+    # here is paid far more times per invocation, and widening it to 600
+    # would be a real, unreviewed increase in a full-corpus run's worst-case
+    # wall-clock. That said, this is a plausible reading of what the code
+    # does, not a recorded reason for why 300 (rather than some other value
+    # below 600) was the number originally chosen -- that specific
+    # discrepancy is unresolved. See
+    # `test_dojo_timeout_has_one_default_across_all_three_entry_points`,
+    # which pins `filter`'s default to be UNEQUAL to `DEFAULT_DOJO_TIMEOUT`.
     p_filter.add_argument("--timeout", type=int, default=300)
     p_filter.add_argument("--fresh", action="store_true", help="delete existing JSONL and start over")
     p_filter.set_defaults(func=cmd_filter)
@@ -764,7 +818,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cell.add_argument("--model", default="anthropic/claude-haiku-4.5")
     p_cell.add_argument("--temperature", type=float, default=0.7)
     p_cell.add_argument("--max-tokens", type=int, default=4096)
-    p_cell.add_argument("--timeout", type=int, default=600)
+    # `DEFAULT_DOJO_TIMEOUT` (600s) -- see that constant's Design comment in
+    # runner.py for why this stays 600 and is not unified down to 300.
+    p_cell.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_cell.add_argument(
         "--seed", type=int, default=1776,
         help="base decoding seed; replicate i uses seed+i",

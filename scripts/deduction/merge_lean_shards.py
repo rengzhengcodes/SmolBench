@@ -11,11 +11,19 @@ and only then prunes the shard dirs, so no run data accumulates locally.
 
 Merge gates (hard failures; nothing is written past a failed one): every shard dir
 has ``all_rows.jsonl`` and ``manifest.json``; every row parses, except a torn
-FINAL line, which is dropped with a warning (resume regenerates it); no duplicate cell key
-(model, theorem_id, k, rung, replicate_idx) or sanity theorem across shards
-(stride shards are disjoint, so a duplicate means a mis-sharded/double-run lane);
-merged totals equal ``--expect-cells``/``--expect-sanity``; no ``theorems/`` path
-collides; the canonical ``all_rows.jsonl`` does not already exist (never overwritten).
+FINAL line, which is dropped with a warning (resume regenerates it); no cell key
+(model, theorem_id, k, rung, replicate_idx) has two or more SURVIVING rows
+(``verdict != "exception"``) across shards -- stride shards are disjoint, so
+that really is a mis-sharded/double-run lane; a key with at most one surviving
+row plus any number of ``"exception"`` rows is the ORDINARY resume case
+(``runner._existing_keys`` deliberately re-runs an exception-only cell and the
+sweep appends the retry) and collapses silently for the ``--expect-cells`` count
+below, though every one of its rows is still kept in the merged file (superseded
+data is labelled, never dropped -- see ``runner.SUPERSEDED_MARKER``'s comment);
+no duplicate sanity theorem across shards; the merged DISTINCT cell-key count
+equals ``--expect-cells`` and the merged sanity-row count equals
+``--expect-sanity``; no ``theorems/`` path collides; the canonical
+``all_rows.jsonl`` does not already exist (never overwritten).
 
 Run from the repo root after the shard drivers have exited::
 
@@ -37,15 +45,18 @@ RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
 def _cell_key(row: dict) -> tuple:
-    # Duplicated verbatim in scripts/deduction/split_lean_run_into_shards.py
-    # rather than shared: both scripts must mirror `runner._row_key`'s field
-    # order, and neither may import smolbench (they run on boxes without it).
-    return (
-        row.get("model"),
-        row.get("theorem_id"),
-        row.get("k"),
-        row.get("rung"),
-        row.get("replicate_idx"),
+    # Delegates to `runner._row_key` instead of keeping a second copy of its
+    # field order: `main()` (below) already imports `runner` unconditionally
+    # -- for the --expect-* argparse defaults, then again for
+    # `write_run_analysis` -- before `merge_shards` (and so this function) ever
+    # runs, so nothing on this call path is "a box without smolbench". The
+    # import stays function-local so a caller that never reaches this line
+    # (e.g. importing the module just for its argparse setup) does not pay for
+    # `runner`'s heavy import chain.
+    from smolbench.deduction.lean import runner
+    return runner._row_key(
+        row.get("model"), row.get("theorem_id"), row.get("k"),
+        row.get("rung"), row.get("replicate_idx"),
     )
 
 
@@ -64,7 +75,8 @@ def merge_shards(
     runs_root : Path
         Holds both the shard run dirs and the canonical run dir.
     expect_cells, expect_sanity : int or None
-        Merged row-count gates; ``None`` disables either.
+        Gates on the merged DISTINCT cell-key count and the merged sanity-row
+        count respectively; ``None`` disables either.
 
     Returns
     -------
@@ -89,10 +101,14 @@ def merge_shards(
         raise SystemExit(f"{canonical / 'all_rows.jsonl'} already exists -- refusing to clobber.")
 
     # Gates run before anything is written.
-    cell_keys: set[tuple] = set()
+    # Cell rows are gathered by key across ALL shards, in shard order then
+    # file order, before any duplicate verdict is judged -- see the loop
+    # below, which needs every row for a key in hand to tell a legitimate
+    # resume from a mis-sharded/double-run lane.
+    cell_rows_by_key: dict[tuple, list[dict]] = {}
     sanity_ids: set[str] = set()
     per_shard_rows: list[list[str]] = []
-    n_cells = n_sanity = 0
+    n_sanity = 0
     for d in shard_dirs:
         lines = (d / "all_rows.jsonl").read_text().splitlines()
         kept: list[str] = []
@@ -114,19 +130,57 @@ def merge_shards(
                 )
             kept.append(line)
             if row.get("kind") == "cell":
-                n_cells += 1
-                k = _cell_key(row)
-                if k in cell_keys:
-                    raise SystemExit(f"duplicate cell across shards: {k}")
-                cell_keys.add(k)
+                cell_rows_by_key.setdefault(_cell_key(row), []).append(row)
             elif row.get("kind") == "sanity":
                 n_sanity += 1
                 t = row.get("theorem_id")
                 if t in sanity_ids:
                     raise SystemExit(f"duplicate sanity row across shards: {t}")
                 sanity_ids.add(t)
+
+    # Gate: at most one SURVIVING row per cell key. `runner._existing_keys`
+    # deliberately re-runs a cell whose only row is an "exception" verdict
+    # (the exception may have come from the verifier, so the proof was never
+    # checked) and a resumed sweep APPENDS that retry, so a key with one
+    # surviving row plus any number of "exception" rows is the ordinary,
+    # expected shape of a lane that resumed past an infrastructure hiccup --
+    # not a mis-sharded/double-run lane. Two or more surviving rows for one
+    # key is what stride-disjoint shards can never legitimately produce, so
+    # that is the only shape this gate rejects. Anchored on the literal
+    # string "exception" (not `runner.SANITY_FAILURE_VERDICTS`, which is a
+    # different taxonomy for SANITY rows, and not
+    # `power_analysis.UNMEASURABLE_VERDICTS`, which also treats
+    # "replay_failed" as unmeasurable): this must match `_existing_keys`'
+    # rule exactly, since `_existing_keys` is what produced the duplicate in
+    # the first place.
+    # Design: named `cell_key`, not `key` -- this function's own parameter is
+    # already called `key` (the lane's spec key, e.g. "ministral-3-14b"), and
+    # shadowing it here would leak the LAST cell key iterated into every
+    # `f"scaling_{key}"` computed after this loop (canonical dir name, and the
+    # synthesized manifest's `run_name`/`config["run_name"]` below).
+    n_resumed = 0
+    for cell_key, rows in cell_rows_by_key.items():
+        surviving = [r for r in rows if r.get("verdict") != "exception"]
+        if len(surviving) >= 2:
+            raise SystemExit(
+                f"duplicate cell across shards: {cell_key} has {len(surviving)} "
+                f"surviving rows (verdicts {[r.get('verdict') for r in surviving]})"
+            )
+        if len(rows) > 1:
+            n_resumed += 1
+    if n_resumed:
+        logging.info(
+            f"{n_resumed} cell key(s) carried an exception row plus a resumed "
+            "retry; both rows are kept in the merged file and the key counts once"
+        )
+
+    # `--expect-cells` counts DISTINCT cell keys, not cell rows: a lane that
+    # resumed past one exception carries 945 rows against a pinned 944 and
+    # must not fail this gate for the same reason the duplicate-key gate
+    # above does not reject it.
+    n_cells = len(cell_rows_by_key)
     if expect_cells is not None and n_cells != expect_cells:
-        raise SystemExit(f"merged cell count {n_cells} != expected {expect_cells}")
+        raise SystemExit(f"merged distinct cell count {n_cells} != expected {expect_cells}")
     if expect_sanity is not None and n_sanity != expect_sanity:
         raise SystemExit(f"merged sanity count {n_sanity} != expected {expect_sanity}")
 
@@ -204,8 +258,7 @@ def main(argv: list[str] | None = None) -> None:
     # of truth in `runner` rather than duplicated here as local constants.
     # `main()` already imports `runner` unconditionally further down (for
     # `write_run_analysis`), so pulling the import up front adds no new
-    # requirement -- this script's boxes-without-smolbench constraint binds
-    # only on `_cell_key` (see its comment), not on `main()`.
+    # requirement.
     from smolbench.deduction.lean import runner
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

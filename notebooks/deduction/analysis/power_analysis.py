@@ -40,7 +40,6 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 import argparse
 import hashlib
 import json
-import math
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -48,6 +47,7 @@ from itertools import combinations
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import binom
 
 # notebooks/ (where _power_common.py lives) is two levels up. Anchoring the
 # import to __file__ makes it cwd-independent (repo convention).
@@ -185,7 +185,21 @@ def _seed_of(name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Core statistics, inlined so this file stays importable on its own.
+# Core statistics. `pass_at_n` and `benjamini_hochberg` stay hand-rolled (they
+# are a few lines of closed-form arithmetic, not worth a dependency either
+# way); `mcnemar_exact_p` below calls `scipy.stats.binom` directly, because
+# scipy is not an extra dependency here -- this file's own run environment
+# (``uv run --no-project --with numpy --with scipy``, see the
+# `_DEDUCTION_SPOOL_PREFIX` comment a few dozen lines up) already declares and
+# installs it. A hand-rolled log-space binomial CDF (previously
+# `_log_binom_cdf_half`, a `lgamma` + log-sum-exp reimplementation of exactly
+# what `scipy.stats.binom.cdf` already computes, more carefully, in C) stood
+# in here under the theory that scipy might not be present; that theory is
+# false for this file's declared environment, so the hand-rolled version is
+# deleted rather than kept as a second, unexercised implementation of the same
+# CDF (`tests/deduction/test_deduction_analysis_reports.py` pins agreement with
+# an independent `math.comb` reference to <=1e-9 across the study's discordant
+# range).
 # --------------------------------------------------------------------------- #
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Probability at least one of `n` conditionally-independent replicates succeeds:
@@ -193,27 +207,13 @@ def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     return 1.0 - (1.0 - np.asarray(p, dtype=float)) ** n
 
 
-def _log_binom_cdf_half(n: int, k: int) -> float:
-    """Log of the Binomial(`n`, 0.5) CDF at `k` (``0 <= k <= n``).
-
-    ``lgamma`` plus log-sum-exp: stays finite for the discordant totals of several
-    thousand that would underflow a naive ``0.5**n``.
-    """
-    ln_half = math.log(0.5)
-    ln_nfac = math.lgamma(n + 1)
-    log_terms = [
-        ln_nfac - math.lgamma(i + 1) - math.lgamma(n - i + 1) + n * ln_half
-        for i in range(k + 1)
-    ]
-    max_lt = max(log_terms)
-    return max_lt + math.log(sum(math.exp(lt - max_lt) for lt in log_terms))
-
-
 def mcnemar_exact_p(b: int, c: int) -> float:
     """McNemar's exact two-sided binomial p-value for discordant counts.
 
     Under H0 the ``b`` cells are ``Binomial(b + c, 0.5)``, so
-    ``p = min(1, 2 * P(X <= min(b, c)))``.
+    ``p = min(1, 2 * P(X <= min(b, c)))``, evaluated via
+    ``scipy.stats.binom.cdf`` (see the "Core statistics" comment above this
+    function for why depending on scipy is safe in this file specifically).
 
     Parameters
     ----------
@@ -229,7 +229,7 @@ def mcnemar_exact_p(b: int, c: int) -> float:
     if n == 0:
         return 1.0
     k = min(b, c)
-    return min(1.0, 2.0 * math.exp(_log_binom_cdf_half(n, k)))
+    return min(1.0, 2.0 * binom.cdf(k, n, 0.5))
 
 
 def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
@@ -445,9 +445,18 @@ def load_joint_cells(
     """Load and pair per-cell joint outcomes across one or more run files.
 
     Unions `row_files` (e.g. the 21 checkpoints' ``verified_rows.jsonl``), reading
-    only ``kind == "cell"``, ``replicate_idx == 0`` rows -- a filter, not an
-    assumption: this study collects R=1, but the code stays correct if a later run
-    adds replicates. Cells are graded through `grade_verdicts`.
+    only ``kind == "cell"``, ``replicate_idx == 0`` rows. This study collects R=1,
+    and that is an ASSUMPTION baked into this loader, not a no-op filter: any row
+    with ``replicate_idx > 0`` is DROPPED here, not aggregated. If a later run
+    starts writing real replicates, this function keeps reading only the first
+    attempt per cell and silently ignores the rest -- it does not average, does
+    not widen a denominator, and does not error. `N_REPLICATES_GRID` and
+    `needed_replicates` (below) size how many replicates a FUTURE experiment
+    would need to reach a target power; they do not make this loader able to
+    analyse R>1 once collected -- that is a separate follow-up. Because the drop
+    is otherwise invisible, this function prints one stderr WARNING per call
+    (naming the dropped-row count and the file(s) it came from) whenever it
+    fires. Cells are graded through `grade_verdicts`.
 
     Parameters
     ----------
@@ -482,6 +491,11 @@ def load_joint_cells(
     cell_rows: list[dict] = []
     warn_reasons: list[str] = []
     unverified_count = 0
+    # Design: dropped-replicate counts are kept PER FILE (not just a grand
+    # total) so the eventual warning can name exactly which file(s) carried
+    # R>1 rows -- a silent drop is what let this discrepancy go unnoticed
+    # before this fix, so the message needs to be specific enough to act on.
+    dropped_replicates: dict[Path, int] = {}
     for path in row_files:
         if path.name == "all_rows.jsonl":
             warn_reasons.append(
@@ -495,6 +509,7 @@ def load_joint_cells(
             if row.get("kind") != "cell":
                 continue
             if row.get("replicate_idx", 0) != 0:
+                dropped_replicates[path] = dropped_replicates.get(path, 0) + 1
                 continue
             if row.get("verdict") == "unverified":
                 unverified_count += 1
@@ -502,6 +517,17 @@ def load_joint_cells(
     if unverified_count:
         warn_reasons.append(
             f'{unverified_count} loaded cell row(s) carry verdict == "unverified".'
+        )
+    if dropped_replicates:
+        total_dropped = sum(dropped_replicates.values())
+        detail = "; ".join(
+            f"{path}: {n}" for path, n in dropped_replicates.items()
+        )
+        print(
+            f"WARNING: load_joint_cells dropped {total_dropped} row(s) with "
+            f"replicate_idx > 0 (this study collects R=1; rows past "
+            f"replicate_idx == 0 are DISCARDED, not aggregated) -- {detail}",
+            file=sys.stderr,
         )
     if warn_reasons:
         _warn_unverified(warn_reasons)
@@ -547,6 +573,19 @@ def load_joint_cells(
     #
     #    "incomplete" is NOT in this set: its cell sets differ per model
     #    (68 / 30 / 50 across three lanes, 8 shared), so it is real behaviour.
+    #
+    #    "no_answer" is ALSO deliberately NOT in this set, though it sounds like
+    #    it should belong next to "exception". The two are not the same claim:
+    #    "no_answer" (smolbench.deduction.lean.verify's verdict for a candidate
+    #    tail that splits to zero tactics) means the request COMPLETED and the
+    #    model answered with nothing extractable -- most often a reasoning model
+    #    truncated at max_tokens inside an unclosed <think> block. That is a
+    #    real failure to answer, not a missing measurement: the model was asked,
+    #    had its turn, and produced nothing usable. Scoring it 0 (via
+    #    grade_verdicts's fallthrough, `1 if verdict == "success" else 0`)
+    #    correctly counts it as a miss on the axis this study measures, exactly
+    #    like "lean_error" or "given_up" -- unlike "exception"/"replay_failed",
+    #    which mean the ATTEMPT to measure the model never completed at all.
     #
     #    Unmeasurable cells are left ABSENT, so the paired filter below drops
     #    them from every model's block -- what "not measured" means in a paired

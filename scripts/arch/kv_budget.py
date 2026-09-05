@@ -20,10 +20,15 @@ replication grows it. Per layer, per token of effective context, at BF16:
   halve anything: both K and V are written, so the ``x2`` stands.
 * **MLA**: ``(kv_lora_rank + qk_rope_head_dim) * 2``, one latent per token
   instead of ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
+* **DeepSeek-V4's shared latent**: ``(head_dim + qk_rope_head_dim) * 2``, one
+  row per token shared by K and V -- no ``kv_lora_rank`` field, but the same
+  "one row, no per-head replication" shape as MLA (see `_is_shared_latent`).
 * vLLM **replicates KV heads when tp exceeds a layer's KV-head count**,
-  multiplying that layer's non-MLA KV by ``max(1, tp / n_kv)``: DeepSeek-V4's
-  single KV head at tp=8 is 8x its tp=1 figure, and Gemma-4-12B's 1-head global
-  layers replicate at tp=4 while its 8-head sliding layers do not.
+  multiplying that layer's non-MLA, non-shared-latent KV by
+  ``max(1, tp / n_kv)``: Gemma-4-12B's 1-head global layers replicate at tp=4
+  while its 8-head sliding layers do not. DeepSeek-V4's single KV head does
+  *not* replicate this way -- there is one shared row per token per layer, not
+  one per KV head, so a tp shard cannot be "a per-head copy".
 
 The layer mix comes from ``hybrid_override_pattern`` (a per-layer string), else
 ``layer_types`` (a list), else ``sliding_window_pattern`` (a cycling string,
@@ -148,6 +153,45 @@ def _layer_kv_shape(cfg: Dict[str, Any], kind: str) -> Tuple[int, int]:
     return n_kv, head_dim
 
 
+def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
+    """Return whether `cfg` describes DeepSeek-V4's shared-latent KV cache.
+
+    DeepSeek-V4 caches one ``head_dim + qk_rope_head_dim``-wide row per token
+    per layer, shared by K and V, with no per-head replication -- structurally
+    close to MLA, but keyed under different fields (no ``kv_lora_rank``).
+
+    Two independent readings are OR-ed together so a later V4 point release
+    that renames ``model_type`` still lands on the right arithmetic:
+
+    * the label reading -- ``model_type == "deepseek_v4"``;
+    * the structural reading -- a single KV head (``num_key_value_heads == 1``)
+      with a rope split (``qk_rope_head_dim`` present) but *no* MLA latent rank.
+
+    The ``kv_lora_rank is None`` clause in the structural reading is load-
+    bearing: a config *with* ``kv_lora_rank`` set is ordinary MLA (DeepSeek-V3.1,
+    GLM-4.7-Flash) and must fall to the existing MLA branch in `kv_bytes`, not
+    be stolen here just because it also happens to have one KV head and a rope
+    split.
+
+    Parameters
+    ----------
+    cfg : dict
+        The (text) config block for one checkpoint.
+
+    Returns
+    -------
+    bool
+        True if the shared-latent branch applies to this config.
+    """
+    if cfg.get("model_type") == "deepseek_v4":
+        return True
+    return (
+        cfg.get("num_key_value_heads") == 1
+        and cfg.get("qk_rope_head_dim") is not None
+        and cfg.get("kv_lora_rank") is None
+    )
+
+
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
     """Total KV-cache bytes for one sequence of `ctx` tokens, over all layers and tp shards.
 
@@ -156,7 +200,8 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     cfg : dict
         The (text) config block for one checkpoint.
     tp : int
-        Tensor-parallel degree. For non-MLA models KV heads replicate when
+        Tensor-parallel degree. For models that are neither MLA nor
+        shared-latent (see `_is_shared_latent`) KV heads replicate when
         ``tp > n_kv``, multiplying a layer's total by ``tp / n_kv``. Applied per
         layer, because Gemma-4's two blocks hold different KV-head counts.
     naive : bool
@@ -179,6 +224,17 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
         per_token = (cfg["kv_lora_rank"] + cfg.get("qk_rope_head_dim", 0)) * BYTES_BF16
         return per_token * ctx * n_layers
 
+    if _is_shared_latent(cfg) and not naive:
+        # DeepSeek-V4: one (head_dim + qk_rope_head_dim)-wide row per token per
+        # layer, shared by K and V -- no ``2 *`` (there is no separate K and V
+        # to double) and no tp replication (one row per token, not one per KV
+        # head, so a tp shard is not "a per-head copy"; see `_replication`).
+        # Hand check for deepseek-v4-pro: 61 layers x (512 + 64) x 2 B x
+        # 131072 tokens = 9.21 GB, against 16.37 GB naive at tp=1 and 131.0 GB
+        # on the old (wrong) replicated-at-tp=8 GQA reading this fix removes.
+        per_token = (head_dim + cfg.get("qk_rope_head_dim", 0)) * BYTES_BF16
+        return per_token * ctx * n_layers
+
     if naive:
         per_token_full = 2 * n_kv * head_dim * BYTES_BF16
         return int(per_token_full * ctx * n_layers * max(1, tp / n_kv))
@@ -196,8 +252,8 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
 
 
 def _replication(cfg: Dict[str, Any], tp: int) -> float:
-    """Largest per-layer KV-head replication factor at `tp` (1.0 if none, MLA included)."""
-    if cfg.get("kv_lora_rank") is not None:
+    """Largest per-layer KV-head replication factor at `tp` (1.0 if none, MLA and shared-latent included)."""
+    if cfg.get("kv_lora_rank") is not None or _is_shared_latent(cfg):
         return 1.0
     factors = [
         max(1, tp / _layer_kv_shape(cfg, kind)[0])
@@ -227,6 +283,8 @@ def main() -> None:
         notes = []
         if cfg.get("kv_lora_rank") is not None:
             notes.append("MLA")
+        elif _is_shared_latent(cfg):
+            notes.append("shared latent (K=V)")
         mix = _layer_mix(cfg)
         if "sliding" in mix:
             notes.append(f"{mix.count('sliding')}/{len(mix)} sliding@{cfg.get('sliding_window')}")

@@ -1,10 +1,13 @@
 """Provision the S3-backed replicate results bucket (needs ADMIN credentials).
 
 The runbook counterpart to ``smolbench.evals.results_store``, which writes here
-when ``SMOLBENCH_RESULTS_S3`` is configured. Provisions `BUCKET` in `REGION`
-with all four public-access-block flags on and versioning enabled, plus the
-managed read/write policy `POLICY_NAME` (see `policy_document`) attached to IAM
-group `GROUP_NAME`. Every step is IDEMPOTENT; nothing runs at import time::
+when ``SMOLBENCH_RESULTS_S3`` is configured. Provisions the bucket named by
+``SMOLBENCH_RESULTS_S3`` (via ``results_store.resolve_results_location``, which
+falls back to ``results_store.DEFAULT_RESULTS_BUCKET`` when that env var is
+unset) in `REGION`, with all four public-access-block flags on and versioning
+enabled, plus the managed read/write policy `POLICY_NAME` (see
+`policy_document`) attached to IAM group `GROUP_NAME`. Every step is
+IDEMPOTENT; nothing runs at import time::
 
     .venv/bin/python scripts/results/provision_results_bucket.py
 
@@ -25,7 +28,15 @@ import json
 import sys
 from typing import Any
 
-BUCKET = "smolbench-results-414266451290"
+from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET, resolve_results_location
+
+# Design: no literal bucket string lives here -- the fallback is declared
+# once in results_store (the module that owns the S3 URI resolution) and
+# aliased as BUCKET, which is the documented fallback each step function
+# (ensure_bucket / put_public_access_block / enable_versioning /
+# ensure_policy) takes as its default argument when a caller does not pass
+# one; main() always passes the CALL-TIME resolved bucket instead.
+BUCKET = DEFAULT_RESULTS_BUCKET
 REGION = "us-west-2"
 POLICY_NAME = "SmolbenchResultsBucketRW"
 GROUP_NAME = "smolbench-ec2-operators"
@@ -271,24 +282,40 @@ def main(argv: list[str] | None = None) -> int:
     """
     parse_args(argv)
 
+    # Design: resolve the target bucket at CALL time from whatever
+    # SMOLBENCH_RESULTS_S3 the harness is actually configured with (falling
+    # back to DEFAULT_RESULTS_BUCKET when unset), rather than the module-level
+    # BUCKET constant -- otherwise this script could provision one bucket
+    # while ReplicateHarness / S3ResultsStore write to another, silently.
+    # base_prefix is deliberately unused: public-access-block, versioning, and
+    # the read/write IAM policy are all BUCKET-level configuration, not
+    # prefix-scoped, so a base prefix in SMOLBENCH_RESULTS_S3 has nothing to
+    # apply it to here.
+    bucket, _base_prefix = resolve_results_location()
+
+    # Imported lazily (not at module scope) for two independent reasons: it
+    # keeps the AWS SDK off this module's import path, AND it is what lets the
+    # offline tests monkeypatch smolbench.evals._aws.fresh_client BEFORE main
+    # looks up the name -- hoisting this import to module scope would bind the
+    # real fresh_client before any test fixture can patch it.
     from smolbench.evals._aws import fresh_client
 
-    print(f"Provisioning {BUCKET!r} in {REGION}...")
+    print(f"Provisioning {bucket!r} in {REGION}...")
     s3 = fresh_client("s3", REGION)
     iam = fresh_client("iam")
 
     try:
-        _run_step("ensure bucket", "s3:CreateBucket", lambda: ensure_bucket(s3, BUCKET, REGION))
+        _run_step("ensure bucket", "s3:CreateBucket", lambda: ensure_bucket(s3, bucket, REGION))
         _run_step(
             "block public access",
             "s3:PutPublicAccessBlock",
-            lambda: put_public_access_block(s3, BUCKET),
+            lambda: put_public_access_block(s3, bucket),
         )
         _run_step(
-            "enable versioning", "s3:PutBucketVersioning", lambda: enable_versioning(s3, BUCKET)
+            "enable versioning", "s3:PutBucketVersioning", lambda: enable_versioning(s3, bucket)
         )
         policy_arn = _run_step(
-            "ensure IAM policy", "iam:CreatePolicy", lambda: ensure_policy(iam, BUCKET, POLICY_NAME)
+            "ensure IAM policy", "iam:CreatePolicy", lambda: ensure_policy(iam, bucket, POLICY_NAME)
         )
         _run_step(
             "attach policy to group",

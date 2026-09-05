@@ -113,8 +113,13 @@ notebook = [
     # The analysis scripts under notebooks/{induction,deduction}/analysis/
     # import scipy.stats for their reference distributions (induction
     # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
-    # deduction hint_vs_noise.py: binom), and induction power_analysis.py
-    # additionally imports statsmodels for the omnibus interaction test. Both
+    # deduction hint_vs_noise.py: binom), and statsmodels for their
+    # multiplicity corrections: induction paired_analysis.py and
+    # significance_report.py import statsmodels.stats.multitest.multipletests
+    # at module top for the Holm / Hochberg / Benjamini-Hochberg passes, which
+    # are on the main path of EVERY report run, and induction power_analysis.py
+    # additionally imports statsmodels.api for the omnibus interaction test (an
+    # optional diagnostic). Both
     # must stay declared: `uv sync` strips anything undeclared, and those
     # scripts then fail on ModuleNotFoundError partway through a run.
     "scipy>=1.15",

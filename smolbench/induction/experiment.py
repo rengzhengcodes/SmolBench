@@ -2,13 +2,18 @@
 
 :class:`InductionExperiment` bundles
 :class:`~smolbench.evals.replicates.ReplicateHarness` with the EC2 spot
-lifecycle that serves the models under test. The family-ladder scaling study
-builds one module-level ``EXPERIMENT`` in ``notebooks/induction/run_study.py``,
-launched per lane by ``scripts/fleet/run_fleet.py``.
+lifecycle that serves the models under test. This module is study-NEUTRAL: a
+driver builds one module-level ``EXPERIMENT`` in its own study's ``run_study.py``
+and supplies every study-specific choice through the fields below. Lanes may be
+launched from that driver directly or under an external supervisor
+(``scripts/fleet/run_fleet.py`` -- lands in slice 4).
 
-Seed convention. A "replicate" is the SAME quiz regenerated under a fresh seed;
-``seeds`` is always ``tuple(base_seed + r for r in range(n_replicates))``. That
-seed drives the quiz's own randomness AND the per-request decoding seed, so a
+Seed convention. A "replicate" is the SAME quiz regenerated under a fresh seed.
+Unsharded, ``seeds`` is ``tuple(base_seed + r for r in range(n_replicates))``.
+Under ``shard=(index, count)`` it STRIDES that tuple instead, keeping the
+``r % count == index`` entries, so N shards of one experiment partition the same
+seed set without overlapping (see the ``seeds`` property). Either way the seed
+drives the quiz's own randomness AND the per-request decoding seed, so a
 replicate is reproducible from its ``rep_{seed}.yaml`` path alone.
 ``make_quizzes`` also takes the model, because the noise arm is padded to an
 exact token count under the model's own tokenizer.
@@ -65,7 +70,6 @@ class InductionExperiment:
     """
 
     #: Locates results at ``repo_root()/notebooks/<notebook_dir>/results``.
-    #: The current family-ladder study uses ``"induction"``.
     notebook_dir: str
     #: Model name -> short archetype tag used in result directory names (e.g.
     #: ``{"olmo-3.1-32b-instruct": "decode"}``). Forwarded to ``ReplicateHarness``.
@@ -75,19 +79,17 @@ class InductionExperiment:
     #: model -- see the module docstring's "Seed convention" section.
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Number of replicate seeds. Every induction study to date uses 30; the
-    #: sizing evidence lives in each study's ``analysis/power_analysis.py``,
-    #: and the family-ladder value is additionally USER-LOCKED (see
-    #: ``run_study.py``'s N_REPLICATES comment).
+    #: sizing evidence lives in each study's ``analysis/power_analysis.py``.
     n_replicates: int = 30
     #: First replicate's seed; replicate 0 uses it exactly. Default 1776 (the
-    #: July 4th nod); the family-ladder study overrides it to 0 on purpose --
-    #: see ``notebooks/induction/run_study.py``'s "Seeds" paragraph.
+    #: July 4th nod). A study may override it -- see its own ``run_study.py``.
     base_seed: int = 1776
     #: Info types evaluated per replicate, in serialization order. Forwarded to
     #: ``ReplicateHarness``. The default is the original three-condition set
-    #: (see ``periodic.py``'s "Information conditions"
-    #: module docstring section); the family-ladder study adds ``"zero"`` for
-    #: :func:`~smolbench.induction.periodic.get_periodic_zero_info_numeric_quiz`.
+    #: (see ``periodic.py``'s "Information conditions" module docstring
+    #: section); a study adding a fourth condition -- e.g. ``"zero"`` for
+    #: :func:`~smolbench.induction.periodic.get_periodic_zero_info_numeric_quiz`
+    #: -- passes the longer tuple here.
     info_types: Tuple[str, ...] = ("intens", "extens", "noise_intens")
     #: Optional namespace prefix on result directory names (e.g.
     #: ``"one_hop_"``) so two experiments can share one ``results_dir`` without
@@ -95,14 +97,25 @@ class InductionExperiment:
     prefix: str = ""
     #: Repo-root-anchored basename (e.g. ``".ec2_state_induction.json"``) for
     #: this experiment's EC2 state file, or None to use ``ec2.py``'s default.
-    #: Set it when two experiments could run concurrently, so they do not
-    #: clobber each other's instance record; see ``_apply_env``.
+    #: Set it whenever two lifecycles could be live at once, so they do not
+    #: clobber each other's instance record; see ``_apply_env``. That covers two
+    #: different experiments sharing a checkout AND -- the case easily missed --
+    #: two SHARDS of ONE experiment, which need one state file EACH. A sharded
+    #: run that leaves this at the default gives every shard the same record;
+    #: see the ``shard`` field for the failure that produces.
     state_file: Optional[str] = None
     #: ``(index, count)`` selecting a disjoint slice of the replicates, so N
     #: processes on N instances can collect one model's replicates in parallel;
-    #: None runs all of them. Replicates are independent by construction (fresh
-    #: seed each, results keyed by (tag, info, seed)), so no coordination is
-    #: needed BEYOND the disjointness ``seeds`` guarantees.
+    #: None runs all of them. The RESULTS need no coordination -- replicates are
+    #: independent by construction (fresh seed each, results keyed by
+    #: (tag, info, seed)) and ``seeds`` hands each shard a disjoint set -- but
+    #: the EC2 LIFECYCLE does. Every shard MUST be given its own ``state_file``
+    #: AND its own ``EC2_EXPERIMENT_TAG``. Without both, shard 1's
+    #: ``provision()`` discovers shard 0's live instance by tag/state and
+    #: reattaches to it, and its ``run()`` then calls ``serve_model`` on that
+    #: shared box, swapping the served model out from under shard 0's run in
+    #: progress. A driver derives both per-shard values from the lane rather
+    #: than defaulting them; see its own ``run_study.py``'s shard handling.
     shard: Optional[Tuple[int, int]] = None
     #: Forwarded to ``ReplicateHarness.force_seeds``: seeds re-collected past
     #: the resume-skip; ``None`` disables it. Supersede semantics differ by
@@ -302,8 +315,10 @@ class InductionExperiment:
         LIVE AWS call. Calls ``ec2.shutdown_instance()`` with no overrides; safe
         even if provisioning failed or the state file was lost, since
         ``shutdown_instance`` falls back to the ``smolbench:experiment`` tag.
-        The family-ladder study invokes this only behind an explicit
-        ``--teardown`` flag: ``scripts/fleet/run_fleet.py`` owns teardown there.
+        A driver running under an external supervisor must NOT call this: the
+        supervisor owns the instance's lifetime and may still have lanes queued
+        against it, so such a driver gates teardown behind an explicit opt-in
+        flag (or omits it) and leaves the decision to whoever provisioned.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's CRITICAL section.

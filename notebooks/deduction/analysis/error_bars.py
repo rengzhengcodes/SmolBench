@@ -44,6 +44,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.stats import norm
+from statsmodels.stats.multitest import multipletests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -89,23 +90,59 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Compute Holm (1979) step-down rejections at familywise level `alpha`.
 
     Valid under ARBITRARY dependence, which this family needs (the 21 ladder
-    contrasts share cells and models). The sort is STABLE: several contrasts
-    sit exactly on the permutation test's ``1/(B+1)`` resolution floor, and
-    those ties must not make the rejection mask depend on build order.
+    contrasts share cells and models). Delegates to
+    ``statsmodels.stats.multitest.multipletests(pvals, alpha, method="holm")``,
+    which implements the same step-down rule this function used to compute by
+    hand (sort ascending, reject ranks ``1..i`` for the LARGEST ``i`` whose
+    ``p_(i) <= alpha / (m - i + 1)``, stopping at the first rank that fails)
+    and hands the mask back in `pvals`' original order.
+
+    Parameters
+    ----------
+    pvals : ndarray
+        One p-value per contrast.
+    alpha : float, optional
+        Familywise error rate target (default `ALPHA`).
 
     Returns
     -------
     ndarray of bool
         Rejection mask, in `pvals` order.
+
+    Notes
+    -----
+    Several contrasts in this family sit exactly on the permutation test's
+    ``1/(B+1)`` resolution floor, so exact ties at the FWER decision boundary
+    are routine here, not a corner case -- the previous hand-rolled version
+    used an explicitly STABLE sort for this reason.
+    ``statsmodels.stats.multitest.multipletests`` sorts with plain
+    ``np.argsort`` (not guaranteed stable), but that does not reintroduce
+    order-dependence: Holm's stopping rule is a function of the sorted
+    p-VALUE sequence alone (the smallest rank whose value first exceeds its
+    rank's threshold), never of which original index landed on that rank, so
+    permuting equal-valued entries before sorting cannot change which ranks
+    get rejected. Checked empirically with a throwaway script sweeping exact
+    ties placed at every rank's threshold, in every permutation, against the
+    previous hand-rolled implementation over several thousand cases: 0
+    mismatches.
+
+    Design: `statsmodels` is a new dependency for the deduction leg's analysis
+    scripts. It was confirmed installed in this repo's project ``.venv``
+    before this change was made (`power_analysis.py`'s stricter
+    ``uv run --no-project --with numpy --with scipy`` environment does NOT
+    carry it, which is why `mcnemar_exact_p`, in that file, uses
+    `scipy.stats.binom` instead -- `holm` lives here, in `error_bars.py`,
+    which already runs under the full project venv).
+
+    The induction leg's sibling, ``notebooks/induction/analysis
+    /paired_analysis.holm``, still carries a byte-identical hand-rolled copy
+    of the algorithm this function used to implement directly; migrating it
+    to `multipletests` too is out of scope for this change, which covers only
+    the deduction leg's analysis scripts.
     """
-    m = pvals.size
-    order = np.argsort(pvals, kind="stable")
-    reject = np.zeros(m, dtype=bool)
-    for i, idx in enumerate(order):
-        if pvals[idx] <= alpha / (m - i):
-            reject[idx] = True
-        else:
-            break
+    reject, _pvals_corrected, _alpha_sidak, _alpha_bonf = multipletests(
+        pvals, alpha=alpha, method="holm"
+    )
     return reject
 
 
@@ -333,6 +370,18 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     generation-time ``"unverified"`` sentinel would grade as a real failure and
     bias the lane's rate invisibly.
 
+    Only ``replicate_idx == 0`` rows are read. This is an ASSUMPTION that this
+    study collects R=1, not a harmless filter: a row with ``replicate_idx > 0``
+    is DROPPED here, not aggregated into its cell's outcome, and nothing in
+    this function or its caller (`build_pool`) reads it back. If a source
+    starts carrying real replicates, this still analyses only the first
+    attempt per cell. (``power_analysis.N_REPLICATES_GRID`` /
+    ``needed_replicates`` size how many replicates a FUTURE run would need for
+    a target power -- they do not give this loader the ability to analyse
+    replicates once collected; that is a separate follow-up.) Because the drop
+    would otherwise be invisible, this function prints one stderr WARNING per
+    call naming the dropped-row count and source file whenever it fires.
+
     Returns
     -------
     graded : dict
@@ -356,11 +405,23 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
         # Screened on this source's OWN field -- see reject_unverified_verdicts
         # for why the check is per-source rather than always on "verdict".
         reject_unverified_verdicts(parsed, field, path)
+        dropped_replicates = 0
         for row in parsed:
-            if row.get("kind") != "cell" or row.get("replicate_idx", 0) != 0:
+            if row.get("kind") != "cell":
+                continue
+            if row.get("replicate_idx", 0) != 0:
+                dropped_replicates += 1
                 continue
             key = (row["theorem_id"], row["k"], row["rung"])
             rows.setdefault(key, []).append(row.get(field))
+        if dropped_replicates:
+            print(
+                f"WARNING: lane_outcomes({model!r}) dropped "
+                f"{dropped_replicates} row(s) with replicate_idx > 0 from "
+                f"{path} (this study collects R=1; rows past "
+                f"replicate_idx == 0 are DISCARDED, not aggregated).",
+                file=sys.stderr,
+            )
     graded, no_survivor = {}, set()
     for key, verdicts in rows.items():
         grade = grade_verdicts(verdicts)

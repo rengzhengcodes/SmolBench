@@ -10,9 +10,17 @@ code path -- so the two can never disagree about ownership.
 `source` is only READ (``theorems/`` subtrees copied, not moved); the caller
 renames it out of the canonical path first and deletes it only after the merge's
 verified S3 spool. Every row must land in exactly one shard, so the script aborts
-BEFORE writing any shard dir on an unmapped ``theorem_id``, unknown ``kind``,
-duplicate cell key, or torn MIDDLE line; a torn FINAL line (SIGKILL mid-write) is
-dropped with a warning and regenerates on resume. ``server_config.yaml`` and
+BEFORE writing any shard dir on an unmapped ``theorem_id``, unknown ``kind``, a
+cell key with two or more SURVIVING (``verdict != "exception"``) rows, or torn
+MIDDLE line; a key with at most one surviving row plus any number of
+``"exception"`` rows is the ORDINARY resume case (``runner._existing_keys``
+deliberately re-runs an exception-only cell and the sweep appends the retry)
+and every one of its rows still lands in its shard, uncollapsed -- only the
+abort is gone; a torn FINAL line (SIGKILL mid-write) is dropped with a
+warning, and the row it belongs to really is regenerated on resume, because
+the resumed sweep TRUNCATES that torn tail before appending -- so the retry
+writes a fresh, complete line rather than landing after a corrupt prefix.
+``server_config.yaml`` and
 ``manifest.json`` (as ``manifest_prelude.json``, the unsharded phase's provenance;
 the shard's sweep writes a fresh ``manifest.json``) go to shard 0, which relaunches
 against the ORIGINAL box via the original state file, keeping the sidecar chain one
@@ -37,15 +45,18 @@ RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
 def _cell_key(row: dict) -> tuple:
-    # Duplicated verbatim in scripts/deduction/merge_lean_shards.py rather than
-    # shared: both scripts must mirror `runner._row_key`'s field order, and
-    # neither may import smolbench (they run on boxes without it).
-    return (
-        row.get("model"),
-        row.get("theorem_id"),
-        row.get("k"),
-        row.get("rung"),
-        row.get("replicate_idx"),
+    # Delegates to `runner._row_key` instead of keeping a second copy of its
+    # field order: both `split_run` (below, for `_select_theorems`) and
+    # `main()` (for the --limit argparse default) already import `runner`
+    # lazily on every call path that reaches this function, so nothing here
+    # is "a box without smolbench". The import stays function-local so a
+    # caller of `_cell_key` alone -- there is none today, but this keeps the
+    # cost where it is paid -- does not force `runner`'s heavy import chain
+    # any earlier than `split_run` already does.
+    from smolbench.deduction.lean import runner
+    return runner._row_key(
+        row.get("model"), row.get("theorem_id"), row.get("k"),
+        row.get("rung"), row.get("replicate_idx"),
     )
 
 
@@ -108,7 +119,11 @@ def split_run(
     # Gate every row before anything is written.
     lines = (source / "all_rows.jsonl").read_text().splitlines()
     per_shard: list[list[str]] = [[] for _ in range(n)]
-    seen_cells: set[tuple] = set()
+    # Every row is gathered by cell key across the WHOLE source (in file
+    # order) before any duplicate verdict is judged, mirroring
+    # merge_lean_shards.py's gate: a key needs all of its rows in hand to
+    # tell an ordinary resume from a mis-sharded/double-run lane.
+    cell_rows_by_key: dict[tuple, list[dict]] = {}
     torn_tail = False
     for lineno, line in enumerate(lines):
         try:
@@ -123,14 +138,33 @@ def split_run(
         if kind not in ("cell", "sanity"):
             raise SystemExit(f"unknown row kind {kind!r} at line {lineno + 1}")
         if kind == "cell":
-            ck = _cell_key(row)
-            if ck in seen_cells:
-                raise SystemExit(f"duplicate cell in source run: {ck}")
-            seen_cells.add(ck)
+            cell_rows_by_key.setdefault(_cell_key(row), []).append(row)
         theorem = row.get("theorem_id")
         if theorem not in owner:
             raise SystemExit(f"row theorem {theorem!r} maps to no shard -- wrong spec?")
         per_shard[owner[theorem]].append(line)
+
+    # Gate: at most one SURVIVING row per cell key -- see the module
+    # docstring and merge_lean_shards.py's identical gate for the full
+    # rationale. Anchored on the literal string "exception" (matching
+    # `runner._existing_keys`, which is what produces these duplicates in
+    # the first place), not `runner.SANITY_FAILURE_VERDICTS` or
+    # `power_analysis.UNMEASURABLE_VERDICTS` (different taxonomies for a
+    # different purpose). Every row is still routed to its shard above --
+    # this gate only decides whether to abort, never which rows to keep.
+    # Design: named `cell_key`, not `key` -- this function's own parameter is
+    # already called `key` (the lane's spec key, e.g. "gemma-4-12b"); nothing
+    # after this loop reads `key` today, but shadowing it here would be a
+    # landmine for the next edit (see merge_lean_shards.py's identical gate,
+    # where the same shadowing DID leak into the merged manifest before it
+    # was caught).
+    for cell_key, rows in cell_rows_by_key.items():
+        surviving = [r for r in rows if r.get("verdict") != "exception"]
+        if len(surviving) >= 2:
+            raise SystemExit(
+                f"duplicate cell in source run: {cell_key} has {len(surviving)} "
+                f"surviving rows (verdicts {[r.get('verdict') for r in surviving]})"
+            )
 
     # Partition theorem artifact directories by slug.
     theorem_subdirs = []

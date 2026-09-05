@@ -60,3 +60,41 @@ def test_loads_uses_first_bytes_not_substring():
     assert Marks.loads(text) == marks
 
 
+
+
+def test_assessed_counts_only_marks_a_compliance_parser_judged():
+    """``Marks.assessed`` is the census denominator, added beside ``noncompliant`` (12-26).
+
+    The analysis census previously re-derived this rule with its own,
+    different denominator while re-parsing the same YAML the loader had just
+    read. The rule pinned here is the one the census must use: a mark counts
+    as assessed when it carries EITHER ``COMPLIANT`` (None -- obeyed the
+    contract) OR a violation label; ``NOT_ASSESSED`` marks (the field default,
+    so pre-field stored results) count as neither compliant nor violating and
+    are excluded, keeping a legacy lane from publishing as a collapse.
+    """
+    from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
+
+    def mark(compliance):
+        return Mark(query="q", answer=1, response="1", score=1, compliance=compliance)
+
+    marks = Marks(
+        model="stub-model",
+        marks=(
+            mark(COMPLIANT), mark(COMPLIANT),
+            mark("empty"), mark("multiple-values"),
+            mark(NOT_ASSESSED), mark(NOT_ASSESSED), mark(NOT_ASSESSED),
+        ),
+        date=datetime(2026, 7, 1, tzinfo=timezone.utc),
+    )
+    assert marks.assessed == 4
+    assert marks.noncompliant == 2
+    # The two properties are consistent by construction: every noncompliant
+    # mark is assessed, so the census rate can never exceed 1.0.
+    assert marks.noncompliant <= marks.assessed
+
+    # A wholly legacy Marks is UNMEASURED, not compliant: 0, so a caller that
+    # divides by it must guard rather than publish a 0% collapse rate.
+    legacy = Marks(model="m", marks=(mark(NOT_ASSESSED),),
+                   date=datetime(2026, 7, 1, tzinfo=timezone.utc))
+    assert legacy.assessed == 0

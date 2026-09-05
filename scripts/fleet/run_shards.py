@@ -17,6 +17,14 @@ script supervises ONE shard group:
   the on-box watchdog fires.
 - Exits once every shard is complete or halted, non-zero if any halted.
 
+Tag namespace: ``--tag`` defaults to ``"induction-scaling"``, spelled
+deliberately OUTSIDE the fleet's ``scaling-`` tag prefix (see
+`refuse_fleet_prefix_tag`), so `fleet_status.py`'s server-side tag filter
+never lists these shard boxes and ``fleet_teardown.py --terminate`` can never
+reach them. A ``--tag`` that would land inside that prefix once the driver's
+per-shard suffix is appended is refused unless ``--allow-fleet-prefix`` is
+passed.
+
 Launch it detached (``setsid nohup ... &``, redirecting to a log under
 ``notebooks/induction/results/fleet_logs/``) from a shell that has sourced
 ``notebooks/induction/keys.env`` and ``notebooks/ec2-operator.env``: children
@@ -27,6 +35,7 @@ top.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
@@ -35,6 +44,28 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_CONFIG_MODULE_NAME = "smolbench_fleet_config"
+
+
+def _load_fleet_config():
+    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    module = sys.modules.get(_CONFIG_MODULE_NAME)
+    if module is None:
+        path = Path(__file__).resolve().parent / "_config.py"
+        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+# By file path, not a bare `import _config`: `scripts/fleet` has no
+# `__init__.py` (it is not a package), and every module in it is already
+# loaded under a private module name by its own callers (see `_config.py`'s
+# module docstring for the full list), so a bare import name is ambiguous or
+# absent from `sys.path`.
+_config = _load_fleet_config()
 
 REPO = Path(__file__).resolve().parents[2]
 DRIVER = REPO / "notebooks" / "induction" / "run_study.py"
@@ -116,6 +147,32 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
     Sharded runs derive ``.ec2_state_induction-<model>-s<i>of<n>.json``
     (mirroring ``run_study``'s ``_LANE`` suffix); unsharded runs use
     ``--state-file`` verbatim.
+
+    Why not the fleet scheme
+    ------------------------
+    This deliberately does NOT match `fleet_status`/`fleet_teardown`'s
+    ``.ec2_state_scaling_<lane>.json`` naming. When a shard tag landed inside
+    the fleet's blast radius (the bug `refuse_fleet_prefix_tag` now refuses),
+    the fix is that refusal, not renaming these files INTO the fleet's
+    scheme, for three reasons:
+
+    1. `terminate_shard_box` already unlinks its own state file on the
+       success path -- this script owns that file's whole lifecycle, so
+       there is no handoff to `fleet_teardown.py` to align the name with.
+    2. `fleet_teardown.delete_state_files` only ever sees rows produced by
+       `fleet_status.fleet_rows`, which filters server-side on the
+       ``scaling-*`` tag prefix. With a ``--tag`` outside that prefix (the
+       default, ``"induction-scaling"``), a shard box is never in those
+       rows, so teardown never needs -- and must never be handed -- a state
+       file matching its glob.
+    3. Renaming shard state files INTO ``.ec2_state_scaling_*`` would put
+       them in `fleet_teardown`'s deletion glob, risking a collision with
+       (deletion of, or deletion alongside) a real fleet lane's file.
+
+    Note that this function never reads `args.tag`: the ``induction-``
+    prefix here is fixed regardless of what ``--tag`` is (default or
+    otherwise), so it only coincidentally echoes the word in the new default
+    tag ``"induction-scaling"`` -- the two are not derived from each other.
     """
     if args.no_shard:
         return REPO / args.state_file
@@ -145,7 +202,14 @@ def terminate_shard_box(args: argparse.Namespace, index: int) -> None:
         logging.warning(f"shard {index}: box termination skipped ({exc})")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Build this script's CLI parser.
+
+    Extracted out of `main` (which now just calls this and `parse_args`) so
+    `refuse_fleet_prefix_tag` and tests can exercise argument parsing --
+    including the fleet-prefix refusal -- without running the supervisor
+    loop.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True, help="Spec key, e.g. gemma-4-12b.")
     parser.add_argument("--count", type=int, required=True, help="Number of shards.")
@@ -153,9 +217,21 @@ def main() -> int:
     parser.add_argument("--types", required=True, help="EC2_INSTANCE_TYPES for every shard.")
     parser.add_argument("--regions", required=True, help="EC2_REGIONS for every shard.")
     parser.add_argument("--request-timeout", type=int, default=0, help="EC2_REQUEST_TIMEOUT_SECONDS override.")
-    parser.add_argument("--tag", default="scaling", help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver).")
+    parser.add_argument(
+        "--tag", default="induction-scaling",
+        help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver). "
+             "Deliberately outside the fleet's 'scaling-' tag namespace by "
+             "default -- see refuse_fleet_prefix_tag -- so fleet_teardown.py "
+             "--terminate cannot reach these shard boxes.",
+    )
     parser.add_argument("--no-shard", action="store_true", help="Single unsharded run (requires --state-file; --count must be 1).")
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")
+    parser.add_argument(
+        "--allow-fleet-prefix", action="store_true",
+        help="Allow --tag to fall inside the fleet's 'scaling-' tag prefix "
+             "anyway. See refuse_fleet_prefix_tag for the blast-radius reason "
+             "this is refused by default.",
+    )
     # WHY: the driver provisions BEFORE it checks has_outstanding(), so a shard
     # whose seeds are already collected still bids for a box, holds it through
     # boot, finds nothing to do, and exits -- starving the shards with real work
@@ -166,9 +242,74 @@ def main() -> int:
         help="Comma-separated shard indices to run (default: all). "
              "--count still defines the seed->shard mapping.",
     )
+    return parser
+
+
+def refuse_fleet_prefix_tag(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a ``--tag`` whose DERIVED per-shard tag falls in the fleet's blast radius.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+        Used only to call `parser.error`, argparse's own gate: it prints a
+        usage message to stderr and raises ``SystemExit(2)``. A raise, not an
+        ``assert`` -- an ``assert`` is stripped entirely under ``python -O``.
+    args : argparse.Namespace
+        Parsed arguments; reads ``args.tag`` and ``args.allow_fleet_prefix``.
+
+    Raises
+    ------
+    SystemExit
+        Via `parser.error`, when ``args.tag`` would land inside
+        `_config.SCALING_TAG_PREFIX` once the driver's per-shard suffix is
+        appended, and ``args.allow_fleet_prefix`` is ``False``.
+
+    Notes
+    -----
+    `shard_env` passes ``args.tag`` straight through as
+    ``EC2_EXPERIMENT_TAG``, and ``notebooks/induction/run_study.py`` appends
+    ``-<model>-s<i>of<n>`` to it per shard (its ``_LANE`` derivation) -- so
+    the string that actually lands on the instance's ``smolbench:experiment``
+    tag is the SUFFIXED form, never the bare ``args.tag``. That is why this
+    checks ``f"{args.tag}-"`` rather than ``args.tag`` itself: a bare tag of
+    exactly ``"scaling"`` (the OLD default) does not literally start with
+    ``"scaling-"`` -- it is one character short -- yet its derived per-shard
+    tag, ``"scaling-<model>-s0of<n>"``, does. Appending one more ``"-"``
+    before the prefix check catches that exact-match case too, without
+    over-matching an unrelated tag like ``"scalingful"`` (whose derived form,
+    ``"scalingful-<model>-s0of<n>"``, never starts with ``"scaling-"``
+    either).
+
+    A tag inside `_config.SCALING_TAG_PREFIX` sits inside
+    `fleet_status.fleet_rows`'s server-side tag filter, and therefore inside
+    `fleet_teardown.py --terminate`'s only safety re-check -- so a routine
+    fleet teardown would terminate these hand-launched shard boxes as though
+    they were fleet lane instances. ``"induction-scaling"``, the new
+    default, is spelled outside that prefix on purpose (see this module's
+    docstring).
+    """
+    if args.allow_fleet_prefix:
+        return
+    if f"{args.tag}-".startswith(_config.SCALING_TAG_PREFIX):
+        parser.error(
+            f"--tag {args.tag!r}: shard tags become "
+            f"'{args.tag}-<model>-s<i>of<n>', which starts with the fleet's "
+            f"{_config.SCALING_TAG_PREFIX!r} prefix -- these shard boxes would "
+            "sit inside fleet_teardown.py --terminate's blast radius, so a "
+            "routine fleet teardown would terminate them. Pass a --tag outside "
+            "that prefix (the default, 'induction-scaling', already is), or "
+            "pass --allow-fleet-prefix to launch anyway."
+        )
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
     if args.no_shard and (args.count != 1 or not args.state_file):
         parser.error("--no-shard requires --count 1 and --state-file")
+    # Nothing may be launched -- not even logging is configured yet -- until
+    # the tag is confirmed outside the fleet's blast radius.
+    refuse_fleet_prefix_tag(parser, args)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

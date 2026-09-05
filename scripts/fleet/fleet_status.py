@@ -10,17 +10,46 @@ fake through `client_factory`.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import logging
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
+_CONFIG_MODULE_NAME = "smolbench_fleet_config"
+
+
+def _load_fleet_config():
+    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    module = sys.modules.get(_CONFIG_MODULE_NAME)
+    if module is None:
+        path = Path(__file__).resolve().parent / "_config.py"
+        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+# By file path, not a bare `import _config`: `scripts/fleet` has no
+# `__init__.py` (it is not a package), and every module in it is already
+# loaded under a private module name by its own callers (see this file's own
+# module docstring, and `_config.py`'s), so a bare import name is ambiguous
+# or absent from `sys.path`.
+_config = _load_fleet_config()
+
 #: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``) -- the ONE constant that must agree
-#: between the two modules, or this file finds nothing.
-SCALING_TAG_PREFIX = "scaling-"
-#: Every region a lane might have provisioned in: matches
-#: ``run_fleet.DEFAULT_REGIONS``, and tier D's override spans the same three.
-STATUS_REGIONS: tuple[str, ...] = ("us-east-1", "us-east-2", "us-west-2")
+#: (see ``run_fleet.Lane.experiment_tag``). Sourced from `_config`, the ONE
+#: place this prefix is declared for every fleet script that needs it,
+#: including `run_fleet.py`. Reading from the same file, rather than each
+#: module spelling its own literal, is what makes the two unable to drift
+#: apart.
+SCALING_TAG_PREFIX = _config.SCALING_TAG_PREFIX
+#: Every region a lane might have provisioned in. Sourced from `_config` --
+#: see the note on `SCALING_TAG_PREFIX` just above; tier D's override still
+#: spans the same three regions.
+STATUS_REGIONS: tuple[str, ...] = _config.REGION_TUPLE
 
 
 def _default_client_factory(region: str) -> Any:

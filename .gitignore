@@ -229,6 +229,11 @@ __marimo__/
 # or restore from the archive -- see notebooks/ARCHIVE.md).
 notebooks/deduction/data/leandojo_benchmark_4/
 
+# Generated post-cutoff declaration-name lists (scripts/deduction/postcutoff_names.py),
+# one per --target-date run -- not a hand-authored artifact. Regenerate with
+# that script, or restore from the archive -- see notebooks/ARCHIVE.md.
+notebooks/deduction/postcutoff_names_*.json
+
 # Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
 # dirs pruned after upload; never committed.
 notebooks/*/results/
@@ -246,6 +251,3 @@ CLAUDE.md
 # kept out by policy).
 /local_results_2026-08-10.zip
 /archive_2026-08-11.zip
-
-# multiplicity_sim.py writes its Monte Carlo summary next to itself
-notebooks/induction/analysis/multiplicity_sim_results.json

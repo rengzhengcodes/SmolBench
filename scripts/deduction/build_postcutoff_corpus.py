@@ -16,10 +16,13 @@ any roster model's training data, at the cost of a much smaller pool.
 Design
 ------
 * **Stdlib only.** This script must run on the trace box, which has lean-dojo
-  and nothing else installed -- so it never imports ``smolbench``, exactly like
-  ``scripts/deduction/merge_lean_shards.py``'s duplicated ``_cell_key``. The
-  corpus contract it writes against is mirrored from
-  ``smolbench/deduction/lean/corpus.py``, not imported.
+  and nothing else installed -- so it never imports ``smolbench``.
+  ``scripts/deduction/merge_lean_shards.py`` and
+  ``split_lean_run_into_shards.py`` are NOT a precedent for that any more:
+  their ``_cell_key`` now delegates to ``runner._row_key``, which they can do
+  because every call path reaching it already imports ``runner``, and this
+  script has no such path. The corpus contract it writes against is mirrored
+  from ``smolbench/deduction/lean/corpus.py``, not imported.
 * **Splits are re-derived, not inherited.** A row's output split is
   ``sha256(full_name)[:8] % 100``: ``< 80`` train, ``< 90`` val, else test. The
   export's own splits are discarded because they partition a pool ~4 orders of

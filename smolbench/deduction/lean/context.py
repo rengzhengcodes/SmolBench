@@ -5,7 +5,14 @@
 - `hint:0..4` adds *answer-conditional* detail about the premises the *true*
   next tactic uses; cumulative, on a `stepk:2` baseline.
 - `noise:N` is `hint:(N-1)` whitespace-padded to `hint:N`'s exact token
-  count — the length control for the hint chain.
+  count IN THE FULL PROMPT the model receives (`prompt.build_user_prompt`,
+  i.e. this rung's context plus the fixed instruction suffix) — the length
+  control for the hint chain. Matched on the prompt, not the bare context,
+  because equal-token CONTEXTS do not imply equal-token PROMPTS: the
+  instruction suffix's own token cost depends on what precedes it (BPE merges
+  across that boundary), so a context-only match can be one token short of
+  its `hint:N` twin in the only text that matters. See `_render_noise_parts`'s
+  docstring for the measured example (28 vs. 27 suffix tokens).
 
 `stepk:*` and `hint:0` build from a `BenchmarkTheorem` alone; `hint:1+` needs
 a premise-body lookup against the premise corpus (see `.premises`).
@@ -59,9 +66,76 @@ def split_state(state_pp: str) -> tuple[str, str]:
 
 
 def extract_goal_only(state_pp: str) -> str:
-    """`stepk:0` helper: drop hypotheses, keep only the goal block."""
-    _, goals = split_state(state_pp)
-    return goals or state_pp
+    """`stepk:0` helper: drop hypotheses, keep every goal's `case ...`/`⊢` lines.
+
+    A tactic state can carry MULTIPLE goals at once -- the normal shape right
+    after a branching tactic (`cases`, `constructor`, `rcases`, ...) -- each
+    rendered as an optional `case ...` header, that goal's own hypothesis
+    lines, and a `⊢ ...` goal line. `split_state` only locates the FIRST `⊢`,
+    which is exactly right for its own callers (`_render_stepk_parts`'s
+    `stepk:1` full-state dump wants everything; `is_trivial_rung`'s
+    `stepk:1` check wants only the first goal's hypotheses, to match what
+    `stepk:0` withholds), but is the wrong tool here: naively keeping
+    everything from the first `⊢` onward would pass every LATER goal's
+    hypotheses straight through, unfiltered, into the very rung defined to
+    drop them. This function instead walks every line and keeps `case ...`
+    headers and `⊢ ...` goal lines across ALL goals, and drops every
+    hypothesis line, however many goals the state has.
+
+    Continuation lines
+    ------------------
+    Lean line-wraps a long `⊢ ...` goal onto following lines, and those
+    continuation lines are indented relative to the `⊢` itself (which, like
+    every hypothesis and `case ...` header, starts at column 0). That
+    indentation is the only signal available here to tell a wrapped goal
+    continuation apart from the next goal's hypotheses -- both are plain
+    text with no leading marker -- so: once a `⊢` line is kept, any
+    immediately following line that is still indented and non-blank is
+    treated as part of that same goal and kept too; the first unindented
+    line ends it (reclassified normally as a blank separator, a new
+    `case ...` header, a new `⊢` line, or a hypothesis line to drop).
+
+    Parameters
+    ----------
+    state_pp : str
+        A Lean tactic-state pretty-print (`TracedTactic.state_before`).
+
+    Returns
+    -------
+    str
+        `state_pp` with every hypothesis line removed, keeping `case ...`
+        headers, `⊢ ...` goal lines, their wrapped continuations, and the
+        blank lines that separate goals -- rstripped. If `state_pp` has no
+        `⊢` line at all (already closed, or unparseable), it is returned
+        completely UNCHANGED (not even rstripped), matching this function's
+        prior behaviour of falling back to `state_pp` in that case.
+    """
+    lines = state_pp.splitlines()
+    if not any(line.lstrip().startswith("⊢") for line in lines):
+        return state_pp
+
+    kept: list[str] = []
+    in_goal = False  # True while consuming a just-kept `⊢` line's wrapped continuation.
+    for line in lines:
+        stripped = line.lstrip()
+        if in_goal and stripped and line != stripped:
+            # Indented and non-blank: a continuation of the previous `⊢` line.
+            kept.append(line)
+            continue
+        in_goal = False
+        if stripped.startswith("case ") or stripped.startswith("⊢"):
+            kept.append(line)
+            in_goal = stripped.startswith("⊢")
+            continue
+        if not stripped:
+            # Blank separator between goals -- keep at most one, and never
+            # leading, so dropped hypotheses don't leave behind a run of
+            # blank lines or an empty line at the very start.
+            if kept and kept[-1] != "":
+                kept.append("")
+            continue
+        # Anything else is a hypothesis line: drop it.
+    return "\n".join(kept).rstrip()
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +208,24 @@ _HINT2_3_TOKEN_CAP = 50_000  # token budget for transitive closure rendering
 def _count_tokens(s: str) -> int:
     """Token count of `s`: `tiktoken` ``cl100k_base``, else ``len(s) // 4``.
 
-    Already an approximation of the prompted model's tokenizer, which suffices
-    for `_render_hint_parts`'s hint:3+ budget and `is_trivial_rung`; but the
-    char-based fallback makes `_render_noise_parts`'s exact-token padding
-    unsatisfiable — it raises.
+    A graceful-degrade counter for BUDGET-style measurements, where an
+    approximation is an acceptable price for never raising just because
+    `tiktoken` is missing: `_render_hint_parts`'s hint:3+ transitive-closure
+    cap applies this exact tiktoken-or-``len(s) // 4`` policy inline (its own
+    local ``tok()``, not a call to this function, but the same fallback
+    contract), and `is_trivial_rung`'s non-``noise`` branches size their
+    checks the same tolerant way. Outside this module, `cli.py` and
+    `tests/deduction/test_s3_archive.py` call this directly for the same
+    reason.
+
+    Design: the ``noise`` chain does NOT use this counter -- see
+    `_render_noise_parts` and `is_trivial_rung`'s ``noise`` branch, both of
+    which use `smolbench.evals.tokenization.TiktokenTokenizer` instead. A
+    rough count is fine for a 50k-token BUDGET (missing the cap by a few
+    tokens changes nothing about correctness); it is fatal for an EXACT
+    length control, where a wrong count would silently reintroduce the very
+    confound the control exists to remove. Two different tolerances for two
+    different jobs, not an oversight.
     """
     try:
         import tiktoken
@@ -146,77 +234,138 @@ def _count_tokens(s: str) -> int:
         return len(s) // 4
 
 
-class _TokenCounter:
-    """Adapt `_count_tokens` to the interface the pad search expects.
+def _as_full_prompt(level: int, text: str) -> str:
+    """Wrap noise-chain context `text` as the FULL prompt the model receives.
 
-    `smolbench.induction._common`'s token-matching search needs `count()` and
-    `name`. Ad hoc rather than `smolbench.evals.tokenization.Tokenizer`, which
-    is duck-typed anyway: this module must not depend on `smolbench.evals`
-    (see `_render_noise_parts`'s Notes).
+    `_render_noise_parts` and `is_trivial_rung`'s ``noise`` branch must
+    measure and pad against IDENTICAL text -- the actual prompt, not the bare
+    context -- or the two could disagree about which rungs are trivial and
+    which pad lengths are exact (see both callers' Notes). Centralizing the
+    ``RenderedContext`` construction and the lazy `prompt` import here is what
+    keeps that in lockstep: there is exactly one place that decides "what does
+    the model see", and both callers go through it.
+
+    Parameters
+    ----------
+    level : int
+        This rung's ``noise`` level, threaded through only to build an honest
+        `RenderedContext` (`prompt.build_user_prompt` reads only `.text`, but
+        a real object is cheaper to explain than a dummy with placeholder
+        metadata).
+    text : str
+        Context text to wrap -- a `hint:N` rendering, or that rendering with a
+        whitespace pad appended.
+
+    Returns
+    -------
+    str
+        ``prompt.build_user_prompt(RenderedContext(chain="noise", level=level, text=text))``.
+
+    Notes
+    -----
+    The import is LAZY: `.prompt` does ``from .context import RenderedContext``
+    at module scope, so importing it at THIS module's top level would be a
+    cycle. `runner.py` imports `context` at top level, so the cycle would bite
+    on every run, not just tests.
     """
-
-    #: Names the counter in the pad search's `ValueError` messages
-    #: (`token_matched_noise_prompt` and `choose_whitespace_unit`); nothing
-    #: else consumes it.
-    name = "smolbench.deduction.lean.context._count_tokens (tiktoken cl100k_base, or len//4 fallback)"
-
-    def count(self, text: str) -> int:
-        """`_count_tokens(text)`, under the name the search helper calls."""
-        return _count_tokens(text)
+    from . import prompt as _prompt
+    return _prompt.build_user_prompt(RenderedContext(chain="noise", level=level, text=text))
 
 
 def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
-    """`noise:N` = `hint:(N-1)` whitespace-padded to `hint:N`'s exact token count.
+    """`noise:N` = `hint:(N-1)` whitespace-padded to `hint:N`'s exact PROMPT token count.
 
-    The length control for the hint chain: both rungs cost identical tokens, so
-    only `hint:N`'s marginal *content* differs. The pad is appended to the LAST
-    part's text, never as a new list element — `render()` joins parts with
-    ``"\\n\\n"``, and a new element would add a separator the token search never
-    measured. A baseline already equal to the target (a trivial rung, see
-    `is_trivial_rung`) returns unchanged: `render()` still calls this under
-    ``skip_trivial: false``, so that case must not raise.
+    The length control for the hint chain: both rungs cost identical tokens IN
+    THE PROMPT THE MODEL RECEIVES, so only `hint:N`'s marginal *content*
+    differs. Matched on `prompt.build_user_prompt`'s output, not on the bare
+    context text: the model is sent this rung's context text followed by a
+    fixed instruction suffix (`prompt.build_user_prompt` -- see `prompt.py`
+    for the exact suffix; not reproduced here, so this docstring cannot drift
+    from it), and that suffix's OWN token cost is not constant -- it depends
+    on what precedes it, since BPE merges across the context/suffix boundary.
+    Concretely, under `cl100k_base` with the pad unit `choose_whitespace_unit`
+    picks (``" \\t"``, ~1 token/rep), the suffix costs 28 tokens after most
+    pad lengths but 27 after a two-unit pad:
+    matching on context tokens alone can land exactly on the `hint:N` context
+    count while shipping a prompt one token SHORT of it -- reintroducing, in
+    the one text that matters, the exact length confound this rung exists to
+    remove. Matching on the full prompt closes that gap by construction.
+
+    The pad is appended to the LAST part's text, never as a new list element —
+    `render()` joins parts with ``"\\n\\n"``, and a new element would add a
+    separator the token search never measured. A baseline already equal to
+    the target (a trivial rung, see `is_trivial_rung`) returns unchanged:
+    `render()` still calls this under ``skip_trivial: false``, so that case
+    must not raise.
 
     Raises
     ------
     ValueError
         `level < 1` (the `hint:0`/`stepk:2` baseline has no noise counterpart);
-        the `hint:(level - 1)` baseline is LONGER in tokens than the
-        `hint:level` target, since whitespace can only grow a rendering and
-        under-padding would reintroduce the length confound;
-        `choose_whitespace_unit` finds no unit costing ~1 token per repetition,
-        which is what `_count_tokens`'s ``len(s) // 4`` fallback causes; or the
-        pad misses the target.
+        the `hint:(level - 1)` baseline's PROMPT is LONGER in tokens than the
+        `hint:level` target's PROMPT, since whitespace can only grow a
+        rendering and under-padding would reintroduce the length confound;
+        `choose_whitespace_unit` finds no unit costing ~1 token per repetition
+        under `TiktokenTokenizer`; the pad search misses the target; or the
+        recovered pad does not reconstruct the padded prompt structurally
+        (see the reconstruction check below).
+    ImportError
+        `tiktoken` is not installed (`TiktokenTokenizer`'s constructor raises
+        rather than degrading -- see `_count_tokens`'s Design note on why the
+        noise chain, unlike the hint:3+ budget, cannot tolerate a fallback).
 
     Notes
     -----
     The pad search is `smolbench.induction._common.token_matched_noise_prompt`,
-    reused so the two benchmarks' padding cannot drift apart; its import is LAZY
-    because that module pulls in `numpy`/`ordered_set`/`smolbench.evals` and
-    `runner.py` imports this module at top level. The pad is pure whitespace —
-    prose or a header would be content the paired `hint:N` rung lacks. The
-    result is re-verified here because the helper can fall back to returning an
-    unpadded render with only a warning.
+    reused so the two benchmarks' padding cannot drift apart; its import is
+    LAZY because that module pulls in `numpy`/`ordered_set`/`smolbench.evals`
+    and `runner.py` imports this module at top level. `TiktokenTokenizer`
+    (`smolbench.evals.tokenization`) is imported the same way and for the same
+    reason -- both are one hop further than `smolbench.evals` alone, which the
+    lazy `token_matched_noise_prompt` import already pulls in, so importing
+    the tokenizer lazily too adds no new cost, only avoids paying it at
+    `runner.py`'s top-level `import context`. The pad is pure whitespace —
+    prose or a header would be content the paired `hint:N` rung lacks.
+
+    The exactness re-check below is NOT redundant with
+    `token_matched_noise_prompt`'s own internal verification: it re-derives
+    the pad from the helper's returned PROMPT by slicing out the instruction
+    suffix (`build_user_prompt` never appears twice, so the suffix length must
+    be measured, not hardcoded -- see `suffix_len` below), and then re-renders
+    that recovered pad through `_as_full_prompt` to confirm the slice actually
+    recovered it. That second render is cheap insurance: `suffix_len` is
+    computed as a total ``len(prompt) - len(text)`` difference, so if
+    `build_user_prompt` ever grew a PREFIX (not just its current fixed
+    suffix), the slice below would silently mis-locate the pad instead of
+    raising -- this reconstruction check is what would catch that.
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
 
-    # Lazy import -- see this function's Notes.
+    # Lazy imports -- see this function's Notes.
     from smolbench.induction._common import choose_whitespace_unit, token_matched_noise_prompt
+    from smolbench.evals.tokenization import TiktokenTokenizer
 
     base_parts = _render_hint_parts(theorem, k, level - 1)
     base_text = "\n\n".join(base_parts)
-    base_tokens = _count_tokens(base_text)
+    base_prompt = _as_full_prompt(level, base_text)
 
     target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
-    target_tokens = _count_tokens(target_text)
+    target_prompt = _as_full_prompt(level, target_text)
+
+    # One tokenizer instance for every measurement in this call -- cheap to
+    # build, but there is no reason to re-load the encoding per count.
+    tokenizer = TiktokenTokenizer()
+    base_tokens = tokenizer.count(base_prompt)
+    target_tokens = tokenizer.count(target_prompt)
 
     if base_tokens > target_tokens:
         raise ValueError(
-            f"noise:{level} baseline (hint:{level - 1}, {base_tokens} tokens) is "
-            f"LONGER than its hint:{level} target ({target_tokens} tokens) for "
-            f"{theorem.full_name!r} at k={k} -- a whitespace pad can only grow "
-            "a rendering, never shrink one, so this rung cannot be built as a "
-            "length control"
+            f"noise:{level} baseline (hint:{level - 1}, {base_tokens} PROMPT "
+            f"tokens) is LONGER than its hint:{level} target ({target_tokens} "
+            f"PROMPT tokens) for {theorem.full_name!r} at k={k} -- a "
+            "whitespace pad can only grow a rendering, never shrink one, so "
+            "this rung cannot be built as a length control"
         )
     if base_tokens == target_tokens:
         # Already exact: nothing to pad. Common -- every rung where
@@ -225,25 +374,44 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
         # `skip_trivial: false`, so it must return cleanly, not raise.
         return base_parts
 
-    counter = _TokenCounter()
-    padded_text = token_matched_noise_prompt(
-        lambda pad: base_text + pad,  # render: pad string -> full rendered text
+    padded_prompt = token_matched_noise_prompt(
+        # render: pad string -> the FULL prompt with that pad appended to the
+        # context, not the bare context -- see this function's docstring for
+        # why matching on context tokens alone under-counts the confound.
+        lambda pad: _as_full_prompt(level, base_text + pad),
         "",  # context: empty -- the pad IS the whole variable part being searched
         target_tokens,
-        counter,
-        unit=choose_whitespace_unit(counter),
+        tokenizer,
+        unit=choose_whitespace_unit(tokenizer),
     )
 
     # Verify exactness here rather than trusting the helper (see Notes).
-    padded_tokens = _count_tokens(padded_text)
+    padded_tokens = tokenizer.count(padded_prompt)
     if padded_tokens != target_tokens:
         raise ValueError(
             f"noise:{level} padding for {theorem.full_name!r} at k={k} did not "
-            f"hit the exact target: got {padded_tokens} tokens, wanted "
+            f"hit the exact target: got {padded_tokens} PROMPT tokens, wanted "
             f"{target_tokens}"
         )
 
-    pad = padded_text[len(base_text):]
+    # Recover the pad structurally: `padded_prompt` is
+    # `base_text + pad + <fixed instruction suffix>`, and the suffix's length
+    # is derived from `base_prompt` itself, never hardcoded from `prompt.py`'s
+    # own suffix-building expression -- copying that literal into this module
+    # is exactly the drift this fix closes.
+    suffix_len = len(base_prompt) - len(base_text)
+    pad = padded_prompt[len(base_text): len(padded_prompt) - suffix_len]
+
+    # Verify the reconstruction (see Notes) rather than trusting the slice.
+    reconstructed = _as_full_prompt(level, base_text + pad)
+    if reconstructed != padded_prompt:
+        raise ValueError(
+            f"noise:{level} pad recovery for {theorem.full_name!r} at k={k} "
+            "did not reconstruct the padded prompt: slicing the instruction "
+            "suffix off the helper's returned prompt produced a pad that, "
+            "re-rendered, does not reproduce that prompt byte-for-byte"
+        )
+
     return base_parts[:-1] + [base_parts[-1] + pad]
 
 
@@ -276,18 +444,47 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
             parts.append("## Premise signatures\n" + "\n\n".join(sigs))
 
     if level >= 2:
-        from .premises import lookup, body_with_proof
+        # `body_with_proof` silently falls back to the corpus's stored
+        # `Premise.code` (a signature, usually with no proof body) whenever
+        # `premises.slice_full_decl` can't find a traced-repo source slice --
+        # true on any box without `premises._traced_root()` (CI, an analysis
+        # box). The heading must say which one this block actually rendered:
+        # `has_full_source` re-answers that per premise (cheap -- backed by
+        # the same `lru_cache`d `slice_full_decl` `body_with_proof` already
+        # called), and the SECTION heading is decided from whether ANY
+        # premise in it got a real slice, with individual entries that fell
+        # back marked inline so a mixed block (some real, some fallback) is
+        # not misread as uniformly one or the other.
+        from .premises import lookup, body_with_proof, has_full_source
+        resolved = [(n, lookup(n)) for n in names]
+        full_source: dict[str, bool] = {
+            n: has_full_source(p) for n, p in resolved if p is not None
+        }
+        any_full_source = any(full_source.values())
         bodies: list[str] = []
-        for n in names:
-            p = lookup(n)
+        for n, p in resolved:
             if p is None:
                 bodies.append(f"### `{n}`\n_(not found in premise corpus)_")
-            else:
-                bodies.append(
-                    f"### `{n}` ({p.kind}) at `{p.file_path}`\n```lean\n{body_with_proof(p)}\n```"
-                )
+                continue
+            header = f"### `{n}` ({p.kind}) at `{p.file_path}`"
+            if any_full_source and not full_source[n]:
+                # Mixed block: a sibling premise below (or above) got a real
+                # traced-repo slice, so this fallback entry must be called
+                # out individually -- the section heading alone would say
+                # "full source" for the whole block.
+                header += "  _(no traced source for this premise; signature shown)_"
+            bodies.append(f"{header}\n```lean\n{body_with_proof(p)}\n```")
         if bodies:
-            parts.append("## Premise full source (with proof)\n" + "\n\n".join(bodies))
+            heading = (
+                "## Premise full source (with proof)"
+                if any_full_source
+                # No premise in this block got a real traced-repo slice: every
+                # body below is `body_with_proof`'s corpus-signature fallback,
+                # so heading it "full source (with proof)" would tell the
+                # model it had been given proofs it was not given.
+                else "## Premise signature (corpus record; traced source unavailable)"
+            )
+            parts.append(f"{heading}\n" + "\n\n".join(bodies))
 
     if level >= 3:
         from .premises import body_with_proof, lookup, premise_dep_closure
@@ -375,6 +572,9 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
         `k` out of range; `(chain, level)` rejected by `validate`; or --
         for ``noise`` -- propagated from `_render_noise_parts` (notably
         ``noise:0``, which `validate` allows through).
+    ImportError
+        For ``noise`` -- propagated from `_render_noise_parts` when
+        `tiktoken` is not installed (see that function's Raises).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")
@@ -416,7 +616,9 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
       - `hint:1` and the corpus has no record for any true premise;
       - `hint:2` and no premise's body differs from its signature;
       - `hint:3+` and the closure at that hop depth is empty;
-      - `noise:N` and `hint:N` is trivial or adds no tokens over `hint:(N-1)`.
+      - `noise:N` and `hint:N` is trivial or adds no PROMPT tokens over
+        `hint:(N-1)` (see the ``noise`` branch below for why this must be a
+        prompt-level count, matching `_render_noise_parts` exactly).
 
     `stepk:0` and `stepk:2` are never trivial (stepk:2 adds theorem identity
     even at k=0). Only caller is `runner.sweep`, gated by ``skip_trivial``.
@@ -427,6 +629,17 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
         True if the rung is trivial. False -- not an exception -- for an
         unrecognized `chain` or an out-of-range `k`, so the cell still runs
         instead of being silently dropped.
+
+    Raises
+    ------
+    ImportError
+        `chain == "noise"`, `level >= 1`, and `tiktoken` is not installed
+        (`TiktokenTokenizer`'s constructor). Deliberately not caught into a
+        `False`/`True` guess: `_render_noise_parts` cannot build that rung
+        either without `tiktoken`, so a tokenizer-optional answer here could
+        tell `runner.sweep` a rung is fine to render when rendering it would
+        raise -- the exact divergence this function's ``noise`` branch is
+        written to avoid (see below).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         return False
@@ -469,7 +682,22 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
             return True
         if is_trivial_rung(theorem, k, "hint", level):
             return True
+        # Design: this MUST measure the same quantity, with the same
+        # tokenizer, as `_render_noise_parts` -- full PROMPT tokens via
+        # `_as_full_prompt`/`TiktokenTokenizer`, not context-text tokens via
+        # `_count_tokens`. If this branch and that function measured
+        # different things, a rung this function calls "trivial" (so
+        # `runner.sweep` skips it under ``skip_trivial: true``) could still
+        # be non-trivial by `_render_noise_parts`'s own measure -- or, worse,
+        # a rung called "non-trivial" here could hit `_render_noise_parts`'s
+        # ``base_tokens == target_tokens`` early-return and silently render
+        # unpadded. Both are the skip/render disagreement this function and
+        # that one must never fall into.
+        from smolbench.evals.tokenization import TiktokenTokenizer
+        tokenizer = TiktokenTokenizer()
         base_text = "\n\n".join(_render_hint_parts(theorem, k, level - 1))
         target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
-        return _count_tokens(target_text) - _count_tokens(base_text) <= 0
+        base_tokens = tokenizer.count(_as_full_prompt(level, base_text))
+        target_tokens = tokenizer.count(_as_full_prompt(level, target_text))
+        return target_tokens - base_tokens <= 0
     return False

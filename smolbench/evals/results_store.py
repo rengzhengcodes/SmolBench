@@ -94,6 +94,61 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, base_prefix
 
 
+#: This account's study bucket -- the DOCUMENTED FALLBACK used only when
+#: ``SMOLBENCH_RESULTS_S3`` is unset (see `resolve_results_location`).
+#: Declared here, in the module that owns the S3 URI resolution, so every
+#: script that needs a bucket name IMPORTS this constant instead of re-typing
+#: it: it was previously a literal duplicated across ten files, so a
+#: redirected results store (a new ``SMOLBENCH_RESULTS_S3``) silently did not
+#: reach them.
+DEFAULT_RESULTS_BUCKET: str = "smolbench-results-414266451290"
+
+
+def resolve_results_location() -> tuple[str, str]:
+    """Resolve the ``(bucket, base_prefix)`` a TOOL should target for S3 results.
+
+    Reads ``SMOLBENCH_RESULTS_S3`` at CALL time (never a module constant --
+    same rationale as :func:`resolve_store`: a notebook runs
+    ``load_dotenv(keys.env)`` AFTER ``import smolbench``), stripped exactly as
+    :func:`resolve_store` strips it.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(bucket, base_prefix)``. `base_prefix` is ``""`` for a bucket-only
+        URI (or when the env var is unset) and never carries a leading or
+        trailing ``"/"`` (see :func:`parse_s3_uri`). Unset, empty, or
+        whitespace-only ``SMOLBENCH_RESULTS_S3`` yields
+        ``(DEFAULT_RESULTS_BUCKET, "")``, logged at INFO so the fallback is
+        never silent.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`parse_s3_uri` when ``SMOLBENCH_RESULTS_S3`` is
+        set but malformed. NOT swallowed and NOT downgraded to the default:
+        mirroring `resolve_store`'s step-2 rationale, a typo'd URI must fail
+        loudly rather than silently provision or audit the WRONG bucket.
+
+    Notes
+    -----
+    For TOOLS that need the bucket/prefix pair directly -- a bucket
+    provisioner, a completeness auditor, a snapshot exporter -- none of which
+    hold or need a ``results_dir``. Code that needs a working
+    :class:`ResultsStore` must still go through :func:`resolve_store`, which
+    additionally handles the local-store and offline-test hermeticity cases
+    (neither of which applies to a tool addressing the bucket itself).
+    """
+    uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
+    if not uri:
+        logging.info(
+            "resolve_results_location: SMOLBENCH_RESULTS_S3 is unset/empty; "
+            f"falling back to DEFAULT_RESULTS_BUCKET ({DEFAULT_RESULTS_BUCKET!r})."
+        )
+        return DEFAULT_RESULTS_BUCKET, ""
+    return parse_s3_uri(uri)
+
+
 def utcnow() -> datetime:
     """Return the current instant as a timezone-aware UTC ``datetime``.
 

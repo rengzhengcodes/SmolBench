@@ -28,18 +28,27 @@ but never fail the run.
 
 import argparse
 import collections
+import functools
+import importlib.util
 import json
+import os
 import pathlib
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+import sys
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from smolbench.evals.results_store import S3ResultsStore, resolve_results_location
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-BUCKET = "smolbench-results-414266451290"
-INDUCTION_PREFIX = "induction/"
-
-#: Expected induction seeds per (model, arm): base_seed=0, R=30.
-EXPECTED_SEEDS = 30
+#: The induction study's ``S3ResultsStore.experiment`` key segment -- the same
+#: ``induction/`` prefix the old hand-rolled-regex walk named via
+#: ``INDUCTION_PREFIX`` (removed with FINDING 14-04's fix; see `audit_induction`
+#: and `_induction_store`). Kept as a constant, not re-derived per call, since
+#: it is the study's fixed notebook directory name
+#: (``results_store.experiment_name``'s output for ``notebooks/induction/results``),
+#: not something that varies with environment the way the bucket/prefix do.
+INDUCTION_EXPERIMENT = "induction"
 
 #: Substrings that mark a row's failure as INFRASTRUCTURE, not model
 #: behavior. This pattern is deliberately broad. A false "infra" costs one
@@ -85,6 +94,18 @@ def iter_deduction_lanes(
     tuple of (str, str)
         Lane name and its raw rows text, ``""`` when S3 holds no such object for
         a lane -- itself a finding.
+
+    Notes
+    -----
+    The S3 BUCKET (as opposed to `deduction_prefix`, the key prefix inside it)
+    is resolved here at CALL time via `resolve_results_location`, i.e. from
+    ``SMOLBENCH_RESULTS_S3``, falling back to
+    `smolbench.evals.results_store.DEFAULT_RESULTS_BUCKET` when that env var is
+    unset/empty -- replacing a module-level ``BUCKET`` literal so a redirected
+    results store reaches this auditor too. `deduction_prefix` is a DIFFERENT,
+    orthogonal axis: the deduction spool has its own independent
+    ``LEAN_SPOOL_PREFIX``/`spool_prefix` key-prefix scheme inside that bucket,
+    unrelated to `resolve_results_location`'s ``base_prefix``.
     """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
@@ -99,16 +120,21 @@ def iter_deduction_lanes(
         from smolbench.deduction.lean.runner import spool_prefix
 
         deduction_prefix = spool_prefix() + "/"
+    # Bucket resolved HERE, at call time (see docstring Notes), not a
+    # module-level literal; `base_prefix` is discarded on purpose -- the
+    # deduction spool's own `deduction_prefix` above is an independent
+    # key-prefix scheme, not layered under `resolve_results_location`'s prefix.
+    bucket, _base_prefix = resolve_results_location()
     s3 = _s3()
     pages = s3.get_paginator("list_objects_v2").paginate(
-        Bucket=BUCKET, Prefix=deduction_prefix, Delimiter="/"
+        Bucket=bucket, Prefix=deduction_prefix, Delimiter="/"
     )
     for page in pages:
         for p in page.get("CommonPrefixes", []):
             lane = p["Prefix"].split("/")[-2]
             try:
                 body = s3.get_object(
-                    Bucket=BUCKET, Key=f"{deduction_prefix}{lane}/all_rows.jsonl"
+                    Bucket=bucket, Key=f"{deduction_prefix}{lane}/all_rows.jsonl"
                 )["Body"].read()
             except Exception:  # noqa: BLE001 -- a lane with no rows is itself a finding
                 yield lane, ""
@@ -168,32 +194,167 @@ def audit_lane(text: str) -> Dict[str, object]:
     }
 
 
-def audit_induction(models: Optional[List[str]] = None) -> Dict[str, Dict[str, int]]:
-    """Report induction ``(model, arm)`` pairs missing seeds, as ``{model: {arm: n}}``.
+@functools.lru_cache(maxsize=1)
+def _induction_driver() -> Any:
+    """Load ``notebooks/induction/run_study.py`` by file path; cached.
 
-    The induction analogue of an empty cell is a MISSING seed: the arm file is
-    written only when a seed completes, so a lane that died mid-seed leaves no
-    trace in S3. Only models with at least one gap are returned; ``models``
-    restricts the report, ``None`` covers every model in S3.
+    LAZY BY DESIGN -- call this only from inside a function body, never at
+    module import time. Executing the driver module runs its OWN
+    ``load_dotenv(notebooks/induction/keys.env)`` (and, under
+    ``INDUCTION_SHARD``, mutates ``EC2_EXPERIMENT_TAG``); this script's
+    ``--local`` deduction path must stay usable with no induction environment
+    configured at all, which a module-scope call here would break.
+
+    Loaded BY FILE PATH, exactly as ``scripts/fleet/run_fleet.py`` does at its
+    own module scope (see that file's "the induction driver import" comment):
+    a bare ``import run_study`` is ambiguous once the DEDUCTION study's
+    same-named ``notebooks/deduction/run_study.py`` is ALSO importable on
+    ``sys.path`` (this same file's `main` already imports
+    ``smolbench.deduction.lean.runner``, so both trees are live in one
+    process). The module is registered in ``sys.modules`` under a distinct
+    name (``"induction_run_study"``) BEFORE ``exec_module`` runs, matching
+    ``run_fleet.py``'s ordering, so any import inside the driver that looks
+    itself up by that name mid-exec finds a (partially-initialized) module
+    object rather than re-triggering this load.
+
+    Returns
+    -------
+    module
+        The executed driver module, exposing ``MODELS``, ``INFO_TYPES``,
+        ``BASE_SEED`` and ``N_REPLICATES``. Memoized via ``lru_cache``, so a
+        second call is a cache hit, not a second ``load_dotenv``/import-time
+        side effect.
     """
-    s3 = _s3()
-    seen: Dict[Tuple[str, str], set] = collections.defaultdict(set)
-    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=INDUCTION_PREFIX)
-    for page in pages:
-        for o in page.get("Contents", []):
-            m = re.match(
-                rf"{INDUCTION_PREFIX}([^/]+)/seed=(\d+)/([a-z_]+)--", o["Key"]
-            )
-            if m:
-                seen[(m.group(1), m.group(3))].add(int(m.group(2)))
-    out: Dict[str, Dict[str, int]] = {}
-    for (model, arm), seeds in sorted(seen.items()):
-        if models and model not in models:
-            continue
-        missing = EXPECTED_SEEDS - len(seeds)
-        if missing:
-            out.setdefault(model, {})[arm] = missing
-    return out
+    path = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
+    spec = importlib.util.spec_from_file_location("induction_run_study", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _induction_store() -> S3ResultsStore:
+    """Build the ``S3ResultsStore`` `audit_induction` reads real seeds from.
+
+    Split out from `audit_induction` so the S3 construction step alone is
+    small, testable and independently patchable; the audit function's default
+    seam is "call `_induction_store()` when `store` is not supplied".
+
+    Bucket and base prefix come from `resolve_results_location`, i.e. from
+    ``SMOLBENCH_RESULTS_S3`` (falling back to
+    `smolbench.evals.results_store.DEFAULT_RESULTS_BUCKET`) -- the SAME
+    resolution `iter_deduction_lanes` now uses for the deduction bucket, so one
+    redirected results store reaches both audits. Region mirrors
+    `smolbench.evals.results_store.resolve_store`'s own resolution rule (see
+    that function's docstring, step 4-6): ``SMOLBENCH_RESULTS_S3_REGION``,
+    else ``AWS_REGION``, else ``None`` (boto3's own credential/region chain
+    decides).
+    """
+    bucket, base_prefix = resolve_results_location()
+    region = os.environ.get("SMOLBENCH_RESULTS_S3_REGION") or os.environ.get("AWS_REGION") or None
+    return S3ResultsStore(
+        bucket=bucket, base_prefix=base_prefix, experiment=INDUCTION_EXPERIMENT, region=region
+    )
+
+
+def audit_induction(
+    models: Optional[List[str]] = None, *, store: Any = None
+) -> Tuple[Dict[str, Dict[str, Dict[str, List[int]]]], int]:
+    """Report induction ``(model, arm)`` seed-set mismatches against the pinned grid.
+
+    FINDING 14-04 fix: the previous implementation built its report ONLY from
+    S3 listing hits, so a ``(model, arm)`` with ZERO objects in S3 (an absent
+    model, or a wholly empty bucket) never entered its ``seen`` dict and was
+    never reported -- a vacuous pass, exactly the failure mode this file's
+    module docstring says an audit must never exhibit. This version walks the
+    EXPECTED grid instead -- every model in `models` (or, by default, every key
+    of the driver's ``MODELS``) crossed with every arm in ``INFO_TYPES`` -- so
+    a cell with nothing landed is EXAMINED and reported like any other, not
+    silently absent.
+
+    Parameters
+    ----------
+    models : list of str, optional
+        Induction roster SPEC KEYS (``MODELS`` keys, e.g. ``"deepseek-v4-pro"``)
+        to restrict the audit to. ``None`` (the default) audits every model in
+        the roster. A name that is not a ``MODELS`` key is treated as a
+        caller typo, not a deliberately narrow selection -- see Raises: an
+        unrecognized model must fail loudly, not silently audit nothing (the
+        same vacuous-pass failure mode this function exists to remove, just
+        moved to the caller's side).
+    store : object, optional
+        Duck-typed provider of ``list_seeds(model, tag, info) -> list[int]``,
+        the same shape as ``smolbench.evals.results_store.ResultsStore
+        .list_seeds`` (`S3ResultsStore` satisfies it directly). ``None`` (the
+        default) builds the real store via `_induction_store`. THIS is the
+        seam the offline test suite injects a fake through, so `audit_induction`
+        is exercised with no AWS credentials, no network call and no boto3
+        client construction.
+
+    Returns
+    -------
+    tuple of (dict, int)
+        ``({model: {arm: {"missing": [...], "unexpected": [...]}}}, examined)``.
+        Only a ``(model, arm)`` whose seed set does not exactly match the
+        expected range appears in the mapping -- an exact match is omitted,
+        matching `audit_lane`'s "report only faults" shape. Per cell:
+
+        - ``"missing"`` is ``sorted(expected - landed)``: seeds in
+          ``range(BASE_SEED, BASE_SEED + N_REPLICATES)`` never collected.
+        - ``"unexpected"`` is ``sorted(landed - expected)``: seeds landed
+          OUTSIDE that range (e.g. a 31st seed) -- the case the old
+          ``EXPECTED_SEEDS - len(seeds)`` subtraction turned into a
+          nonsensical ``-1`` instead of naming the seed.
+
+        ``examined`` is ``len(models or MODELS) * len(INFO_TYPES)``, the
+        number of cells the grid walk actually visited -- so a caller can
+        refuse to call a zero-cell grid a pass (see `main`'s ``--induction``
+        block, which does exactly that).
+
+    Raises
+    ------
+    SystemExit
+        One or more `models` entries is not a key of the driver's ``MODELS``;
+        names the bad key(s) and the full valid roster.
+    Exception
+        Whatever `store.list_seeds` raises (a credentials failure, throttling,
+        ...) propagates UNCHANGED -- never caught and read as "0 seeds
+        landed", which would just relocate the vacuous-pass bug this function
+        replaces into a new hiding place.
+    """
+    driver = _induction_driver()
+    roster: Dict[str, str] = driver.MODELS
+    info_types: Tuple[str, ...] = tuple(driver.INFO_TYPES)
+    base_seed: int = driver.BASE_SEED
+    n_replicates: int = driver.N_REPLICATES
+
+    selected = list(roster) if models is None else list(models)
+    bad = [m for m in selected if m not in roster]
+    if bad:
+        raise SystemExit(
+            f"audit_induction: unknown induction model key(s) {bad!r} -- valid "
+            f"MODELS keys are {sorted(roster)!r}"
+        )
+
+    if store is None:
+        store = _induction_store()
+
+    expected = set(range(base_seed, base_seed + n_replicates))
+    out: Dict[str, Dict[str, Dict[str, List[int]]]] = {}
+    for model in selected:
+        tag = roster[model]
+        for info in info_types:
+            # Not wrapped in try/except: a real backend error must propagate
+            # (see Raises), never read as an empty seed set.
+            landed = set(store.list_seeds(model, tag, info))
+            missing = sorted(expected - landed)
+            unexpected = sorted(landed - expected)
+            if missing or unexpected:
+                out.setdefault(model, {})[info] = {
+                    "missing": missing,
+                    "unexpected": unexpected,
+                }
+    return out, len(selected) * len(info_types)
 
 
 def main() -> int:
@@ -270,15 +431,35 @@ def main() -> int:
         return 1
 
     if args.induction:
-        gaps = audit_induction()
+        gaps, examined = audit_induction()
         print("\nINDUCTION seed coverage:")
-        if gaps:
-            for model, arms in gaps.items():
-                worst = max(arms.values())
-                failures.append(f"{model}: induction missing up to {worst} seed(s) {arms}")
-                print(f"  FAULT {model}: missing seeds per arm -> {arms}")
+        if examined == 0:
+            # This is the induction analogue of the `if not audited:` guard
+            # above -- but that guard counts DEDUCTION lanes and runs BEFORE
+            # this block, so it cannot see an empty induction grid. Without
+            # this check, an empty selection would report a clean (empty)
+            # `gaps` mapping and read as a pass -- the exact vacuous-pass bug
+            # FINDING 14-04 removed from `audit_induction` itself, relocated
+            # into `main` if left unguarded here.
+            print("\n*** AUDITED NOTHING: the induction model/arm grid was empty ***")
+            print("An empty grid is not a pass. Check --induction model selection.")
+            failures.append("induction: audited 0 (model, arm) cells")
+        elif gaps:
+            for model, arms in sorted(gaps.items()):
+                worst_missing = max(len(a["missing"]) for a in arms.values())
+                unexpected_seeds = sorted({s for a in arms.values() for s in a["unexpected"]})
+                failures.append(
+                    f"{model}: induction missing up to {worst_missing} seed(s) per arm"
+                    + (f", unexpected seed(s) {unexpected_seeds}" if unexpected_seeds else "")
+                )
+                print(f"  FAULT {model}: missing/unexpected seeds per arm -> {arms}")
         else:
-            print(f"  ok: every (model, arm) has all {EXPECTED_SEEDS} seeds")
+            driver = _induction_driver()
+            base_seed, n_replicates = driver.BASE_SEED, driver.N_REPLICATES
+            print(
+                f"  ok: every (model, arm) of the {examined} examined has seeds "
+                f"{base_seed}..{base_seed + n_replicates - 1}"
+            )
 
     if failures:
         print("\n*** COMPLETENESS FAULTS ***")

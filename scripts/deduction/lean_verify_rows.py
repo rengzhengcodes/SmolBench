@@ -22,10 +22,17 @@ Contracts, each enforced where documented:
   identical to per-group memoisation under the configured ``k.strategy == "last"``
   (``runner._k_indices``), strictly cheaper otherwise;
 - resume applies an ALL-cells rule to the PAIRED output, never to a prior
-  ``verified_rows.jsonl`` alone (:func:`resume_done_groups`); uploads checkpoint every
-  :data:`UPLOAD_EVERY_GROUPS` groups and once at the end; :func:`verify_run` returns 2
-  if a FULL pass leaves a cell on the ``"unverified"`` sentinel, which downstream
-  loaders score as a failure;
+  ``verified_rows.jsonl`` alone (:func:`resume_done_groups`): a group counts as done
+  only once every cell carries a non-``"unverified"`` verdict AND at least one cell
+  carries a GENUINELY GRADED one -- a group where every cell reads
+  ``"replay_failed"``/``"exception"`` (:data:`_NEVER_MEASURED_VERDICTS`) was never
+  actually tested against Lean and is retried, not marked done; uploads checkpoint
+  every :data:`UPLOAD_EVERY_GROUPS` groups and once at the end; :func:`verify_run`
+  returns 2 if a FULL pass leaves a cell on the ``"unverified"`` sentinel, which
+  downstream loaders score as a failure -- a FULL pass whose groups end all-
+  never-measured instead logs a separate diagnostic and leaves the return code at 0,
+  since that population is a documented, stable property of the corpus, not a
+  symptom (see :func:`verify_run`'s body);
 - one exclusive flock on a dedicated file in :data:`DOJO_CACHE_DIR` is held for the
   whole multi-run loop, since concurrent passes race on the shared traced-repo cache
   (:func:`_dojo_cache_lock`);
@@ -89,6 +96,24 @@ _LOCK_FILENAME = ".smolbench_verify.lock"
 #: space `_lookup_theorem` scans, since a row carries no `kind`/`split` of its own.
 _CORPUS_KINDS: tuple[str, ...] = ("random", "novel_premises")
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
+
+#: Verdicts meaning a cell's group was never actually put in front of Lean: the REPL
+#: session never opened (`_verify_one_group`'s `except Exception` around
+#: `verifier.open_at_step` fans `"replay_failed"` over the whole group), or an
+#: unanticipated bug tripped `_process_group`'s last-resort net (`"exception"`).
+#: Neither case tested a single recorded candidate.
+#:
+#: Same two verdicts, for the same reason, as
+#: `notebooks/deduction/analysis/power_analysis.UNMEASURABLE_VERDICTS`: both mark
+#: "the model was never actually tested here" rather than a real pass or fail. This
+#: script cannot import that module -- `notebooks/` has no `__init__.py` (it is not
+#: an importable package from a script under `scripts/`), and this module's own
+#: contract (see the module docstring's last bullet) is to import cleanly without
+#: any of the analysis stack's dependencies -- so the pair is duplicated here rather
+#: than shared. If the two ever drift apart, `resume_done_groups` below and the
+#: analysis loaders would disagree about what "measured" means for the exact same
+#: rows; keep them in sync by hand.
+_NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset({"exception", "replay_failed"})
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +221,39 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
         row["verify_ms"] = result["verify_ms"]
 
 
+def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict]]:
+    """Group ``kind == "cell"`` `rows` by their ``(theorem_id, int(k))`` pair.
+
+    Shared by :func:`resume_done_groups` and :func:`verify_run`'s never-measured
+    diagnostic, so the two agree on what a "group" is by construction rather than
+    by two independently maintained loops.
+
+    Returns
+    -------
+    dict[tuple[str, int], list[dict]]
+        ``(theorem_id, int(k))`` -> its cell rows, in `rows` order; non-cell rows
+        are ignored. ``k`` is ``int()``-coerced to tolerate a hand-edited string
+        value.
+    """
+    groups: dict[tuple[str, int], list[dict]] = {}
+    for row in rows:
+        if row.get("kind") != "cell":
+            continue
+        key = (row["theorem_id"], int(row["k"]))
+        groups.setdefault(key, []).append(row)
+    return groups
+
+
+def _never_measured(cell_rows: list[dict]) -> bool:
+    """True iff every row in `cell_rows` carries a :data:`_NEVER_MEASURED_VERDICTS`
+    verdict -- i.e. NOTHING in this group was ever actually tested against Lean,
+    as opposed to tested and failed.
+    """
+    return all(row.get("verdict") in _NEVER_MEASURED_VERDICTS for row in cell_rows)
+
+
 def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
-    """Find the ``(theorem_id, k)`` groups where every cell row is fully graded.
+    """Find the ``(theorem_id, k)`` groups a later pass should NOT re-attempt.
 
     The ALL-cells rule (rather than ANY) is what holds ACROSS passes:
     ``all_rows.jsonl`` grows by appending, so a group a prior pass finished can gain
@@ -213,21 +269,62 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     Returns
     -------
     set[tuple[str, int]]
-        Every ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows ALL carry a
-        non-``"unverified"`` verdict; non-cell rows are ignored and can never make
-        a group done. ``k`` is ``int()``-coerced.
-    """
-    groups: dict[tuple[str, int], list[dict]] = {}
-    for row in verified_rows:
-        if row.get("kind") != "cell":
-            continue
-        key = (row["theorem_id"], int(row["k"]))
-        groups.setdefault(key, []).append(row)
+        Every ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows (a) ALL carry a
+        non-``"unverified"`` verdict, AND (b) are NOT all in
+        :data:`_NEVER_MEASURED_VERDICTS` (:func:`_never_measured`). Non-cell rows
+        are ignored and can never make a group done. ``k`` is ``int()``-coerced.
 
+        (b) is what stops a never-measured group from counting as done. The OLD rule was
+        (a) alone: "no cell still reads unverified", which a group of ALL
+        ``"replay_failed"``/``"exception"`` cells also satisfies -- so a group whose
+        REPL session never even opened read as "done" forever after, and
+        `error_bars.build_pool`'s ``count_as_failure`` then permanently scored those
+        never-tested cells 0. Phase 1's own resume (`runner._existing_keys`) takes the
+        opposite view of this exact verdict class -- it deliberately RE-RUNS an
+        exception-only cell -- so this was also an inconsistency between the two phases'
+        definitions of "done", not just an internal bug.
+
+        A group with at least one GENUINELY GRADED cell -- ``"success"``,
+        ``"lean_error"``, ``"incomplete"``, ``"given_up"``, or ``"no_answer"``
+        (anything outside :data:`_NEVER_MEASURED_VERDICTS` and not
+        ``"unverified"``) -- still counts as done even when its OTHER cells are
+        ``"replay_failed"``/``"exception"``: only a group where NOTHING was
+        measured is retried. `try_tail` runs per unique candidate text
+        (:func:`unique_candidates`), not per row, so one candidate's REPL-open
+        failure never taints a sibling candidate that already has a real verdict.
+
+        This includes rows carrying ``verdict == "no_answer"``
+        (`smolbench.deduction.lean.verify`'s verdict for a candidate tail that
+        split to zero tactics). That is deliberate: the group WAS measured --
+        `try_tail`/`verify_proof_tail` ran and reported that the model
+        answered with nothing extractable -- so it counts as done, same as any
+        other real verdict. Do not special-case it into "not yet graded, retry
+        it": there is nothing left to retry against Lean for an empty
+        candidate, and treating it as pending would loop this group forever.
+
+    Notes
+    -----
+    Cost of (b), stated honestly: a theorem that is PERMANENTLY unopenable -- say,
+    missing ``*.ast.json`` in the traced mathlib4 cache -- is a property of the
+    CORPUS, not of the box, yet nothing recorded on a row distinguishes that from a
+    transient REPL hiccup (a flaky subprocess start, a momentarily wedged host).
+    Because this function can no longer tell the two apart, it now re-attempts such
+    a group's REPL open on EVERY subsequent full pass, forever -- there is no way to
+    "give up" on a group from inside this function without losing the one thing
+    (b) exists to preserve: the ability to notice a transient failure has cleared.
+    That is the price of being able to tell the two apart at all. The work stays
+    BOUNDED, not unbounded: one REPL-open attempt per pending group per pass, same
+    cost as any other pending group, never a retry loop within a single pass. See
+    :func:`verify_run`'s never-measured diagnostic for how an operator tells a
+    corpus property from a live box problem across passes, without this function
+    trying (and failing) to guess it from one row's-eye view.
+    """
+    groups = _group_cell_rows_by_key(verified_rows)
     return {
         key
         for key, cell_rows in groups.items()
         if all(row.get("verdict") != "unverified" for row in cell_rows)
+        and not _never_measured(cell_rows)
     }
 
 
@@ -532,11 +629,30 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     Returns
     -------
     list[dict]
-        One dict per non-blank line, in file order; ``[]`` when the object does not
-        exist (NORMAL for a not-yet-created ``verified_rows.jsonl``), detected as a
-        ``ClientError`` with ``Error.Code`` ``"NoSuchKey"`` or ``"404"`` -- the shapes
-        boto3 and ``tests/evals/test_results_store.py``'s ``FakeS3Client`` raise. Any
-        other S3 failure propagates: it must never read as "nothing to verify yet".
+        One dict per non-blank line, in file order, MINUS a torn FINAL line if the
+        last non-blank line fails to parse (see the loop body and Raises below);
+        ``[]`` when the object does not exist (NORMAL for a not-yet-created
+        ``verified_rows.jsonl``), detected as a ``ClientError`` with ``Error.Code``
+        ``"NoSuchKey"`` or ``"404"`` -- the shapes boto3 and
+        ``tests/evals/test_results_store.py``'s ``FakeS3Client`` raise. Any other S3
+        failure propagates: it must never read as "nothing to verify yet".
+
+    Raises
+    ------
+    json.JSONDecodeError
+        If any line OTHER than the file's final line fails to parse. A torn final
+        line is the ONE recoverable shape (the append-only writer regenerates it on
+        resume, see below); a corrupt line anywhere else is real mid-file damage
+        this function will not silently shrink the pass's input around, since
+        nothing re-derives a lost middle row.
+
+    Notes
+    -----
+    `dest` is always written the full `body` bytes verbatim, exactly as
+    downloaded -- this function's job is to READ, never to "repair" the S3 object
+    or the local copy; a caller that wants a cleaned-up object re-uploads a
+    different file (:func:`upload_rows` does, from `verify_run`'s in-memory rows,
+    never from `dest`).
     """
     from botocore.exceptions import ClientError  # lazy: importing must not need boto3
 
@@ -551,11 +667,36 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(body)
 
+    # Design: `all_rows.jsonl` is written APPEND-ONLY by an unattended, spot-priced
+    # box, so a SIGKILL (spot reclaim, OOM) mid-write leaves a half-written LAST
+    # line -- never a half-written line in the MIDDLE, since every earlier line was
+    # already flushed complete before the writer moved on. `lineno` is taken over
+    # the RAW split (including blank lines) so "final line" means the file's actual
+    # last line, matching what `merge_lean_shards.py` and
+    # `split_lean_run_into_shards.py` already do for the same artifact.
+    lines = body.decode("utf-8").splitlines()
     rows: list[dict] = []
-    for line in body.decode("utf-8").splitlines():
+    for lineno, line in enumerate(lines):
         if not line.strip():
             continue
-        rows.append(json.loads(line))
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if lineno == len(lines) - 1:
+                # Recoverable: the writer's own resume regenerates this exact row
+                # next pass, so dropping it here loses nothing -- but it must be
+                # REPORTED, not silently swallowed, since a silent drop would hide
+                # real corruption behind this same code path.
+                logging.warning(
+                    f"lean_verify_rows: s3://{bucket}/{key}: torn (truncated) final "
+                    "line dropped -- the append-only writer regenerates it on "
+                    f"resume. The local copy at {dest} still has it verbatim (this "
+                    "function never rewrites what it downloads)."
+                )
+                continue
+            # Unrecoverable: real damage in the middle of a file this pass will not
+            # re-derive. Propagate unchanged rather than shrinking the input.
+            raise
     return rows
 
 
@@ -687,11 +828,16 @@ def verify_run(
     Returns
     -------
     int
-        ``0`` on success, including "nothing to do" and partial passes (``--limit``,
-        ``--theorem``, ``--dry-run``); ``1`` if the run has no ``all_rows.jsonl``
-        (logged, skipped); ``2`` if a FULL pass left a cell on the ``"unverified"``
-        sentinel after its final upload (see the gate comment in the body; the output
-        is uploaded regardless -- the gate reports, never withholds).
+        ``0`` on success, including "nothing to do", partial passes (``--limit``,
+        ``--theorem``, ``--dry-run``), AND a full pass whose only unresolved groups
+        ended entirely on :data:`_NEVER_MEASURED_VERDICTS` verdicts (deliberately NOT
+        folded into the ``2`` below -- see the gate comment in the body for why a
+        corpus-stable population must not flip the return code -- that case instead
+        logs its own diagnostic, distinct from the sentinel gate);
+        ``1`` if the run has no ``all_rows.jsonl`` (logged, skipped); ``2`` if a
+        FULL pass left a cell on the ``"unverified"`` sentinel after its final
+        upload (see the gate comment in the body; the output is uploaded
+        regardless -- the gate reports, never withholds).
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)
@@ -915,6 +1061,57 @@ def verify_run(
             )
             return 2
 
+        # Never-measured diagnostic. This is DELIBERATELY separate
+        # from the sentinel gate above and DELIBERATELY does not change the return
+        # code. The review's fix_spec asked for these groups to be folded into
+        # `n_sentinel` ("count such groups as unverified"); that is wrong against
+        # the study's own recorded measurement: `notebooks/deduction/analysis/
+        # power_analysis.py` documents that "replay_failed" is a STABLE population
+        # across the WHOLE study -- exactly 232 cells (151 DojoInit + 81 prefix),
+        # 100% overlap, in every one of 21 models. A population that shows up
+        # identically in every healthy run is a property of the CORPUS (theorems
+        # LeanDojo cannot open a session for, or whose ground-truth prefix will not
+        # replay), not a symptom of this pass. Folding it into `n_sentinel` would
+        # return 2 on every one of those otherwise-healthy full passes, forever --
+        # and `_verify_every_run` counts any non-zero `rc` into its failed-run
+        # total, so `main` would report non-zero on the documented healthy flow. A
+        # signal that always fires carries no information; it would train an
+        # operator to ignore this gate exactly when it matters.
+        # Restricted to `pending` (this pass's ATTEMPTED groups), not every group in
+        # `out_rows`: an all-never-measured ORPHAN (a prior-pass row `seed_out_rows`
+        # appended with no counterpart in `all_rows.jsonl`, see its docstring) was
+        # never in `pending` and nothing was attempted against it this pass -- the
+        # rc=2 gate above already accounts for an orphan separately (it can carry an
+        # "unverified" sentinel), and this diagnostic would otherwise describe a
+        # group as "ended this pass" that this pass never touched.
+        never_measured_groups = {
+            key
+            for key, cell_rows in _group_cell_rows_by_key(out_rows).items()
+            if key in pending and _never_measured(cell_rows)
+        }
+        if never_measured_groups:
+            affected = sorted(never_measured_groups)
+            logging.warning(
+                f"lean_verify_rows[{run}]: {len(affected)} (theorem_id, k) GROUP(S) "
+                'ENDED THIS FULL PASS WITH EVERY CELL ON "replay_failed"/'
+                '"exception". A verdict WAS written for each of these -- this is '
+                "NOT the rc=2 sentinel gate above -- and what it says is that Lean "
+                "verification could not even be SET UP for that group (the REPL "
+                "session never opened). This code cannot tell you whether that is "
+                "a broken box (SMOLBENCH_MATHLIB_ROOT unset or wrong, elan "
+                "missing, a wedged host -- see dojo_failure_hint()) or a "
+                "PERMANENT property of the corpus (no *.ast.json for that theorem "
+                "in the traced mathlib4 cache): nothing recorded on a row "
+                "distinguishes the two. The discriminator: diff THIS pass's "
+                "affected (theorem_id, k) set, listed at the end of this message, "
+                "against a PRIOR pass's. A box problem MOVES the set -- different "
+                "theorems fail depending on what broke this time -- while a corpus "
+                "property does NOT: the same theorems fail on every pass. See "
+                "notebooks/deduction/analysis/power_analysis.UNMEASURABLE_VERDICTS "
+                "for why cells confirmed corpus-stable are excluded from analysis "
+                f"entirely rather than scored 0. Affected groups: {affected}"
+            )
+
     return 0
 
 
@@ -998,7 +1195,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     -------
     int
         ``0`` when every matching run was processed (even with nothing to verify);
-        otherwise the COUNT of runs :func:`verify_run` returned non-zero for.
+        otherwise the COUNT of runs that either had :func:`verify_run` return
+        non-zero OR raised an exception (`_verify_every_run` isolates each run, so
+        one lane's exception is logged and counted, never left to abort the runs
+        after it).
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -1025,20 +1225,48 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     def _verify_every_run() -> int:
+        """Run :func:`verify_run` over every matched run, isolating one run's failure.
+
+        This loop used to let a `verify_run` exception propagate straight out of
+        `main`, so a pass over (say) 21 lanes that died on lane 3 left the other
+        18 completely unchecked and reported a bare traceback instead of a per-run
+        status -- worse than useless for an unattended overnight pass, since the
+        operator cannot even tell which lanes were actually verified. Each run now
+        gets its own `try`/`except`, logged and counted as failed, and the loop
+        continues to the next run regardless.
+        """
         n_failed = 0
         for run in runs:
-            rc = verify_run(
-                client=client,
-                bucket=bucket,
-                key_prefix=key_prefix,
-                run=run,
-                workers=args.workers,
-                theorem=args.theorem,
-                limit=args.limit,
-                workdir=workdir,
-                dry_run=args.dry_run,
-                no_resume=args.no_resume,
-            )
+            try:
+                rc = verify_run(
+                    client=client,
+                    bucket=bucket,
+                    key_prefix=key_prefix,
+                    run=run,
+                    workers=args.workers,
+                    theorem=args.theorem,
+                    limit=args.limit,
+                    workdir=workdir,
+                    dry_run=args.dry_run,
+                    no_resume=args.no_resume,
+                )
+            except Exception as exc:  # noqa: BLE001 -- isolate this run; never abort the pass.
+                # `Exception`, not `BaseException`: an operator's Ctrl-C
+                # (`KeyboardInterrupt`) must still stop the whole pass -- that is a
+                # "stop now" signal, not a per-run failure, and swallowing it here
+                # would make an unattended multi-hour pass un-interruptible. (A
+                # `SystemExit` from `check_workers` or `_dojo_cache_lock` cannot
+                # reach this `except` in the first place -- both run in `main`,
+                # around this whole loop, before any run is attempted -- but the
+                # same "let it stop the pass" reasoning would apply if that ever
+                # changed.)
+                logging.exception(
+                    f"lean_verify_rows[{run}]: verify_run raised "
+                    f"{type(exc).__name__}: {exc} -- counting this run as FAILED "
+                    "and continuing with the remaining runs."
+                )
+                n_failed += 1
+                continue
             if rc != 0:
                 n_failed += 1
         return n_failed
