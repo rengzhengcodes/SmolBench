@@ -188,22 +188,6 @@ def test_shard_env_and_state_file(monkeypatch):
     assert shards.state_file_for(solo, 0).name == ".ec2_state_x.json"
 
 
-def test_sync_deduction_spool_writes_under_the_new_prefix(monkeypatch, tmp_path):
-    """The published pre-cutoff study lives under `deduction/runs`; never write there."""
-    src = tmp_path / "notebooks" / "deduction" / "results" / "runs" / "scaling_glm-4.7"
-    src.mkdir(parents=True)
-    (src / "manifest.json").write_text("{}")
-    (src / "all_rows.jsonl").write_text('{"kind": "cell"}\n')
-    monkeypatch.setattr(fleet, "REPO_ROOT", tmp_path)
-    monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
-    uploads = []
-    client = SimpleNamespace(upload_file=lambda f, b, k: uploads.append((b, k)))
-    assert fleet.sync_deduction_spool(SimpleNamespace(key="glm-4.7"), client=client) == 2
-    assert {k for _b, k in uploads} == {
-        "deduction_postcutoff/runs/scaling_glm-4.7/manifest.json",
-        "deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl"}
-    assert all(b == fleet.SPOOL_BUCKET for b, _k in uploads)
-
 
 # ---------------------------------------------------------------------------
 # 14-07: the shard supervisor's tag namespace
@@ -341,3 +325,272 @@ def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence():
     # highest: ...but a lane's own pin still wins over it.
     assert fleet.lane_env(pinned, "induction", base_env={"EC2_VLLM_IMAGE": "op/img"})[
         "EC2_VLLM_IMAGE"] == fleet.LANE_IMAGE_OVERRIDES["deepseek-v4-pro"]
+
+
+# ---------------------------------------------------------------------------
+# 14-02 / 14-03 / 14-11: the restart, gate and spool policies
+#
+# The reviewer's tripwire: disabling the CoT halt, setting MAX_CRASH_RELAUNCHES
+# to 999 and deleting the tier B/C launch each left all 99 tooling tests green,
+# because the file pinned only leaf predicates. These drive the policy
+# functions themselves, with fake processes -- no subprocess, no AWS.
+# ---------------------------------------------------------------------------
+class _FakeProc:
+    """subprocess.Popen stand-in: a fixed return code and a terminate() flag."""
+
+    def __init__(self, rc):
+        self.returncode = rc
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+
+def _lane_run(key, phases=("induction",), rc=1):
+    run = fleet._LaneRun(lane=fleet.LANES[key], phases=phases)
+    run.proc = _FakeProc(rc)
+    return run
+
+
+def _recording_start_phase(launches, rc=1, log_text=None):
+    def _start(run, log_dir):
+        launches.append(run.lane.key)
+        run.proc = _FakeProc(rc)
+        if log_text is not None:
+            (log_dir / f"{run.lane.key}.log").write_text(log_text)
+    return _start
+
+
+def test_presence_reads_an_empty_first_sweep_as_unknown_not_as_gone():
+    """14-02: fleet_rows returns [] for an empty fleet AND for an all-region failure.
+
+    Reading that as "every instance is gone" made classify_exit short-circuit
+    to "reclaim" for every lane before RECLAIM_PATTERNS was ever consulted.
+    """
+    presence = fleet._Presence()
+    assert presence.lanes is None and presence.ever_seen is False
+    presence.observe(set())
+    assert presence.lanes is None, "an empty sweep before any lane was seen is UNKNOWN"
+    presence.observe({"glm-4.7"})
+    assert presence.lanes == {"glm-4.7"} and presence.ever_seen is True
+    presence.observe(set())
+    assert presence.lanes == set(), "once a lane has been seen, empty means empty"
+
+
+def test_an_empty_sweep_no_longer_turns_a_crash_into_an_endless_reclaim(monkeypatch, tmp_path):
+    """The simulated failure: 60 ticks of empty sweeps gave 60 relaunches, 0 crashes."""
+    launches = []
+    tail = "Traceback (most recent call last):\n  KeyError: 'gemma-4-e2b'\n"
+    (tmp_path / "gemma-4-e2b.log").write_text(tail)
+    monkeypatch.setattr(fleet, "_start_phase", _recording_start_phase(launches, log_text=tail))
+    runs = {"gemma-4-e2b": _lane_run("gemma-4-e2b")}
+    presence = fleet._Presence()
+    presence.observe(set())  # an empty sweep, nothing ever seen
+
+    for _ in range(60):
+        fleet._apply_restart_policy(runs, tmp_path, presence)
+
+    run = runs["gemma-4-e2b"]
+    assert run.reclaim_relaunches == 0, "an unknown sweep must not read as a reclaim"
+    assert run.halted and "MAX_CRASH_RELAUNCHES" in run.halt_reason
+    assert len(launches) == fleet.MAX_CRASH_RELAUNCHES == 2
+
+
+def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
+    """14-02: reclaims had unlimited retries and no backoff at all."""
+    import time as _time
+
+    launches, delays = [], []
+    tail = "botocore ... InsufficientInstanceCapacity for p6-b200.48xlarge\n"
+    (tmp_path / "glm-4.7.log").write_text(tail)
+    monkeypatch.setattr(fleet, "_start_phase", _recording_start_phase(launches, log_text=tail))
+    runs = {"glm-4.7": _lane_run("glm-4.7")}
+    run = runs["glm-4.7"]
+    presence = fleet._Presence()
+    presence.observe({"glm-4.7"})  # present: the verdict comes from the log tail
+
+    for expected in range(1, fleet.MAX_RECLAIM_RELAUNCHES + 2):
+        fleet._apply_restart_policy(runs, tmp_path, presence)
+        if run.halted:
+            break
+        assert run.reclaim_relaunches == expected
+        assert run.pending_relaunch_at is not None
+        delays.append(run.pending_relaunch_at - _time.monotonic())
+        # A lane inside its backoff window is not relaunched...
+        before = len(launches)
+        fleet._apply_restart_policy(runs, tmp_path, presence)
+        assert len(launches) == before, "relaunched before the backoff elapsed"
+        # ...and is relaunched once the deadline passes.
+        run.pending_relaunch_at = _time.monotonic() - 1
+        fleet._apply_restart_policy(runs, tmp_path, presence)
+        assert len(launches) == before + 1 and run.pending_relaunch_at is None
+
+    assert run.halted and str(fleet.MAX_RECLAIM_RELAUNCHES) in run.halt_reason
+    assert len(launches) == fleet.MAX_RECLAIM_RELAUNCHES
+    # Exponential, capped: 60, 120, 240, ... 1800, 1800, ...
+    assert delays[0] == pytest.approx(fleet.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
+    assert delays[1] == pytest.approx(2 * fleet.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
+    assert max(delays) == pytest.approx(fleet.RECLAIM_BACKOFF_CAP_SECONDS, abs=2)
+
+
+def test_the_budget_alert_uses_a_clock_a_relaunch_cannot_reset(tmp_path, capsys):
+    """14-02: _start_phase resets started_at, so the 2x-budget alert never fired."""
+    run = _lane_run("gemma-4-e2b", rc=None)
+    run.lane_started_at = fleet.time.monotonic() - 3600 * 2 * fleet.LANES[
+        "gemma-4-e2b"].budget_hours - 60
+    run.started_at = fleet.time.monotonic()  # as a fresh relaunch would leave it
+    (tmp_path / "gemma-4-e2b.log").write_text("still going\n")
+    fleet._monitor_tick({"gemma-4-e2b": run}, tmp_path, 2, fleet._Presence())
+    assert "exceeds 2x budget" in capsys.readouterr().out
+
+
+def test_tail_log_finds_a_reclaim_marker_in_a_large_log(tmp_path):
+    """14-03: _tail_log read the WHOLE file every tick, per lane.
+
+    Under-reading is not neutral either: a RECLAIM_PATTERNS match outside the
+    window silently becomes a CRASH, halting a lane that should have retried.
+    """
+    log = tmp_path / "k.log"
+    log.write_text(("x" * 200 + "\n") * 5000
+                   + "botocore ... InsufficientInstanceCapacity for p5e.48xlarge\n")
+    assert log.stat().st_size > 1_000_000
+    tail = fleet._tail_log(tmp_path, "k")
+    assert fleet.classify_exit(tail, True) == "reclaim"
+    assert len(tail.splitlines()) <= 40
+    assert len(tail) < log.stat().st_size // 4, "the whole file is still being read"
+    assert fleet._tail_log(tmp_path, "does-not-exist") == ""
+
+
+def test_the_gate_scan_is_incremental_sticky_and_survives_truncation(tmp_path):
+    """14-03: the gate line appears ONCE, early, then scrolls away.
+
+    So the scan cannot simply become a bounded tail: it reads only what is new,
+    latches when it finds the line, and rescans from 0 if the file shrinks.
+    """
+    run = fleet._LaneRun(lane=fleet.LANES["gemma-4-e2b"], phases=("induction",))
+    log = tmp_path / "gemma-4-e2b.log"
+    log.write_text("provisioning\n")
+    assert fleet._lane_gate_passed(run, tmp_path) is False
+
+    # The healthy-serve line arrives split across two reads.
+    with log.open("a") as fh:
+        fh.write("INFO:root:serve_model: 'gemma-4-e2b' is up at ")
+    assert fleet._lane_gate_passed(run, tmp_path) is False, "a partial line must not match"
+    with log.open("a") as fh:
+        fh.write("http://1.2.3.4:8000/v1\n")
+    assert fleet._lane_gate_passed(run, tmp_path) is True
+    assert run.gate_passed is True
+
+    # Sticky: the line may scroll away entirely.
+    log.write_text("gigabytes of later chatter\n")
+    assert fleet._lane_gate_passed(run, tmp_path) is True
+
+    # Truncation before passing: the offset resets instead of reading nothing forever.
+    other = fleet._LaneRun(lane=fleet.LANES["ministral-3-3b"], phases=("induction",))
+    olog = tmp_path / "ministral-3-3b.log"
+    olog.write_text("A" * 5000 + "\n")
+    assert fleet._lane_gate_passed(other, tmp_path) is False
+    assert other.gate_scan_offset > 0
+    olog.write_text("INFO:root:serve_model: 'ministral-3-3b' is up at http://1.2.3.4:8000/v1\n")
+    assert fleet._lane_gate_passed(other, tmp_path) is True
+
+
+def test_a_failed_family_gate_halts_the_never_launched_lanes(monkeypatch, tmp_path, caplog, capsys):
+    """14-03: gate failure left tier B/C at proc=None, so _all_terminal never became true.
+
+    The supervisor then ticked forever with the tier-D boxes billing, never
+    printing the closing report or the teardown reminder.
+    """
+    import logging
+
+    monkeypatch.setattr(fleet, "MONITOR_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(fleet, "LAUNCH_STAGGER_SECONDS", 0)
+    launches = []
+    crash = "Traceback (most recent call last):\n  KeyError: 'boom'\n"
+    monkeypatch.setattr(fleet, "_start_phase", _recording_start_phase(launches, log_text=crash))
+    monkeypatch.setattr(fleet, "_check_cot", lambda runs, *a, **k: None)
+
+    # A bounded stub: without the fix _run_fleet never becomes all-terminal, and
+    # an unbounded loop would HANG the suite rather than fail it. 200 ticks is
+    # far more than the handful this scenario needs.
+    ticks = {"n": 0}
+
+    def _bounded_tick(runs, log_dir, tick, presence):
+        ticks["n"] += 1
+        if ticks["n"] > 200:
+            raise AssertionError(
+                "_run_fleet did not terminate: the never-launched lanes were "
+                "left un-halted, so _all_terminal can never be true")
+
+    monkeypatch.setattr(fleet, "_monitor_tick", _bounded_tick)
+
+    lanes = {k: fleet.LANES[k] for k in
+             ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b",  # the gate lanes
+              "qwen3.5-27b",                                            # tier B
+              "glm-4.7")}                                               # tier D
+    with caplog.at_level(logging.ERROR):
+        fleet._run_fleet(lanes, ("induction",), gate=True, log_dir=tmp_path,
+                         phase_name="induction")  # must TERMINATE, not spin
+
+    assert "qwen3.5-27b" not in launches, "tier B must not launch behind a failed gate"
+    assert set(launches) >= set(fleet.GATE_MODELS) | {"glm-4.7"}
+    text = caplog.text
+    assert "FAMILY GATE FAILED" in text
+    assert "qwen3.5-27b" in text and "never launched" in text
+    assert "fleet finished with" in text
+    assert "fleet_teardown.py --terminate" in capsys.readouterr().out
+
+
+def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplog):
+    """14-11: the deleted copy uploaded without verification, then unlinked the rows.
+
+    The driver's own spool_to_s3 verifies each upload with head_object before
+    pruning; a failure must surface rather than being logged and forgotten,
+    because this runs immediately before the supervisor shuts the box down.
+    """
+    import logging
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setattr(fleet, "MONITOR_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(fleet, "LAUNCH_STAGGER_SECONDS", 0)
+    spool_ticks = {"n": 0}
+
+    def _bounded_tick(runs, log_dir, tick, presence):
+        spool_ticks["n"] += 1
+        if spool_ticks["n"] > 200:
+            raise AssertionError("_run_fleet did not terminate")
+
+    monkeypatch.setattr(fleet, "_monitor_tick", _bounded_tick)
+    monkeypatch.setattr(fleet, "_check_cot", lambda runs, *a, **k: None)
+    monkeypatch.setattr(fleet, "_start_phase", _recording_start_phase([], rc=0))
+    # The lane exits 0, so _advance_finished would otherwise really shell out.
+    shutdowns = []
+    monkeypatch.setattr(fleet, "subprocess",
+                        NS(run=lambda cmd, **kw: shutdowns.append(cmd), Popen=None))
+
+    def _boom(run_dir, key):
+        # The deduction driver's module-scope guard raises SystemExit, which is
+        # NOT an Exception -- an `except Exception` here would kill the fleet.
+        raise SystemExit(f"EC2_EXPERIMENT_TAG mismatch for {key}")
+
+    monkeypatch.setattr(fleet, "_deduction_driver", lambda: NS(spool_to_s3=_boom))
+
+    lanes = {"glm-4.7": fleet.LANES["glm-4.7"]}
+    with caplog.at_level(logging.ERROR):
+        fleet._run_fleet(lanes, ("deduction",), gate=False, log_dir=tmp_path,
+                         phase_name="deduction")
+
+    assert "glm-4.7" in caplog.text and "spool" in caplog.text.lower()
+    assert "SystemExit" in caplog.text
+    assert shutdowns, "the lane still completes and its box is still shut down"
+
+
+def test_the_unverified_spool_copy_is_gone():
+    """14-11: sync_deduction_spool duplicated the driver without its verification."""
+    assert not hasattr(fleet, "sync_deduction_spool")
+    assert not hasattr(fleet, "SPOOL_BUCKET") and not hasattr(fleet, "SPOOL_REGION")
+    source = (SCRIPTS / "fleet" / "run_fleet.py").read_text()
+    assert "smolbench-results-414266451290" not in source
