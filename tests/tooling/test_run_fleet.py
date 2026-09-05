@@ -1,4 +1,7 @@
-"""Offline contract for scripts/fleet/{run_fleet,fleet_status,run_shards}.py; no AWS."""
+"""Offline contract for scripts/fleet/{run_fleet,fleet_status,run_shards,fleet_teardown}.py.
+
+No AWS: every client is a stub factory and no subprocess is ever launched.
+"""
 
 import argparse
 import importlib.util
@@ -26,7 +29,8 @@ def _load(stem):
     return module
 
 
-fleet, status, shards = (_load(s) for s in ("run_fleet", "fleet_status", "run_shards"))
+fleet, status, shards, teardown = (
+    _load(s) for s in ("run_fleet", "fleet_status", "run_shards", "fleet_teardown"))
 
 TIERS = {  # tier -> instance types, then that tier's lane keys
     "A": "g6e.4xlarge,g6e.8xlarge,g6e.12xlarge nemotron-3-nano-4b gemma-4-e2b ministral-3-3b",
@@ -160,13 +164,14 @@ def test_shard_env_and_state_file(monkeypatch):
     def _args(**overrides):
         return argparse.Namespace(**{
             "model": "gemma-4-12b", "count": 3, "force_rerun": "1", "types": "g7.12xlarge",
-            "regions": "us-east-2,us-west-2", "request_timeout": 10800, "tag": "scaling",
+            "regions": "us-east-2,us-west-2", "request_timeout": 10800,
+            "tag": "induction-scaling", "allow_fleet_prefix": False,
             "no_shard": False, "state_file": "", **overrides})
 
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
     assert shards.shard_env(_args(), 1).items() >= {
         "INDUCTION_MODELS": "gemma-4-12b", "INDUCTION_SHARD": "1/3",
-        "INDUCTION_FORCE_RERUN": "1", "EC2_EXPERIMENT_TAG": "scaling",
+        "INDUCTION_FORCE_RERUN": "1", "EC2_EXPERIMENT_TAG": "induction-scaling",
         "EC2_INSTANCE_TYPES": "g7.12xlarge", "EC2_REQUEST_TIMEOUT_SECONDS": "10800",
         "AWS_ACCESS_KEY_ID": "AKIATEST"}.items()
     solo = _args(no_shard=True, count=1, state_file=".ec2_state_x.json", force_rerun="0-11")
@@ -193,3 +198,62 @@ def test_sync_deduction_spool_writes_under_the_new_prefix(monkeypatch, tmp_path)
         "deduction_postcutoff/runs/scaling_glm-4.7/manifest.json",
         "deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl"}
     assert all(b == fleet.SPOOL_BUCKET for b, _k in uploads)
+
+
+# ---------------------------------------------------------------------------
+# 14-07: the shard supervisor's tag namespace
+# ---------------------------------------------------------------------------
+def _shard_args(parser, *extra):
+    return parser.parse_args(
+        ["--model", "gemma-4-12b", "--count", "3", "--types", "g6e.12xlarge",
+         "--regions", "us-east-2", *extra])
+
+
+def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius():
+    """--tag defaulted to "scaling", putting shard boxes inside fleet_teardown.
+
+    The driver appends "-<model>-s<i>of<n>", so the tag that actually landed on
+    the instance was "scaling-gemma-4-12b-s0of3": inside fleet_status's
+    server-side "scaling-*" filter and therefore inside `fleet_teardown
+    --terminate`'s only safety re-check, which would have killed live,
+    hand-launched shard boxes.
+    """
+    parser = shards.build_parser()
+    args = _shard_args(parser)
+    assert args.tag == "induction-scaling"
+    # The DERIVED per-shard tag, not the bare one, is what lands on the box.
+    assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    shards.refuse_fleet_prefix_tag(parser, args)  # accepted: no raise
+
+    # The old default is refused even though "scaling" does not itself start
+    # with "scaling-" -- it is the suffixed form that matters.
+    assert "scaling-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    for bad in ("scaling", "scaling-gemma"):
+        with pytest.raises(SystemExit):
+            shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", bad))
+        # ...and the escape hatch is explicit, not implicit.
+        shards.refuse_fleet_prefix_tag(
+            parser, _shard_args(parser, "--tag", bad, "--allow-fleet-prefix"))
+    # A tag that merely shares a prefix-free stem is not over-matched.
+    shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", "scalingful"))
+
+
+def test_shard_state_files_stay_out_of_the_fleet_teardown_glob():
+    """run_shards owns its state files; teardown's glob must not claim them."""
+    import fnmatch
+
+    args = _shard_args(shards.build_parser())
+    name = shards.state_file_for(args, 2).name
+    assert name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
+    assert not fnmatch.fnmatch(name, teardown.STATE_FILE_GLOB)
+    # ...while a real fleet lane's file is exactly what that glob is for.
+    assert fnmatch.fnmatch(fleet.LANES["glm-4.7"].state_file, teardown.STATE_FILE_GLOB)
+
+
+def test_regions_and_tag_prefix_are_declared_once():
+    """14-15: fleet_status/run_shards/run_fleet read one _config, not three literals."""
+    config = status._config
+    assert config is shards._config          # one module object, not three copies
+    assert status.SCALING_TAG_PREFIX == config.SCALING_TAG_PREFIX == "scaling-"
+    assert status.STATUS_REGIONS == config.REGION_TUPLE
+    assert config.REGION_TUPLE == tuple(config.DEFAULT_REGIONS.split(","))

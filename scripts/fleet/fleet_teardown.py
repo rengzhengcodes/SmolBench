@@ -21,6 +21,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+#: Only files matching this glob are ever unlinked (see `delete_state_files`).
+#: `scripts/fleet/run_shards.py` deliberately uses a DIFFERENT
+#: ``.ec2_state_induction-*`` naming scheme for its shard boxes (see that
+#: file's ``state_file_for``, "Why not the fleet scheme") -- this is NOT
+#: drift, it is intentional: those boxes are tagged outside this module's
+#: ``scaling-`` prefix by default, so `fleet_status.fleet_rows` never lists
+#: them and this glob has no reason to also match their state files;
+#: run_shards.py terminates its own boxes directly instead.
 STATE_FILE_GLOB = ".ec2_state_scaling_*.json"
 
 
