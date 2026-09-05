@@ -16,7 +16,10 @@ from tests._paths import SCRIPTS
 
 sys.path.insert(0, str(SCRIPTS / "arch"))
 
-from kv_budget import kv_bytes, _kv_layers, _layer_kv_shape, _text_config  # noqa: E402
+from kv_budget import (  # noqa: E402
+    kv_bytes, _is_shared_latent, _kv_layers, _layer_kv_shape, _layer_mix,
+    _replication, _text_config,
+)
 
 RAW = json.loads((SCRIPTS / "arch" / "arch_configs_raw.json").read_text())
 CTX = 131072
@@ -80,6 +83,21 @@ def _kv_gb(model: str, tp: int = 1, naive: bool = False) -> float:
 #               40 E + 8 '*'
 #   naive   88 x 2x2x128 x2B x131072        = 88 x 134.2e6   =  11.81 GB
 #   attn     8 x 134.2e6                                     =   1.07 GB
+# deepseek-v4-pro / -flash  SHARED LATENT (no kv_lora_rank field): one
+#               head_dim 512 + qk_rope 64 = 576-wide row per token per layer,
+#               shared by K and V, so no x2 and no tp replication. n_kv 1,
+#               head_dim 512; 61 layers (pro) / 43 layers (flash).
+#   latent  per layer per token (512 + 64) x2B             = 1152 B
+#           x131072                                        = 150.99e6
+#   pro     61 x 150.99e6                                  =   9.21 GB
+#   flash   43 x 150.99e6                                  =   6.49 GB
+#   naive   per layer per token 2x1x512 x2B                = 2048 B
+#           x131072                                        = 268.44e6
+#   pro     61 x 268.44e6                                  =  16.37 GB
+#   flash   43 x 268.44e6                                  =  11.54 GB
+#   (pro's 9.21 GB coinciding with deepseek-v3.1's is arithmetic, not a
+#    copy-paste: both are 61 layers x 576 dims x 2B x ctx -- V3.1 as
+#    kv_lora_rank 512 + rope 64, V4 as head_dim 512 + rope 64.)
 AUDIT_TABLE = {
     "gemma-4-31b": (128.85, 11.58),
     "gemma-4-12b": (51.54, 2.48),
@@ -92,6 +110,8 @@ AUDIT_TABLE = {
     "nemotron-3-nano-4b": (22.55, 2.15),
     "nemotron-3-nano-30b-a3b": (6.98, 0.81),
     "nemotron-3-super-120b-a12b": (11.81, 1.07),
+    "deepseek-v4-pro": (16.37, 9.21),
+    "deepseek-v4-flash": (11.54, 6.49),
 }
 
 
@@ -148,14 +168,42 @@ def test_replication_is_per_layer():
 
 
 def test_tp_and_attention_kind():
-    """MQA replicates KV across tp; MLA does not; a bare window is not applied."""
-    # DeepSeek-V4-Pro has one KV head: tp=8 replicates its KV 8x.
-    assert _kv_gb("deepseek-v4-pro", tp=8) == pytest.approx(
-        8 * _kv_gb("deepseek-v4-pro", tp=1), rel=1e-6)
-    # MLA caches one shared latent: there are no KV heads to replicate.
-    assert _kv_gb("deepseek-v3.1", tp=8) == _kv_gb("deepseek-v3.1", tp=1)
-    # sliding_window=128 without layer_types is the CSA/HCA scheme, not a window.
-    cfg = _text_config(RAW["deepseek-v4-pro"])
-    assert cfg.get("sliding_window") and not cfg.get("layer_types")
+    """Neither one-row-per-token mechanism replicates across tp; a bare window is not applied.
+
+    Rewritten for the DeepSeek-V4 fix: this test used to assert that
+    ``kv(tp=8) == 8 * kv(tp=1)`` for deepseek-v4-pro and that its corrected
+    figure equalled its naive one. Both held only because V4 fell through to
+    the GQA path -- the very defect. They are replaced here by assertions on
+    the MECHANISM that decides the arithmetic, so a future regression that
+    re-routes V4 to GQA fails on the reason, not on a re-tuned number.
+    """
+    pro = _text_config(RAW["deepseek-v4-pro"])
+    # V4 is detected as a shared latent by BOTH readings the tool accepts.
+    assert pro["model_type"] == "deepseek_v4"
+    assert pro["num_key_value_heads"] == 1 and pro["qk_rope_head_dim"] == 64
+    assert "kv_lora_rank" not in pro
+    assert _is_shared_latent(pro)
+    # ...so one row per token per layer is billed, and nothing per-head is left
+    # for tp=8 to replicate.
     assert _kv_gb("deepseek-v4-pro") == pytest.approx(
-        _kv_gb("deepseek-v4-pro", naive=True), rel=1e-6)
+        61 * (512 + 64) * 2 * CTX / GB, rel=1e-9)
+    assert _kv_gb("deepseek-v4-pro", tp=8) == _kv_gb("deepseek-v4-pro", tp=1)
+    assert _replication(pro, 8) == 1.0
+
+    # MLA is the same one-row shape keyed on a different field, and must NOT be
+    # claimed by the shared-latent predicate.
+    v31 = _text_config(RAW["deepseek-v3.1"])
+    assert v31["kv_lora_rank"] == 512 and not _is_shared_latent(v31)
+    assert _kv_gb("deepseek-v3.1", tp=8) == _kv_gb("deepseek-v3.1", tp=1)
+
+    # sliding_window=128 without layer_types is the CSA/HCA scheme, not a
+    # window: every layer still bills full context.
+    assert pro.get("sliding_window") == 128 and not pro.get("layer_types")
+    assert set(_layer_mix(pro)) == {"full"}
+    assert len(_kv_layers(pro)) == pro["num_hidden_layers"] == 61
+
+
+def test_shared_latent_predicate_does_not_steal_mla_or_gqa():
+    """The predicate must claim exactly the two V4 rungs across the whole roster."""
+    claimed = {m for m in RAW if _is_shared_latent(_text_config(RAW[m]))}
+    assert claimed == {"deepseek-v4-pro", "deepseek-v4-flash"}
