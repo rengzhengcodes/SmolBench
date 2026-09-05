@@ -3,8 +3,8 @@
 Kept separate from ``periodic.py`` so the calibration invariants live in one
 place: the noise-padding ablation is comparable across evals only when the
 noise profile is identical, and a seed must always map to the same label set.
-(``smolbench.deduction.lean.context`` reuses the pad search below for the same
-reason.)
+(``smolbench.deduction.lean.context`` -- lands in slice 3 -- reuses the pad
+search below for the same reason.)
 
 The noise pad is WHITESPACE sized in TOKENS (:func:`token_matched_noise_prompt`)
 under the tokenizer of the model under test, verified to hit the target exactly.
@@ -12,9 +12,24 @@ Characters are the wrong unit -- a character-matched pad over-pads the control
 arm ~1.6x at the periodic production config (an ad-hoc design-time
 measurement; the load-bearing invariant is the verified per-prompt token
 exactness, not that ratio).
+
+Pad CONTENT is whitespace only, which is a separate choice from the unit and
+needs its own justification. Whitespace carries no token-level information a
+model can condition on, so the padded arm differs from the unpadded intensional
+arm in LENGTH and nothing else -- exactly the one variable this control exists
+to vary. Random alphanumerics (an earlier, since-deleted generator padded with
+letters + digits + whitespace) inject spurious tokens the model may try to
+interpret as part of the task, confounding the length control with an
+unmeasured distractor-content effect. The KNOWN COST, stated honestly rather
+than sold as free: whitespace padding is harder on the OUTPUT CONTRACT.
+``notebooks/induction/analysis/extens_vs_noise.py`` measures per-lane
+non-compliance on both arms and buckets a substantial minority of models into
+"padding-robustness collapse" (noise arm largely non-compliant), where
+``extens > noise`` is mechanically forced and the row is a padding finding, not
+evidence about information. That is a measured trade-off accepted with the
+mechanism made visible, not a win.
 """
 
-import logging
 import string
 from dataclasses import dataclass
 from typing import Any, Callable, Collection, Dict, Iterable, Optional, Tuple
@@ -25,53 +40,68 @@ from ordered_set import OrderedSet
 from smolbench.evals import Answer, QnA, Quiz
 
 
+# Design: exactly TWO fields. `Prompter` previously also carried
+# `substitution: Dict[str, str]` and `extens_template: Optional[Template]`
+# (plus a `resolved_extens_template` property). Both were hooks for the
+# `query_years` mechanism of the chromatic benchmark, which has been deleted:
+# `substitution` was `{}` at every construction site in the repo, and no
+# production caller ever set `extens_template`. They were dead weight that made
+# TWO render paths (template vs extens_template) and a three-term substitution
+# precedence look live when only one path and two terms ever executed -- a
+# reader had to check every call site to learn that. Removing them makes the
+# single live path the only path.
 @dataclass(frozen=True, slots=True)
 class Prompter:
     """Bundle everything needed to prompt an LLM with a generated context.
 
     Placeholder contract: ``template`` MUST reference ``$positive_info`` (the
     intensional, extensional or noise-padded context) plus every key
-    ``query_gen`` and ``substitution`` produce. Rendering uses
-    ``safe_substitute``, which SILENTLY leaves a misspelled placeholder verbatim
-    instead of raising, so validate templates on a sample query first.
-    ``safe_substitute`` (not ``substitute``) is deliberate: a literal ``$`` in
-    quiz text must not raise mid-study, and the golden-quiz hash pins
+    ``query_gen`` produces -- and nothing else, since those two sources are now
+    the whole substitution (see :func:`build_substitution`). For the built-in
+    periodic generators that means ``$positive_info`` plus ``$label`` and
+    ``$seq_len`` (``numeric_count_query_gen``) or ``$label`` and ``$pos``
+    (``tof_membership_query_gen``). Rendering uses ``safe_substitute``, which
+    SILENTLY leaves a misspelled placeholder verbatim instead of raising, so
+    validate templates on a sample query first. ``safe_substitute`` (not
+    ``substitute``) is deliberate: a literal ``$`` in quiz text must not raise
+    mid-study, and the golden-quiz hash pins
     (``tests/induction/test_golden_quizzes.py``) already fail on any drift in
     the rendered prompts.
     """
 
     #: Prompt template. See the placeholder contract in the class docstring.
     template: string.Template
-    #: Static placeholder values merged into every query's substitutions.
-    substitution: Dict[str, str]
     #: (generated context mappings..., seed) -> iterable of
     #: (substitution_dict, answer) pairs; the mapping arguments are
     #: benchmark-specific (see each benchmark's built-in query generators).
     query_gen: Callable[..., Iterable[Tuple[Dict[str, str], Any]]]
-    #: Optional extensional-prompt template, so the query representation can
-    #: match the extensional context. Falls back to ``template`` when None.
-    extens_template: Optional[string.Template] = None
-
-    @property
-    def resolved_extens_template(self) -> string.Template:
-        """Return ``extens_template`` if the caller set one, else ``template``."""
-        return self.extens_template or self.template
 
 
 def build_substitution(
     query: Dict[str, str], prompter: Prompter, positive_info: str
 ) -> Dict[str, str]:
-    """Merge a query's substitutions with the prompter's, plus positive_info.
+    """Merge a query's substitutions with the arm's ``positive_info`` context.
 
     The single merge point for all three renderings, so precedence is uniform:
-    dict-union in the order ``query``, ``prompter.substitution``,
-    ``positive_info``, the last winning a collision: the static
-    ``prompter.substitution`` outranks the query so a ``query_gen`` cannot
-    silently override a study-pinned field, and the arm's context comes last
-    because every arm must control it. Returns a fresh dict, so callers may
-    mutate it further.
+    a two-term dict-union in the order ``query``, ``positive_info``, the last
+    winning a collision. The arm's context comes last because every arm --
+    intensional, extensional, noise-padded, zero-information -- must control
+    it; a ``query_gen`` that emitted its own ``positive_info`` key would
+    otherwise silently collapse the three arms into one. Nothing can outrank a
+    ``query_gen`` any more: the static ``prompter.substitution`` table that used
+    to sit between the two terms is gone with the chromatic hooks (see the
+    :class:`Prompter` comment). Returns a fresh dict, so callers may mutate it
+    further.
+
+    `prompter` is currently UNUSED -- deliberately, not by oversight. It was
+    the source of that removed static term, and it is kept in the signature so
+    this stays the one merge point every render site calls the same way
+    (:func:`context_renderer` plus the three arms in ``periodic.py``), with a
+    stable seam for any future prompter-sourced substitution. Every caller
+    already holds a `Prompter`, so the parameter costs nothing; dropping it is
+    a safe follow-up if nothing reclaims it.
     """
-    return query | prompter.substitution | {"positive_info": positive_info}
+    return query | {"positive_info": positive_info}
 
 
 def context_renderer(
@@ -269,10 +299,14 @@ def token_matched_noise_prompt(
 
     The noise-padded ("length control") arm. The pad is APPENDED, keeping the
     rules where the unpadded intensional arm puts them, and the match is on the
-    whole RENDERED prompt, per query: query text length varies (and an
-    ``extens_template`` can render from a different template), so equal-token
-    CONTEXTS would still give unequal-token PROMPTS. Consumes no RNG and takes
-    no seed, so a replicate stays regenerable from its seed alone.
+    whole RENDERED prompt, per query: query text length varies from query to
+    query, so equal-token CONTEXTS would still give unequal-token PROMPTS.
+    Consumes no RNG and takes no seed, so a replicate stays regenerable from its
+    seed alone.
+
+    PRECONDITION: ``tokenizer.count(render(context)) < target_tokens``,
+    STRICTLY. An appended pad can only grow a prompt, so a base that already
+    meets or exceeds the target is unreachable and raises (see `Raises`).
 
     Parameters
     ----------
@@ -293,15 +327,15 @@ def token_matched_noise_prompt(
     -------
     str
         ``render(context + pad)``, verified (never assumed) EXACTLY
-        `target_tokens` tokens. An unreachable target -- unpadded prompt already
-        that long -- returns the unpadded render and logs a warning rather
-        than raising: an appended pad cannot SHRINK a prompt, and reuse sites
-        pad contexts that legitimately exceed the target. Callers for which an
-        over-long base is a fatal confound must check the result (the study
-        notebook asserts exact matches; production has ~200x headroom).
+        `target_tokens` tokens. There is no other return: every unreachable
+        target raises, so a caller never has to check the result to learn
+        whether the length control was actually built.
 
     Raises
     ------
+    ValueError
+        If the precondition above fails -- the unpadded prompt already costs
+        ``>= target_tokens`` -- since an appended pad cannot SHRINK a prompt.
     ValueError
         If the search cannot land on `target_tokens`; a close-but-inexact prompt
         would reintroduce the length confound invisibly.
@@ -309,12 +343,20 @@ def token_matched_noise_prompt(
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)
     if base_tokens >= target_tokens:
-        logging.warning(
-            f"token_matched_noise_prompt: unpadded prompt is already "
-            f"{base_tokens} tokens >= target {target_tokens}; returning it "
-            "unpadded (the length control cannot be built by appending)"
+        # Raise, never warn-and-return the unpadded render: no caller checked
+        # the returned length, so the "length control" arm silently shipped
+        # BYTE-IDENTICAL to the intensional arm it controls for whenever this
+        # branch fired (measured at the periodic config for n <= 2, where the
+        # extensional listing is not strictly longer than the intensional
+        # rules). A confounded arm that looks collected is worse than a run
+        # that stops.
+        raise ValueError(
+            f"unpadded prompt is already {base_tokens} tokens, which is not "
+            f"below the target of {target_tokens}; an appended pad can only "
+            "GROW a prompt, never SHRINK one, so no whitespace pad reaches "
+            "this target. The caller's precondition -- rendered context "
+            "strictly shorter than target_tokens -- does not hold here."
         )
-        return base
 
     pad_unit: str = unit if unit is not None else choose_whitespace_unit(tokenizer)
 
@@ -332,7 +374,7 @@ def token_matched_noise_prompt(
     # means the token count JUMPS over the target: no repetition count satisfies
     # the request, a genuine failure.
     n: int = target_tokens - base_tokens
-    lo: int = 0  # f(0) = base_tokens < target_tokens, per the early return
+    lo: int = 0  # f(0) = base_tokens < target_tokens, per the guard above
     hi: Optional[int] = None
     for _ in range(_MAX_MATCH_ITERATIONS):
         prompt: str = render(context + pad_unit * n)

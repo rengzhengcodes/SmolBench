@@ -27,22 +27,45 @@ def _marks(scores) -> Marks:
 
 @pytest.mark.parametrize(
     "scores, expected",
-    [([1, 1, 1], 1.0), ([1, 1, 0, None], 0.5), ([0, 0, None], 0.0), ([], 0.0)],
+    [([1, 1, 1], 1.0), ([1, 1, 0, None], 0.5), ([0, 0, None], 0.0)],
 )
 def test_accuracy(scores, expected):
-    """accuracy() scores over valid marks only: None (ungraded) marks leave the
-    denominator, and an all-empty Marks reads 0.0 rather than dividing by zero."""
+    """accuracy() counts invalids against the model: a ``None`` (unparseable)
+    mark STAYS in the denominator and scores as a miss, so [1, 1, 0, None] is
+    2/4. (Corrects this docstring's former claim that None marks leave the
+    denominator -- figures.accuracy has always kept them in it.)"""
     assert accuracy(_marks(scores)) == expected
 
 
-def test_load_condition_accuracies_present_and_missing(tmp_path, capsys):
-    """A present YAML maps to its accuracy; a missing file maps to None (condition
-    absent from the sync, distinct from a graded 0.0) and is reported on stdout."""
+def test_accuracy_refuses_an_empty_marks():
+    """An empty ``Marks`` RAISES rather than scoring 0.0 (12-14).
+
+    A genuine 0% and "this replicate graded nothing" are different results,
+    and ``tof_membership_query_gen`` produces empty quizzes by design at tiny
+    configs. Returning 0.0 stored the second as the first and made
+    ``plot_archetype_accuracy``'s ``None -> "n/a"`` branch unreachable from
+    disk."""
+    with pytest.raises(ValueError):
+        accuracy(_marks([]))
+
+
+def test_load_condition_accuracies_present_missing_and_empty(tmp_path, capsys):
+    """A present YAML maps to its accuracy; a missing file AND an existing-but-empty
+    replicate both map to None (12-14).
+
+    The empty case is the one that regressed: it used to load as a genuine
+    0.0, indistinguishable in the plotted table from a lane that really scored
+    zero. ``accuracy`` now raises on it and the loader maps that raise to
+    ``None``, the same value the plotter renders as "n/a"."""
     _marks([1, 1, 0, None]).dump(tmp_path / "present.yaml")
-    files = {("modelA", "intens"): "present.yaml", ("modelB", "intens"): "missing.yaml"}
+    _marks([]).dump(tmp_path / "empty.yaml")
+    files = {("modelA", "intens"): "present.yaml",
+             ("modelB", "intens"): "missing.yaml",
+             ("modelC", "intens"): "empty.yaml"}
     data = load_condition_accuracies(tmp_path, files)
     assert data[("modelA", "intens")] == 0.5
     assert data[("modelB", "intens")] is None
+    assert data[("modelC", "intens")] is None
     assert "missing.yaml" in capsys.readouterr().out
 
 

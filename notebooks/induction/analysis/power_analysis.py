@@ -30,6 +30,7 @@ Run:
 """
 
 import sys
+from collections import namedtuple
 from itertools import combinations
 from pathlib import Path
 
@@ -40,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from scipy.stats import chi2
 
-from smolbench.evals import Marks
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 from _power_common import (
     ALPHA,
@@ -73,13 +74,12 @@ FAMILIES: dict[str, tuple[str, str, str]] = {
     "ds":      ("ds_flash", "ds_v31", "ds_pro"),
 }
 
-# Drift guard: MODELS (iteration order) and FAMILIES (ladder/omnibus structure)
-# are hand-maintained and must never disagree about which 21 models exist or in
-# what order. At MODULE scope so importers get the guard too; `main` re-asserts
-# it, per the spec's "assert BOTH" requirement.
-assert MODELS == tuple(rung for rungs in FAMILIES.values() for rung in rungs), (
-    "MODELS must equal the concatenation of FAMILIES' rungs, in FAMILIES order"
-)
+# MODELS (iteration order) and FAMILIES (ladder/omnibus structure) are
+# hand-maintained and must never disagree about which 21 models exist or in what
+# order. That drift guard now lives in `check_design_invariants` near the bottom
+# of this module, alongside the two family-size guards it belongs with: it
+# cannot sit here because that function also calls the contrast builders, which
+# are defined further down. It is a raise, not an assert, and it runs at import.
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
 N_HARMONICS = 9
@@ -151,11 +151,11 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
     """Load per-condition PILOT harmonic outcome vectors.
 
-    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``Marks.load``
-    (the store's own safe reader, with the legacy-tag fallback), so a
-    ``score:``-shaped line inside a stored trace can never be scraped as a
-    phantom mark. Marks serialize in ascending-period order, so position
-    recovers the harmonic.
+    Reads ``{model}_{info}/rep_{PILOT_SEED}.yaml`` through ``LocalResultsStore``,
+    which owns that layout and reads each file with ``Marks.load`` (the store's
+    own safe reader, with the legacy-tag fallback), so a ``score:``-shaped line
+    inside a stored trace can never be scraped as a phantom mark. Marks
+    serialize in ascending-period order, so position recovers the harmonic.
 
     Returns
     -------
@@ -169,10 +169,24 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
         If a pilot replicate file is missing.
     """
     outcomes: dict[tuple[str, str], np.ndarray] = {}
+    # Built here rather than by a module-level helper: this is the ONLY reader
+    # of the replicate tree in this module, so a helper would be a one-caller
+    # indirection. It cannot reuse `paired_analysis.results_store` either --
+    # that module imports THIS one, so the dependency only runs one way, and
+    # its helper reads ITS OWN `RESULTS_DIR` binding, not this module's.
+    # Constructed inside the call so a rebound `RESULTS_DIR` is honoured.
+    store = LocalResultsStore(RESULTS_DIR)
     for model in MODELS:
         for info in INFOS:
-            path = RESULTS_DIR / f"{model}_{info}" / f"rep_{PILOT_SEED}.yaml"
-            if not path.exists():
+            # tag=model (the local directory key); model=None because
+            # LocalResultsStore ignores that field and this script never talks
+            # to S3 -- it reads the tree sync_down() produced.
+            addr = ReplicateAddress(tag=model, info=info, seed=PILOT_SEED)
+            # `store._path` is the store's own renderer of the layout this fix
+            # exists to stop hand-building; used read-only, to name a path in
+            # the operator instructions below.
+            path = store._path(addr)
+            if not store.exists(addr):
                 raise SystemExit(
                     f"No pilot replicate for ({model}, {info}); expected\n  {path}\n"
                     f"This analysis SIZES R from the pilot (seed {PILOT_SEED}) -- "
@@ -185,7 +199,7 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
                     f"{{model}}_{{info}}/rep_{{seed}}.yaml layout this script "
                     f"reads (it never talks to S3 directly)."
                 )
-            scores = [m.score for m in Marks.load(path).marks]
+            scores = [m.score for m in store.load_marks(addr).marks]
             if len(scores) != N_HARMONICS:
                 # A raise, not an assert: this gate must survive `python -O`,
                 # and a short pilot silently misaligns the harmonic axis.
@@ -343,15 +357,55 @@ def simulated_power(
     return cmh_reject(succ_a, succ_b, n_reps, alpha).mean()
 
 
+_SizingScan = tuple[dict[float, int | None], dict[int, float]]
+
+#: `replicates_needed`'s memo: ``(rates_a bytes, rates_b bytes, alpha)`` -> scan.
+_SIZING_CACHE: dict[tuple[bytes, bytes, float], _SizingScan] = {}
+_SIZING_CACHE_HITS = 0
+_SIZING_CACHE_MISSES = 0
+#: Field-for-field `functools.lru_cache`'s CacheInfo, so a caller (or an audit)
+#: can read `replicates_needed.cache_info()` the way it would read any other
+#: memoized function's. `lru_cache` itself cannot be used here: `rng` is
+#: unhashable AND deliberately outside the key, and `lru_cache` keys on the
+#: whole argument list.
+SizingCacheInfo = namedtuple("SizingCacheInfo", "hits misses maxsize currsize")
+
+
+def _sizing_cache_info() -> SizingCacheInfo:
+    """Report `replicates_needed`'s memo statistics (`maxsize` is `None`: unbounded)."""
+    return SizingCacheInfo(_SIZING_CACHE_HITS, _SIZING_CACHE_MISSES, None,
+                           len(_SIZING_CACHE))
+
+
+def _sizing_cache_clear() -> None:
+    """Empty `replicates_needed`'s memo and zero its statistics."""
+    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
+    _SIZING_CACHE.clear()
+    _SIZING_CACHE_HITS = _SIZING_CACHE_MISSES = 0
+
+
 def replicates_needed(
     rates_a: np.ndarray,
     rates_b: np.ndarray,
     rng: np.random.Generator,
     alpha: float = ALPHA_PRIMARY,
-) -> tuple[dict[float, int | None], dict[int, float]]:
+) -> _SizingScan:
     """Find the smallest replicate count R reaching each `POWER_TARGETS` entry.
 
-    Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is met.
+    Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is
+    met. MEMOIZED on the rate vectors and `alpha` (see Notes).
+
+    Parameters
+    ----------
+    rates_a, rates_b : ndarray
+        The two conditions' assumed true per-harmonic rates.
+    rng : numpy.random.Generator
+        Drawn from only on a cache MISS. Every caller re-seeds
+        ``np.random.default_rng(SEED)`` immediately before the call, so a
+        generator is never carried across calls and a hit that consumes no
+        draws cannot shift a later result.
+    alpha : float
+        The tier's per-test threshold.
 
     Returns
     -------
@@ -359,8 +413,43 @@ def replicates_needed(
         Power target -> smallest R reaching it, `None` if no R within
         `MAX_REPLICATES` does.
     curve : dict of int -> float
-        Each scanned R -> its simulated power.
+        Each scanned R -> its simulated power. Freshly copied per call, so a
+        caller mutating it cannot corrupt the memo.
+
+    Raises
+    ------
+    ValueError
+        If `rates_a` and `rates_b` differ in shape: the memo key is their raw
+        bytes, and two different shapes flattening to the same buffer would
+        collide.
+
+    Notes
+    -----
+    The key is ``(rates_a.tobytes(), rates_b.tobytes(), alpha)`` -- the VALUES,
+    not the array identities, since `_compute_sizing_results` builds a new array
+    object per contrast. `rng` is deliberately NOT part of the key: it is
+    unhashable, and (per the Parameters note above) every caller re-seeds it, so
+    keying on it would be keying on a constant while making the cache useless.
+
+    The scan is the expensive part of `main` -- `N_SIMS` binomial draws per
+    candidate R, per contrast -- and the inputs repeat heavily: the pooled
+    (condition-mean) rate assumption admits only ~10 distinct rate vectors
+    across the 273 primary + secondary contrasts, so an uncached scan is
+    recomputed up to ~27x per distinct input for a bit-identical answer.
     """
+    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
+    if rates_a.shape != rates_b.shape:
+        raise ValueError(
+            f"rates_a and rates_b must have the same shape, got "
+            f"{rates_a.shape} and {rates_b.shape}"
+        )
+    key = (rates_a.tobytes(), rates_b.tobytes(), float(alpha))
+    if key in _SIZING_CACHE:
+        _SIZING_CACHE_HITS += 1
+        needed, curve = _SIZING_CACHE[key]
+        return dict(needed), dict(curve)
+    _SIZING_CACHE_MISSES += 1
+
     needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
@@ -371,7 +460,15 @@ def replicates_needed(
                 needed[target] = n_reps
         if all(needed[t] is not None for t in POWER_TARGETS):
             break
+    _SIZING_CACHE[key] = (dict(needed), dict(curve))
     return needed, curve
+
+
+# Attached after the definition so `replicates_needed` reads like any other
+# memoized callable at the call site, and so the memo is auditable (and
+# resettable between test cases) without reaching for the module globals.
+replicates_needed.cache_info = _sizing_cache_info
+replicates_needed.cache_clear = _sizing_cache_clear
 
 
 def fisher_check(
@@ -479,8 +576,21 @@ def omnibus_power(
     return gcmh_reject(succ, n_reps, alpha).mean()
 
 
+#: `omnibus_interaction_power`'s default `n_sims`. Two GLM fits per sim and two
+#: calls per `main` run made the old default of 1,000 the single most expensive
+#: thing in this script (~4,000 fits, minutes of wall clock) for a number that
+#: is explicitly NOT a gate. At 200 the Monte Carlo SE of the reported power is
+#: at most sqrt(0.25 / 200) = 0.035, which is finer than the diagnostic is read
+#: to. Cutting it TRUNCATES the fixed `SEED + 1` stream rather than re-seeding
+#: it, so the 200 sims kept are exactly the first 200 the old default ran and
+#: the estimate is the old one's running mean, not a different draw.
+N_SIMS_OMNIBUS_DIAGNOSTIC = 200
+
+
 def omnibus_interaction_power(
-    rates: dict[tuple[str, str], np.ndarray], n_reps: int, n_sims: int = 1000
+    rates: dict[tuple[str, str], np.ndarray],
+    n_reps: int,
+    n_sims: int = N_SIMS_OMNIBUS_DIAGNOSTIC,
 ) -> float:
     """Power of the model x info-type interaction (logit LR test) at `n_reps` replicates.
 
@@ -489,6 +599,13 @@ def omnibus_interaction_power(
     (21-1) * (4-1) = 60 df -- too coarse to localize WHICH model/info
     combination drives a rejection -- so it is a design-level diagnostic, not a
     gate: no contrast family depends on it.
+
+    Parameters
+    ----------
+    n_sims : int
+        Simulations to run; defaults to `N_SIMS_OMNIBUS_DIAGNOSTIC`, NOT to the
+        study-wide `N_SIMS`, because this is a diagnostic rather than a sizing
+        input. Pass a larger value for a one-off precise read.
 
     Returns
     -------
@@ -671,20 +788,138 @@ def _print_sizing_rows(
         )
 
 
+def check_design_invariants() -> None:
+    """Check the hand-written design constants against what the builders emit.
+
+    Four facts of the pre-registered design are maintained by hand and must
+    never drift apart: the two family sizes against their PRE-REGISTERED
+    literals, `MODELS` against `FAMILIES`, `N_PRIMARY` against
+    `build_primary_contrasts`, and `N_SECONDARY` against
+    `build_secondary_contrasts`. The two counts are what `ALPHA_PRIMARY`
+    (``ALPHA / N_PRIMARY``) and `ALPHA_SECONDARY`
+    (``Q_SECONDARY / N_SECONDARY``) divide by, and every correction in the
+    study -- here, in ``paired_analysis``, in ``significance_report`` and in
+    ``extens_vs_noise`` -- is taken at one of those thresholds. A count that no
+    longer matches its builder therefore does not produce a broken report; it
+    produces a well-formed report whose every published correction was computed
+    at the wrong threshold.
+
+    Reads the module globals on each call, capturing nothing at definition
+    time, so patching a constant and calling again re-checks the patched value.
+
+    Returns
+    -------
+    None
+        When all four invariants hold.
+
+    Raises
+    ------
+    RuntimeError
+        If any of the four disagree. The message names both sides of the
+        disagreement and states the consequence for the study's thresholds.
+
+    Notes
+    -----
+    A raise and never an ``assert``: these are pre-registration gates on
+    published numbers, and ``python -O`` strips assertions outright.
+    `load_outcomes` already argues the same point for its own gate; run under
+    ``python -O``, the assertions this replaced let the module import with
+    `MODELS` disagreeing with `FAMILIES` and `ALPHA_PRIMARY` still ``0.05/210``.
+
+    A function rather than inline module-scope code, for two reasons an inline
+    block cannot serve: it is CALLED at module scope below, so an importer gets
+    the gate whether or not it ever calls `main`, AND it can be re-run by a test
+    after patching one constant, which is the only way to demonstrate that the
+    gate actually fires.
+    """
+    # Guard 1 -- the PRE-REGISTERED family sizes, as LITERALS.
+    #
+    # 210 and 63 are pre-registration values, not merely internal constants:
+    # they were fixed before the data existed, and every published correction
+    # is taken at a threshold derived from them. Guards 3 and 4 below only
+    # check the constants against their BUILDERS, which a CONSISTENT redesign
+    # satisfies -- change the builder and the constant together and the study
+    # silently re-registers itself under a different family size. The
+    # predecessor of this function asserted
+    # ``len(build_primary_contrasts()) == N_PRIMARY == 210``; restating the
+    # literals restores that anchor.
+    #
+    # Changing either number is therefore a PROTOCOL decision that has to be
+    # made deliberately -- and updating these literals on purpose is how it is
+    # recorded. It must never ride along with a refactor.
+    if N_PRIMARY != 210 or N_SECONDARY != 63:
+        raise RuntimeError(
+            f"The pre-registered family sizes have changed: N_PRIMARY is "
+            f"{N_PRIMARY} (pre-registered 210) and N_SECONDARY is "
+            f"{N_SECONDARY} (pre-registered 63). These were fixed before any "
+            f"data was collected, and every PRIMARY and SECONDARY threshold "
+            f"this study publishes divides by them. Re-sizing a family is a "
+            f"protocol decision, not a refactor: if it is genuinely intended, "
+            f"update these literals in check_design_invariants deliberately, "
+            f"and re-state the pre-registration alongside the change."
+        )
+
+    # Guard 2 -- structure. Both contrast builders walk MODELS and FAMILIES, so
+    # a disagreement changes WHICH contrasts the study tests and how many there
+    # are; the size guards below are downstream of this one.
+    expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
+    if MODELS != expected_models:
+        raise RuntimeError(
+            f"MODELS disagrees with FAMILIES. MODELS is {MODELS!r}, but the "
+            f"concatenation of FAMILIES' rungs in FAMILIES order is "
+            f"{expected_models!r}. Both contrast builders walk these two "
+            f"structures, so a disagreement changes which contrasts exist and "
+            f"how many of them there are -- and those counts are exactly what "
+            f"ALPHA_PRIMARY and ALPHA_SECONDARY divide by, so every published "
+            f"correction would have been computed at the wrong threshold."
+        )
+
+    # Guard 3 -- PRIMARY family size (Bonferroni denominator).
+    n_primary = len(build_primary_contrasts())
+    if n_primary != N_PRIMARY:
+        raise RuntimeError(
+            f"build_primary_contrasts() returns {n_primary} contrasts but "
+            f"N_PRIMARY is {N_PRIMARY}. ALPHA_PRIMARY was frozen at import as "
+            f"ALPHA / N_PRIMARY = {ALPHA_PRIMARY:.6g}, and every PRIMARY "
+            f"Bonferroni and Holm decision in this study is taken at that "
+            f"threshold, so a mismatch means the family is not the size its "
+            f"threshold assumes and every published correction was computed at "
+            f"the wrong one."
+        )
+
+    # Guard 4 -- SECONDARY family size (BH denominator and rank-1 sizing alpha).
+    n_secondary = len(build_secondary_contrasts())
+    if n_secondary != N_SECONDARY:
+        raise RuntimeError(
+            f"build_secondary_contrasts() returns {n_secondary} contrasts but "
+            f"N_SECONDARY is {N_SECONDARY}. ALPHA_SECONDARY was frozen at "
+            f"import as Q_SECONDARY / N_SECONDARY = {ALPHA_SECONDARY:.6g} (the "
+            f"conservative rank-1 BH threshold this tier is sized at), and the "
+            f"Benjamini-Hochberg thresholds q * i / m applied downstream use m "
+            f"= the family size, so a mismatch means every SECONDARY discovery "
+            f"was declared at the wrong threshold."
+        )
+
+
+# Called HERE rather than beside N_PRIMARY, where the counts it checks are
+# defined: the gate calls `build_primary_contrasts` / `build_secondary_contrasts`,
+# so it can only run AFTER their definitions -- at module scope a call placed
+# earlier would be a forward reference and raise NameError on import. It runs on
+# IMPORT, so `paired_analysis`, `significance_report` and `extens_vs_noise` get
+# it without ever calling `main`, and it runs before any pilot data is touched,
+# so a structural regression is caught even with nothing synced down.
+check_design_invariants()
+
+
 def main() -> None:
     """Run the full family-ladder power analysis and print the report.
 
     Prints the eight numbered sections marked in the body; the recommended R
     comes from Tier 2 alone.
     """
-    # Drift guards: a silent change to the pre-registered family sizes would
-    # invalidate the Bonferroni/BH corrections baked into ALPHA_PRIMARY /
-    # ALPHA_SECONDARY. They run before any pilot data is touched, so a
-    # structural regression is caught even with no results synced down.
-    assert MODELS == tuple(rung for rungs in FAMILIES.values() for rung in rungs)
-    assert len(build_primary_contrasts()) == N_PRIMARY == 210
-    assert len(build_secondary_contrasts()) == N_SECONDARY == 63
-
+    # The pre-registered design invariants (MODELS vs FAMILIES, and both family
+    # sizes against their builders) were already checked by
+    # `check_design_invariants`, which ran at import; nothing to re-check here.
     outcomes = load_outcomes()
     rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
     pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}
