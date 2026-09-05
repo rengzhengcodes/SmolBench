@@ -521,6 +521,69 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     return keys
 
 
+def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
+    """Collapse ``kind: "cell"`` rows to one row per cell key: earliest surviving attempt.
+
+    ``_existing_keys`` deliberately re-runs a cell whose only recorded row is an
+    ``"exception"`` verdict (the exception may have come from the VERIFIER, so
+    the candidate proof was never checked), and a resumed sweep APPENDS that
+    retry rather than replacing the row -- so a lane that resumed past even one
+    exception legitimately carries more than one row for the same cell key.
+    Counting rows instead of cells makes a retried cell read as pass 1/2 (50%)
+    instead of 1/1, and inflates ``cmd_analyze``'s pass@N ``N`` to the row count
+    rather than the replicate count. This function is the single place that
+    undoes that: callers aggregate over its output instead of over raw rows.
+
+    Grouping mirrors `_existing_keys`' own field names and ``.get`` defaults
+    exactly (not this module's stricter ``_row_key`` call sites elsewhere,
+    which coerce types and use different sentinels) so the two agree on what
+    counts as "the same cell" for exactly the rows `_existing_keys` itself
+    would re-run.
+
+    Parameters
+    ----------
+    rows : iterable of dict
+        Already-parsed ``kind: "cell"`` rows, in file order. Passing a row of
+        any other ``kind`` is a caller error this function does not guard
+        against -- sanity rows have no cell identity and are the callers'
+        business (see the module's callers, which filter by ``kind`` first).
+
+    Returns
+    -------
+    list of dict
+        One row per distinct cell key, in the RELATIVE order the surviving
+        (or, failing that, first) row for that key appeared in `rows`. For a
+        key with at least one non-``"exception"`` row: the EARLIEST such row,
+        matching ``notebooks/deduction/analysis/power_analysis.grade_verdicts``'s
+        earliest-surviving-attempt-wins rule. For a key whose every row is an
+        ``"exception"``: the FIRST row, so an exception-only cell still counts
+        once (in the ``exc`` column) rather than vanishing from the aggregate
+        entirely.
+
+    Notes
+    -----
+    Does not mutate `rows` or its dict elements. O(n) in the number of rows.
+    """
+    rows_by_key: dict[tuple, list[dict]] = {}
+    order: list[tuple] = []  # first-seen order of keys, for a stable return order
+    for row in rows:
+        key = _row_key(
+            row.get("model", ""), row.get("theorem_id", ""),
+            int(row.get("k", -1)), row.get("rung", ""),
+            int(row.get("replicate_idx", -1)),
+        )
+        if key not in rows_by_key:
+            order.append(key)
+        rows_by_key.setdefault(key, []).append(row)
+
+    deduped: list[dict] = []
+    for key in order:
+        group = rows_by_key[key]
+        surviving = next((r for r in group if r.get("verdict") != "exception"), None)
+        deduped.append(surviving if surviving is not None else group[0])
+    return deduped
+
+
 def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     """Map theorem name to its recorded sanity verdict from the JSONL (last wins).
 
@@ -900,6 +963,11 @@ def write_run_analysis(run_dir: Path) -> None:
 
     Notes
     -----
+    Cell rows are deduped through `dedupe_cell_rows` before counting (a resumed
+    lane may carry an exception row and its retry for the same cell key; see
+    that function's docstring), so the header's "N cells" and every per-cell
+    ``n`` already reflect distinct cells, not raw rows.
+
     Name-level ``l3`` detection also needs the ``lean3_align.json.gz`` asset
     (`lean3.AlignMap.load`); without it ``l3`` degrades to parse-level syntax
     relics only, and a marker line goes after the table header so an old run is
@@ -925,7 +993,13 @@ def write_run_analysis(run_dir: Path) -> None:
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    n_rows = 0
+    # Cell rows are collected here, not aggregated inline, so `dedupe_cell_rows`
+    # can collapse an exception-then-retry pair for the same cell key (see its
+    # docstring) BEFORE this table's "N cells" header count and per-cell tallies
+    # below ever see the raw row count. A run's all_rows.jsonl is thousands of
+    # rows, not millions, so materializing the cell subset is cheap next to the
+    # gzip+JSON `AlignMap.load` above.
+    cell_rows: list[dict] = []
     with all_rows.open() as f:
         for line in f:
             try:
@@ -946,20 +1020,27 @@ def write_run_analysis(run_dir: Path) -> None:
                     # to check it failed, but nothing POSITIVELY failed.
                     n_sanity_skipped += 1
                 continue
-            n_rows += 1
-            key = (r.get("rung", "?"), r.get("model", "?"))
-            c = cells[key]
-            c["n"] += 1
-            v = r.get("verdict", "exception")
-            if v in c:
-                c[v] += 1
-            else:
-                c["exception"] += 1
-            c["tok_in"] += r.get("prompt_tokens", 0)
-            c["tok_out"] += r.get("completion_tokens", 0)
-            c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-            if lean3.find_relics(r.get("candidate_proof") or "", align):
-                c["l3"] += 1
+            cell_rows.append(r)
+
+    # `n_rows` (this function's "N cells" header count) is the DEDUPED cell
+    # count -- a lane that resumed past an exception must read as one cell,
+    # not two. See `dedupe_cell_rows`'s docstring for the full rationale.
+    n_rows = 0
+    for r in dedupe_cell_rows(cell_rows):
+        n_rows += 1
+        key = (r.get("rung", "?"), r.get("model", "?"))
+        c = cells[key]
+        c["n"] += 1
+        v = r.get("verdict", "exception")
+        if v in c:
+            c[v] += 1
+        else:
+            c["exception"] += 1
+        c["tok_in"] += r.get("prompt_tokens", 0)
+        c["tok_out"] += r.get("completion_tokens", 0)
+        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+        if lean3.find_relics(r.get("candidate_proof") or "", align):
+            c["l3"] += 1
 
     out: list[str] = []
     out.append(

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    SANITY_FAILURE_VERDICTS, new_run_id, regenerate_run_artifacts,
+    SANITY_FAILURE_VERDICTS, dedupe_cell_rows, new_run_id, regenerate_run_artifacts,
     reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
 )
 
@@ -317,14 +317,19 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
     Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file with
-    the same row schema): no Lean toolchain, no Dojo session, no writes. The
-    ``trunc`` column counts rows that opened a ``<think>`` block without closing
-    it, or died in the reasoning channel. A pass@N table follows only when some
-    cell recorded more than one replicate: a cell passes if ANY replicate
-    verified, and N is the max replicate count seen IN THE DATA, not the sweep
-    config -- so N is reported honestly for a partially-generated run, but a
-    mixed-replicate file still pools cells of unequal N under that one heading. `path` is checked against
-    `runner.reject_superseded_rows` before it is opened.
+    the same row schema): no Lean toolchain, no Dojo session, no writes. Cell
+    rows are deduped through `runner.dedupe_cell_rows` before any counting (a
+    resumed lane may carry an exception row and its retry for the same cell
+    key; see that function's docstring) -- both the plain pass/N table and the
+    pass@N table below count DISTINCT cells, never raw rows. The ``trunc``
+    column counts rows that opened a ``<think>`` block without closing it, or
+    died in the reasoning channel. A pass@N table follows only when some cell
+    recorded more than one distinct ``replicate_idx`` after deduping: a cell
+    passes if ANY replicate verified, and N is the max number of distinct
+    replicate indices seen IN THE DATA, not the sweep config -- so N is
+    reported honestly for a partially-generated run, but a mixed-replicate file
+    still pools cells of unequal N under that one heading. `path` is checked
+    against `runner.reject_superseded_rows` before it is opened.
 
     Returns
     -------
@@ -355,6 +360,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     # unfiltered upstream -- the likeliest place to point at a retired
     # `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
     reject_superseded_rows([args.path])
+    # Cell rows are collected here, not aggregated inline: `runner.dedupe_cell_rows`
+    # must run on the whole set BEFORE `cells`/`groups` are built, or a lane that
+    # resumed past one exception counts its retried cell twice -- both as 1/2 in
+    # `cells` and as an inflated pass@N `N` (see `groups`, below). Sanity rows
+    # have no cell identity and stay a single streaming pass.
+    cell_rows: list[dict] = []
     with open(args.path) as f:
         for line in f:
             r = json.loads(line)
@@ -374,42 +385,45 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     # counts as deferred/unresolved here too, not a fail.
                     n_sanity_skipped += 1
                 continue
-            n_rows += 1
-            key = (r.get("rung", "?"), r.get("model", "?"))
-            c = cells[key]
-            c["n"] += 1
-            v = r.get("verdict", "exception")
-            if v in c:
-                c[v] += 1
-            else:
-                c["exception"] += 1
-            c["tok_in"] += r.get("prompt_tokens", 0)
-            c["tok_out"] += r.get("completion_tokens", 0)
-            c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+            cell_rows.append(r)
 
-            # Truncation smell: a reasoning model cut off mid-<think> emits
-            # no tactic block, which otherwise looks like an ordinary
-            # `incomplete`/`given_up` verdict; counting it separately keeps
-            # a wave of truncations from reading as reasoning dead ends.
-            # `raw_response` is the field runner.py writes; `content` is a
-            # fallback for row variants using the provider SDK's key name.
-            raw_text = r.get("raw_response", "") or r.get("content", "")
-            unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-            # Parser-path case: under a vLLM --reasoning-parser the server
-            # splits <think> into `reasoning_content`, so a generation that
-            # died in the think channel leaves `raw_response` EMPTY rather
-            # than unclosed, and the check above reads 0. Deliberately tests
-            # `raw_response` alone, not the `content`-fallback `raw_text`,
-            # matching the row schema runner.py writes in that mode.
-            died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
-            if unclosed_think_in_raw or died_in_reasoning_channel:
-                c["trunc"] += 1
+    for r in dedupe_cell_rows(cell_rows):
+        n_rows += 1
+        key = (r.get("rung", "?"), r.get("model", "?"))
+        c = cells[key]
+        c["n"] += 1
+        v = r.get("verdict", "exception")
+        if v in c:
+            c[v] += 1
+        else:
+            c["exception"] += 1
+        c["tok_in"] += r.get("prompt_tokens", 0)
+        c["tok_out"] += r.get("completion_tokens", 0)
+        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
 
-            group_key = (
-                r.get("model", "?"), r.get("rung", "?"),
-                r.get("theorem_id", "?"), r.get("k", -1),
-            )
-            groups[group_key].append(v)
+        # Truncation smell: a reasoning model cut off mid-<think> emits
+        # no tactic block, which otherwise looks like an ordinary
+        # `incomplete`/`given_up` verdict; counting it separately keeps
+        # a wave of truncations from reading as reasoning dead ends.
+        # `raw_response` is the field runner.py writes; `content` is a
+        # fallback for row variants using the provider SDK's key name.
+        raw_text = r.get("raw_response", "") or r.get("content", "")
+        unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
+        # Parser-path case: under a vLLM --reasoning-parser the server
+        # splits <think> into `reasoning_content`, so a generation that
+        # died in the think channel leaves `raw_response` EMPTY rather
+        # than unclosed, and the check above reads 0. Deliberately tests
+        # `raw_response` alone, not the `content`-fallback `raw_text`,
+        # matching the row schema runner.py writes in that mode.
+        died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
+        if unclosed_think_in_raw or died_in_reasoning_channel:
+            c["trunc"] += 1
+
+        group_key = (
+            r.get("model", "?"), r.get("rung", "?"),
+            r.get("theorem_id", "?"), r.get("k", -1),
+        )
+        groups[group_key].append(v)
 
     if not cells:
         print(f"empty: no rows in {args.path}", file=sys.stderr)

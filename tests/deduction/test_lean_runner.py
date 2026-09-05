@@ -536,8 +536,14 @@ def test_l3_counts_relics(tmp_path, monkeypatch, align, proofs, expected_verifie
             json.dump({"lean3_to_lean4": align}, f)
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
+    # Distinct theorem_id per row: `write_run_analysis` now deduplicates on the
+    # full `runner._row_key` (13-04), so rows sharing an identity collapse to
+    # one cell. Production rows always carry these fields; this fixture did not,
+    # and three identity-less rows would fold into a single 1/1 cell.
     _write_rows(run_dir, [{"kind": "cell", "rung": "stepk:0", "model": "m",
-                           "verdict": v, "candidate_proof": p} for v, p in proofs])
+                           "theorem_id": f"T{i}", "k": 1, "replicate_idx": 0,
+                           "verdict": v, "candidate_proof": p}
+                          for i, (v, p) in enumerate(proofs)])
     runner.write_run_analysis(run_dir)
     text = (run_dir / "analysis.txt").read_text()
     marker = "# l3 = parse-level only (lean3_align.json.gz not built)"
@@ -687,10 +693,13 @@ def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeyp
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
+    # Distinct theorem_id per row -- see `test_l3_counts_relics`: the analysis
+    # deduplicates on the full row key (13-04).
     _write_rows(run_dir, [
-        {"kind": "cell", "rung": "stepk:0", "model": "m", "verdict": v,
-         "candidate_proof": p}
-        for v, p in [("no_answer", ""), ("lean_error", "bogus"), ("success", "rfl")]
+        {"kind": "cell", "rung": "stepk:0", "model": "m", "theorem_id": f"T{i}",
+         "k": 1, "replicate_idx": 0, "verdict": v, "candidate_proof": p}
+        for i, (v, p) in enumerate(
+            [("no_answer", ""), ("lean_error", "bogus"), ("success", "rfl")])
     ])
     runner.write_run_analysis(run_dir)
     lines = (run_dir / "analysis.txt").read_text().splitlines()
@@ -701,3 +710,58 @@ def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeyp
     assert row[header.index("noans")] == "1"
     assert row[header.index("lerr")] == "1"
     assert row[2] == "1/3"
+
+
+def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
+        tmp_path, monkeypatch):
+    """13-04: analysis.txt counts CELLS, not rows, for a resumed lane.
+
+    `_existing_keys` re-runs an exception-only cell and the sweep appends the
+    retry, so one key legitimately owns two rows. Counting rows made the
+    retried cell read as 1/2 = 50%. Earliest SURVIVING attempt wins, matching
+    `power_analysis.grade_verdicts`; the superseded exception row stays in
+    all_rows.jsonl and is simply not counted twice.
+
+    The second cell pins the other direction: with no surviving row the first
+    row stands in, so a never-measured cell is counted once under `exc` rather
+    than disappearing from the denominator.
+    """
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    base = {"kind": "cell", "rung": "stepk:0", "model": "m", "k": 1,
+            "candidate_proof": "rfl"}
+    _write_rows(run_dir, [
+        {**base, "theorem_id": "T1", "replicate_idx": 0, "verdict": "exception"},
+        {**base, "theorem_id": "T1", "replicate_idx": 0, "verdict": "success"},
+        {**base, "theorem_id": "T2", "replicate_idx": 0, "verdict": "exception"},
+        {**base, "theorem_id": "T2", "replicate_idx": 0, "verdict": "exception"},
+    ])
+    runner.write_run_analysis(run_dir)
+    lines = (run_dir / "analysis.txt").read_text().splitlines()
+    assert lines[0].startswith("# 2 cells;"), lines[0]
+    header = next(line for line in lines if "noans" in line and "exc" in line).split()
+    sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
+    assert row[2] == "1/2", row
+    assert row[header.index("exc")] == "1", row
+
+
+def test_dedupe_cell_rows_keys_on_the_full_row_key():
+    """13-04: replicates are a real axis; only the SAME key collapses.
+
+    `replicate_idx` is part of `runner._row_key`, so genuine replicates survive
+    deduplication. A helper keyed on (model, theorem, k, rung) alone would
+    silently collapse the replication axis the sweep is built around.
+    """
+    def row(rep, verdict):
+        return {"kind": "cell", "model": "m", "theorem_id": "T", "k": 1,
+                "rung": "stepk:0", "replicate_idx": rep, "verdict": verdict}
+
+    kept = runner.dedupe_cell_rows([row(0, "exception"), row(0, "success"),
+                                    row(1, "lean_error")])
+    assert [(r["replicate_idx"], r["verdict"]) for r in kept] == [
+        (0, "success"), (1, "lean_error")]
+    # Order of the surviving rows follows the input, not the key ordering.
+    kept = runner.dedupe_cell_rows([row(1, "success"), row(0, "success")])
+    assert [r["replicate_idx"] for r in kept] == [1, 0]
