@@ -86,6 +86,56 @@ def mechanism(nc_e: float, nc_n: float) -> str:
     return "information"           # both arms well-formed
 
 
+def direction(acc_e: float, acc_n: float) -> str:
+    """Label which arm scored higher, with an explicit branch for an exact tie.
+
+    ONE spelling of the comparison, shared by every place in this report that
+    prints a direction, so the significant-lane list, the per-mechanism rows and
+    the raw-direction tally cannot disagree about the same lane.
+
+    Parameters
+    ----------
+    acc_e, acc_n : float
+        Accuracy of the `extens` and `noise_intens` arms respectively, over the
+        SAME matched items (`paired_analysis.aligned` intersects the two arms'
+        seeds before scoring either), so the two figures are directly
+        comparable and an equality between them is meaningful.
+
+    Returns
+    -------
+    str
+        ``"noise HIGHER"``, ``"extens HIGHER"``, or ``"exactly tied"`` when the
+        two accuracies are equal.
+
+    Notes
+    -----
+    An exact tie is a REAL and REACHABLE outcome here, not a floating-point
+    curiosity to be rounded away. Both arms are scored over the same items, so
+    two arms that agree item for item -- or merely agree on their totals --
+    produce bit-identical means. The predecessor spelled the label as
+    ``"noise HIGHER" if acc_n > acc_e else "extens HIGHER"``, a two-way branch
+    which silently awards every tie to `extens` and so MANUFACTURES a direction
+    the data does not have. The RAW DIRECTION block at the end of this report
+    has always counted ties as a third category, so the two-way label made the
+    one report contradict itself: a lane printed as "0.759 vs 0.759 extens
+    HIGHER" reappeared two screens later inside "1 exactly tied".
+
+    Examples
+    --------
+    >>> direction(0.500, 0.750)
+    'noise HIGHER'
+    >>> direction(0.750, 0.500)
+    'extens HIGHER'
+    >>> direction(0.759, 0.759)
+    'exactly tied'
+    """
+    if acc_n > acc_e:
+        return "noise HIGHER"
+    if acc_n < acc_e:
+        return "extens HIGHER"
+    return "exactly tied"
+
+
 def main() -> None:
     """Run the extens-vs-noise focused test and print the report.
 
@@ -93,6 +143,11 @@ def main() -> None:
     seed-level vs item-level agreement, the lanes significant under the primary
     correction, the three mechanism buckets, and the unfiltered raw direction
     across all 21 lanes.
+
+    Every direction label and every direction tally printed below is THREE-WAY
+    (noise-higher / extens-higher / tied), via `direction` and via explicit
+    ``>`` and ``<`` counts, so the per-lane labels, the per-bucket tallies and
+    the RAW DIRECTION block all classify a given lane the same way.
     """
     correct, valid, compliance = load_marks()
     census = compliance_census(compliance)
@@ -209,7 +264,7 @@ def main() -> None:
     print(f"\nSIGNIFICANT under the primary (m=210, seed-level) correction: "
           f"{len(sig)} of {len(rows)}")
     for r in sorted(sig, key=lambda r: r["p_cluster"]):
-        d = "noise HIGHER" if r["acc_n"] > r["acc_e"] else "extens HIGHER"
+        d = direction(r["acc_e"], r["acc_n"])
         print(f"  {r['model']:13s} {r['acc_e']:.3f} vs {r['acc_n']:.3f}   "
               f"{d:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}")
 
@@ -243,16 +298,23 @@ def main() -> None:
               f"{len(sel_sig)} significant")
         print(f"  {gloss}.")
         for r in sorted(sel, key=lambda r: r["p_cluster"]):
-            d = "noise HIGHER" if r["acc_n"] > r["acc_e"] else "extens HIGHER"
+            d = direction(r["acc_e"], r["acc_n"])
             mark = "SIG " if r["holm210"] else "  . "
             print(f"  {mark}{r['model']:13s} {r['acc_e']:.3f} vs "
                   f"{r['acc_n']:.3f}   {d:13s} "
                   f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   "
                   f"p={r['p_cluster']:.2e}")
         if sel_sig:
+            # Ties are counted as their own category, matching `direction` above
+            # and the RAW DIRECTION block below. `down` is an explicit `<` and
+            # NOT `len(sel_sig) - up`: that subtraction folds every exact tie
+            # into the extens-higher count, which is how this line came to
+            # disagree with the raw tally printed a few screens later.
             up = sum(1 for r in sel_sig if r["acc_n"] > r["acc_e"])
+            down = sum(1 for r in sel_sig if r["acc_n"] < r["acc_e"])
             print(f"  => direction among the significant ones: {up} "
-                  f"noise-higher, {len(sel_sig) - up} extens-higher.")
+                  f"noise-higher, {down} extens-higher, "
+                  f"{len(sel_sig) - up - down} tied.")
 
     # Unmeasured lanes get their own loud section rather than vanishing: a
     # missing census cell is a sync problem, never a mechanism verdict.

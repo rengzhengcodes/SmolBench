@@ -51,9 +51,15 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     build_secondary_contrasts,
 )
 
-#: run_study.N_REPLICATES (user-locked). Depth gates against THIS, not the
-#: deepest lane: a uniform shortfall leaves no lane "short" while silently
-#: raising the sign-flip floor (2/2^S) above every Holm threshold.
+#: run_study.N_REPLICATES (user-locked). Depth is gated against THIS ABSOLUTE
+#: number rather than against the tree's own deepest lane, because a UNIFORM
+#: shortfall leaves no lane looking "short" relative to its neighbours while
+#: silently raising the sign-flip floor (2/2^S) above every Holm threshold --
+#: a relative comparison can never see that. Which lane the gate READS is a
+#: separate question, answered the other way: it reads the SHALLOWEST lane,
+#: since a contrast is sign-flipped over the seeds its two arms share and so is
+#: only as deep as the shorter of the two. Reading the deepest lane let one
+#: full-depth lane silence the warning for every short lane beside it.
 EXPECTED_R = 30
 
 
@@ -471,14 +477,21 @@ def main() -> None:
     short = sorted({m for (m, _), n in depths.items() if n < max(depths.values())})
     if short:
         print(f"  still collecting (compared on their common seeds only): {short}")
-    if max(depths.values()) < EXPECTED_R:
-        # See EXPECTED_R: a uniform shortfall never shows up in `short`.
+    # See EXPECTED_R. The gate reads the SHALLOWEST lane: each contrast is
+    # sign-flipped over the seeds its two arms SHARE, so its resolution floor
+    # 2/2^S is set by the shorter arm. Under `max` a single full-depth lane
+    # suppressed this warning for every short lane beside it. Both ends of the
+    # spread are reported, so the operator can tell a uniform shortfall (which
+    # `short` above cannot surface) from a ragged one.
+    if min(depths.values()) < EXPECTED_R:
         print(
-            f"  WARNING: deepest lane has {max(depths.values())} replicates, "
-            f"but the study collects {EXPECTED_R}. Every lane is short -- the "
-            f"sign-flip floor is 2/2^{max(depths.values())}, so Holm may be "
-            "unable to reject ANYTHING (including the positive controls). "
-            "This is an incomplete sync, not a null result.",
+            f"  WARNING: shallowest lane has {min(depths.values())} replicates "
+            f"and the deepest has {max(depths.values())}, but the study "
+            f"collects {EXPECTED_R}. A contrast is only as deep as its shorter "
+            f"arm, so the sign-flip floor reaches 2/2^{min(depths.values())} "
+            f"and Holm may be unable to reject ANYTHING (including the positive "
+            f"controls) on the contrasts that touch a short lane. This is an "
+            f"incomplete sync, not a null result.",
             file=sys.stderr,
         )
 
