@@ -32,7 +32,25 @@ from tests._paths import NOTEBOOKS
 ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
 
 
+#: Bare module names the deduction and induction analysis scripts share. The
+#: scripts import their siblings by bare name off their own sys.path insert,
+#: so a cached induction ``power_analysis`` (left by tests/analysis) would be
+#: handed to deduction's ``error_bars`` and fail with an ImportError on a
+#: symbol only the induction module lacks. Evict foreign siblings first.
+_BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
+                  "hint_vs_noise", "significance_report", "extens_vs_noise", "multiplicity_sim")
+
+
+def _owned_by(module, directory: Path) -> bool:
+    file = getattr(module, "__file__", None)
+    return bool(file) and Path(file).resolve().parent == directory.resolve()
+
+
 def _load(name: str):
+    for sibling in _BARE_SIBLINGS:
+        mod = sys.modules.get(sibling)
+        if mod is not None and not _owned_by(mod, ANALYSIS):
+            del sys.modules[sibling]
     spec = importlib.util.spec_from_file_location(
         f"deduction_analysis_{name}", ANALYSIS / f"{name}.py")
     module = importlib.util.module_from_spec(spec)

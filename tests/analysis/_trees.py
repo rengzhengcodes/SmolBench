@@ -123,6 +123,20 @@ def build_tree(root, models, infos, profile, copies=None):
         shutil.copytree(src_dir, dst_dir)
 
 
+#: Every bare module name the induction and deduction analysis scripts share.
+_BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
+                  "hint_vs_noise", "significance_report", "extens_vs_noise", "multiplicity_sim")
+
+
+def _owned_by(module, directory) -> bool:
+    """Whether `module` was loaded from a file directly inside `directory`."""
+    file = getattr(module, "__file__", None)
+    if not file:
+        return False
+    from pathlib import Path as _P
+    return _P(file).resolve().parent == _P(directory).resolve()
+
+
 def load_analysis(name: str):
     """Import one ``analysis/`` script by path, under its own bare module name.
 
@@ -131,8 +145,21 @@ def load_analysis(name: str):
     exactly that bare name or a sibling import re-executes the module and the
     two copies disagree about ``RESULTS_DIR``.
     """
-    if name in sys.modules:
-        return sys.modules[name]
+    # Reuse the cached module only when it really is THIS directory's script.
+    # The deduction leg's analysis scripts (notebooks/deduction/analysis/) use
+    # the same bare names (power_analysis, error_bars, ...) and register
+    # themselves under them via their own sys.path insert, so after a deduction
+    # test has run, ``sys.modules["power_analysis"]`` may be the deduction
+    # module: returning it here would hand this fixture the wrong study's
+    # constants. Evict every stale sibling before loading so the scripts'
+    # bare-name imports re-resolve against ANALYSIS_DIR.
+    cached = sys.modules.get(name)
+    if cached is not None and _owned_by(cached, ANALYSIS_DIR):
+        return cached
+    for sibling in _BARE_SIBLINGS:
+        mod = sys.modules.get(sibling)
+        if mod is not None and not _owned_by(mod, ANALYSIS_DIR):
+            del sys.modules[sibling]
     sys.path.insert(0, str(ANALYSIS_DIR))
     sys.path.insert(0, str(NOTEBOOKS))
     spec = importlib.util.spec_from_file_location(name, ANALYSIS_DIR / f"{name}.py")
