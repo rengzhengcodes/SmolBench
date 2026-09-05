@@ -47,99 +47,146 @@ this one and the induction one together must give each a unique
 
 ## Data layout
 
-The traced corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/`
-(not committed -- see "Data bootstrap" below):
+The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/` -- a pre-cutoff-era directory name (not committed; see "Data bootstrap" below).
+`leandojo_benchmark_4` is a path artifact of the builder's output layout, not itself a claim about which snapshot is checked out: it is both the ORIGINAL pre-cutoff download's directory name and the name `scripts/deduction/build_postcutoff_corpus.py --out <root>` writes its POST-cutoff output under (`<root>/leandojo_benchmark_4`, same pre-cutoff-era name, post-cutoff content):
 
 - `corpus.jsonl` -- every premise (theorem/def/etc.) declared in the traced
   mathlib4 repo, with its source position and containing file
   (`smolbench.deduction.lean.premises`).
-- `metadata.json` -- the benchmark's provenance: `dataset_name`,
-  `creation_time`, `from_repo` (`url`/`commit`), `leandojo_version`.
+- `metadata.json` -- the corpus's provenance: `dataset_name`,
+  `creation_time`, `from_repo` (`url`/`commit`), `leandojo_version`, and --
+  for a post-cutoff corpus -- an extra `postcutoff` block (see "Corpus date
+  vs. model cutoffs" below).
 - `novel_premises/{train,val,test}.json` and `random/{train,val,test}.json`
-  -- the two independent split axes `smolbench.deduction.lean.corpus`
-  loads via `load_split(kind, split)`: `"random"` is an i.i.d. train/val/test
-  split, `"novel_premises"` is a val/test split chosen so its premises are
-  under-represented in train (the harder generalization slice). Each file
-  is a JSON array of theorem records (`url`, `commit`, `file_path`,
-  `full_name`, `start`, `end`, `traced_tactics`).
+  -- the two split-kind directories `smolbench.deduction.lean.corpus` loads
+  via `load_split(kind, split)`. In the PRE-CUTOFF LeanDojo Benchmark 4
+  snapshot these are two independent partitions: `"random"` is an i.i.d.
+  train/val/test split, `"novel_premises"` is a val/test split chosen so its
+  premises are under-represented in train (the harder generalization slice
+  that pre-cutoff study's pool was drawn from -- see "History: the
+  pre-cutoff study" below). `build_postcutoff_corpus.py` writes both
+  directories too (so no loader path 404s), but as real copies of the SAME
+  rows: there is no separate generalization-slice curation post-cutoff, so
+  this study's driver now reads `random`/`val` by default
+  (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`; see `run_study.py`'s module
+  docstring, "Environment"). Each file is a JSON array of theorem records
+  (`url`, `commit`, `file_path`, `full_name`, `start`, `end`,
+  `traced_tactics`).
 - `licenses/` -- upstream license files for the traced repo and the tools
   LeanDojo depends on (CMark.lean, LeanInk, ProofWidgets4, aesop, ...).
 
-Alongside `leandojo_benchmark_4/`, two sidecars record which theorems'
-GROUND-TRUTH proofs actually replay successfully against a live Lean
-session: `replay_passing_novel_premises_val.jsonl` and
-`replay_passing_novel_premises_test.jsonl`. These are produced by
+Alongside the corpus, sidecars record which theorems' GROUND-TRUTH proofs
+actually replay successfully against a live Lean session:
+`replay_passing_<kind>_<split>.jsonl` -- e.g. `replay_passing_random_val.jsonl`
+for this study's default pool. These are produced by
 `python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`
-and are small enough to commit (unlike the ~700 MB raw dataset). A theorem
-whose recorded proof does not replay (a LeanDojo tracing artifact, a
-premise that no longer resolves, etc.) is excluded from every sweep that
-draws its pool via `corpus.iter_replay_passing`, which this study's
-`build_config` always does (`theorems.source == "replay_passing"`).
+and are small enough to commit (unlike the multi-hundred-MB raw corpus). A
+theorem whose recorded proof does not replay (a tracing artifact, a premise
+that no longer resolves, etc.) is excluded from every sweep that draws its
+pool via `corpus.iter_replay_passing`, which this study's `build_config`
+always does (`theorems.source == "replay_passing"`).
 
 **Pool size** (measured against the checked-out data, not assumed):
 
 ```
-.venv/bin/python -c "from smolbench.deduction.lean import corpus; print(len(list(corpus.iter_replay_passing('novel_premises','val'))))"
+.venv/bin/python -c "from smolbench.deduction.lean import corpus; print(len(list(corpus.iter_replay_passing('random','val'))))"
 ```
 
-returns **805** -- the `replay_passing`/`novel_premises`/`val` pool this
-study draws its 300-theorem sample from (`build_config`'s
-`theorems.limit`, seeded `0`).
+No number is recorded here: the post-cutoff corpus's `replay_passing`/
+`random`/`val` pool depends on which built corpus is checked out, and this
+study has not yet fixed a single number for it the way the pre-cutoff study
+did (see "History: the pre-cutoff study" below, **805**) -- run the command
+above against your own checked-out corpus to find out. Inventing a number
+here would be worse than omitting one.
 
 ### Data bootstrap
 
-The dataset itself (`leandojo_benchmark_4/`) is not shipped in this repo:
-download the LeanDojo Benchmark 4 archive from
-[Zenodo](https://zenodo.org/records/10929138) and unpack it so that
-`corpus.jsonl`, `metadata.json`, `novel_premises/`, `random/`, and
-`licenses/` land directly under `notebooks/deduction/data/leandojo_benchmark_4/`
-(or point `SMOLBENCH_LEAN_DATA` at wherever you unpacked it -- see
-`smolbench.deduction.lean.corpus.data_root`'s docstring for the exact
-resolution order). Every loader in `smolbench.deduction.lean.corpus` raises
-an actionable `FileNotFoundError` naming the exact missing path if this
-step has not been done. The `replay_passing_*.jsonl` sidecars are generated
-from the bootstrapped dataset (`python -m smolbench.deduction.lean.cli
-filter --kind novel_premises --split val`, ~70 min per split) and live
-beside the download at `data_root().parent`; they are not tracked -- see
-`notebooks/ARCHIVE.md` for the archived copies.
+The corpus itself is not shipped in this repo. Build the POST-CUTOFF corpus
+with `scripts/deduction/build_postcutoff_corpus.py` (see that script's
+module docstring for the full pipeline: a LeanDojo-v2 `generate_benchmark`
+export of mathlib4 at a NEW commit, plus
+`scripts/deduction/postcutoff_names.py`'s declaration-name-difference JSON
+against an OLD commit) and point `SMOLBENCH_LEAN_DATA` at wherever you built
+it -- see `smolbench.deduction.lean.corpus.data_root`'s docstring for the
+exact resolution order.
 
-### The pinned 300
+**The driver refuses a pre-cutoff corpus.** `notebooks/deduction/run_study.py`'s
+`build_config` calls `corpus.postcutoff_metadata()` before any AWS call and
+`SystemExit`s if it is `None` (see that function's docstring, "Post-cutoff
+corpus gate"): every roster checkpoint's knowledge cutoff postdates the
+original LeanDojo Benchmark 4 snapshot's 2024-03-24 trace, so a pre-cutoff
+corpus's theorems are not a valid held-out set -- a model may simply have
+memorised their proofs during training. (The historical exception is the
+ORIGINAL study, which predates this gate and ran directly against that
+pre-cutoff snapshot -- see "History: the pre-cutoff study" below.)
 
-`build_config` draws its sample with `random.Random(0).sample(pool, 300)`
-over the 805-theorem pool above, so the drawn set is fixed only as long as
-that pool is -- and the pool is not stable by construction. It comes from
-the `replay_passing` sidecars, which are produced by live Dojo replay, and
-Dojo init fails nondeterministically. Regenerating a sidecar can add or drop
-a theorem, and because `rng.sample` depends on both the membership AND the
-order of its population, one changed theorem reshuffles the entire 300.
-Nothing downstream compares the drawn set against anything, so that
-reshuffle would be silent.
+Every loader in `smolbench.deduction.lean.corpus` raises an actionable
+`FileNotFoundError` naming the exact missing path if the corpus has not been
+built. The `replay_passing_*.jsonl` sidecars are generated from the built
+corpus (`python -m smolbench.deduction.lean.cli filter --kind random --split
+val`, ~70 min per split) and live beside it at `data_root().parent`; they
+are not tracked -- see `notebooks/ARCHIVE.md` for the archived pre-cutoff
+copies.
 
-`pinned_theorems.json` therefore records the drawn set verbatim: the 300
-`full_name`s, the corpus provenance, the derivation recipe, and a sha256
-over the sorted names. `tests/deduction/test_lean_pinning_audit.py` pins
-that digest, so a reshuffle fails a test instead of quietly changing which
-theorems the study measures. That file is also the only in-tree answer to
-"which theorems does this study run": the corpus and both sidecars are
-archived out of the tree.
+### History: the pre-cutoff study
 
-`scripts/results/audit_lean_pinning.py` checks the drawn set against what
-the 21 lanes actually ran, from the S3 spool -- identical `theorems` config
-and seed, identical theorem sets, identical `(theorem, rung)` cell keys,
-byte-identical rendered prompts (compared by ETag, so no spool download),
-and containment of the recovery and flip side-runs. All 21 lanes ran the
-same 300 theorems and 944 cells with byte-identical prompts.
+Everything below this point through "The pinned 300" (and the FIRST two
+paragraphs of "Corpus date vs. model cutoffs" just after it) describes the
+ORIGINAL, COMPLETED, pre-cutoff study: LeanDojo Benchmark 4, pre-cutoff Zenodo record 10929138, traced mathlib4 commit `fe4454af`, `creation_time` 2024-03-24 -- not a live default for new runs. ("Corpus
+date vs. model cutoffs"'s own "What the code now enforces" subsection is
+NOT historical: it documents the gate the driver enforces today.)
+`pinned_theorems.json`'s recorded derivation, the published `deduction/runs`
+S3 prefix (see "Results policy: S3-only" below), and
+`smolbench.deduction.lean.runner`'s `EXPECTED_THEOREMS` / `EXPECTED_CELLS` /
+`EXPECTED_SANITY_ROWS` (300/944/300 -- "the OLD published study's pinned
+shape", per that module's own comment) all still describe that pre-cutoff
+study; they are retained as the historical record of what was measured,
+not as instructions for a new run. New runs draw from the post-cutoff
+corpus described above, whose pool size is not yet fixed.
+
+### The pinned 300 (pre-cutoff study)
+
+The PRE-CUTOFF study's `build_config` drew its sample with
+`random.Random(0).sample(pool, 300)` over that study's 805-theorem pool (see
+"History: the pre-cutoff study" above), so the drawn set was fixed only as
+long as that pool was -- and the pool is not stable by construction. It came
+from the `replay_passing` sidecars, which are produced by live Dojo replay,
+and Dojo init fails nondeterministically. Regenerating a sidecar can add or
+drop a theorem, and because `rng.sample` depends on both the membership AND
+the order of its population, one changed theorem would have reshuffled the
+entire 300. Nothing downstream compared the drawn set against anything, so
+that reshuffle would have been silent.
+
+`pinned_theorems.json` therefore records that pre-cutoff study's drawn set
+verbatim: the 300 `full_name`s, the corpus provenance, the derivation
+recipe, and a sha256 over the sorted names. `tests/deduction/
+test_lean_pinning_audit.py` pins that digest, so a reshuffle of the archived
+pre-cutoff sidecars would fail a test instead of quietly changing which
+theorems the historical record claims that study measured. That file is
+also the only in-tree answer to "which theorems did the pre-cutoff study
+run": the corpus and both sidecars are archived out of the tree.
+
+`scripts/results/audit_lean_pinning.py` checks that drawn set against what
+the pre-cutoff study's 21 lanes actually ran, from the S3 spool -- identical
+`theorems` config and seed, identical theorem sets, identical `(theorem,
+rung)` cell keys, byte-identical rendered prompts (compared by ETag, so no
+spool download), and containment of the recovery and flip side-runs. All 21
+lanes ran the same 300 theorems and 944 cells (that pre-cutoff study's
+pinned shape, `runner.EXPECTED_THEOREMS`/`EXPECTED_CELLS`) with
+byte-identical prompts.
 
 Byte equality is the load-bearing check, not set equality: it proves the
 same theorem was asked at the same step `k` under the same rendered context.
 It also covers `noise:3`, which is whitespace padded to a token-matched
 length -- the induction leg pads under each model's own tokenizer, and had
-this leg done the same, that rung would not be comparable across models.
+this leg done the same, that rung would not have been comparable across
+models.
 
-This gates the questions ASKED, not the data that came back. Cells can be
-present and dead, and the published pools (707/828/833 cells) are smaller
-than 944 because dead cells and verdict filtering shrink it unevenly. Use
-`scripts/results/audit_run_completeness.py` for that axis.
+This gated the questions ASKED, not the data that came back. Cells can be
+present and dead, and that pre-cutoff study's published pools (707/828/833
+cells) are smaller than its 944 because dead cells and verdict filtering
+shrink it unevenly. Use `scripts/results/audit_run_completeness.py` for
+that axis on any run, pre- or post-cutoff.
 
 ### Corpus date vs. model cutoffs
 
@@ -149,11 +196,12 @@ checkpoint's cutoff postdates it, so 0 of the benchmark's 300 theorems
 qualify as post-cutoff by construction, and no sampling, seed, or split
 change over this single-commit snapshot can produce one.
 
-Neither of the study's two holdout mechanisms is a substitute for a
-post-cutoff tail, and neither should be cited as if it were one: `decontam.py`
-guards a synthetic SFT corpus against reproducing eval theorems, and
-`novel_premises` selects theorems under-represented in the benchmark's own
-train split -- both operate entirely within that same 2024-03-24 snapshot.
+Neither of the pre-cutoff study's two holdout mechanisms is a substitute for
+a post-cutoff tail, and neither should be cited as if it were one:
+`decontam.py` guards a synthetic SFT corpus against reproducing eval
+theorems, and the pre-cutoff study's `novel_premises` split selects theorems
+under-represented in the benchmark's own train split -- both operate
+entirely within that same 2024-03-24 snapshot.
 
 **What the code now enforces.** A re-collection is underway on a NEW mathlib4
 snapshot, restricted by declaration-name set difference against the old
@@ -446,11 +494,16 @@ study's code, notebooks, and documentation.
   a deeper hop count is progressively more likely to hit the renderer's own
   50k-token cap before its expanded content actually reaches a rendered
   prompt.
-- **The `random` split kind.** This study's pool selector is fixed to
-  `kind == "novel_premises"` (the harder generalization slice); the
-  `random` split is present in the bootstrapped dataset and loadable via
-  `corpus.load_split("random", ...)`, but no sweep this study runs draws
-  from it.
+- **The `novel_premises` split kind, post-cutoff.** The PRE-CUTOFF study's
+  pool selector was fixed to `kind == "novel_premises"` (the harder
+  generalization slice; see "History: the pre-cutoff study" above). That is
+  now backwards: the re-collection's post-cutoff corpus has a single
+  meaningful split family -- `build_postcutoff_corpus.py` writes a
+  `novel_premises/` directory too, but as a real copy of `random/`'s rows,
+  not an independent curated slice (see "Data layout" above) -- so
+  `run_study.build_config` now reads `random`/`val` by default
+  (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`), and `random` IS what every sweep
+  this study runs draws from.
 - **Live REPL interaction during generation.** Everything in this
   study's generation phase (`run_study.py`, and by extension
   `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore
