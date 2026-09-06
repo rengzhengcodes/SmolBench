@@ -140,7 +140,7 @@ requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 
 The suite needs no AWS credentials or network access: it drives the real
 quiz-generation, provider-dispatch, and grading code paths against a local
-OpenAI-compatible stub server. This prints `1146 passed, 5 skipped`.
+OpenAI-compatible stub server. This prints `1349 passed, 5 skipped`.
 
 All 5 skips are the same opt-in gate: `tests/deduction/test_s3_archive.py`
 pins archived evidence that lives only on S3, so it skips unless
