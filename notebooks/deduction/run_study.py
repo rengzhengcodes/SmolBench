@@ -17,8 +17,25 @@ module's ``load_dotenv`` (no ``override=True``, so it never beats an already-set
 value). Get the order wrong and nothing raises: this lane's tag, state file and
 vLLM image silently drift, and two lanes swap served checkpoints on a live
 billing box. ``setdefault``, never assignment, is what lets a fleet-exported
-value win. Import also raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is not
-exactly ``f"scaling-{LEAN_MODEL}"`` (see the GUARD below).
+value win. The two ``smolbench`` imports that sit ABOVE that setdefault block
+(``smolbench.evals.study_config``, for ``SPOOL_BUCKET``/``SPOOL_REGION``, and
+``smolbench.evals.experiment``, for the GUARD's shared tag validation) are
+allowed there only because both were VERIFIED ``ec2``-free: importing each in a
+fresh interpreter leaves ``"smolbench.evals.providers.ec2"`` absent from
+``sys.modules``. The comment beside them records each import's exact closure
+and the two-line check; re-run it before adding a third.
+
+Import raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is unsafe, applying
+TWO complementary checks in this order (see the GUARD below). First the shared
+``experiment.validate_experiment_tag``, which catches a tag that is empty or
+whitespace-only, names a RETIRED study, or is the bare shared fleet prefix
+naming every lane in the fleet at once. Then this driver's own EXACT
+comparison against ``f"scaling-{LEAN_MODEL}"``, which is the only one of the
+two that catches a well-formed tag belonging to a DIFFERENT live lane. Import
+can also raise ``FileNotFoundError``, ``ValueError`` or
+``tomllib.TOMLDecodeError`` out of the ``load_study_config()`` call behind
+``SPOOL_BUCKET``/``SPOOL_REGION``: a missing or malformed committed study
+config is a hard stop, never something to fall back from.
 
 LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
 and build the sweep config -- this ALSO validates the corpus (see
@@ -69,22 +86,72 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# These two `smolbench` imports MUST stay above the `os.environ.setdefault`
+# block further down, because the constants and the GUARD that follow it both
+# need them; they are deliberately NOT in the late `# noqa: E402` block, which
+# sits below their consumers. Placing them here rather than lower also keeps
+# them visually apart from that block: these carry no ordering hazard, and a
+# reader must not mistake them for imports that do.
+#
+# VERIFIED ``ec2``-free, which is the only reason they may precede the
+# setdefaults at all (module docstring, "MODULE IMPORT ORDER"). Check one
+# module per fresh interpreter, since a shared one proves nothing about which
+# import pulled what::
+#
+#     import sys, smolbench.evals.study_config   # then again for .experiment
+#     assert "smolbench.evals.providers.ec2" not in sys.modules
+#
+# It passes for both. `study_config` pulls in only `smolbench`,
+# `smolbench.evals`, `smolbench.evals.quiz` and `smolbench.evals.study_config`;
+# `experiment` additionally pulls `smolbench.evals.{_aws,provider,replicates,
+# results_store}` -- and `providers.ec2` from neither. Re-run that check before
+# adding a THIRD smolbench import here: one that reached `ec2` would freeze
+# this lane's EC2_* constants from the still-unseeded environment, and nothing
+# would raise.
+from smolbench.evals.experiment import validate_experiment_tag
+from smolbench.evals.study_config import load_study_config
+
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------------------------------
-# Anchoring + S3-spool constants (pure; no environment or filesystem effects)
+# Anchoring + S3-spool constants. No environment reads and no AWS calls, but
+# NOT filesystem-free: the SPOOL_* pair parses the committed study config off
+# disk at import time (see the note on those constants).
 # ---------------------------------------------------------------------------
 # parents[2] of <repo>/notebooks/deduction/run_study.py is the repo root.
 # Anchored via __file__, never the cwd: the fleet, a notebook kernel or a bare
 # shell may launch this file from anywhere.
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
-#: Same bucket and region ``scripts/fleet/run_fleet.py``'s
-#: ``sync_deduction_spool`` uses for the induction-phase results store -- this
-#: study's whole S3 footprint lives in one bucket. A plain literal, not imported
-#: from ``run_fleet``, so this file does not depend on that off-limits module.
-SPOOL_BUCKET: str = "smolbench-results-414266451290"
-SPOOL_REGION: str = "us-west-2"
+#: The bucket and region this lane spools its run directory to -- the study's
+#: whole S3 footprint lives in one bucket, shared with the induction-phase
+#: results store.
+#:
+#: These used to be hand-typed literals, justified by a comment saying they
+#: were deliberately not imported from ``scripts/fleet/run_fleet.py`` so this
+#: file would not depend on that module. That concern is still respected:
+#: nothing here imports ``scripts/fleet``. The value simply comes from a
+#: different place now -- the committed ``smolbench/evals/study_config.toml``,
+#: which is shared CONFIG, not the fleet module. What the literal actually
+#: cost was correctness rather than coupling: it was a second copy of a fact
+#: with an owner elsewhere, and it could go stale in total silence.
+#:
+#: This is the same ``[results]`` section ``smolbench.evals.results_store``
+#: reads -- VERIFIED: its ``default_results_uri`` and ``resolve_store`` both
+#: call ``load_study_config().results`` -- so this driver can no longer spool
+#: to a bucket the rest of the study does not read back. That config file's own
+#: header additionally names ``smolbench/evals/providers/ec2.py``,
+#: ``notebooks/induction/run_study.py`` and
+#: ``notebooks/induction/analysis/power_analysis.py`` as consumers. It does NOT
+#: name the fleet supervisor, so whether ``scripts/fleet/run_fleet.py`` reads
+#: this same file is not something established here.
+#:
+#: Two ``load_study_config()`` calls rather than one bound temporary: that
+#: loader is memoized on the RESOLVED config path, so the second call parses
+#: nothing, and this leaves no import-time temporary needing a ``del`` (which
+#: is what the guard below has to do with ``_TAG``).
+SPOOL_BUCKET: str = load_study_config().results.bucket
+SPOOL_REGION: str = load_study_config().results.region
 #: The destination key prefix comes from ``runner.spool_prefix()``, resolved
 #: at CALL time inside ``spool_to_s3`` and the GUARD in ``main`` below -- not
 #: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override (or the
@@ -173,10 +240,63 @@ if _RAW_LEAN_MODEL:
     # wrong model. keys.env's standalone `EC2_EXPERIMENT_TAG=scaling-standalone`
     # exported by a `set -a` launcher is how lanes end up sharing one; the raise
     # below spells out that cause and the fix.
+    #
+    # Two checks run below, and the ORDER is load-bearing rather than a style
+    # choice. `validate_experiment_tag` is the shared structural validation the
+    # induction leg already gets: it refuses an empty or whitespace-only tag, a
+    # RETIRED study's tag, and the bare shared fleet prefix ("scaling-", or
+    # "scaling" with the trailing dash dropped). It does NOT do the exact
+    # lane-identity compare below -- read its body, not just its name: it
+    # cannot, since it does not know this lane's model key.
+    #
+    # Every one of those three conditions would ALSO fail the exact compare,
+    # which is precisely why the shared check must go first. Take the bare
+    # prefix: the exact compare would reject it with a message about this
+    # lane's tag, when the real condition is both different and far more
+    # dangerous -- that tag names EVERY lane in the fleet at once, and fleet
+    # teardown terminates BY TAG, so a run under it can take the whole fleet
+    # down rather than collide with one box. The more specific diagnosis has to
+    # be the one the operator sees.
+    #
+    # lane=None because this driver never appends a lane suffix to its tag: its
+    # shard support goes into `run_name` (build_config's `shard_suffix`), never
+    # into EC2_EXPERIMENT_TAG, so there is no suffix for the validator to
+    # strip. No `retired=` override either -- the default already names the one
+    # retired study, and overriding it here could only re-admit a tag that list
+    # exists to refuse.
+    _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
+    try:
+        validate_experiment_tag(_TAG, None)
+    except ValueError as exc:
+        # Translated, never propagated. `main`'s docstring states this driver's
+        # contract: a configuration mistake surfaces as SystemExit BEFORE any
+        # AWS call, which is what every other guard here does (selected_model,
+        # select_verifier, build_config's corpus gate, main's shard guard). The
+        # shared validator is library code and signals with ValueError, which
+        # would reach an operator as a traceback instead of a message. The
+        # original text is re-raised verbatim and chained with `from exc`, so
+        # the cause survives, plus the same actionable Fix line the exact-match
+        # guard below already gives.
+        #
+        # The `except` cannot mis-label a CONFIG failure as a tag failure, even
+        # though `validate_experiment_tag` internally loads the study config
+        # (for the fleet tag prefix) and that load raises ValueError on a
+        # malformed file. SPOOL_BUCKET above already forced that same memoized
+        # load, on the same resolved path, to succeed -- and the loader
+        # validates every section before returning -- so the validator's call
+        # is a cache hit that cannot raise. Every ValueError arriving here is
+        # one of the validator's own three refusals.
+        raise SystemExit(
+            f"{exc}\n"
+            f"Fix: export EC2_EXPERIMENT_TAG=scaling-{_RAW_LEAN_MODEL} for this "
+            "lane (or stop sourcing keys.env in the launcher)."
+        ) from exc
+
     # EXACT compare, never a substring test: spec keys nest ("glm-4.7" is a
     # prefix of "glm-4.7-flash"), so a containment check would accept the
     # NEIGHBOURING lane's tag and re-open exactly the adoption hole it guards.
-    _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
+    # This is also the check the shared validation above cannot make: a
+    # neighbouring lane's tag is perfectly well-formed and passes it cleanly.
     if _TAG != f"scaling-{_RAW_LEAN_MODEL}":
         raise SystemExit(
             f"EC2_EXPERIMENT_TAG={_TAG!r} is not this lane's tag "

@@ -655,3 +655,50 @@ def test_a_non_integer_lean_seed_is_refused(driver, postcutoff_corpus, monkeypat
     monkeypatch.setenv("LEAN_SEED", "abc")
     with pytest.raises(SystemExit):
         driver.build_config(KEY)
+
+
+# ---------------------------------------------------------------------------
+# The import-time tag guard now runs the SHARED structural validation
+# (smolbench.evals.experiment.validate_experiment_tag) before its own exact
+# lane-identity compare, and the spool bucket/region come from study_config.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tag, expected_phrase", [
+    # Bare shared fleet prefix: names every lane at once, and fleet teardown
+    # terminates BY TAG. The exact compare would also reject it, but with a
+    # message about THIS lane -- the shared validator's diagnosis must win, so
+    # the assertion is on the message, not merely on the exit status.
+    ("scaling-", "every lane"),
+    ("scaling", "every lane"),
+    ("periodic-induction", "RETIRED"),
+    ("   ", "empty or whitespace-only"),
+])
+def test_shared_tag_validation_runs_before_the_exact_compare(tag, expected_phrase):
+    proc = _run_driver({"EC2_EXPERIMENT_TAG": tag})
+    assert proc.returncode != 0, proc.stdout
+    assert expected_phrase in proc.stderr, proc.stderr
+    assert "is not this lane's tag" not in proc.stderr, (
+        "the exact-match message won; the shared structural diagnosis is the "
+        f"specific one for {tag!r} and must be what the operator sees:\n{proc.stderr}"
+    )
+
+
+def test_a_neighbouring_lanes_tag_still_gets_the_exact_match_message():
+    """The strict-prefix case the shared validator cannot catch.
+
+    ``scaling-glm-4.7-flash`` is a perfectly well-formed, non-retired,
+    non-bare-prefix tag, so `validate_experiment_tag` passes it; only this
+    driver's own EXACT compare rejects it. Adding the shared call must not have
+    replaced that check.
+    """
+    proc = _run_driver({"EC2_EXPERIMENT_TAG": f"scaling-{KEY}-flash"})
+    assert proc.returncode != 0
+    assert "is not this lane's tag" in proc.stderr, proc.stderr
+
+
+def test_spool_bucket_and_region_come_from_the_study_config(driver):
+    from smolbench.evals.study_config import load_study_config
+
+    results = load_study_config().results
+    assert (driver.SPOOL_BUCKET, driver.SPOOL_REGION) == (results.bucket, results.region)

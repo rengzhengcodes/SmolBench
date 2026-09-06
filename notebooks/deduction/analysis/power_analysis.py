@@ -17,11 +17,14 @@ DATA SOURCE -- LOUD WARNING: read ``verified_rows.jsonl`` (written by
 ``scripts/deduction/lean_verify_rows.py``), NEVER the generation-time ``all_rows.jsonl``:
 its verdicts are all the ``"unverified"`` placeholder, so every rate would read at or near
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
-the loud stderr banner `load_joint_cells` prints instead of falling back silently. Inputs
-are ``--s3`` (``s3://smolbench-results-414266451290/<spool-prefix>/scaling_*/``, where
-``<spool-prefix>`` defaults to the re-collection's prefix and is overridable via
-``--spool-prefix`` -- the published pre-cutoff study lives at ``deduction/runs``) or
-``--results-dir`` (local ``runs/scaling_*/verified_rows.jsonl``):
+the loud stderr banner `load_joint_cells` prints instead of falling back silently. The
+bucket is deliberately NOT spelled out below: it is committed config, read from
+``smolbench/evals/study_config.toml`` into this module's `S3_BUCKET` constant, and prose
+restating it could drift from the bucket a run actually reads. Inputs are ``--s3``
+(``s3://<S3_BUCKET>/<spool-prefix>/scaling_*/``, where ``<spool-prefix>`` defaults to the
+re-collection's prefix and is overridable via ``--spool-prefix`` -- the published
+pre-cutoff study lives at ``deduction/runs``) or ``--results-dir`` (local
+``runs/scaling_*/verified_rows.jsonl``):
 
     .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
 """
@@ -53,6 +56,25 @@ from scipy.stats import binom
 # import to __file__ makes it cwd-independent (repo convention).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# The repo root is one level further up, added so `smolbench.evals.study_config`
+# resolves from the SOURCE TREE and not only from an editable install: this
+# script's documented run environment is ``uv run --no-project --with numpy
+# --with scipy``, which installs no smolbench. That import is affordable there
+# because study_config's whole transitive chain is pure stdlib --
+# ``smolbench/__init__.py`` is a docstring, ``smolbench/evals/__init__.py``
+# imports only ``smolbench.evals.quiz`` (os, re, datetime, dataclasses,
+# typing), and study_config itself imports functools, tomllib, dataclasses,
+# pathlib, types, typing. That is NOT true of
+# ``smolbench.deduction.lean.runner`` (it reaches provider/corpus code), which
+# is why the spool-prefix constants further down stay duplicated instead of
+# imported from it: the constraint has narrowed, not disappeared.
+#
+# Inserted at position 0, so `smolbench` resolves from THIS tree ahead of any
+# editable install pointing at a different checkout -- deliberate, and the same
+# __file__-anchored convention the line above follows: the roster and bucket
+# this script reports on should be the ones committed beside it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
 from _power_common import (
     ALPHA,
     POWER_TARGETS,
@@ -61,32 +83,75 @@ from _power_common import (
     results_dir,
 )
 
+from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import load_study_config
+
 # --------------------------------------------------------------------------- #
 # Roster: 7 vendor families x 3 parameter-count rungs (ladder positions) = 21
-# models, verbatim from the study spec. Keys are the EC2 spec keys this study's
-# runs use as ``model`` (== ``display_name``) on every JSONL row -- see the
-# module docstring's DATA SOURCE section -- NOT the short analysis tags the
-# induction sibling study uses. Each family's 3-tuple is ordered SMALL -> MID ->
-# LARGE; that order is load-bearing for build_cross_family_contrasts's
-# size-matched pairing below.
+# models, read from the ONE committed study config
+# (``smolbench/evals/study_config.toml``) instead of being hand-typed here.
+# The values are the EC2 spec keys this study's runs use as ``model``
+# (== ``display_name``) on every JSONL row -- see the module docstring's DATA
+# SOURCE section -- so, unlike the induction sibling analysis, this file keeps
+# the config's spec keys as-is and never passes them through
+# ``study_config.tag_for``.
+#
+# ORDER IS LOAD-BEARING, and this file now depends on the config to supply it:
+# each family's 3-tuple must read SMALL -> MID -> LARGE, because
+# `build_cross_family_contrasts` pairs two families BY LADDER POSITION and
+# `build_within_family_contrasts` names its pairs by it. The config's
+# ``[roster.families]`` declaration order already is that order and documents
+# itself as the study's canonical ladder order; reordering a family's rungs
+# there silently re-pairs all 63 secondary contrasts here.
+#
+# REPORT-OUTPUT CHANGE -- recorded here so a reader diffing two report runs
+# across this change can find out why labels moved. Adopting the config's
+# family NAMES renames three families: ``nemotron3`` -> ``nemo3``,
+# ``ministral3`` -> ``min3``, ``deepseek`` -> ``ds``. The MODEL keys, and their
+# order, are identical to the literal this replaced, so no rate, p-value, CI or
+# contrast membership changes -- only the family LABEL does. That label is
+# printed by `build_within_family_contrasts`, in each contrast's
+# ``[{family} ladder] ...`` label, and by ``error_bars.py``'s per-family ladder
+# verdict block, which iterates FAMILIES imported from here; ``error_bars.py``
+# also carries those contrast labels into its ``--out-json`` output, so the
+# three renamed strings move there too.
 # --------------------------------------------------------------------------- #
-FAMILIES: dict[str, tuple[str, str, str]] = {
-    "qwen35": ("qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"),
-    "nemotron3": ("nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b"),
-    "gemma4": ("gemma-4-e2b", "gemma-4-12b", "gemma-4-31b"),
-    "glm": ("glm-4.7-flash", "glm-4.5-air", "glm-4.7"),
-    "ministral3": ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b"),
-    "exaone": ("exaone-4.0-32b", "exaone-4.5-33b", "k-exaone-236b-a23b"),
-    "deepseek": ("deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro"),
+FAMILIES: dict[str, tuple[str, ...]] = {
+    family: tuple(rungs) for family, rungs in _study_families().items()
 }
 MODELS = tuple(m for rungs in FAMILIES.values() for m in rungs)  # 21
 
 # At MODULE scope, not just inside main(), so importing this module for its
-# constants gets the guard too. MODELS is DEFINED as a comprehension over FAMILIES,
-# so length/uniqueness is the only drift this design can suffer -- unlike the
-# induction sibling, no hand-maintained flat tuple can disagree with FAMILIES.
-assert len(MODELS) == 21, f"expected 21 models (7 families x 3 rungs), got {len(MODELS)}"
-assert len(set(MODELS)) == 21, "MODELS contains a duplicate model spec-key"
+# constants gets the guard too. `raise`, not `assert`: `assert` is stripped
+# under ``python -O``, which would silently delete a guard whose whole purpose
+# is to fire at import time.
+#
+# MODELS is DEFINED as a comprehension over FAMILIES -- and so is exactly
+# ``tuple(study_config.roster_keys())``, which is that same flattening -- so
+# length and uniqueness are the only drift this design can suffer; no
+# hand-maintained flat tuple exists that could disagree with FAMILIES.
+#
+# What these two do NOT pin, spelled out rather than left to be discovered:
+# "21 models across 7 families" does not by itself force 3 rungs per family,
+# and both contrast builders index every family's tuple by ladder position
+# 0..2. Note that `main`'s contrast-count checks cannot cover this gap either
+# -- 7 x C(3,2) and 3 x C(7,2) are 21 and 63 whatever a family's length is.
+# The 3-rungs-per-family property is instead pinned by these two guards
+# together: a short family raises IndexError at position 2 on the first
+# contrast build, and a long one pushes len(MODELS) past 21 (a compensating
+# 4-and-2 split still IndexErrors on the 2). That is left as a documented
+# dependency on the config rather than restated as a third guard.
+if len(MODELS) != 21:
+    raise ValueError(
+        f"expected 21 models (7 families x 3 rungs) from study_config, got "
+        f"{len(MODELS)} across {len(FAMILIES)} families"
+    )
+_duplicate_keys = sorted({key for key in MODELS if MODELS.count(key) > 1})
+if _duplicate_keys:
+    raise ValueError(
+        f"study_config's roster repeats model spec-key(s) {_duplicate_keys}; "
+        "each checkpoint must appear on exactly one family ladder"
+    )
 
 # --------------------------------------------------------------------------- #
 # Design constants.
@@ -118,16 +183,29 @@ N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
-# S3 layout (see the module docstring's DATA SOURCE section).
-S3_BUCKET = "smolbench-results-414266451290"
-S3_REGION = "us-west-2"
+# S3 layout (see the module docstring's DATA SOURCE section). Both values are
+# the committed config's -- ``smolbench/evals/study_config.toml``, the same file
+# the fleet driver and results store read -- so this script cannot point at a
+# bucket the run never wrote to. They stay MODULE-LEVEL constants under their
+# existing names because `_download_s3_rows` and several report f-strings read
+# them by name.
+#
+# Import-time versus call-time resolution is immaterial here: `study_config`
+# reads no environment variables at all (that is a documented invariant of its
+# module, not an accident), so there is no late `load_dotenv` whose effect a
+# frozen import-time read could miss. `load_study_config` is memoized, so
+# resolving at import costs one TOML parse the rest of the process reuses.
+S3_BUCKET = load_study_config().results.bucket
+S3_REGION = load_study_config().results.region
 
 #: The re-collection's S3 key prefix, duplicated from
 #: `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`/`LEGACY_SPOOL_PREFIX`
 #: rather than imported: this file runs under
-#: ``uv run --no-project --with numpy --with scipy``, an environment with no
-#: smolbench installed (the same constraint `SUPERSEDED_MARKER`, below,
-#: duplicates a runner.py literal for). Kept in step by
+#: ``uv run --no-project --with numpy --with scipy``, so it may import only
+#: stdlib-reachable smolbench modules (see the ``sys.path`` block near the top
+#: -- `study_config` qualifies, `runner` does not: it pulls the provider and
+#: corpus stacks). The same constraint makes `SUPERSEDED_MARKER`, below,
+#: duplicate a runner.py literal. Kept in step by
 #: ``tests/deduction/test_spool_prefix.py``.
 _DEDUCTION_SPOOL_PREFIX = "deduction_postcutoff/runs"
 _LEGACY_SPOOL_PREFIX = "deduction/runs"
