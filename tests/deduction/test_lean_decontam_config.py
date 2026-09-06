@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -72,27 +71,41 @@ def test_parsed_policy_equals_the_constants_it_replaced():
     assert cfg.keys.min_goal_key_chars == EXPECTED_MIN_GOAL_KEY_CHARS
 
 
+#: The 97 entries `premises._LEAN_NOISE` held as a hand-written frozenset before
+#: the move to config, FROZEN here as a literal.
+#:
+#: Not read back out of the file under test (that would be vacuous) and not
+#: recovered from ``git show HEAD:...`` either: HEAD carried the pre-move
+#: literal only until the move was committed, after which such a test SKIPS
+#: forever and silently stops checking anything. This list was verified equal
+#: to that literal, by exact set comparison, at the commit immediately before
+#: the move; freezing it is what keeps the check live.
+#:
+#: This set decides which identifiers resolve to premise references and so what
+#: the `hint:3`/`hint:4` rungs CONTAIN. An entry silently dropped or added here
+#: changes prompt content across the whole study, which is why it is pinned
+#: entry-by-entry rather than by count.
+PRE_MOVE_LEAN_NOISE = frozenset({
+    'False', 'Prop', 'Set', 'Sort', 'True', 'Type', 'abbrev', 'all_goals',
+    'and', 'any_goals', 'apply', 'assumption', 'attribute', 'axiom', 'by',
+    'cases', 'class', 'constructor', 'decide', 'def', 'deriving', 'do',
+    'elab', 'else', 'end', 'eq', 'exact', 'example', 'exists', 'false',
+    'field_simp', 'forall', 'from', 'fun', 'ge', 'gt', 'h1', 'h2', 'h3',
+    'have', 'id', 'if', 'iff', 'import', 'in', 'inductive', 'instance',
+    'intro', 'intros', 'le', 'lemma', 'let', 'linarith', 'lt', 'macro',
+    'match', 'mutual', 'namespace', 'ne', 'nlinarith', 'noncomputable',
+    'not', 'obtain', 'of', 'omega', 'open', 'or', 'partial', 'private',
+    'protected', 'rcases', 'refine', "refine'", 'rewrite', 'rfl', 'ring',
+    'rintro', 'rw', 'section', 'set_option', 'show', 'simp', 'split',
+    'structure', 'syntax', 'tauto', 'then', 'theorem', 'this', 'to',
+    'trivial', 'true', 'use', 'variable', 'variables', 'where', 'with'
+})
+
+
 def test_the_stoplist_is_membership_identical_to_the_one_it_replaced():
-    """`lean_noise` is exactly the pre-move `premises._LEAN_NOISE`.
-
-    Extracted from git rather than retyped here: a hand-copied expected set
-    could be wrong in the same direction as the file under test, which is the
-    one failure mode a stoplist pin has to rule out. This is the set that
-    decides what `hint:3`/`hint:4` contain, so a silently dropped or added
-    entry changes prompt content across the whole study.
-    """
-    old_source = subprocess.run(
-        ["git", "show", "HEAD:smolbench/deduction/lean/premises.py"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=300,
-    )
-    if old_source.returncode != 0 or "_LEAN_NOISE = frozenset({" not in old_source.stdout:
-        pytest.skip("HEAD no longer carries the pre-move literal to compare against")
-    literal = re.search(r"_LEAN_NOISE = frozenset\(\{.*?\n\}\)", old_source.stdout, re.S)
-    namespace: dict = {}
-    exec(literal.group(0), namespace)  # noqa: S102 -- a literal set from our own history
-
-    assert load_decontam_config().lean_noise == namespace["_LEAN_NOISE"]
-    assert premises._LEAN_NOISE == namespace["_LEAN_NOISE"]
+    """`lean_noise` is exactly the stoplist `premises` carried before the move."""
+    assert load_decontam_config().lean_noise == PRE_MOVE_LEAN_NOISE
+    assert premises._LEAN_NOISE == PRE_MOVE_LEAN_NOISE
 
 
 def test_the_digest_is_over_the_files_raw_bytes():
@@ -170,16 +183,20 @@ def test_the_config_module_imports_only_the_standard_library():
 
 
 @pytest.mark.parametrize("entry, why", [
-    ("x", "one character: referenced_premises drops it on `len(tok) <= 1` first"),
+    ("x", "one character: referenced_premises's `len(tok) <= 1` arm drops it "
+           "whether or not the stoplist lists it"),
     ("trivial!", "not an _IDENT_RE token: `!` is outside its character class"),
     ("3foo", "not an _IDENT_RE token: an identifier cannot start with a digit"),
 ])
 def test_a_provably_dead_stoplist_entry_is_refused(tmp_path, entry, why):
     """`premises` refuses a stoplist entry that could never change an outcome.
 
-    `referenced_premises` skips a token on ``tok in _LEAN_NOISE or len(tok) <= 1``,
-    and only `_IDENT_RE.findall` output is ever tested for membership. So a
-    one-character entry, or one `_IDENT_RE` could not have produced, is
+    `referenced_premises` skips a token on ``tok in _LEAN_NOISE or len(tok) <= 1``
+    -- membership is evaluated FIRST, but the outcome is the same either way: a
+    one-character token is skipped by the second arm whether or not the first
+    matched, so listing it changes nothing. And only `_IDENT_RE.findall` output
+    is ever tested for membership at all. So a one-character entry, or one
+    `_IDENT_RE` could not have produced, is
     documentation asserting a filter that never runs -- which is exactly the
     dead weight a past cleanup already stripped from the hand-written list
     (22 single-character entries plus ``"trivial!"``). Editing the list as

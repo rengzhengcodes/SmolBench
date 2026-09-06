@@ -422,10 +422,12 @@ class HoldoutIndex:
             key = _stmt_key(t.full_name, vi)
             # First-wins, matching `statements.setdefault` above. `MinHashLSH`
             # RAISES on a duplicate key where the old band-bucket dict tolerated
-            # one (it re-appended, and the caller's `seen` set deduped), so the
-            # re-indexing this skips has to be skipped explicitly. It reaches
-            # here whenever one theorem is indexed twice -- the same
-            # ``full_name`` appearing in two of the holdout's splits.
+            # one (it re-appended, and the caller's `seen` set deduped), so a
+            # re-index has to be skipped explicitly rather than left to throw.
+            # It takes one ``full_name`` being indexed twice to reach this,
+            # which `eval_split_specs`'s own splits are not expected to do --
+            # but `build` takes an arbitrary `eval_specs` list, so nothing here
+            # can rule it out.
             if key in self._stmt_shingles:
                 continue
             self._stmt_shingles[key] = shingles
