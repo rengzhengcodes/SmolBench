@@ -129,3 +129,43 @@ def test_the_real_roster_is_the_grid():
     assert (driver.BASE_SEED, driver.N_REPLICATES) == (0, 30)
     assert examined == 84 and gaps == {}
     assert {c[0] for c in store.calls} == set(driver.MODELS)
+
+
+# ---------------------------------------------------------------------------
+# 14-15 / #46: both S3 seams resolve the bucket from one place
+# ---------------------------------------------------------------------------
+def test_both_audits_follow_smolbench_results_s3(monkeypatch):
+    """A redirected results store must reach the induction AND deduction halves.
+
+    The bucket used to be a module-level literal, so pointing
+    ``SMOLBENCH_RESULTS_S3`` at another bucket silently audited the old one.
+    Both seams now call ``results_store.resolve_results_location`` at CALL
+    time, which is what this pins -- one for the induction store it builds,
+    one for the deduction lane listing.
+    """
+    from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET
+
+    listed = []
+
+    class FakeS3:
+        def get_paginator(self, name):
+            return self
+
+        def paginate(self, Bucket, Prefix, Delimiter):
+            listed.append(Bucket)
+            return iter(())
+
+    monkeypatch.setattr(audit, "_s3", FakeS3)
+
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/base")
+    store = audit._induction_store()
+    assert (store.bucket, store.base_prefix) == ("redirected-bucket", "base")
+    assert store.experiment == audit.INDUCTION_EXPERIMENT
+    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert listed == ["redirected-bucket"]
+
+    # ...and unset falls back to the ONE committed default, not a local copy.
+    monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
+    assert audit._induction_store().bucket == DEFAULT_RESULTS_BUCKET
+    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert listed == ["redirected-bucket", DEFAULT_RESULTS_BUCKET]

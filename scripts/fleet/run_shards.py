@@ -17,13 +17,15 @@ script supervises ONE shard group:
   the on-box watchdog fires.
 - Exits once every shard is complete or halted, non-zero if any halted.
 
-Tag namespace: ``--tag`` defaults to ``"induction-scaling"``, spelled
-deliberately OUTSIDE the fleet's ``scaling-`` tag prefix (see
-`refuse_fleet_prefix_tag`), so `fleet_status.py`'s server-side tag filter
-never lists these shard boxes and ``fleet_teardown.py --terminate`` can never
-reach them. A ``--tag`` that would land inside that prefix once the driver's
-per-shard suffix is appended is refused unless ``--allow-fleet-prefix`` is
-passed.
+Tag namespace: ``--tag`` defaults to the committed study config's
+``[fleet].standalone_tag``, read here as ``_config.STANDALONE_TAG`` -- the
+same default ``notebooks/induction/run_study.py`` applies to a standalone
+run, so the two cannot spell it differently. That config places it
+deliberately OUTSIDE the fleet's tag prefix (see `refuse_fleet_prefix_tag`),
+so `fleet_status.py`'s server-side tag filter never lists these shard boxes
+and ``fleet_teardown.py --terminate`` can never reach them. A ``--tag`` that
+would land inside that prefix once the driver's per-shard suffix is appended
+is refused unless ``--allow-fleet-prefix`` is passed.
 
 Launch it detached (``setsid nohup ... &``, redirecting to a log under
 ``notebooks/induction/results/fleet_logs/``) from a shell that has sourced
@@ -218,11 +220,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--regions", required=True, help="EC2_REGIONS for every shard.")
     parser.add_argument("--request-timeout", type=int, default=0, help="EC2_REQUEST_TIMEOUT_SECONDS override.")
     parser.add_argument(
-        "--tag", default="induction-scaling",
+        # Sourced from the committed study config rather than re-typed: the
+        # driver already defaults a standalone run's EC2_EXPERIMENT_TAG to the
+        # same key, so a literal here could drift and put a shard box under a
+        # tag no other tool expects.
+        "--tag", default=_config.STANDALONE_TAG,
         help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver). "
-             "Deliberately outside the fleet's 'scaling-' tag namespace by "
-             "default -- see refuse_fleet_prefix_tag -- so fleet_teardown.py "
-             "--terminate cannot reach these shard boxes.",
+             "Defaults to the committed study config's [fleet].standalone_tag, "
+             "which sits deliberately outside the fleet's tag prefix -- see "
+             "refuse_fleet_prefix_tag -- so fleet_teardown.py --terminate "
+             "cannot reach these shard boxes.",
     )
     parser.add_argument("--no-shard", action="store_true", help="Single unsharded run (requires --state-file; --count must be 1).")
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")

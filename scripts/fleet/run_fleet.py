@@ -55,12 +55,16 @@ VENV_PYTHON: Path = REPO_ROOT / ".venv" / "bin" / "python"
 
 # Loaded by FILE PATH, never `sys.path` plus a bare `import run_study`: the
 # deduction study ships its OWN `notebooks/deduction/run_study.py`, and a bare
-# module name goes ambiguous once both trees sit on `sys.path`. `run_study.MODELS`
-# (spec key -> analysis tag) is the single source of truth for this study's
-# roster; LANES below is built FROM it. The import also runs
-# `load_dotenv(notebooks/induction/keys.env)`, which is DESIRED here: it is how
-# AWS profile, results-store and model-cache variables reach THIS process, for
-# `lane_env` to pass through to every lane.
+# module name goes ambiguous once both trees sit on `sys.path`. What this
+# module is imported FOR is the driver's per-lane RUNTIME facts -- `BASE_SEED`,
+# `INFO_TYPES`, `completion_budget` and `EXPERIMENT` -- which describe how a
+# lane runs and live nowhere else. It is NOT imported for the roster: the
+# driver is one more consumer of `smolbench/evals/study_config.toml`, not its
+# owner, so `LANES` and `_drift_guard` below read the roster from that
+# committed config instead, through `_config.ROSTER_KEYS`/`ROSTER_TAGS`. The
+# import also runs `load_dotenv(notebooks/induction/keys.env)`, which is
+# DESIRED here: it is how AWS profile, results-store and model-cache variables
+# reach THIS process, for `lane_env` to pass through to every lane.
 _RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 _run_study_spec = importlib.util.spec_from_file_location("induction_run_study", _RUN_STUDY_PATH)
 run_study = importlib.util.module_from_spec(_run_study_spec)
@@ -351,8 +355,9 @@ DESCRIBE_EVERY_N_TICKS = 5
 class Lane:
     """One study checkpoint's fleet identity: spec key, analysis tag, tier.
 
-    `key` is an ``EC2_DEPLOY_SPECS`` / ``run_study.MODELS`` key and vLLM's
-    ``--served-model-name``; `tag` is ``run_study.MODELS[key]``, used in result
+    `key` is an ``EC2_DEPLOY_SPECS`` / ``_config.ROSTER_KEYS`` key and vLLM's
+    ``--served-model-name``; `tag` is ``_config.ROSTER_TAGS[key]``, the
+    committed study config's analysis tag for that checkpoint, used in result
     directory names and figure legends; `tier` is ``"A"``-``"D"``. Everything
     else is DERIVED below, so a tier constant cannot go stale in a per-lane copy.
     """
@@ -402,10 +407,17 @@ class Lane:
 def _drift_guard() -> None:
     """Verify, at IMPORT time, that ``TIER_MEMBERS`` agrees with both sources of truth.
 
-    ``TIER_MEMBERS`` is HAND-WRITTEN and must match ``run_study.MODELS`` and
+    ``TIER_MEMBERS`` is HAND-WRITTEN and must match ``_config.ROSTER_KEYS``
+    (the committed ``study_config.toml`` roster) and
     ``set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"}``; a rung added there but not
     here would silently never run. At import time, so even a bare import or
     ``--dry-run`` catches the drift.
+
+    Checking against the config's roster rather than the induction driver's
+    ``MODELS`` is deliberate: the driver builds ``MODELS`` from that same
+    config, so it is a consumer, not an authority, and pinning this guard to
+    the config keeps the tier table answerable to the file an operator
+    actually edits when the ladder changes.
 
     Raises
     ------
@@ -425,13 +437,13 @@ def _drift_guard() -> None:
             "tiers must be pairwise disjoint."
         )
 
-    study_keys = set(run_study.MODELS)
+    roster_key_set = set(_config.ROSTER_KEYS)
     spec_keys = set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"}
     problems = []
-    if flat_set != study_keys:
+    if flat_set != roster_key_set:
         problems.append(
-            f"TIER_MEMBERS vs run_study.MODELS differ by "
-            f"{sorted(flat_set.symmetric_difference(study_keys))}"
+            f"TIER_MEMBERS vs the study config's roster differ by "
+            f"{sorted(flat_set.symmetric_difference(roster_key_set))}"
         )
     if flat_set != spec_keys:
         problems.append(
@@ -441,19 +453,23 @@ def _drift_guard() -> None:
     if problems:
         raise SystemExit(
             "run_fleet: lane roster drift detected -- " + "; ".join(problems) + ". "
-            "A rung added to (or removed from) EC2_DEPLOY_SPECS/run_study.MODELS "
-            "without a matching edit to TIER_MEMBERS in this file would silently "
-            "never run, shipping 20 of 21 ladders with no error. Fix TIER_MEMBERS."
+            "A rung added to (or removed from) EC2_DEPLOY_SPECS or "
+            "smolbench/evals/study_config.toml's [roster] without a matching "
+            "edit to TIER_MEMBERS in this file would silently never run, "
+            "shipping 20 of 21 ladders with no error. Fix TIER_MEMBERS."
         )
 
 
+# Run BEFORE `LANES` is built, so the `_config.ROSTER_TAGS[key]` lookup below
+# is already certified total over TIER_MEMBERS and can never KeyError.
 _drift_guard()
 
 #: Spec key -> Lane for every model this study runs, built from
-#: TIER_MEMBERS x run_study.MODELS; _drift_guard above has already
-#: certified both against each other.
+#: TIER_MEMBERS x _config.ROSTER_TAGS -- i.e. the tier assignment is this
+#: file's, the roster and its analysis tags are the committed study config's;
+#: _drift_guard above has already certified the two against each other.
 LANES: dict[str, Lane] = {
-    key: Lane(key=key, tag=run_study.MODELS[key], tier=tier)
+    key: Lane(key=key, tag=_config.ROSTER_TAGS[key], tier=tier)
     for tier, keys in TIER_MEMBERS.items()
     for key in keys
 }

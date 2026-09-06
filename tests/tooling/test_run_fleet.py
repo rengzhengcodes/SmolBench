@@ -249,6 +249,56 @@ def test_regions_and_tag_prefix_are_declared_once():
 
 
 # ---------------------------------------------------------------------------
+# #46: _config is a VIEW on the committed study config, not a second copy
+# ---------------------------------------------------------------------------
+def test_fleet_config_is_read_from_the_committed_study_config():
+    """The fleet vocabulary is study_config.toml's, not a literal in _config.py.
+
+    Before #46 the tag prefix, the region list and the standalone tag were
+    each typed out twice -- once in ``smolbench/evals/study_config.toml`` (read
+    by ``providers/ec2.py`` and ``notebooks/induction/run_study.py``) and once
+    in ``scripts/fleet/_config.py`` -- with nothing keeping the two spellings
+    equal. Editing the TOML now moves the fleet with it.
+    """
+    from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
+
+    cfg = load_study_config().fleet
+    config = fleet._config
+    assert config.REGION_TUPLE == cfg.regions
+    assert config.SCALING_TAG_PREFIX == cfg.tag_prefix
+    assert config.STANDALONE_TAG == cfg.standalone_tag
+    # DEFAULT_REGIONS is the comma-joined RENDERING of the tuple (the shape an
+    # EC2_REGIONS environment value takes), derived from it rather than
+    # declared beside it.
+    assert config.DEFAULT_REGIONS == ",".join(cfg.regions)
+    # The roster reaches the fleet from the same file...
+    assert config.ROSTER_KEYS == roster_keys()
+    assert config.ROSTER_TAGS == {key: tag_for(key) for key in roster_keys()}
+    # ...and is what the lane table is actually built from, so a rung added to
+    # the TOML cannot be missing here.
+    assert set(fleet.LANES) == set(config.ROSTER_KEYS)
+    assert {key: lane.tag for key, lane in fleet.LANES.items()} == dict(config.ROSTER_TAGS)
+
+
+def test_the_shard_tag_default_is_the_configs_standalone_tag():
+    """run_shards' --tag default was a literal that had to agree with the config.
+
+    ``notebooks/induction/run_study.py`` already defaults a standalone run's
+    ``EC2_EXPERIMENT_TAG`` to ``[fleet].standalone_tag``; run_shards spelled
+    the same string again, so the two could drift and a shard box would carry
+    a tag no other tool expected.
+    """
+    from smolbench.evals.study_config import load_study_config
+
+    default = shards.build_parser().get_default("tag")
+    assert default == fleet._config.STANDALONE_TAG
+    assert default == load_study_config().fleet.standalone_tag
+    # It must stay outside the fleet's blast radius -- that is WHY it is a
+    # separate config key rather than a derivation of the tag prefix.
+    assert not f"{default}-".startswith(fleet._config.SCALING_TAG_PREFIX)
+
+
+# ---------------------------------------------------------------------------
 # 14-06 / 14-10 / 14-12: the per-lane environment is what makes a lane reproducible
 # ---------------------------------------------------------------------------
 def test_a_tier_hunt_list_cannot_change_derived_tp_mid_lane():
