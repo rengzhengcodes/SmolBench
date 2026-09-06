@@ -9,14 +9,31 @@ positions contain it (:func:`numeric_count_query_gen`). :class:`PeriodicConfig`
 plus a ``_common.Prompter`` determine a run; the canonical eval configs live in
 ``notebooks/induction/run_study.py``.
 
-Information conditions, all built from one sequence by
-:func:`get_periodic_prompts`: **intensional** = the compact rules ("Every 3
-positions write gerbil."); **extensional** = the enumerated position ->
+Information conditions, all built from one sequence in ONE render loop by
+:func:`get_periodic_prompts`, and declared in exactly one place, the
+``CONDITIONS`` mapping below: **intens** = the compact rules ("Every 3
+positions write gerbil."); **extens** = the enumerated position ->
 compound-label table ("Position 6: fizz|buzz|gerbil."); **noise_intens** = the
-intensional text plus whitespace until the RENDERED PROMPT hits its extensional
-counterpart's token count, isolating length as a confound.
-:func:`get_periodic_zero_info_numeric_quiz` is a standalone fourth condition
-(EMPTY context) returning ONE Quiz, not the three-condition tuple.
+intensional text plus whitespace until the RENDERED PROMPT hits ``extens``'s
+token count, isolating length as a confound; **zero** = empty context, the
+chance floor -- rendered from a RANGE-FREE question ("How many of the
+positions include 'vw'?", no ``$seq_len``) via ``prompter.range_free_template``,
+because on the default 1..n pathway the period-1 harmonic's answer IS
+``seq_len``, and the range-stating question the other three arms use ("...
+positions 1 through $seq_len...") would print that answer directly into the
+prompt of the very arm meant to measure the floor a model reaches with NO
+positive information at all (a model echoing the only large number in its own
+prompt scored 11.1 pp on it). See ``CONDITIONS`` for the mapping that drives
+the loop and ``RANGE_KEYS`` for how the zero arm's promise is verified rather
+than trusted.
+
+Re-collection note: any ``zero``-arm rows collected before this change carry
+the OLD, range-stating question and must be re-collected, not compared
+against the new ones -- they measured a different (leakier) floor.
+``notebooks/induction/run_study.py``'s ``INDUCTION_FORCE_RERUN`` re-collects
+past the resume-skip, but forcing is PER-SEED: it re-collects all four info
+arms of a forced seed in one pooled call, not the ``zero`` arm alone -- there
+is no way to force just one arm (see that module's docstring).
 
 Noise-arm PRECONDITION -- a requirement on the config, not a property the
 benchmark guarantees: for every query, the extensional prompt must be STRICTLY
@@ -60,20 +77,25 @@ re-baseline the fixture. The ``__main__`` demo uses seed 42.
 import string
 from dataclasses import dataclass
 from math import gcd, lcm
-from typing import TypeAlias, Collection, Iterable, Tuple, Dict
+from types import MappingProxyType
+from typing import Callable, Collection, Dict, Iterable, Mapping, Optional, Tuple, TypeAlias
 
 import numpy as np
 
-from smolbench.evals import Quiz, ToF, Numeric, Answer
-from smolbench.evals.tokenization import TiktokenTokenizer, Tokenizer
+from smolbench.evals import Quiz, ToF, Numeric
+from smolbench.evals.tokenization import (
+    TiktokenTokenizer,
+    Tokenizer,
+    choose_whitespace_unit,
+    token_matched_noise_prompt,
+)
 from smolbench.induction._common import (
     Prompter,
+    RenderedQuery,
     build_substitution,
-    choose_whitespace_unit,
     context_renderer,
     quizzes_from_prompts,
     random_labels,
-    token_matched_noise_prompt,
 )
 
 # Prompter is re-exported for callers configuring the benchmark; the class
@@ -81,11 +103,14 @@ from smolbench.induction._common import (
 __all__ = [
     "PeriodicConfig",
     "Prompter",
+    "Contexts",
+    "Condition",
+    "CONDITIONS",
+    "RANGE_KEYS",
     "generate_sequence",
     "get_periodic_prompts",
     "get_periodic_quiz",
     "get_periodic_numeric_quiz",
-    "get_periodic_zero_info_numeric_quiz",
     "tof_membership_query_gen",
     "numeric_count_query_gen",
 ]
@@ -308,27 +333,190 @@ def _render_extensional(pos_to_compound: PosToCompound) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Information conditions
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Contexts:
+    """The two rendered context bodies one sequence produces.
+
+    Bundles :func:`_render_intensional`'s and :func:`_render_extensional`'s
+    output for a single query's generation pass, so a :class:`Condition`'s
+    ``context`` callable can pick whichever body (or neither) its arm shows,
+    without every call site re-deriving both renders by hand.
+    """
+
+    #: The compact rule list ("Every 3 positions write gerbil.").
+    intensional: str
+    #: The enumerated position -> compound-label table ("Position 6: ...").
+    extensional: str
+
+
+@dataclass(frozen=True)
+class Condition:
+    """One information condition: which context it shows, and how.
+
+    Parameters
+    ----------
+    context : Callable[[Contexts], str]
+        Selects this arm's ``positive_info`` body from the query's
+        :class:`Contexts` (e.g. ``lambda c: c.intensional``, or ``lambda c:
+        ""`` for the zero arm).
+    match_tokens_to : Optional[str]
+        The name of another condition whose RENDERED prompt's token count
+        this arm's rendering must exactly match, via whitespace padding (see
+        :func:`~smolbench.evals.tokenization.token_matched_noise_prompt`).
+        ``None`` (the default) renders this arm plainly, with no padding.
+        Must name another entry of the same ``conditions`` mapping that does
+        NOT itself carry a ``match_tokens_to`` -- see
+        :func:`get_periodic_prompts`'s validation for why a padded arm's own
+        count is not a usable pad target.
+    omit_range : bool
+        If ``True``, this arm renders from ``prompter.range_free_template``
+        instead of ``prompter.template``, and the rendered text is verified
+        to contain none of ``RANGE_KEYS``'s values. ``False`` (the default)
+        renders from ``prompter.template`` like every other arm.
+    """
+
+    context: Callable[[Contexts], str]
+    match_tokens_to: Optional[str] = None
+    omit_range: bool = False
+
+
+# The single declaration of this benchmark's information conditions -- every
+# consumer (get_periodic_prompts's default, InductionExperiment.info_types,
+# run_study.INFO_TYPES) derives from THIS mapping rather than restating the
+# arm names, so the four names and their order live in exactly one place.
+# MappingProxyType, not a plain dict: the mapping is a shared, module-level
+# default (get_periodic_prompts's own default argument, plus every importer
+# that reads it directly), and a caller mutating a plain dict in place would
+# silently change every other caller's default underneath it.
+CONDITIONS: Mapping[str, Condition] = MappingProxyType({
+    # The compact rule list. Fewer tokens than extens at any n this benchmark
+    # exercises past the tiny configs the noise-arm precondition excludes
+    # (see the module docstring's "Noise-arm PRECONDITION").
+    "intens": Condition(context=lambda c: c.intensional),
+    # The full position-by-position enumeration. Usually more tokens than
+    # intens; the pairing the noise arm isolates length from.
+    "extens": Condition(context=lambda c: c.extensional),
+    # intens's text, whitespace-padded until the RENDERED prompt hits
+    # extens's token count -- a length-matched control arm, so a gap between
+    # this and intens cannot be explained by prompt length alone.
+    "noise_intens": Condition(context=lambda c: c.intensional, match_tokens_to="extens"),
+    # No context at all, and a range-free question: the chance floor with no
+    # positive information AND no leaked seq_len (see the module docstring's
+    # "Information conditions" section for why the range must be omitted
+    # here specifically).
+    "zero": Condition(context=lambda c: "", omit_range=True),
+})
+
+
+# The query-substitution keys that name the position range ("1 through
+# $seq_len", "positions 1..$seq_len"). An ``omit_range`` condition's RENDERED
+# prompt is verified, at generation time, to contain none of these keys'
+# VALUES -- not merely to have been built from a template that lacks the
+# placeholder -- because a template that still names the key elsewhere (or a
+# caller's mistake) would otherwise ship the same leak this benchmark's
+# ``zero`` condition exists to remove. A query generator that never emits any
+# of these keys in the first place (``tof_membership_query_gen``, whose
+# questions state a POSITION, not a range) is already range-free by
+# construction, and the check is vacuously satisfied for it -- there is
+# nothing to strip, and nothing to verify against.
+RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
+
+
+# ---------------------------------------------------------------------------
 # Core prompt generation
 # ---------------------------------------------------------------------------
+
+def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -> string.Template:
+    """Return the template `name`'s condition renders from.
+
+    ``omit_range`` conditions render from ``prompter.range_free_template``;
+    every other condition renders from ``prompter.template``.
+
+    Raises
+    ------
+    ValueError
+        If `condition` is ``omit_range=True`` and ``prompter.range_free_template``
+        is ``None``. No silent fallback to ``prompter.template`` here: that
+        fallback IS the leak an ``omit_range`` condition exists to avoid (see
+        the module docstring's "Information conditions" section).
+    """
+    if not condition.omit_range:
+        return prompter.template
+    if prompter.range_free_template is None:
+        raise ValueError(
+            f"condition {name!r} has omit_range=True but "
+            "prompter.range_free_template is None: a range-omitting "
+            "condition must be given its own range-free question. Falling "
+            "back to prompter.template would render the ordinary, "
+            "range-stating question -- exactly the leak this condition "
+            "exists to remove."
+        )
+    return prompter.range_free_template
+
+
+def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> None:
+    """Raise if `rendered` reveals any of ``RANGE_KEYS``'s values from `query`.
+
+    Checked against the RENDERED prompt, not the template used to build it:
+    see ``RANGE_KEYS``'s own docstring for why a promise about the template
+    is not enough. A query lacking some ``RANGE_KEYS`` entry entirely (e.g.
+    ``tof_membership_query_gen``'s queries, which carry no ``seq_len``) makes
+    that key's check vacuously true -- there is nothing to leak.
+
+    Raises
+    ------
+    ValueError
+        Naming the offending key and its value, and `name`, when that value's
+        string form appears in `rendered`.
+    """
+    for key in RANGE_KEYS:
+        if key in query and str(query[key]) in rendered:
+            raise ValueError(
+                f"condition {name!r} is omit_range=True (its prompt must "
+                f"never reveal the position range) but its rendered prompt "
+                f"still contains {key}={query[key]!r}: the supplied "
+                "range_free_template leaks the very thing it exists to omit."
+            )
+
 
 def get_periodic_prompts(
     config: PeriodicConfig,
     prompter: Prompter,
     *,
     tokenizer: Tokenizer,
-) -> Iterable[Tuple[str, str, str, Answer]]:
-    """Generate intensional, extensional, and noise-padded intensional prompts.
+    conditions: Mapping[str, Condition] = CONDITIONS,
+) -> Iterable[RenderedQuery]:
+    """Render every information condition of every query, in one loop.
 
-    Yields ``(intens, extens, noise_intens, answer)`` per query, the noise arm
-    padded to the token count of the SAME query's extensional prompt. All three
-    arms render from the prompter's single ``template``, differing only in
-    ``positive_info``. ``tokenizer`` defines the noise arm's token target and
-    must be the model's own -- see the module docstring's tokenizer discipline.
+    For each query :func:`generate_sequence` (via ``prompter.query_gen``)
+    produces, renders every entry of `conditions` against that query's
+    :class:`Contexts` and yields one :class:`~smolbench.induction._common.RenderedQuery`
+    carrying all of them, keyed by condition name in `conditions`'s iteration
+    order. `tokenizer` defines every padded arm's token target and must be
+    the model's own -- see the module docstring's tokenizer discipline.
+
+    Rendering happens in two stages per query: first every condition WITHOUT
+    ``match_tokens_to`` (recording its rendered prompt and
+    ``tokenizer.count(...)`` of it), then every condition WITH one, via
+    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` against
+    the ALREADY-RECORDED target condition's count. A padded condition's own
+    count is its target by construction -- the pad search verifies it hits
+    the target exactly -- so it is not re-tokenized after padding.
 
     Raises
     ------
     ValueError
-        Propagated from :func:`~smolbench.induction._common.token_matched_noise_prompt`
+        Raised once, before any query is rendered, if some condition's
+        ``match_tokens_to`` names a condition absent from `conditions` (names
+        the missing condition), or names a condition that is ITSELF padded
+        (names it): a padded arm's own count is not available to pad
+        against, since it depends on the pad search that has not run yet,
+        and a chain of padded arms has no count to bottom out on.
+    ValueError
+        Propagated from :func:`~smolbench.evals.tokenization.token_matched_noise_prompt`
         when the noise arm's precondition fails for some query -- that query's
         extensional prompt is not STRICTLY longer, in tokens, than its
         intensional one, so no appended pad can reach the target (see the module
@@ -339,36 +527,97 @@ def get_periodic_prompts(
         confound out of collected data.
     ValueError
         Also propagated from ``token_matched_noise_prompt`` (or
-        :func:`~smolbench.induction._common.choose_whitespace_unit`) when no
+        :func:`~smolbench.evals.tokenization.choose_whitespace_unit`) when no
         whitespace pad can hit the target exactly under `tokenizer`.
+    ValueError
+        From :func:`_resolve_arm_template` when an ``omit_range`` condition's
+        ``prompter.range_free_template`` is ``None`` (naming the condition and
+        ``range_free_template``), or from :func:`_verify_no_range_leak` when
+        an ``omit_range`` condition's rendered prompt still reveals a
+        ``RANGE_KEYS`` value (naming the condition and the leaked key).
     """
+    # Validate the mapping ONCE, before any query is rendered: a bad
+    # `match_tokens_to` is a construction-time mistake in `conditions` itself,
+    # not something that should only surface after partial work on the first
+    # query.
+    for name, condition in conditions.items():
+        target = condition.match_tokens_to
+        if target is None:
+            continue
+        if target not in conditions:
+            raise ValueError(
+                f"condition {name!r}: match_tokens_to={target!r} names a "
+                f"condition not present in conditions ({sorted(conditions)})."
+            )
+        if conditions[target].match_tokens_to is not None:
+            raise ValueError(
+                f"condition {name!r}: match_tokens_to target {target!r} is "
+                f"itself padded (match_tokens_to={conditions[target].match_tokens_to!r}). "
+                "A padded arm's own count is not available to pad against "
+                "-- it depends on the very pad search that has not run yet "
+                "-- and a chain of padded arms has no count to bottom out on."
+            )
+
     period_to_label, pos_to_compound = generate_sequence(config)
 
-    intension: str = _render_intensional(period_to_label)
-    extension: str = _render_extensional(pos_to_compound)
+    contexts = Contexts(
+        intensional=_render_intensional(period_to_label),
+        extensional=_render_extensional(pos_to_compound),
+    )
 
     # Probe the pad atom once, not per query: it depends only on the tokenizer.
     unit: str = choose_whitespace_unit(tokenizer)
 
-    for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
-        intens = prompter.template.safe_substitute(
-            build_substitution(query, prompter, intension)
-        )
-        extens = prompter.template.safe_substitute(
-            build_substitution(query, prompter, extension)
-        )
-        # Match per query on the RENDERED prompt (why: token_matched_noise_prompt).
-        # The closure renders exactly as the intensional arm above, so the two
-        # differ only in `positive_info`.
-        noise_intens = token_matched_noise_prompt(
-            context_renderer(prompter, query),
-            intension,
-            tokenizer.count(extens),
-            tokenizer,
-            unit=unit,
-        )
+    # Split once: order-independent of `conditions`'s own iteration order,
+    # since stage membership only depends on `match_tokens_to`, not on where
+    # an entry sits in the mapping.
+    unpadded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is None]
+    padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
 
-        yield intens, extens, noise_intens, answer
+    for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
+        prompts: Dict[str, str] = {}
+        token_counts: Dict[str, int] = {}
+
+        # Stage 1: every condition that renders plainly, with no pad target
+        # to wait on.
+        for name, condition in unpadded:
+            template = _resolve_arm_template(name, condition, prompter)
+            rendered = template.safe_substitute(
+                build_substitution(query, prompter, condition.context(contexts))
+            )
+            if condition.omit_range:
+                _verify_no_range_leak(name, query, rendered)
+            prompts[name] = rendered
+            token_counts[name] = tokenizer.count(rendered)
+
+        # Stage 2: every condition padded to a stage-1 condition's count.
+        # `context_renderer` renders exactly as stage 1 above, so the two
+        # differ only in the appended whitespace pad.
+        for name, condition in padded:
+            template = _resolve_arm_template(name, condition, prompter)
+            target_count = token_counts[condition.match_tokens_to]
+            rendered = token_matched_noise_prompt(
+                context_renderer(prompter, query, template=template),
+                condition.context(contexts),
+                target_count,
+                tokenizer,
+                unit=unit,
+            )
+            if condition.omit_range:
+                _verify_no_range_leak(name, query, rendered)
+            prompts[name] = rendered
+            # NOT tokenizer.count(rendered) again: the pad search already
+            # verified this hits target_count exactly, and the tokenizer ran
+            # during that search regardless of whether anyone reads the count.
+            token_counts[name] = target_count
+
+        # Emit in `conditions`'s own order, not the stage-1/stage-2 split
+        # order used to build the two dicts above.
+        yield RenderedQuery(
+            prompts={name: prompts[name] for name in conditions},
+            token_counts={name: token_counts[name] for name in conditions},
+            answer=answer,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -380,10 +629,21 @@ def get_periodic_quiz(
     prompter: Prompter,
     *,
     tokenizer: Tokenizer,
-) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes: intens, extens, noise."""
+    conditions: Mapping[str, Condition] = CONDITIONS,
+) -> Dict[str, Quiz]:
+    """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes, keyed by condition name.
+
+    Returns a ``dict`` in `conditions`'s iteration order (``CONDITIONS``'s
+    default order: ``intens``, ``extens``, ``noise_intens``, ``zero``), not a
+    positional tuple: a caller reads a specific arm by NAME
+    (``quizzes["extens"]``) rather than by position, so adding, removing or
+    reordering conditions can never silently relabel an existing caller's
+    arms.
+    """
     return quizzes_from_prompts(
-        get_periodic_prompts(config, prompter, tokenizer=tokenizer), ToF
+        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
+        ToF,
+        conditions,
     )
 
 
@@ -392,35 +652,17 @@ def get_periodic_numeric_quiz(
     prompter: Prompter,
     *,
     tokenizer: Tokenizer,
-) -> Tuple[Quiz, Quiz, Quiz]:
-    """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes: intens, extens, noise."""
-    return quizzes_from_prompts(
-        get_periodic_prompts(config, prompter, tokenizer=tokenizer), Numeric
-    )
+    conditions: Mapping[str, Condition] = CONDITIONS,
+) -> Dict[str, Quiz]:
+    """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes, keyed by condition name.
 
-
-def get_periodic_zero_info_numeric_quiz(
-    config: PeriodicConfig,
-    prompter: Prompter,
-) -> Quiz:
-    """Build the zero-information baseline quiz.
-
-    Same numeric queries and answers as :func:`get_periodic_numeric_quiz` but
-    with an EMPTY ``positive_info`` context, so the count cannot be computed from
-    the prompt at all: the chance floor of the positive-information gradient.
-    Returns ONE Quiz, leaving the 3-condition tuple shape untouched.
+    See :func:`get_periodic_quiz`'s docstring for the return shape rationale;
+    this is the same wrapper over ``Numeric`` instead of ``ToF``.
     """
-    period_to_label, pos_to_compound = generate_sequence(config)
-    return tuple(
-        Numeric(
-            prompt=prompter.template.safe_substitute(
-                build_substitution(query, prompter, "")
-            ),
-            answer=answer,
-        )
-        for query, answer in prompter.query_gen(
-            period_to_label, pos_to_compound, config.seed
-        )
+    return quizzes_from_prompts(
+        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
+        Numeric,
+        conditions,
     )
 
 
@@ -524,6 +766,16 @@ if __name__ == "__main__":
         "Answer with a single integer."
     )
 
+    # The `zero` condition's range-free counterpart of `template` above: the
+    # same question with its position-range clause removed, exactly as a real
+    # driver supplies one (see `notebooks/induction/run_study.py`'s
+    # `zero_template`/`RANGE_CLAUSE`). See the module docstring's
+    # "Information conditions" section for why `zero` needs this rather than
+    # `template` itself.
+    range_free_template = string.Template(
+        template.template.replace(" 1 through $seq_len", "")
+    )
+
     cfg = PeriodicConfig(
         n=3,
         labels=["fizz", "buzz", "gerbil"],
@@ -535,19 +787,25 @@ if __name__ == "__main__":
     # discipline.
     demo_tokenizer = TiktokenTokenizer("cl100k_base")
 
-    for intens, extens, noise_intens, answer in get_periodic_prompts(
+    # A real caller supplies BOTH templates (see `Prompter.range_free_template`'s
+    # docstring in `_common.py`), so this demo does too, and renders every
+    # entry of `CONDITIONS` (the default) -- `zero` included.
+    for rendered in get_periodic_prompts(
         cfg,
-        Prompter(template, numeric_count_query_gen),
+        Prompter(template, numeric_count_query_gen, range_free_template=range_free_template),
         tokenizer=demo_tokenizer,
     ):
         print("-- intensional --")
-        print(intens)
+        print(rendered.prompts["intens"])
         print("-- extensional --")
-        print(extens)
-        print("answer:", answer)
+        print(rendered.prompts["extens"])
+        print("-- zero --")
+        print(rendered.prompts["zero"])
+        print("answer:", rendered.answer)
         print(
-            "token counts -- intens:", demo_tokenizer.count(intens),
-            "extens:", demo_tokenizer.count(extens),
-            "noise_intens:", demo_tokenizer.count(noise_intens),
+            "token counts -- intens:", rendered.token_counts["intens"],
+            "extens:", rendered.token_counts["extens"],
+            "noise_intens:", rendered.token_counts["noise_intens"],
+            "zero:", rendered.token_counts["zero"],
         )
         print()

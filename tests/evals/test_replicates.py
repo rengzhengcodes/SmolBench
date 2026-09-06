@@ -140,3 +140,36 @@ def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
     addr = ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model")
     prefixed.store.dump_marks(Marks(model="stub-model", marks=()), addr, RUN_TS)
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
+
+
+def test_forcing_a_seed_supersedes_its_stored_run_first(harness, fake_evaluate,
+                                                       tmp_path, monkeypatch):
+    """A forced re-collection must be what a reader RETURNS, on either backend.
+
+    ``force_seeds`` used to spend real GPU time appending a run that
+    earliest-wins reads never returned (S3) while silently overwriting the
+    previous one with no history (local). Both now go through
+    ``ResultsStore.supersede_all`` BEFORE the replacement is collected, so the
+    re-run is the surviving run and the retired bytes stay on disk under the
+    ``SUPERSEDED-<ts>`` name.
+    """
+    harness.run_replicates("stub-model")
+    intens = tmp_path / "decode_intens"
+    original = (intens / "rep_1.yaml").read_bytes()
+
+    # A re-run that scores differently, so "which run does the reader return"
+    # has an observable answer.
+    monkeypatch.setattr(provider, "evaluate", lambda quiz, model, seed, **kw: Marks(
+        model=model,
+        marks=tuple(Mark(query=q.prompt, answer=q.answer, response="0", score=0)
+                    for q in quiz)))
+    dataclasses.replace(harness, force_seeds=frozenset({1})).run_replicates("stub-model")
+
+    # The live file is the RE-RUN, and the retired one is still on disk.
+    assert Marks.load(intens / "rep_1.yaml").marks[0].score == 0
+    retired = list(intens.glob("rep_1.SUPERSEDED-*.yaml"))
+    assert len(retired) == 1 and retired[0].read_bytes() == original
+    # Seed 2 was not forced, so nothing about it was retired.
+    assert not list(intens.glob("rep_2.SUPERSEDED-*.yaml"))
+    # The analysis-side reader still sees exactly one replicate per seed.
+    assert harness.store.list_seeds(None, "decode", "intens") == [1, 2]

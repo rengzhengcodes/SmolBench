@@ -116,11 +116,14 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 def compliance_census(compliance: dict) -> dict:
     """Measure non-compliance per ``(model, info)`` cell, from an ALREADY-PARSED tree.
 
-    ``compliance: null`` marks a completion that obeyed the output contract;
-    any other value names HOW it failed (the violation label set is owned by
+    `COMPLIANT` marks a completion that obeyed the output contract; any other
+    value names HOW it failed (the violation label set is owned by
     ``smolbench/evals/parsing.py``, plus ``openai_compat``'s ``parser-error``
-    and the pre-field ``not-assessed`` default). Counting the modes, not just
-    the rate, lets the census name a mechanism.
+    and the pre-field ``not-assessed`` default). A row from before `COMPLIANT`
+    was spelled out as its own string instead spells this ``compliance: null``
+    -- `Marks.loads`'s read-compat shim maps that back to `COMPLIANT` at load
+    time, so this function never sees the old spelling. Counting the modes,
+    not just the rate, lets the census name a mechanism.
 
     Touches the FILESYSTEM NOT AT ALL. It consumes `paired_analysis.load_marks`'s
     third return value, so the census and the contrasts read one and the same

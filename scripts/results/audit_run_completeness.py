@@ -205,7 +205,7 @@ def _induction_driver() -> Any:
     ``--local`` deduction path must stay usable with no induction environment
     configured at all, which a module-scope call here would break.
 
-    Loaded BY FILE PATH, exactly as ``scripts/fleet/run_fleet.py`` does at its
+    Loaded BY FILE PATH, exactly as ``scripts/fleet/lane_env.py`` does at its
     own module scope (see that file's "the induction driver import" comment):
     a bare ``import run_study`` is ambiguous once the DEDUCTION study's
     same-named ``notebooks/deduction/run_study.py`` is ALSO importable on
@@ -213,7 +213,7 @@ def _induction_driver() -> Any:
     ``smolbench.deduction.lean.runner``, so both trees are live in one
     process). The module is registered in ``sys.modules`` under a distinct
     name (``"induction_run_study"``) BEFORE ``exec_module`` runs, matching
-    ``run_fleet.py``'s ordering, so any import inside the driver that looks
+    ``lane_env.py``'s ordering, so any import inside the driver that looks
     itself up by that name mid-exec finds a (partially-initialized) module
     object rather than re-triggering this load.
 

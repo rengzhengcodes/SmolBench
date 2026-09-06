@@ -29,6 +29,12 @@ CONSUMERS = [
     SCRIPTS / "results" / "audit_run_completeness.py",
     SCRIPTS / "results" / "snapshot_analysis_data.py",
     NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py",
+    # These two gained an `--s3 [PREFIX]` source and now resolve the default
+    # prefix themselves; they are here for the same import-time reason as the
+    # rest, and they exercise `rows_source.spool_prefix` -- the one copy the
+    # three analysis scripts now share -- rather than a fourth of their own.
+    NOTEBOOKS / "deduction" / "analysis" / "error_bars.py",
+    NOTEBOOKS / "deduction" / "analysis" / "hint_vs_noise.py",
 ]
 
 #: Analysis/audit consumers that READ the published study and therefore need to
@@ -113,9 +119,16 @@ def test_readers_expose_a_spool_prefix_flag(path):
 
 
 def test_power_analysis_duplicate_stays_in_step_with_runner():
-    """`power_analysis.py` runs without smolbench installed, so it carries its own
-    copy of both prefixes (the same constraint `SUPERSEDED_MARKER` is duplicated
-    for). A copy is only safe if something fails when it drifts."""
+    """The analysis scripts' ONE copy of the prefixes stays in step with `runner`.
+
+    These scripts run without smolbench's `runner` importable (their documented
+    environment installs no smolbench beyond a pure-stdlib reach), so the
+    prefixes -- and `SUPERSEDED_MARKER`, duplicated for the same constraint --
+    are copied rather than imported. There used to be a copy per script; there
+    is now one, in `rows_source`, which `power_analysis` re-exports under the
+    names asserted below. A copy is only safe if something fails when it
+    drifts, so this asserts against `runner` itself.
+    """
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(

@@ -42,6 +42,8 @@ import numpy as np
 from scipy.stats import chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
+from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import roster_keys, tag_for
 
 from _power_common import (
     ALPHA,
@@ -52,34 +54,34 @@ from _power_common import (
 )
 
 # ---------------------------------------------------------------------------
-# Experiment design; MODELS and FAMILIES are given verbatim by the study spec.
+# Experiment design: MODELS and FAMILIES are the committed study config
+# (smolbench/evals/study_config.toml, the same file
+# notebooks/induction/run_study.py's own MODELS reads) rendered into ANALYSIS
+# TAGS. The config stores spec keys (EC2_DEPLOY_SPECS keys, also vLLM's
+# --served-model-name); everything below this point in this module -- the
+# contrast builders, per-model result directories -- is keyed on the short
+# analysis tag instead, so both are passed through study_config.tag_for()
+# exactly once, here.
 # ---------------------------------------------------------------------------
-MODELS = (
-    "qwen35_27b", "qwen35_122b", "qwen35_397b",
-    "nemo3_4b", "nemo3_30b", "nemo3_120b",
-    "gemma4_e2b", "gemma4_12b", "gemma4_31b",
-    "glm_flash", "glm_air", "glm_47",
-    "min3_3b", "min3_8b", "min3_14b",
-    "exaone_32b", "exaone_33b", "exaone_236b",
-    "ds_flash", "ds_v31", "ds_pro",
-)
+MODELS = tuple(tag_for(key) for key in roster_keys())
 
-FAMILIES: dict[str, tuple[str, str, str]] = {
-    "qwen35":  ("qwen35_27b", "qwen35_122b", "qwen35_397b"),
-    "nemo3":   ("nemo3_4b", "nemo3_30b", "nemo3_120b"),
-    "gemma4":  ("gemma4_e2b", "gemma4_12b", "gemma4_31b"),
-    "glm":     ("glm_flash", "glm_air", "glm_47"),
-    "min3":    ("min3_3b", "min3_8b", "min3_14b"),
-    "exaone":  ("exaone_32b", "exaone_33b", "exaone_236b"),
-    "ds":      ("ds_flash", "ds_v31", "ds_pro"),
+FAMILIES: dict[str, tuple[str, ...]] = {
+    family: tuple(tag_for(key) for key in rungs)
+    for family, rungs in _study_families().items()
 }
 
-# MODELS (iteration order) and FAMILIES (ladder/omnibus structure) are
-# hand-maintained and must never disagree about which 21 models exist or in what
-# order. That drift guard now lives in `check_design_invariants` near the bottom
-# of this module, alongside the two family-size guards it belongs with: it
-# cannot sit here because that function also calls the contrast builders, which
-# are defined further down. It is a raise, not an assert, and it runs at import.
+# MODELS and FAMILIES used to be a SECOND hand-maintained copy of the
+# 21-model family ladder, its agreement with run_study.py's own MODELS (which
+# models exist, and in what order) enforced only by a runtime guard here. Both
+# now derive from the ONE committed config run_study.py itself reads, so that
+# drift is structurally impossible rather than merely caught. What
+# `check_design_invariants` (near the bottom of this module) still guards is
+# narrower but still real: that THIS module's own MODELS and FAMILIES agree
+# with EACH OTHER (a rendering bug could still desync the tuple from the
+# dict), and the two pre-registered family sizes the contrast builders below
+# are sized against. It cannot sit here because it also calls the contrast
+# builders, which are defined further down. It is a raise, not an assert, and
+# it runs at import.
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
 N_HARMONICS = 9
@@ -911,68 +913,157 @@ def check_design_invariants() -> None:
 check_design_invariants()
 
 
-def main() -> None:
-    """Run the full family-ladder power analysis and print the report.
+def observed_accuracy(
+    outcomes: dict[tuple[str, str], np.ndarray]
+) -> list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]:
+    """Compute observed per-(family, model, info) accuracy from the pilot marks.
 
-    Prints the eight numbered sections marked in the body; the recommended R
-    comes from Tier 2 alone.
+    Parameters
+    ----------
+    outcomes : dict
+        Keyed like `load_outcomes`'s return value.
+
+    Returns
+    -------
+    list of (str, list of (str, list of (str, float)))
+        ``[(family, [(model, [(info, mean_accuracy), ...]), ...]), ...]``, in
+        `FAMILIES` and `INFOS` order.
     """
-    # The pre-registered design invariants (MODELS vs FAMILIES, and both family
-    # sizes against their builders) were already checked by
-    # `check_design_invariants`, which ran at import; nothing to re-check here.
-    outcomes = load_outcomes()
-    rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
-    pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}
+    return [
+        (
+            family,
+            [
+                (
+                    model,
+                    [(info, float(outcomes[(model, info)].mean())) for info in INFOS],
+                )
+                for model in rungs
+            ],
+        )
+        for family, rungs in FAMILIES.items()
+    ]
 
-    # --- 1. Observed accuracy table, grouped by family --------------------
+
+def render_observed_accuracy(
+    data: list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+) -> None:
+    """Print the observed accuracy table `observed_accuracy` returns."""
     print(
         f"Observed accuracy (n=9, one question per harmonic k=1..9; "
         f"{len(MODELS)} models x {len(INFOS)} infos):"
     )
-    for family, rungs in FAMILIES.items():
+    for family, rows in data:
         print(f"  {family}:")
-        for model in rungs:
-            row = "  ".join(
-                f"{info}={outcomes[(model, info)].mean():.3f}" for info in INFOS
-            )
+        for model, info_means in rows:
+            row = "  ".join(f"{info}={mean:.3f}" for info, mean in info_means)
             print(f"    {model:14s} {row}")
     print()
 
-    # --- 2. Design banner ---------------------------------------------------
+
+def design_banner() -> dict:
+    """Gather the Tier 1/2/3 design constants the report's banner states.
+
+    Returns
+    -------
+    dict
+        Keys ``n_families``, ``alpha_omnibus``, ``n_primary``,
+        ``alpha_primary``, ``n_secondary``, ``q_secondary``,
+        ``alpha_secondary``, ``n_sims``, ``seed``, ``shrinkage`` -- the module
+        constants the banner reports, gathered here so `render_design_banner`
+        reads only its argument, never module globals.
+    """
+    return dict(
+        n_families=N_FAMILIES,
+        alpha_omnibus=ALPHA_OMNIBUS,
+        n_primary=N_PRIMARY,
+        alpha_primary=ALPHA_PRIMARY,
+        n_secondary=N_SECONDARY,
+        q_secondary=Q_SECONDARY,
+        alpha_secondary=ALPHA_SECONDARY,
+        n_sims=N_SIMS,
+        seed=SEED,
+        shrinkage=SHRINKAGE,
+    )
+
+
+def render_design_banner(data: dict) -> None:
+    """Print the design banner `design_banner` returns."""
     print(
         "Design: three pre-registered contrast tiers over the 7-family x "
         "3-rung (21-model) scaling grid (see module docstring):"
     )
     print(
-        f"  Tier 1 (family omnibus gates):  {N_FAMILIES} tests, "
-        f"alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f} (Bonferroni)"
+        f"  Tier 1 (family omnibus gates):  {data['n_families']} tests, "
+        f"alpha = {ALPHA}/{data['n_families']} = {data['alpha_omnibus']:.5f} "
+        f"(Bonferroni)"
     )
     print(
-        f"  Tier 2 (PRIMARY pairwise):      {N_PRIMARY} tests, "
-        f"alpha = {ALPHA}/{N_PRIMARY} = {ALPHA_PRIMARY:.6f} (Bonferroni)"
+        f"  Tier 2 (PRIMARY pairwise):      {data['n_primary']} tests, "
+        f"alpha = {ALPHA}/{data['n_primary']} = {data['alpha_primary']:.6f} "
+        f"(Bonferroni)"
     )
     print(
-        f"  Tier 3 (SECONDARY pairwise):    {N_SECONDARY} tests, "
-        f"Benjamini-Hochberg q = {Q_SECONDARY}, sized at the conservative "
-        f"rank-1 threshold alpha = {Q_SECONDARY}/{N_SECONDARY} = "
-        f"{ALPHA_SECONDARY:.6f} (an UPPER BOUND on the R BH will actually need)"
+        f"  Tier 3 (SECONDARY pairwise):    {data['n_secondary']} tests, "
+        f"Benjamini-Hochberg q = {data['q_secondary']}, sized at the "
+        f"conservative rank-1 threshold alpha = {data['q_secondary']}/"
+        f"{data['n_secondary']} = {data['alpha_secondary']:.6f} (an UPPER "
+        f"BOUND on the R BH will actually need)"
     )
-    print(f"{N_SIMS} sims per point, seed={SEED}.")
+    print(f"{data['n_sims']} sims per point, seed={data['seed']}.")
     print(
         f"Assumed rates: per-harmonic outcomes shrunk toward condition mean "
-        f"(c={SHRINKAGE}); 'pooled' column = sensitivity with condition-mean "
-        f"rates only."
+        f"(c={data['shrinkage']}); 'pooled' column = sensitivity with "
+        f"condition-mean rates only."
     )
     print()
 
-    # PRIMARY results drive the recommended R (item 6) and feed the
-    # omnibus-gate report (item 3), so compute them before printing either
-    # -- see `_compute_sizing_results`'s Notes section.
-    primary_contrasts = build_primary_contrasts()
-    primary_results = _compute_sizing_results(
-        primary_contrasts, rates, pooled, ALPHA_PRIMARY
-    )
-    feasible = [n[0.80] for *_, n, _pooled in primary_results if n[0.80] is not None]
+
+def primary_contrasts_table(
+    rates: dict[tuple[str, str], np.ndarray], pooled: dict[tuple[str, str], np.ndarray]
+) -> dict:
+    """Build the Tier 2 PRIMARY sizing table, and the figures later sections need.
+
+    Runs `_compute_sizing_results` over `build_primary_contrasts`'s 210-test
+    family. Also derives `r_star` (the recommended replicate count) and
+    `n_censored`, since both are read from this same sizing pass by the
+    Tier-1 omnibus-gate section and the recommended-R section, and must not be
+    recomputed there (see `_compute_sizing_results`'s Notes section on why
+    this pass is expensive).
+
+    Parameters
+    ----------
+    rates : dict
+        Shrunk-toward-mean rates, keyed like `load_outcomes`'s return value.
+    pooled : dict
+        Condition-mean-only rates, the sensitivity assumption.
+
+    Returns
+    -------
+    dict
+        Keys:
+        results : list of _SizingResult
+            One per contrast, input (build_primary_contrasts) order.
+        r_star : int
+            Max R(80%) over the POWERED contrasts only -- deliberately not
+            the search ceiling, so a handful of unpowered contrasts cannot
+              drag the recommendation to MAX_REPLICATES.
+        n_censored : int
+            PRIMARY contrasts whose R(80%) was never reached.
+        label_w : int
+            Max contrast-name length, for column alignment.
+        n_ladder : int
+            Row index separating the 84 ladder contrasts from the 126
+            info-arm contrasts (`build_primary_contrasts`'s own boundary).
+
+    Raises
+    ------
+    SystemExit
+        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES -- the
+        pilot cannot size R at all, so nothing downstream can be recommended.
+    """
+    contrasts = build_primary_contrasts()
+    results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
+    feasible = [n[0.80] for *_, n, _pooled in results if n[0.80] is not None]
     if not feasible:
         raise SystemExit(
             "No PRIMARY contrast reaches 80% power within "
@@ -983,10 +1074,59 @@ def main() -> None:
     # counted and reported below, not silently dropped -- no affordable R
     # covers them, so they must not drag the answer to the search ceiling.
     r_star = max(feasible)
-    n_censored = len(primary_results) - len(feasible)
-    primary_label_w = max(len(name) for name, *_ in primary_results)
+    n_censored = len(results) - len(feasible)
+    label_w = max(len(name) for name, *_ in results)
+    n_ladder = N_FAMILIES * len(INFOS) * len(list(combinations(range(3), 2)))  # 84
+    return dict(
+        results=results, r_star=r_star, n_censored=n_censored, label_w=label_w,
+        n_ladder=n_ladder,
+    )
 
-    # --- 3. Tier-1 family omnibus gates -------------------------------------
+
+def render_primary_contrasts_table(
+    data: dict, outcomes: dict[tuple[str, str], np.ndarray]
+) -> None:
+    """Print the PRIMARY sizing table `primary_contrasts_table` returns."""
+    print(f"Tier 2 -- PRIMARY pairwise contrasts ({N_PRIMARY} tests):")
+    header = _sizing_header(data["label_w"])
+    print(header)
+    print("-" * len(header))
+    print("-- ladder contrasts (within family, across rungs) --")
+    _print_sizing_rows(data["results"][:data["n_ladder"]], outcomes, data["label_w"])
+    print()
+    print("-- info-arm contrasts (within model, across info types) --")
+    _print_sizing_rows(data["results"][data["n_ladder"]:], outcomes, data["label_w"])
+    print()
+
+
+def omnibus_gates(
+    rates: dict[tuple[str, str], np.ndarray], r_star: int
+) -> list[tuple[str, float, float]]:
+    """Compute Tier 1 family omnibus-gate power at R=`r_star` and at R=1.
+
+    Parameters
+    ----------
+    rates : dict
+        Shrunk-toward-mean rates, keyed like `load_outcomes`'s return value.
+    r_star : int
+        The recommended replicate count (`primary_contrasts_table`'s
+        ``r_star``); the second power point is always the current R=1.
+
+    Returns
+    -------
+    list of (str, float, float)
+        ``(family, power_at_r_star, power_at_1)``, in `FAMILIES` order.
+    """
+    rows = []
+    for family in FAMILIES:
+        power_star = omnibus_power(rates, family, r_star, np.random.default_rng(SEED))
+        power_1 = omnibus_power(rates, family, 1, np.random.default_rng(SEED))
+        rows.append((family, power_star, power_1))
+    return rows
+
+
+def render_omnibus_gates(rows: list[tuple[str, float, float]], r_star: int) -> None:
+    """Print the Tier 1 omnibus-gate section `omnibus_gates` returns."""
     print(
         "Tier 1 -- family omnibus gates: generalized CMH test (df=2) of "
         "whether a family's 3 rungs differ at all, stratified by harmonic x "
@@ -998,55 +1138,93 @@ def main() -> None:
         "ungated ladder contrast risks chasing noise the family-level test "
         "says isn't there."
     )
-    for family in FAMILIES:
-        power_star = omnibus_power(rates, family, r_star, np.random.default_rng(SEED))
-        power_1 = omnibus_power(rates, family, 1, np.random.default_rng(SEED))
+    for family, power_star, power_1 in rows:
         print(
             f"  {family:8s} power(R={r_star}) = {power_star:.3f}   "
             f"power(R=1) = {power_1:.3f}"
         )
     print()
 
-    # --- 4. PRIMARY contrast table ------------------------------------------
-    print(f"Tier 2 -- PRIMARY pairwise contrasts ({N_PRIMARY} tests):")
-    header = _sizing_header(primary_label_w)
-    print(header)
-    print("-" * len(header))
-    print("-- ladder contrasts (within family, across rungs) --")
-    n_ladder = N_FAMILIES * len(INFOS) * len(list(combinations(range(3), 2)))  # 84
-    _print_sizing_rows(primary_results[:n_ladder], outcomes, primary_label_w)
-    print()
-    print("-- info-arm contrasts (within model, across info types) --")
-    _print_sizing_rows(primary_results[n_ladder:], outcomes, primary_label_w)
-    print()
 
-    # --- 5. SECONDARY contrast table ----------------------------------------
-    secondary_contrasts = build_secondary_contrasts()
-    secondary_results = _compute_sizing_results(
-        secondary_contrasts, rates, pooled, ALPHA_SECONDARY
-    )
-    secondary_label_w = max(len(name) for name, *_ in secondary_results)
+def secondary_contrasts_table(
+    rates: dict[tuple[str, str], np.ndarray], pooled: dict[tuple[str, str], np.ndarray]
+) -> dict:
+    """Build the Tier 3 SECONDARY sizing table.
+
+    Parameters
+    ----------
+    rates : dict
+        Shrunk-toward-mean rates, keyed like `load_outcomes`'s return value.
+    pooled : dict
+        Condition-mean-only rates, the sensitivity assumption.
+
+    Returns
+    -------
+    dict
+        Keys ``results`` (list of _SizingResult, `build_secondary_contrasts`
+        order) and ``label_w`` (max contrast-name length, for alignment).
+    """
+    contrasts = build_secondary_contrasts()
+    results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_SECONDARY)
+    label_w = max(len(name) for name, *_ in results)
+    return dict(results=results, label_w=label_w)
+
+
+def render_secondary_contrasts_table(
+    data: dict, outcomes: dict[tuple[str, str], np.ndarray]
+) -> None:
+    """Print the SECONDARY sizing table `secondary_contrasts_table` returns."""
     print(
         f"Tier 3 -- SECONDARY pairwise contrasts ({N_SECONDARY} tests, "
         f"cross-family, size-matched, intens only):"
     )
-    header = _sizing_header(secondary_label_w)
+    header = _sizing_header(data["label_w"])
     print(header)
     print("-" * len(header))
-    _print_sizing_rows(secondary_results, outcomes, secondary_label_w)
+    _print_sizing_rows(data["results"], outcomes, data["label_w"])
     print()
 
-    # --- 6. Recommended R ----------------------------------------------------
+
+def recommended_replicates(r_star: int, n_censored: int) -> dict:
+    """Derive the recommended-R section's figures from PRIMARY sizing.
+
+    Parameters
+    ----------
+    r_star : int
+        Max R(80%) among the powered PRIMARY contrasts
+        (`primary_contrasts_table`'s ``r_star``); not recomputed here.
+    n_censored : int
+        PRIMARY contrasts that never reached 80% power within MAX_REPLICATES
+        (`primary_contrasts_table`'s ``n_censored``); not recomputed here.
+
+    Returns
+    -------
+    dict
+        Keys ``r_star``, ``n_censored``, ``extra_runs`` (additional quiz runs
+        beyond the pilot's single run), ``extra_questions`` (``extra_runs *
+        N_HARMONICS``).
+    """
+    return dict(
+        r_star=r_star,
+        n_censored=n_censored,
+        extra_runs=r_star - 1,
+        extra_questions=(r_star - 1) * N_HARMONICS,
+    )
+
+
+def render_recommended_replicates(data: dict) -> None:
+    """Print the recommended-R section `recommended_replicates` returns."""
     print(
         f"Recommended replicates per condition (max feasible PRIMARY R at "
-        f"80%): {r_star}"
+        f"80%): {data['r_star']}"
     )
     print(
-        f"  = {r_star - 1} additional quiz runs ({(r_star - 1) * N_HARMONICS} "
-        f"more questions) per condition beyond the existing pilot run."
+        f"  = {data['extra_runs']} additional quiz runs "
+        f"({data['extra_questions']} more questions) per condition beyond "
+        f"the existing pilot run."
     )
     print(
-        f"  ({n_censored} PRIMARY contrasts never reached 80% within "
+        f"  ({data['n_censored']} PRIMARY contrasts never reached 80% within "
         f"R <= {MAX_REPLICATES} and are excluded from this max.)"
     )
     print(
@@ -1061,17 +1239,53 @@ def main() -> None:
     )
     print()
 
-    # --- 7. Fisher cross-check + TOST equivalence (PRIMARY only) -----------
-    print(
-        f"Cross-check at R={r_star} (pooled two-sided Fisher exact, PRIMARY "
-        f"alpha={ALPHA_PRIMARY:.6f}):"
-    )
+
+def equivalence_checks(
+    primary_results: list[_SizingResult],
+    rates: dict[tuple[str, str], np.ndarray],
+    r_star: int,
+) -> dict:
+    """Compute the Fisher cross-check and TOST equivalence sizing at R=`r_star`.
+
+    Parameters
+    ----------
+    primary_results : list of _SizingResult
+        `primary_contrasts_table`'s ``results``, input (contrast-build) order.
+    rates : dict
+        Shrunk-toward-mean rates, keyed like `load_outcomes`'s return value.
+    r_star : int
+        The recommended replicate count.
+
+    Returns
+    -------
+    dict
+        Keys:
+        fisher : list of (str, float)
+            ``(name, fisher_power)``, for every PRIMARY contrast whose
+            R(80%) was reached, input order.
+        near_ties : list of (str, tuple, tuple)
+            ``(name, key_a, key_b)`` for contrasts whose R(80%) was censored
+            or exceeded 20 -- this report's "near-tie" grouping cut.
+        deltas : tuple of float
+            The TOST equivalence margins probed.
+        alpha_eq : float or None
+            Bonferroni-corrected one-sided alpha over `near_ties`; `None`
+            when `near_ties` is empty (nothing to correct, and dividing by
+            zero near-ties would raise).
+        table : list of (str, list of int or None)
+            ``(name, [r_eq for each delta])``, `near_ties` order; an entry is
+            `None` where equivalence was never reached within MAX_REPLICATES.
+            Empty when `near_ties` is empty.
+    """
+    fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
         if needed[0.80] is None:
             continue
         rng = np.random.default_rng(SEED)
-        p_fisher = fisher_check(rates[key_a], rates[key_b], r_star, rng, alpha=ALPHA_PRIMARY)
-        print(f"  {name:{primary_label_w}s} fisher power = {p_fisher:.3f}")
+        p_fisher = fisher_check(
+            rates[key_a], rates[key_b], r_star, rng, alpha=ALPHA_PRIMARY
+        )
+        fisher.append((name, p_fisher))
 
     # Equivalence (TOST) sizing for near-tie PRIMARY contrasts: assume a TRUE
     # tie and ask how many replicates show the difference within +/-delta at
@@ -1088,51 +1302,136 @@ def main() -> None:
         for name, key_a, key_b, needed, _pooled in primary_results
         if needed[0.80] is None or needed[0.80] > 20
     ]
-    print()
+    deltas = (0.10, 0.15, 0.20)
     if not near_ties:
         # With 210 contrasts over genuinely different model sizes, "zero
         # near-ties" is plausible, and ALPHA / len(near_ties) would then raise
         # ZeroDivisionError.
+        return dict(fisher=fisher, near_ties=near_ties, deltas=deltas, alpha_eq=None,
+                    table=[])
+
+    # The equivalence tests form their own planned family; Bonferroni-correct
+    # the per-one-sided-test alpha across it.
+    alpha_eq = ALPHA / len(near_ties)
+    table = []
+    for name, key_a, key_b in near_ties:
+        cells = []
+        for delta in deltas:
+            rng = np.random.default_rng(SEED)
+            r_eq = equivalence_replicates(
+                rates[key_a], rates[key_b], delta, rng, alpha=alpha_eq
+            )
+            cells.append(r_eq)
+        table.append((name, cells))
+    return dict(fisher=fisher, near_ties=near_ties, deltas=deltas, alpha_eq=alpha_eq,
+                table=table)
+
+
+def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
+    """Print the Fisher cross-check and TOST sections `equivalence_checks` returns."""
+    print(
+        f"Cross-check at R={r_star} (pooled two-sided Fisher exact, PRIMARY "
+        f"alpha={ALPHA_PRIMARY:.6f}):"
+    )
+    for name, p_fisher in data["fisher"]:
+        print(f"  {name:{label_w}s} fisher power = {p_fisher:.3f}")
+
+    near_ties = data["near_ties"]
+    print()
+    if not near_ties:
         print(
             "No near-tie PRIMARY contrasts (all reached 80% power within "
             "R(80%) <= 20) -- skipping TOST equivalence sizing."
         )
-    else:
-        deltas = (0.10, 0.15, 0.20)
-        # The equivalence tests form their own planned family; Bonferroni-
-        # correct the per-one-sided-test alpha across it.
-        alpha_eq = ALPHA / len(near_ties)
-        print(
-            "Equivalence (TOST) sizing for near-tie PRIMARY contrasts, "
-            f"assuming a true tie at the contrasts' mean rate (alpha="
-            f"{ALPHA}/{len(near_ties)} = {alpha_eq:.4f} per one-sided test, "
-            f"Bonferroni over the {len(near_ties)}-test family; 80% power):"
-        )
-        eq_header = f"{'contrast':{primary_label_w}s} " + " ".join(
-            f"{f'R(d={d:.2f})':>10s}" for d in deltas
-        )
-        print(eq_header)
-        print("-" * len(eq_header))
-        for name, key_a, key_b in near_ties:
-            cells = []
-            for delta in deltas:
-                rng = np.random.default_rng(SEED)
-                r_eq = equivalence_replicates(
-                    rates[key_a], rates[key_b], delta, rng, alpha=alpha_eq
-                )
-                cells.append(f">{MAX_REPLICATES}" if r_eq is None else str(r_eq))
-            print(f"{name:{primary_label_w}s} " + " ".join(f"{c:>10s}" for c in cells))
+        return
+    deltas = data["deltas"]
+    alpha_eq = data["alpha_eq"]
+    print(
+        "Equivalence (TOST) sizing for near-tie PRIMARY contrasts, "
+        f"assuming a true tie at the contrasts' mean rate (alpha="
+        f"{ALPHA}/{len(near_ties)} = {alpha_eq:.4f} per one-sided test, "
+        f"Bonferroni over the {len(near_ties)}-test family; 80% power):"
+    )
+    eq_header = f"{'contrast':{label_w}s} " + " ".join(
+        f"{f'R(d={d:.2f})':>10s}" for d in deltas
+    )
+    print(eq_header)
+    print("-" * len(eq_header))
+    for name, cells in data["table"]:
+        formatted = [f">{MAX_REPLICATES}" if c is None else str(c) for c in cells]
+        print(f"{name:{label_w}s} " + " ".join(f"{c:>10s}" for c in formatted))
 
-    # --- 8. Model x info-type interaction diagnostic -------------------------
+
+def interaction_diagnostic(
+    rates: dict[tuple[str, str], np.ndarray], r_star: int
+) -> tuple[float, float]:
+    """Compute the model x info-type interaction diagnostic's power at `r_star` and R=1.
+
+    Parameters
+    ----------
+    rates : dict
+        Shrunk-toward-mean rates, keyed like `load_outcomes`'s return value.
+    r_star : int
+        The recommended replicate count.
+
+    Returns
+    -------
+    tuple of float
+        ``(power_at_r_star, power_at_1)``.
+    """
+    return omnibus_interaction_power(rates, r_star), omnibus_interaction_power(rates, 1)
+
+
+def render_interaction_diagnostic(data: tuple[float, float], r_star: int) -> None:
+    """Print the interaction diagnostic `interaction_diagnostic` returns."""
+    p_omni, p_omni_1 = data
     print()
-    p_omni = omnibus_interaction_power(rates, r_star)
     print(
         f"Omnibus model x info-type interaction (logit LR test, harmonic "
         f"fixed effects, alpha={ALPHA}, df=60; design-level diagnostic, not "
         f"a gate) at R={r_star}: power = {p_omni:.3f}"
     )
-    p_omni_1 = omnibus_interaction_power(rates, 1)
     print(f"  ... at the current R=1: power = {p_omni_1:.3f}")
+
+
+def main() -> None:
+    """Run the full family-ladder power analysis and print the report.
+
+    Computes each of the eight numbered sections via its data function, then
+    prints it through its ``render_*`` twin, in the sections' original order.
+    Sections 3 and 4 both read PRIMARY sizing (`primary_contrasts_table`), so
+    it is computed once and passed to both -- see that function's docstring.
+    """
+    # The pre-registered design invariants (MODELS vs FAMILIES, and both family
+    # sizes against their builders) were already checked by
+    # `check_design_invariants`, which ran at import; nothing to re-check here.
+    outcomes = load_outcomes()
+    rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
+    pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}
+
+    render_observed_accuracy(observed_accuracy(outcomes))  # 1
+    render_design_banner(design_banner())  # 2
+
+    # PRIMARY results drive the recommended R (item 6) and feed the
+    # omnibus-gate report (item 3), so compute them before printing either
+    # -- see `primary_contrasts_table`'s and `_compute_sizing_results`'s Notes.
+    primary = primary_contrasts_table(rates, pooled)
+    r_star, n_censored = primary["r_star"], primary["n_censored"]
+
+    render_omnibus_gates(omnibus_gates(rates, r_star), r_star)  # 3
+    render_primary_contrasts_table(primary, outcomes)  # 4
+
+    secondary = secondary_contrasts_table(rates, pooled)
+    render_secondary_contrasts_table(secondary, outcomes)  # 5
+
+    render_recommended_replicates(recommended_replicates(r_star, n_censored))  # 6
+
+    render_equivalence_checks(
+        equivalence_checks(primary["results"], rates, r_star),
+        primary["label_w"], r_star,
+    )  # 7
+
+    render_interaction_diagnostic(interaction_diagnostic(rates, r_star), r_star)  # 8
 
 
 if __name__ == "__main__":

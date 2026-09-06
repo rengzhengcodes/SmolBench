@@ -3,33 +3,29 @@
 The teardown half of the fleet lifecycle: ``run_fleet.py --phase induction``
 never terminates anything, on purpose, and prints a reminder pointing here. The
 listing itself is `fleet_status.py`, imported rather than reimplemented. The
-default is READ-ONLY: nothing is terminated and no state file deleted without
-an explicit ``--terminate``.
+default is READ-ONLY: nothing is terminated without an explicit
+``--terminate``.
 
-Because `lane` comes from an AWS tag value this script does not control, two
-safety invariants are re-checked in code at the point of action -- see
-`terminate_fleet` (tag prefix) and `delete_state_files` (resolved path).
+This script DELETES NO LOCAL FILE; it terminates instances, and that is all it
+does. The per-lane EC2 state file belongs to
+``smolbench/evals/providers/ec2.py``'s own provisioning mechanism, which
+recovers a box from its ``smolbench:experiment`` tag when that file is
+missing. Unlinking it therefore never reclaimed anything and could not have --
+terminating the instance is what stops the billing.
+
+That leaves ONE safety invariant re-checked in code at the point of action:
+`terminate_fleet` skips any row whose ``experiment_tag`` does not start with
+`fleet_status.SCALING_TAG_PREFIX`. It is re-checked rather than trusted
+because that tag is an AWS tag value this script does not control.
 """
 
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import functools
 import importlib.util
 from pathlib import Path
 from typing import Any, Optional
-
-REPO_ROOT: Path = Path(__file__).resolve().parents[2]
-#: Only files matching this glob are ever unlinked (see `delete_state_files`).
-#: `scripts/fleet/run_shards.py` deliberately uses a DIFFERENT
-#: ``.ec2_state_induction-*`` naming scheme for its shard boxes (see that
-#: file's ``state_file_for``, "Why not the fleet scheme") -- this is NOT
-#: drift, it is intentional: those boxes are tagged outside this module's
-#: ``scaling-`` prefix by default, so `fleet_status.fleet_rows` never lists
-#: them and this glob has no reason to also match their state files;
-#: run_shards.py terminates its own boxes directly instead.
-STATE_FILE_GLOB = ".ec2_state_scaling_*.json"
 
 
 @functools.lru_cache(maxsize=1)
@@ -44,15 +40,6 @@ def _fleet_status():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def state_file_path(lane: str) -> Path:
-    """Return the UNRESOLVED ``REPO_ROOT/.ec2_state_scaling_{lane}.json`` path.
-
-    Nothing is checked here, and `lane` is untrusted, so a caller that deletes
-    this path MUST ``.resolve()``-verify it first (see `delete_state_files`).
-    """
-    return REPO_ROOT / f".ec2_state_scaling_{lane}.json"
 
 
 def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -> list[dict]:
@@ -93,34 +80,6 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     return terminated
 
 
-def delete_state_files(rows: list[dict]) -> list[Path]:
-    """Delete each row's local EC2 state file if present.
-
-    Returns
-    -------
-    list[Path]
-        The resolved paths actually unlinked.
-
-    Notes
-    -----
-    `state_file_path(row["lane"])` is ``.resolve()``d and unlinked only when its
-    parent is `REPO_ROOT` (also resolved) AND its basename matches
-    `STATE_FILE_GLOB`, so a crafted ``scaling-../../secrets`` tag cannot walk
-    outside the repo.
-    """
-    deleted: list[Path] = []
-    repo_root_resolved = REPO_ROOT.resolve()
-    for row in rows:
-        lane = row.get("lane", "")
-        resolved = state_file_path(lane).resolve()
-        if resolved.parent != repo_root_resolved or not fnmatch.fnmatch(resolved.name, STATE_FILE_GLOB):
-            continue  # should be unreachable -- see docstring Notes
-        if resolved.exists():
-            resolved.unlink()
-            deleted.append(resolved)
-    return deleted
-
-
 def main(argv: Optional[list[str]] = None) -> int:
     """Run the CLI: print the fleet listing, and with ``--terminate`` kill it.
 
@@ -128,15 +87,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     -------
     int
         ``0`` for a read-only listing, or after a confirmed (or ``--yes``)
-        termination -- `terminate_fleet`, then `delete_state_files`; ``1`` if
-        the ``--terminate`` confirmation was declined.
+        `terminate_fleet` call; ``1`` if the ``--terminate`` confirmation was
+        declined.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."
     )
     parser.add_argument(
         "--terminate", action="store_true",
-        help="Terminate every enumerated instance and delete its local state file.",
+        help="Terminate every enumerated instance. No local file is deleted.",
     )
     parser.add_argument(
         "--yes", action="store_true",
@@ -164,8 +123,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 1
 
     terminated = terminate_fleet(rows)
-    deleted = delete_state_files(terminated)
-    print(f"Terminated {len(terminated)} instance(s); deleted {len(deleted)} state file(s).")
+    print(f"Terminated {len(terminated)} instance(s).")
     return 0
 
 

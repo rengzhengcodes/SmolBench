@@ -1,0 +1,179 @@
+# Sweep knobs for the DEDUCTION side of the family-ladder scaling study.
+#
+# WHAT THIS IS: the values `notebooks/deduction/run_study.py`'s `build_config`
+# hands to `smolbench.deduction.lean.runner.sweep` as its `config` mapping.
+# `build_config` loads this file through `runner.load_sweep_config` (the same
+# loader `python -m smolbench.deduction.lean.cli run-sweep --config` uses, so
+# this is one schema with one reader, not two), then overlays this lane's
+# identity on a deep copy of it.
+#
+# PROVENANCE: `load_sweep_config` also returns this file's SHA-256, over its
+# RAW BYTES -- comments included -- and `build_config` stamps that digest into
+# the config it returns, as `sweep_config: {path, sha256}`. `runner.sweep`
+# writes the whole config verbatim into each run's `manifest.json`, so an
+# ARCHIVED run records which knob values it ran under, instead of that being
+# recoverable only by diffing driver source at the matching commit.
+#
+# `build_config` stamps a SECOND provenance key of the same shape,
+# `decontam_config: {path, sha256}`, over
+# `smolbench/deduction/lean/decontam_config.toml`. That one is NOT supplied by
+# this file and must not be added here: it is computed by the driver from a
+# file the package ships, whose premise stoplist decides what the `hint:3` and
+# `hint:4` rungs contain.
+#
+# WHAT LIVES HERE: only knobs that are IDENTICAL across all 21 lanes. That is
+# what lets a next-tactic success-rate difference point at the model rather
+# than at a changed sweep.
+#
+# WHAT IS DELIBERATELY ABSENT, and is REFUSED with a `SystemExit` naming it if
+# added here: `run_name`, `seed`, `models`, `cell_whitelist`, and
+# `theorems.seed` / `theorems.shard`. Those six are per-lane IDENTITY, not
+# knobs: `build_config` resolves each at call time from `LEAN_RUN_NAME`,
+# `LEAN_SEED`, `LEAN_MODEL`, `LEAN_CELL_WHITELIST` and `LEAN_SHARD`, and
+# overlays it on top of whatever this file says. A value written here for any
+# of them would therefore be silently overwritten and have no effect at all --
+# a maintainer who set `seed: 7` here would get seed 0 and no warning -- so the
+# driver refuses the file rather than accept a line that does nothing.
+#
+# `build_config` also refuses this file if any key below is MISSING, naming
+# every one it could not find. A missing key would otherwise fall through to
+# `runner.sweep`'s own library default, which is precisely the silent drift
+# these explicit values exist to prevent (see `runner.DEFAULT_DOJO_TIMEOUT`'s
+# Design comment, which spells out that this study's explicit
+# `dojo_timeout: 300` is what keeps it pinned independently of that default).
+#
+# Every value below carries a one-line rationale comment: anywhere a real
+# derivation could not be found in the repo, the comment says so explicitly
+# rather than inventing one.
+
+# Matches runner.sweep's OWN library default
+# (`config.get("temperature", 0.7)`) and cli.py's `--temperature`
+# default -- pinned here as an explicit literal so a future change to
+# that library default cannot silently drift this study's decoding.
+temperature: 0.7
+
+# No recorded derivation found for this specific number. Real
+# cross-study discrepancy: notebooks/induction/run_study.py's
+# completion_budget() computes a PER-MODEL budget (floor 48,000,
+# cap up to CONTEXT_LIMIT=131,072 tokens) rather than a fixed
+# literal, and typically lands well above this value. Carried from
+# this study's first sweep, not re-derived against the current
+# roster -- flagged here rather than silently accepted.
+max_tokens: 32768
+
+# runner.py's own module docstring: ChatClient's 120s HTTP default
+# truncates long CoT mid-stream. 1800s is that module's own
+# documented default (`request_timeout: int = 1800` at
+# `run_cell`/`sweep`); made explicit here rather than relied on
+# implicitly, so a future change to that default cannot silently
+# retime this study.
+request_timeout: 1800
+
+# Tighter than runner.sweep's OWN default of 4 (module docstring:
+# "so a wedged endpoint cannot spin forever inside an open Dojo
+# session"). No recorded reason for 2 specifically here -- plausibly
+# tighter because a stuck retry holds a live, billable Dojo session
+# open for its whole duration, but that connection is not written
+# down anywhere; carried from the first sweep, not re-derived.
+max_retries: 2
+
+# Deliberately tighter than the library-wide fallback
+# `runner.DEFAULT_DOJO_TIMEOUT = 600`, which is what `run_cell`,
+# `cli --timeout` and `sweep`'s own default all resolve to: this
+# explicit 300 is what keeps THIS production sweep's timeout pinned
+# independently of wherever that shared default moves.
+dojo_timeout: 300
+
+# Fans out generation calls per (theorem, k) instead of serializing
+# them -- see _run_cells_at_step_concurrent's docstring: gen
+# (~1.3-3s/cell) dominates verify (~0.4s/cell), so this is where the
+# wall-clock win is.
+concurrent_gen: true
+
+# Matches context.is_trivial_rung's own stated purpose ("keeps
+# per-rung pass rates apples-to-apples: every counted cell saw a real
+# context expansion") -- without it, a trivial rung's guaranteed-
+# identical output would pad the denominator with cells that measure
+# nothing new.
+skip_trivial: true
+
+# Scores the final tactic step only -- the deepest, hardest proof
+# state, reached after every earlier tactic has already been applied --
+# rather than every intermediate step, which would dilute the sweep
+# with far easier early-proof cells.
+k:
+  strategy: last
+
+# This study collects R=1 by design:
+# notebooks/deduction/analysis/{power_analysis,error_bars}.py both
+# hard-code that assumption today (reading only `replicate_idx == 0`
+# rows and DISCARDING anything past it) and compute a
+# `needed_replicates` figure for a possible future expansion, rather
+# than analysing more than one draw per cell right now.
+n_replicates: 1
+
+# Reproduces the ORIGINAL published study's shape verbatim:
+# runner.py's own EXPECTED_THEOREMS/EXPECTED_CELLS comment records
+# "300 theorems x 4 rungs ... -> 944 cells" for exactly this rung
+# list. Changing it would break comparability with that baseline.
+rungs:
+  - stepk:1
+  - hint:2
+  - noise:3
+  - hint:3
+
+# Parallel theorem-level workers, each opening its OWN Dojo session
+# (an independent Lean process) -- real parallelism for
+# verification, unlike max_concurrency below. No recorded derivation
+# for 4 specifically; runner.sweep's own default is 1 (serial).
+theorem_workers: 4
+
+# Bounds each (theorem, k) step's own ThreadPoolExecutor (max_workers)
+# for concurrent generation calls -- how many of that step's pending
+# (rung, model, replicate) cells fire at once (4 rungs x 1 model x 1
+# replicate = 4 pending per step here; this cap mostly matters
+# stacked with theorem_workers above, up to 4 x 8 = 32 requests in
+# flight sweep-wide). BUT: smolbench/evals/providers/ec2.py
+# unconditionally appends DETERMINISM_ARGS' `--max-num-seqs 1` to
+# EVERY EC2_DEPLOY_SPECS entry (ec2.py, the `_spec["vllm_args"] =
+# _args + DETERMINISM_ARGS` loop), so the served vLLM box itself
+# processes exactly ONE sequence at a time regardless of this value
+# -- concurrency here hides HTTP round-trip latency between calls,
+# it does not achieve real server-side batching. No recorded
+# derivation for 8 specifically; runner.sweep's own default is 12.
+max_concurrency: 8
+
+# kind/split default to "random"/"val" -- the new post-cutoff corpus has a
+# single `random` split family, unlike LeanDojo Benchmark 4's `random`/
+# `novel_premises` pair, but LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT stay
+# overridable for whatever split families the built corpus ends up with.
+# require_postcutoff makes runner._select_theorems re-enforce the same
+# gate build_config already ran, at the point the pool is actually
+# sampled (see that function's docstring for why both checks exist).
+#
+# `seed` and `shard` are absent from this block on purpose -- see "WHAT IS
+# DELIBERATELY ABSENT" in this file's header.
+theorems:
+  # Quality filter, not a data-leak concern: only theorems whose
+  # ground-truth proof is CONFIRMED to replay (corpus.iter_replay_passing
+  # membership) enter the pool at all -- excludes rows whose recorded
+  # tactic trace does not actually check.
+  source: replay_passing
+  # See the paragraph above this block. This is the DEFAULT that a
+  # LEAN_CORPUS_KIND override replaces, and that a blank override falls
+  # back to.
+  kind: random
+  # See the paragraph above this block. This is the DEFAULT that a
+  # LEAN_CORPUS_SPLIT override replaces, and that a blank override falls
+  # back to.
+  split: val
+  # Matches notebooks/deduction/pinned_theorems.json's own `count` (300)
+  # and runner.EXPECTED_THEOREMS: this reproduces the ORIGINAL published
+  # study's theorem-pool SIZE. It is not, once require_postcutoff draws
+  # from the new corpus, the same theorem IDENTITIES as that study.
+  limit: 300
+  # Re-enforced at sweep time by runner._select_theorems -- see the
+  # "Post-cutoff corpus gate" section of run_study.build_config's docstring
+  # for why this check also needs to run again there, not just in the
+  # driver.
+  require_postcutoff: true

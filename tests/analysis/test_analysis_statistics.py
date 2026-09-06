@@ -45,6 +45,28 @@ def multiplicity_sim(power_analysis):
 
 
 # ===========================================================================
+# The roster is read from the committed study config, not re-declared here
+# ===========================================================================
+
+def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
+    """MODELS/FAMILIES are the config's roster rendered into ANALYSIS TAGS.
+
+    They used to be a second hand-maintained copy of the 21-model ladder with
+    nothing pinning them to the driver's; the tags and the family grouping now
+    have one owner (``smolbench/evals/study_config.toml``).
+    """
+    from smolbench.evals import study_config
+
+    assert power_analysis.MODELS == tuple(
+        study_config.tag_for(key) for key in study_config.roster_keys()
+    )
+    assert power_analysis.FAMILIES == {
+        family: tuple(study_config.tag_for(key) for key in rungs)
+        for family, rungs in study_config.families().items()
+    }
+
+
+# ===========================================================================
 # 12-25 -- Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
 # ===========================================================================
 
@@ -541,3 +563,171 @@ def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis):
     assert default < 1000, default
     source = inspect.getsource(power_analysis.omnibus_interaction_power)
     assert str(default) in source or "n_sims" in source
+
+
+# ===========================================================================
+# The simulations that certify the tests must model the clustering the study
+# assumes: an arm-specific per-replicate latent shared by a replicate's items
+# ===========================================================================
+
+def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim):
+    """`icc=0.0` must draw exactly what the un-clustered simulation drew.
+
+    Every PART 2 figure already published was produced without clustering, so
+    the new parameter must be inert at 0 -- including in RNG CALL ORDER, which
+    is what makes the icc=0 rows comparable to the old ones rather than merely
+    similar.
+    """
+    def draw(**kwargs):
+        return multiplicity_sim.paired_marks(
+            0.9, 0.8, 0.5, 64, 30, np.random.default_rng(7), **kwargs)
+
+    plain_a, plain_b = draw()
+    zero_a, zero_b = draw(icc=0.0)
+    assert np.array_equal(plain_a, zero_a)
+    assert np.array_equal(plain_b, zero_b)
+
+
+def within_replicate_phi(marks) -> float:
+    """Mean correlation between two items of the SAME replicate.
+
+    The clustering the study's design effect measures: with `K_HARM` items per
+    replicate, a positive value means a replicate's items rise and fall
+    together instead of being independent draws.
+    """
+    x = marks.reshape(-1, marks.shape[-1]).astype(float)
+    mu = x.mean()
+    centered = x - mu
+    row_sums = centered.sum(axis=1)
+    k = x.shape[1]
+    cross = ((row_sums ** 2) - (centered ** 2).sum(axis=1)).mean() / (k * (k - 1))
+    return float(cross / (mu * (1 - mu)))
+
+
+def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
+        multiplicity_sim):
+    """The latent is a within-REPLICATE effect, not a change of difficulty.
+
+    Marginal success rates must stay at `p_a`/`p_b` -- otherwise an icc row
+    would be comparing a different task, not the same task with clustering.
+    """
+    args = (0.9, 0.8, 0.5, 400, 30)
+    flat_a, flat_b = multiplicity_sim.paired_marks(
+        *args, np.random.default_rng(11), icc=0.0)
+    clustered_a, clustered_b = multiplicity_sim.paired_marks(
+        *args, np.random.default_rng(11), icc=0.4)
+
+    assert abs(within_replicate_phi(flat_a)) < 0.02
+    assert within_replicate_phi(clustered_a) > 0.10
+    for flat, clustered, rate in ((flat_a, clustered_a, 0.9), (flat_b, clustered_b, 0.8)):
+        assert abs(flat.mean() - rate) < 0.01
+        assert abs(clustered.mean() - rate) < 0.01
+
+
+def test_the_replicate_latent_is_arm_specific_not_shared(multiplicity_sim):
+    """Each ARM draws its own per-replicate offset (PART 3's "independent"
+    variant), so at rho=0 the two arms' replicate means stay uncorrelated.
+
+    A single latent shared by both arms would couple them through the back
+    door and quietly inflate the paired test's apparent advantage -- the
+    opposite of the effect this parameter exists to expose.
+    """
+    marks_a, marks_b = multiplicity_sim.paired_marks(
+        0.9, 0.9, 0.0, 400, 30, np.random.default_rng(13), icc=0.4)
+    per_replicate_a = marks_a.mean(axis=2).ravel()
+    per_replicate_b = marks_b.mean(axis=2).ravel()
+    assert abs(np.corrcoef(per_replicate_a, per_replicate_b)[0, 1]) < 0.05
+    # ... while each arm on its own really is clustered at this icc.
+    assert within_replicate_phi(marks_a) > 0.10
+
+
+def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_sim):
+    """The finding PART 2's null-calibration row has to be able to show.
+
+    Item-level McNemar treats a replicate's 9 marks as 9 independent pairs, so
+    a per-replicate latent inflates its Type I error above nominal. The row is
+    only informative if the simulation can produce that inflation at all.
+    """
+    def type_i(icc):
+        _unpaired, mcnemar, _phi, _agree = multiplicity_sim._paired_powers(
+            0.90, 0.0, 0.5, multiplicity_sim.R_DEFAULT, 4000,
+            np.random.default_rng(17), stats=False, icc=icc)
+        return mcnemar
+
+    flat, clustered = type_i(0.0), type_i(0.4)
+    assert clustered > flat
+    assert clustered > multiplicity_sim.ALPHA_BONF
+
+
+def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
+        multiplicity_sim):
+    """One table per icc, with the un-clustered results still at the top level.
+
+    Readers of the checkpoint JSON (and the notebook) index
+    ``OUT["part2"]["rows"]``/``["nulls"]``; those keep meaning exactly what
+    they meant -- the icc=0 run -- while the clustered runs arrive under a new
+    ``"icc"`` key rather than by changing the shape underneath a reader.
+    """
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        multiplicity_sim.part2(np.random.default_rng(2), n_sims=200, search_sims=100)
+    out = multiplicity_sim.OUT["part2"]
+
+    assert set(out["icc"]) == {"0.0", "0.2", "0.4"}
+    for icc_key, block in out["icc"].items():
+        assert block["rows"] and "nulls" in block
+        # Every row records the icc it was simulated at, so a reader of the
+        # flattened rows never has to infer it from which block it came from.
+        assert {row["icc"] for row in block["rows"]} == {float(icc_key)}
+    # Backward compatibility: the top level IS the icc=0 run.
+    assert out["rows"] == out["icc"]["0.0"]["rows"]
+    assert out["nulls"] == out["icc"]["0.0"]["nulls"]
+    # One printed table per icc, each labelled with the icc it used.
+    printed = buf.getvalue()
+    for icc in ("0.0", "0.2", "0.4"):
+        assert f"icc={icc}" in printed, printed[:400]
+
+
+def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
+        multiplicity_sim):
+    """A reader must be able to tell WHICH icc row describes this study.
+
+    The docstring has to name the study's measured design effect (read from
+    ``paired_analysis.design_effect`` when a results tree exists) or say
+    plainly that it is unknown -- not leave the three icc rows uninterpretable.
+    """
+    doc = multiplicity_sim.__doc__
+    assert "design effect" in doc.lower()
+    assert "icc" in doc.lower()
+    assert "design_effect" in doc
+    # Prose alone is not the contract: the module must actually be able to
+    # READ the study's measured design effect, and to say "unknown" when there
+    # is no results tree to read it from (this repo ships none).
+    assert multiplicity_sim.study_design_effect() is None
+
+
+def test_each_icc_block_reports_the_design_effect_it_produces(multiplicity_sim):
+    """The bridge from a simulated icc to the study's own measured number.
+
+    An icc is a latent-scale knob; ``paired_analysis.design_effect`` measures a
+    variance RATIO on the binary per-seed differences. Relating the two by the
+    textbook ``1 + (k-1)*icc`` would compare the wrong scales, so each block
+    reports the design effect its OWN marks produce, under the same estimator
+    the report uses. That is what lets a reader with a measured design effect
+    pick the row that describes their study.
+    """
+    import contextlib
+    import io
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        multiplicity_sim.part2(np.random.default_rng(3), n_sims=200, search_sims=100)
+    blocks = multiplicity_sim.OUT["part2"]["icc"]
+    deffs = [blocks[k]["design_effect_simulated"] for k in ("0.0", "0.2", "0.4")]
+    assert all(isinstance(d, float) for d in deffs), deffs
+    # No clustering -> the CMH denominator is right, i.e. a ratio of about 1.
+    assert 0.8 < deffs[0] < 1.3, deffs
+    # ... and more clustering means a more anticonservative denominator.
+    assert deffs[0] < deffs[1] < deffs[2], deffs

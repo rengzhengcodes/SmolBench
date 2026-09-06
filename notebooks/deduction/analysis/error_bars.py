@@ -32,7 +32,23 @@ Row rules are NOT re-implemented here: ``lane_outcomes`` grades through
 ``hint_vs_noise.load_rungs``. This file adds only the count-as-failure
 denominator rule and the recovery rows' second schema.
 
+Rows come from either the S3 archive or a local tree, through
+``rows_source.resolve_rows_dir``: ``--s3 [PREFIX]`` downloads
+``<prefix>/scaling_<key>/verified_rows.jsonl`` into a temporary
+``<dir>/<model>/verified_rows.jsonl`` tree, and ``--rows-dir`` reads such a
+tree that already exists. ``--recovery-dir`` is LOCAL-ONLY, and NOT because the
+DojoInit recovery rows are unarchived -- they are spooled, under their own
+``<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`` tree (which
+``scripts/results/audit_lean_pinning.py`` reads). That run directory does not
+start with ``scaling_`` and its file is not ``verified_rows.jsonl``, so
+``rows_source.download_scaling_rows``' run filter and its ``candidates`` list
+both exclude it by construction. Fetching the recovery arm from S3 is not
+implemented here, so ``--recovery-dir`` takes a path you already have locally;
+passing ``--s3`` does not fetch it.
+
 Run (``--mode report`` is the default; ``-B`` sets the resample count):
+    .venv/bin/python \
+        notebooks/deduction/analysis/error_bars.py --s3 --mode sweep
     .venv/bin/python \
         notebooks/deduction/analysis/error_bars.py --rows-dir <dir> --mode sweep
 """
@@ -48,6 +64,7 @@ from statsmodels.stats.multitest import multipletests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import rows_source  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
     FAMILIES,
@@ -779,21 +796,50 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
 def main(argv=None) -> int:
     """Parse arguments, build the pool, and run the requested mode.
 
+    The rows themselves come from `rows_source.resolve_rows_dir`, so ``--s3``
+    and ``--rows-dir`` are interchangeable from here on: everything below works
+    against ONE resolved local directory of ``<model>/verified_rows.jsonl``.
+
     Raises
     ------
     SystemExit
-        If any model's ``verified_rows.jsonl`` is missing.
+        If any model's ``verified_rows.jsonl`` is missing from the RESOLVED
+        directory (all 21 lanes are required here); or from
+        `rows_source.resolve_rows_dir` when an ``--s3`` download comes back
+        empty or hits a retired artifact.
     """
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--rows-dir", type=Path, required=True,
-                    help="directory of <model>/verified_rows.jsonl")
+    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
+    # argument inside a mutually-exclusive group at parser-construction time.
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--rows-dir", type=Path, default=None,
+                        help="local directory of <model>/verified_rows.jsonl "
+                             "to analyse; the way to read a tree you already "
+                             "have, including one a previous --s3 run left "
+                             "behind")
+    source.add_argument("--s3", nargs="?", const="", default=None,
+                        metavar="PREFIX",
+                        help="download this study's rows from "
+                             "s3://<bucket>/<PREFIX>/scaling_<key>/"
+                             "verified_rows.jsonl into a temp "
+                             "<dir>/<model>/verified_rows.jsonl tree and "
+                             "analyse those. PREFIX is optional and defaults "
+                             "to this study's spool prefix (LEAN_SPOOL_PREFIX, "
+                             "or the re-collection's); the published "
+                             "pre-cutoff study is at deduction/runs. The "
+                             "default is resolved AFTER parsing, never here.")
     ap.add_argument("--mode", choices=("sweep", "report"), default="report")
     ap.add_argument("-B", type=int, default=20_000)
     ap.add_argument("--out-json", type=Path, default=None)
     ap.add_argument("--recovery-dir", type=Path, default=None,
-                    help="directory of <model>/recovered_rows.jsonl (DojoInit "
-                         "recovery). Pooled into the SENSITIVITY rows, never "
-                         "into the headline pool.")
+                    help="LOCAL directory of <model>/recovered_rows.jsonl "
+                         "(DojoInit recovery). These rows ARE archived, under "
+                         "their own dojoinit_recovery_<date>/<lane>/ tree, but "
+                         "that tree is neither scaling_* nor "
+                         "verified_rows.jsonl, so --s3 does not reach it and "
+                         "no --s3 form of this option is implemented. Pooled "
+                         "into the SENSITIVITY rows, never into the headline "
+                         "pool.")
     ap.add_argument("--no-count-as-failure", dest="count_as_failure",
                     action="store_false",
                     help="revert to the legacy rule that DROPS model-dependent "
@@ -801,13 +847,30 @@ def main(argv=None) -> int:
     ap.set_defaults(count_as_failure=True)
     args = ap.parse_args(argv)
 
-    missing = [args.rows_dir / m / "verified_rows.jsonl" for m in MODELS]
+    # `--s3` with no value arrives as "" (its `const`); the default prefix is
+    # resolved HERE, after parsing, never as an argparse default -- a
+    # `spool_prefix()` call at parser-build time would make
+    # `LEAN_SPOOL_PREFIX=deduction/runs --help` raise, and would deny the
+    # legacy prefix even to a reader passing it explicitly.
+    #
+    # Single-element `candidates`, unlike `power_analysis`: this script has no
+    # `all_rows.jsonl` fallback and must not acquire one. Those rows carry the
+    # ungraded "unverified" sentinel, so `reject_unverified_verdicts` would
+    # raise on them anyway -- a fallback would only convert a clear
+    # "verification never ran" condition into a confusing downstream error.
+    rows_dir = rows_source.resolve_rows_dir(
+        rows_dir=args.rows_dir,
+        s3_prefix=None if args.s3 is None else (args.s3 or rows_source.spool_prefix()),
+        candidates=("verified_rows.jsonl",),
+    )
+
+    missing = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
     missing = [f for f in missing if not f.exists()]
     if missing:
         raise SystemExit(f"missing row files: {[str(f) for f in missing]}")
 
     models, blocks, rungs, meta = build_pool(
-        args.rows_dir, count_as_failure=args.count_as_failure)
+        rows_dir, count_as_failure=args.count_as_failure)
     succ, size = block_matrix(models, blocks)
     per_lane = dict(meta["own_rate"])
 
@@ -822,7 +885,7 @@ def main(argv=None) -> int:
         for rec in ([None] + ([args.recovery_dir] if args.recovery_dir else [])):
             if caf == args.count_as_failure and rec is None:
                 continue
-            _m, _b, _r, _meta = build_pool(args.rows_dir, recovery_dir=rec,
+            _m, _b, _r, _meta = build_pool(rows_dir, recovery_dir=rec,
                                            count_as_failure=caf)
             _succ, _size = block_matrix(_m, _b)
             p = block_signflip_p(_succ, _m, build_within_family_contrasts())

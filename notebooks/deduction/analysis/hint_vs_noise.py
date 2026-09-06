@@ -12,7 +12,15 @@ theorem: the pairs are independent, so exact McNemar is the primary test and no 
 correction applies (unlike the family-ladder contrasts). Holm-Bonferroni over the 21
 models at FWER 0.05 (`ALPHA`), valid under arbitrary dependence.
 
+Rows come from either the S3 archive or a local tree, through
+``rows_source.resolve_rows_dir``: ``--s3 [PREFIX]`` downloads
+``<prefix>/scaling_<key>/verified_rows.jsonl`` into a temporary
+``<dir>/<model>/verified_rows.jsonl`` tree, and ``--rows-dir`` reads such a
+tree that already exists.
+
 Run:
+    .venv/bin/python \
+        notebooks/deduction/analysis/hint_vs_noise.py --s3
     .venv/bin/python \
         notebooks/deduction/analysis/hint_vs_noise.py --rows-dir <dir>
 """
@@ -28,6 +36,7 @@ from scipy.stats import binom
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import rows_source  # noqa: E402
 from error_bars import holm  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
@@ -129,13 +138,70 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
 
 
 def main(argv=None) -> int:
+    """Parse arguments, run the per-model hint:3 vs noise:3 comparison, print it.
+
+    The rows come from `rows_source.resolve_rows_dir`, so ``--s3`` and
+    ``--rows-dir`` are interchangeable: everything below reads ONE resolved
+    local directory of ``<model>/verified_rows.jsonl``, one lane per model.
+
+    Returns
+    -------
+    int
+        0; this comparison has no failure exit -- a missing or unverified lane
+        raises instead.
+
+    Raises
+    ------
+    SystemExit
+        From `rows_source.resolve_rows_dir` when an ``--s3`` download comes
+        back empty or hits a retired artifact, and from `load_rungs` (via
+        ``power_analysis.reject_superseded`` /
+        ``reject_unverified_verdicts``) on a retired or ungraded lane. A lane
+        missing from the resolved directory raises ``FileNotFoundError`` at
+        `load_rungs`' read.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--rows-dir", type=Path, required=True)
+    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
+    # argument inside a mutually-exclusive group at parser-construction time.
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--rows-dir", type=Path, default=None,
+                        help="local directory of <model>/verified_rows.jsonl "
+                             "to analyse; the way to read a tree you already "
+                             "have, including one a previous --s3 run left "
+                             "behind")
+    source.add_argument("--s3", nargs="?", const="", default=None,
+                        metavar="PREFIX",
+                        help="download this study's rows from "
+                             "s3://<bucket>/<PREFIX>/scaling_<key>/"
+                             "verified_rows.jsonl into a temp "
+                             "<dir>/<model>/verified_rows.jsonl tree and "
+                             "analyse those. PREFIX is optional and defaults "
+                             "to this study's spool prefix (LEAN_SPOOL_PREFIX, "
+                             "or the re-collection's); the published "
+                             "pre-cutoff study is at deduction/runs. The "
+                             "default is resolved AFTER parsing, never here.")
     args = ap.parse_args(argv)
+
+    # `--s3` with no value arrives as "" (its `const`); the default prefix is
+    # resolved HERE, after parsing, never as an argparse default -- a
+    # `spool_prefix()` call at parser-build time would make
+    # `LEAN_SPOOL_PREFIX=deduction/runs --help` raise, and would deny the
+    # legacy prefix even to a reader passing it explicitly.
+    #
+    # Single-element `candidates`, unlike `power_analysis`: this script has no
+    # `all_rows.jsonl` fallback and must not acquire one. Those rows carry the
+    # ungraded "unverified" sentinel, so `reject_unverified_verdicts` would
+    # raise on them anyway -- a fallback would only convert a clear
+    # "verification never ran" condition into a confusing downstream error.
+    rows_dir = rows_source.resolve_rows_dir(
+        rows_dir=args.rows_dir,
+        s3_prefix=None if args.s3 is None else (args.s3 or rows_source.spool_prefix()),
+        candidates=("verified_rows.jsonl",),
+    )
 
     rows = []
     for model in MODELS:
-        pairs = load_rungs(args.rows_dir / model / "verified_rows.jsonl")
+        pairs = load_rungs(rows_dir / model / "verified_rows.jsonl")
         both = [v for v in pairs.values() if RUNG_INFO in v and RUNG_NOISE in v]
         info = np.array([v[RUNG_INFO] for v in both], dtype=bool)
         noise = np.array([v[RUNG_NOISE] for v in both], dtype=bool)

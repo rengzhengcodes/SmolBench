@@ -1,15 +1,17 @@
-"""Content-level decontamination of Lean 4 SFT data against the eval holdout.
+"""Content-level decontamination of candidate Lean 4 training data against the eval holdout.
 
-`sft`'s ``full_name`` holdout is blind to two leak channels: a *restatement* of
-an eval theorem under another name (mathlib has duplicate lemmas; an
-autoformalized corpus shares no naming at all), and answer-content overlap
-without the theorem -- mathlib-derived corpora (e.g. LeanNavigator) reproduce
-eval states and tactic chains inside *other* theorems. `HoldoutIndex` fingerprints
-every eval theorem; `.check` reports which keys a candidate hits.
+The cheap holdout -- drop every candidate row whose ``full_name`` is an eval
+theorem's -- is blind to two leak channels: a *restatement* of an eval theorem
+under another name (mathlib has duplicate lemmas; an autoformalized corpus
+shares no naming at all), and answer-content overlap without the theorem --
+mathlib-derived corpora (e.g. LeanNavigator) reproduce eval states and tactic
+chains inside *other* theorems. `HoldoutIndex` fingerprints every eval theorem;
+`.check` reports which keys a candidate hits.
 
 Key families
 ------------
-- **K1 name** -- ``full_name`` set (as `sft.eval_holdout_names`).
+- **K1 name** -- ``full_name`` set: the name-only holdout above, subsumed here
+  so one `.check` call covers every channel.
 - **K2 statement** -- normalized step-0 ``state_before``, exact *and*
   MinHash/LSH near-duplicate (catches alpha-renamed restatements).
 - **K3 state** -- normalized ``state_before`` of *every* proof step, since
@@ -21,24 +23,51 @@ Key families
   chain-indexed: ``simp`` and ``intro h``+``simp`` are ubiquitous idioms
   revealing no answer, and the pair key covers them *with* the state.
 
+Near-duplicate index: what was measured
+---------------------------------------
+K2's near-duplicate stage is `datasketch`'s seeded MinHash + banded LSH,
+parameterized from ``decontam_config.toml``. On the 840-candidate
+near-duplicate corpus ``tests/deduction/test_lean_decontam.py`` builds
+(``_LSH_BASE`` perturbed at 0..13 single-character edits, 60 draws each,
+seeded), the datasketch-backed index detects 152 of the 152 candidates whose
+exact shingle Jaccard is >= 0.85, with zero false positives among the 688
+below it. The hand-rolled MinHash/LSH it replaces detected 150 of those 152;
+the two it missed both sat at J = 0.8864, just above the decision threshold,
+which is where 8x8 banding is weakest. Every decision the old index made is
+reproduced, and those two are additionally caught.
+
+Those are MEASUREMENTS on that one fixture corpus, not guarantees: the
+banding's recall is probabilistic in the similarity, which is precisely why
+the exact-Jaccard confirm sits behind it and is what actually decides.
+
 Deterministic (pure text normalization, seeded MinHash, no model calls), so a
 build is byte-reproducible from its manifest config. Imports only
-generation-side siblings, never `verify`: no Lean toolchain needed.
+generation-side siblings and `datasketch`, never `verify`: no Lean toolchain
+needed.
 """
 
 from __future__ import annotations
 
-import hashlib
-import random
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+from datasketch import MinHash, MinHashLSH
+
 from . import corpus
 from .context import extract_goal_only
 from .corpus import Split, SplitKind
-from .sft import DEFAULT_EVAL_SPECS
+from .decontam_config import load_decontam_config
+
+#: The committed decontamination POLICY -- shingle width, MinHash/LSH
+#: parameters, statement/state key floor -- resolved ONCE at import. Every
+#: constant below is bound from it rather than spelled here, so
+#: ``decontam_config.toml`` is the single place the policy is written down and
+#: the single thing a run manifest's digest fingerprints; each value's
+#: rationale lives beside it in that file. `load_decontam_config` is itself
+#: memoized, so this shares one parse with `premises`' own lookup.
+_CONFIG = load_decontam_config()
 
 # ---------------------------------------------------------------------------
 # Normalization
@@ -90,12 +119,9 @@ def state_variants(state_pp: str) -> list[str]:
 
 
 #: Minimum normalized length for a *goal-only* variant to become a
-#: statement/state index key: shorter bare goals (``⊢ False``, ``⊢ a = b``)
-#: recur across unrelated mathlib theorems and would mass-drop harmless training
-#: rows. A state WITH hypotheses still contributes its full-state variant; a
-#: hypothesis-free one under the floor contributes no key at all, and `pairs`
-#: covers it -- a (state, tactic) match reproduces the *answer* at any length.
-_MIN_GOAL_KEY_CHARS = 24
+#: statement/state index key; rationale in ``decontam_config.toml``'s ``[keys]``
+#: section.
+_MIN_GOAL_KEY_CHARS = _CONFIG.keys.min_goal_key_chars
 
 
 def _index_variants(state_pp: str) -> list[str]:
@@ -118,62 +144,146 @@ def _index_variants(state_pp: str) -> list[str]:
 # MinHash / LSH near-duplicate index (statements only)
 # ---------------------------------------------------------------------------
 
-#: Character-shingle width. 5 chars spans roughly one Lean token plus its
-#: neighborhood, so renaming one hypothesis perturbs only the shingles that
-#: touch it -- the signature stays close under alpha-renaming.
-_SHINGLE_N = 5
-#: MinHash permutations; 64 keeps signatures cheap while the banding below puts
-#: the LSH candidate threshold safely under `_JACCARD_THRESHOLD`.
-_NUM_PERM = 64
-#: LSH banding: 8 bands x 8 rows over the 64-slot signature. Candidate recall
-#: threshold ~ (1/8)^(1/8) ~= 0.77, below the 0.85 decision threshold, so true
-#: near-dups surface as candidates and are then confirmed by exact Jaccard (no
-#: false drops from LSH alone).
-_BANDS = 8
-_ROWS = _NUM_PERM // _BANDS
+#: Character-shingle width; rationale in ``decontam_config.toml``'s
+#: ``[minhash]`` section, as for every constant in this block.
+_SHINGLE_N = _CONFIG.minhash.shingle_n
+#: MinHash permutations, i.e. the signature length.
+_NUM_PERM = _CONFIG.minhash.num_perm
+#: LSH banding: `_BANDS` bands of `_ROWS` rows over the `_NUM_PERM`-slot
+#: signature. `_ROWS` is DERIVED by the loader (``num_perm // bands``, which it
+#: also refuses to leave a remainder), never configured, so the two cannot
+#: drift apart.
+_BANDS = _CONFIG.minhash.bands
+_ROWS = _CONFIG.minhash.rows
 #: Final decision threshold on exact shingle-set Jaccard similarity.
-_JACCARD_THRESHOLD = 0.85
-#: Mersenne prime for the universal-hash permutations.
-_MERSENNE = (1 << 61) - 1
-#: Fixed, not caller-configurable, so every index built anywhere hashes
-#: identically; the value is arbitrary.
-_PERM_SEED = 1776
+_JACCARD_THRESHOLD = _CONFIG.minhash.jaccard_threshold
+#: MinHash permutation seed: fixed, not caller-configurable, so every index
+#: built anywhere hashes identically.
+_PERM_SEED = _CONFIG.minhash.perm_seed
 
 
-def _perm_params() -> list[tuple[int, int]]:
-    """The seeded ``(a, b)`` parameters of the 64 universal-hash permutations."""
-    rng = random.Random(_PERM_SEED)
-    return [(rng.randrange(1, _MERSENNE), rng.randrange(0, _MERSENNE)) for _ in range(_NUM_PERM)]
+def _new_stmt_lsh() -> MinHashLSH:
+    """A fresh, empty LSH index over statement signatures, banded per config.
+
+    Returns
+    -------
+    MinHashLSH
+        Threshold `_JACCARD_THRESHOLD`, `_NUM_PERM` permutations, banded
+        ``(_BANDS, _ROWS)``.
+
+    Notes
+    -----
+    ``params`` is passed EXPLICITLY, and that is load-bearing. Left at
+    ``None``, ``MinHashLSH`` optimizes ``(b, r)`` from the threshold on its
+    own; MEASURED at this module's values,
+    ``MinHashLSH(threshold=0.85, num_perm=64, params=None).b, .r`` is
+    ``(4, 15)`` -- which does not even cover all 64 slots -- while
+    ``params=(8, 8)`` gives ``(8, 8)``. Omitting it would therefore silently
+    discard the banding ``decontam_config.toml`` documents, and no error would
+    be raised.
+
+    ``(1/_BANDS) ** (1 / _ROWS)`` = ``(1/8) ** (1/8)`` ~= 0.771 is the standard
+    S-curve approximation of the CANDIDATE threshold for these ``params``: the
+    similarity at which a pair becomes about as likely as not to collide in
+    some band. It remains true of this banding, and it sits below the 0.85
+    decision threshold, which is the point of choosing it. It is an analytic
+    approximation, not a recall guarantee -- for what the index actually does
+    on a fixture corpus, see this module's docstring, which records the
+    measured detection counts rather than leaving the approximation
+    unexercised.
+    """
+    return MinHashLSH(threshold=_JACCARD_THRESHOLD, num_perm=_NUM_PERM, params=(_BANDS, _ROWS))
 
 
-_PERMS = _perm_params()
+def _shingles(text: str) -> frozenset[str]:
+    """Character `_SHINGLE_N`-gram shingle set of normalized `text`.
 
+    The n-grams THEMSELVES, not hashes of them. Text shorter than the shingle
+    width contributes itself as one shingle.
 
-def _shingles(text: str) -> frozenset[int]:
-    """Hashed character `_SHINGLE_N`-gram shingle set of normalized `text`.
+    Parameters
+    ----------
+    text : str
+        Normalized text (`normalize_text` output); not normalized here.
 
-    64-bit ``blake2b`` integers -- stable across processes and Python versions,
-    unlike built-in ``hash``. Text shorter than the shingle width contributes
-    itself as one shingle.
+    Returns
+    -------
+    frozenset of str
+        Every distinct `_SHINGLE_N`-character window of `text`, or
+        ``{text}`` when `text` is shorter than the window, or the empty set
+        when `text` is empty.
+
+    Notes
+    -----
+    These grams used to be stored as 64-bit ``blake2b`` digests, to make
+    shingle sets cheap to hold. Storing the strings instead removes a
+    collision surface rather than adding one, and it costs no accuracy here:
+    MEASURED over the 840-candidate corpus
+    ``tests/deduction/test_lean_decontam.py`` builds, the maximum absolute
+    difference between the gram-string Jaccard and the blake2b-hash Jaccard is
+    exactly ``0.0`` -- no decision changes.
     """
     if len(text) <= _SHINGLE_N:
         grams = [text] if text else []
     else:
         grams = [text[i : i + _SHINGLE_N] for i in range(len(text) - _SHINGLE_N + 1)]
-    return frozenset(
-        int.from_bytes(hashlib.blake2b(g.encode(), digest_size=8).digest(), "big")
-        for g in grams
-    )
+    return frozenset(grams)
 
 
-def _signature(shingles: frozenset[int]) -> tuple[int, ...] | None:
-    """MinHash signature of a shingle set (None for an empty set)."""
-    if not shingles:
-        return None
-    return tuple(min((a * s + b) % _MERSENNE for s in shingles) for a, b in _PERMS)
+def _minhash(shingles: frozenset[str]) -> MinHash:
+    """Seeded MinHash signature of a shingle set.
+
+    Parameters
+    ----------
+    shingles : frozenset of str
+        `_shingles` output. Must be non-empty -- callers guard, since a
+        signature over no shingles is the all-max-hash vector, which is a
+        meaningless index entry and a query that collides with every other
+        one.
+
+    Returns
+    -------
+    MinHash
+        `_NUM_PERM` permutations at `_PERM_SEED`.
+
+    Notes
+    -----
+    Iteration order over `shingles` (a set, so PYTHONHASHSEED-dependent) does
+    not reach the result: a MinHash signature is an elementwise minimum, hence
+    order-invariant by construction.
+    """
+    sig = MinHash(num_perm=_NUM_PERM, seed=_PERM_SEED)
+    sig.update_batch([g.encode() for g in shingles])
+    return sig
 
 
-def _jaccard(a: frozenset[int], b: frozenset[int]) -> float:
+def _stmt_key(full_name: str, variant_index: int) -> str:
+    """Spell an ``(eval theorem, statement variant)`` pair as one LSH key.
+
+    ``MinHashLSH`` keys have to be hashable and are stored as-is, so the
+    ``(full_name, variant_index)`` tuple this index is really keyed by needs a
+    string spelling. `HoldoutIndex._stmt_variants` maps the result back to the
+    pair, so a `Hit` still names the theorem and the variant index exactly as
+    before.
+
+    Parameters
+    ----------
+    full_name : str
+        Eval theorem's fully-qualified Lean name.
+    variant_index : int
+        Index of the statement variant within `_index_variants`'s output.
+
+    Returns
+    -------
+    str
+        ``f"{full_name}\\x00{variant_index}"``. The separator is NUL, which no
+        Lean identifier can contain, so the spelling is injective: two
+        distinct pairs can never produce one key and silently share an entry.
+    """
+    return f"{full_name}\x00{variant_index}"
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     """Exact Jaccard similarity of two shingle sets."""
     if not a or not b:
         return 0.0
@@ -212,11 +322,17 @@ class HoldoutIndex:
     names: set[str] = field(default_factory=set)
     #: K2: normalized step-0 state variants -> theorem name.
     statements: dict[str, str] = field(default_factory=dict)
-    #: K2 near-dup: shingle sets of each indexed statement variant, keyed by
-    #: (theorem name, variant index) -- the LSH buckets point into this.
-    _stmt_shingles: dict[tuple[str, int], frozenset[int]] = field(default_factory=dict)
-    #: K2 near-dup: LSH band buckets -> the statement keys hashed there.
-    _lsh: dict[tuple[int, tuple[int, ...]], list[tuple[str, int]]] = field(default_factory=dict)
+    #: K2 near-dup: the banded-LSH index over indexed statement variants,
+    #: keyed by `_stmt_key` strings. Proposes candidates only; `_near_statement`
+    #: confirms each against the exact shingle sets below.
+    _stmt_lsh: MinHashLSH = field(default_factory=_new_stmt_lsh)
+    #: K2 near-dup: shingle set of each indexed statement variant, by
+    #: `_stmt_key`. This is what makes precision exact: the LSH proposes, an
+    #: exact Jaccard over these sets decides.
+    _stmt_shingles: dict[str, frozenset[str]] = field(default_factory=dict)
+    #: K2 near-dup: `_stmt_key` -> the ``(theorem full_name, variant index)``
+    #: pair it spells, so a `Hit` can report both after an LSH lookup.
+    _stmt_variants: dict[str, tuple[str, int]] = field(default_factory=dict)
     #: K3: normalized state variants (every step k) -> theorem name.
     states: dict[str, str] = field(default_factory=dict)
     #: K4a: normalized full tactic chains (>= 3 tactics) -> theorem name.
@@ -233,14 +349,54 @@ class HoldoutIndex:
 
     @classmethod
     def build(
-        cls, eval_specs: Iterable[tuple[SplitKind, Split]] = DEFAULT_EVAL_SPECS
+        cls, eval_specs: Iterable[tuple[SplitKind, Split]] | None = None
     ) -> "HoldoutIndex":
         """Index every theorem of the given eval splits.
 
-        Loads via `corpus.load_split` -- the *whole* split, matching
-        `sft.eval_holdout_names`' stricter-than-replay-passing stance. Theorems
-        without traced tactics contribute their name (K1) only.
+        Parameters
+        ----------
+        eval_specs : iterable of (SplitKind, Split), optional
+            Which splits make up the holdout. ``None`` (the default) resolves
+            `corpus.eval_split_specs` at CALL time -- deliberately not spelled
+            as a module-level default argument, which Python evaluates once at
+            import and would freeze whichever corpus that first import saw.
+            Several callers repoint ``SMOLBENCH_LEAN_DATA`` mid-process, so the
+            active corpus is not knowable until the call happens. An explicitly
+            passed value is used verbatim, INCLUDING an empty one: a caller that
+            asks for an empty holdout gets an empty index rather than a silent
+            substitution of the corpus default.
+
+        Returns
+        -------
+        HoldoutIndex
+            Populated across every key family; theorems without traced tactics
+            contribute their name (K1) only.
+
+        Raises
+        ------
+        FileNotFoundError
+            Propagated from `corpus.eval_split_specs` (default path only) or
+            `corpus.load_split`: the corpus is not bootstrapped.
+        ValueError
+            Propagated from `corpus.eval_split_specs` (default path only): the
+            corpus directory holds no recognised split file.
+
+        Notes
+        -----
+        Loads via `corpus.load_split` -- the WHOLE split, not
+        `corpus.iter_replay_passing`. That is the stricter of the two: a sweep
+        can only score replay-passing theorems, so the whole split is a superset
+        of everything that could leak, and the index needs no ``filter`` sidecar
+        to exist.
+
+        Only the SPEC list is re-read per call. `corpus.load_split` is memoized
+        on ``(kind, split)`` alone, so a caller that repoints
+        ``SMOLBENCH_LEAN_DATA`` mid-process must also call
+        `corpus.reset_caches` to get the new root's theorems -- otherwise the
+        specs are fresh and the rows behind them are not.
         """
+        if eval_specs is None:
+            eval_specs = corpus.eval_split_specs()
         idx = cls()
         for kind, split in eval_specs:
             for t in corpus.load_split(kind, split):
@@ -257,13 +413,26 @@ class HoldoutIndex:
         for vi, variant in enumerate(_index_variants(t.traced_tactics[0].state_before)):
             self.statements.setdefault(variant, t.full_name)
             shingles = _shingles(variant)
-            sig = _signature(shingles)
-            if sig is not None:
-                key = (t.full_name, vi)
-                self._stmt_shingles[key] = shingles
-                for band in range(_BANDS):
-                    bucket = (band, sig[band * _ROWS : (band + 1) * _ROWS])
-                    self._lsh.setdefault(bucket, []).append(key)
+            # Guard, not an expected case: `_index_variants` drops empty
+            # variants, so this cannot fire today. A signature over no shingles
+            # would be the all-max-hash vector, which every empty query would
+            # collide with.
+            if not shingles:
+                continue
+            key = _stmt_key(t.full_name, vi)
+            # First-wins, matching `statements.setdefault` above. `MinHashLSH`
+            # RAISES on a duplicate key where the old band-bucket dict tolerated
+            # one (it re-appended, and the caller's `seen` set deduped), so a
+            # re-index has to be skipped explicitly rather than left to throw.
+            # It takes one ``full_name`` being indexed twice to reach this,
+            # which `eval_split_specs`'s own splits are not expected to do --
+            # but `build` takes an arbitrary `eval_specs` list, so nothing here
+            # can rule it out.
+            if key in self._stmt_shingles:
+                continue
+            self._stmt_shingles[key] = shingles
+            self._stmt_variants[key] = (t.full_name, vi)
+            self._stmt_lsh.insert(key, _minhash(shingles))
         # K3 + K4b: every step's state, plus its (state, next-tactic) answer pair.
         tactics = [normalize_text(tt.tactic) for tt in t.traced_tactics]
         for tt, tactic in zip(t.traced_tactics, tactics):
@@ -281,25 +450,33 @@ class HoldoutIndex:
     # -- querying -----------------------------------------------------------
 
     def _near_statement(self, variant: str) -> Hit | None:
-        """K2 near-dup lookup of one normalized candidate statement variant."""
+        """K2 near-dup lookup of one normalized candidate statement variant.
+
+        The LSH proposes candidates; an EXACT Jaccard over the stored shingle
+        sets decides, so precision is exact by construction -- an
+        under-threshold candidate can never be reported, however the banding
+        surfaced it.
+
+        Candidates are walked in SORTED key order. ``MinHashLSH.query``
+        collects them into a ``set`` and returns ``list(candidates)``, whose
+        order depends on PYTHONHASHSEED; without the sort, an index holding two
+        statements that both clear the threshold could report either one, and
+        this module promises byte-reproducible results. (The old band-major
+        walk was also deterministic but ordered differently, so which of
+        several qualifying theorems gets reported can differ from before.)
+        """
         shingles = _shingles(variant)
-        sig = _signature(shingles)
-        if sig is None:
+        if not shingles:
             return None
-        seen: set[tuple[str, int]] = set()
-        for band in range(_BANDS):
-            bucket = (band, sig[band * _ROWS : (band + 1) * _ROWS])
-            for key in self._lsh.get(bucket, ()):
-                if key in seen:
-                    continue
-                seen.add(key)
-                j = _jaccard(shingles, self._stmt_shingles[key])
-                if j >= _JACCARD_THRESHOLD:
-                    return Hit(
-                        key="statement_near",
-                        theorem=key[0],
-                        detail=f"jaccard={j:.3f} vs statement variant {key[1]}",
-                    )
+        for key in sorted(self._stmt_lsh.query(_minhash(shingles))):
+            j = _jaccard(shingles, self._stmt_shingles[key])
+            if j >= _JACCARD_THRESHOLD:
+                theorem, variant_index = self._stmt_variants[key]
+                return Hit(
+                    key="statement_near",
+                    theorem=theorem,
+                    detail=f"jaccard={j:.3f} vs statement variant {variant_index}",
+                )
         return None
 
     def check(

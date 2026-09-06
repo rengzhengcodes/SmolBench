@@ -9,21 +9,42 @@ script supervises ONE shard group:
   double-launching them, so it is safe to start mid-run.
 - Relaunches a dead shard on the hand-launch environment recipe, so it
   REATTACHES to a still-live box through its state file, or provisions a new one.
-- HALTS a shard that dies within ``FAST_CRASH_SECONDS`` of launch
-  ``MAX_FAST_CRASHES`` times in a row; capacity-exhausted hunts
-  (``CAPACITY_MARKER``) are exempt and retry indefinitely on a longer backoff.
+- RESTARTS or HALTS a dead shard on the SHARED restart policy,
+  ``scripts/fleet/policy.py``, which ``run_fleet.py`` reads too -- so one spot
+  reclaim gets one answer whichever supervisor is watching. ``classify_exit``
+  decides reclaim-vs-crash from the log tail; a crash gets
+  ``MAX_CRASH_RELAUNCHES`` immediate relaunches, a reclaim
+  ``MAX_RECLAIM_RELAUNCHES`` relaunches on an exponential, capped backoff, then
+  the shard HALTS either way. This script used to answer the same question with
+  a private vocabulary, and both halves of it are gone:
+
+  * the ``CAPACITY_MARKER`` substring (``"No spot capacity for any"``) is
+    subsumed by the shared ``RECLAIM_PATTERNS``' ``spot capacity`` pattern --
+    the producing line is ``providers/ec2.py``'s "No spot capacity for any
+    (instance type, region) combination:" -- alongside seven other reclaim
+    spellings this script never matched at all, and its flat 300s retry was
+    UNBOUNDED, so a permanently dry pool was re-hunted for the whole run.
+  * the consecutive-fast-crash detector (``FAST_CRASH_SECONDS`` /
+    ``MAX_FAST_CRASHES``) has no counterpart in the shared policy, which
+    counts relaunches rather than timing them. Its "consecutive" reset is
+    precisely what let a SLOW crash loop run forever: one crash slower than
+    the threshold zeroed the counter, so a shard that failed every 6 minutes
+    never reached the halt.
+
 - On a shard's clean exit, terminates its instance through its state file --
   direct runs do no teardown, so the box would otherwise idle ~30 minutes until
   the on-box watchdog fires.
 - Exits once every shard is complete or halted, non-zero if any halted.
 
-Tag namespace: ``--tag`` defaults to ``"induction-scaling"``, spelled
-deliberately OUTSIDE the fleet's ``scaling-`` tag prefix (see
-`refuse_fleet_prefix_tag`), so `fleet_status.py`'s server-side tag filter
-never lists these shard boxes and ``fleet_teardown.py --terminate`` can never
-reach them. A ``--tag`` that would land inside that prefix once the driver's
-per-shard suffix is appended is refused unless ``--allow-fleet-prefix`` is
-passed.
+Tag namespace: ``--tag`` defaults to the committed study config's
+``[fleet].standalone_tag``, read here as ``_config.STANDALONE_TAG`` -- the
+same default ``notebooks/induction/run_study.py`` applies to a standalone
+run, so the two cannot spell it differently. That config places it
+deliberately OUTSIDE the fleet's tag prefix (see `refuse_fleet_prefix_tag`),
+so `fleet_status.py`'s server-side tag filter never lists these shard boxes
+and ``fleet_teardown.py --terminate`` can never reach them. A ``--tag`` that
+would land inside that prefix once the driver's per-shard suffix is appended
+is refused unless ``--allow-fleet-prefix`` is passed.
 
 Launch it detached (``setsid nohup ... &``, redirecting to a log under
 ``notebooks/induction/results/fleet_logs/``) from a shell that has sourced
@@ -43,7 +64,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
@@ -67,24 +88,30 @@ def _load_fleet_config():
 # absent from `sys.path`.
 _config = _load_fleet_config()
 
+# Everything OTHER than `_config` itself now loads through the one loader
+# `_config` provides, rather than through another copy of the bootstrap above:
+# `_config` cannot load itself that way (the function does not exist until the
+# module has run), but nothing else has that problem.
+#
+# `_policy` is the restart vocabulary `run_fleet.py` reads too -- and, because
+# `load_fleet_module` caches on a shared `sys.modules` name, literally the same
+# module object when both run in one process. That shared identity is the point:
+# a cap or a pattern changed there changes for both supervisors at once.
+_policy = _config.load_fleet_module("policy")
+#: `shards.Shard` lives in its own module so it can be constructed -- and the
+#: supervision loop driven -- without an argparse namespace. Bound as a module,
+#: not as a bare `Shard` name, so this file has exactly one definition of that
+#: class to point at and no local alias that could shadow a future change.
+_shards = _config.load_fleet_module("shards")
+
 REPO = Path(__file__).resolve().parents[2]
 DRIVER = REPO / "notebooks" / "induction" / "run_study.py"
 PYTHON = REPO / ".venv" / "bin" / "python"
 LOG_DIR = REPO / "notebooks" / "induction" / "results" / "fleet_logs"
 
+#: Seconds between supervision passes. Only the pass CADENCE lives here; every
+#: relaunch delay comes from `_policy.reclaim_backoff_seconds`.
 POLL_SECONDS = 30
-RELAUNCH_BACKOFF_SECONDS = 60
-#: A shard that dies faster than this after launch counts toward the crash loop.
-FAST_CRASH_SECONDS = 300
-MAX_FAST_CRASHES = 3
-#: A capacity-exhausted hunt prints this marker and exits within about 2-3
-#: minutes. That LOOKS like a fast crash, but must be retried indefinitely:
-#: capacity and quota free up on their own (run_fleet classifies the analogous
-#: lane exit as RECLAIM, with unlimited retries). Checked against the LOG TAIL
-#: of the attempt that just died, and retried on a longer backoff so it does
-#: not hammer a dry pool.
-CAPACITY_MARKER = "No spot capacity for any"
-CAPACITY_BACKOFF_SECONDS = 300
 
 
 def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
@@ -159,6 +186,9 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
     1. `terminate_shard_box` already unlinks its own state file on the
        success path -- this script owns that file's whole lifecycle, so
        there is no handoff to `fleet_teardown.py` to align the name with.
+       (Still true now that `terminate_shard_box` takes a `shards.Shard`
+       rather than ``(args, index)``: the path it unlinks is the one THIS
+       function produced, carried on the shard as ``state_file``.)
     2. `fleet_teardown.delete_state_files` only ever sees rows produced by
        `fleet_status.fleet_rows`, which filters server-side on the
        ``scaling-*`` tag prefix. With a ``--tag`` outside that prefix (the
@@ -179,14 +209,30 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
     return REPO / f".ec2_state_induction-{args.model}-s{index}of{args.count}.json"
 
 
-def terminate_shard_box(args: argparse.Namespace, index: int) -> None:
-    """Best-effort terminate of completed shard `index`'s instance, via its state file.
+def terminate_shard_box(shard: _shards.Shard) -> None:
+    """Best-effort terminate of a completed `shard`'s instance, via its state file.
 
     Direct runs do no teardown, so this reclaims the box at once instead of
     waiting ~30 minutes for the on-box idle watchdog, which stays the backstop:
     any failure here is logged and swallowed.
+
+    Parameters
+    ----------
+    shard : shards.Shard
+        The finished shard. Reads ``shard.state_file`` -- the path
+        `state_file_for` produced when `main` built it -- and ``shard.index``,
+        for the log line. Taking the shard rather than ``(args, index)`` is
+        what lets `supervise` run without an argparse namespace; it also means
+        the file terminated is provably the one this shard was launched
+        against, not one re-derived from arguments that may have moved on.
+
+    Notes
+    -----
+    Unlinks ``shard.state_file`` after a successful terminate, so a later
+    reattach cannot latch onto an instance id that no longer exists.
     """
-    path = state_file_for(args, index)
+    path = shard.state_file
+    index = shard.index
     try:
         state = json.loads(path.read_text())
         import boto3  # deferred: needed only on the success path
@@ -218,11 +264,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--regions", required=True, help="EC2_REGIONS for every shard.")
     parser.add_argument("--request-timeout", type=int, default=0, help="EC2_REQUEST_TIMEOUT_SECONDS override.")
     parser.add_argument(
-        "--tag", default="induction-scaling",
+        # Sourced from the committed study config rather than re-typed: the
+        # driver already defaults a standalone run's EC2_EXPERIMENT_TAG to the
+        # same key, so a literal here could drift and put a shard box under a
+        # tag no other tool expects.
+        "--tag", default=_config.STANDALONE_TAG,
         help="Base EC2_EXPERIMENT_TAG (shard suffix is derived by the driver). "
-             "Deliberately outside the fleet's 'scaling-' tag namespace by "
-             "default -- see refuse_fleet_prefix_tag -- so fleet_teardown.py "
-             "--terminate cannot reach these shard boxes.",
+             "Defaults to the committed study config's [fleet].standalone_tag, "
+             "which sits deliberately outside the fleet's tag prefix -- see "
+             "refuse_fleet_prefix_tag -- so fleet_teardown.py --terminate "
+             "cannot reach these shard boxes.",
     )
     parser.add_argument("--no-shard", action="store_true", help="Single unsharded run (requires --state-file; --count must be 1).")
     parser.add_argument("--state-file", default="", help="INDUCTION_STATE_FILE for --no-shard runs.")
@@ -302,7 +353,139 @@ def refuse_fleet_prefix_tag(parser: argparse.ArgumentParser, args: argparse.Name
         )
 
 
+def supervise(shard_list: list) -> int:
+    """Supervise `shard_list` until every shard is done or halted; return the exit code.
+
+    One pass per `POLL_SECONDS`: every shard that was ``"running"`` and is no
+    longer `alive` is either recorded complete (and its box terminated),
+    relaunched, or halted, on `_policy`'s verdict.
+
+    Parameters
+    ----------
+    shard_list : list of shards.Shard
+        The shards to watch, already launched or adopted by the caller. Their
+        `status`, counters and `proc` are mutated in place. Takes a plain list
+        of shards and no argparse namespace, so a caller can hand-build shards
+        and drive this loop directly -- which is what makes the restart
+        behaviour testable at all.
+
+    Returns
+    -------
+    int
+        ``1`` if any shard halted, else ``0`` -- this process's exit code.
+
+    Raises
+    ------
+    ValueError
+        Propagated from `_policy.decide_relaunch` if the verdict is neither
+        ``"reclaim"`` nor ``"crash"``, which would mean the classifier and this
+        caller had drifted apart.
+
+    Notes
+    -----
+    SLEEP-driven, unlike ``run_fleet._apply_restart_policy``, which records a
+    deadline and re-checks it on a later tick. Both take their delay from
+    `_policy`, so only the SCHEDULING differs: a shard group is one model's
+    work and this loop has nothing else to get on with while a shard backs
+    off, whereas the fleet's single loop is shared by 21 lanes and must never
+    block in one of them.
+
+    The closing summary names no model: this function is handed shards, not
+    ``args``. `main` logs the model once, before calling it, so the model is
+    still in the log stream that precedes this line.
+    """
+    while True:
+        for shard in shard_list:
+            if shard.status != "running" or shard.alive():
+                continue
+            rc = shard.returncode()
+            if rc == 0:
+                shard.status = "done"
+                logging.info(f"shard {shard.index}: COMPLETE")
+                terminate_shard_box(shard)
+                continue
+
+            try:
+                tail = shard.log.read_text(errors="replace")[-2000:]
+            except OSError:
+                tail = ""
+            # `instance_present=True`, unconditionally and on purpose. That
+            # argument exists for `run_fleet`, which runs a periodic
+            # `describe_instances` sweep and can say "the box is gone, so this
+            # was a reclaim". A shard supervisor runs no such sweep and has no
+            # cheap way to: it would need EC2 credentials and a call per shard
+            # per pass. So the verdict must come from the log tail alone, and
+            # asserting presence is what makes the tail the only evidence.
+            # Passing ``False`` would short-circuit `classify_exit` to
+            # "reclaim" for EVERY exit -- including a genuine crash, which
+            # would then get `MAX_RECLAIM_RELAUNCHES` backed-off relaunches
+            # instead of `MAX_CRASH_RELAUNCHES` immediate ones, and would never
+            # be reported as the crash it is.
+            verdict = _policy.classify_exit(tail, True)
+
+            # Increment first, then ask: the policy's `attempt` is defined as
+            # the POST-increment count, so the first relaunch is attempt 1 and
+            # the cap is exceeded at MAX + 1.
+            if verdict == "reclaim":
+                shard.reclaim_relaunches += 1
+                attempt = shard.reclaim_relaunches
+            else:
+                shard.crash_relaunches += 1
+                attempt = shard.crash_relaunches
+            decision = _policy.decide_relaunch(verdict, attempt=attempt, rc=rc)
+
+            if decision.action == "halt":
+                shard.status = "halted"
+                logging.error(
+                    f"shard {shard.index}: HALTED -- {decision.reason}; "
+                    f"see {shard.log}"
+                )
+                continue
+
+            logging.warning(f"shard {shard.index}: {decision.reason}")
+            if decision.delay_seconds:
+                # Skipped entirely on a crash, whose delay is 0.0: sleeping
+                # zero seconds would still hand the interpreter a scheduling
+                # round-trip for no reason, and reads as though a delay were
+                # intended.
+                time.sleep(decision.delay_seconds)
+            shard.launch()
+
+        if all(s.status in ("done", "halted") for s in shard_list):
+            break
+        time.sleep(POLL_SECONDS)
+
+    halted = [s.index for s in shard_list if s.status == "halted"]
+    logging.info(
+        f"run_shards: all shards finished "
+        f"({len(shard_list) - len(halted)} done, halted={halted or 'none'})"
+    )
+    return 1 if halted else 0
+
+
 def main() -> int:
+    """Parse the command line, build and start the shards, then `supervise` them.
+
+    Returns
+    -------
+    int
+        `supervise`'s exit code: ``1`` if any shard halted, else ``0``.
+
+    Raises
+    ------
+    SystemExit
+        Via `argparse.ArgumentParser.error`, for an invalid ``--no-shard``
+        combination, an out-of-range ``--only-shards`` index, or a ``--tag``
+        inside the fleet's blast radius (`refuse_fleet_prefix_tag`).
+
+    Notes
+    -----
+    Deliberately thin: argument parsing, the derivations that turn ``args``
+    into `shards.Shard` constructor arguments, the adoption pass, and one call
+    into `supervise`. Everything it used to hold inline -- the `shards.Shard`
+    class and the whole supervision loop -- now lives where it can be built and
+    driven without a command line.
+    """
     parser = build_parser()
     args = parser.parse_args()
     if args.no_shard and (args.count != 1 or not args.state_file):
@@ -312,51 +495,6 @@ def main() -> int:
     refuse_fleet_prefix_tag(parser, args)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-    class Shard:
-        def __init__(self, index: int):
-            self.index = index
-            self.selector = None if args.no_shard else f"{index}/{args.count}"
-            self.proc: Optional[subprocess.Popen] = None
-            self.adopted_pid: Optional[int] = None
-            self.launched_at = 0.0
-            self.fast_crashes = 0
-            self.status = "pending"  # pending|running|done|halted
-            stem = (args.model if args.no_shard
-                    else f"{args.model}-s{index}of{args.count}")
-            self.log = LOG_DIR / f"{stem}.log"
-
-        def alive(self) -> bool:
-            if self.proc is not None:
-                return self.proc.poll() is None
-            if self.adopted_pid is not None:
-                return Path(f"/proc/{self.adopted_pid}").exists()
-            return False
-
-        def returncode(self) -> Optional[int]:
-            if self.proc is not None:
-                return self.proc.poll()
-            # Adopted processes leave no waitable handle. Infer success
-            # from the driver's unconditional completion line instead.
-            try:
-                tail = self.log.read_text(errors="replace")[-4000:]
-            except OSError:
-                tail = ""
-            return 0 if "INDUCTION STUDY RUN COMPLETE" in tail else 1
-
-        def launch(self):
-            self.log.parent.mkdir(parents=True, exist_ok=True)
-            with self.log.open("ab") as sink:
-                self.proc = subprocess.Popen(
-                    [str(PYTHON), "-u", str(DRIVER)],
-                    stdout=sink, stderr=subprocess.STDOUT,
-                    env=shard_env(args, self.index),
-                    cwd=str(REPO), start_new_session=True,
-                )
-            self.adopted_pid = None
-            self.launched_at = time.time()
-            self.status = "running"
-            logging.info(f"shard {self.index}: launched pid {self.proc.pid}")
 
     selected = (
         sorted({int(i) for i in args.only_shards.split(",") if i.strip() != ""})
@@ -370,8 +508,34 @@ def main() -> int:
             "running %d of %d shard(s): %s (the rest are not launched, so they "
             "cannot provision no-op boxes)", len(selected), args.count, selected,
         )
-    shards: List[Shard] = [Shard(i) for i in selected]
-    for shard in shards:
+
+    # The derivations that used to live inside the nested Shard class, done
+    # ONCE here instead of on every launch. `shard_env` in particular snapshots
+    # this process's own environment, which is exactly the hand-launch recipe
+    # the shards must reproduce and which cannot change under a supervisor that
+    # never edits `os.environ`; building it per relaunch only re-derived the
+    # same dict.
+    shard_list = []
+    for index in selected:
+        stem = (args.model if args.no_shard
+                else f"{args.model}-s{index}of{args.count}")
+        shard_list.append(_shards.Shard(
+            index=index,
+            selector=None if args.no_shard else f"{index}/{args.count}",
+            log=LOG_DIR / f"{stem}.log",
+            env=shard_env(args, index),
+            state_file=state_file_for(args, index),
+            python=PYTHON,
+            driver=DRIVER,
+            cwd=REPO,
+        ))
+
+    # Logged here, not in `supervise`, which is handed shards and never sees
+    # `args`: it keeps the model in the log stream ahead of the per-shard lines
+    # and the closing summary.
+    logging.info(f"run_shards[{args.model}]: supervising {len(shard_list)} shard(s)")
+
+    for shard in shard_list:
         pid = find_adoptable(args.model, shard.selector)
         if pid is not None:
             shard.adopted_pid = pid
@@ -382,59 +546,7 @@ def main() -> int:
             shard.launch()
             time.sleep(5)  # stagger cold launches gently
 
-    while True:
-        for shard in shards:
-            if shard.status != "running" or shard.alive():
-                continue
-            rc = shard.returncode()
-            age = time.time() - shard.launched_at
-            if rc == 0:
-                shard.status = "done"
-                logging.info(f"shard {shard.index}: COMPLETE")
-                terminate_shard_box(args, shard.index)
-                continue
-            try:
-                tail = shard.log.read_text(errors="replace")[-2000:]
-            except OSError:
-                tail = ""
-            if CAPACITY_MARKER in tail:
-                # Not a crash: the hunt found no capacity. Retry patiently,
-                # and never count this toward the crash loop.
-                shard.fast_crashes = 0
-                logging.info(
-                    f"shard {shard.index}: capacity-exhausted hunt; "
-                    f"re-hunting in {CAPACITY_BACKOFF_SECONDS}s"
-                )
-                time.sleep(CAPACITY_BACKOFF_SECONDS)
-                shard.launch()
-                continue
-            if age < FAST_CRASH_SECONDS:
-                shard.fast_crashes += 1
-            else:
-                shard.fast_crashes = 0
-            if shard.fast_crashes >= MAX_FAST_CRASHES:
-                shard.status = "halted"
-                logging.error(
-                    f"shard {shard.index}: HALTED -- {shard.fast_crashes} "
-                    f"consecutive fast crashes (rc={rc}); see {shard.log}"
-                )
-                continue
-            logging.warning(
-                f"shard {shard.index}: exited rc={rc} after {age:.0f}s; "
-                f"relaunching in {RELAUNCH_BACKOFF_SECONDS}s"
-            )
-            time.sleep(RELAUNCH_BACKOFF_SECONDS)
-            shard.launch()
-        if all(s.status in ("done", "halted") for s in shards):
-            break
-        time.sleep(POLL_SECONDS)
-
-    halted = [s.index for s in shards if s.status == "halted"]
-    logging.info(
-        f"run_shards[{args.model}]: all shards finished "
-        f"({len(shards) - len(halted)} done, halted={halted or 'none'})"
-    )
-    return 1 if halted else 0
+    return supervise(shard_list)
 
 
 if __name__ == "__main__":

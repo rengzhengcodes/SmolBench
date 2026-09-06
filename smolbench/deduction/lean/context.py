@@ -316,16 +316,22 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
 
     Notes
     -----
-    The pad search is `smolbench.induction._common.token_matched_noise_prompt`,
-    reused so the two benchmarks' padding cannot drift apart; its import is
-    LAZY because that module pulls in `numpy`/`ordered_set`/`smolbench.evals`
-    and `runner.py` imports this module at top level. `TiktokenTokenizer`
-    (`smolbench.evals.tokenization`) is imported the same way and for the same
-    reason -- both are one hop further than `smolbench.evals` alone, which the
-    lazy `token_matched_noise_prompt` import already pulls in, so importing
-    the tokenizer lazily too adds no new cost, only avoids paying it at
-    `runner.py`'s top-level `import context`. The pad is pure whitespace —
-    prose or a header would be content the paired `hint:N` rung lacks.
+    The pad search is `smolbench.evals.tokenization.token_matched_noise_prompt`,
+    reused rather than reimplemented so this benchmark's padding and the
+    induction benchmark's, which calls the same helper, cannot drift apart. It
+    is public shared API, so nothing here reaches into another study's private
+    module for it. `choose_whitespace_unit` and `TiktokenTokenizer` come from
+    that same module, which is why the one lazy import below covers all three.
+
+    That import is LAZY because `runner.py` imports THIS module at top level,
+    while `smolbench.evals.tokenization` reaches
+    `smolbench.evals.openai_compat`, which imports `requests` and `joblib` --
+    and `joblib` in turn imports `numpy` and `psutil`. Measured, not assumed:
+    importing `tokenization` into an interpreter that has already imported
+    `runner` adds all four. Only the `noise:N` rung needs any of them, so an
+    eager import would charge every deduction run for a stack most runs never
+    touch. The pad is pure whitespace — prose or a header would be content the
+    paired `hint:N` rung lacks.
 
     The exactness re-check below is NOT redundant with
     `token_matched_noise_prompt`'s own internal verification: it re-derives
@@ -342,9 +348,12 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
 
-    # Lazy imports -- see this function's Notes.
-    from smolbench.induction._common import choose_whitespace_unit, token_matched_noise_prompt
-    from smolbench.evals.tokenization import TiktokenTokenizer
+    # Lazy import -- see this function's Notes.
+    from smolbench.evals.tokenization import (
+        TiktokenTokenizer,
+        choose_whitespace_unit,
+        token_matched_noise_prompt,
+    )
 
     base_parts = _render_hint_parts(theorem, k, level - 1)
     base_text = "\n\n".join(base_parts)

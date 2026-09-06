@@ -92,6 +92,11 @@ lean = [
     "PyYAML>=6.0.3",
     # 0.13 is the first release shipping cp312 wheels.
     "tiktoken>=0.13",
+    # The seeded MinHash + banded-LSH near-duplicate index in
+    # smolbench/deduction/lean/decontam.py, which screens candidate training
+    # rows against the eval holdout. Replaces a hand-rolled universal-hash
+    # MinHash and band-bucket dict with the reference implementation.
+    "datasketch>=2.0",
 ]
 
 # Jupyter kernel support for the checked-in notebooks under `notebooks/`,
@@ -146,6 +151,20 @@ include-package-data = false
 # non-.py extensions are deliberate: they keep black/isort/pylint and the
 # import machinery away from files whose bytes are a production contract.
 "smolbench.evals.payloads" = ["*.sh", "*.py.txt"]
+# study_config.toml (the committed results-bucket/fleet/roster config every
+# evals consumer reads): same reasoning as the payloads entry above --
+# include-package-data = false means setuptools picks up only *.py, so
+# without this entry a non-editable install would drop the .toml and every
+# importer of smolbench.evals.study_config would fail at import.
+"smolbench.evals" = ["*.toml"]
+# decontam_config.toml (the committed Lean decontamination policy: MinHash/LSH
+# parameters, the statement/state key floor, and the premise-reference
+# stoplist) -- same reasoning as the two entries above: include-package-data =
+# false means setuptools picks up only *.py, so without this entry a
+# non-editable install would drop the .toml and every importer of
+# smolbench.deduction.lean.decontam_config would fail at import. That is both
+# decontam.py and premises.py, i.e. most of the Lean eval's generation side.
+"smolbench.deduction.lean" = ["*.toml"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.

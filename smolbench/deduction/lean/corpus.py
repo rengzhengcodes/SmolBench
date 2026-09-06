@@ -184,6 +184,78 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
             yield t
 
 
+#: Canonical order `eval_split_specs` reports its splits in. Fixed here rather
+#: than read from directory-listing order, which is filesystem- and
+#: machine-dependent: a holdout index built from these specs must index the same
+#: theorems in the same order everywhere, or two machines' manifests disagree
+#: over an ordering nobody chose.
+_SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
+
+#: The one split family `eval_split_specs` scans. ``novel_premises`` is
+#: deliberately excluded: ``scripts/deduction/build_postcutoff_corpus.py`` writes
+#: a ``novel_premises/`` directory for the post-cutoff corpus, but it is a real
+#: COPY of ``random/``'s rows rather than an independently curated slice (see
+#: ``notebooks/deduction/README.md``, "What's not in scope"), so indexing it
+#: would re-index the same theorems for no gain. ``random`` is also the family
+#: ``notebooks/deduction/run_study.py``'s ``build_config`` defaults to and the
+#: one every sweep this study runs draws from.
+_EVAL_SPLIT_KIND: SplitKind = "random"
+
+
+def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
+    """The ``(kind, split)`` pairs an eval holdout should cover in the ACTIVE corpus.
+
+    Reports every ``<split>.json`` present under ``data_root() / "random"``, in
+    the fixed `_SPLIT_ORDER`. See `_EVAL_SPLIT_KIND` for why only the ``random``
+    family is scanned.
+
+    Reads the filesystem on EVERY call and memoizes nothing -- not even in a
+    module-level constant. Several callers repoint ``SMOLBENCH_LEAN_DATA``
+    mid-process and rely on the next call seeing the new root, exactly as
+    `metadata` / `postcutoff_metadata` already do; a cached result (or an
+    import-time constant) would freeze the first corpus the process ever saw.
+
+    Returns
+    -------
+    tuple of (SplitKind, Split)
+        Non-empty, ordered ``train``, ``val``, ``test``, restricted to the split
+        files that actually exist. Every pair is directly usable as
+        `load_split`'s arguments.
+
+    Raises
+    ------
+    FileNotFoundError
+        ``data_root() / "random"`` does not exist -- the corpus is not
+        bootstrapped.
+    ValueError
+        The directory exists but holds none of the recognised split files.
+        Returning an empty tuple instead would be a silent no-op: a holdout
+        index built from it would decontaminate nothing while still reporting
+        success.
+    """
+    root = data_root()
+    kind_dir = root / _EVAL_SPLIT_KIND
+    if not kind_dir.is_dir():
+        raise FileNotFoundError(
+            f"{kind_dir} not found — the corpus at data_root()={root} is not "
+            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
+        )
+    specs = tuple(
+        (_EVAL_SPLIT_KIND, split)
+        for split in _SPLIT_ORDER
+        if (kind_dir / f"{split}.json").is_file()
+    )
+    if not specs:
+        expected = ", ".join(f"{split}.json" for split in _SPLIT_ORDER)
+        raise ValueError(
+            f"{kind_dir} holds no recognised split file (expected at least one of "
+            f"{expected}) — an eval holdout built from an empty spec list "
+            "decontaminates nothing; re-bootstrap the corpus (see "
+            "notebooks/deduction/README.md's \"Data bootstrap\")"
+        )
+    return specs
+
+
 def metadata() -> dict:
     """Load the benchmark's top-level ``metadata.json``.
 

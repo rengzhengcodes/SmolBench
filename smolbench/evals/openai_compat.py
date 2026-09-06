@@ -36,6 +36,7 @@ import requests
 from joblib import Parallel, delayed
 
 from smolbench.evals import Quiz, Mark, Marks
+from smolbench.evals.quiz import COMPLIANT
 
 #: HTTP timeout (seconds) for provider METADATA requests (``GET /models``,
 #: context-length lookups): small, fast payloads, so one shared constant covers
@@ -217,7 +218,7 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
 
     Each ``Mark`` records ``score`` (1 correct / 0 wrong / None invalid) and
     ``compliance`` (``parsing.parse_for``'s label for how the response
-    disobeyed the output contract, None when it obeyed) INDEPENDENTLY, so a
+    disobeyed the output contract, `COMPLIANT` when it obeyed) INDEPENDENTLY, so a
     right answer in the wrong shape stays distinguishable from a wrong one --
     what the induction ``noise_intens`` arm needs, its whitespace padding
     controlling prompt LENGTH while measurably degrading instruction
@@ -258,10 +259,20 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
                                   response=raw, reasoning=reasoning, score=None,
                                   compliance=parsed.violation))
             continue
+        # `parsing.ParseResult.violation` keeps its own None-means-no-violation
+        # contract (see that module); `grade` is the boundary where a stored
+        # ``Mark`` is built, so the translation to the explicit `COMPLIANT`
+        # label happens here, once, rather than pushing "None means compliant"
+        # out to every reader of a `Mark.compliance` value. Written as an
+        # explicit `is None` check, not `parsed.violation or COMPLIANT`: a
+        # falsy-but-real violation label would silently read as compliant
+        # under `or` (none of today's labels are falsy strings, but the check
+        # should not depend on that staying true).
+        compliance = COMPLIANT if parsed.violation is None else parsed.violation
         mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
                               reasoning=reasoning,
                               score=int(q.score(parsed.value)),
-                              compliance=parsed.violation))
+                              compliance=compliance))
     return Marks(model=model, marks=tuple(mark_list))
 
 
