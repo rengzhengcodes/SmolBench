@@ -360,3 +360,52 @@ def test_lean_noise_stoplist_has_no_dead_entries():
         "120 entries minus the 23 verified-dead ones; a change here needs a "
         "reason in the commit message"
     )
+
+
+def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path):
+    """`context` renders `noise:N` WITHOUT reaching into `smolbench.induction._common`.
+
+    The pad search (`token_matched_noise_prompt` / `choose_whitespace_unit`)
+    used to be imported across packages from another study's PRIVATE module; it
+    now lives in `smolbench.evals.tokenization` as public shared API. An
+    identity assertion cannot prove the move, because `_common` re-exports the
+    very same objects -- so this BLOCKS the private module at import time and
+    renders a real noise rung. With the old import in place the render raises
+    `ImportError`; with the new one the private module is never reached.
+
+    Run in a subprocess: a `sys.meta_path` blocker only bites on a module not
+    already in `sys.modules`, and the in-process test session may well have
+    imported `smolbench.induction._common` for an induction test already.
+    """
+    import subprocess
+    import sys as _sys
+
+    from tests._paths import LEAN_MINI, REPO_ROOT
+
+    script = tmp_path / "blocked_render.py"
+    script.write_text(
+        "import sys\n"
+        "BANNED = 'smolbench.induction._common'\n"
+        "class _Blocker:\n"
+        "    def find_module(self, name, path=None):\n"
+        "        return None\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == BANNED:\n"
+        "            raise ImportError(f'{name} is banned by this test')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, _Blocker())\n"
+        "from smolbench.deduction.lean import context, corpus\n"
+        "t = {x.full_name: x for x in corpus.load_split('random', 'val')}['Mini.theoremA']\n"
+        "rendered = context.render(t, 2, 'noise', 1)\n"
+        "assert BANNED not in sys.modules, 'the private induction module was imported'\n"
+        "assert rendered.text.strip(), 'noise rung rendered empty'\n"
+        "print('OK')\n"
+    )
+    proc = subprocess.run(
+        [_sys.executable, str(script)],
+        capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT),
+        env={"PATH": "/usr/bin:/bin", "SMOLBENCH_LEAN_DATA": str(LEAN_MINI),
+             "PYTHONPATH": str(REPO_ROOT)},
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "OK" in proc.stdout

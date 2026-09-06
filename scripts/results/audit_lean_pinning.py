@@ -57,8 +57,18 @@ import re
 import sys
 from pathlib import Path
 
-BUCKET = "smolbench-results-414266451290"
-REGION = "us-west-2"
+from smolbench.evals.study_config import load_study_config, roster_keys
+
+#: Results bucket and its region, from the committed
+#: ``smolbench/evals/study_config.toml`` -- the same file the fleet driver and
+#: the results store read, so this audit cannot end up auditing a bucket the
+#: study never wrote to. Safe to resolve at MODULE scope: `load_study_config`
+#: is pure file I/O over a committed TOML, reads no environment variable, and
+#: resolves no spool prefix, so it cannot make ``--help`` fail the way an
+#: import-time `spool_prefix()` call would (see `_default_run_prefix`).
+_RESULTS = load_study_config().results
+BUCKET = _RESULTS.bucket
+REGION = _RESULTS.region
 RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 
 #: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: own run
@@ -67,24 +77,31 @@ RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 FLIP_RUNS = [("flip_nemotron-3-nano-4b", "nemotron-3-nano-4b"),
              ("flip2_nemotron-3-nano-4b", "nemotron-3-nano-4b")]
 
-#: The 21 lane spec keys, in roster order (7 families x 3 rungs). Kept
-#: literal rather than imported from ``notebooks/induction/run_study.py``
-#: so this audit does not depend on the driver it is auditing.
-LANES = [
-    "qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b",
-    "nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b",
-    "gemma-4-e2b", "gemma-4-12b", "gemma-4-31b",
-    "glm-4.7-flash", "glm-4.5-air", "glm-4.7",
-    "ministral-3-3b", "ministral-3-8b", "ministral-3-14b",
-    "exaone-4.0-32b", "exaone-4.5-33b", "k-exaone-236b-a23b",
-    "deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro",
-]
+#: The 21 lane spec keys, in roster order (7 families x 3 rungs), read from the
+#: committed ``smolbench/evals/study_config.toml``.
+#:
+#: This list used to be spelled out literally, "rather than imported from
+#: ``notebooks/induction/run_study.py`` so this audit does not depend on the
+#: driver it is auditing". That requirement is SATISFIED here, not abandoned:
+#: `study_config` is a committed data file plus its parser, not the driver, so
+#: the audit still imports nothing from the code under audit and still cannot
+#: inherit a defect from it. What changes is that the audit and the audited
+#: lanes now agree BY CONSTRUCTION -- both read the same roster -- instead of
+#: agreeing only for as long as someone remembers to hand-edit this list when
+#: the roster moves. A hand-maintained copy makes the audit pass while
+#: silently skipping a lane the study actually ran; that is the failure this
+#: replaces, and it is a different hazard from the one `slug_theorem` (below)
+#: guards against by duplicating LOGIC.
+LANES = list(roster_keys())
 
 def slug_theorem(name: str) -> str:
     """Filesystem-safe theorem name; mirrors `runner.slug_theorem` exactly.
 
-    Duplicated rather than imported, like ``LANES``: this audit must not inherit
-    a bug from the module under audit. Kept in step by
+    Duplicated rather than imported: this audit must not inherit a bug from
+    the module under audit. That argument is about LOGIC and still stands --
+    it is not the argument ``LANES`` above used to make, which was about a
+    data list and is now better served by reading the same committed config
+    the study reads. Kept in step by
     ``tests/deduction/test_lean_pinning_audit.py``.
     """
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
@@ -104,13 +121,13 @@ def _default_run_prefix() -> str:
     """Resolve the fetch_* helpers' ``run_prefix`` when a caller passes none.
 
     Lazily imports `runner.spool_prefix` -- a key prefix is CONFIGURATION,
-    not audited logic (unlike `LANES`/`slug_theorem`, which are duplicated
-    literally above so this audit cannot inherit a bug from the module under
-    audit), so importing the single source of truth for it here is not the
-    hazard that duplication rule guards against. `main()` already resolves
-    this once (also via a lazy import, for the same reason) and passes it to
-    every fetch_* call explicitly; this function only backstops a direct
-    caller -- e.g. a test -- that omits ``run_prefix``.
+    not audited logic (unlike `slug_theorem`, which is duplicated above so
+    this audit cannot inherit a bug from the module under audit), so importing
+    the single source of truth for it here is not the hazard that duplication
+    rule guards against. `main()` already resolves this once (also via a lazy
+    import, for the same reason) and passes it to every fetch_* call
+    explicitly; this function only backstops a direct caller -- e.g. a test --
+    that omits ``run_prefix``.
     """
     from smolbench.deduction.lean.runner import spool_prefix
 

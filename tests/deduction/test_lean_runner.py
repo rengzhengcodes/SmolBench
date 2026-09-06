@@ -2,7 +2,6 @@
 two local OpenAI-compatible stub servers; a proof verifies iff it holds MARKER.
 """
 
-import gzip
 import json
 import re
 import shutil
@@ -16,7 +15,6 @@ import pytest
 
 import smolbench.deduction.lean.context as context
 import smolbench.deduction.lean.corpus as corpus
-import smolbench.deduction.lean.lean3 as lean3
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
 from conftest import StubServer, chat_completion
@@ -520,42 +518,53 @@ def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
                                _BrokenModule()) == 10**9
 
 
-@pytest.mark.parametrize("align,proofs,expected_verified,expected_l3", [
-    # Parse-level relics (existsi, trailing comma); `rfl` is clean Lean 4.
-    (None, [("lean_error", "existsi z"), ("lean_error", "intros f,"),
-            ("success", "rfl")], "1/3", "2"),
-    # A comma-free mathlib3 name is only catchable with an align map.
-    ({"supr_le": "iSup_le"}, [("lean_error", "apply supr_le")], "0/1", "1"),
-])
-def test_l3_counts_relics(tmp_path, monkeypatch, align, proofs, expected_verified,
-                          expected_l3):
-    """The `l3` column counts relic-bearing cells; the align asset widens detection."""
+def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monkeypatch):
+    """The `l3` column counts parse-level-relic cells and SAYS it is parse-level.
+
+    Name-level (mathlib3 renamed-lemma) detection was removed from `lean3`
+    together with the declaration-name-map asset that was never built in this
+    tree, so the column now means the same thing on every machine and the old
+    graceful-degradation marker line is gone. Three things are pinned here:
+
+    * a comma-free mathlib3 lemma name (``apply supr_le``) is NOT counted --
+      the negative control for that removal. It used to be counted, but only on
+      a machine that happened to carry the asset;
+    * no ``parse-level only`` marker line survives, since the header now carries
+      that fact;
+    * the header cell is the single whitespace-delimited token
+      ``l3(parse-level)``. It carries no internal space on purpose: this test
+      locates the column by ``header.index(...)`` after ``line.split()`` and
+      asserts every data row yields as many tokens as the header, so a header
+      cell containing a space would silently break that width invariant.
+    """
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
-    if align is not None:
-        with gzip.open(tmp_path / lean3.ALIGN_ASSET_NAME, "wt", encoding="utf-8") as f:
-            json.dump({"lean3_to_lean4": align}, f)
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
     # Distinct theorem_id per row: `write_run_analysis` now deduplicates on the
     # full `runner._row_key` (13-04), so rows sharing an identity collapse to
     # one cell. Production rows always carry these fields; this fixture did not,
     # and three identity-less rows would fold into a single 1/1 cell.
+    proofs = [("lean_error", "existsi z"),      # parse-level relic
+              ("lean_error", "intros f,"),      # parse-level relic
+              ("lean_error", "apply supr_le"),  # mathlib3 NAME only -> not a relic
+              ("success", "rfl")]               # clean Lean 4
     _write_rows(run_dir, [{"kind": "cell", "rung": "stepk:0", "model": "m",
                            "theorem_id": f"T{i}", "k": 1, "replicate_idx": 0,
                            "verdict": v, "candidate_proof": p}
                           for i, (v, p) in enumerate(proofs)])
     runner.write_run_analysis(run_dir)
     text = (run_dir / "analysis.txt").read_text()
-    marker = "# l3 = parse-level only (lean3_align.json.gz not built)"
-    assert (marker in text) is ("not built" in text) is (align is None)
+    assert "parse-level only" not in text, "the degradation marker line must be gone"
     lines = text.splitlines()
     sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
-    row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
-    header = next(line for line in lines if "l3" in line and "exc" in line).split()
+    header = next(line for line in lines
+                  if "l3(parse-level)" in line and "exc" in line).split()
+    row = lines[sep + 1].split()
+    assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
     assert row[0] == "stepk:0" and row[1] == "m"
-    assert row[2] == expected_verified
-    assert row[header.index("l3")] == expected_l3
-    assert f"l3={expected_l3}" in lines[-1]  # per-model totals line
+    assert row[2] == "1/4"
+    assert row[header.index("l3(parse-level)")] == "2"
+    assert "l3(parse-level)=2" in lines[-1]  # per-model totals line
 
 
 def test_nullverify_sweep_generates_all_theorems(sweep_ctx):

@@ -180,3 +180,52 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(monkeypatch, tm
     corpus.reset_caches()
     assert premises._traced_root() is None
     corpus.reset_caches()
+
+
+# ---------------------------------------------------------------------------
+# eval_split_specs: the eval holdout's split list comes from the ACTIVE corpus,
+# not from a literal in a deleted SFT-dataset builder.
+# ---------------------------------------------------------------------------
+
+
+def test_eval_split_specs_reads_the_active_corpus(lean_data):
+    """The committed fixture carries only ``random/val.json``, so that is the spec list."""
+    assert corpus.eval_split_specs() == (("random", "val"),)
+
+
+def test_eval_split_specs_is_canonically_ordered_and_call_time(tmp_path, monkeypatch):
+    """Order is train/val/test regardless of creation order, and re-read per call.
+
+    Creation order is reversed on purpose: a filesystem-listing implementation
+    would report ``test, val, train`` here and two machines' holdout manifests
+    would disagree over an ordering nobody chose. The second half repoints
+    ``SMOLBENCH_LEAN_DATA`` mid-test WITHOUT re-importing anything -- a cached
+    result or an import-time constant would keep reporting the first root.
+    """
+    first = tmp_path / "first" / "random"
+    first.mkdir(parents=True)
+    for split in ("test", "val", "train"):
+        (first / f"{split}.json").write_text("[]")
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "first"))
+    assert corpus.eval_split_specs() == (
+        ("random", "train"), ("random", "val"), ("random", "test"))
+
+    second = tmp_path / "second" / "random"
+    second.mkdir(parents=True)
+    (second / "test.json").write_text("[]")
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "second"))
+    assert corpus.eval_split_specs() == (("random", "test"),)
+
+
+def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(tmp_path, monkeypatch):
+    """Never an empty tuple: a holdout built from one would decontaminate nothing."""
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="missing"):
+        corpus.eval_split_specs()
+
+    empty = tmp_path / "empty" / "random"
+    empty.mkdir(parents=True)
+    (empty / "notes.txt").write_text("not a split file")
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "empty"))
+    with pytest.raises(ValueError, match="no recognised split file"):
+        corpus.eval_split_specs()

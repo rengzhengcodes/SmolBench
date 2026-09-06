@@ -1,7 +1,8 @@
 # Deduction: family-ladder scaling study (Lean 4 next-tactic success)
 
 This is the DEDUCTION side of the family-ladder scaling study. The sweep
-configuration lives in `run_study.py` (`build_config`), the roster is
+configuration is assembled by `run_study.py` (`build_config`) out of the knobs
+in `sweep.yaml`, the roster is
 imported from `notebooks/induction/run_study.py` (`MODELS`, `COT_ARGS`),
 and the fleet-aware entry point for exploring and validating the study is
 `lean_eval.ipynb`. This file documents this directory's layout, the data
@@ -15,11 +16,27 @@ per-lane subprocess launched from a terminal (see `lean_eval.ipynb`'s
 ```
 deduction/
   run_study.py           the per-lane, generation-only driver  <- pinned here
+  sweep.yaml             the sweep knobs every lane ran under  <- see below
   lean_eval.ipynb        the exploration notebook
   pinned_theorems.json   the 300 theorems every lane ran  <- see "The pinned 300"
   results/, data/        S3-mirrored; both archived out of the tree
   analysis/              the numbers that got published
 ```
+
+`sweep.yaml` holds the sweep's knob values -- the ones identical across all 21
+lanes (temperature, token and timeout budgets, rungs, concurrency, and the
+`theorems` selection block), each with the rationale comment that justifies it.
+`run_study.py`'s `build_config` loads it through
+`smolbench.deduction.lean.runner.load_sweep_config` (the same loader the
+`run-sweep` CLI subcommand's `--config` uses) and overlays this lane's identity
+-- `run_name`, seeds, the served model, an optional shard and cell whitelist --
+on a deep copy of it. Those identity keys come from the environment, and the
+driver REFUSES a `sweep.yaml` that sets any of them, or that omits any knob.
+`build_config` also stamps the file's SHA-256 into the config it returns
+(`sweep_config: {path, sha256}`), and `runner.sweep` writes the config verbatim
+into each run's `manifest.json` -- so an archived run records which knob values
+it ran under, rather than that being recoverable only by diffing driver source
+at the matching commit.
 
 `run_study.py` stays at this study root because `scripts/fleet/run_fleet.py`
 builds each lane's argv from the literal path `notebooks/deduction/run_study.py`
@@ -28,18 +45,29 @@ directly beneath it because `notebooks/deduction/results` is the path
 `results_store.experiment_name` matches -- and what
 `smolbench.deduction.lean.runner.results_root()` falls back to.
 
-`analysis/` holds the three read-only report scripts. Each puts its own
-directory on `sys.path` and imports its siblings by bare name, so anything
-importing them programmatically must register each under a UNIQUE
-`sys.modules` name -- the bare names collide with the induction leg's
-same-named modules. Load order does not matter (see
-`tests/tooling/test_analysis_stats.py`).
+`analysis/` holds three read-only report scripts plus the reader module they
+share. Each puts its own directory on `sys.path` and imports its siblings by
+bare name, so anything importing them programmatically must register each
+under a UNIQUE `sys.modules` name -- the bare names collide with the induction
+leg's same-named modules. Load order does not matter provided each load first
+evicts any cached sibling owned by another directory;
+`tests/deduction/test_deduction_analysis_reports.py` implements exactly that
+discipline in its `_load` helper.
+
+All three report scripts read the same rows and offer the same choice of where
+those rows come from: `--s3 [PREFIX]` to pull them from the archive, or a local
+directory to analyse a tree you already have (`--rows-dir` for `error_bars.py`
+and `hint_vs_noise.py`, `--results-dir` for `power_analysis.py`, which keeps
+its own `RESULTS_DIR` default). The archive's address, the prefix resolver,
+the retired-artifact guard and the downloader itself live once, in
+`rows_source.py`.
 
 | File | What it's for |
 | --- | --- |
-| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. Owns `RESULTS_DIR` and a `--s3` run-file download **for itself only** -- it lands one row file per `scaling_<key>/` run prefix, not the `<model>/verified_rows.jsonl` tree `error_bars.py`/`hint_vs_noise.py` read from `--rows-dir`. |
-| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--no-count-as-failure` drops cells with no surviving rollout instead of counting them as failures. |
-| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. |
+| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver and its refusal of the published pre-cutoff prefix, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
+| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3` (with `--spool-prefix`) or `--results-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
+| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`, plus `--no-count-as-failure` to drop cells with no surviving rollout instead of counting them as failures. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
+| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
 
 Note both legs ship a file named `power_analysis.py`. A process loading
 this one and the induction one together must give each a unique
@@ -198,10 +226,10 @@ change over this single-commit snapshot can produce one.
 
 Neither of the pre-cutoff study's two holdout mechanisms is a substitute for
 a post-cutoff tail, and neither should be cited as if it were one:
-`decontam.py` guards a synthetic SFT corpus against reproducing eval
-theorems, and the pre-cutoff study's `novel_premises` split selects theorems
-under-represented in the benchmark's own train split -- both operate
-entirely within that same 2024-03-24 snapshot.
+`decontam.py` screens a candidate training corpus for content that
+reproduces eval theorems, and the pre-cutoff study's `novel_premises` split
+selects theorems under-represented in the benchmark's own train split --
+both operate entirely within that same 2024-03-24 snapshot.
 
 **What the code now enforces.** A re-collection is underway on a NEW mathlib4
 snapshot, restricted by declaration-name set difference against the old
@@ -260,7 +288,7 @@ its ground-truth tactic TAIL (the tactic actually asked for at each `k`,
 plus -- implicitly, by construction -- everything after it in the
 recorded proof). This is exactly the content
 `smolbench.deduction.lean.decontam.HoldoutIndex` fingerprints (its K3
-"goal state" and K4 "tactic chain" key families) to catch a synthetic
+"goal state" and K4 "tactic chain" key families) to catch a candidate
 training corpus that reproduces an eval theorem's states or tactic chains
 inside some OTHER, differently-named theorem -- a leak channel a
 `full_name`-only holdout cannot see. See that module's own docstring for

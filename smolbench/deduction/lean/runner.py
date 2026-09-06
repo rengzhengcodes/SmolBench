@@ -81,9 +81,9 @@ from .corpus import (
 from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 
 # Design: `lean3` is imported at module top (unlike `.verify` below)
-# because it needs only the stdlib plus `.corpus` -- no lean_dojo/torch/
-# datasets -- and `write_run_analysis` uses it unconditionally for the `l3`
-# column, so there is no lazy-import seam to preserve.
+# because it needs only the stdlib -- no lean_dojo/torch/datasets, and no
+# on-disk asset -- and `write_run_analysis` uses it unconditionally for the
+# `l3` column, so there is no lazy-import seam to preserve.
 
 # Design: NO top-level `from .verify import ...`. `.verify` imports
 # `lean_interact`, which is not always installed; `_default_verifier` below
@@ -538,6 +538,91 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
 #: recorded in `manifest.json["whitelist_missed"]` regardless of this cap, so
 #: nothing is lost, only kept off an operator's screen for a large miss.
 WHITELIST_MISS_LOG_CAP: int = 50
+
+
+# ---------------------------------------------------------------------------
+# Sweep config files -- the on-disk spelling of `sweep`'s `config` mapping.
+# One loader, two callers: `cli.cmd_run_sweep`'s ``--config`` and
+# `notebooks/deduction/run_study.py`'s `build_config`. Kept here rather than
+# in `cli.py` so the driver does not have to import the CLI (nor grow a second
+# `yaml.safe_load` of its own, which is how the two spellings would drift
+# apart again).
+# ---------------------------------------------------------------------------
+
+
+def load_sweep_config(path: str | Path) -> tuple[dict, str]:
+    """Load a sweep config YAML file and fingerprint the bytes it was parsed from.
+
+    The document must be a MAPPING -- `sweep` indexes its `config` argument by
+    key, so anything else (a list, or the `None` `yaml.safe_load` returns for
+    an empty file) would surface much later as a confusing `AttributeError`
+    deep inside a sweep that has already started. Refused here instead, naming
+    the file.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the YAML file. Resolved by the caller: this function does no
+        anchoring of its own, so a relative path is interpreted against the
+        process cwd.
+
+    Returns
+    -------
+    tuple[dict, str]
+        The parsed mapping, and the lowercase hex SHA-256 of the file's RAW
+        BYTES.
+
+    Raises
+    ------
+    FileNotFoundError
+        `path` does not exist. Deliberately NOT translated: Python's own
+        message already names the file, so re-raising would only restate it,
+        and a caller that wants to catch it keeps the standard type.
+    ValueError
+        The document parsed to something other than a mapping -- message names
+        `path` and the type actually parsed.
+    yaml.YAMLError
+        Propagated from `yaml.safe_load` on a malformed document. A sweep
+        config that cannot be parsed is a hard stop, never something to fall
+        back from.
+
+    Notes
+    -----
+    The digest is of the file's BYTES, not of the parsed structure, and comes
+    from the SAME single read that is handed to the parser -- so the digest
+    provably describes the mapping returned beside it. Re-opening the file to
+    hash it would leave a window in which an edit lands between the two reads
+    and the pair silently disagree. Byte-level also means the digest changes
+    when a COMMENT changes, which is the behaviour this study wants: this
+    file's rationale comments are part of what a run's provenance record is
+    claiming (see `notebooks/deduction/sweep.yaml`).
+
+    The digest is RETURNED rather than stamped into anything here, because
+    this function has no idea where its caller wants provenance to land:
+    `notebooks/deduction/run_study.py` puts it in the sweep config itself (and
+    so, via `sweep`, into `manifest.json`), while `cli.cmd_run_sweep` has no
+    manifest sidecar of its own and simply discards it.
+
+    `yaml` is imported INSIDE this function, matching `cli.cmd_run_sweep`'s
+    own local import: this module is imported by code paths (the analysis
+    readers, `run_cell`) that have no reason to require PyYAML.
+    """
+    import yaml
+
+    config_path = Path(path)
+    # ONE read, then hash and parse the SAME bytes -- see the Notes. PyYAML
+    # accepts a bytes payload directly, so there is no decode step here that
+    # could see different content from the one that was hashed.
+    raw = config_path.read_bytes()
+    sha256_hex = hashlib.sha256(raw).hexdigest()
+    config = yaml.safe_load(raw)
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"sweep config {str(config_path)!r} must be a YAML mapping of "
+            f"config keys; parsed as {type(config).__name__} "
+            "(an empty file parses as NoneType)"
+        )
+    return config, sha256_hex
 
 
 def _repair_torn_tail(jsonl_path: Path) -> int:
@@ -1112,9 +1197,9 @@ def write_run_analysis(run_dir: Path) -> None:
     ``all_rows.jsonl`` does not exist. Columns per cell: pass/N, rate, verdict
     breakdown (``lerr``/``incp``/``gvup``/``rplf``/``exc``/``noans``), ``l3``,
     then average prompt/completion tokens and wall time. ``l3`` counts CELLS whose
-    ``candidate_proof`` holds at least one Lean 3 relic (`lean3.find_relics`),
-    regardless of verdict — the endpoint `lean3.corrupt_tail`'s SFT intervention
-    aims to drive to zero.
+    ``candidate_proof`` holds at least one PARSE-LEVEL Lean 3 relic
+    (`lean3.find_relics`), regardless of verdict — the endpoint
+    `lean3.corrupt_tail`'s repair-training intervention aims to drive to zero.
 
     Notes
     -----
@@ -1122,19 +1207,10 @@ def write_run_analysis(run_dir: Path) -> None:
     lane may carry an exception row and its retry for the same cell key; see
     that function's docstring), so the header's "N cells" and every per-cell
     ``n`` already reflect distinct cells, not raw rows.
-
-    Name-level ``l3`` detection also needs the ``lean3_align.json.gz`` asset
-    (`lean3.AlignMap.load`); without it ``l3`` degrades to parse-level syntax
-    relics only, and a marker line goes after the table header so an old run is
-    not mistaken for leak-free.
     """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
         return
-
-    # Load once per call, not per row: `AlignMap.load` is a gzip+JSON read
-    # and a sweep's `all_rows.jsonl` holds thousands of rows.
-    align = lean3.AlignMap.load()
 
     cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {
@@ -1152,8 +1228,8 @@ def write_run_analysis(run_dir: Path) -> None:
     # can collapse an exception-then-retry pair for the same cell key (see its
     # docstring) BEFORE this table's "N cells" header count and per-cell tallies
     # below ever see the raw row count. A run's all_rows.jsonl is thousands of
-    # rows, not millions, so materializing the cell subset is cheap next to the
-    # gzip+JSON `AlignMap.load` above.
+    # rows, not millions, so holding the whole cell subset in memory to dedupe it
+    # costs little next to the JSON parse each row already pays for.
     cell_rows: list[dict] = []
     with all_rows.open() as f:
         for line in f:
@@ -1194,7 +1270,7 @@ def write_run_analysis(run_dir: Path) -> None:
         c["tok_in"] += r.get("prompt_tokens", 0)
         c["tok_out"] += r.get("completion_tokens", 0)
         c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-        if lean3.find_relics(r.get("candidate_proof") or "", align):
+        if lean3.find_relics(r.get("candidate_proof") or ""):
             c["l3"] += 1
 
     out: list[str] = []
@@ -1214,18 +1290,20 @@ def write_run_analysis(run_dir: Path) -> None:
         (run_dir / "analysis.txt").write_text("\n".join(out) + "(no cell rows)\n")
         return
 
+    # The `l3` header cell names its own scope, so no separate marker line is
+    # needed to say what the column measures. It is spelled WITHOUT an internal
+    # space on purpose: `tests/deduction/test_lean_runner.py` parses this table
+    # with `line.split()` and asserts every data row yields as many
+    # whitespace-separated tokens as the header, so a header cell containing a
+    # space would silently break that width invariant.
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} {'l3':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} "
+        f"{'l3(parse-level)':>16} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
     )
     out.append(header)
     out.append("-" * len(header))
-    if align is None:
-        # Graceful-degrade marker (see the docstring's Notes): without the
-        # align asset `l3` reflects parse-level relics only, and such a run
-        # must not be mistaken for a leak-free one.
-        out.append(f"# l3 = parse-level only ({lean3.ALIGN_ASSET_NAME} not built)")
     for (rung, model), c in sorted(cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])):
         n = c["n"]
         rate = c["success"] / n if n else 0
@@ -1236,7 +1314,7 @@ def write_run_analysis(run_dir: Path) -> None:
             f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
             f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
-            f"{c['no_answer']:>5} {c['l3']:>5} "
+            f"{c['no_answer']:>5} {c['l3']:>16} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
         )
 
@@ -1253,7 +1331,8 @@ def write_run_analysis(run_dir: Path) -> None:
     for model, m in sorted(by_model.items()):
         rate = m["success"] / m["n"] if m["n"] else 0
         out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  l3={m['l3']}")
+                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "
+                   f"l3(parse-level)={m['l3']}")
     (run_dir / "analysis.txt").write_text("\n".join(out) + "\n")
 
 

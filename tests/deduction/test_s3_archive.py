@@ -143,18 +143,26 @@ def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
                for e in entries), "the true raw is not pinned"
 
 
+#: The archived Lean3 -> Lean4 declaration-name map. Spelled here rather than
+#: imported from `lean3`: this test's subject is the ARCHIVE's contents, and
+#: `lean3` no longer carries name-level detection (or this asset's name) after
+#: the never-built asset and its rule were removed. The object itself is still
+#: in the archive and is still pinned, so a future reader can tell whether it
+#: was deleted from S3 or merely stopped being read.
+ALIGN_ASSET_NAME = "lean3_align.json.gz"
+
+
 def test_archived_data_assets_resolve(s3_archive):
     """Replay-passing sidecars exist and the align asset parses from the archive."""
     import gzip
 
-    import smolbench.deduction.lean.lean3 as lean3
     for split in ("val", "test"):
         name = corpus.replay_passing_path("novel_premises", split).name
         assert s3_archive.exists(f"{DATA}/{name}"), f"archived sidecar missing: {DATA}/{name}"
-    raw = gzip.decompress(s3_archive.read(f"{DATA}/{lean3.ALIGN_ASSET_NAME}"))
-    amap = lean3.AlignMap(json.loads(raw)["lean3_to_lean4"])
-    assert len(amap.lean3_to_lean4) > 100
-    assert amap.lean3_to_lean4["ADE_inequality.A"] == "ADEInequality.A"
+    raw = gzip.decompress(s3_archive.read(f"{DATA}/{ALIGN_ASSET_NAME}"))
+    pairs = json.loads(raw)["lean3_to_lean4"]
+    assert len(pairs) > 100
+    assert pairs["ADE_inequality.A"] == "ADEInequality.A"
 
 
 def test_noise_rung_is_token_matched_to_its_hint_counterpart(s3_archive, monkeypatch):

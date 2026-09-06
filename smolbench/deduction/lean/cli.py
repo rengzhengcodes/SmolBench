@@ -26,9 +26,9 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    DEFAULT_DOJO_TIMEOUT, SANITY_FAILURE_VERDICTS, dedupe_cell_rows, new_run_id,
-    regenerate_run_artifacts, reject_superseded_rows, results_root, run_cell, sweep,
-    write_jsonl,
+    DEFAULT_DOJO_TIMEOUT, SANITY_FAILURE_VERDICTS, dedupe_cell_rows,
+    load_sweep_config, new_run_id, regenerate_run_artifacts,
+    reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
 )
 
 
@@ -549,18 +549,30 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def cmd_run_sweep(args: argparse.Namespace) -> int:
     """Run a YAML-described sweep with resumability; requires `lean_interact`.
 
-    ``--config`` is `yaml.safe_load`ed into `runner.sweep`'s `config`; ``--out``
-    defaults to ``results_root()/runs/<config["run_name"] or new_run_id()>``;
-    ``--fresh`` passes ``resume=False``. All side effects (output layout, resume,
+    ``--config`` is read by `runner.load_sweep_config` into `runner.sweep`'s
+    `config` — the SAME loader `notebooks/deduction/run_study.py` uses, so the
+    two spellings of this schema cannot drift apart. That loader refuses a
+    document that is not a mapping (an empty file, or a list) up front, naming
+    the file, instead of letting it fail as an `AttributeError` inside a sweep
+    that has already started. ``--out`` defaults to
+    ``results_root()/runs/<config["run_name"] or new_run_id()>``; ``--fresh``
+    passes ``resume=False``. All side effects (output layout, resume,
     manifest/analysis writing) belong to `runner.sweep`.
 
     Returns
     -------
     int
         0 in practice — `sweep` never returns a negative count.
+
+    Raises
+    ------
+    FileNotFoundError, ValueError, yaml.YAMLError
+        Propagated from `runner.load_sweep_config` — see that function.
     """
-    import yaml
-    cfg = yaml.safe_load(Path(args.config).read_text())
+    # The digest is discarded here: unlike the study driver, this subcommand
+    # has no provenance sidecar to stamp it into, and `sweep` records only the
+    # `config` mapping it is handed.
+    cfg, _ = load_sweep_config(args.config)
     run_name = cfg.get("run_name") or new_run_id()
     run_dir = Path(args.out) if args.out else results_root() / "runs" / run_name
     n = sweep(cfg, run_dir, resume=not args.fresh)

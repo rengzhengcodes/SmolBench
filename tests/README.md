@@ -20,7 +20,7 @@ Tests are grouped by subsystem under test:
 - `induction/` -- the induction benchmark (periodic quizzes,
   golden fixtures, figures).
 - `deduction/` -- the Lean 4 benchmark and its pipeline scripts (corpus,
-  context, prompt, runner, sft, decontam, verify, S3 archive).
+  context, prompt, runner, decontam, verify, S3 archive).
 - `tooling/` -- cross-study fleet/evidence/bucket/arch analysis contracts
   (run_fleet, run_shards, power_common, kv_budget, evidence_manifest,
   analysis_stats, provision_results_bucket).

@@ -38,7 +38,8 @@ ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
 #: handed to deduction's ``error_bars`` and fail with an ImportError on a
 #: symbol only the induction module lacks. Evict foreign siblings first.
 _BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
-                  "hint_vs_noise", "significance_report", "extens_vs_noise", "multiplicity_sim")
+                  "hint_vs_noise", "rows_source", "significance_report",
+                  "extens_vs_noise", "multiplicity_sim")
 
 
 def _owned_by(module, directory: Path) -> bool:

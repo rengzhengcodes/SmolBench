@@ -125,7 +125,8 @@ def build_tree(root, models, infos, profile, copies=None):
 
 #: Every bare module name the induction and deduction analysis scripts share.
 _BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
-                  "hint_vs_noise", "significance_report", "extens_vs_noise", "multiplicity_sim")
+                  "hint_vs_noise", "rows_source", "significance_report",
+                  "extens_vs_noise", "multiplicity_sim")
 
 
 def _owned_by(module, directory) -> bool:
