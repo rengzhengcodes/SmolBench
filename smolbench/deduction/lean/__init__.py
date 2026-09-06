@@ -25,16 +25,15 @@ nullverify
     ``NullVerifier``: verifies nothing, for phase-1 (generation-only) sweeps
     with no Lean toolchain at all; used by `runner` and
     ``notebooks/deduction/run_study.py``.
-sft
-    Builds a decontaminated Lean 4 SFT dataset out of the eval's own
-    corpus/context/prompt code, for prompt parity with the headline sweep.
-    Not called by anything in-tree today outside its own tests.
 decontam
-    Content-level (name/statement/state/tactic-chain) decontamination for
-    `sft`-built data, catching leaks ``sft``'s ``full_name`` holdout misses.
-    Likewise only exercised by tests today, not by an in-tree caller.
+    Content-level (name/statement/state/tactic-chain) fingerprint index of the
+    eval holdout, for screening ANY candidate training corpus: it catches the
+    restatement and answer-content-overlap leaks that dropping rows by
+    ``full_name`` alone cannot see. Nothing in this tree calls it today; it is
+    exercised only by its own tests.
 lean3
-    Detects and injects Lean 3 syntax / renamed-lemma relics; `runner`'s
+    Detects and injects Lean 3 syntax relics -- PARSE-LEVEL only (`refl`,
+    `existsi`, `begin...end`, binder commas, trailing commas); `runner`'s
     `write_run_analysis` uses it unconditionally for the ``l3`` leak-rate
     column.
 
@@ -44,8 +43,8 @@ and `run-sweep` in `cli`) needs a live Lean toolchain at runtime --
 ``PATH`` plus a mathlib4 checkout actually BUILT with `elan`/`lake`, pointed
 to by the ``SMOLBENCH_MATHLIB_ROOT`` environment variable that
 `replbackend.mathlib_root` reads at call time. Everything else in this
-package -- generation, prompt rendering, analysis, SFT/decontam dataset
-building -- is the non-verifying side and needs none of that. `lean-dojo`
+package -- generation, prompt rendering, analysis, decontamination
+indexing -- is the non-verifying side and needs none of that. `lean-dojo`
 (the old, now-deprecated ``Dojo`` interaction layer, which cannot drive Lean
 >= v4.20 and so cannot reach this corpus's mathlib4 at Lean v4.34.0-rc2) is
 NOT what `verify` needs any more -- but it has not left the ``lean`` extra:

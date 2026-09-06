@@ -522,9 +522,10 @@ def build_config(key: str) -> dict:
         # identical output would pad the denominator with cells that measure
         # nothing new.
         "skip_trivial": True,
-        # smolbench/deduction/lean/sft.py calls this exactly "the headline
-        # sweep" (`k.strategy: last`): the final tactic step only -- the
-        # deepest / hardest proof state -- not every intermediate step.
+        # Scores the final tactic step only -- the deepest, hardest proof
+        # state, reached after every earlier tactic has already been applied --
+        # rather than every intermediate step, which would dilute the sweep
+        # with far easier early-proof cells.
         "k": {"strategy": "last"},
         # This study collects R=1 by design:
         # notebooks/deduction/analysis/{power_analysis,error_bars}.py both

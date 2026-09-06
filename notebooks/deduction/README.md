@@ -198,10 +198,10 @@ change over this single-commit snapshot can produce one.
 
 Neither of the pre-cutoff study's two holdout mechanisms is a substitute for
 a post-cutoff tail, and neither should be cited as if it were one:
-`decontam.py` guards a synthetic SFT corpus against reproducing eval
-theorems, and the pre-cutoff study's `novel_premises` split selects theorems
-under-represented in the benchmark's own train split -- both operate
-entirely within that same 2024-03-24 snapshot.
+`decontam.py` screens a candidate training corpus for content that
+reproduces eval theorems, and the pre-cutoff study's `novel_premises` split
+selects theorems under-represented in the benchmark's own train split --
+both operate entirely within that same 2024-03-24 snapshot.
 
 **What the code now enforces.** A re-collection is underway on a NEW mathlib4
 snapshot, restricted by declaration-name set difference against the old
@@ -260,7 +260,7 @@ its ground-truth tactic TAIL (the tactic actually asked for at each `k`,
 plus -- implicitly, by construction -- everything after it in the
 recorded proof). This is exactly the content
 `smolbench.deduction.lean.decontam.HoldoutIndex` fingerprints (its K3
-"goal state" and K4 "tactic chain" key families) to catch a synthetic
+"goal state" and K4 "tactic chain" key families) to catch a candidate
 training corpus that reproduces an eval theorem's states or tactic chains
 inside some OTHER, differently-named theorem -- a leak channel a
 `full_name`-only holdout cannot see. See that module's own docstring for

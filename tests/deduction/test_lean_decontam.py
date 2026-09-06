@@ -224,3 +224,41 @@ def test_lsh_near_duplicate_recall_and_precision():
         f"({detected}/{n_above}); measured 0.9868 when this test was written"
     )
     assert hit is None or hit.key == "statement_near"
+
+
+# ---------------------------------------------------------------------------
+# The holdout's default spec list comes from the corpus, not from a deleted
+# module's literal.
+# ---------------------------------------------------------------------------
+
+
+def test_default_eval_specs_come_from_the_corpus(monkeypatch):
+    """`HoldoutIndex.build()` with no arguments indexes `corpus.eval_split_specs()`.
+
+    The default used to be `sft.DEFAULT_EVAL_SPECS` = ``novel_premises/{val,test}``,
+    a split family the post-cutoff corpus this study now runs on does not have,
+    so the no-argument default could only ever raise or hold out nothing. It is
+    now resolved from the ACTIVE corpus at call time.
+    """
+    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
+    corpus.reset_caches()
+    try:
+        assert corpus.eval_split_specs() == (("random", "val"),)
+        default = HoldoutIndex.build()
+        explicit = HoldoutIndex.build([("random", "val")])
+        assert default.names == explicit.names == {"Mini.theoremA", "Mini.theoremB"}
+        assert default.stats() == explicit.stats()
+        # An explicitly empty list is honoured verbatim, never silently replaced
+        # by the corpus default.
+        assert HoldoutIndex.build([]).names == set()
+    finally:
+        corpus.reset_caches()
+
+
+def test_decontam_does_not_import_the_deleted_sft_module():
+    """The SFT-dataset builder is gone; `decontam` must not reach for it."""
+    import smolbench.deduction.lean.decontam as decontam_module
+
+    assert not hasattr(decontam_module, "DEFAULT_EVAL_SPECS")
+    with pytest.raises(ModuleNotFoundError):
+        __import__("smolbench.deduction.lean.sft")

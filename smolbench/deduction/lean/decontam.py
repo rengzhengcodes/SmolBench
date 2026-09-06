@@ -1,15 +1,17 @@
-"""Content-level decontamination of Lean 4 SFT data against the eval holdout.
+"""Content-level decontamination of candidate Lean 4 training data against the eval holdout.
 
-`sft`'s ``full_name`` holdout is blind to two leak channels: a *restatement* of
-an eval theorem under another name (mathlib has duplicate lemmas; an
-autoformalized corpus shares no naming at all), and answer-content overlap
-without the theorem -- mathlib-derived corpora (e.g. LeanNavigator) reproduce
-eval states and tactic chains inside *other* theorems. `HoldoutIndex` fingerprints
-every eval theorem; `.check` reports which keys a candidate hits.
+The cheap holdout -- drop every candidate row whose ``full_name`` is an eval
+theorem's -- is blind to two leak channels: a *restatement* of an eval theorem
+under another name (mathlib has duplicate lemmas; an autoformalized corpus
+shares no naming at all), and answer-content overlap without the theorem --
+mathlib-derived corpora (e.g. LeanNavigator) reproduce eval states and tactic
+chains inside *other* theorems. `HoldoutIndex` fingerprints every eval theorem;
+`.check` reports which keys a candidate hits.
 
 Key families
 ------------
-- **K1 name** -- ``full_name`` set (as `sft.eval_holdout_names`).
+- **K1 name** -- ``full_name`` set: the name-only holdout above, subsumed here
+  so one `.check` call covers every channel.
 - **K2 statement** -- normalized step-0 ``state_before``, exact *and*
   MinHash/LSH near-duplicate (catches alpha-renamed restatements).
 - **K3 state** -- normalized ``state_before`` of *every* proof step, since
@@ -38,7 +40,6 @@ from typing import Iterable, Sequence
 from . import corpus
 from .context import extract_goal_only
 from .corpus import Split, SplitKind
-from .sft import DEFAULT_EVAL_SPECS
 
 # ---------------------------------------------------------------------------
 # Normalization
@@ -233,14 +234,54 @@ class HoldoutIndex:
 
     @classmethod
     def build(
-        cls, eval_specs: Iterable[tuple[SplitKind, Split]] = DEFAULT_EVAL_SPECS
+        cls, eval_specs: Iterable[tuple[SplitKind, Split]] | None = None
     ) -> "HoldoutIndex":
         """Index every theorem of the given eval splits.
 
-        Loads via `corpus.load_split` -- the *whole* split, matching
-        `sft.eval_holdout_names`' stricter-than-replay-passing stance. Theorems
-        without traced tactics contribute their name (K1) only.
+        Parameters
+        ----------
+        eval_specs : iterable of (SplitKind, Split), optional
+            Which splits make up the holdout. ``None`` (the default) resolves
+            `corpus.eval_split_specs` at CALL time -- deliberately not spelled
+            as a module-level default argument, which Python evaluates once at
+            import and would freeze whichever corpus that first import saw.
+            Several callers repoint ``SMOLBENCH_LEAN_DATA`` mid-process, so the
+            active corpus is not knowable until the call happens. An explicitly
+            passed value is used verbatim, INCLUDING an empty one: a caller that
+            asks for an empty holdout gets an empty index rather than a silent
+            substitution of the corpus default.
+
+        Returns
+        -------
+        HoldoutIndex
+            Populated across every key family; theorems without traced tactics
+            contribute their name (K1) only.
+
+        Raises
+        ------
+        FileNotFoundError
+            Propagated from `corpus.eval_split_specs` (default path only) or
+            `corpus.load_split`: the corpus is not bootstrapped.
+        ValueError
+            Propagated from `corpus.eval_split_specs` (default path only): the
+            corpus directory holds no recognised split file.
+
+        Notes
+        -----
+        Loads via `corpus.load_split` -- the WHOLE split, not
+        `corpus.iter_replay_passing`. That is the stricter of the two: a sweep
+        can only score replay-passing theorems, so the whole split is a superset
+        of everything that could leak, and the index needs no ``filter`` sidecar
+        to exist.
+
+        Only the SPEC list is re-read per call. `corpus.load_split` is memoized
+        on ``(kind, split)`` alone, so a caller that repoints
+        ``SMOLBENCH_LEAN_DATA`` mid-process must also call
+        `corpus.reset_caches` to get the new root's theorems -- otherwise the
+        specs are fresh and the rows behind them are not.
         """
+        if eval_specs is None:
+            eval_specs = corpus.eval_split_specs()
         idx = cls()
         for kind, split in eval_specs:
             for t in corpus.load_split(kind, split):
