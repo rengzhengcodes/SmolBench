@@ -115,9 +115,9 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
 MAX_CRASH_RELAUNCHES = 2
 # A RECLAIM verdict used to get unlimited relaunches, on the theory that a spot
 # reclaim is never the lane's fault. But an empty or failed
-# `describe_instances` sweep (see `run_fleet._Presence`) made EVERY exit look
+# `describe_instances` sweep (see `supervisor._Presence`) made EVERY exit look
 # like a reclaim, so "unlimited" meant a lane could relaunch forever with no
-# crash counting and no budget alert ever firing (`run_fleet._monitor_tick`'s
+# crash counting and no budget alert ever firing (`supervisor._monitor_tick`'s
 # 2x-budget check keys on `lane_started_at`, which a relaunch never resets, but
 # nothing stopped the relaunches themselves). Bounding it, with backoff so a
 # lane genuinely fighting spot capacity is not hammered every tick:
@@ -126,7 +126,7 @@ MAX_CRASH_RELAUNCHES = 2
 #   = 60, 120, 240, 480, 960, then 1800s thereafter.
 # MAX_RECLAIM_RELAUNCHES=12 relaunches therefore span about 4h of backoff
 # (60+120+240+480+960+1800*7 ~= 4.15h) against a 9-14h tier budget
-# (`run_fleet.TIER_BUDGET_HOURS`), so a lane fighting genuine capacity pressure
+# (`lane_env.TIER_BUDGET_HOURS`), so a lane fighting genuine capacity pressure
 # still gets most of its budget, while the pathological misclassification above
 # stops at 12 relaunches instead of running for the fleet's whole lifetime.
 # `run_shards.py` now reads this same schedule for its own capacity-shaped

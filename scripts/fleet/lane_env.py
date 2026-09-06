@@ -371,10 +371,17 @@ class Lane:
         """This lane's private EC2 state-file basename (repo-root-anchored by the driver).
 
         Spelled ``.ec2_state_scaling_<key>.json`` literally, NOT derived from
-        `experiment_tag`'s ``_config.SCALING_TAG_PREFIX``: ``fleet_teardown.py``'s
-        glob depends on this exact ``.ec2_state_scaling_`` spelling, and the
-        two prefixes (``"scaling-"`` for the tag, ``"scaling_"`` here) are
-        independent strings by construction, not a typo needing to be unified.
+        `experiment_tag`'s ``_config.SCALING_TAG_PREFIX``: this exact spelling
+        must match what ``notebooks/deduction/run_study.py``'s
+        ``lane_env_defaults`` derives for the same lane, because the deduction
+        phase REATTACHES to the induction phase's box through it. If the two
+        ever diverge, the deduction phase provisions a SECOND box per lane --
+        silently, and expensively -- so ``tests/tooling/test_run_fleet.py``
+        pins that equality directly against the driver.
+
+        The two prefixes (``"scaling-"`` for the tag, ``"scaling_"`` here) are
+        thus independent strings by construction, not a typo needing to be
+        unified: one answers to AWS, the other to that driver.
         """
         return f".ec2_state_scaling_{self.key}.json"
 
@@ -506,15 +513,24 @@ def lane_env(
         Every ``PASSTHROUGH_ENV`` key present in `base_env`, verbatim (a missing
         key stays absent -- no invented defaults), plus the per-lane
         ``INFERENCE_PROVIDER``/``EC2_*``/``INDUCTION_*`` settings below. Phase
-        ``"deduction"`` also adds ``LEAN_MODEL``, ``LEAN_STATE_FILE`` (the SAME
-        value as ``INDUCTION_STATE_FILE`` -- the reattach contract) and
-        ``LEAN_RUN_NAME`` = ``scaling_<key>``, which
-        ``notebooks/deduction/run_study.py`` defaults to and
-        ``supervisor._advance_finished`` builds the same ``scaling_<key>`` run
-        directory name from, to hand to that driver's own ``spool_to_s3``.
+        ``"deduction"`` also adds ``LEAN_MODEL`` and ``LEAN_RUN_NAME`` =
+        ``scaling_<key>``, which ``notebooks/deduction/run_study.py`` defaults
+        to and ``supervisor._advance_finished`` builds the same
+        ``scaling_<key>`` run directory name from, to hand to that driver's
+        own ``spool_to_s3``.
 
     Notes
     -----
+    THE REATTACH CONTRACT is that both drivers resolve the SAME state-file
+    path for the same lane -- the induction driver from the
+    ``INDUCTION_STATE_FILE`` set below, the deduction driver from its own
+    ``lane_env_defaults`` derivation -- so the deduction phase reattaches to
+    the box induction provisioned instead of starting a second one. This
+    function no longer sets ``LEAN_STATE_FILE``: that was a second,
+    independently spelled variable naming the identical path, and a second
+    spelling is exactly what drifts. `Lane.state_file`'s docstring records
+    which side of that equality is pinned by test.
+
     PURE: never mutates `base_env`, always returns a NEW ``dict``. Mutating
     ``os.environ`` across 21 lanes launched from one parent would let lane N+1
     inherit lane N's tag and state file, and the two would then reattach to ONE
@@ -539,6 +555,19 @@ def lane_env(
         {
             "INFERENCE_PROVIDER": "ec2",
             "EC2_EXPERIMENT_TAG": lane.experiment_tag,
+            # This one STAYS, and must: it is not the redundant half of the
+            # pair `LEAN_STATE_FILE` was. `notebooks/induction/run_study.py`'s
+            # own default is `f".ec2_state_induction{_LANE}.json"`, and
+            # `_LANE` is EMPTY for a fleet lane (it is non-empty only under
+            # `INDUCTION_SHARD`), so with this unset all 21 lanes would
+            # resolve the SAME `.ec2_state_induction.json`. Verified: running
+            # that driver with EC2_EXPERIMENT_TAG=scaling-glm-4.7,
+            # INDUCTION_MODELS=glm-4.7 and no INDUCTION_STATE_FILE yields
+            # `EXPERIMENT.state_file == '.ec2_state_induction.json'`. And
+            # `ec2._reattach_existing_instance` trusts that file WITHOUT
+            # re-checking the tag, so every lane would reattach to whichever
+            # box the shared file last named and swap that lane's checkpoint
+            # out from under it.
             "INDUCTION_STATE_FILE": lane.state_file,
             "INDUCTION_MODELS": lane.key,
             "EC2_INSTANCE_TYPES": lane.instance_types,
@@ -568,8 +597,12 @@ def lane_env(
     if phase == "deduction":
         env.update(
             {
+                # No LEAN_STATE_FILE: this driver's own `lane_env_defaults`
+                # derives `repo_root / f".ec2_state_scaling_{key}.json"` when
+                # it is unset -- byte-identical to what was being passed here
+                # -- so setting it only added a second spelling of one path.
+                # See this function's Notes on the reattach contract.
                 "LEAN_MODEL": lane.key,
-                "LEAN_STATE_FILE": lane.state_file,
                 "LEAN_RUN_NAME": f"scaling_{lane.key}",
             }
         )

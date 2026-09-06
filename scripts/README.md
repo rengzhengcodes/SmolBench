@@ -6,21 +6,25 @@ covering the roster's architecture facts; it is not described here.
 
 There is no `__init__.py` under `scripts/` -- the directories are implicit
 namespace packages, so `from scripts.<group>.<module> import ...` works
-from the repo root (pytest sets `pythonpath`). `run_fleet.py` and
-`fleet_teardown.py` instead load `fleet_status.py` by file path, so that the
-test loader, which registers these scripts under private module names, never
-collides with a package import of the same basename.
+from the repo root (pytest sets `pythonpath`). The `scripts/fleet/` scripts
+instead load their siblings by file path, so that the test loader, which
+registers these scripts under private module names, never collides with a
+package import of the same basename.
 
 ## scripts/fleet/ -- launching and babysitting the family-ladder EC2 fleet
 
 | File | What it's for |
 | --- | --- |
-| `run_fleet.py` | The 21-lane EC2 fleet supervisor for the family-ladder scaling study: launches one subprocess per study model/lane, each provisioning its own EC2 spot instance, and supervises restarts (reclaim vs. crash-loop classification). |
+| `run_fleet.py` | The entry point for a 21-lane EC2 fleet run of the family-ladder scaling study: argument parsing, lane selection and the `--dry-run` plan. The launching, supervision and restart classification themselves belong to `lane_env.py`, `supervisor.py` and `policy.py`. |
+| `lane_env.py` | The study's roster -- the lane list and the per-tier instance-type, region and budget tables -- and one lane's complete child environment and argv. Also owns the load-bearing import order the fleet's environment-frozen `EC2_*` constants depend on. |
+| `supervisor.py` | The live supervision loop: pre-flight, staggered launch, the family gate, monitor ticks, restart-policy application, the CoT-ON check, phase advance, S3 spool and shutdown. Also owns the supervisor state file that lets a replacement supervisor resume a running fleet. |
+| `policy.py` | The one reclaim-vs-crash vocabulary: the reclaim patterns, the exit classification, the relaunch caps and the backoff schedule. Shared with `run_shards.py`, so one spot reclaim gets one answer whichever supervisor is watching. |
 | `fleet_status.py` | Read-only listing of the fleet's live EC2 instances. Loaded as a library by `run_fleet.py` and `fleet_teardown.py`, and also runnable standalone. |
 | `fleet_teardown.py` | Lists, and optionally terminates, the fleet's live instances -- the safety net for lanes a `run_fleet.py` run didn't shut down itself. |
 | `run_shards.py` | Babysits direct (supervisor-less) `notebooks/induction/run_study.py` shard fleets: adopts already-running shard processes, relaunches dead ones, and tears down completed shards' boxes. |
+| `shards.py` | One supervised shard of a direct `run_study.py` run -- its child process, log file, EC2 state file and restart counters. The unit `run_shards.py` supervises. |
 
-All three fleet files must stay in this directory together (the sibling
+All of these files must stay in this directory together (the sibling
 load resolves via `Path(__file__).parent`).
 
 ## scripts/deduction/ -- the Lean deduction study's sharding and verification passes

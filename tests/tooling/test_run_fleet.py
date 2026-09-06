@@ -5,6 +5,7 @@ No AWS: every client is a stub factory and no subprocess is ever launched.
 
 import argparse
 import importlib.util
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -81,8 +82,12 @@ def test_lane_env_and_commands():
         "EC2_MAX_LIFETIME_MIN": "2160", "EC2_REQUEST_TIMEOUT_SECONDS": "3600"}
     ded = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert ded["LEAN_MODEL"] == "glm-4.7"
-    assert ded["LEAN_STATE_FILE"] == ".ec2_state_scaling_glm-4.7.json"
-    assert ded["INDUCTION_STATE_FILE"] == ded["LEAN_STATE_FILE"]
+    # LEAN_STATE_FILE is gone: the deduction driver derives the identical path
+    # itself, so the fleet no longer spells a second variable for it. The
+    # equality is pinned against that driver in
+    # `test_the_fleet_no_longer_manages_per_lane_state_files`.
+    assert "LEAN_STATE_FILE" not in ded
+    assert ded["INDUCTION_STATE_FILE"] == ".ec2_state_scaling_glm-4.7.json"
     assert ded["EC2_EXPERIMENT_TAG"] == "scaling-glm-4.7"
     before = dict(os.environ)
     result = laneenv.lane_env(laneenv.LANES["deepseek-v4-pro"], "induction")
@@ -237,16 +242,20 @@ def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius():
     shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", "scalingful"))
 
 
-def test_shard_state_files_stay_out_of_the_fleet_teardown_glob():
-    """run_shards owns its state files; teardown's glob must not claim them."""
-    import fnmatch
+def test_shard_state_files_are_named_apart_from_the_fleets():
+    """run_shards owns its own state files, under a distinct naming scheme.
 
+    Teardown no longer has a state-file glob to keep them out of -- it
+    terminates by tag and deletes nothing (see
+    `test_the_fleet_no_longer_manages_per_lane_state_files`) -- but the two
+    schemes must still be distinct, so an operator reading a repo root can
+    tell a shard box's record from a fleet lane's.
+    """
     args = _shard_args(shards.build_parser())
     name = shards.state_file_for(args, 2).name
     assert name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
-    assert not fnmatch.fnmatch(name, teardown.STATE_FILE_GLOB)
-    # ...while a real fleet lane's file is exactly what that glob is for.
-    assert fnmatch.fnmatch(laneenv.LANES["glm-4.7"].state_file, teardown.STATE_FILE_GLOB)
+    assert name != laneenv.LANES["gemma-4-12b"].state_file
+    assert not name.startswith(".ec2_state_scaling_")
 
 
 def test_regions_and_tag_prefix_are_declared_once():
@@ -852,3 +861,209 @@ def test_the_dry_run_plan_still_renders_every_lane_and_phase(capsys):
     assert "[shutdown] command" in out
     # ...and it launched nothing and asked AWS nothing to do it.
     assert "WIRING preview only" in out
+
+
+# ---------------------------------------------------------------------------
+# 14-13 / #48: one restartable supervisor state, and teardown by tag
+# ---------------------------------------------------------------------------
+def _persisted_runs():
+    """Two lanes mid-flight: one backing off a reclaim, one already halted."""
+    backing_off = sup._LaneRun(lane=laneenv.LANES["glm-4.7"], phases=("induction", "deduction"))
+    backing_off.phase_index = 1
+    backing_off.crash_relaunches = 1
+    backing_off.reclaim_relaunches = 4
+    backing_off.cot_checked = True
+    backing_off.gate_passed = True
+    backing_off.gate_scan_offset = 4096
+    backing_off.lane_started_at = sup.time.monotonic() - 7200      # 2h ago
+    backing_off.pending_relaunch_at = sup.time.monotonic() + 600   # 10m out
+    halted = sup._LaneRun(lane=laneenv.LANES["gemma-4-e2b"], phases=("induction",))
+    halted.halted = True
+    halted.halt_reason = "crashed 3 time(s) (last rc=1); exceeded MAX_CRASH_RELAUNCHES=2"
+    return {"glm-4.7": backing_off, "gemma-4-e2b": halted}
+
+
+def test_the_supervisor_state_file_lives_under_the_log_dir(tmp_path):
+    """One file, named once, beside the lane logs it describes."""
+    runs = _persisted_runs()
+    sup.save_fleet_state(runs, tmp_path)
+    path = tmp_path / "fleet_state.json"
+    assert path.is_file()
+    assert sup.fleet_state_path(tmp_path) == path
+    # Atomic rewrite: no temporary left behind for a reader to trip over.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fleet_state.json"]
+    state = json.loads(path.read_text())
+    assert sorted(state["lanes"]) == ["gemma-4-e2b", "glm-4.7"]
+    # Lane identity is the tag's: fleet_status derives `lane` by stripping the
+    # prefix off smolbench:experiment, and that is the key used here, so a
+    # describe sweep and this file name the same lanes.
+    for key in state["lanes"]:
+        tag = laneenv.LANES[key].experiment_tag
+        assert tag[len(status.SCALING_TAG_PREFIX):] == key
+
+
+def test_a_resumed_supervisor_continues_with_the_persisted_counters(tmp_path, monkeypatch):
+    """THE regression: every counter lived in memory, so a dead supervisor lost them.
+
+    21 boxes kept billing with nobody advancing phases, and a replacement
+    supervisor restarted every lane's crash and reclaim budget from zero.
+
+    The reload runs under a SHIFTED ``time.monotonic``, because that is what a
+    genuinely new process gets: monotonic's epoch is arbitrary per process, so
+    a persisted monotonic deadline is meaningless on the other side of a
+    restart. Only wall-clock survives, and the assertions below are on the
+    lane's AGE and its REMAINING backoff -- both of which a naive
+    monotonic-in, monotonic-out implementation gets wrong by exactly the shift.
+    """
+    sup.save_fleet_state(_persisted_runs(), tmp_path)
+
+    real_monotonic = sup.time.monotonic
+    shift = 10_000.0  # a fresh process's arbitrary monotonic origin
+    monkeypatch.setattr(sup.time, "monotonic", lambda: real_monotonic() + shift)
+
+    resumed = {key: sup._LaneRun(lane=laneenv.LANES[key], phases=phases)
+               for key, phases in (("glm-4.7", ("induction", "deduction")),
+                                   ("gemma-4-e2b", ("induction",)))}
+    assert sup.load_fleet_state(resumed, tmp_path) == 2
+
+    lane = resumed["glm-4.7"]
+    assert lane.phase_index == 1 and lane.current_phase == "deduction"
+    assert (lane.crash_relaunches, lane.reclaim_relaunches) == (1, 4)
+    assert lane.cot_checked is True and lane.gate_passed is True
+    assert lane.gate_scan_offset == 4096
+    now = sup.time.monotonic()
+    assert now - lane.lane_started_at == pytest.approx(7200, abs=5), \
+        "the lane's AGE must survive the restart, so the 2x-budget alert still fires"
+    assert lane.pending_relaunch_at - now == pytest.approx(600, abs=5), \
+        "the REMAINING backoff must survive, not the raw monotonic deadline"
+
+    halted = resumed["gemma-4-e2b"]
+    assert halted.halted is True and "MAX_CRASH_RELAUNCHES" in halted.halt_reason
+    # A process handle cannot be persisted, so a resumed lane holds none; the
+    # driver's own resume-skip is what stops landed work being re-billed.
+    assert lane.proc is None and halted.proc is None
+
+
+def test_a_lane_absent_from_the_state_file_starts_clean(tmp_path, caplog):
+    """A --lanes subset, or a lane added since the last run, must not fail the load."""
+    import logging
+
+    sup.save_fleet_state({"glm-4.7": _persisted_runs()["glm-4.7"]}, tmp_path)
+    resumed = {key: sup._LaneRun(lane=laneenv.LANES[key], phases=("induction",))
+               for key in ("glm-4.7", "qwen3.5-27b")}
+    with caplog.at_level(logging.INFO):
+        assert sup.load_fleet_state(resumed, tmp_path) == 1
+    assert resumed["qwen3.5-27b"].reclaim_relaunches == 0
+    assert resumed["qwen3.5-27b"].lane_started_at == 0.0
+    assert "qwen3.5-27b" in caplog.text, "a lane starting clean must be reported"
+
+
+def test_no_state_file_at_all_is_a_first_run_not_an_error(tmp_path):
+    assert sup.load_fleet_state({"glm-4.7": _persisted_runs()["glm-4.7"]}, tmp_path) == 0
+
+
+def test_a_corrupt_state_file_is_refused_loudly(tmp_path):
+    """Silently starting from zero would re-bill 21 boxes' worth of relaunch budget."""
+    (tmp_path / "fleet_state.json").write_text("{not json")
+    runs = {"glm-4.7": sup._LaneRun(lane=laneenv.LANES["glm-4.7"], phases=("induction",))}
+    with pytest.raises(ValueError) as excinfo:
+        sup.load_fleet_state(runs, tmp_path)
+    assert "fleet_state.json" in str(excinfo.value)
+
+
+def test_the_state_file_is_rewritten_every_tick(monkeypatch, tmp_path):
+    """A supervisor that only saved at exit would lose everything to the crash."""
+    monkeypatch.setattr(sup, "MONITOR_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(sup, "LAUNCH_STAGGER_SECONDS", 0)
+    monkeypatch.setattr(sup, "_check_cot", lambda runs, *a, **k: None)
+    monkeypatch.setattr(sup, "_start_phase", _recording_start_phase([], rc=0))
+    monkeypatch.setattr(sup, "subprocess", SimpleNamespace(run=lambda cmd, **kw: None, Popen=None))
+    saves = []
+    real_save = sup.save_fleet_state
+    monkeypatch.setattr(sup, "save_fleet_state",
+                        lambda runs, log_dir: (saves.append(sorted(runs)), real_save(runs, log_dir))[1])
+
+    ticks = {"n": 0}
+
+    def _bounded_tick(runs, log_dir, tick, presence):
+        ticks["n"] += 1
+        if ticks["n"] > 200:
+            raise AssertionError("_run_fleet did not terminate")
+
+    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick)
+    sup._run_fleet({"glm-4.7": laneenv.LANES["glm-4.7"]}, ("induction",),
+                   gate=False, log_dir=tmp_path, phase_name="induction")
+    assert saves, "the supervisor state was never written"
+    assert (tmp_path / "fleet_state.json").is_file()
+    assert json.loads((tmp_path / "fleet_state.json").read_text())["lanes"]["glm-4.7"]["done"]
+
+
+def test_the_fleet_no_longer_manages_per_lane_state_files():
+    """14-13: three state-file naming schemes coexisted and teardown globbed one.
+
+    ec2's provisioning state file stays -- ec2 needs it, and the induction
+    driver's own default is SHARED across lanes, so the supervisor still has to
+    hand each lane a private one. What goes is the FLEET managing them:
+    teardown no longer globs or deletes anything, and the deduction phase no
+    longer gets a second, independently spelled state-file variable.
+    """
+    for gone in ("STATE_FILE_GLOB", "state_file_path", "delete_state_files"):
+        assert not hasattr(teardown, gone), gone
+    deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
+    assert "LEAN_STATE_FILE" not in deduction
+    # ...because the deduction driver derives the IDENTICAL path itself. If
+    # these two ever diverge the deduction phase provisions a SECOND box per
+    # lane, silently and expensively, so pin it against the driver.
+    driver = _deduction_driver_module()
+    derived = driver.lane_env_defaults("glm-4.7", repo_root=Path("/anchor"))["EC2_STATE_FILE"]
+    assert Path(derived).name == deduction["INDUCTION_STATE_FILE"]
+    assert Path(derived).name == laneenv.LANES["glm-4.7"].state_file
+
+
+def _deduction_driver_module():
+    """Load notebooks/deduction/run_study.py under an environment snapshot.
+
+    It calls ``load_dotenv`` and sets ``EC2_*`` defaults at module scope, which
+    would otherwise leak into every later test in the session.
+    """
+    saved = dict(os.environ)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+    return module
+
+
+def test_teardown_terminates_by_tag_and_deletes_nothing(tmp_path, monkeypatch, capsys):
+    """Termination is decided by the smolbench:experiment tag, and only by it."""
+    calls = []
+    rows = [
+        {"region": "us-east-2", "instance_id": "i-ours", "lane": "glm-4.7",
+         "experiment_tag": "scaling-glm-4.7"},
+        {"region": "us-east-1", "instance_id": "i-theirs", "lane": "x",
+         "experiment_tag": "induction-scaling-gemma-4-12b-s0of3"},
+    ]
+
+    def factory(region):
+        return SimpleNamespace(
+            terminate_instances=lambda InstanceIds: calls.append((region, InstanceIds)))
+
+    terminated = teardown.terminate_fleet(rows, client_factory=factory)
+    assert [r["instance_id"] for r in terminated] == ["i-ours"]
+    assert calls == [("us-east-2", ["i-ours"])]
+
+    monkeypatch.setattr(teardown, "_fleet_status", lambda: SimpleNamespace(
+        fleet_rows=lambda: rows[:1],
+        format_fleet_table=lambda r: "TABLE\n",
+        SCALING_TAG_PREFIX=status.SCALING_TAG_PREFIX))
+    monkeypatch.setattr(teardown, "terminate_fleet",
+                        lambda r, **kw: r)
+    assert teardown.main(["--terminate", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "Terminated 1 instance(s)" in out
+    assert "state file" not in out, "the fleet no longer deletes state files"

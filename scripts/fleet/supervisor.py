@@ -7,6 +7,12 @@ per-tick monitor table and its alerts, the application of the shared restart
 policy, the CoT-ON assertion, the phase advance, the post-deduction S3 spool
 and the box shutdown. `_run_fleet` is its one entry point.
 
+It also owns the supervisor's own RESTARTABILITY: `save_fleet_state` and
+`load_fleet_state` keep every lane's counters, phase and halt state in ONE
+file under the run's log directory (`fleet_state_path`), so a supervisor host
+that drops can be replaced without 21 boxes billing on unattended while a
+fresh process re-grants every lane a full relaunch budget.
+
 It deliberately does NOT own three things:
 
 - the roster and the per-lane environment -- ``scripts/fleet/lane_env.py``'s
@@ -52,6 +58,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -528,6 +535,9 @@ class _LaneRun:
     phase_index: int = 0
     proc: Optional[subprocess.Popen] = None
     #: Timestamp of the most recent (re)launch; reset by every relaunch.
+    #: Deliberately NOT carried in the supervisor state file: a resumed
+    #: supervisor relaunches this lane's current phase anyway, so the value is
+    #: stale the instant it is read back (see `save_fleet_state`'s Notes).
     started_at: float = 0.0
     #: Timestamp of this lane's FIRST launch ONLY -- never reset by a
     #: relaunch. `_monitor_tick`'s 2x-budget alert keys on THIS, not
@@ -571,6 +581,429 @@ class _LaneRun:
         if self.phase_index >= len(self.phases):
             return None
         return self.phases[self.phase_index]
+
+
+# ---------------------------------------------------------------------------
+# The supervisor state file: one file, so a replacement supervisor can resume
+# ---------------------------------------------------------------------------
+# Every counter below used to live in memory ONLY. If the supervisor host
+# dropped, 21 GPU boxes kept billing with nobody advancing phases, and a
+# replacement supervisor restarted every lane's crash and reclaim budget from
+# zero -- so a lane already at its cap got a second full budget's worth of
+# relaunches, silently and expensively. One file, rewritten every tick, is
+# what makes a restart pick the fleet up where it was left.
+FLEET_STATE_FILENAME = "fleet_state.json"
+
+#: Written into every document and required back on load. A file this
+#: supervisor cannot interpret is refused (see `load_fleet_state`), never
+#: partially applied: a half-restored lane is worse than an announced clean
+#: start, because nothing tells the operator which half was lost.
+_FLEET_STATE_VERSION = 1
+
+#: The `_LaneRun` fields carried verbatim -- plain JSON scalars, no conversion.
+#: Declared ONCE so `save_fleet_state` and `load_fleet_state` cannot drift into
+#: writing a field neither reads back, which is exactly how a "persisted"
+#: counter quietly stops persisting.
+_STATE_PLAIN_FIELDS = (
+    "phase_index",
+    "crash_relaunches",
+    "reclaim_relaunches",
+    "cot_checked",
+    "gate_passed",
+    "gate_scan_offset",
+    "halted",
+    "halt_reason",
+    "done",
+    "spool_error",
+)
+
+#: The two fields that are `time.monotonic()` values in memory and WALL-CLOCK
+#: values on disk. Named with an ``_epoch`` suffix precisely so nobody reads
+#: one back into a monotonic field without noticing the conversion -- see
+#: `_monotonic_to_epoch` for why persisting the raw monotonic number is wrong.
+_STATE_CLOCK_FIELDS = ("lane_started_at_epoch", "pending_relaunch_at_epoch")
+
+
+def fleet_state_path(log_dir: Path) -> Path:
+    """Return the supervisor state file's path for a run logging to `log_dir`.
+
+    Parameters
+    ----------
+    log_dir : Path
+        The run's RESOLVED log directory -- ``run_fleet.py`` resolves
+        ``--log-dir`` before handing it to `_run_fleet`, and every consumer
+        here uses that same value.
+
+    Returns
+    -------
+    Path
+        ``log_dir / FLEET_STATE_FILENAME``. Not created, not checked.
+
+    Notes
+    -----
+    The state file lives BESIDE the lane logs it describes rather than at some
+    fixed repo-root location, and that placement is the resume rule: a
+    supervisor restarted with the same ``--log-dir`` finds the file and
+    resumes, while one started with a DIFFERENT ``--log-dir`` finds no file
+    and correctly starts fresh -- it is, by the operator's own choice of
+    directory, a different run, and inheriting another run's counters and
+    halt reasons would be the wrong answer.
+
+    Examples
+    --------
+    >>> fleet_state_path(Path("/tmp/logs")).name
+    'fleet_state.json'
+    """
+    return log_dir / FLEET_STATE_FILENAME
+
+
+def _monotonic_to_epoch(
+    value: Optional[float], *, monotonic_now: float, epoch_now: float
+) -> Optional[float]:
+    """Convert an in-memory `time.monotonic` value to a persistable wall-clock one.
+
+    Parameters
+    ----------
+    value : float or None
+        A `time.monotonic` reading, or ``None`` to pass straight through (the
+        caller has already mapped its own "unset" sentinel onto ``None``).
+    monotonic_now, epoch_now : float
+        `time.monotonic()` and `time.time()` sampled ONCE by the caller, so
+        every lane in one save converts against a single reference pair.
+
+    Returns
+    -------
+    float or None
+        ``epoch_now - (monotonic_now - value)``: the `time.time`-based instant
+        that is just as far in the past (or future) as `value` is from
+        `monotonic_now`. ``None`` for a ``None`` input.
+
+    Notes
+    -----
+    WHY this conversion exists, and why nobody may "simplify" it away by
+    writing the monotonic number straight to disk: **`time.monotonic()`'s
+    epoch is arbitrary and PER PROCESS.** The number is only ever meaningful
+    as a difference against another reading from the SAME process. Persisted
+    and read back by a replacement supervisor, it is garbage measured against
+    that process's own unrelated origin -- a backoff deadline that fires
+    instantly or effectively never, and a 2x-budget alert (`_monitor_tick`)
+    that can never be right. What has to survive a restart is the lane's AGE
+    and its REMAINING backoff, and wall clock is the only clock both processes
+    share.
+    """
+    if value is None:
+        return None
+    return epoch_now - (monotonic_now - value)
+
+
+def _epoch_to_monotonic(
+    value: Optional[float], *, monotonic_now: float, epoch_now: float
+) -> Optional[float]:
+    """Convert a persisted wall-clock value back into THIS process's monotonic frame.
+
+    The exact inverse of `_monotonic_to_epoch` (see its Notes for why the
+    round trip cannot be skipped): ``monotonic_now - (epoch_now - value)``
+    re-expresses `value` against this process's own arbitrary monotonic
+    origin, preserving the elapsed interval rather than the raw number.
+
+    Parameters
+    ----------
+    value : float or None
+        A wall-clock instant read from the state file, or ``None`` (passed
+        through, so the caller can restore its own "unset" sentinel).
+    monotonic_now, epoch_now : float
+        `time.monotonic()` and `time.time()` sampled ONCE by the caller.
+
+    Returns
+    -------
+    float or None
+        The equivalent `time.monotonic` value in this process, or ``None``.
+
+    Notes
+    -----
+    Wall clock can be stepped (NTP, a manual set) between the save and the
+    load, which shifts the recovered age by that step. That is accepted: the
+    alternative is no resume at all, the fields it feeds are an ALERT
+    threshold and a backoff deadline rather than anything the study measures,
+    and a clock step large enough to matter is itself worth an operator's
+    attention.
+    """
+    if value is None:
+        return None
+    return monotonic_now - (epoch_now - value)
+
+
+def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
+    """Write every lane's resumable state to `log_dir`'s one supervisor state file.
+
+    Parameters
+    ----------
+    runs : dict of str to _LaneRun
+        Spec key -> live lane state. Read only; never mutated.
+    log_dir : Path
+        The run's log directory; created (with parents) if it does not exist,
+        so the first save cannot fail merely because no lane has logged yet.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    OSError
+        If the directory cannot be created or the file cannot be written.
+        Deliberately NOT swallowed: a save that silently does nothing leaves
+        an operator believing a restart is safe when it is not.
+
+    Notes
+    -----
+    **Atomic.** The document is serialised to a SIBLING ``.tmp`` file and
+    ``os.replace``d into position -- the same discipline
+    ``smolbench.evals.quiz.Marks.dump`` uses, and for the same reason: a
+    reader, including the next supervisor, must never observe a torn file. A
+    partially written ``fleet_state.json`` would either fail to parse (an
+    operator-visible refusal at the worst possible moment) or, worse, parse
+    into a lane set missing entries that would then silently start clean.
+    ``os.replace`` is atomic within a filesystem, and the temporary is a
+    sibling precisely so that holds. On the success path no ``.tmp`` is left
+    behind.
+
+    **What is persisted**, per lane: `_STATE_PLAIN_FIELDS` verbatim, plus the
+    two clock fields of `_STATE_CLOCK_FIELDS` converted from
+    `time.monotonic` to wall clock by `_monotonic_to_epoch` -- read that
+    function's Notes before touching them. ``lane_started_at == 0.0`` ("never
+    launched") and ``pending_relaunch_at is None`` ("nothing pending") are
+    both written as JSON ``null``, so a never-launched lane does not come back
+    with an age of decades and a lane with no pending relaunch does not come
+    back with an already-expired deadline.
+
+    **What is NOT persisted**, and why:
+
+    * `_LaneRun.started_at` -- the MOST RECENT launch's timestamp. A resumed
+      supervisor relaunches the lane's current phase anyway, which resets it,
+      so the stored value would be stale by construction. `lane_started_at`,
+      the lane's first launch, is the one that has to survive, because
+      `_monitor_tick`'s 2x-budget alert keys on it.
+    * `_LaneRun.proc` -- a `subprocess.Popen` cannot be serialised at all; see
+      `load_fleet_state`'s Notes for what that means for a lane still running
+      on the old host.
+    * `_LaneRun.lane` and `_LaneRun.phases` -- derived from the roster and the
+      ``--phase`` argument, and rebuilt by `_run_fleet` before this file is
+      read. Persisting them would let a stale copy of the roster silently
+      override the committed one.
+
+    The ``lanes`` map is keyed by SPEC KEY. That is deliberately the SAME
+    string ``fleet_status.fleet_rows`` derives as its ``lane`` column (the
+    ``smolbench:experiment`` tag with ``_config.SCALING_TAG_PREFIX``
+    stripped), so a describe sweep and this file name the same lanes -- which
+    is what "lane identity comes from the tag" means in practice, and what
+    lets an operator read the two side by side without a translation table.
+    """
+    # Sample both clocks ONCE, not per lane: every lane in one document must
+    # convert against a single reference pair, or two lanes saved microseconds
+    # apart disagree about what "now" was.
+    monotonic_now = time.monotonic()
+    epoch_now = time.time()
+
+    lanes: dict[str, dict[str, Any]] = {}
+    for key, run in runs.items():
+        entry: dict[str, Any] = {name: getattr(run, name) for name in _STATE_PLAIN_FIELDS}
+        # 0.0 is `lane_started_at`'s "never launched" sentinel and None is
+        # `pending_relaunch_at`'s "nothing pending"; both become JSON null
+        # rather than being run through the conversion -- see this function's
+        # Notes.
+        entry["lane_started_at_epoch"] = _monotonic_to_epoch(
+            run.lane_started_at if run.lane_started_at else None,
+            monotonic_now=monotonic_now,
+            epoch_now=epoch_now,
+        )
+        entry["pending_relaunch_at_epoch"] = _monotonic_to_epoch(
+            run.pending_relaunch_at, monotonic_now=monotonic_now, epoch_now=epoch_now
+        )
+        lanes[key] = entry
+
+    document = {
+        "version": _FLEET_STATE_VERSION,
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "lanes": lanes,
+    }
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = fleet_state_path(log_dir)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as state_file:
+        json.dump(document, state_file, indent=2, sort_keys=True)
+        state_file.write("\n")
+    os.replace(tmp, path)
+
+
+def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
+    """Restore `log_dir`'s persisted lane state into `runs`, in place.
+
+    Parameters
+    ----------
+    runs : dict of str to _LaneRun
+        Spec key -> freshly built lane state; MUTATED in place. Only lanes
+        named in both `runs` and the file are touched.
+    log_dir : Path
+        The run's log directory, holding `fleet_state_path`'s file.
+
+    Returns
+    -------
+    int
+        How many lanes were actually resumed -- the size of the intersection
+        of `runs` and the file's ``lanes`` map. ``0`` when there is no file at
+        all.
+
+    Raises
+    ------
+    ValueError
+        If the file exists but cannot be read, does not parse as JSON, carries
+        an unrecognised ``version``, or has the wrong shape (missing or
+        non-mapping ``lanes``, a non-mapping lane entry, a lane entry missing
+        a persisted field). The message NAMES the path and tells the operator
+        to delete it to start fresh. This is deliberately loud rather than a
+        silent reset: quietly starting 21 lanes from zero counters re-grants
+        every one of them a full crash and reclaim budget, so a lane that has
+        already burned through its relaunches gets to burn through another
+        set -- expensive, and invisible in the logs that would matter.
+
+    Notes
+    -----
+    Behaviour per lane, all of it logged at INFO with the lane's name, because
+    every skip here changes what the supervisor will do next:
+
+    * **No file at all** -> ``0``, logged. This is a FIRST RUN, not an error.
+    * **In `runs`, absent from the file** -> that lane starts clean, logged BY
+      NAME. Both causes are ordinary: a ``--lanes`` subset that did not
+      include it last time, or a rung added to the roster since.
+    * **In the file, absent from `runs`** -> ignored, logged. The mirror case
+      (a ``--lanes`` subset now, or a rung removed).
+
+    A lane restored as ``halted`` or ``done`` stays that way and is never
+    relaunched. That needs no extra guard here: `_all_terminal` counts it as
+    terminal, and both `_apply_restart_policy` and `_advance_finished` skip on
+    ``run.halted or run.done`` before doing anything else.
+
+    **SCOPE -- what a resume does NOT recover.** `_LaneRun.proc` is a
+    `subprocess.Popen`; it cannot be serialised, so a resumed supervisor holds
+    NO handle on a lane process that may still be running on the old host. The
+    resumed supervisor therefore RELAUNCHES the lane's current phase, and what
+    stops already-landed work from being re-collected and re-billed is the
+    driver's OWN resume-skip -- ``ResultsStore.exists`` per replicate -- not
+    anything in this file. Adopting a live process by PID (the ``/proc``
+    inspection ``run_shards.py`` does for its own shards) is deliberately out
+    of scope: it is only sound on the SAME host, which is precisely the
+    assumption a supervisor-host failure breaks.
+    """
+    path = fleet_state_path(log_dir)
+    if not path.exists():
+        logging.info(
+            f"run_fleet: no supervisor state file at {path}; treating this as a first run "
+            "(every lane starts with a clean phase index and relaunch budget)."
+        )
+        return 0
+
+    # A refusal must name the file and say what to do about it: the operator
+    # is looking at a stalled 21-box fleet and needs a one-line remedy, not a
+    # traceback to interpret.
+    remedy = f"Delete {path} to start fresh (every lane's counters restart from zero)."
+    try:
+        raw = path.read_text()
+    except OSError as exc:
+        raise ValueError(
+            f"run_fleet: could not read the supervisor state file {path}: {exc}. {remedy}"
+        ) from exc
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # Re-raised rather than propagated even though JSONDecodeError IS a
+        # ValueError: on its own it names a line and column, not the file the
+        # operator has to delete.
+        raise ValueError(
+            f"run_fleet: the supervisor state file {path} is not valid JSON: {exc}. {remedy}"
+        ) from exc
+
+    # Shape checks are on the FILE's own structure only -- never on agreement
+    # with the in-memory roster. A lane's stored `phase_index` legitimately
+    # exceeds this invocation's phase count when the operator resumes
+    # `--phase induction` over a `--phase both` run, and refusing that would
+    # turn a normal narrowing into a hard stop.
+    if not isinstance(document, dict):
+        raise ValueError(
+            f"run_fleet: the supervisor state file {path} is not a JSON object "
+            f"(found {type(document).__name__}). {remedy}"
+        )
+    version = document.get("version")
+    if version != _FLEET_STATE_VERSION:
+        raise ValueError(
+            f"run_fleet: the supervisor state file {path} has version {version!r}; "
+            f"this supervisor writes and reads version {_FLEET_STATE_VERSION}. {remedy}"
+        )
+    stored = document.get("lanes")
+    if not isinstance(stored, dict):
+        raise ValueError(
+            f"run_fleet: the supervisor state file {path} has no 'lanes' object "
+            f"(found {type(stored).__name__}). {remedy}"
+        )
+
+    for key in sorted(set(stored) - set(runs)):
+        logging.info(
+            f"run_fleet: lane {key!r} is in {path} but not in this invocation's lanes; "
+            "ignoring its persisted state (a --lanes subset, or a rung removed since)."
+        )
+
+    monotonic_now = time.monotonic()
+    epoch_now = time.time()
+    resumed = 0
+    for key in sorted(runs):
+        entry = stored.get(key)
+        if entry is None:
+            logging.info(
+                f"run_fleet: lane {key!r} has no entry in {path}; starting it clean "
+                "(a --lanes subset last time, or a rung added since)."
+            )
+            continue
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"run_fleet: lane {key!r} in the supervisor state file {path} is not a "
+                f"JSON object (found {type(entry).__name__}). {remedy}"
+            )
+        missing = [
+            name for name in _STATE_PLAIN_FIELDS + _STATE_CLOCK_FIELDS if name not in entry
+        ]
+        if missing:
+            # Partial application is not an option: a lane restored with some
+            # counters and not others is neither resumed nor clean, and
+            # nothing downstream could tell which.
+            raise ValueError(
+                f"run_fleet: lane {key!r} in the supervisor state file {path} is missing "
+                f"{', '.join(missing)}. {remedy}"
+            )
+
+        run = runs[key]
+        for name in _STATE_PLAIN_FIELDS:
+            setattr(run, name, entry[name])
+        # The clock fields go back through the wall-clock -> monotonic
+        # conversion, restoring the lane's AGE and its REMAINING backoff
+        # rather than the raw numbers; null restores each field's own "unset"
+        # sentinel (0.0 / None), which are NOT interchangeable --
+        # `_apply_restart_policy` branches on `pending_relaunch_at is not
+        # None`, so a 0.0 there would read as an expired deadline and
+        # relaunch every resumed lane at once.
+        restored_start = _epoch_to_monotonic(
+            entry["lane_started_at_epoch"], monotonic_now=monotonic_now, epoch_now=epoch_now
+        )
+        run.lane_started_at = 0.0 if restored_start is None else restored_start
+        run.pending_relaunch_at = _epoch_to_monotonic(
+            entry["pending_relaunch_at_epoch"],
+            monotonic_now=monotonic_now,
+            epoch_now=epoch_now,
+        )
+        resumed += 1
+
+    logging.info(f"run_fleet: resumed {resumed} lane(s) from {path}.")
+    return resumed
 
 
 def _phase_sequence(phase: str) -> tuple[str, ...]:
@@ -969,6 +1402,16 @@ def _run_fleet(
     monitor loop until every lane is halted or done.
     """
     runs = {key: _LaneRun(lane=lane, phases=phase_sequence) for key, lane in lanes.items()}
+    # ONCE, after `runs` is built (so every lane exists to be restored into)
+    # and BEFORE the first launch (so a resumed lane's phase index, counters
+    # and halt state are already in place when `_launch_batch` reads them).
+    # A lane restored as halted or done needs no special handling here: the
+    # loop guards below already skip on `run.halted or run.done`.
+    resumed = load_fleet_state(runs, log_dir)
+    logging.info(
+        f"run_fleet: {resumed} of {len(runs)} lane(s) resumed from a previous supervisor; "
+        f"the rest start clean."
+    )
 
     tier_d = [k for k in lanes if lanes[k].tier == "D"]
     tier_a = [k for k in lanes if lanes[k].tier == "A"]
@@ -988,6 +1431,12 @@ def _run_fleet(
         _apply_restart_policy(runs, log_dir, presence)
         _check_cot(runs)
         _advance_finished(runs, log_dir)
+        # Every tick, at its END: the file then reflects the state the
+        # supervisor just reached, so the most a host failure can cost is the
+        # one tick in progress. Saving only at exit would lose everything to
+        # exactly the failure this file exists for. BEFORE the gate-failure
+        # branch below, whose `break` would otherwise skip the save.
+        save_fleet_state(runs, log_dir)
         if all(runs[k].halted for k in gate_keys):
             logging.error(
                 "run_fleet: FAMILY GATE FAILED -- every GATE_MODELS lane halted; NOT "
@@ -1020,6 +1469,7 @@ def _run_fleet(
         _apply_restart_policy(runs, log_dir, presence)
         _check_cot(runs)
         _advance_finished(runs, log_dir)
+        save_fleet_state(runs, log_dir)  # every tick -- see the gate loop's comment
 
     halted = {key: run.halt_reason for key, run in runs.items() if run.halted}
     if halted:
@@ -1033,6 +1483,11 @@ def _run_fleet(
             f"run_fleet: {len(spool_errors)} lane(s) had a post-deduction spool failure "
             f"(data is collected locally, NOT confirmed in S3): {spool_errors}"
         )
+    # Once more after the closing summary, so the FINAL state of every lane is
+    # on disk: the gate-failure path breaks out of the loop above before its
+    # tier-B/C halts have been written, and a `--phase induction` run leaves
+    # boxes up for a later `--phase deduction` invocation to resume against.
+    save_fleet_state(runs, log_dir)
     if phase_name == "induction":
         print(
             "\nrun_fleet: induction-only run complete. Boxes are left RUNNING on purpose "
