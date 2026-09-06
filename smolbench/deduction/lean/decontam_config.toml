@@ -1,0 +1,122 @@
+# Single committed source for the Lean decontamination POLICY: the MinHash/LSH
+# near-duplicate parameters that `smolbench/deduction/lean/decontam.py`
+# fingerprints eval statements with, the statement/state key-length floor, and
+# the identifier stoplist `smolbench/deduction/lean/premises.py` filters
+# premise references through.
+#
+# Parsed by smolbench/deduction/lean/decontam_config.py (stdlib tomllib; no new
+# dependency) and read by:
+#   - smolbench/deduction/lean/decontam.py   ([minhash] -> the MinHash/LSH
+#                                             index, [keys] -> the key floor)
+#   - smolbench/deduction/lean/premises.py   ([premises].lean_noise ->
+#                                             _LEAN_NOISE)
+#
+# POLICY, NOT LOGIC. Every value below decides what a run CONTAINS rather than
+# how it is computed, which is why it lives in a reviewable file instead of in
+# code constants: `lean_noise` decides which identifiers resolve to premise
+# references and therefore what the `hint:3` and `hint:4` rungs actually hold,
+# and the [minhash] block decides which candidate training rows a
+# decontamination pass drops.
+#
+# PROVENANCE: `notebooks/deduction/run_study.py`'s `build_config` stamps this
+# file's SHA-256, over its RAW BYTES -- comments included, so the rationale
+# text below is fingerprinted too -- into every run's `manifest.json` as
+# `decontam_config: {path, sha256}`. An archived run therefore records WHICH
+# stoplist produced its prompts, exactly as it records which sweep knobs it ran
+# under.
+#
+# This file is the audit surface for all of the above: it is meant to be read
+# by a human checking "what near-duplicate policy and what stoplist did this
+# run use", not just by the parser, hence the generous comments below.
+
+# ---------------------------------------------------------------------------
+# MinHash / banded-LSH near-duplicate index over eval statements (decontam K2).
+# ---------------------------------------------------------------------------
+[minhash]
+# Character-shingle width. 5 chars spans roughly one Lean token plus its
+# neighborhood, so renaming one hypothesis perturbs only the shingles that
+# touch it -- the signature stays close under alpha-renaming.
+shingle_n = 5
+
+# MinHash permutations; 64 keeps signatures cheap while the banding below puts
+# the LSH candidate threshold safely under `jaccard_threshold`.
+num_perm = 64
+
+# LSH banding: 8 bands over the 64-slot signature, hence 8 rows per band --
+# `decontam_config.py` DERIVES `rows = num_perm // bands` and refuses a
+# `num_perm` the bands do not partition exactly, so the row count is never
+# configured twice. `(1/bands)**(1/rows)` = `(1/8)**(1/8)` ~= 0.771 is the
+# standard S-curve approximation of the CANDIDATE threshold for this banding:
+# the similarity at which a pair becomes about as likely as not to collide in
+# some band. It sits below the 0.85 decision threshold, which is the point --
+# candidates surface, and exact Jaccard then decides. It is an approximation,
+# not a guarantee of full recall; `decontam.py`'s docstring records what was
+# actually MEASURED on the 840-candidate fixture corpus.
+bands = 8
+
+# Final decision threshold on exact shingle-set Jaccard similarity. The LSH
+# above only proposes candidates; this value is what actually drops a row.
+jaccard_threshold = 0.85
+
+# MinHash permutation seed. Fixed, not caller-configurable, so every index
+# built anywhere hashes identically; the value is arbitrary.
+perm_seed = 1776
+
+# ---------------------------------------------------------------------------
+# Statement/state key eligibility (decontam K2/K3).
+# ---------------------------------------------------------------------------
+[keys]
+# Minimum normalized length for a *goal-only* variant to become a
+# statement/state index key: shorter bare goals (`⊢ False`, `⊢ a = b`) recur
+# across unrelated mathlib theorems and would mass-drop harmless training rows.
+# A state WITH hypotheses still contributes its full-state variant; a
+# hypothesis-free one under the floor contributes no key at all, and the
+# (state, tactic) pair family covers it -- a pair match reproduces the *answer*
+# at any length.
+min_goal_key_chars = 24
+
+# ---------------------------------------------------------------------------
+# Premise-reference stoplist (`premises._LEAN_NOISE`).
+# ---------------------------------------------------------------------------
+[premises]
+# Lean keywords, tactic vocabulary, and ubiquitous short identifiers that would
+# pollute the per-premise dependency graph if treated as premise references.
+# Not exhaustive: the high-traffic ones only. Grouped exactly as the hand
+# written frozenset this list replaces was grouped -- keywords, then core
+# tactics, then short ids -- so the two are diffable.
+#
+# `premises.py` VALIDATES this list at import: every entry must match its
+# `_IDENT_RE` and be longer than one character, because `referenced_premises`
+# filters `len(tok) <= 1` before the membership test and only `_IDENT_RE`
+# tokens ever reach it. `decontam_config.py` separately refuses an empty list
+# or a duplicate entry.
+lean_noise = [
+  "theorem", "lemma", "def", "instance", "structure", "inductive",
+  "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
+  "if", "then", "else", "match", "with", "by", "have", "show", "this",
+  "true", "True", "false", "False", "Type", "Prop", "Sort", "Set",
+  "namespace", "open", "import", "section", "end", "variable", "variables",
+  "where", "macro", "syntax", "elab", "deriving", "attribute", "set_option",
+  "noncomputable", "private", "protected", "partial", "mutual",
+  # Core tactics.
+  "rw", "rewrite", "simp", "exact", "apply", "intro", "intros", "rintro",
+  "cases", "rcases", "obtain", "use", "constructor", "refine", "refine'",
+  "split", "and", "or", "not", "iff", "exists", "forall", "all_goals",
+  "any_goals", "tauto", "ring", "field_simp", "linarith", "nlinarith",
+  "omega", "decide", "rfl", "trivial", "assumption",
+  # Very common short ids that would explode the graph if a match on them
+  # were what skipped them -- but it never is. `referenced_premises` skips a
+  # token on `tok in _LEAN_NOISE or len(tok) <= 1`, so every
+  # single-character identifier (`a`, `b`, ..., `z`) is dropped by the length
+  # arm whether or not this list mentions it: listing one changes nothing.
+  # 22 such single-character entries were removed (plus `"trivial!"`,
+  # unmatchable by `premises._IDENT_RE` since `!` is outside its character
+  # class) as dead: 23 lines of documentation asserting a filter that never
+  # ran. Do NOT restore single-character entries here, and every entry in
+  # this list must be a real `_IDENT_RE` token -- `premises.py` now REFUSES
+  # to import if any entry is either kind, naming it, rather than merely
+  # asking. Dropping the `len(tok) <= 1` arm from `referenced_premises`
+  # first is what it would take to make single-character entries live again.
+  "id", "le", "lt", "ge", "gt", "eq", "ne", "of", "to", "from",
+  "h1", "h2", "h3",
+]

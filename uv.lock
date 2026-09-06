@@ -314,6 +314,19 @@ wheels = [
 ]
 
 [[package]]
+name = "datasketch"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux'" },
+    { name = "scipy", marker = "sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/da/ae/bbcdeab67ebfe27747896618bca0f8113e79d534c5af2b06ce6693c981de/datasketch-2.0.0.tar.gz", hash = "sha256:e0570e170f7e64b8d6fb1cc2e4ce36a9f7036c5100167e50a0770addc50558c2", size = 98666, upload-time = "2026-07-05T06:36:30.681Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/df/9e79bf1fb2f660507dbd00d24730d107595a2f599f2524a96344149c95f1/datasketch-2.0.0-py3-none-any.whl", hash = "sha256:aea5ffafcce776e03d085740e78b874e778d779b07ee11ca636ca51b3fef09ed", size = 107247, upload-time = "2026-07-05T06:36:29.222Z" },
+]
+
+[[package]]
 name = "debugpy"
 version = "1.8.21"
 source = { registry = "https://pypi.org/simple" }
@@ -1734,6 +1747,7 @@ dev = [
     { name = "pytest", marker = "sys_platform == 'linux'" },
 ]
 lean = [
+    { name = "datasketch", marker = "sys_platform == 'linux'" },
     { name = "lean-dojo", marker = "sys_platform == 'linux'" },
     { name = "lean-interact", marker = "sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'linux'" },
@@ -1757,6 +1771,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.43" },
     { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.35.0" },
+    { name = "datasketch", marker = "extra == 'lean'", specifier = ">=2.0" },
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=7.2.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=8.0.1" },
