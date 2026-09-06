@@ -2,13 +2,15 @@
 
 This file exists so the study's ``scaling-`` EC2 tag prefix and its default
 region list have exactly ONE place the fleet family reads them from --
-``run_fleet.py``, ``fleet_status.py``, ``fleet_teardown.py`` (via
+``run_fleet.py`` (and the modules it was split into, ``lane_env.py`` and
+``supervisor.py``), ``fleet_status.py``, ``fleet_teardown.py`` (via
 ``fleet_status``, which it already imports) and ``run_shards.py`` all come
 here -- instead of each spelling its own copy that can silently drift from
 the others, the way
-``fleet_status.SCALING_TAG_PREFIX``/``STATUS_REGIONS`` and
-``run_fleet.DEFAULT_REGIONS``/``Lane.experiment_tag`` did before this file
-existed, with only a comment (not code) asserting they agreed.
+``fleet_status.SCALING_TAG_PREFIX``/``STATUS_REGIONS`` and the supervisor's
+own ``DEFAULT_REGIONS``/``Lane.experiment_tag`` (then in ``run_fleet.py``,
+today in ``lane_env.py``) did before this file existed, with only a comment
+(not code) asserting they agreed.
 
 No CONSTANT below is DECLARED here any more: every one is a VIEW on
 ``smolbench/evals/study_config.toml``, read through
@@ -38,9 +40,9 @@ so at most once per process however many fleet scripts load it.
 SDK, for analysis notebooks, and keeps that property. What the import DOES
 newly require is that ``smolbench`` be importable at all -- which every
 consumer already satisfies, because they run under the repo ``.venv``'s
-editable install and ``run_fleet.py`` already imports
-``smolbench.evals.results_store`` and ``smolbench.evals.providers.ec2`` at
-module scope.
+editable install and the fleet supervisor already imports
+``smolbench.evals.providers.ec2`` (in ``lane_env.py``) and
+``smolbench.evals.results_store`` (in ``supervisor.py``) at module scope.
 
 This module stays environment-blind for exactly the reason
 ``study_config.py`` does: ``EC2_REGIONS`` is applied by ``ec2.py`` at its own
@@ -53,7 +55,7 @@ It is loaded BY FILE PATH, never a bare ``import _config`` or
 consumer defines): ``scripts/fleet`` has no ``__init__.py`` -- it is not a
 package -- and every module in it is already loaded under a private module
 name by its callers (``tests/tooling/test_run_fleet.py``,
-``run_fleet._fleet_status_module``, ``fleet_teardown._fleet_status``), so a
+``supervisor._fleet_status_module``, ``fleet_teardown._fleet_status``), so a
 bare import name would be ambiguous at best and simply absent from
 ``sys.path`` at worst.
 
@@ -67,9 +69,9 @@ Two consequences worth spelling out:
 - The hand-written ``_load_fleet_config`` bootstrap stays in each consumer,
   but ONLY for ``_config`` itself: this module cannot load itself through its
   own function, since that function does not exist until the module has been
-  executed. Everything else -- ``policy.py``, ``shards.py`` -- goes through
-  `load_fleet_module`, so there is one loader implementation instead of one
-  per consumer.
+  executed. Everything else -- ``policy.py``, ``shards.py``, ``lane_env.py``
+  and ``supervisor.py`` -- goes through `load_fleet_module`, so there is one
+  loader implementation instead of one per consumer.
 - `load_fleet_module` adds only ``importlib.util``, ``sys`` and ``pathlib``,
   all stdlib. This module's documented properties -- no AWS SDK anywhere in
   its import chain, environment-blind, and no side effect on import beyond
@@ -87,12 +89,15 @@ of scope for this file; do not fold it in here.
 
 Every fleet script now reads these from here: ``fleet_status.py``
 (``SCALING_TAG_PREFIX``/``STATUS_REGIONS``, the latter from `REGION_TUPLE`),
-``run_fleet.py`` (its ``DEFAULT_REGIONS`` constant, ``TIER_REGIONS``,
+``lane_env.py`` (its ``DEFAULT_REGIONS`` constant, ``TIER_REGIONS``,
 ``Lane.experiment_tag`` from `SCALING_TAG_PREFIX`, and its ``LANES`` table
 and ``_drift_guard`` from `ROSTER_KEYS`/`ROSTER_TAGS`), ``run_shards.py``
 (via its own ``_load_fleet_config``: `SCALING_TAG_PREFIX` for
 ``refuse_fleet_prefix_tag`` and `STANDALONE_TAG` for its ``--tag`` default)
 and ``fleet_teardown.py`` (transitively, through ``fleet_status``).
+``run_fleet.py`` and ``supervisor.py`` read none of these constants
+directly: they take the roster and the per-lane environment from
+``lane_env.py``, which is the point of the split.
 """
 
 from __future__ import annotations
@@ -122,9 +127,11 @@ def load_fleet_module(stem: str) -> ModuleType:
     types.ModuleType
         The loaded module, registered in ``sys.modules`` under
         ``f"smolbench_fleet_{stem}"``. Every caller in a process therefore
-        gets the SAME object: ``run_fleet`` and ``run_shards`` both reading
+        gets the SAME object: ``supervisor`` and ``run_shards`` both reading
         ``load_fleet_module("policy")`` share one policy module, which is the
-        whole point of having one restart policy rather than two copies.
+        whole point of having one restart policy rather than two copies (and
+        ``run_fleet`` and ``supervisor`` likewise share one ``lane_env``, so
+        there is one roster per process).
 
     Raises
     ------
@@ -199,14 +206,14 @@ REGION_TUPLE: tuple[str, ...] = _FLEET.regions
 #: `REGION_TUPLE`, comma-joined. Derived FROM the tuple -- note the direction:
 #: the tuple is the config's own shape for the region list, and this string is
 #: merely the RENDERING that shape takes as an ``EC2_REGIONS`` environment
-#: value (see ``run_fleet.Lane.regions``, which falls back to this for every
+#: value (see ``lane_env.Lane.regions``, which falls back to this for every
 #: tier but D, and ``run_shards.py --regions``). Deriving it here rather than
 #: declaring it means the two forms can never disagree, and only the tuple has
 #: to be kept faithful to the config.
 DEFAULT_REGIONS: str = ",".join(REGION_TUPLE)
 
 #: Every fleet lane's ``smolbench:experiment`` EC2 tag is
-#: ``f"{SCALING_TAG_PREFIX}{spec_key}"`` (see ``run_fleet.Lane.experiment_tag``).
+#: ``f"{SCALING_TAG_PREFIX}{spec_key}"`` (see ``lane_env.Lane.experiment_tag``).
 #: Read from ``[fleet].tag_prefix`` rather than declared, so this file and the
 #: committed config cannot name two different fleet namespaces -- which would
 #: make ``fleet_status``'s server-side tag filter blind to the boxes
