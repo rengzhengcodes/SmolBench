@@ -36,15 +36,19 @@ Rows come from either the S3 archive or a local tree, through
 ``rows_source.resolve_rows_dir``: ``--s3 [PREFIX]`` downloads
 ``<prefix>/scaling_<key>/verified_rows.jsonl`` into a temporary
 ``<dir>/<model>/verified_rows.jsonl`` tree, and ``--rows-dir`` reads such a
-tree that already exists. ``--recovery-dir`` is LOCAL-ONLY, and NOT because the
-DojoInit recovery rows are unarchived -- they are spooled, under their own
-``<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`` tree (which
-``scripts/results/audit_lean_pinning.py`` reads). That run directory does not
-start with ``scaling_`` and its file is not ``verified_rows.jsonl``, so
-``rows_source.download_scaling_rows``' run filter and its ``candidates`` list
-both exclude it by construction. Fetching the recovery arm from S3 is not
-implemented here, so ``--recovery-dir`` takes a path you already have locally;
-passing ``--s3`` does not fetch it.
+tree that already exists. ``--recovery-dir`` is LOCAL-ONLY here, and NOT
+because the DojoInit recovery rows are unarchived -- they are spooled, under
+their own ``<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl``
+tree (which ``scripts/results/audit_lean_pinning.py`` reads). That run
+directory does not start with ``scaling_`` and its file is not
+``verified_rows.jsonl``, so ``rows_source.download_scaling_rows``' run filter
+and its ``candidates`` list both exclude it BY DEFAULT: a caller can reach it
+by overriding both ``run_marker=""`` and ``candidates=
+("recovered_rows.jsonl",)``, which is what lets something else in this
+repository fetch it through the very same reader. This script does not do
+that -- ``error_bars.py``'s own ``--recovery-dir`` stays a plain local path
+with no ``--s3`` form, so passing ``--s3`` here still does not fetch the
+recovery tree.
 
 Run (``--mode report`` is the default; ``-B`` sets the resample count):
     .venv/bin/python \

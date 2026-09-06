@@ -23,6 +23,28 @@ LAYOUTS -- the two this module bridges, spelled out because they differ:
   which is precisely the tree ``error_bars.lane_outcomes`` and
   ``hint_vs_noise.main`` already read from ``--rows-dir``.
 
+RUN-NAMING CONVENTIONS -- `download_scaling_rows` (and, through it,
+`resolve_rows_dir`) actually recognizes TWO of these, selected by the
+``run_marker`` keyword:
+
+* The default, ``run_marker="scaling_"``, is the layout above: one run per
+  model, all 21 of this study's lanes.
+* ``run_marker=""`` accepts every run directory under `prefix` verbatim and
+  strips nothing off its name. This is what the DojoInit recovery spool
+  needs: it lives at ``<prefix>/dojoinit_recovery_<date>/<lane>/
+  recovered_rows.jsonl`` -- the key shape ``scripts/results/
+  audit_lean_pinning.py``'s ``fetch_recovery`` constructs (``f"{run_prefix}/"
+  f"{RECOVERY_RUN}/{lane}/recovered_rows.jsonl"``). That run directory does
+  not start with ``scaling_`` and its file is not ``verified_rows.jsonl``, so
+  under the DEFAULT marker it is invisible to a plain ``--s3`` fetch -- which
+  is the point: a recovery run sitting beside the lanes must never be pulled
+  into a headline pool by surprise. Called with ``run_marker=""`` and
+  ``candidates=("recovered_rows.jsonl",)``, the SAME reader lands it at
+  ``<lane>/recovered_rows.jsonl``: the identical ``<model>/<file>`` shape the
+  ``scaling_`` path produces, and exactly what ``error_bars.lane_outcomes``
+  reads from ``--recovery-dir``. This is one reader serving a second
+  run-naming convention, not a second layout.
+
 RUN ENVIRONMENT -- these scripts' documented run environment is ``uv run
 --no-project --with numpy --with scipy``: an interpreter with neither smolbench
 nor boto3 installed. That constrains this module in two separate places. Which
@@ -208,16 +230,33 @@ def download_scaling_rows(
     *,
     prefix: str,
     candidates: tuple[str, ...] = ("verified_rows.jsonl",),
+    run_marker: str = "scaling_",
     client=None,
 ) -> list[Path]:
-    """Download this study's ``scaling_*`` run row files from S3 into `dest_dir`.
+    """Download this study's ``<run_marker>*`` run row files from S3 into `dest_dir`.
 
     Lists ``s3://S3_BUCKET/<prefix>`` with ``Delimiter="/"`` and keeps the
-    common prefixes whose last path segment starts with ``scaling_``. For each
+    common prefixes whose last path segment starts with `run_marker`. For each
     such run it then LISTS the run's objects and downloads the first entry of
     `candidates` that is actually present, to
     ``dest_dir/<model_key>/<candidate>``, where ``<model_key>`` is the run
-    prefix's last segment with the leading ``scaling_`` stripped.
+    prefix's last segment with the leading `run_marker` stripped.
+
+    `run_marker` defaults to ``"scaling_"``, this study's one-run-per-model
+    convention, and every existing caller (`power_analysis`, `error_bars`,
+    `hint_vs_noise`) relies on that default staying put: a recovery run
+    sitting beside the lanes must stay invisible to a plain ``--s3`` fetch.
+    The DojoInit recovery spool is a SECOND run-naming convention under the
+    same prefix (``<prefix>/dojoinit_recovery_<date>/<lane>/
+    recovered_rows.jsonl``, the key shape ``scripts/results/
+    audit_lean_pinning.py``'s ``fetch_recovery`` constructs) -- its run
+    directory does not start with ``scaling_`` and its file is not
+    ``verified_rows.jsonl``, so it was unreachable from S3 while every other
+    row source was reachable. Passing ``run_marker=""`` opens it: every run
+    directory is then accepted (``str.startswith("")`` is always true) and
+    nothing is stripped from its name, landing it at the same
+    ``<lane>/<file>`` shape the default path produces -- one reader, a second
+    convention, not a second layout.
 
     WHY LIST INSTEAD OF BLIND-DOWNLOADING. The obvious implementation asks S3
     for each candidate key in turn and swallows the 404. Listing first buys two
@@ -258,6 +297,14 @@ def download_scaling_rows(
         documented fallback; because the candidate name is also the landed
         basename, ``load_joint_cells``'s unverified-input banner still fires on
         the fallback under this layout.
+    run_marker : str, optional
+        A run directory qualifies when its last path segment starts with this
+        string; the qualifying prefix is then stripped to form the landed
+        ``<model_key>``. Defaults to ``"scaling_"``, this study's run-naming
+        convention -- unchanged, every existing caller depends on a recovery
+        run staying invisible by default. Pass ``""`` to accept every run
+        directory under `prefix` and strip nothing, for the DojoInit recovery
+        spool's own naming convention (see the function docstring above).
     client : optional
         An S3 client. Defaults to ``None`` -> a lazily built
         ``boto3.client("s3", region_name=S3_REGION)``. It is a parameter so
@@ -307,12 +354,15 @@ def download_scaling_rows(
     paginator = client.get_paginator("list_objects_v2")
 
     # Phase 1: discover the run prefixes. Delimiter="/" makes S3 roll each
-    # <prefix>/scaling_<key>/... family up into one CommonPrefixes entry.
+    # <prefix>/<run_marker><key>/... family up into one CommonPrefixes entry.
+    # `run_marker=""` makes every segment qualify (str.startswith("") is
+    # always True), which is exactly the DojoInit recovery tree's need: its
+    # run directories carry no shared marker at all.
     run_prefixes = sorted(
         common["Prefix"]
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix, Delimiter="/")
         for common in page.get("CommonPrefixes", [])
-        if Path(common["Prefix"].rstrip("/")).name.startswith("scaling_")
+        if Path(common["Prefix"].rstrip("/")).name.startswith(run_marker)
     )
 
     # Phase 2: per run, list -> guard -> download at most one file.
@@ -332,7 +382,9 @@ def download_scaling_rows(
         if chosen is None:
             continue  # partially collected study; documented in Returns
 
-        model_key = Path(run_prefix.rstrip("/")).name[len("scaling_"):]
+        # With run_marker="" this slices at 0 and leaves the segment whole --
+        # the "strip nothing" half of the unmarked layout's contract.
+        model_key = Path(run_prefix.rstrip("/")).name[len(run_marker):]
         local_dir = dest_dir / model_key
         local_dir.mkdir(parents=True, exist_ok=True)
         local_path = local_dir / chosen
@@ -346,6 +398,7 @@ def resolve_rows_dir(
     rows_dir: Path | None,
     s3_prefix: str | None,
     candidates: tuple[str, ...] = ("verified_rows.jsonl",),
+    run_marker: str = "scaling_",
     client=None,
 ) -> Path:
     """Return a local directory of ``<model>/verified_rows.jsonl``, fetching if asked.
@@ -366,6 +419,12 @@ def resolve_rows_dir(
         default; `spool_prefix`'s docstring says why.
     candidates : tuple of str, optional
         Passed through to `download_scaling_rows`.
+    run_marker : str, optional
+        Passed through to `download_scaling_rows`; defaults to
+        ``"scaling_"``, so a plain ``--s3`` fetch keeps behaving exactly as it
+        did before this parameter existed. A caller after the DojoInit
+        recovery tree passes ``run_marker=""`` alongside
+        ``candidates=("recovered_rows.jsonl",)``.
     client : optional
         Passed through to `download_scaling_rows`; for tests.
 
@@ -426,11 +485,16 @@ def resolve_rows_dir(
         file=sys.stderr,
     )
     landed = download_scaling_rows(
-        dest_dir, prefix=normalized, candidates=candidates, client=client
+        dest_dir, prefix=normalized, candidates=candidates, run_marker=run_marker,
+        client=client,
     )
     if not landed:
+        # `run_marker` is echoed literally (including the empty string) so the
+        # message stays true of whichever convention was actually searched,
+        # rather than hard-coding the default's "scaling_*" past the point
+        # this function started accepting other conventions too.
         raise SystemExit(
-            f"no scaling_*/{candidates[0]} objects found under "
+            f"no {run_marker}*/{candidates[0]} objects found under "
             f"s3://{S3_BUCKET}/{normalized} -- nothing to analyze. Check the "
             f"prefix (--s3 <PREFIX>, or LEAN_SPOOL_PREFIX; the published "
             f"pre-cutoff study is at {_LEGACY_SPOOL_PREFIX}) and that the "

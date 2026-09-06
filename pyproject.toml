@@ -76,8 +76,9 @@ aws = [
 # token matching, prompt-stats; also backs the optional
 # smolbench.evals.tokenization.TiktokenTokenizer, which the offline tests and
 # the module demos use in place of a downloaded model tokenizer);
-# verification additionally needs lean-dojo (the reason the project pins
-# python<3.13 above).
+# verification additionally needs lean-interact (the REPL backend); lean-dojo
+# -- still required below for corpus tracing and premise slicing, not
+# verification -- is what pins python<3.13 above.
 lean = [
     # The verifier's REPL backend: `lean-interact` wraps
     # leanprover-community/repl (MIT) and tracks current Lean, including
