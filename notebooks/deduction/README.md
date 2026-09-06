@@ -28,18 +28,29 @@ directly beneath it because `notebooks/deduction/results` is the path
 `results_store.experiment_name` matches -- and what
 `smolbench.deduction.lean.runner.results_root()` falls back to.
 
-`analysis/` holds the three read-only report scripts. Each puts its own
-directory on `sys.path` and imports its siblings by bare name, so anything
-importing them programmatically must register each under a UNIQUE
-`sys.modules` name -- the bare names collide with the induction leg's
-same-named modules. Load order does not matter (see
-`tests/tooling/test_analysis_stats.py`).
+`analysis/` holds three read-only report scripts plus the reader module they
+share. Each puts its own directory on `sys.path` and imports its siblings by
+bare name, so anything importing them programmatically must register each
+under a UNIQUE `sys.modules` name -- the bare names collide with the induction
+leg's same-named modules. Load order does not matter provided each load first
+evicts any cached sibling owned by another directory;
+`tests/deduction/test_deduction_analysis_reports.py` implements exactly that
+discipline in its `_load` helper.
+
+All three report scripts read the same rows and offer the same choice of where
+those rows come from: `--s3 [PREFIX]` to pull them from the archive, or a local
+directory to analyse a tree you already have (`--rows-dir` for `error_bars.py`
+and `hint_vs_noise.py`, `--results-dir` for `power_analysis.py`, which keeps
+its own `RESULTS_DIR` default). The archive's address, the prefix resolver,
+the retired-artifact guard and the downloader itself live once, in
+`rows_source.py`.
 
 | File | What it's for |
 | --- | --- |
-| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. Owns `RESULTS_DIR` and a `--s3` run-file download **for itself only** -- it lands one row file per `scaling_<key>/` run prefix, not the `<model>/verified_rows.jsonl` tree `error_bars.py`/`hint_vs_noise.py` read from `--rows-dir`. |
-| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--no-count-as-failure` drops cells with no surviving rollout instead of counting them as failures. |
-| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. |
+| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver and its refusal of the published pre-cutoff prefix, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
+| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3` (with `--spool-prefix`) or `--results-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
+| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`, plus `--no-count-as-failure` to drop cells with no surviving rollout instead of counting them as failures. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
+| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
 
 Note both legs ship a file named `power_analysis.py`. A process loading
 this one and the induction one together must give each a unique

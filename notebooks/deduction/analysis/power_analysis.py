@@ -17,9 +17,14 @@ DATA SOURCE -- LOUD WARNING: read ``verified_rows.jsonl`` (written by
 ``scripts/deduction/lean_verify_rows.py``), NEVER the generation-time ``all_rows.jsonl``:
 its verdicts are all the ``"unverified"`` placeholder, so every rate would read at or near
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
-the loud stderr banner `load_joint_cells` prints instead of falling back silently. The
-bucket is deliberately NOT spelled out below: it is committed config, read from
-``smolbench/evals/study_config.toml`` into this module's `S3_BUCKET` constant, and prose
+the loud stderr banner `load_joint_cells` prints instead of falling back silently.
+
+Everything about the archive's ADDRESS and LAYOUT -- the bucket and region, the spool
+prefix and its legacy refusal, the retired-artifact guard, and the downloader itself --
+lives in the sibling module ``rows_source.py``, shared with ``error_bars.py`` and
+``hint_vs_noise.py``; this module re-exports the names its callers already import from
+it. The bucket is deliberately NOT spelled out in prose anywhere: it is committed
+config, read from ``smolbench/evals/study_config.toml`` into `S3_BUCKET`, and prose
 restating it could drift from the bucket a run actually reads. Inputs are ``--s3``
 (``s3://<S3_BUCKET>/<spool-prefix>/scaling_*/``, where ``<spool-prefix>`` defaults to the
 re-collection's prefix and is overridable via ``--spool-prefix`` -- the published
@@ -56,6 +61,16 @@ from scipy.stats import binom
 # import to __file__ makes it cwd-independent (repo convention).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# THIS directory, for the bare-name sibling import of `rows_source` below.
+# Required, not decorative: running this file as a script puts its own
+# directory on sys.path[0] for free, but the tests (and any programmatic
+# consumer) load it via ``importlib.util.spec_from_file_location``, which does
+# NOT -- so without this line the sibling import would resolve only by
+# accident, when some other sibling happened to be loaded first in the same
+# process. `error_bars.py` and `hint_vs_noise.py` carry the identical insert
+# for the identical reason.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 # The repo root is one level further up, added so `smolbench.evals.study_config`
 # resolves from the SOURCE TREE and not only from an editable install: this
 # script's documented run environment is ``uv run --no-project --with numpy
@@ -66,8 +81,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # typing), and study_config itself imports functools, tomllib, dataclasses,
 # pathlib, types, typing. That is NOT true of
 # ``smolbench.deduction.lean.runner`` (it reaches provider/corpus code), which
-# is why the spool-prefix constants further down stay duplicated instead of
-# imported from it: the constraint has narrowed, not disappeared.
+# is why `rows_source` keeps the spool-prefix constants duplicated instead of
+# importing them from it: the constraint has narrowed, not disappeared.
 #
 # Inserted at position 0, so `smolbench` resolves from THIS tree ahead of any
 # editable install pointing at a different checkout -- deliberate, and the same
@@ -84,7 +99,33 @@ from _power_common import (
 )
 
 from smolbench.evals.study_config import families as _study_families
-from smolbench.evals.study_config import load_study_config
+
+# The study's archive address, spool-prefix resolver, retired-artifact guard
+# and downloader all live in `rows_source` now, shared with `error_bars.py`
+# and `hint_vs_noise.py` -- which, until that module existed, could not read
+# the S3 archive at all.
+#
+# Every name is re-imported under its EXISTING spelling, including the ones
+# this module no longer uses itself, because this module is their published
+# home: `error_bars.py` and `hint_vs_noise.py` import `reject_superseded` from
+# here, and `tests/deduction/` reads `S3_BUCKET`, `S3_REGION`,
+# `SUPERSEDED_MARKER` and both spool-prefix literals off this module. Dropping
+# an "unused" one would break a caller, not tidy the file.
+from rows_source import (  # noqa: E402
+    RETIRED_MARKERS,
+    S3_BUCKET,
+    S3_REGION,
+    SUPERSEDED_MARKER,
+    _DEDUCTION_SPOOL_PREFIX,
+    _LEGACY_SPOOL_PREFIX,
+    download_scaling_rows,
+    reject_superseded,
+    spool_prefix,
+)
+
+# Alias, so the private name this module's own callers and tests already use
+# keeps resolving after the definition moved to `rows_source`.
+_spool_prefix = spool_prefix
 
 # --------------------------------------------------------------------------- #
 # Roster: 7 vendor families x 3 parameter-count rungs (ladder positions) = 21
@@ -182,70 +223,6 @@ ALPHA_PRIMARY = ALPHA / N_PRIMARY
 N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
-
-# S3 layout (see the module docstring's DATA SOURCE section). Both values are
-# the committed config's -- ``smolbench/evals/study_config.toml``, the same file
-# the fleet driver and results store read -- so this script cannot point at a
-# bucket the run never wrote to. They stay MODULE-LEVEL constants under their
-# existing names because `_download_s3_rows` and several report f-strings read
-# them by name.
-#
-# Import-time versus call-time resolution is immaterial here: `study_config`
-# reads no environment variables at all (that is a documented invariant of its
-# module, not an accident), so there is no late `load_dotenv` whose effect a
-# frozen import-time read could miss. `load_study_config` is memoized, so
-# resolving at import costs one TOML parse the rest of the process reuses.
-S3_BUCKET = load_study_config().results.bucket
-S3_REGION = load_study_config().results.region
-
-#: The re-collection's S3 key prefix, duplicated from
-#: `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`/`LEGACY_SPOOL_PREFIX`
-#: rather than imported: this file runs under
-#: ``uv run --no-project --with numpy --with scipy``, so it may import only
-#: stdlib-reachable smolbench modules (see the ``sys.path`` block near the top
-#: -- `study_config` qualifies, `runner` does not: it pulls the provider and
-#: corpus stacks). The same constraint makes `SUPERSEDED_MARKER`, below,
-#: duplicate a runner.py literal. Kept in step by
-#: ``tests/deduction/test_spool_prefix.py``.
-_DEDUCTION_SPOOL_PREFIX = "deduction_postcutoff/runs"
-_LEGACY_SPOOL_PREFIX = "deduction/runs"
-
-
-def _spool_prefix() -> str:
-    """Resolve the deduction spool prefix; duplicates `runner.spool_prefix()`.
-
-    Not a module constant, and NEVER called at import time or as an argparse
-    default: `main` resolves it once, after `parse_args`, so
-    ``LEAN_SPOOL_PREFIX=deduction/runs --help`` never raises (and so that
-    `tests/tooling/test_analysis_stats.py`, which imports this file via
-    ``importlib`` -- executing module scope -- never triggers the refusal
-    below just by importing).
-
-    Returns
-    -------
-    str
-        The normalized prefix (env override, or `_DEDUCTION_SPOOL_PREFIX`),
-        never ending in "/".
-
-    Raises
-    ------
-    ValueError
-        If the resolved prefix is the published pre-cutoff study's
-        `_LEGACY_SPOOL_PREFIX` and ``LEAN_ALLOW_LEGACY_PREFIX`` is not
-        ``"1"`` -- see `runner.spool_prefix`'s docstring for the full
-        rationale (this duplicates its behavior, not just its literals).
-    """
-    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
-    resolved = raw.rstrip("/") if raw else _DEDUCTION_SPOOL_PREFIX
-    if resolved == _LEGACY_SPOOL_PREFIX and os.environ.get("LEAN_ALLOW_LEGACY_PREFIX") != "1":
-        raise ValueError(
-            f"refusing to resolve the deduction spool prefix to the published "
-            f"pre-cutoff study's prefix ({_LEGACY_SPOOL_PREFIX!r}) -- writing/reading "
-            "there again risks silently conflating it with the re-collection. Set "
-            "LEAN_ALLOW_LEGACY_PREFIX=1 to override, or pass --spool-prefix explicitly."
-        )
-    return resolved
-
 
 RESULTS_DIR = results_dir(__file__, up=1)
 
@@ -393,49 +370,6 @@ def _warn_unverified(reasons: list[str]) -> None:
 #: measurements in load_joint_cells): cells carrying only these are excluded from
 #: the paired blocks rather than scored 0.
 UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
-
-
-#: Filename marker for a RETIRED row artifact: ``run_study.py`` renames a superseded
-#: ``all_rows.jsonl`` to ``all_rows_SUPERSEDED-<stamp>.jsonl`` rather than deleting it
-#: (audit trail, on purpose), and the S3 analysis snapshot copies those files too -- so
-#: a byte-identical copy of the retired MIXED-HARDWARE artifact sits one directory from
-#: live data, within reach of any wide enough glob (why that matters:
-#: `reject_superseded`).
-SUPERSEDED_MARKER = "SUPERSEDED"
-#: The snapshot writes three retirement markers for the same audit-trail class
-#: (scripts/results/snapshot_analysis_data.py). STALE/BROKEN are anchored ``_MARKER-``
-#: to avoid matching ordinary words in basenames; SUPERSEDED stays bare (historical).
-RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
-
-
-def reject_superseded(paths) -> None:
-    """Refuse retired row artifacts, loudly and by name.
-
-    Raises ``SystemExit`` naming every path whose BASENAME contains a
-    `RETIRED_MARKERS` entry (basename, so a directory legitimately named after an
-    audit is not a target). A warning would not do: these files parse and their rows
-    are well-formed, so ingesting one yields a complete, plausible, WRONG report.
-    """
-    bad = [str(p) for p in paths
-           if any(m in Path(p).name for m in RETIRED_MARKERS)]
-    if not bad:
-        return
-    bar = "!" * 78
-    raise SystemExit(
-        "\n".join(
-            [bar, "!!  REFUSING SUPERSEDED ROW FILE(S)", bar]
-            + [f"!!  {b}" for b in bad]
-            + [
-                "!!",
-                "!!  A *_SUPERSEDED-* file is a RETIRED artifact kept as an audit",
-                "!!  trail (see run_study.py --force-rerun). Its rows were collected",
-                "!!  on hardware that has since been superseded; pooling them with",
-                "!!  current rows re-creates the mixed-hardware confound the archive",
-                "!!  was made to remove. Point the loader at verified_rows.jsonl.",
-                bar,
-            ]
-        )
-    )
 
 
 def reject_unverified_verdicts(rows, field, source) -> None:
@@ -1219,60 +1153,6 @@ def _print_tier_report(
 
 
 # --------------------------------------------------------------------------- #
-# S3 loading.
-# --------------------------------------------------------------------------- #
-def _download_s3_rows(tmp_dir: Path, *, deduction_prefix: str) -> list:
-    """Download this study's ``scaling_*`` run row files from S3 into `tmp_dir`.
-
-    Lists ``s3://S3_BUCKET/<deduction_prefix>`` with ``Delimiter="/"``, keeps
-    ``scaling_*`` run prefixes, and per run writes ``verified_rows.jsonl`` or,
-    failing that, ``all_rows.jsonl`` (which makes `load_joint_cells` fire
-    `_warn_unverified`) into its own subdirectory of `tmp_dir`. Returns one
-    path per downloaded run, silently omitting runs with neither object; any
-    ``ClientError`` other than 404/NoSuchKey propagates. ``boto3``/``botocore``
-    are imported LAZILY so the local ``--results-dir`` path and every pure
-    function stay usable without boto3.
-
-    Parameters
-    ----------
-    deduction_prefix : str
-        S3 key prefix to list under, WITH a trailing "/". `main` resolves
-        this via `spool_prefix()` / ``--spool-prefix`` and passes it in --
-        never a module constant, so a late ``LEAN_SPOOL_PREFIX`` override (or
-        the legacy-prefix refusal) takes effect per-invocation.
-    """
-    import boto3  # lazy: keep the local-analysis path boto3-free
-    from botocore.exceptions import ClientError
-
-    client = boto3.client("s3", region_name=S3_REGION)
-    resp = client.list_objects_v2(Bucket=S3_BUCKET, Prefix=deduction_prefix, Delimiter="/")
-    run_prefixes = sorted(
-        cp["Prefix"]
-        for cp in resp.get("CommonPrefixes", [])
-        if Path(cp["Prefix"].rstrip("/")).name.startswith("scaling_")
-    )
-
-    row_files: list[Path] = []
-    for prefix in run_prefixes:
-        run_name = Path(prefix.rstrip("/")).name
-        local_dir = tmp_dir / run_name
-        local_dir.mkdir(parents=True, exist_ok=True)
-        for candidate in ("verified_rows.jsonl", "all_rows.jsonl"):
-            key = f"{prefix}{candidate}"
-            local_path = local_dir / candidate
-            try:
-                client.download_file(S3_BUCKET, key, str(local_path))
-            except ClientError as exc:
-                code = exc.response.get("Error", {}).get("Code", "")
-                if code not in ("404", "NoSuchKey"):
-                    raise
-                continue
-            row_files.append(local_path)
-            break  # prefer verified_rows.jsonl; only try all_rows.jsonl if it 404s
-    return row_files
-
-
-# --------------------------------------------------------------------------- #
 # CLI + report.
 # --------------------------------------------------------------------------- #
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1358,8 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.s3:
         # Resolved HERE, after parse_args -- not a module constant, not an
         # argparse default -- so LEAN_SPOOL_PREFIX=deduction/runs never
-        # breaks --help (see `_spool_prefix`'s and `_download_s3_rows`'s
-        # docstrings).
+        # breaks --help (see `rows_source.spool_prefix`'s docstring).
         deduction_prefix = (args.spool_prefix or _spool_prefix()) + "/"
         tmp_dir = Path(tempfile.mkdtemp(prefix="smolbench_deduction_power_"))
         print(
@@ -1367,7 +1246,25 @@ def main(argv: list[str] | None = None) -> int:
             f"{tmp_dir} ...",
             file=sys.stderr,
         )
-        row_files = _download_s3_rows(tmp_dir, deduction_prefix=deduction_prefix)
+        # `download_scaling_rows`, not `rows_source.resolve_rows_dir`: this
+        # script needs the row-file LIST (it reports how many runs loaded) and
+        # must return 1 on an empty archive rather than raise, which is what
+        # the sibling scripts' shared resolver does. Both candidates are passed
+        # to preserve this script's documented all_rows.jsonl fallback -- the
+        # candidate name is also the landed basename, so `load_joint_cells`'s
+        # unverified-input banner still fires on it.
+        #
+        # The local scratch layout changed with the move, from
+        # ``<tmp>/scaling_<key>/`` to ``<tmp>/<key>/``. That is invisible to
+        # this script: `load_joint_cells` keys every model off the row's own
+        # ``model`` field and never reads a directory name. The new layout is
+        # the one `error_bars.py` and `hint_vs_noise.py` need, which is why one
+        # downloader can now serve all three.
+        row_files = download_scaling_rows(
+            tmp_dir,
+            prefix=deduction_prefix,
+            candidates=("verified_rows.jsonl", "all_rows.jsonl"),
+        )
         if not row_files:
             print(
                 f"No run files found under s3://{S3_BUCKET}/{deduction_prefix} -- "
