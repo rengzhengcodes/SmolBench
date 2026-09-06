@@ -12,9 +12,12 @@ S3 spool sync plus shutdown.
   ``GATE_MODELS`` tier-A lanes -- one per reasoning-toggle style -- log a
   healthy serve, turning a 21-way bet on the digest-pinned ``FLEET_IMAGE`` into
   a 3-way bet.
-- Restart policy: :func:`classify_exit` gives a reclaim ``MAX_RECLAIM_RELAUNCHES``
-  BACKED-OFF relaunches and a crash ``MAX_CRASH_RELAUNCHES`` immediate ones, then
-  HALTS that lane either way; the fleet continues.
+- Restart policy: lives in ``scripts/fleet/policy.py``, SHARED with
+  ``scripts/fleet/run_shards.py`` so one spot reclaim gets one answer whichever
+  supervisor is watching. ``policy.classify_exit`` gives a reclaim
+  ``policy.MAX_RECLAIM_RELAUNCHES`` BACKED-OFF relaunches and a crash
+  ``policy.MAX_CRASH_RELAUNCHES`` immediate ones, then HALTS that lane either
+  way; the fleet continues.
 - CoT-ON: :func:`reasoning_fraction` HALTS any lane whose first landed replicate
   falls below ``COT_MIN_FRACTION``; non-thinking data is indistinguishable later.
 - Phases: ``--phase induction`` (default) never shuts a box down; ``deduction``
@@ -113,6 +116,20 @@ def _load_fleet_config():
 # pattern, in `_fleet_status_module`) has already loaded `_config.py` this
 # process, this is a cache hit, not a second, independent module object.
 _config = _load_fleet_config()
+
+# The restart vocabulary -- `classify_exit`, the relaunch caps, the reclaim
+# backoff schedule and `decide_relaunch` -- used to be declared in THIS file
+# while `run_shards.py` carried an unrelated set of its own, so the same spot
+# reclaim got two different answers depending on which supervisor was
+# watching. It now lives in `scripts/fleet/policy.py`, which both supervisors
+# load through `_config.load_fleet_module` -- and therefore as ONE module
+# object per process, not a copy each.
+#
+# Loaded eagerly, at module scope, not lazily like `_fleet_status_module`
+# below: `policy.py` imports nothing but `re` and `dataclasses`, so it cannot
+# fail, read the environment or pull in an AWS SDK, and `_apply_restart_policy`
+# needs it on every supervision tick anyway.
+_policy = _config.load_fleet_module("policy")
 
 # ---------------------------------------------------------------------------
 # Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
@@ -312,28 +329,13 @@ TIER_MEMBERS = {
 }
 
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
-MAX_CRASH_RELAUNCHES = 2
-# Finding 14-02: a RECLAIM verdict used to get unlimited relaunches, on the
-# theory that a spot reclaim is never the lane's fault. But an empty or
-# failed `describe_instances` sweep (see `_Presence`) made EVERY exit look
-# like a reclaim, so "unlimited" meant a lane could relaunch forever with no
-# crash counting and no budget alert ever firing (`_monitor_tick`'s 2x-budget
-# check keys on `lane_started_at`, which a relaunch never resets, but nothing
-# stopped the relaunches themselves). Bounding it, with backoff so a lane
-# genuinely fighting spot capacity is not hammered every tick:
-#   delay before relaunch n = min(RECLAIM_BACKOFF_CAP_SECONDS,
-#                                  RECLAIM_BACKOFF_BASE_SECONDS * 2 ** (n - 1))
-#   = 60, 120, 240, 480, 960, then 1800s thereafter.
-# MAX_RECLAIM_RELAUNCHES=12 relaunches therefore span about 4h of backoff
-# (60+120+240+480+960+1800*7 ~= 4.15h) against a 9-14h tier budget
-# (TIER_BUDGET_HOURS), so a lane fighting genuine capacity pressure still
-# gets most of its budget, while the pathological misclassification above
-# stops at 12 relaunches instead of running for the fleet's whole lifetime.
-# `run_shards.py`'s flat `CAPACITY_BACKOFF_SECONDS = 300` is the analogous
-# existing policy for its own capacity-shaped retries.
-MAX_RECLAIM_RELAUNCHES = 12
-RECLAIM_BACKOFF_BASE_SECONDS = 60
-RECLAIM_BACKOFF_CAP_SECONDS = 1800
+# The relaunch caps and the reclaim backoff schedule that used to be declared
+# here are now `_policy.MAX_CRASH_RELAUNCHES`, `_policy.MAX_RECLAIM_RELAUNCHES`
+# and `_policy.reclaim_backoff_seconds` -- see `scripts/fleet/policy.py` for
+# the values and for why a reclaim is no longer retried without limit. They
+# are not re-exported here: a module-level alias is exactly the second
+# spelling this move exists to remove.
+
 # A DEAD toggle measures ~0-11% (bare integers everywhere); a
 # working-but-variable soft protocol measures 78-100%. 0.5 cleanly
 # separates the two regimes. (With only 9 intens marks, a 0.9 threshold
@@ -646,60 +648,6 @@ def is_serve_healthy(line: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Restart-policy classifier
-# ---------------------------------------------------------------------------
-# Deliberately EXCLUDES the bare provisioning line (`provision_spot_instance:
-# trying <type> in <az> ...`, logged by `ec2._launch_fresh` on EVERY attempt):
-# it appears in successful launches too, so matching it would misclassify a
-# provisioning-time CRASH -- which also logs "trying ..." before failing -- as a
-# reclaim, and reclaims get UNLIMITED retries. Only failure wording counts:
-# capacity/quota errors, and the "endpoint unreachable" message ec2.py raises
-# after its connection-failure cap trips (the spot-reclaim/IP-drift symptom).
-RECLAIM_PATTERNS: tuple[re.Pattern, ...] = tuple(
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"InsufficientInstanceCapacity",
-        r"spot quota exhausted",
-        r"MaxSpotInstanceCountExceeded",
-        r"SpotMaxPriceTooLow",
-        r"spot capacity",
-        r"capacity-not-available",
-        r"spot interruption",
-        r"endpoint unreachable",
-    )
-)
-
-
-def classify_exit(log_tail: str, instance_present: bool) -> str:
-    """Classify a lane's non-zero exit as a spot reclaim or a real crash.
-
-    Parameters
-    ----------
-    log_tail : str
-        The lane's last ~40 log lines at the moment the exit was observed.
-    instance_present : bool
-        Whether its ``scaling-<key>`` instance was in the last sweep.
-
-    Returns
-    -------
-    str
-        ``"reclaim"`` when the instance is absent or `log_tail` matches
-        ``RECLAIM_PATTERNS``; ``"crash"`` otherwise, INCLUDING an empty tail with
-        the instance still present.
-
-    Notes
-    -----
-    A backwards verdict either abandons a lane on a routine interruption or
-    burns money relaunching one that will always fail the same way.
-    """
-    if not instance_present:
-        return "reclaim"
-    if any(pattern.search(log_tail) for pattern in RECLAIM_PATTERNS):
-        return "reclaim"
-    return "crash"
-
-
-# ---------------------------------------------------------------------------
 # CoT-ON assertion
 # ---------------------------------------------------------------------------
 def reasoning_fraction(
@@ -880,9 +828,10 @@ LOG_DIR: Path = REPO_ROOT / "notebooks" / "induction" / "results" / "fleet_logs"
 #: whose subprocess just exited, and a live lane's log can reach gigabytes
 #: over a multi-hour vLLM serve, so reading the WHOLE file every tick does
 #: not scale. 256 KiB is deliberately generous relative to the ~40 lines
-#: callers ask for: UNDER-reading is not neutral here -- a `RECLAIM_PATTERNS`
-#: match that falls outside the read window would silently reclassify a
-#: reclaim as a crash, halting a lane that should have been relaunched.
+#: callers ask for: UNDER-reading is not neutral here -- a
+#: `_policy.RECLAIM_PATTERNS` match that falls outside the read window would
+#: silently reclassify a reclaim as a crash, halting a lane that should have
+#: been relaunched.
 TAIL_MAX_BYTES = 262144
 
 
@@ -899,7 +848,7 @@ def _tail_log(log_dir: Path, key: str, n: int = 40, *, max_bytes: int = TAIL_MAX
     0, so its first line is very likely PARTIAL (the seek landed mid-line);
     that line is dropped rather than returned, since a partial line could
     spuriously match or fail to match a pattern a caller checks lines
-    against (`is_serve_healthy`, `RECLAIM_PATTERNS`).
+    against (`is_serve_healthy`, `_policy.RECLAIM_PATTERNS`).
     """
     path = log_dir / f"{key}.log"
     try:
@@ -1112,10 +1061,14 @@ class _LaneRun:
     #: never fire for the one lane it exists to catch -- one being relaunched
     #: over and over (see `_start_phase`).
     lane_started_at: float = 0.0
+    #: Crash relaunches so far this invocation; bounded by
+    #: `_policy.MAX_CRASH_RELAUNCHES`. Passed to `_policy.decide_relaunch` as
+    #: its ``attempt``, so it is incremented BEFORE the decision is asked for.
     crash_relaunches: int = 0
     #: Reclaim relaunches so far this invocation; bounded by
-    #: `MAX_RECLAIM_RELAUNCHES` (see that constant's comment for why a
-    #: reclaim is no longer unlimited).
+    #: `_policy.MAX_RECLAIM_RELAUNCHES` (see that constant's comment in
+    #: ``scripts/fleet/policy.py`` for why a reclaim is no longer unlimited).
+    #: Incremented before the decision, like `crash_relaunches`.
     reclaim_relaunches: int = 0
     #: `time.monotonic()` deadline for a pending backed-off reclaim relaunch;
     #: ``None`` means nothing is pending. Set by `_apply_restart_policy` on a
@@ -1299,18 +1252,50 @@ def _monitor_tick(
 def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _Presence) -> None:
     """Relaunch or halt every lane whose subprocess exited non-zero this tick.
 
-    Enforces `classify_exit`'s verdict: a CRASH gets `MAX_CRASH_RELAUNCHES`
-    immediate relaunches then a halt; a RECLAIM gets `MAX_RECLAIM_RELAUNCHES`
-    BACKED-OFF relaunches (see that constant's comment for the schedule) then
-    a halt too. Reclaims are no longer unlimited -- finding 14-02: an empty or
-    failed describe sweep used to make every exit look like a reclaim, so an
-    unbounded retry policy on that misclassification meant a lane could
-    relaunch forever with no crash counting and no budget alert ever firing.
+    Applies `_policy.classify_exit`'s verdict through `_policy.decide_relaunch`,
+    the ONE place either supervisor's relaunch cap is enforced (``run_shards.py``
+    asks the same function about a dead shard): a CRASH gets
+    `_policy.MAX_CRASH_RELAUNCHES` immediate relaunches then a halt; a RECLAIM
+    gets `_policy.MAX_RECLAIM_RELAUNCHES` BACKED-OFF relaunches, on
+    `_policy.reclaim_backoff_seconds`' schedule, then a halt too. Reclaims are
+    not unlimited: an empty or failed describe sweep used to make every exit
+    look like a reclaim, so an unbounded retry policy on that misclassification
+    meant a lane could relaunch forever with no crash counting and no budget
+    alert ever firing.
+
+    This function owns only the TICK-DRIVEN half of that: it never sleeps,
+    because it supervises 21 lanes from a single loop and blocking in one
+    lane's backoff would stall the other twenty. A non-zero
+    ``decision.delay_seconds`` becomes a `pending_relaunch_at` deadline
+    re-checked on later ticks; a zero delay relaunches in line.
+    (``run_shards.py``, which watches one model's shards and has nothing else
+    pending, sleeps the same delay instead. The scheduling differs; the policy
+    does not.)
 
     A lane whose previous reclaim verdict is still waiting out its backoff
     (`pending_relaunch_at` in the future) is left alone this tick: neither
     relaunched early nor re-classified against a log tail that has not
     changed.
+
+    Parameters
+    ----------
+    runs : dict of str to _LaneRun
+        Lane key -> live lane state; mutated in place (counters, ``halted``,
+        ``halt_reason``, ``pending_relaunch_at``, and `proc` via
+        `_start_phase`).
+    log_dir : Path
+        Directory holding ``<lane key>.log``, read for the verdict and passed
+        to `_start_phase` for a relaunch.
+    presence : _Presence
+        The last ``describe_instances`` sweep, consulted per lane for
+        `_policy.classify_exit`'s ``instance_present``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from `_policy.decide_relaunch` if the verdict is neither
+        ``"reclaim"`` nor ``"crash"`` -- which would mean the classifier and
+        this caller had drifted apart, and is not something to paper over.
     """
     now = time.monotonic()
     for key, run in runs.items():
@@ -1329,41 +1314,31 @@ def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _P
             continue  # still running, or a clean exit (handled by _advance_finished)
 
         tail = _tail_log(log_dir, key)
-        verdict = classify_exit(tail, presence.present(key))
+        verdict = _policy.classify_exit(tail, presence.present(key))
+        # The counter is incremented FIRST, then handed to the policy: its
+        # `attempt` is defined as the post-increment count, so `attempt == 1`
+        # is the first relaunch and the cap is exceeded at MAX + 1.
         if verdict == "reclaim":
             run.reclaim_relaunches += 1
-            if run.reclaim_relaunches > MAX_RECLAIM_RELAUNCHES:
-                run.halted = True
-                run.halt_reason = (
-                    f"reclaimed {run.reclaim_relaunches} time(s) (last rc={rc}); exceeded "
-                    f"MAX_RECLAIM_RELAUNCHES={MAX_RECLAIM_RELAUNCHES}"
-                )
-                logging.error(f"run_fleet[{key}]: HALTED -- {run.halt_reason}")
-            else:
-                delay = min(
-                    RECLAIM_BACKOFF_CAP_SECONDS,
-                    RECLAIM_BACKOFF_BASE_SECONDS * 2 ** (run.reclaim_relaunches - 1),
-                )
-                run.pending_relaunch_at = now + delay
-                logging.warning(
-                    f"run_fleet[{key}]: exited rc={rc}, classified RECLAIM -- relaunch "
-                    f"{run.reclaim_relaunches}/{MAX_RECLAIM_RELAUNCHES} in {delay:.0f}s."
-                )
+            attempt = run.reclaim_relaunches
         else:
             run.crash_relaunches += 1
-            if run.crash_relaunches > MAX_CRASH_RELAUNCHES:
-                run.halted = True
-                run.halt_reason = (
-                    f"crashed {run.crash_relaunches} time(s) (last rc={rc}); exceeded "
-                    f"MAX_CRASH_RELAUNCHES={MAX_CRASH_RELAUNCHES}"
-                )
-                logging.error(f"run_fleet[{key}]: HALTED -- {run.halt_reason}")
-            else:
-                logging.warning(
-                    f"run_fleet[{key}]: exited rc={rc}, classified CRASH -- relaunch "
-                    f"{run.crash_relaunches}/{MAX_CRASH_RELAUNCHES}."
-                )
-                _start_phase(run, log_dir)
+            attempt = run.crash_relaunches
+        decision = _policy.decide_relaunch(verdict, attempt=attempt, rc=rc)
+
+        if decision.action == "halt":
+            run.halted = True
+            run.halt_reason = decision.reason
+            logging.error(f"run_fleet[{key}]: HALTED -- {run.halt_reason}")
+            continue
+
+        logging.warning(f"run_fleet[{key}]: {decision.reason}")
+        if decision.delay_seconds:
+            # Record a deadline rather than sleeping -- see this function's
+            # docstring on why the 21-lane loop must not block.
+            run.pending_relaunch_at = now + decision.delay_seconds
+        else:
+            _start_phase(run, log_dir)
 
 
 def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = build_results_store) -> None:

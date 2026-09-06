@@ -8,6 +8,7 @@ import importlib.util
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +32,12 @@ def _load(stem):
 
 fleet, status, shards, teardown = (
     _load(s) for s in ("run_fleet", "fleet_status", "run_shards", "fleet_teardown"))
+# Reached THROUGH the consumers, never re-`_load`ed: `_load` builds a fresh
+# module object every call, so an independently loaded copy could never be the
+# object run_fleet and run_shards actually share -- which is the property under
+# test. Same idiom as `status._config is shards._config is fleet._config` below.
+policy = fleet._policy
+shard_mod = shards._shards
 
 TIERS = {  # tier -> instance types, then that tier's lane keys
     "A": "g6e.4xlarge,g6e.8xlarge nemotron-3-nano-4b gemma-4-e2b ministral-3-3b",
@@ -109,7 +116,7 @@ def test_lane_env_and_commands():
      ("", True, "crash")],
 )
 def test_classify_exit(tail, present, expected):
-    assert fleet.classify_exit(tail, present) == expected
+    assert policy.classify_exit(tail, present) == expected
 
 
 @pytest.mark.parametrize(
@@ -446,7 +453,7 @@ def test_an_empty_sweep_no_longer_turns_a_crash_into_an_endless_reclaim(monkeypa
     run = runs["gemma-4-e2b"]
     assert run.reclaim_relaunches == 0, "an unknown sweep must not read as a reclaim"
     assert run.halted and "MAX_CRASH_RELAUNCHES" in run.halt_reason
-    assert len(launches) == fleet.MAX_CRASH_RELAUNCHES == 2
+    assert len(launches) == policy.MAX_CRASH_RELAUNCHES == 2
 
 
 def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
@@ -462,7 +469,7 @@ def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
     presence = fleet._Presence()
     presence.observe({"glm-4.7"})  # present: the verdict comes from the log tail
 
-    for expected in range(1, fleet.MAX_RECLAIM_RELAUNCHES + 2):
+    for expected in range(1, policy.MAX_RECLAIM_RELAUNCHES + 2):
         fleet._apply_restart_policy(runs, tmp_path, presence)
         if run.halted:
             break
@@ -478,12 +485,12 @@ def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
         fleet._apply_restart_policy(runs, tmp_path, presence)
         assert len(launches) == before + 1 and run.pending_relaunch_at is None
 
-    assert run.halted and str(fleet.MAX_RECLAIM_RELAUNCHES) in run.halt_reason
-    assert len(launches) == fleet.MAX_RECLAIM_RELAUNCHES
+    assert run.halted and str(policy.MAX_RECLAIM_RELAUNCHES) in run.halt_reason
+    assert len(launches) == policy.MAX_RECLAIM_RELAUNCHES
     # Exponential, capped: 60, 120, 240, ... 1800, 1800, ...
-    assert delays[0] == pytest.approx(fleet.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
-    assert delays[1] == pytest.approx(2 * fleet.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
-    assert max(delays) == pytest.approx(fleet.RECLAIM_BACKOFF_CAP_SECONDS, abs=2)
+    assert delays[0] == pytest.approx(policy.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
+    assert delays[1] == pytest.approx(2 * policy.RECLAIM_BACKOFF_BASE_SECONDS, abs=2)
+    assert max(delays) == pytest.approx(policy.RECLAIM_BACKOFF_CAP_SECONDS, abs=2)
 
 
 def test_the_budget_alert_uses_a_clock_a_relaunch_cannot_reset(tmp_path, capsys):
@@ -508,7 +515,7 @@ def test_tail_log_finds_a_reclaim_marker_in_a_large_log(tmp_path):
                    + "botocore ... InsufficientInstanceCapacity for p5e.48xlarge\n")
     assert log.stat().st_size > 1_000_000
     tail = fleet._tail_log(tmp_path, "k")
-    assert fleet.classify_exit(tail, True) == "reclaim"
+    assert policy.classify_exit(tail, True) == "reclaim"
     assert len(tail.splitlines()) <= 40
     assert len(tail) < log.stat().st_size // 4, "the whole file is still being read"
     assert fleet._tail_log(tmp_path, "does-not-exist") == ""
@@ -644,3 +651,152 @@ def test_the_unverified_spool_copy_is_gone():
     assert not hasattr(fleet, "SPOOL_BUCKET") and not hasattr(fleet, "SPOOL_REGION")
     source = (SCRIPTS / "fleet" / "run_fleet.py").read_text()
     assert "smolbench-results-414266451290" not in source
+
+
+# ---------------------------------------------------------------------------
+# 14-14 / #49: ONE restart vocabulary, ONE Shard, thin entry points
+# ---------------------------------------------------------------------------
+def test_both_supervisors_share_one_policy_module():
+    """The same spot reclaim must not get two different answers.
+
+    run_shards used to carry its own restart vocabulary -- a single
+    ``CAPACITY_MARKER`` substring, ``FAST_CRASH_SECONDS``/``MAX_FAST_CRASHES``,
+    and unlimited flat-backoff capacity retries -- beside run_fleet's eight
+    ``RECLAIM_PATTERNS`` and capped exponential backoff. Both now read one
+    module object, so there is nothing left to drift.
+    """
+    assert fleet._policy is shards._policy is policy   # one object, not two copies
+    for gone in ("CAPACITY_MARKER", "CAPACITY_BACKOFF_SECONDS",
+                 "FAST_CRASH_SECONDS", "MAX_FAST_CRASHES", "RELAUNCH_BACKOFF_SECONDS"):
+        assert not hasattr(shards, gone), gone
+    for gone in ("RECLAIM_PATTERNS", "classify_exit", "MAX_CRASH_RELAUNCHES",
+                 "MAX_RECLAIM_RELAUNCHES", "RECLAIM_BACKOFF_BASE_SECONDS",
+                 "RECLAIM_BACKOFF_CAP_SECONDS"):
+        assert not hasattr(fleet, gone), f"run_fleet still declares {gone}"
+        assert hasattr(policy, gone), f"policy is missing {gone}"
+
+
+def test_the_shared_patterns_cover_the_marker_they_replaced():
+    """Deleting CAPACITY_MARKER only holds if RECLAIM_PATTERNS catches that line.
+
+    Pinned against the line's PRODUCER (``providers/ec2.py``), not against the
+    deleted literal, so this cannot pass by comparing the substitution to
+    itself.
+    """
+    # The phrase alone, not the escaped newline that follows it in the raise:
+    # this is a pin on the WORDING ec2.py produces, and how a source file spells
+    # the line break after it is not part of that wording.
+    produced = "No spot capacity for any (instance type, region) combination:"
+    assert produced in (REPO_ROOT / "smolbench" / "evals" / "providers" / "ec2.py").read_text()
+    rendered = f"ERROR:root:{produced}\n  g6e.12xlarge in us-east-2 -- no capacity"
+    assert policy.classify_exit(rendered, True) == "reclaim"
+    # ...and it is not a blanket "everything is a reclaim" verdict.
+    assert policy.classify_exit("Traceback:\n  KeyError: 'x'\n", True) == "crash"
+
+
+@pytest.mark.parametrize("verdict,attempt,action", [
+    ("reclaim", 1, "relaunch"),
+    ("reclaim", policy.MAX_RECLAIM_RELAUNCHES, "relaunch"),
+    ("reclaim", policy.MAX_RECLAIM_RELAUNCHES + 1, "halt"),
+    ("crash", 1, "relaunch"),
+    ("crash", policy.MAX_CRASH_RELAUNCHES, "relaunch"),
+    ("crash", policy.MAX_CRASH_RELAUNCHES + 1, "halt"),
+])
+def test_decide_relaunch_is_the_one_capped_backed_off_answer(verdict, attempt, action):
+    """One decision function, so neither supervisor can answer differently."""
+    decision = policy.decide_relaunch(verdict, attempt=attempt, rc=1)
+    assert decision.action == action
+    assert decision.reason.strip()
+    if action == "halt":
+        cap = ("MAX_RECLAIM_RELAUNCHES" if verdict == "reclaim"
+               else "MAX_CRASH_RELAUNCHES")
+        assert cap in decision.reason
+    elif verdict == "crash":
+        assert decision.delay_seconds == 0, "a crash relaunches immediately"
+    else:
+        assert decision.delay_seconds == policy.reclaim_backoff_seconds(attempt)
+
+
+def test_the_reclaim_backoff_is_exponential_and_capped():
+    """60, 120, 240, 480, 960, then 1800s forever -- the schedule run_fleet documents."""
+    seq = [policy.reclaim_backoff_seconds(n)
+           for n in range(1, policy.MAX_RECLAIM_RELAUNCHES + 1)]
+    assert seq[:5] == [60, 120, 240, 480, 960]
+    assert set(seq[5:]) == {policy.RECLAIM_BACKOFF_CAP_SECONDS} == {1800}
+    assert seq == sorted(seq), "backoff must never shrink"
+
+
+def test_shard_is_a_module_level_class_with_an_explicit_constructor():
+    """14-14: `class Shard` lived inside main(), closing over `args`.
+
+    Every field it read off that closure is now a constructor parameter, so a
+    Shard can be built (and driven) without an argparse Namespace.
+    """
+    assert not hasattr(shards, "Shard"), "run_shards must import Shard, not redefine it"
+    src = (SCRIPTS / "fleet" / "run_shards.py").read_text()
+    assert "class Shard" not in src
+    shard = shard_mod.Shard(
+        index=2, selector="2/3", log=Path("/tmp/nowhere/gemma-4-12b-s2of3.log"),
+        env={"INDUCTION_SHARD": "2/3"}, state_file=Path("/tmp/nowhere/.state.json"),
+        python=Path("/py"), driver=Path("/drv.py"), cwd=Path("/repo"))
+    assert (shard.index, shard.selector, shard.status) == (2, "2/3", "pending")
+    assert shard.proc is None and shard.adopted_pid is None
+    assert shard.launched_at == 0.0
+    assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
+    assert shard.env["INDUCTION_SHARD"] == "2/3"
+
+
+def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(monkeypatch, tmp_path):
+    """A capacity-exhausted hunt used to retry FOREVER on a flat 300s sleep.
+
+    It now takes the same bounded, exponentially backed-off path a fleet lane
+    does, so a permanently dry pool stops costing relaunches instead of
+    retrying for the whole run.
+    """
+    slept, launches = [], []
+    monkeypatch.setattr(shards.time, "sleep", slept.append)
+    monkeypatch.setattr(shards, "terminate_shard_box", lambda shard: None)
+
+    log = tmp_path / "s0.log"
+    log.write_text("ERROR:root:No spot capacity for any (instance type, region)\n")
+    shard = shard_mod.Shard(
+        index=0, selector="0/1", log=log, env={}, state_file=tmp_path / ".st.json",
+        python=Path("/py"), driver=Path("/drv.py"), cwd=tmp_path)
+
+    def _fake_launch():
+        launches.append(len(launches))
+        shard.proc = _FakeProc(1)
+        shard.status = "running"
+        shard.launched_at = 0.0
+
+    monkeypatch.setattr(shard, "launch", _fake_launch)
+    shard.proc = _FakeProc(1)
+    shard.status = "running"
+
+    assert shards.supervise([shard]) == 1
+    assert shard.status == "halted"
+    assert shard.reclaim_relaunches == policy.MAX_RECLAIM_RELAUNCHES + 1
+    assert len(launches) == policy.MAX_RECLAIM_RELAUNCHES
+    backoffs = [s for s in slept if s in
+                {policy.reclaim_backoff_seconds(n)
+                 for n in range(1, policy.MAX_RECLAIM_RELAUNCHES + 1)}]
+    assert backoffs == [policy.reclaim_backoff_seconds(n)
+                        for n in range(1, policy.MAX_RECLAIM_RELAUNCHES + 1)]
+
+
+def test_a_completed_shard_still_terminates_its_own_box(monkeypatch, tmp_path):
+    """The clean-exit path is what reclaims a direct run's box; keep it wired."""
+    terminated = []
+    monkeypatch.setattr(shards.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(shards, "terminate_shard_box", terminated.append)
+    log = tmp_path / "s0.log"
+    log.write_text("INDUCTION STUDY RUN COMPLETE\n")
+    shard = shard_mod.Shard(
+        index=0, selector=None, log=log, env={}, state_file=tmp_path / ".st.json",
+        python=Path("/py"), driver=Path("/drv.py"), cwd=tmp_path)
+    shard.proc = _FakeProc(0)
+    shard.status = "running"
+
+    assert shards.supervise([shard]) == 0
+    assert shard.status == "done"
+    assert terminated == [shard]
