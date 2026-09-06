@@ -71,6 +71,7 @@ from smolbench.evals._aws import DeploySpec
 from smolbench.evals.openai_compat import ChatClient, metadata_get
 from smolbench.evals.payloads import pack_user_data, render_user_data
 from smolbench.evals.results_store import parse_s3_uri, repo_root
+from smolbench.evals.study_config import load_study_config
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 # Spot capacity hunt order, tried TYPE-MAJOR: each type across every region
@@ -85,7 +86,14 @@ EC2_INSTANCE_TYPES: Tuple[str, ...] = tuple(
         if t.strip()
     )
 )
-_DEFAULT_REGIONS: str = ",".join(dict.fromkeys((AWS_REGION, "us-east-1", "us-east-2", "us-west-2")))
+# Default region list comes from the committed study config's [fleet].regions
+# (smolbench/evals/study_config.toml), not a second hand-copied literal here.
+# AWS_REGION still leads (a caller's own region is tried first, exactly as
+# before) and the EC2_REGIONS environment override below is unchanged;
+# study_config imports only the stdlib, so importing it here adds no cycle.
+_DEFAULT_REGIONS: str = ",".join(
+    dict.fromkeys((AWS_REGION, *load_study_config().fleet.regions))
+)
 EC2_REGIONS: Tuple[str, ...] = tuple(
     dict.fromkeys(
         r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()

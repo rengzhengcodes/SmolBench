@@ -112,8 +112,13 @@ notebook = [
     # The analysis scripts under notebooks/{induction,deduction}/analysis/
     # import scipy.stats for their reference distributions (induction
     # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
-    # deduction hint_vs_noise.py: binom), and induction power_analysis.py
-    # additionally imports statsmodels for the omnibus interaction test. Both
+    # deduction hint_vs_noise.py: binom), and statsmodels for their
+    # multiplicity corrections: induction paired_analysis.py and
+    # significance_report.py import statsmodels.stats.multitest.multipletests
+    # at module top for the Holm / Hochberg / Benjamini-Hochberg passes, which
+    # are on the main path of EVERY report run, and induction power_analysis.py
+    # additionally imports statsmodels.api for the omnibus interaction test (an
+    # optional diagnostic). Both
     # must stay declared: `uv sync` strips anything undeclared, and those
     # scripts then fail on ModuleNotFoundError partway through a run.
     "scipy>=1.15",
@@ -140,6 +145,12 @@ include-package-data = false
 # non-.py extensions are deliberate: they keep black/isort/pylint and the
 # import machinery away from files whose bytes are a production contract.
 "smolbench.evals.payloads" = ["*.sh", "*.py.txt"]
+# study_config.toml (the committed results-bucket/fleet/roster config every
+# evals consumer reads): same reasoning as the payloads entry above --
+# include-package-data = false means setuptools picks up only *.py, so
+# without this entry a non-editable install would drop the .toml and every
+# importer of smolbench.evals.study_config would fail at import.
+"smolbench.evals" = ["*.toml"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.

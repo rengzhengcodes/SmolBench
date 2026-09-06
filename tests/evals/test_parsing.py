@@ -4,6 +4,7 @@ import pytest
 
 from smolbench.evals import Numeric, ToF
 from smolbench.evals.openai_compat import grade
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals.parsing import (
     DEGENERATE, EMPTY, EXPRESSION, MARKUP, MULTIPLE_VALUES, PREFIXED, TRUNCATED,
     UNPARSEABLE, VERBOSE, WRONG_LEXICON, is_degenerate, parse_for, parse_numeric, parse_tof,
@@ -137,7 +138,10 @@ def test_grade_records_scores_and_compliance():
     marks = grade(quiz, responses, "stub-model")
 
     assert [m.score for m in marks.marks] == [1, 1, None, 0]
-    assert [m.compliance for m in marks.marks] == [None, PREFIXED, DEGENERATE, PREFIXED]
+    # COMPLIANT is the explicit string "compliant", never None: `parse_for`
+    # still reports "no violation" as `violation=None`, and `grade` is the
+    # boundary that translates that into the stored label.
+    assert [m.compliance for m in marks.marks] == [COMPLIANT, PREFIXED, DEGENERATE, PREFIXED]
     assert (marks.correct, marks.invalid, marks.noncompliant) == (2, 1, 3)
 
 
