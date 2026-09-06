@@ -40,7 +40,7 @@ everywhere else under `scripts/`, runs under `.venv`.
 | File | What it's for |
 | --- | --- |
 | `provision_results_bucket.py` | ADMIN-credentialed, one-time (idempotent) runbook that provisions the S3-backed replicate results bucket `smolbench.evals.results_store` reads and writes. |
-| `regrade.py` | Re-grades already-collected replicates with the current compliance-aware parser, in place. |
+| `regrade.py` | Re-grades already-collected replicates with the current compliance-aware parser, THROUGH the results store on either backend: on S3 it appends a new run carrying `regraded_from` and retires the run it replaces with a `.superseded` marker; on a local tree it renames the replaced `rep_<seed>.yaml` aside as `rep_<seed>.SUPERSEDED-<ts>.yaml` and writes the regrade back under the original name. Dry run unless `--write`. |
 | `audit_run_completeness.py` | Audits content-level run completeness against S3 (or a local run directory) to catch silent data faults that row/key counts alone would miss. |
 | `audit_lean_pinning.py` | Audits that all 21 deduction lanes were asked the SAME pinned theorems, against S3: config, theorem sets, cell keys, byte-identical prompts (via ETag), and side-run containment. Complements `audit_run_completeness.py` -- this one gates the questions asked, that one gates the data that came back. |
 | `snapshot_analysis_data.py` | Publishes an analysis-ready snapshot of the family-ladder study to S3, carrying the superseded/stale/broken repair audit trail alongside the current data. |
