@@ -14,6 +14,13 @@
 # ARCHIVED run records which knob values it ran under, instead of that being
 # recoverable only by diffing driver source at the matching commit.
 #
+# `build_config` stamps a SECOND provenance key of the same shape,
+# `decontam_config: {path, sha256}`, over
+# `smolbench/deduction/lean/decontam_config.toml`. That one is NOT supplied by
+# this file and must not be added here: it is computed by the driver from a
+# file the package ships, whose premise stoplist decides what the `hint:3` and
+# `hint:4` rungs contain.
+#
 # WHAT LIVES HERE: only knobs that are IDENTICAL across all 21 lanes. That is
 # what lets a next-tactic success-rate difference point at the model rather
 # than at a changed sweep.

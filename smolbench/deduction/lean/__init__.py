@@ -25,6 +25,12 @@ nullverify
     ``NullVerifier``: verifies nothing, for phase-1 (generation-only) sweeps
     with no Lean toolchain at all; used by `runner` and
     ``notebooks/deduction/run_study.py``.
+decontam_config
+    Loads ``decontam_config.toml``, the committed decontamination POLICY:
+    `decontam`'s MinHash/LSH parameters and key-length floor, and the premise
+    stoplist `premises` filters references through. Standard library only, so
+    `premises` can import it without closing the ``decontam`` -> ``context``
+    -> ``premises`` cycle. Its SHA-256 is stamped into every sweep manifest.
 decontam
     Content-level (name/statement/state/tactic-chain) fingerprint index of the
     eval holdout, for screening ANY candidate training corpus: it catches the

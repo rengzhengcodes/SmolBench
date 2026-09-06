@@ -10,7 +10,12 @@ reusing that phase's ``EC2_EXPERIMENT_TAG`` and state file.
 The sweep's KNOB VALUES are likewise not literals in this file: they live in
 ``notebooks/deduction/sweep.yaml``, which ``build_config`` loads through
 ``runner.load_sweep_config`` and whose SHA-256 it stamps into the config, and
-so into every run's ``manifest.json``. What stays here is lane IDENTITY --
+so into every run's ``manifest.json``. ``build_config`` stamps a SECOND
+digest the same way, over
+``smolbench/deduction/lean/decontam_config.toml``: that file's premise
+stoplist decides which identifiers resolve to premise references, and so what
+the ``hint:3``/``hint:4`` rungs contain, which makes it as much a part of a
+run's provenance as the sweep knobs. What stays here is lane IDENTITY --
 ``run_name``, seeds, the served model, the optional shard and cell whitelist
 -- overlaid on the loaded knobs.
 
@@ -354,7 +359,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # notebooks/induction/run_study.py.
 # ---------------------------------------------------------------------------
 from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.deduction.lean import corpus, runner  # noqa: E402
+from smolbench.deduction.lean import corpus, decontam_config, runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
 
@@ -501,6 +506,40 @@ RESERVED_SWEEP_KEYS: frozenset[str] = frozenset(
 RESERVED_SWEEP_THEOREM_KEYS: frozenset[str] = frozenset({"seed", "shard"})
 
 
+def _stamp_path(path: Path) -> str:
+    """Spell `path` the way a manifest provenance stamp records it.
+
+    REPO-RELATIVE whenever possible, never absolute: an absolute path would
+    embed this box's checkout location in every archived manifest and make two
+    boxes' manifests differ over nothing.
+
+    Parameters
+    ----------
+    path : Path
+        Any path, resolved or not; it is resolved here, so a caller need not.
+
+    Returns
+    -------
+    str
+        `path` relative to `REPO_ROOT` in POSIX form. A path OUTSIDE the repo
+        has no repo-relative spelling at all, so it is returned as an absolute
+        POSIX path instead -- reachable only through `build_config`'s
+        ``sweep_config_path`` test seam, never in production.
+
+    Notes
+    -----
+    Shared by both of `build_config`'s provenance stamps (``sweep_config`` and
+    ``decontam_config``) so the two cannot drift apart in how they spell a
+    path; that is the whole reason it is a function rather than two copies of
+    a ``try``/``except ValueError`` block.
+    """
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
 def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     """Build this lane's ``runner.sweep`` configuration: load the knobs, overlay the lane.
 
@@ -511,7 +550,8 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     lane's IDENTITY is then overlaid on a DEEP COPY of what was loaded:
     ``run_name``, ``seed``, ``models``, the ``theorems`` block's ``seed``,
     ``kind``/``split`` and optional ``shard``, an optional ``cell_whitelist``,
-    and the ``sweep_config`` provenance stamp described under "Returns".
+    and the ``sweep_config`` / ``decontam_config`` provenance stamps described
+    under "Returns".
 
     USER-LOCKED: every key is identical across all 21 checkpoints except
     ``run_name`` and the single ``models[0]`` entry, which is what lets a
@@ -579,18 +619,26 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     -------
     dict
         A fresh dict, safe to mutate: the sweep file's 13 knob keys
-        (`REQUIRED_SWEEP_KEYS`) DEEP-copied, plus the four this function
-        always overlays -- ``run_name``, ``seed``, ``models`` and
-        ``sweep_config`` -- for 17 keys. The ``theorems`` block selects up to
+        (`REQUIRED_SWEEP_KEYS`) DEEP-copied, plus the five this function
+        always overlays -- ``run_name``, ``seed``, ``models``,
+        ``sweep_config`` and ``decontam_config`` -- for 18 keys. The ``theorems`` block selects up to
         300 of the active post-cutoff corpus's
         ``replay_passing``/``<LEAN_CORPUS_KIND>``/``<LEAN_CORPUS_SPLIT>``
         pool's theorems at seed 0, with ``require_postcutoff: True`` so
         `runner._select_theorems` re-checks the corpus and every selected
         theorem at sweep time. ``models[0]["extra_params"]`` DEEP-copies
         ``COT_ARGS[key]``, so a caller's in-place mutation cannot corrupt that
-        shared nested table for other lanes. ``sweep_config`` is the
-        provenance stamp: ``{"path": <repo-relative POSIX path>, "sha256":
-        <digest of the file's raw bytes>}``. Two further keys are conditional:
+        shared nested table for other lanes. ``sweep_config`` and
+        ``decontam_config`` are the two provenance stamps, both spelled
+        ``{"path": <repo-relative POSIX path>, "sha256": <digest of the
+        file's raw bytes>}`` (see `_stamp_path`): the first fingerprints
+        ``notebooks/deduction/sweep.yaml``, the second
+        ``smolbench/deduction/lean/decontam_config.toml``, whose premise
+        stoplist decides what the ``hint:3``/``hint:4`` rungs contain.
+        ``decontam_config`` is COMPUTED here from a file the package ships,
+        not read from the sweep file, which is why it is in neither
+        `REQUIRED_SWEEP_KEYS` nor `RESERVED_SWEEP_KEYS`. Two further keys are
+        conditional:
         ``theorems["shard"]`` under ``LEAN_SHARD`` and top-level
         ``cell_whitelist`` under ``LEAN_CELL_WHITELIST``.
 
@@ -795,12 +843,36 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     # repo-relative spelling at all, and is stamped as an absolute path
     # instead -- reachable only through the `sweep_config_path` test seam,
     # never in production.
-    resolved_config_path = config_path.resolve()
-    try:
-        stamped_path = resolved_config_path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        stamped_path = resolved_config_path.as_posix()
-    cfg["sweep_config"] = {"path": stamped_path, "sha256": sweep_config_sha256}
+    cfg["sweep_config"] = {
+        "path": _stamp_path(config_path),
+        "sha256": sweep_config_sha256,
+    }
+
+    # Decontamination-policy provenance stamp, alongside the sweep-file stamp
+    # above and recorded the same way. `premises._LEAN_NOISE` -- which lives in
+    # this file's `decontam_config.toml` -- decides which identifiers resolve to
+    # premise references, and therefore what the `hint:3` and `hint:4` rungs
+    # actually CONTAIN. Two of the four rungs this study sweeps are that file's
+    # output, so a run's manifest has to record WHICH stoplist produced its
+    # prompts, exactly as it now records which sweep knobs it ran under.
+    #
+    # NOT a sweep knob and deliberately absent from sweep.yaml and from the
+    # reserved/required key sets: this is a stamp the driver COMPUTES from a
+    # file the package ships, not a value the sweep file supplies. The digest
+    # covers that file's RAW BYTES, so it fingerprints the rationale comments
+    # that make the policy reviewable, not just the parsed values.
+    #
+    # Path and digest both come off the SAME loaded config object, never from a
+    # path re-spelled here: a second spelling could drift and let the stamp
+    # name a different file from the one whose bytes were hashed. The file
+    # ships inside the package, so it is not anchored to `REPO_ROOT` the way
+    # `SWEEP_CONFIG_PATH` is; `_stamp_path` still renders it repo-relatively
+    # for an editable checkout.
+    decontam = decontam_config.load_decontam_config()
+    cfg["decontam_config"] = {
+        "path": _stamp_path(decontam.path),
+        "sha256": decontam.sha256,
+    }
 
     # Optional LEAN_CELL_WHITELIST sidecar stamp -- CONDITIONALLY present, like
     # the shard key above, but purely informational: `runner.sweep` reads

@@ -18,6 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .corpus import data_root, metadata
+from .decontam_config import load_decontam_config
 
 
 @dataclass(frozen=True)
@@ -272,37 +273,79 @@ def has_full_source(p: Premise) -> bool:
 # against the corpus index, whose full_names are ASCII.
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
-# Lean keywords, tactic vocabulary, and ubiquitous short identifiers that would
-# pollute the dep graph if treated as premise references. Not exhaustive: the
-# high-traffic ones only.
-_LEAN_NOISE = frozenset({
-    "theorem", "lemma", "def", "instance", "structure", "inductive",
-    "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
-    "if", "then", "else", "match", "with", "by", "have", "show", "this",
-    "true", "True", "false", "False", "Type", "Prop", "Sort", "Set",
-    "namespace", "open", "import", "section", "end", "variable", "variables",
-    "where", "macro", "syntax", "elab", "deriving", "attribute", "set_option",
-    "noncomputable", "private", "protected", "partial", "mutual",
-    # core tactics
-    "rw", "rewrite", "simp", "exact", "apply", "intro", "intros", "rintro",
-    "cases", "rcases", "obtain", "use", "constructor", "refine", "refine'",
-    "split", "and", "or", "not", "iff", "exists", "forall", "all_goals",
-    "any_goals", "tauto", "ring", "field_simp", "linarith", "nlinarith",
-    "omega", "decide", "rfl", "trivial", "assumption",
-    # Very common short ids that would explode the graph if they reached the
-    # set test below -- but they never do: `referenced_premises` checks
-    # ``len(tok) <= 1`` BEFORE the `_LEAN_NOISE` membership test, so every
-    # single-character identifier (`a`, `b`, ..., `z`) is already filtered out
-    # upstream of this set. 22 such single-character entries were removed
-    # (plus `"trivial!"`, unmatchable by `_IDENT_RE` since `!` is outside its
-    # character class) as dead: 23 lines of documentation asserting a filter
-    # that never ran. Do NOT restore single-character entries here -- add the
-    # `len(tok) <= 1` guard's removal to `referenced_premises` first, if that
-    # is ever what's wanted -- and any entry added below must be a real
-    # `_IDENT_RE` token (`_IDENT_RE.fullmatch(entry)`) to have any effect.
-    "id", "le", "lt", "ge", "gt", "eq", "ne", "of", "to", "from",
-    "h1", "h2", "h3",
-})
+def _validate_lean_noise(entries: "frozenset[str]") -> "frozenset[str]":
+    """Return `entries` unchanged, refusing any entry that could never match.
+
+    Two classes of stoplist entry are PROVABLY dead, and this module is where
+    the check belongs because this module owns both of the facts that prove
+    it:
+
+    - **One character or shorter.** `referenced_premises` skips a token on
+      ``tok in _LEAN_NOISE or len(tok) <= 1``. The length arm drops every
+      single-character token whether or not the stoplist lists it, so listing
+      one changes no outcome.
+    - **Not an `_IDENT_RE` token.** Only `_IDENT_RE.findall` output is ever
+      tested for membership, so an entry that `_IDENT_RE` could not have
+      produced cannot equal any tested token.
+
+    Either kind is documentation asserting a filter that never runs -- exactly
+    the dead weight a past cleanup already removed from the hand-written list
+    this config replaced (22 single-character entries plus ``"trivial!"``; the
+    audit trail is the comment beside ``lean_noise`` in
+    ``decontam_config.toml``). Refusing them at import is what keeps that
+    cleanup from silently regressing now that the list is edited as data
+    rather than as code.
+
+    Parameters
+    ----------
+    entries : frozenset of str
+        ``decontam_config.toml``'s ``[premises].lean_noise``, already checked
+        by `decontam_config` for emptiness and for duplicates.
+
+    Returns
+    -------
+    frozenset of str
+        `entries`, unchanged. Returned rather than checked in a bare
+        statement so the binding below cannot name an unvalidated set.
+
+    Raises
+    ------
+    ValueError
+        One or more entries are dead. The message names EVERY offender,
+        sorted, so one edit fixes the whole file instead of one entry per
+        failed import.
+    """
+    dead = sorted(e for e in entries if len(e) <= 1 or not _IDENT_RE.fullmatch(e))
+    if dead:
+        raise ValueError(
+            "decontam_config.toml [premises] lean_noise has dead entries: "
+            f"{', '.join(repr(e) for e in dead)}. An entry is dead if it is one "
+            "character or shorter, or is not a premises._IDENT_RE token. "
+            "referenced_premises() skips a token on `tok in _LEAN_NOISE or "
+            "len(tok) <= 1`, so the length arm already drops every "
+            "single-character token regardless of this list, and only "
+            "_IDENT_RE tokens are ever tested for membership at all. Either "
+            "kind therefore asserts a filter that never runs. Remove them -- "
+            "or, for the length case only, drop the `len(tok) <= 1` arm from "
+            "referenced_premises first."
+        )
+    return entries
+
+
+#: Lean keywords, tactic vocabulary, and ubiquitous short identifiers that
+#: would pollute the dep graph if treated as premise references. The entries
+#: and their rationale live in ``decontam_config.toml``'s ``[premises]``
+#: section, which is the reviewable, digest-stamped home for policy like this;
+#: what stays here is the validation above, which needs `_IDENT_RE`.
+#:
+#: Resolved ONCE, at import, rather than per call: `referenced_premises`
+#: consults this set once per identifier token of every premise body it scans,
+#: so resolving it there would put a loader call on a per-token path.
+#: `load_decontam_config` is itself `lru_cache`d, so that would be a cache
+#: lookup rather than a re-parse -- binding the result here states the
+#: once-only intent structurally instead of leaning on that memoization, and
+#: makes a malformed config fail at import rather than mid-scan.
+_LEAN_NOISE: "frozenset[str]" = _validate_lean_noise(load_decontam_config().lean_noise)
 
 
 @lru_cache(maxsize=1)
@@ -341,6 +384,11 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     seen: set[str] = {full_name}
     out: list[Premise] = []
     for tok in _IDENT_RE.findall(text):
+        # The `len(tok) <= 1` arm is what makes single-character identifiers
+        # (`a`, `b`, ..., `z`) unreachable as premise references, independently
+        # of `_LEAN_NOISE`: a one-character token is skipped whether or not the
+        # stoplist lists it. That is why `_validate_lean_noise` REFUSES a
+        # one-character stoplist entry -- it could never change an outcome.
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
         # Exact full-name match (e.g. `Set.subset_def`).

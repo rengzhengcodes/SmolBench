@@ -21,6 +21,8 @@ from tests._paths import (LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTO
 DRIVER_PATH = NOTEBOOKS / "deduction" / "run_study.py"
 #: The committed sweep knobs `build_config` loads and fingerprints.
 SWEEP_YAML = NOTEBOOKS / "deduction" / "sweep.yaml"
+#: The committed decontamination policy `build_config` also fingerprints.
+DECONTAM_TOML = REPO_ROOT / "smolbench" / "deduction" / "lean" / "decontam_config.toml"
 INDUCTION_PATH = NOTEBOOKS / "induction" / "run_study.py"
 KEY = "glm-4.7"
 IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
@@ -105,6 +107,17 @@ def test_build_config_locked_overridable_and_unshared(
         "sweep_config": {
             "path": "notebooks/deduction/sweep.yaml",
             "sha256": hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest(),
+        },
+        # The second provenance stamp: the decontamination policy file's
+        # premise stoplist decides which identifiers resolve to premise
+        # references, and so what the `hint:3` and `hint:4` rungs -- two of
+        # the four rungs this study sweeps -- actually CONTAIN. Unlike
+        # `sweep_config` this is COMPUTED from a file the package ships, not
+        # read from sweep.yaml, so it is in neither the required nor the
+        # reserved key set.
+        "decontam_config": {
+            "path": "smolbench/deduction/lean/decontam_config.toml",
+            "sha256": hashlib.sha256(DECONTAM_TOML.read_bytes()).hexdigest(),
         }}
     before = json.dumps(driver.COT_ARGS[KEY], sort_keys=True)
     cfg["models"][0]["extra_params"]["enable_thinking"] = "CLOBBERED"
@@ -852,3 +865,40 @@ def test_the_cli_run_sweep_path_uses_the_same_loader(tmp_path):
     config, digest = runner.load_sweep_config(SWEEP_YAML)
     assert isinstance(config, dict)
     assert digest == hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest()
+
+
+def test_the_decontam_digest_lands_in_the_run_manifest(driver, sweep_env, stub_server):
+    """The stoplist that shaped the prompts is recorded beside the sweep knobs.
+
+    `premises._LEAN_NOISE` decides which identifiers resolve to premise
+    references, so `decontam_config.toml` is what the `hint:3`/`hint:4` rungs
+    are rendered from. An archived run has to say WHICH stoplist produced its
+    prompts, for the same reason it says which knobs it ran under.
+    """
+    cfg = driver.build_config(KEY)
+    cfg["theorems"] = {"source": "explicit", "kind": "random", "split": "val",
+                       "full_names": ["Mini.theoremA"], "require_postcutoff": True}
+    cfg["rungs"] = ["stepk:1"]
+    run_dir = sweep_env / "runs" / cfg["run_name"]
+    runner.sweep(cfg, run_dir, verifier=NullVerifier())
+
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["config"]["decontam_config"] == {
+        "path": "smolbench/deduction/lean/decontam_config.toml",
+        "sha256": hashlib.sha256(DECONTAM_TOML.read_bytes()).hexdigest(),
+    }
+
+
+def test_the_stamped_decontam_path_is_the_file_actually_loaded(driver, postcutoff_corpus):
+    """The stamp must name the file the loader read, not a re-spelled guess.
+
+    A provenance stamp whose path and digest can disagree is worse than none:
+    it asserts a claim about a file nothing verified. This pins them to the
+    same source by checking the stamped path resolves to the loader's own.
+    """
+    from smolbench.deduction.lean.decontam_config import load_decontam_config
+
+    stamp = driver.build_config(KEY)["decontam_config"]
+    loaded = load_decontam_config()
+    assert (REPO_ROOT / stamp["path"]).resolve() == DECONTAM_TOML.resolve()
+    assert stamp["sha256"] == loaded.sha256
