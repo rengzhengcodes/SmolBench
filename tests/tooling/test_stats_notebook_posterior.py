@@ -303,3 +303,165 @@ def test_section_7_markdown_explains_the_block_count_limit(nb):
     joined = "\n".join(sources[start:end])
     for token in ("B_GRID", "DRIFT_TOL", "R = 30"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
+
+
+# --- the false-DECIDED calibration at the study's own R and alpha ----------
+#
+# The verdict-distribution cell above measures the mechanism at R=40,
+# alpha=0.05, where 60 simulations are enough to see it. That is not the
+# operating point: the study collected R = `run_study.N_REPLICATES` and reads
+# the all-pairs family's `ALPHA_POSTERIOR`. The calibration cell answers the
+# question the classifier's user actually has -- "how clustered may my data be
+# before a DECIDED verdict stops meaning what it says?" -- and the tests below
+# pin that it measures rather than asserts, and that it cannot quietly stop
+# measuring.
+
+
+@pytest.fixture(scope="module")
+def calibration(nb, posterior_ns) -> tuple[dict, str]:
+    """Execute the calibration cell once; return its namespace and its output.
+
+    Module-scoped and captured with ``redirect_stdout`` rather than ``capsys``
+    (which is function-scoped) because the cell simulates a full ladder: paying
+    for it once per module keeps the suite honest about cost.
+    """
+    import contextlib
+    import io
+
+    namespace = dict(posterior_ns)
+    for needle in ("def synth(", "def verdict_distribution", "def false_decided_rate"):
+        with contextlib.redirect_stdout(io.StringIO()) as sink:
+            exec(compile(_cell_source(nb, needle), str(STATS_NB), "exec"), namespace)
+        captured = sink.getvalue()
+    return namespace, captured
+
+
+def test_calibration_runs_at_the_studys_own_R_and_alpha(calibration, posterior_ns):
+    """The calibration's parameters must BE the study's, read from the live sources.
+
+    A calibration at some other R or alpha would be a different question with
+    the same name: the false-DECIDED rate is a tail probability, so it moves by
+    orders of magnitude with alpha, and the tail is exactly where clustering
+    bites hardest.
+    """
+    namespace, _out = calibration
+    assert namespace["STUDY_R"] == posterior_ns["run_study"].N_REPLICATES
+    rows = namespace["CALIBRATION_ROWS"]
+    assert rows, "the calibration produced no rows"
+    for row in rows:
+        assert row["r"] == posterior_ns["run_study"].N_REPLICATES, row
+        assert row["alpha"] == posterior_ns["ALPHA_POSTERIOR"], row
+        assert row["decided"] <= row["n_sim"], row
+
+
+def test_calibration_reports_both_numbers(calibration):
+    """Both headline numbers must reach the reader's screen, not just the namespace.
+
+    The two are the whole deliverable: the design-effect ceiling below which no
+    inflation was measured, and what the rate actually is on data shaped like
+    the study's. A cell that computed them and printed a summary without them
+    would leave the verdict table beside it uninterpreted.
+    """
+    namespace, out = calibration
+    ceiling = namespace["CALIBRATED_DEFF_CEILING"]
+    study_row = namespace["CALIBRATION_ROWS"][-1]
+    assert f"{ceiling:.2f}" in out, out[-1500:]
+    assert f"{study_row['decided']}/{study_row['n_sim']}" in out, out[-1500:]
+
+
+def test_calibration_states_its_detection_floor(calibration):
+    """"No measured inflation" is not "calibrated to alpha", and must say so.
+
+    At this alpha a nominal run puts well under one false DECIDED in `n_sim`
+    draws, so an admissible rung's zero count bounds its rate only at roughly
+    ``3/n_sim`` -- orders of magnitude above alpha. Without that floor on the
+    screen the ceiling reads far stronger than the evidence behind it.
+    """
+    _namespace, out = calibration
+    lowered = out.lower()
+    assert "detect" in lowered, out[-1500:]
+    # the expected number of false DECIDEDs a nominal rung would produce
+    assert "expected" in lowered, out[-1500:]
+
+
+def test_the_ceiling_sits_below_the_studys_own_design_effect(calibration):
+    """The substantive claim: at deff ~3 the classifier's DECIDED is not valid.
+
+    Section 2 reports `design_effect` on the real induction data in this range,
+    and `CLUSTER_SD` is calibrated to it. If the ceiling were at or above that,
+    the note this cell justifies would be pointless -- so this is the assertion
+    that makes the whole calibration worth printing.
+    """
+    namespace, _out = calibration
+    ceiling = namespace["CALIBRATED_DEFF_CEILING"]
+    study_row = namespace["CALIBRATION_ROWS"][-1]
+    assert 0.9 <= ceiling <= 2.0, ceiling
+    assert study_row["median_deff"] >= 2.5, study_row
+    assert ceiling < study_row["median_deff"] - 1.0, (ceiling, study_row)
+
+
+def test_the_studys_shaped_rate_is_inflated_by_orders_of_magnitude(calibration,
+                                                                   posterior_ns):
+    """The measured rate at the study-shaped deff, against the alpha it claims."""
+    namespace, _out = calibration
+    alpha = posterior_ns["ALPHA_POSTERIOR"]
+    study_row = namespace["CALIBRATION_ROWS"][-1]
+    assert study_row["rate"] > 20 * alpha, (study_row, alpha)
+    assert study_row["rate"] < 0.10, study_row       # still a tail, not a coin flip
+
+
+def test_false_decided_rate_can_come_out_the_other_way(calibration, posterior_ns):
+    """The estimator must be able to report NO inflation, and does on i.i.d. draws.
+
+    A measurement that cannot return the negative answer is not a measurement.
+    Run at a small `n_sim` on purpose: this is the control, not the ladder.
+    """
+    namespace, _out = calibration
+    # 400 draws, not 200: at the study-shaped rate (about 2%) a 200-draw
+    # control has a few percent chance of coming back empty, which would read
+    # as "the estimator cannot see clustering" rather than as thin sampling.
+    iid = namespace["false_decided_rate"](0.0, n_sim=400)
+    clustered = namespace["false_decided_rate"](namespace["CLUSTER_SD"], n_sim=400)
+    assert iid["decided"] == 0, iid
+    assert iid["median_deff"] == pytest.approx(1.0, abs=0.2), iid
+    assert clustered["decided"] > 0, clustered
+    assert clustered["rate"] > iid["rate"], (iid, clustered)
+
+
+def test_the_calibration_prints_beside_the_verdict_table(nb):
+    """The two must read as one exhibit: same section, nothing but prose between.
+
+    The calibration answers a question the verdict table raises (it is measured
+    at the study's own R and alpha, where the table's 60 draws could see
+    nothing), so a reader who stops at the table must not have to go looking.
+    """
+    sources = ["".join(cell["source"]) for cell in nb["cells"]]
+    table = next(i for i, s in enumerate(sources) if "def verdict_distribution" in s)
+    calibration = next(i for i, s in enumerate(sources) if "def false_decided_rate" in s)
+    section_8 = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
+    assert table < calibration < section_8, (table, calibration, section_8)
+    between = [i for i in range(table + 1, calibration)
+               if nb["cells"][i]["cell_type"] != "markdown"]
+    assert not between, f"code cells {between} sit between the table and its calibration"
+
+
+def test_section_7_markdown_states_the_validity_rule_without_a_literal(nb, calibration):
+    """The note states the RULE; the number lives only in the cell's output.
+
+    Cell 27 already establishes the house convention ("the conclusion as
+    computed figures, so it cannot drift from the table above"). A threshold
+    typed into markdown is exactly the drift that convention exists to
+    prevent -- it would keep reading as authoritative after a re-run moved it.
+    """
+    namespace, _out = calibration
+    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
+               for cell in nb["cells"]]
+    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
+    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
+    joined = "\n".join(sources[start:end])
+    lowered = joined.lower()
+    for token in ("design effect", "calibrat", "valid"):
+        assert token in lowered, f"section 7 markdown never mentions {token!r}"
+    literal = f"{namespace['CALIBRATED_DEFF_CEILING']:.2f}"
+    assert literal not in joined, \
+        f"section 7 markdown hardcodes the calibrated ceiling {literal}"
