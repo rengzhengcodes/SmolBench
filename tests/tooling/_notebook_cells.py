@@ -49,6 +49,13 @@ def load_analysis_modules() -> dict:
     that siblings import by BARE name, so each is bound as ``power_analysis``
     only while its dependants exec, then unbound.
 
+    ``rows_source`` is loaded FIRST and bound for the whole deduction leg, for
+    the same reason and one step earlier: all three deduction scripts import it
+    by bare name, so loading it after them would leave the notebook holding a
+    SECOND module object with its own ``S3_BUCKET`` -- and a test that patches
+    the one the notebook binds would leave the one the scripts actually call
+    untouched. The notebook's own loader binds it the same way.
+
     ``notebooks/induction/run_study.py`` calls ``load_dotenv`` and parses
     ``INDUCTION_SHARD`` at MODULE SCOPE, so loading it mutates ``os.environ``
     for the rest of the pytest session. The whole environment is snapshotted
@@ -68,14 +75,19 @@ def load_analysis_modules() -> dict:
         spec.loader.exec_module(module)
         return module
 
-    saved_modules = {k: sys.modules.get(k) for k in ("power_analysis", "error_bars")}
+    saved_modules = {k: sys.modules.get(k)
+                     for k in ("power_analysis", "error_bars", "rows_source")}
     saved_env = dict(os.environ)
     saved_path = list(sys.path)
     try:
+        rows_source = load("nbt_ded_rows_source", "deduction/analysis/rows_source.py",
+                           bare="rows_source")
         ded_pa = load("nbt_ded_power_analysis", "deduction/analysis/power_analysis.py",
                       bare="power_analysis")
         error_bars = load("nbt_ded_error_bars", "deduction/analysis/error_bars.py",
                           bare="error_bars")
+        hint_vs_noise = load("nbt_ded_hint_vs_noise",
+                             "deduction/analysis/hint_vs_noise.py")
         ind_pa = load("nbt_ind_power_analysis", "induction/analysis/power_analysis.py",
                       bare="power_analysis")
         paired = load("nbt_ind_paired", "induction/analysis/paired_analysis.py")
@@ -89,7 +101,8 @@ def load_analysis_modules() -> dict:
         os.environ.clear()
         os.environ.update(saved_env)
         sys.path[:] = saved_path
-    return dict(ded_pa=ded_pa, error_bars=error_bars, ind_pa=ind_pa, paired=paired,
+    return dict(ded_pa=ded_pa, error_bars=error_bars, hint_vs_noise=hint_vs_noise,
+                rows_source=rows_source, ind_pa=ind_pa, paired=paired,
                 run_study=run_study, power_common=sys.modules["_power_common"])
 
 

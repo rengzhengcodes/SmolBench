@@ -293,3 +293,95 @@ def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(tmp_path, monkeypatch
     assert "DEDUCTION: hint:3 vs noise:3, per model" in out.out
     for model in hvn.MODELS:
         assert model in out.out, f"{model} missing from the report"
+
+
+# --- the recovery tree: same reader, a different run naming convention -----
+#
+# The DojoInit recovery spools to ``<prefix>/dojoinit_recovery_<date>/<lane>/
+# recovered_rows.jsonl`` (the key shape ``scripts/results/audit_lean_pinning.py``
+# constructs). That is a run directory that does NOT start with ``scaling_``
+# and a file that is not ``verified_rows.jsonl``, so the default filter
+# excluded it and the sensitivity pool it feeds was unreachable from S3. One
+# optional `run_marker` opens it without moving the default an inch.
+
+RECOVERY_PREFIX = f"{BUCKET_PREFIX}dojoinit_recovery_2026-08-18/"
+
+
+def _recovery_bucket(**lanes: str) -> "dict[str, str]":
+    """``{lane: body}`` -> a flat bucket under the recovery run's prefix."""
+    return {f"{RECOVERY_PREFIX}{lane}/recovered_rows.jsonl": body
+            for lane, body in lanes.items()}
+
+
+def test_an_unmarked_run_layout_lands_under_its_own_directory_name(rows_source, tmp_path):
+    """``run_marker=""`` accepts every run directory and strips nothing from it.
+
+    The landed tree has to be ``<lane>/recovered_rows.jsonl``, because that is
+    what `error_bars.lane_outcomes` reads from ``--recovery-dir`` -- the same
+    ``<model>/<file>`` shape the ``scaling_`` path produces, reached by turning
+    the marker off rather than by teaching the reader a second layout.
+    """
+    client = FakeS3(_recovery_bucket(**{"glm-4.7": "R\n", "gemma-4-12b": "R\n"}))
+    landed = rows_source.download_scaling_rows(
+        tmp_path, prefix=RECOVERY_PREFIX, candidates=("recovered_rows.jsonl",),
+        client=client, run_marker="")
+    assert [p.relative_to(tmp_path).as_posix() for p in landed] == [
+        "gemma-4-12b/recovered_rows.jsonl", "glm-4.7/recovered_rows.jsonl"]
+    assert all(p.read_text() == "R\n" for p in landed)
+
+
+def test_the_default_marker_still_excludes_the_recovery_run(rows_source, tmp_path):
+    """The default is unchanged: without the override the recovery tree is invisible.
+
+    This is the behaviour ``error_bars.py``'s ``--recovery-dir`` help text
+    describes, and the three existing callers depend on it -- a recovery run
+    sitting beside the lanes must never be pulled into a ``--s3`` row fetch.
+    """
+    client = FakeS3(dict(
+        _recovery_bucket(**{"glm-4.7": "R\n"}),
+        **_bucket(**{"scaling_glm-4.7": {"verified_rows.jsonl": "V\n"}}),
+    ))
+    landed = rows_source.download_scaling_rows(
+        tmp_path, prefix=BUCKET_PREFIX, client=client)
+    assert [p.relative_to(tmp_path).as_posix() for p in landed] == [
+        "glm-4.7/verified_rows.jsonl"]
+    assert all("dojoinit" not in key for key in client.downloads), client.downloads
+
+
+def test_the_retired_artifact_guard_covers_the_unmarked_layout(rows_source, tmp_path):
+    """Turning the marker off must not turn the superseded guard off with it.
+
+    The recovery tree is archived data that has been re-spooled before; a
+    retired copy beside it is the same "complete, plausible, WRONG report"
+    hazard as on the ``scaling_`` path, and refusing has to happen before
+    anything lands.
+    """
+    objects = _recovery_bucket(**{"glm-4.7": "R\n"})
+    objects[f"{RECOVERY_PREFIX}glm-4.7/recovered_rows_SUPERSEDED-20260820T000000Z.jsonl"] = "OLD\n"
+    client = FakeS3(objects)
+    with pytest.raises(SystemExit, match="REFUSING SUPERSEDED"):
+        rows_source.download_scaling_rows(
+            tmp_path, prefix=RECOVERY_PREFIX, candidates=("recovered_rows.jsonl",),
+            client=client, run_marker="")
+    assert client.downloads == [], "downloaded before refusing"
+    assert list(tmp_path.iterdir()) == [], "wrote to disk before refusing"
+
+
+def test_resolve_rows_dir_passes_the_marker_through(rows_source):
+    """The one-call entry point reaches the recovery tree too, guard and all.
+
+    The notebook's section 5 calls `resolve_rows_dir`, not the downloader, so
+    the passthrough is the difference between "the sensitivity arm is fetched
+    with the empty-result refusal" and "the notebook re-implements the fetch".
+    """
+    client = FakeS3(_recovery_bucket(**{"glm-4.7": "R\n"}))
+    landed_dir = rows_source.resolve_rows_dir(
+        rows_dir=None, s3_prefix=RECOVERY_PREFIX.rstrip("/"),
+        candidates=("recovered_rows.jsonl",), client=client, run_marker="")
+    assert (landed_dir / "glm-4.7" / "recovered_rows.jsonl").read_text() == "R\n"
+
+    # And the empty-result refusal still names what it searched.
+    with pytest.raises(SystemExit, match="recovered_rows.jsonl"):
+        rows_source.resolve_rows_dir(
+            rows_dir=None, s3_prefix=f"{BUCKET_PREFIX}nothing-here",
+            candidates=("recovered_rows.jsonl",), client=FakeS3({}), run_marker="")
