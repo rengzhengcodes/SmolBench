@@ -1,0 +1,332 @@
+"""Provision the S3-backed replicate results bucket (needs ADMIN credentials).
+
+The runbook counterpart to ``smolbench.evals.results_store``, which writes here
+when ``SMOLBENCH_RESULTS_S3`` is configured. Provisions the bucket named by
+``SMOLBENCH_RESULTS_S3`` (via ``results_store.resolve_results_location``, which
+falls back to ``results_store.DEFAULT_RESULTS_BUCKET`` when that env var is
+unset) in `REGION`, with all four public-access-block flags on and versioning
+enabled, plus the managed read/write policy `POLICY_NAME` (see
+`policy_document`) attached to IAM group `GROUP_NAME`. Every step is
+IDEMPOTENT; nothing runs at import time::
+
+    .venv/bin/python scripts/results/provision_results_bucket.py
+
+Exit status is ``0`` when every step succeeded or was already in place, ``1``
+when a call was denied -- as every call here is under the day-to-day
+``smolbench-ec2-operators`` key, which is deliberately EC2-only.
+
+The bucket is a clean, append-only EXPERIMENT LOG written by the harness through
+``S3ResultsStore``, and deliberately NOT seeded: any historical import MUST go
+THROUGH the store, landing in the current layout
+``<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from typing import Any
+
+from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET, resolve_results_location
+
+# Design: no literal bucket string lives here -- the fallback is declared
+# once in results_store (the module that owns the S3 URI resolution) and
+# aliased as BUCKET, which is the documented fallback each step function
+# (ensure_bucket / put_public_access_block / enable_versioning /
+# ensure_policy) takes as its default argument when a caller does not pass
+# one; main() always passes the CALL-TIME resolved bucket instead.
+BUCKET = DEFAULT_RESULTS_BUCKET
+REGION = "us-west-2"
+POLICY_NAME = "SmolbenchResultsBucketRW"
+GROUP_NAME = "smolbench-ec2-operators"
+
+#: `ClientError` codes meaning "the caller's credentials are not allowed to do
+#: this"; `_run_step` handles these uniformly.
+_ACCESS_DENIED_CODES = frozenset(
+    {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
+)
+
+
+# ---------------------------------------------------------------------------
+# Pure functions (no AWS, no I/O)
+# ---------------------------------------------------------------------------
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse this script's command line; the namespace is always empty.
+
+    There are no flags -- what varies is the module-level constants -- but the
+    parse still runs so ``--help`` and a stray argument behave as elsewhere.
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Idempotently provision the S3-backed replicate results bucket "
+            "(smolbench.evals.results_store)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def policy_document(bucket: str) -> dict:
+    """Build the IAM policy document granting read/write on ``bucket``.
+
+    ``s3:ListBucket`` is scoped to the bucket ARN (no trailing ``/*``, which is
+    what listing keys requires); the object actions to the ``/*`` object-ARN
+    wildcard. Key order is pinned: a reviewer diffs the rendered ``json.dumps``
+    output against this literal shape.
+    """
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": ["s3:ListBucket"],
+                "Resource": f"arn:aws:s3:::{bucket}",
+            },
+            {
+                "Effect": "Allow",
+                "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+                "Resource": f"arn:aws:s3:::{bucket}/*",
+            },
+        ],
+    }
+
+
+def access_denied_message(operation: str) -> str:
+    """Build the AccessDenied message for ``operation`` (e.g. ``"s3:CreateBucket"``)."""
+    return (
+        f"ACCESS DENIED on {operation}.\n"
+        "The credentials in use are expired, or deliberately scoped-out: "
+        f"the {GROUP_NAME!r} operator key used for day-to-day eval runs is "
+        "EC2-only and cannot manage S3 or IAM. This script requires ADMIN "
+        "credentials -- authenticate with an admin-scoped profile and re-run."
+    )
+
+
+# ---------------------------------------------------------------------------
+# AWS steps. Each takes an already-built client as its first parameter, so each
+# is testable against a fake with no AWS SDK installed; none builds a client
+# itself, and none runs at import time.
+# ---------------------------------------------------------------------------
+def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
+    """Create ``bucket`` in ``region``, tolerating "already provisioned".
+
+    ``CreateBucketConfiguration={"LocationConstraint": region}`` is REQUIRED:
+    without it ``create_bucket`` always targets ``us-east-1``, whatever the
+    client's region binding. ``BucketAlreadyOwnedByYou`` and
+    ``BucketAlreadyExists`` both count as idempotent success; the latter
+    ordinarily means a DIFFERENT account owns the globally-unique name, but
+    `BUCKET` embeds this account's id as a suffix.
+
+    Raises
+    ------
+    botocore.exceptions.ClientError
+        Any other S3 failure -- notably ``AccessDenied``, which `main` reports
+        via `_run_step`.
+    """
+    from botocore.exceptions import ClientError
+
+    from smolbench.evals._aws import error_code
+
+    try:
+        s3.create_bucket(
+            Bucket=bucket,
+            CreateBucketConfiguration={"LocationConstraint": region},
+        )
+    except ClientError as err:
+        if error_code(err) not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+            raise
+
+
+def put_public_access_block(s3: Any, bucket: str = BUCKET) -> None:
+    """Block all public access on ``bucket``, setting all four flags to True.
+
+    A PUT (replace), so re-running is idempotent with no error-code handling.
+    """
+    s3.put_public_access_block(
+        Bucket=bucket,
+        PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True,
+            "IgnorePublicAcls": True,
+            "BlockPublicPolicy": True,
+            "RestrictPublicBuckets": True,
+        },
+    )
+
+
+def enable_versioning(s3: Any, bucket: str = BUCKET) -> None:
+    """Enable S3 versioning on ``bucket`` (an idempotent call).
+
+    A replicate ``rep_*.yaml`` is written exactly once and never mutated (see
+    ``smolbench.evals.replicates``), so versions cost almost nothing while
+    making an accidental overwrite (two drivers racing on one replicate number)
+    or a destructive ``aws s3 sync --delete`` recoverable.
+    """
+    s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
+
+
+def ensure_policy(iam: Any, bucket: str = BUCKET, name: str = POLICY_NAME) -> str:
+    """Create the managed policy granting read/write on ``bucket``, or reuse it.
+
+    Create-or-REUSE, not create-or-update: refreshing the document via
+    ``create_policy_version`` on every run would silently burn IAM's budget of 5
+    versions per managed policy, so a genuine change is a deliberate manual
+    ``aws iam create-policy-version``. The existing ARN comes from
+    ``list_policies(Scope="Local")``, paginated by hand via
+    ``Marker``/``IsTruncated`` to stay on the one ``iam`` client.
+
+    Returns
+    -------
+    str
+        ARN of the created or already-existing policy.
+
+    Raises
+    ------
+    botocore.exceptions.ClientError
+        Any IAM failure other than ``EntityAlreadyExists`` on ``create_policy``.
+    RuntimeError
+        IAM reported ``EntityAlreadyExists`` but no policy by that name is in
+        ``list_policies`` -- better than a ``None`` ARN reaching
+        `attach_policy_to_group`.
+    """
+    from botocore.exceptions import ClientError
+
+    from smolbench.evals._aws import error_code
+
+    try:
+        response = iam.create_policy(
+            PolicyName=name,
+            PolicyDocument=json.dumps(policy_document(bucket)),
+        )
+        return response["Policy"]["Arn"]
+    except ClientError as err:
+        if error_code(err) != "EntityAlreadyExists":
+            raise
+
+    marker: str | None = None
+    while True:
+        kwargs = {"Scope": "Local"}
+        if marker:
+            kwargs["Marker"] = marker
+        response = iam.list_policies(**kwargs)
+        for policy in response.get("Policies", []):
+            if policy["PolicyName"] == name:
+                return policy["Arn"]
+        if not response.get("IsTruncated"):
+            break
+        marker = response["Marker"]
+
+    raise RuntimeError(
+        f"IAM reported EntityAlreadyExists for policy {name!r}, but it is not "
+        f"present in list_policies(Scope='Local')"
+    )
+
+
+def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -> None:
+    """Attach ``policy_arn`` (from `ensure_policy`) to IAM group ``group``.
+
+    No "already attached" handling: ``attach_group_policy`` is idempotent
+    server-side and succeeds silently, unlike
+    ``_aws.ensure_instance_profile``'s ``add_role_to_instance_profile``, which
+    DOES raise ``LimitExceeded``.
+    """
+    iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+class _ProvisionAccessDenied(Exception):
+    """Raised by `_run_step` on a denied call, so `main` exits 1 with no traceback."""
+
+
+def _run_step(label: str, operation: str, call):
+    """Run one provisioning step with a progress line and AccessDenied handling.
+
+    ``ClientError`` is imported lazily, per this module's and ``_aws.py``'s
+    house rule that nothing reachable at import time requires the AWS SDK.
+
+    Parameters
+    ----------
+    operation : str
+        Identifier named in `access_denied_message`, e.g. ``"s3:CreateBucket"``.
+    call : callable
+        Zero-argument; its return value is passed through.
+
+    Raises
+    ------
+    _ProvisionAccessDenied
+        ``call`` raised a ``ClientError`` whose code is in
+        `_ACCESS_DENIED_CODES`, after printing the denial; any other exception
+        propagates unchanged.
+    """
+    from botocore.exceptions import ClientError
+
+    from smolbench.evals._aws import error_code
+
+    print(f"-> {label}")
+    try:
+        return call()
+    except ClientError as err:
+        if error_code(err) in _ACCESS_DENIED_CODES:
+            print(access_denied_message(operation))
+            raise _ProvisionAccessDenied(operation) from err
+        raise
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Provision the results bucket and return an exit status.
+
+    ``0`` when every step succeeded or was already in place, ``1`` when an AWS
+    call was denied. Clients come from ``smolbench.evals._aws.fresh_client``,
+    never a cached/default-session one: S3 bound to `REGION`, IAM global.
+    """
+    parse_args(argv)
+
+    # Design: resolve the target bucket at CALL time from whatever
+    # SMOLBENCH_RESULTS_S3 the harness is actually configured with (falling
+    # back to DEFAULT_RESULTS_BUCKET when unset), rather than the module-level
+    # BUCKET constant -- otherwise this script could provision one bucket
+    # while ReplicateHarness / S3ResultsStore write to another, silently.
+    # base_prefix is deliberately unused: public-access-block, versioning, and
+    # the read/write IAM policy are all BUCKET-level configuration, not
+    # prefix-scoped, so a base prefix in SMOLBENCH_RESULTS_S3 has nothing to
+    # apply it to here.
+    bucket, _base_prefix = resolve_results_location()
+
+    # Imported lazily (not at module scope) for two independent reasons: it
+    # keeps the AWS SDK off this module's import path, AND it is what lets the
+    # offline tests monkeypatch smolbench.evals._aws.fresh_client BEFORE main
+    # looks up the name -- hoisting this import to module scope would bind the
+    # real fresh_client before any test fixture can patch it.
+    from smolbench.evals._aws import fresh_client
+
+    print(f"Provisioning {bucket!r} in {REGION}...")
+    s3 = fresh_client("s3", REGION)
+    iam = fresh_client("iam")
+
+    try:
+        _run_step("ensure bucket", "s3:CreateBucket", lambda: ensure_bucket(s3, bucket, REGION))
+        _run_step(
+            "block public access",
+            "s3:PutPublicAccessBlock",
+            lambda: put_public_access_block(s3, bucket),
+        )
+        _run_step(
+            "enable versioning", "s3:PutBucketVersioning", lambda: enable_versioning(s3, bucket)
+        )
+        policy_arn = _run_step(
+            "ensure IAM policy", "iam:CreatePolicy", lambda: ensure_policy(iam, bucket, POLICY_NAME)
+        )
+        _run_step(
+            "attach policy to group",
+            "iam:AttachGroupPolicy",
+            lambda: attach_policy_to_group(iam, policy_arn, GROUP_NAME),
+        )
+    except _ProvisionAccessDenied:
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
