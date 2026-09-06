@@ -1,7 +1,8 @@
 # Deduction: family-ladder scaling study (Lean 4 next-tactic success)
 
 This is the DEDUCTION side of the family-ladder scaling study. The sweep
-configuration lives in `run_study.py` (`build_config`), the roster is
+configuration is assembled by `run_study.py` (`build_config`) out of the knobs
+in `sweep.yaml`, the roster is
 imported from `notebooks/induction/run_study.py` (`MODELS`, `COT_ARGS`),
 and the fleet-aware entry point for exploring and validating the study is
 `lean_eval.ipynb`. This file documents this directory's layout, the data
@@ -15,11 +16,27 @@ per-lane subprocess launched from a terminal (see `lean_eval.ipynb`'s
 ```
 deduction/
   run_study.py           the per-lane, generation-only driver  <- pinned here
+  sweep.yaml             the sweep knobs every lane ran under  <- see below
   lean_eval.ipynb        the exploration notebook
   pinned_theorems.json   the 300 theorems every lane ran  <- see "The pinned 300"
   results/, data/        S3-mirrored; both archived out of the tree
   analysis/              the numbers that got published
 ```
+
+`sweep.yaml` holds the sweep's knob values -- the ones identical across all 21
+lanes (temperature, token and timeout budgets, rungs, concurrency, and the
+`theorems` selection block), each with the rationale comment that justifies it.
+`run_study.py`'s `build_config` loads it through
+`smolbench.deduction.lean.runner.load_sweep_config` (the same loader the
+`run-sweep` CLI subcommand's `--config` uses) and overlays this lane's identity
+-- `run_name`, seeds, the served model, an optional shard and cell whitelist --
+on a deep copy of it. Those identity keys come from the environment, and the
+driver REFUSES a `sweep.yaml` that sets any of them, or that omits any knob.
+`build_config` also stamps the file's SHA-256 into the config it returns
+(`sweep_config: {path, sha256}`), and `runner.sweep` writes the config verbatim
+into each run's `manifest.json` -- so an archived run records which knob values
+it ran under, rather than that being recoverable only by diffing driver source
+at the matching commit.
 
 `run_study.py` stays at this study root because `scripts/fleet/run_fleet.py`
 builds each lane's argv from the literal path `notebooks/deduction/run_study.py`

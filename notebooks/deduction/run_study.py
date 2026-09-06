@@ -7,6 +7,12 @@ lane; each reattaches to the box its induction phase already provisioned, by
 reusing that phase's ``EC2_EXPERIMENT_TAG`` and state file.
 ``MODELS``/``COT_ARGS`` are loaded BY FILE PATH from
 ``notebooks/induction/run_study.py``, the roster's single source of truth.
+The sweep's KNOB VALUES are likewise not literals in this file: they live in
+``notebooks/deduction/sweep.yaml``, which ``build_config`` loads through
+``runner.load_sweep_config`` and whose SHA-256 it stamps into the config, and
+so into every run's ``manifest.json``. What stays here is lane IDENTITY --
+``run_name``, seeds, the served model, the optional shard and cell whitelist
+-- overlaid on the loaded knobs.
 
 MODULE IMPORT ORDER is load-bearing. ``smolbench.evals.providers.ec2`` freezes
 ``EC2_EXPERIMENT_TAG``, ``EC2_VLLM_IMAGE``, ``EC2_INSTANCE_TYPES`` and
@@ -38,8 +44,10 @@ can also raise ``FileNotFoundError``, ``ValueError`` or
 config is a hard stop, never something to fall back from.
 
 LIFECYCLE, in ``main`` order: (1) parse arguments; (2) resolve ``LEAN_MODEL``
-and build the sweep config -- this ALSO validates the corpus (see
-``build_config``'s post-cutoff gate) before any AWS call; (3) resolve
+and build the sweep config, loading ``notebooks/deduction/sweep.yaml`` and
+overlaying this lane's identity on it -- this ALSO validates the corpus (see
+``build_config``'s post-cutoff gate) and that sweep file (its reserved-key and
+missing-key refusals) before any AWS call; (3) resolve
 ``LEAN_VERIFY`` -- steps 1-3 run BEFORE any AWS call, so a configuration
 mistake never lands on a billing box; (4) compute this lane's outstanding-cell
 set (see :func:`outstanding_cell_keys`) -- skipped, and treated as
@@ -433,21 +441,120 @@ def resolve_lean_seed() -> int:
         ) from None
 
 
-def build_config(key: str) -> dict:
-    """Build this lane's ``runner.sweep`` configuration.
+# ---------------------------------------------------------------------------
+# Sweep-config schema. This study's sweep KNOBS live in
+# `notebooks/deduction/sweep.yaml`; what lives here is only the set of key
+# NAMES `build_config` expects that file to define, and the set it refuses to
+# let that file define at all.
+# ---------------------------------------------------------------------------
+#: This study's committed sweep-knob file. Anchored to `REPO_ROOT` like every
+#: other path in this driver, never the cwd: the fleet, a notebook kernel or a
+#: bare shell may launch this file from anywhere.
+SWEEP_CONFIG_PATH: Path = REPO_ROOT / "notebooks" / "deduction" / "sweep.yaml"
+
+#: SCHEMA guard, NOT a config table: only key NAMES live here, every VALUE
+#: lives in `SWEEP_CONFIG_PATH`. `build_config` refuses a sweep file that is
+#: missing any of these, because an absent key would instead fall through to
+#: ``runner.sweep``'s own library default -- precisely the silent drift these
+#: explicit values exist to prevent. ``runner.DEFAULT_DOJO_TIMEOUT``'s Design
+#: comment spells out the worked example: this study's ``dojo_timeout: 300``
+#: stays pinned at 300, independently of wherever that shared default moves,
+#: ONLY because the config states it explicitly.
+REQUIRED_SWEEP_KEYS: frozenset[str] = frozenset(
+    {
+        "temperature",
+        "max_tokens",
+        "request_timeout",
+        "max_retries",
+        "dojo_timeout",
+        "concurrent_gen",
+        "skip_trivial",
+        "k",
+        "n_replicates",
+        "rungs",
+        "theorem_workers",
+        "max_concurrency",
+        "theorems",
+    }
+)
+
+#: The same SCHEMA guard one level down, inside the sweep file's ``theorems``
+#: block. ``seed`` and ``shard`` are deliberately NOT here: they are lane
+#: identity, and appear in `RESERVED_SWEEP_THEOREM_KEYS` instead.
+REQUIRED_SWEEP_THEOREM_KEYS: frozenset[str] = frozenset(
+    {"source", "kind", "split", "limit", "require_postcutoff"}
+)
+
+#: Keys the sweep file must NOT define, at top level. Each is per-lane
+#: IDENTITY that `build_config` resolves from the environment at CALL time and
+#: overlays on top of the loaded document, so a value written in the file
+#: would be silently overwritten and have no effect whatsoever. Refusing them
+#: is the difference between "the sweep file IS the config" and "the sweep
+#: file is decoration": without this check a maintainer could set ``seed: 7``
+#: there and get seed 0, with nothing raised and nothing logged.
+RESERVED_SWEEP_KEYS: frozenset[str] = frozenset(
+    {"run_name", "seed", "models", "cell_whitelist"}
+)
+
+#: The same refusal inside the sweep file's ``theorems`` block: ``seed`` comes
+#: from `resolve_lean_seed` and ``shard`` from ``LEAN_SHARD``.
+RESERVED_SWEEP_THEOREM_KEYS: frozenset[str] = frozenset({"seed", "shard"})
+
+
+def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
+    """Build this lane's ``runner.sweep`` configuration: load the knobs, overlay the lane.
+
+    TWO LAYERS. The study's sweep KNOBS are loaded from the committed
+    ``notebooks/deduction/sweep.yaml`` (`SWEEP_CONFIG_PATH`) through
+    ``runner.load_sweep_config`` -- the same loader ``cli.cmd_run_sweep``'s
+    ``--config`` goes through, so this schema has one reader, not two. This
+    lane's IDENTITY is then overlaid on a DEEP COPY of what was loaded:
+    ``run_name``, ``seed``, ``models``, the ``theorems`` block's ``seed``,
+    ``kind``/``split`` and optional ``shard``, an optional ``cell_whitelist``,
+    and the ``sweep_config`` provenance stamp described under "Returns".
 
     USER-LOCKED: every key is identical across all 21 checkpoints except
     ``run_name`` and the single ``models[0]`` entry, which is what lets a
     next-tactic success-rate difference point to the model rather than a changed
-    sweep. ``runner.sweep`` accepts every key verbatim. Callers must validate
-    `key` first (e.g. ``selected_model()``): ``COT_ARGS`` is total over
-    ``MODELS``, so any other key raises a bare ``KeyError``.
+    sweep. The sweep file is what now RECORDS that lock: its SHA-256 is stamped
+    into every run's ``manifest.json``, so an archived run states which knob
+    values it ran under, instead of that being recoverable only by diffing
+    driver source at the matching commit. ``runner.sweep`` accepts every key
+    verbatim. Callers must validate `key` first (e.g. ``selected_model()``):
+    ``COT_ARGS`` is total over ``MODELS``, so any other key raises a bare
+    ``KeyError``.
 
-    Performs corpus I/O (via `corpus.postcutoff_metadata`) and can
-    ``SystemExit`` -- see the "Post-cutoff corpus gate" paragraph below. This
-    makes `build_config` no longer a pure function of `key` and the
-    environment already documented for the pre-existing knobs; it is still
-    called BEFORE any AWS call (module docstring, LIFECYCLE step 2).
+    Two refusals guard the loaded file, in this order -- the more dangerous
+    condition is checked first, so a file that both adds a reserved key AND
+    drops a knob is diagnosed by the reserved key:
+
+    1. RESERVED keys -- any of `RESERVED_SWEEP_KEYS` at top level, or any of
+       `RESERVED_SWEEP_THEOREM_KEYS` inside ``theorems`` -- raise
+       ``SystemExit`` naming every offender. Each is resolved per-lane from the
+       environment and would be silently overwritten by the overlay.
+    2. MISSING keys -- any of `REQUIRED_SWEEP_KEYS`, then any of
+       `REQUIRED_SWEEP_THEOREM_KEYS` -- raise ``SystemExit`` listing exactly
+       which. A missing knob would fall through to ``runner.sweep``'s own
+       library default instead of this study's pinned value.
+
+    Performs corpus I/O (via `corpus.postcutoff_metadata`) and reads the sweep
+    file, and can ``SystemExit`` -- see the "Post-cutoff corpus gate" paragraph
+    below and the two refusals above. This makes `build_config` no longer a
+    pure function of `key` and the environment already documented for the
+    pre-existing knobs; it is still called BEFORE any AWS call (module
+    docstring, LIFECYCLE step 2).
+
+    Parameters
+    ----------
+    key : str
+        Model spec key; must be one of ``MODELS``/``COT_ARGS`` (see above).
+    sweep_config_path : Path or None, keyword-only
+        TEST SEAM, used by nothing in production: ``None`` (the default) reads
+        the committed `SWEEP_CONFIG_PATH`. It exists so a test can point this
+        at a modified COPY of that file and exercise the two refusals above
+        without editing the committed one. A path OUTSIDE the repo is stamped
+        into ``sweep_config["path"]`` as an absolute path, since no
+        repo-relative spelling of it exists.
 
     Post-cutoff corpus gate
     ------------------------
@@ -471,16 +578,21 @@ def build_config(key: str) -> dict:
     Returns
     -------
     dict
-        16 keys, including a ``theorems`` block selecting up to 300 of the
-        active post-cutoff corpus's ``replay_passing``/``<LEAN_CORPUS_KIND>``/
-        ``<LEAN_CORPUS_SPLIT>`` pool's theorems at seed 0, with
-        ``require_postcutoff: True`` so `runner._select_theorems` re-checks the
-        corpus and every selected theorem at sweep time. A
-        ``models[0]["extra_params"]`` DEEP-copies ``COT_ARGS[key]``, so a
-        caller's in-place mutation cannot corrupt that shared nested table for
-        other lanes. Two further keys are conditional: ``theorems["shard"]``
-        under ``LEAN_SHARD`` and top-level ``cell_whitelist`` under
-        ``LEAN_CELL_WHITELIST``.
+        A fresh dict, safe to mutate: the sweep file's 13 knob keys
+        (`REQUIRED_SWEEP_KEYS`) DEEP-copied, plus the four this function
+        always overlays -- ``run_name``, ``seed``, ``models`` and
+        ``sweep_config`` -- for 17 keys. The ``theorems`` block selects up to
+        300 of the active post-cutoff corpus's
+        ``replay_passing``/``<LEAN_CORPUS_KIND>``/``<LEAN_CORPUS_SPLIT>``
+        pool's theorems at seed 0, with ``require_postcutoff: True`` so
+        `runner._select_theorems` re-checks the corpus and every selected
+        theorem at sweep time. ``models[0]["extra_params"]`` DEEP-copies
+        ``COT_ARGS[key]``, so a caller's in-place mutation cannot corrupt that
+        shared nested table for other lanes. ``sweep_config`` is the
+        provenance stamp: ``{"path": <repo-relative POSIX path>, "sha256":
+        <digest of the file's raw bytes>}``. Two further keys are conditional:
+        ``theorems["shard"]`` under ``LEAN_SHARD`` and top-level
+        ``cell_whitelist`` under ``LEAN_CELL_WHITELIST``.
 
     Notes
     -----
@@ -491,18 +603,32 @@ def build_config(key: str) -> dict:
     and never cached. ``run_name`` defaults to ``f"scaling_{key}"`` plus a
     ``_shard<i>of<n>`` suffix when sharding (matching
     ``scripts/fleet/run_fleet.py``'s ``Lane`` naming); an explicit
-    ``LEAN_RUN_NAME`` wins verbatim. With ``LEAN_CELL_WHITELIST`` set this also
-    does file I/O and can raise ``ValueError`` from
+    ``LEAN_RUN_NAME`` wins verbatim. ``LEAN_CORPUS_KIND``/``LEAN_CORPUS_SPLIT``
+    override the sweep file's ``theorems.kind``/``theorems.split``, which are
+    the DEFAULTS a blank override falls back to. With ``LEAN_CELL_WHITELIST``
+    set this also does file I/O and can raise ``ValueError`` from
     ``runner.load_cell_whitelist`` -- before any AWS call.
+
+    The sweep file is re-read on EVERY call (``load_sweep_config`` is not
+    memoized) and the result is deep-copied before anything is overlaid, so
+    two calls share no nested structure: mutating one call's ``theorems``
+    block or ``models[0]`` cannot reach the next call's.
 
     Raises
     ------
     SystemExit
         The active corpus is not post-cutoff, or its ``target_date`` is
         earlier than `ROSTER_LATEST_RELEASE` -- see "Post-cutoff corpus gate"
-        above.
+        above; or the sweep file defines a RESERVED key or is missing a
+        REQUIRED one -- see the two refusals above.
+    FileNotFoundError, ValueError, yaml.YAMLError
+        Propagated from ``runner.load_sweep_config``: the sweep file is
+        absent, is not a YAML mapping, or does not parse. Deliberately NOT
+        translated into ``SystemExit`` -- these say the committed config is
+        broken or gone, not that this lane was configured wrongly, and they
+        reach an operator with the standard type and message.
     ValueError
-        Propagated from ``runner.load_cell_whitelist`` under
+        Also propagated from ``runner.load_cell_whitelist`` under
         ``LEAN_CELL_WHITELIST``.
     """
     # --- Post-cutoff corpus gate -- see the docstring above. Runs BEFORE the
@@ -531,6 +657,58 @@ def build_config(key: str) -> dict:
             "training."
         )
 
+    # --- Sweep knobs. This study's 13 knob values live in the committed
+    # notebooks/deduction/sweep.yaml, not in this function: one reviewable
+    # file, whose SHA-256 this function stamps into the config below so an
+    # archived run records WHICH knob values it ran under. Loaded through the
+    # SAME runner.load_sweep_config that cli.cmd_run_sweep's `--config` uses,
+    # so the schema has exactly one reader.
+    config_path = SWEEP_CONFIG_PATH if sweep_config_path is None else Path(sweep_config_path)
+    loaded, sweep_config_sha256 = runner.load_sweep_config(config_path)
+
+    # REFUSAL 1 -- RESERVED keys. Checked BEFORE the missing-key refusal, so a
+    # file that both adds a reserved key and drops a knob is diagnosed by the
+    # more dangerous of the two. `theorems` may be absent or not a mapping at
+    # this point (that is the next refusal's business), so its sub-keys are
+    # read defensively rather than indexed.
+    loaded_theorems = loaded.get("theorems")
+    loaded_theorem_keys = set(loaded_theorems) if isinstance(loaded_theorems, dict) else set()
+    reserved = sorted(
+        {name for name in RESERVED_SWEEP_KEYS if name in loaded}
+        | {f"theorems.{name}" for name in RESERVED_SWEEP_THEOREM_KEYS & loaded_theorem_keys}
+    )
+    if reserved:
+        raise SystemExit(
+            f"{config_path}: reserved key(s) {', '.join(reserved)}.\n"
+            "Each is per-lane IDENTITY, resolved at build_config call time from "
+            "LEAN_RUN_NAME / LEAN_SEED / LEAN_MODEL / LEAN_SHARD / "
+            "LEAN_CELL_WHITELIST and overlaid on top of this file, so a value "
+            "set here would be SILENTLY OVERWRITTEN and have no effect at all.\n"
+            "Fix: delete the key(s) from the file and set the matching "
+            "environment variable instead."
+        )
+
+    # REFUSAL 2 -- MISSING knobs. Top level first: `theorems` is itself in
+    # REQUIRED_SWEEP_KEYS, so by the time the sub-key check below runs, that
+    # block is known to be present. A `theorems` block that IS present but is
+    # not a mapping contributes no keys, and so reports all five sub-keys as
+    # missing rather than raising an opaque AttributeError -- the message
+    # still names exactly what the file has to state. Both lists are sorted,
+    # so the message is reproducible.
+    missing = sorted(REQUIRED_SWEEP_KEYS - set(loaded))
+    if not missing:
+        missing = sorted(
+            f"theorems.{name}" for name in REQUIRED_SWEEP_THEOREM_KEYS - loaded_theorem_keys
+        )
+    if missing:
+        raise SystemExit(
+            f"{config_path}: missing required key(s) {', '.join(missing)}.\n"
+            "Every knob this study pins must be stated explicitly: an absent key "
+            "falls through to runner.sweep's own library default instead of this "
+            "study's value, silently and with nothing recorded (see "
+            "runner.DEFAULT_DOJO_TIMEOUT's Design comment for the worked example)."
+        )
+
     # Optional theorem-stride shard ("i/n", passed to runner._select_theorems).
     # The key is CONDITIONALLY present, so an unsharded theorems block stays
     # byte-identical to the study config. Sharding also suffixes the DEFAULT
@@ -548,146 +726,81 @@ def build_config(key: str) -> dict:
     # it off its pinned default (0).
     seed = resolve_lean_seed()
 
-    # Every value below carries a one-line rationale comment: anywhere a real
-    # derivation could not be found in the repo, the comment says so
-    # explicitly rather than inventing one.
-    #
-    # kind/split default to "random"/"val" -- the new post-cutoff corpus has a
-    # single `random` split family, unlike LeanDojo Benchmark 4's `random`/
-    # `novel_premises` pair, but LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT stay
-    # overridable for whatever split families the built corpus ends up with.
-    # require_postcutoff makes runner._select_theorems re-enforce the same
-    # gate this function already ran, at the point the pool is actually
-    # sampled (see that function's docstring for why both checks exist).
-    theorems: dict[str, Any] = {
-        # Quality filter, not a data-leak concern: only theorems whose
-        # ground-truth proof is CONFIRMED to replay (corpus.iter_replay_passing
-        # membership) enter the pool at all -- excludes rows whose recorded
-        # tactic trace does not actually check.
-        "source": "replay_passing",
-        # See the paragraph above this dict.
-        "kind": os.environ.get("LEAN_CORPUS_KIND", "random").strip() or "random",
-        # See the paragraph above this dict.
-        "split": os.environ.get("LEAN_CORPUS_SPLIT", "val").strip() or "val",
-        # Matches notebooks/deduction/pinned_theorems.json's own `count` (300)
-        # and runner.EXPECTED_THEOREMS: this reproduces the ORIGINAL published
-        # study's theorem-pool SIZE. It is not, once require_postcutoff draws
-        # from the new corpus, the same theorem IDENTITIES as that study.
-        "limit": 300,
-        # LEAN_SEED (default 0) -- see resolve_lean_seed(). This is the seed
-        # `runner._select_theorems` feeds to `random.Random(seed).sample(pool,
-        # limit)`, so it decides WHICH theorems this lane measures; changing
-        # it off 0 desyncs from the pinned 300 in
-        # notebooks/deduction/pinned_theorems.json (its digest is asserted in
-        # tests/deduction/test_lean_pinning_audit.py).
-        "seed": seed,
-        # Re-enforced at sweep time by runner._select_theorems -- see the
-        # "Post-cutoff corpus gate" section above for why this check also
-        # needs to run again there, not just here.
-        "require_postcutoff": True,
-    }
+    # DEEP copy, never the loader's return value itself and never a shallow
+    # copy: every nested structure in it (`theorems`, `k`, `rungs`) has to be
+    # private to THIS call, so a caller that mutates one returned config
+    # cannot reach into the next call's. `models[0]["extra_params"]` below
+    # applies the same rule to the shared COT_ARGS table.
+    cfg: dict[str, Any] = copy.deepcopy(loaded)
+
+    # --- Lane identity, overlaid on the loaded knobs. Each key assigned below
+    # is either one the sweep file is REFUSED for defining (REFUSAL 1 above),
+    # so the assignment cannot be quietly discarding a value a maintainer
+    # meant to pin there, or -- theorems.kind/split -- one whose loaded value
+    # is documented in that file as the DEFAULT an environment override
+    # replaces.
+    cfg["run_name"] = run_name
+    # LEAN_SEED (default 0) -- the SAME value as theorems["seed"] below,
+    # but a different role: this is the decode seed runner.sweep puts on
+    # the wire (replicate `i` decodes at `seed + i`). One env var drives
+    # both so "the experiment's seed" means one thing; see
+    # resolve_lean_seed()'s docstring for the full
+    # coupling and the WARNING about changing it.
+    cfg["seed"] = seed
+
+    theorems: dict[str, Any] = cfg["theorems"]
+    # LEAN_SEED (default 0) -- see resolve_lean_seed(). This is the seed
+    # `runner._select_theorems` feeds to `random.Random(seed).sample(pool,
+    # limit)`, so it decides WHICH theorems this lane measures; changing
+    # it off 0 desyncs from the pinned 300 in
+    # notebooks/deduction/pinned_theorems.json (its digest is asserted in
+    # tests/deduction/test_lean_pinning_audit.py).
+    theorems["seed"] = seed
+    # kind/split: the sweep file's values are the DEFAULTS that
+    # LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT override, and that a BLANK override
+    # falls back to (see the paragraph above that file's `theorems` block for
+    # why they are "random"/"val"). Each loaded default is bound to a local
+    # FIRST, because the assignment overwrites the very value it falls back to.
+    yaml_kind = theorems["kind"]
+    theorems["kind"] = os.environ.get("LEAN_CORPUS_KIND", yaml_kind).strip() or yaml_kind
+    yaml_split = theorems["split"]
+    theorems["split"] = os.environ.get("LEAN_CORPUS_SPLIT", yaml_split).strip() or yaml_split
     if shard:
         theorems["shard"] = shard
 
-    cfg: dict[str, Any] = {
-        "run_name": run_name,
-        # LEAN_SEED (default 0) -- the SAME value as theorems["seed"] above,
-        # but a different role: this is the decode seed runner.sweep puts on
-        # the wire (replicate `i` decodes at `seed + i`). One env var drives
-        # both so "the experiment's seed" means one thing; see
-        # resolve_lean_seed()'s docstring for the full
-        # coupling and the WARNING about changing it.
-        "seed": seed,
-        # Matches runner.sweep's OWN library default
-        # (`config.get("temperature", 0.7)`) and cli.py's `--temperature`
-        # default -- pinned here as an explicit literal so a future change to
-        # that library default cannot silently drift this study's decoding.
-        "temperature": 0.7,
-        # No recorded derivation found for this specific number. Real
-        # cross-study discrepancy: notebooks/induction/run_study.py's
-        # completion_budget() computes a PER-MODEL budget (floor 48,000,
-        # cap up to CONTEXT_LIMIT=131,072 tokens) rather than a fixed
-        # literal, and typically lands well above this value. Carried from
-        # this study's first sweep, not re-derived against the current
-        # roster -- flagged here rather than silently accepted.
-        "max_tokens": 32768,
-        # runner.py's own module docstring: ChatClient's 120s HTTP default
-        # truncates long CoT mid-stream. 1800s is that module's own
-        # documented default (`request_timeout: int = 1800` at
-        # `run_cell`/`sweep`); made explicit here rather than relied on
-        # implicitly, so a future change to that default cannot silently
-        # retime this study.
-        "request_timeout": 1800,
-        # Tighter than runner.sweep's OWN default of 4 (module docstring:
-        # "so a wedged endpoint cannot spin forever inside an open Dojo
-        # session"). No recorded reason for 2 specifically here -- plausibly
-        # tighter because a stuck retry holds a live, billable Dojo session
-        # open for its whole duration, but that connection is not written
-        # down anywhere; carried from the first sweep, not re-derived.
-        "max_retries": 2,
-        # Deliberately tighter than the library-wide fallback a parallel
-        # package is introducing as `runner.DEFAULT_DOJO_TIMEOUT = 600` (for
-        # `run_cell`, `cli --timeout` and `sweep`'s own default): this
-        # explicit 300 is what keeps THIS production sweep's timeout pinned
-        # independently of wherever that shared default moves.
-        "dojo_timeout": 300,
-        # Fans out generation calls per (theorem, k) instead of serializing
-        # them -- see _run_cells_at_step_concurrent's docstring: gen
-        # (~1.3-3s/cell) dominates verify (~0.4s/cell), so this is where the
-        # wall-clock win is.
-        "concurrent_gen": True,
-        # Matches context.is_trivial_rung's own stated purpose ("keeps
-        # per-rung pass rates apples-to-apples: every counted cell saw a real
-        # context expansion") -- without it, a trivial rung's guaranteed-
-        # identical output would pad the denominator with cells that measure
-        # nothing new.
-        "skip_trivial": True,
-        # Scores the final tactic step only -- the deepest, hardest proof
-        # state, reached after every earlier tactic has already been applied --
-        # rather than every intermediate step, which would dilute the sweep
-        # with far easier early-proof cells.
-        "k": {"strategy": "last"},
-        # This study collects R=1 by design:
-        # notebooks/deduction/analysis/{power_analysis,error_bars}.py both
-        # hard-code that assumption today (reading only `replicate_idx == 0`
-        # rows and DISCARDING anything past it) and compute a
-        # `needed_replicates` figure for a possible future expansion, rather
-        # than analysing more than one draw per cell right now.
-        "n_replicates": 1,
-        "theorems": theorems,
-        # Reproduces the ORIGINAL published study's shape verbatim:
-        # runner.py's own EXPECTED_THEOREMS/EXPECTED_CELLS comment records
-        # "300 theorems x 4 rungs ... -> 944 cells" for exactly this rung
-        # list. Changing it would break comparability with that baseline.
-        "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
-        # Parallel theorem-level workers, each opening its OWN Dojo session
-        # (an independent Lean process) -- real parallelism for
-        # verification, unlike max_concurrency below. No recorded derivation
-        # for 4 specifically; runner.sweep's own default is 1 (serial).
-        "theorem_workers": 4,
-        # Bounds each (theorem, k) step's own ThreadPoolExecutor (max_workers)
-        # for concurrent generation calls -- how many of that step's pending
-        # (rung, model, replicate) cells fire at once (4 rungs x 1 model x 1
-        # replicate = 4 pending per step here; this cap mostly matters
-        # stacked with theorem_workers above, up to 4 x 8 = 32 requests in
-        # flight sweep-wide). BUT: smolbench/evals/providers/ec2.py
-        # unconditionally appends DETERMINISM_ARGS' `--max-num-seqs 1` to
-        # EVERY EC2_DEPLOY_SPECS entry (ec2.py, the `_spec["vllm_args"] =
-        # _args + DETERMINISM_ARGS` loop), so the served vLLM box itself
-        # processes exactly ONE sequence at a time regardless of this value
-        # -- concurrency here hides HTTP round-trip latency between calls,
-        # it does not achieve real server-side batching. No recorded
-        # derivation for 8 specifically; runner.sweep's own default is 12.
-        "max_concurrency": 8,
-        "models": [
-            {
-                "provider": "ec2",
-                "model": key,
-                "display_name": key,
-                "extra_params": copy.deepcopy(COT_ARGS[key]),
-            }
-        ],
-    }
+    # The single per-lane entry -- see the USER-LOCKED paragraph above.
+    # `extra_params` DEEP-copies the shared COT_ARGS table, so no caller can
+    # corrupt it for the other lanes.
+    cfg["models"] = [
+        {
+            "provider": "ec2",
+            "model": key,
+            "display_name": key,
+            "extra_params": copy.deepcopy(COT_ARGS[key]),
+        }
+    ]
+
+    # Sweep-file provenance stamp, following the LEAN_CELL_WHITELIST sidecar's
+    # precedent below exactly: `runner.sweep` writes this whole `config` dict
+    # verbatim into the run's manifest.json (runner.py's module docstring,
+    # "Output layout"), so stamping the digest HERE is the entire mechanism --
+    # there is no matching change inside `runner.sweep`, and no reader should
+    # go looking for one. The digest covers the file's RAW BYTES, so it
+    # fingerprints the rationale comments that make that file reviewable too,
+    # not just the parsed values.
+    #
+    # REPO-RELATIVE, never absolute: an absolute path would embed this box's
+    # checkout location in every archived manifest and make two boxes'
+    # manifests differ over nothing. A file OUTSIDE the repo has no
+    # repo-relative spelling at all, and is stamped as an absolute path
+    # instead -- reachable only through the `sweep_config_path` test seam,
+    # never in production.
+    resolved_config_path = config_path.resolve()
+    try:
+        stamped_path = resolved_config_path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        stamped_path = resolved_config_path.as_posix()
+    cfg["sweep_config"] = {"path": stamped_path, "sha256": sweep_config_sha256}
 
     # Optional LEAN_CELL_WHITELIST sidecar stamp -- CONDITIONALLY present, like
     # the shard key above, but purely informational: `runner.sweep` reads

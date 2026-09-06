@@ -1,6 +1,7 @@
 """Offline tests for notebooks/deduction/run_study.py: StubServer + NullVerifier, fake S3."""
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -18,6 +19,8 @@ from tests._paths import (LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTO
                          NOTEBOOKS, REPO_ROOT)
 
 DRIVER_PATH = NOTEBOOKS / "deduction" / "run_study.py"
+#: The committed sweep knobs `build_config` loads and fingerprints.
+SWEEP_YAML = NOTEBOOKS / "deduction" / "sweep.yaml"
 INDUCTION_PATH = NOTEBOOKS / "induction" / "run_study.py"
 KEY = "glm-4.7"
 IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
@@ -91,7 +94,18 @@ def test_build_config_locked_overridable_and_unshared(
         "concurrent_gen": True, "skip_trivial": True, "max_concurrency": 8,
         "theorem_workers": 4, "n_replicates": 1, "k": {"strategy": "last"},
         "theorems": THEOREMS, "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
-        "models": cfg["models"]}
+        "models": cfg["models"],
+        # Provenance stamp: the sweep knobs above are no longer a literal in
+        # the driver, they are loaded from the committed sweep.yaml, and this
+        # records WHICH bytes of that file the run used. Recomputed here from
+        # the file rather than pinned as a hex string, so an intentional knob
+        # edit does not require touching this test -- what is pinned is that
+        # the digest MATCHES the committed file, which is the claim an
+        # archived manifest.json makes.
+        "sweep_config": {
+            "path": "notebooks/deduction/sweep.yaml",
+            "sha256": hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest(),
+        }}
     before = json.dumps(driver.COT_ARGS[KEY], sort_keys=True)
     cfg["models"][0]["extra_params"]["enable_thinking"] = "CLOBBERED"
     cfg["theorems"]["limit"] = 1
@@ -702,3 +716,139 @@ def test_spool_bucket_and_region_come_from_the_study_config(driver):
 
     results = load_study_config().results
     assert (driver.SPOOL_BUCKET, driver.SPOOL_REGION) == (results.bucket, results.region)
+
+
+# ---------------------------------------------------------------------------
+# The sweep knobs live in a committed YAML, loaded through the SAME loader the
+# `cli run-sweep --config` path uses, and its digest lands in manifest.json.
+# ---------------------------------------------------------------------------
+
+
+def _sweep_yaml_copy(tmp_path, mutate):
+    """A scratch copy of the committed sweep.yaml with `mutate` applied to the dict."""
+    import yaml
+
+    doc = yaml.safe_load(SWEEP_YAML.read_text())
+    mutate(doc)
+    path = tmp_path / "sweep.yaml"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return path
+
+
+def test_sweep_yaml_is_the_only_place_the_knobs_are_written(driver, postcutoff_corpus):
+    """No knob value is a literal in the driver any more.
+
+    The point of the move is that a knob tweak is reviewable as a config diff
+    rather than being indistinguishable from a logic change. This asserts the
+    direction that can regress silently: every knob the config carries must
+    come from the file, so a value re-typed into `build_config` would have to
+    disagree with it to be detected -- hence the check is that EDITING the file
+    changes the config.
+    """
+    cfg = driver.build_config(KEY)
+    loaded, digest = runner.load_sweep_config(SWEEP_YAML)
+    for knob in ("temperature", "max_tokens", "request_timeout", "max_retries",
+                 "dojo_timeout", "concurrent_gen", "skip_trivial", "k",
+                 "n_replicates", "rungs", "theorem_workers", "max_concurrency"):
+        assert cfg[knob] == loaded[knob], knob
+    for knob in ("source", "limit", "require_postcutoff"):
+        assert cfg["theorems"][knob] == loaded["theorems"][knob], knob
+    assert cfg["sweep_config"]["sha256"] == digest
+
+
+def test_an_edited_sweep_yaml_changes_the_config_and_the_digest(
+        driver, postcutoff_corpus, tmp_path):
+    """A knob edit reaches the config, and the recorded digest moves with it."""
+    edited = _sweep_yaml_copy(tmp_path, lambda d: d.__setitem__("max_retries", 9))
+    cfg = driver.build_config(KEY, sweep_config_path=edited)
+    assert cfg["max_retries"] == 9
+    assert cfg["sweep_config"]["sha256"] != driver.build_config(KEY)["sweep_config"]["sha256"]
+
+
+@pytest.mark.parametrize("mutate, named", [
+    (lambda d: d.__setitem__("seed", 7), "seed"),
+    (lambda d: d.__setitem__("run_name", "whatever"), "run_name"),
+    (lambda d: d.__setitem__("models", []), "models"),
+    (lambda d: d["theorems"].__setitem__("shard", "1/3"), "theorems.shard"),
+    (lambda d: d["theorems"].__setitem__("seed", 7), "theorems.seed"),
+])
+def test_a_reserved_key_in_the_sweep_yaml_is_refused_by_name(
+        driver, postcutoff_corpus, tmp_path, mutate, named):
+    """Per-lane identity written into the file would be SILENTLY overwritten.
+
+    Without this refusal a maintainer could set ``seed: 7`` in the sweep file,
+    get seed 0, and have nothing anywhere say why -- the overlay wins and says
+    nothing. The assertion is on the NAME in the message, not just the exit:
+    a refusal that does not say which key is at fault sends the reader back to
+    diffing the very source this change exists to stop them diffing.
+    """
+    path = _sweep_yaml_copy(tmp_path, mutate)
+    with pytest.raises(SystemExit) as excinfo:
+        driver.build_config(KEY, sweep_config_path=path)
+    assert named in str(excinfo.value), str(excinfo.value)
+
+
+@pytest.mark.parametrize("dropped", ["max_retries", "dojo_timeout", "rungs"])
+def test_a_missing_knob_in_the_sweep_yaml_is_refused_by_name(
+        driver, postcutoff_corpus, tmp_path, dropped):
+    """An absent key would fall through to runner.sweep's own library default.
+
+    That is the exact silent drift the explicit values exist to prevent
+    (`runner.DEFAULT_DOJO_TIMEOUT`'s Design comment spells out the worked
+    example), and it would leave nothing in the manifest to reveal it.
+    """
+    path = _sweep_yaml_copy(tmp_path, lambda d: d.pop(dropped))
+    with pytest.raises(SystemExit) as excinfo:
+        driver.build_config(KEY, sweep_config_path=path)
+    assert dropped in str(excinfo.value), str(excinfo.value)
+
+
+def test_a_missing_theorems_subkey_is_refused_by_name(driver, postcutoff_corpus, tmp_path):
+    path = _sweep_yaml_copy(tmp_path, lambda d: d["theorems"].pop("limit"))
+    with pytest.raises(SystemExit) as excinfo:
+        driver.build_config(KEY, sweep_config_path=path)
+    assert "theorems.limit" in str(excinfo.value), str(excinfo.value)
+
+
+def test_the_sweep_digest_lands_in_the_run_manifest(driver, sweep_env, stub_server):
+    """`runner.sweep` stamps the config verbatim, so the digest reaches manifest.json.
+
+    This is the whole point of the stamp: an ARCHIVED run records which knob
+    values it ran under, instead of that being recoverable only by finding the
+    driver source at the matching commit.
+    """
+    cfg = driver.build_config(KEY)
+    cfg["theorems"] = {"source": "explicit", "kind": "random", "split": "val",
+                       "full_names": ["Mini.theoremA"], "require_postcutoff": True}
+    cfg["rungs"] = ["stepk:1"]
+    run_dir = sweep_env / "runs" / cfg["run_name"]
+    runner.sweep(cfg, run_dir, verifier=NullVerifier())
+
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["config"]["sweep_config"] == {
+        "path": "notebooks/deduction/sweep.yaml",
+        "sha256": hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest(),
+    }
+
+
+def test_the_cli_run_sweep_path_uses_the_same_loader(tmp_path):
+    """One schema, one reader: `cli run-sweep --config` goes through the loader too.
+
+    The issue this closes is that the driver's knobs were a literal dict while
+    `cli run-sweep` already defined a config-FILE schema for exactly that dict.
+    Two readers would have re-created the split; this pins that a
+    non-mapping document is refused by the SAME named check on both paths,
+    rather than surfacing as an `AttributeError` inside a sweep that has
+    already started.
+    """
+    from smolbench.deduction.lean import cli
+
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("")
+    with pytest.raises(ValueError, match=str(empty)):
+        runner.load_sweep_config(empty)
+
+    assert cli.cmd_run_sweep.__doc__ and "load_sweep_config" in cli.cmd_run_sweep.__doc__
+    config, digest = runner.load_sweep_config(SWEEP_YAML)
+    assert isinstance(config, dict)
+    assert digest == hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest()

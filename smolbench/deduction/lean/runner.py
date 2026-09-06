@@ -540,6 +540,91 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
 WHITELIST_MISS_LOG_CAP: int = 50
 
 
+# ---------------------------------------------------------------------------
+# Sweep config files -- the on-disk spelling of `sweep`'s `config` mapping.
+# One loader, two callers: `cli.cmd_run_sweep`'s ``--config`` and
+# `notebooks/deduction/run_study.py`'s `build_config`. Kept here rather than
+# in `cli.py` so the driver does not have to import the CLI (nor grow a second
+# `yaml.safe_load` of its own, which is how the two spellings would drift
+# apart again).
+# ---------------------------------------------------------------------------
+
+
+def load_sweep_config(path: str | Path) -> tuple[dict, str]:
+    """Load a sweep config YAML file and fingerprint the bytes it was parsed from.
+
+    The document must be a MAPPING -- `sweep` indexes its `config` argument by
+    key, so anything else (a list, or the `None` `yaml.safe_load` returns for
+    an empty file) would surface much later as a confusing `AttributeError`
+    deep inside a sweep that has already started. Refused here instead, naming
+    the file.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the YAML file. Resolved by the caller: this function does no
+        anchoring of its own, so a relative path is interpreted against the
+        process cwd.
+
+    Returns
+    -------
+    tuple[dict, str]
+        The parsed mapping, and the lowercase hex SHA-256 of the file's RAW
+        BYTES.
+
+    Raises
+    ------
+    FileNotFoundError
+        `path` does not exist. Deliberately NOT translated: Python's own
+        message already names the file, so re-raising would only restate it,
+        and a caller that wants to catch it keeps the standard type.
+    ValueError
+        The document parsed to something other than a mapping -- message names
+        `path` and the type actually parsed.
+    yaml.YAMLError
+        Propagated from `yaml.safe_load` on a malformed document. A sweep
+        config that cannot be parsed is a hard stop, never something to fall
+        back from.
+
+    Notes
+    -----
+    The digest is of the file's BYTES, not of the parsed structure, and comes
+    from the SAME single read that is handed to the parser -- so the digest
+    provably describes the mapping returned beside it. Re-opening the file to
+    hash it would leave a window in which an edit lands between the two reads
+    and the pair silently disagree. Byte-level also means the digest changes
+    when a COMMENT changes, which is the behaviour this study wants: this
+    file's rationale comments are part of what a run's provenance record is
+    claiming (see `notebooks/deduction/sweep.yaml`).
+
+    The digest is RETURNED rather than stamped into anything here, because
+    this function has no idea where its caller wants provenance to land:
+    `notebooks/deduction/run_study.py` puts it in the sweep config itself (and
+    so, via `sweep`, into `manifest.json`), while `cli.cmd_run_sweep` has no
+    manifest sidecar of its own and simply discards it.
+
+    `yaml` is imported INSIDE this function, matching `cli.cmd_run_sweep`'s
+    own local import: this module is imported by code paths (the analysis
+    readers, `run_cell`) that have no reason to require PyYAML.
+    """
+    import yaml
+
+    config_path = Path(path)
+    # ONE read, then hash and parse the SAME bytes -- see the Notes. PyYAML
+    # accepts a bytes payload directly, so there is no decode step here that
+    # could see different content from the one that was hashed.
+    raw = config_path.read_bytes()
+    sha256_hex = hashlib.sha256(raw).hexdigest()
+    config = yaml.safe_load(raw)
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"sweep config {str(config_path)!r} must be a YAML mapping of "
+            f"config keys; parsed as {type(config).__name__} "
+            "(an empty file parses as NoneType)"
+        )
+    return config, sha256_hex
+
+
 def _repair_torn_tail(jsonl_path: Path) -> int:
     """Truncate a torn or unparseable FINAL line off `jsonl_path`, in place.
 
