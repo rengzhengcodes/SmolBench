@@ -10,7 +10,8 @@ import pytest
 from smolbench.evals import Numeric
 from smolbench.evals.providers import ec2
 from smolbench.evals.replicates import ReplicateHarness
-from smolbench.induction.experiment import InductionExperiment, repo_root
+from smolbench.evals.results_store import repo_root
+from smolbench.induction.experiment import InductionExperiment
 
 
 def make_quizzes(seed: int, model: str):
@@ -231,6 +232,7 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
     pooled marks, and the stored layout are all exercised.
     """
     from smolbench.evals import Mark, Marks
+    from smolbench.evals.quiz import COMPLIANT
     from smolbench.evals import replicates as replicates_mod
     from smolbench.evals.results_store import LocalResultsStore
 
@@ -251,7 +253,8 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
         return Marks(
             model=model,
             marks=tuple(
-                Mark(query=q.prompt, answer=q.answer, response="1", score=1)
+                Mark(query=q.prompt, answer=q.answer, response="1", score=1,
+                     compliance=COMPLIANT)
                 for q in quiz
             ),
         )

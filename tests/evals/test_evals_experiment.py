@@ -95,12 +95,6 @@ def test_a_lane_tag_and_the_standalone_tag_are_accepted():
 
 
 @pytest.mark.parametrize("tag, lane", [
-    # The retired study's tag: tag-based recovery would reattach to any live
-    # box carrying it, and a teardown would terminate it.
-    ("periodic-induction", None),
-    # ... including behind a lane suffix, which an exact-match guard misses.
-    ("periodic-induction-s0of2", "-s0of2"),
-    ("periodic-induction-deepseek-v3.1-s1of2", "-deepseek-v3.1-s1of2"),
     # A BARE shared fleet prefix names every lane at once: fleet_teardown
     # terminates by tag, so this would take the whole fleet down.
     ("scaling-", None),
@@ -116,14 +110,3 @@ def test_an_unsafe_tag_is_refused(tag, lane):
         validate_experiment_tag(tag, lane)
     assert repr(tag) in str(exc.value) or tag.strip() in str(exc.value)
 
-
-def test_the_retired_set_is_a_parameter():
-    """`retired` defaults to the one retired study but is caller-overridable,
-    so a later study can retire its own tag without editing this module."""
-    assert validate_experiment_tag("old-study", None) is None
-    with pytest.raises(ValueError):
-        validate_experiment_tag("old-study", None, retired=("old-study",))
-    # An empty override disables only the RETIRED check; the bare-prefix and
-    # empty-tag checks are structural and always apply.
-    with pytest.raises(ValueError):
-        validate_experiment_tag("scaling-", None, retired=())

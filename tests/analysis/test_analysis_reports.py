@@ -58,9 +58,6 @@ WEAK_MODEL = "min3_3b"
 #: covers only the first 10, with the intens non-compliance living entirely on
 #: the 6 seeds noise does not have. Whole-cell and common-seed deltas disagree.
 SKEW_MODEL = "exaone_32b"
-#: Lane whose `noise_intens` marks all pre-date the compliance field, so the
-#: census has no cell for it and the padding table must be one row short.
-LEGACY_MODEL = "glm_air"
 #: Lane whose `noise_intens` arm is a BYTE COPY of its `extens` arm: an exact
 #: tie, which the direction label had no branch for.
 TIED_MODEL = "nemo3_30b"
@@ -91,9 +88,6 @@ def _collapse_profile(model, info):
         return 0.10, 0.90, "empty", seeds
     if model == WEAK_MODEL and info == "intens":
         return 0.10, 0.0, "empty", seeds
-    if model == LEGACY_MODEL and info == "noise_intens":
-        # mode=None -> every mark NOT_ASSESSED, so the census omits the cell.
-        return 0.90, 0.0, None, seeds
     if model == SKEW_MODEL and info == "intens":
         # Non-compliant ONLY on the seeds the noise arm lacks.
         return 0.90, (lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0), \
@@ -285,21 +279,20 @@ def test_padding_table_reports_the_seed_count_it_used(report, collapse_tree):
 
 def test_padding_table_counts_come_from_the_rows_it_actually_built(report,
                                                                   collapse_tree):
-    """A lane with no census cell drops out of the table, so "all 21" is wrong.
+    """Every count in the section is the table's own row count.
 
-    ``glm_air``'s noise marks all pre-date the compliance field, so the census
-    omits that cell and the padding table can only build 20 rows. At f3a13c9a
-    the caption said "all 21 lanes" and the header said "of ``len(MODELS)``"
-    while the footer said "of ``len(pad_rows)``" -- three counts, two of them
-    wrong, in one section.
+    At f3a13c9a the caption said "all 21 lanes", the header said "of
+    ``len(MODELS)``" and the footer said "of ``len(pad_rows)``" -- three
+    counts, two of them wrong, in one section.
     """
     out = report(collapse_tree)
     assert "all 21 lanes" not in out
-    assert len(_padding_table(out)) == 20
+    n_rows = len(_padding_table(out))
+    # Every lane has a census cell for both arms, so the table is the roster.
+    assert n_rows == 21, out
     section = out.split("COLLAPSE CENSUS", 1)[1].split("ALL cells", 1)[0]
-    # Every "of N lanes" count in this section is the table's own row count.
     counts = {int(n) for n in re.findall(r"of (\d+) lanes", section)}
-    assert counts == {20}, section
+    assert counts == {n_rows}, section
 
 
 # ===========================================================================
@@ -438,8 +431,6 @@ def test_collapsed_lane_still_buckets_as_collapse_not_unmeasured(repoint,
             if ln[:1].isalpha() and len(ln.split()) > 3}
     assert COLLAPSE_MODEL in rows, table[:2500]
     assert "COLLAPSE" in rows[COLLAPSE_MODEL], rows[COLLAPSE_MODEL]
-    # LEGACY_MODEL's noise marks are all NOT_ASSESSED, so it has no census cell
-    # and IS legitimately unmeasured -- it is the control that keeps the
-    # assertion above from passing just because nothing is ever "unmeasured".
+    # Every lane has a census cell for both arms, so nothing is unmeasured.
     unmeasured = [model for model, line in rows.items() if "unmeasured" in line]
-    assert unmeasured == [LEGACY_MODEL], unmeasured
+    assert unmeasured == [], unmeasured

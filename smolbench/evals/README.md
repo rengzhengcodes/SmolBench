@@ -9,8 +9,7 @@ splitting, token guard), and parallel quiz evaluation live once in
 `openai_compat.py`; each provider module is a thin configuration over it.
 Select a provider with `INFERENCE_PROVIDER` (read at call time) and import
 `query`/`evaluate` from `provider.py`. Result files round-trip through
-`Marks.dump`/`Marks.load` (plain-mapping YAML; the loader also reads the
-legacy `!!python/object`-tagged files).
+`Marks.dump`/`Marks.load` (plain-mapping YAML).
 
 ## Layout
 
@@ -69,11 +68,8 @@ a format contract, not an implementation detail.
 ### The `__init__.py` -> `quiz.py` split
 
 The datamodel lives in `quiz.py`; `__init__.py` re-exports `Answer`, `QnA`, `ToF`, `Numeric`, `Quiz`, `Mark`
-and `Marks` from it. That re-export is load-bearing twice over: it keeps
-`from smolbench.evals import Marks` working for every caller, and it keeps
-the legacy YAML tag `!!python/object:smolbench.evals.Marks` resolving in
-result files written before the split (pinned by
-`tests/evals/test_marks_io.py`'s legacy fixture).
+and `Marks` from it. That re-export keeps `from smolbench.evals import Marks`
+working for every caller.
 
 ## Shared AWS provisioning primitives (`_aws.py`)
 

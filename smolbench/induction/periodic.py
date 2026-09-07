@@ -27,14 +27,6 @@ prompt scored 11.1 pp on it). See ``CONDITIONS`` for the mapping that drives
 the loop and ``RANGE_KEYS`` for how the zero arm's promise is verified rather
 than trusted.
 
-Re-collection note: any ``zero``-arm rows collected before this change carry
-the OLD, range-stating question and must be re-collected, not compared
-against the new ones -- they measured a different (leakier) floor.
-``notebooks/induction/run_study.py``'s ``INDUCTION_FORCE_RERUN`` re-collects
-past the resume-skip, but forcing is PER-SEED: it re-collects all four info
-arms of a forced seed in one pooled call, not the ``zero`` arm alone -- there
-is no way to force just one arm (see that module's docstring).
-
 Noise-arm PRECONDITION -- a requirement on the config, not a property the
 benchmark guarantees: for every query, the extensional prompt must be STRICTLY
 longer in tokens than the intensional one. The pad is appended, so it can only
@@ -583,7 +575,7 @@ def get_periodic_prompts(
         for name, condition in unpadded:
             template = _resolve_arm_template(name, condition, prompter)
             rendered = template.safe_substitute(
-                build_substitution(query, prompter, condition.context(contexts))
+                build_substitution(query, condition.context(contexts))
             )
             if condition.omit_range:
                 _verify_no_range_leak(name, query, rendered)

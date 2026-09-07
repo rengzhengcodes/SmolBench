@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from scipy.stats import binom, chi2
+from scipy.stats import chi2
 from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
@@ -49,6 +49,10 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     RESULTS_DIR,
     build_primary_contrasts,
     build_secondary_contrasts,
+    # DESCRIPTIVE only (it treats the 270 marks as 270 independent pairs, which
+    # they are not); `signflip_exact_p` carries the inference and collapses
+    # onto this test at singleton clusters.
+    mcnemar_exact_p,
 )
 
 #: run_study.N_REPLICATES (user-locked). Depth is gated against THIS ABSOLUTE
@@ -107,8 +111,8 @@ def load_marks() -> tuple[dict, dict, dict]:
     compliance : dict
         Same keys -> ``{seed: tuple of length 9}``, each mark's ``compliance``
         value in serialization order (`COMPLIANT` is the explicit
-        ``"compliant"`` label, `NOT_ASSESSED` for a mark predating the field,
-        otherwise a violation label owned by ``smolbench/evals/parsing.py``).
+        ``"compliant"`` label, otherwise a violation label owned by
+        ``smolbench/evals/parsing.py``).
         Returned so that
         ``significance_report.compliance_census`` reads THE SAME PARSE the
         contrasts do, instead of re-walking and re-YAML-parsing the tree a
@@ -230,19 +234,6 @@ def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
         )
     seed_idx = np.repeat(np.arange(len(seeds)), N_HARMONICS).reshape(a.shape)
     return a[keep], b[keep], seed_idx[keep]
-
-
-def mcnemar_exact_p(b: int, c: int) -> float:
-    """Two-sided exact conditional (binomial) McNemar p for discordant counts `b`, `c`.
-
-    1.0 when there are no discordant pairs. DESCRIPTIVE only (it treats the 270
-    marks as 270 independent pairs, which they are not); `signflip_exact_p`
-    carries the inference and collapses onto this test at singleton clusters.
-    """
-    nd = b + c
-    if nd == 0:
-        return 1.0
-    return float(min(1.0, 2.0 * binom.cdf(min(b, c), nd, 0.5)))
 
 
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:

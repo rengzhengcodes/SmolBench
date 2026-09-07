@@ -1,19 +1,15 @@
 """Induction's study-specific defaults over the neutral experiment facade.
 
-The whole provision/run/agent_status/teardown/``_apply_env`` lifecycle now
-lives on :class:`~smolbench.evals.experiment.Experiment` -- see that module's
-docstring for the seed convention, the results/resume contract, the COST
-notes and the CRITICAL "never import ``providers.ec2`` at module scope" rule,
-all of which apply here unchanged. :class:`InductionExperiment` only narrows
-two fields to induction's own defaults, keeping this module importable
-exactly as it was for existing callers (``from
-smolbench.induction.experiment import InductionExperiment, repo_root``).
+:class:`InductionExperiment` narrows two fields to induction's own defaults;
+:class:`~smolbench.evals.experiment.Experiment` carries the lifecycle, the
+seed convention, the results/resume contract and the CRITICAL "never import
+``providers.ec2`` at module scope" rule, all of which apply here unchanged.
 """
 
 from dataclasses import dataclass
 from typing import Tuple
 
-from smolbench.evals.experiment import Experiment, repo_root  # noqa: F401 -- re-exported
+from smolbench.evals.experiment import Experiment
 from smolbench.induction import periodic
 
 

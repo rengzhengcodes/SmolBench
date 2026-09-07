@@ -57,10 +57,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from scipy.stats import binom, chi2
+from scipy.stats import chi2
 
 from _power_common import ALPHA, SEED, results_dir
-from power_analysis import ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY
+from power_analysis import (ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY, cmh_p,
+                            cmh_stat, mcnemar_exact_p)
 
 # ----------------------------------------------------------------------------- design
 # Local ALIASES for two imported constants. Both spellings are kept because the
@@ -145,36 +146,6 @@ def dump(tag: str) -> None:
 
 
 # ------------------------------------------------------------------------- statistics
-def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
-    """Compute the repo's continuity-corrected 2x2xK CMH statistic (chi2, df=1).
-
-    Parameters
-    ----------
-    succ_a, succ_b : ndarray, shape (..., K)
-        Success counts out of `n` trials per stratum, `n` the same for both.
-
-    Returns
-    -------
-    ndarray, shape (...)
-        One statistic per leading batch index.
-    """
-    big_n = 2 * n
-    m1 = succ_a + succ_b
-    m0 = big_n - m1
-    expect = m1 * n / big_n
-    var = (n * n * m1 * m0) / (big_n * big_n * (big_n - 1))
-    num = np.abs((succ_a - expect).sum(axis=-1)) - 0.5
-    num = np.clip(num, 0.0, None) ** 2
-    denom = var.sum(axis=-1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(denom > 0, num / denom, 0.0)
-
-
-def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
-    """Compute the two-sided chi2 (df=1) p-value for `cmh_stat`."""
-    return chi2.sf(cmh_stat(succ_a, succ_b, n), df=1)
-
-
 def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     """Compute the generalized CMH "general association" statistic, 3 rungs (chi2, df=2).
 
@@ -237,45 +208,6 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
     v = v_j.sum(axis=-1)
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(v > 0, (t - e) ** 2 / v, 0.0)
-
-
-def mcnemar_exact_p(b: np.ndarray, c: np.ndarray) -> np.ndarray:
-    """Compute the two-sided exact conditional (binomial) McNemar p-value, BATCHED.
-
-    ``paired_analysis.mcnemar_exact_p`` holds the SCALAR reference
-    implementation of this test; this is the batched form of the IDENTICAL
-    test, on the same conditional-binomial definition
-    ``min(1, 2 * P[Bin(b + c, 1/2) <= min(b, c)])`` and through the same
-    ``scipy.stats.binom``. It exists separately only because this module
-    evaluates it over whole simulation batches (shape ``(n_sims,)`` and larger)
-    where a Python-level loop over the reference would dominate the runtime.
-
-    Parameters
-    ----------
-    b, c : ndarray
-        Counts of A-succeeds/B-fails pairs and the reverse, broadcast together.
-
-    Returns
-    -------
-    ndarray
-        The p-value; 1.0 where ``b + c == 0`` (no discordant pairs), the same
-        convention the scalar reference uses.
-    """
-    nd = b + c
-    lo = np.minimum(b, c)
-    # `np.maximum(nd, 1)` is NOT a silent fallback answer. Unlike the scalar
-    # reference, which returns early, numpy evaluates `binom.cdf` across the
-    # WHOLE array before `np.where` selects per entry, so the no-discordance
-    # entries are computed and then thrown away. Flooring their trial count at
-    # 1 makes that dead branch a well-defined Bin(1, 1/2) rather than leaning
-    # on scipy's convention for a zero-trial binomial; the nd == 0 answer comes
-    # from `np.where` below, never from this line.
-    p = 2.0 * binom.cdf(lo, np.maximum(nd, 1), 0.5)
-    # The vectorized spelling of the reference's `min(1.0, ...)`: doubling a
-    # one-sided tail exceeds 1 whenever b == c. The 0.0 lower bound is inert (a
-    # CDF is never negative) and is kept only so the bound reads as a range.
-    p = np.clip(p, 0.0, 1.0)
-    return np.where(nd == 0, 1.0, p)
 
 
 def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
@@ -767,15 +699,10 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
         icc_blocks[str(icc)] = dict(rows=rows, nulls=nulls,
                                     design_effect_simulated=deff_sim)
 
-    # Backward-compatible top level: `rows`/`nulls` keep meaning exactly the
-    # icc=0.0 run, as they always have, while the clustered levels arrive
-    # under the new `icc` key rather than by changing the shape underneath an
-    # existing reader. The `icc` sub-keys are STRINGS (`str(icc)`) because
-    # this dict is checkpointed to JSON and JSON has no float keys, so the
-    # in-memory shape here is already the on-disk shape.
-    OUT["part2"] = dict(rows=icc_blocks["0.0"]["rows"],
-                        nulls=icc_blocks["0.0"]["nulls"],
-                        n_sims=n_sims, alpha=ALPHA_BONF, grid_r=grid_r,
+    # The `icc` sub-keys are STRINGS (`str(icc)`) because this dict is
+    # checkpointed to JSON and JSON has no float keys, so the in-memory shape
+    # here is already the on-disk shape.
+    OUT["part2"] = dict(n_sims=n_sims, alpha=ALPHA_BONF, grid_r=grid_r,
                         icc=icc_blocks)
 
 

@@ -13,10 +13,8 @@ arm ~1.6x at the periodic production config (an ad-hoc design-time
 measurement; the load-bearing invariant is the verified per-prompt token
 exactness, not that ratio). The pad search itself, its unit table and the
 pad-content rationale now live in :mod:`smolbench.evals.tokenization` -- this
-module re-exports them (see the comment below) so an existing caller of
-``smolbench.induction._common`` keeps resolving. What stays here is everything
-else the calibration invariant needs: ``Prompter``, the substitution merge, and
-the random label/string generators.
+module. What stays here is everything else the calibration invariant needs:
+``Prompter``, the substitution merge, and the random label/string generators.
 """
 
 import string
@@ -36,22 +34,6 @@ import numpy as np
 from ordered_set import OrderedSet
 
 from smolbench.evals import Answer, QnA, Quiz
-# Re-exported, not re-implemented: these are the SAME objects as
-# smolbench.evals.tokenization's, never copies. A second, independently-edited
-# pad search would silently de-calibrate the noise arm between the two studies
-# that use it (this one and, eventually, smolbench.deduction.lean.context).
-# The import stays here so `from smolbench.induction._common import
-# token_matched_noise_prompt` keeps resolving for any existing caller; a
-# sibling study reaches for the public smolbench.evals.tokenization import
-# instead (see smolbench.induction.periodic's own import for the pattern).
-from smolbench.evals.tokenization import (  # noqa: F401 -- re-exported
-    WHITESPACE_UNITS,
-    _MAX_MATCH_ITERATIONS,
-    _UNIT_COST_TOLERANCE,
-    _UNIT_PROBES,
-    choose_whitespace_unit,
-    token_matched_noise_prompt,
-)
 
 
 # Design: THREE fields, two dead ones removed and one live one added back.
@@ -146,9 +128,7 @@ class RenderedQuery:
     answer: Answer
 
 
-def build_substitution(
-    query: Dict[str, str], prompter: Prompter, positive_info: str
-) -> Dict[str, str]:
+def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, str]:
     """Merge a query's substitutions with the arm's ``positive_info`` context.
 
     The single merge point for all three renderings, so precedence is uniform:
@@ -161,14 +141,6 @@ def build_substitution(
     to sit between the two terms is gone with the chromatic hooks (see the
     :class:`Prompter` comment). Returns a fresh dict, so callers may mutate it
     further.
-
-    `prompter` is currently UNUSED -- deliberately, not by oversight. It was
-    the source of that removed static term, and it is kept in the signature so
-    this stays the one merge point every render site calls the same way
-    (:func:`context_renderer` plus the three arms in ``periodic.py``), with a
-    stable seam for any future prompter-sourced substitution. Every caller
-    already holds a `Prompter`, so the parameter costs nothing; dropping it is
-    a safe follow-up if nothing reclaims it.
     """
     return query | {"positive_info": positive_info}
 
@@ -188,7 +160,7 @@ def context_renderer(
     resolved: string.Template = template if template is not None else prompter.template
 
     def render(context: str) -> str:
-        return resolved.safe_substitute(build_substitution(query, prompter, context))
+        return resolved.safe_substitute(build_substitution(query, context))
 
     return render
 

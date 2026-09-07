@@ -29,8 +29,8 @@ Run:
     .venv/bin/python notebooks/induction/analysis/power_analysis.py
 """
 
+import functools
 import sys
-from collections import namedtuple
 from itertools import combinations
 from pathlib import Path
 
@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from scipy.stats import chi2
+from scipy.stats import binom, chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 from smolbench.evals.study_config import families as _study_families
@@ -221,37 +221,68 @@ def shrunk_rates(y: np.ndarray, c: float = SHRINKAGE) -> np.ndarray:
     return (y + c * y.mean()) / (1.0 + c)
 
 
-def cmh_reject(
-    succ_a: np.ndarray, succ_b: np.ndarray, n_per_stratum: int, alpha: float
-) -> np.ndarray:
-    """Vectorized CMH test (2 x 2 x K, continuity-corrected) -- the Tier-2/3 pairwise test.
+def mcnemar_exact_p(b, c):
+    """Two-sided exact conditional (binomial) McNemar p for discordant counts.
+
+    ``min(1, 2 * P[Bin(b + c, 1/2) <= min(b, c)])``, 1.0 where ``b + c == 0``
+    (no discordant pairs). Broadcasts, so the same implementation serves the
+    scalar call sites and the batched simulations.
+
+    Parameters
+    ----------
+    b, c : int or ndarray
+        Counts of A-succeeds/B-fails pairs and the reverse, broadcast together.
+    """
+    nd = b + c
+    # `np.maximum(nd, 1)`: numpy evaluates `binom.cdf` over the WHOLE array
+    # before `np.where` selects, so flooring the trial count keeps the
+    # no-discordance entries a well-defined Bin(1, 1/2) instead of leaning on
+    # scipy's zero-trial convention. The nd == 0 answer comes from `np.where`.
+    p = 2.0 * binom.cdf(np.minimum(b, c), np.maximum(nd, 1), 0.5)
+    # Doubling a one-sided tail exceeds 1 whenever b == c; the 0.0 bound is
+    # inert (a CDF is never negative) and kept only so this reads as a range.
+    return np.where(nd == 0, 1.0, np.clip(p, 0.0, 1.0))
+
+
+def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
+    """The repo's continuity-corrected 2 x 2 x K CMH statistic (chi2, df=1).
 
     Stratified by harmonic only (K = N_HARMONICS); `gcmh_reject` is a distinct
     statistic (3 categories, harmonic x info strata, no continuity correction).
 
     Parameters
     ----------
-    succ_a, succ_b : ndarray, shape (n_sims, K)
-        Success counts out of `n_per_stratum` trials per stratum -- the same
-        trial count for both conditions.
+    succ_a, succ_b : ndarray, shape (..., K)
+        Success counts out of `n` trials per stratum -- the same trial count
+        for both conditions.
 
     Returns
     -------
-    ndarray of bool, shape (n_sims,)
-        True where the statistic exceeds ``chi2.isf(alpha, df=1)``.
+    ndarray, shape (...)
+        One statistic per leading batch index.
     """
-    n = n_per_stratum
     big_n = 2 * n  # total per stratum
     m1 = succ_a + succ_b  # successes per stratum
     m0 = big_n - m1
     expect = m1 * n / big_n
     var = (n * n * m1 * m0) / (big_n * big_n * (big_n - 1))
-    num = np.abs((succ_a - expect).sum(axis=1)) - 0.5
+    num = np.abs((succ_a - expect).sum(axis=-1)) - 0.5
     num = np.clip(num, 0.0, None) ** 2
-    denom = var.sum(axis=1)
+    denom = var.sum(axis=-1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        stat = np.where(denom > 0, num / denom, 0.0)
-    return stat > chi2.isf(alpha, df=1)
+        return np.where(denom > 0, num / denom, 0.0)
+
+
+def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
+    """Two-sided chi2 (df=1) p-value for `cmh_stat`."""
+    return chi2.sf(cmh_stat(succ_a, succ_b, n), df=1)
+
+
+def cmh_reject(
+    succ_a: np.ndarray, succ_b: np.ndarray, n_per_stratum: int, alpha: float
+) -> np.ndarray:
+    """`cmh_stat` rejections at `alpha` -- the Tier-2/3 pairwise test."""
+    return cmh_stat(succ_a, succ_b, n_per_stratum) > chi2.isf(alpha, df=1)
 
 
 def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarray:
@@ -361,51 +392,39 @@ def simulated_power(
 
 _SizingScan = tuple[dict[float, int | None], dict[int, float]]
 
-#: `replicates_needed`'s memo: ``(rates_a bytes, rates_b bytes, alpha)`` -> scan.
-_SIZING_CACHE: dict[tuple[bytes, bytes, float], _SizingScan] = {}
-_SIZING_CACHE_HITS = 0
-_SIZING_CACHE_MISSES = 0
-#: Field-for-field `functools.lru_cache`'s CacheInfo, so a caller (or an audit)
-#: can read `replicates_needed.cache_info()` the way it would read any other
-#: memoized function's. `lru_cache` itself cannot be used here: `rng` is
-#: unhashable AND deliberately outside the key, and `lru_cache` keys on the
-#: whole argument list.
-SizingCacheInfo = namedtuple("SizingCacheInfo", "hits misses maxsize currsize")
 
-
-def _sizing_cache_info() -> SizingCacheInfo:
-    """Report `replicates_needed`'s memo statistics (`maxsize` is `None`: unbounded)."""
-    return SizingCacheInfo(_SIZING_CACHE_HITS, _SIZING_CACHE_MISSES, None,
-                           len(_SIZING_CACHE))
-
-
-def _sizing_cache_clear() -> None:
-    """Empty `replicates_needed`'s memo and zero its statistics."""
-    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
-    _SIZING_CACHE.clear()
-    _SIZING_CACHE_HITS = _SIZING_CACHE_MISSES = 0
+@functools.lru_cache(maxsize=None)
+def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
+    """`replicates_needed`'s memoized core, keyed on hashable rate tuples."""
+    a, b = np.asarray(rates_a), np.asarray(rates_b)
+    rng = np.random.default_rng(SEED)
+    needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
+    curve: dict[int, float] = {}
+    for n_reps in range(1, MAX_REPLICATES + 1):
+        power = simulated_power(a, b, n_reps, rng, alpha=alpha)
+        curve[n_reps] = power
+        for target in POWER_TARGETS:
+            if needed[target] is None and power >= target:
+                needed[target] = n_reps
+        if all(needed[t] is not None for t in POWER_TARGETS):
+            break
+    return needed, curve
 
 
 def replicates_needed(
     rates_a: np.ndarray,
     rates_b: np.ndarray,
-    rng: np.random.Generator,
     alpha: float = ALPHA_PRIMARY,
 ) -> _SizingScan:
     """Find the smallest replicate count R reaching each `POWER_TARGETS` entry.
 
     Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is
-    met. MEMOIZED on the rate vectors and `alpha` (see Notes).
+    met. MEMOIZED on the rate VALUES and `alpha` (see Notes).
 
     Parameters
     ----------
     rates_a, rates_b : ndarray
         The two conditions' assumed true per-harmonic rates.
-    rng : numpy.random.Generator
-        Drawn from only on a cache MISS. Every caller re-seeds
-        ``np.random.default_rng(SEED)`` immediately before the call, so a
-        generator is never carried across calls and a hit that consumes no
-        draws cannot shift a later result.
     alpha : float
         The tier's per-test threshold.
 
@@ -421,17 +440,14 @@ def replicates_needed(
     Raises
     ------
     ValueError
-        If `rates_a` and `rates_b` differ in shape: the memo key is their raw
-        bytes, and two different shapes flattening to the same buffer would
-        collide.
+        If `rates_a` and `rates_b` differ in shape.
 
     Notes
     -----
-    The key is ``(rates_a.tobytes(), rates_b.tobytes(), alpha)`` -- the VALUES,
-    not the array identities, since `_compute_sizing_results` builds a new array
-    object per contrast. `rng` is deliberately NOT part of the key: it is
-    unhashable, and (per the Parameters note above) every caller re-seeds it, so
-    keying on it would be keying on a constant while making the cache useless.
+    The key is the rate VALUES, not the array identities, since
+    `_compute_sizing_results` builds a new array object per contrast. Each scan
+    seeds its own ``np.random.default_rng(SEED)``, so a memo hit and a
+    recomputation agree and re-runs stay byte-identical.
 
     The scan is the expensive part of `main` -- `N_SIMS` binomial draws per
     candidate R, per contrast -- and the inputs repeat heavily: the pooled
@@ -439,38 +455,17 @@ def replicates_needed(
     across the 273 primary + secondary contrasts, so an uncached scan is
     recomputed up to ~27x per distinct input for a bit-identical answer.
     """
-    global _SIZING_CACHE_HITS, _SIZING_CACHE_MISSES
     if rates_a.shape != rates_b.shape:
         raise ValueError(
             f"rates_a and rates_b must have the same shape, got "
             f"{rates_a.shape} and {rates_b.shape}"
         )
-    key = (rates_a.tobytes(), rates_b.tobytes(), float(alpha))
-    if key in _SIZING_CACHE:
-        _SIZING_CACHE_HITS += 1
-        needed, curve = _SIZING_CACHE[key]
-        return dict(needed), dict(curve)
-    _SIZING_CACHE_MISSES += 1
-
-    needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
-    curve: dict[int, float] = {}
-    for n_reps in range(1, MAX_REPLICATES + 1):
-        power = simulated_power(rates_a, rates_b, n_reps, rng, alpha=alpha)
-        curve[n_reps] = power
-        for target in POWER_TARGETS:
-            if needed[target] is None and power >= target:
-                needed[target] = n_reps
-        if all(needed[t] is not None for t in POWER_TARGETS):
-            break
-    _SIZING_CACHE[key] = (dict(needed), dict(curve))
-    return needed, curve
+    needed, curve = _sizing_scan(tuple(rates_a), tuple(rates_b), float(alpha))
+    return dict(needed), dict(curve)
 
 
-# Attached after the definition so `replicates_needed` reads like any other
-# memoized callable at the call site, and so the memo is auditable (and
-# resettable between test cases) without reaching for the module globals.
-replicates_needed.cache_info = _sizing_cache_info
-replicates_needed.cache_clear = _sizing_cache_clear
+replicates_needed.cache_info = _sizing_scan.cache_info
+replicates_needed.cache_clear = _sizing_scan.cache_clear
 
 
 def fisher_check(
@@ -744,18 +739,13 @@ def _compute_sizing_results(
     -----
     Side-effect-free and separate from printing because `main` derives the
     recommended R from the PRIMARY results before the omnibus section that
-    precedes their table. Re-seeds ``np.random.default_rng(SEED)`` before each
-    contrast and again before its pooled counterpart, so re-runs are
+    precedes their table. Each scan re-seeds itself, so re-runs are
     byte-identical.
     """
     results: list[_SizingResult] = []
     for name, key_a, key_b in contrasts:
-        rng = np.random.default_rng(SEED)
-        needed, _ = replicates_needed(rates[key_a], rates[key_b], rng, alpha=alpha)
-        rng_pooled = np.random.default_rng(SEED)
-        needed_pooled, _ = replicates_needed(
-            pooled[key_a], pooled[key_b], rng_pooled, alpha=alpha
-        )
+        needed, _ = replicates_needed(rates[key_a], rates[key_b], alpha=alpha)
+        needed_pooled, _ = replicates_needed(pooled[key_a], pooled[key_b], alpha=alpha)
         results.append((name, key_a, key_b, needed, needed_pooled))
     return results
 

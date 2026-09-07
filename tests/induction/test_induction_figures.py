@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import pytest
 
 from smolbench.evals import Mark, Marks
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.induction.figures import accuracy, load_condition_accuracies, plot_archetype_accuracy
 
 
@@ -18,7 +19,8 @@ def _marks(scores) -> Marks:
     return Marks(
         model="stub-model",
         marks=tuple(
-            Mark(query=f"q{i}", answer=True, response="x", score=s)
+            Mark(query=f"q{i}", answer=True, response="x", score=s,
+                 compliance=COMPLIANT)
             for i, s in enumerate(scores)
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),

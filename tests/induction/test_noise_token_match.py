@@ -10,8 +10,9 @@ import pytest
 
 from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
 
-from smolbench.induction._common import (
-    WHITESPACE_UNITS, choose_whitespace_unit, context_renderer, token_matched_noise_prompt)
+from smolbench.evals.tokenization import (
+    WHITESPACE_UNITS, choose_whitespace_unit, token_matched_noise_prompt)
+from smolbench.induction._common import context_renderer
 from smolbench.induction.periodic import (
     CONDITIONS, PeriodicConfig, get_periodic_numeric_quiz)
 from smolbench.induction.periodic import Prompter as PeriodicPrompter, numeric_count_query_gen

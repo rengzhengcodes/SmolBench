@@ -347,14 +347,12 @@ class Experiment:
         ec2.shutdown_instance()
 
 
-def validate_experiment_tag(
-    tag: str, lane: Optional[str], *, retired: Tuple[str, ...] = ("periodic-induction",)
-) -> None:
+def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     """Raise if `tag` is unsafe to run an experiment lifecycle under.
 
     ``ec2``'s tag-based recovery reattaches ``provision()`` to ANY live
     instance carrying `tag`, and a teardown terminates every instance carrying
-    it -- so a tag that is empty, retired, or a bare shared-fleet prefix is not
+    it -- so a tag that is empty or a bare shared-fleet prefix is not
     a per-driver identity, it is a way to collide with, or destroy, a box this
     process does not own. A driver calls this on its RESOLVED
     ``EC2_EXPERIMENT_TAG`` before provisioning.
@@ -371,13 +369,6 @@ def validate_experiment_tag(
         an exact-match guard compared against the unstripped `tag` would then
         never fire on the very (sharded, unattended) invocations most likely
         to run this into a collision.
-    retired : tuple of str, optional
-        Study tags that are no longer live; defaults to the one retired study
-        known here. Caller-overridable so a later study can retire its own tag
-        without editing this function. Passing ``()`` disables only this
-        check -- the empty-tag and bare-shared-fleet-prefix checks below are
-        structural and always apply.
-
     Returns
     -------
     None
@@ -387,8 +378,7 @@ def validate_experiment_tag(
     ------
     ValueError
         If `tag` (or its lane-suffix-stripped base) is empty or
-        whitespace-only; if the base is in `retired`; or if the base is the
-        shared fleet prefix (``study_config.load_study_config().fleet.
+        whitespace-only; or if the base is the shared fleet prefix (``study_config.load_study_config().fleet.
         tag_prefix``, e.g. ``"scaling-"``) either exactly or with its trailing
         ``"-"`` removed (``"scaling"``) -- a bare prefix names every lane in
         the fleet at once, and fleet teardown terminates BY TAG.
@@ -410,16 +400,6 @@ def validate_experiment_tag(
             f"EC2_EXPERIMENT_TAG={tag!r} is empty or whitespace-only, so it "
             "names no experiment. ec2's tag-based recovery and teardown both "
             "key off this string; export a real tag."
-        )
-
-    if base in retired:
-        raise ValueError(
-            f"EC2_EXPERIMENT_TAG={tag!r} resolves to the RETIRED {base!r} "
-            "study's tag. Running under it would let ec2's tag-based recovery "
-            "reattach `provision()` to any live box still carrying it -- "
-            "swapping that box's served model out from under whichever driver "
-            "owns it -- and would make a `teardown()` terminate a box this "
-            "process does not own. Export a distinct EC2_EXPERIMENT_TAG."
         )
 
     fleet_prefix = study_config.load_study_config().fleet.tag_prefix

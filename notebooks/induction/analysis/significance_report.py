@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from statsmodels.stats.multitest import multipletests
 
-from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
+from smolbench.evals.quiz import COMPLIANT
 # The violation-label set is owned by parsing.py; EMPTY is imported rather than
 # spelled "empty" here, because a literal would keep parsing cleanly and
 # silently read 0 if that module ever renamed the label -- turning a padding
@@ -118,12 +118,9 @@ def compliance_census(compliance: dict) -> dict:
 
     `COMPLIANT` marks a completion that obeyed the output contract; any other
     value names HOW it failed (the violation label set is owned by
-    ``smolbench/evals/parsing.py``, plus ``openai_compat``'s ``parser-error``
-    and the pre-field ``not-assessed`` default). A row from before `COMPLIANT`
-    was spelled out as its own string instead spells this ``compliance: null``
-    -- `Marks.loads`'s read-compat shim maps that back to `COMPLIANT` at load
-    time, so this function never sees the old spelling. Counting the modes,
-    not just the rate, lets the census name a mechanism.
+    ``smolbench/evals/parsing.py``, plus ``openai_compat``'s
+    ``parser-error``). Counting the modes, not just the rate, lets the census
+    name a mechanism.
 
     Touches the FILESYSTEM NOT AT ALL. It consumes `paired_analysis.load_marks`'s
     third return value, so the census and the contrasts read one and the same
@@ -145,62 +142,41 @@ def compliance_census(compliance: dict) -> dict:
         Cell key -> a dict with
 
         ``rate``
-            Non-compliant share over ASSESSED marks, whole cell.
+            Non-compliant share over the whole cell.
         ``n``
-            Assessed mark count over the whole cell. Because `load_marks` keeps
-            only full-length replicates, this is ``n_seeds * N_HARMONICS``
-            whenever the cell carries no `NOT_ASSESSED` marks; in general it
-            equals the sum of `per_seed`'s second components.
+            Mark count over the whole cell. Because `load_marks` keeps only
+            full-length replicates, this is ``n_seeds * N_HARMONICS``.
         ``modes``
-            `collections.Counter` of violation labels among assessed marks.
+            `collections.Counter` of violation labels.
         ``per_seed``
-            ``{seed: (noncompliant_count, assessed_count)}`` for EVERY seed the
+            ``{seed: (noncompliant_count, mark_count)}`` for EVERY seed the
             cell has, so a caller can re-take the rate over any seed subset --
             which is what the padding table does, since a delta between two
             arms is only attributable to the arm difference on the seeds both
             arms cover.
 
-        Cells with no assessed marks are OMITTED -- an unmeasured cell must
+        Cells with no marks at all are OMITTED -- an unmeasured cell must
         never read as either compliant or collapsed.
 
     Notes
     -----
-    Non-compliance is `Marks.noncompliant`'s rule (neither `COMPLIANT` nor
-    `NOT_ASSESSED`) over `Marks.assessed`'s denominator, applied here to the
-    same values those properties read.
+    Non-compliance is `Marks.noncompliant`'s rule, applied here to the same
+    values that property reads.
     """
     out = {}
-    # Iterates the loader's own mapping, so cell order (and therefore the order
-    # of the NOTEs below) follows MODELS x INFOS exactly as before.
+    # Iterates the loader's own mapping, so cell order follows MODELS x INFOS.
     for key, by_seed in compliance.items():
         vals = [v for seed_vals in by_seed.values() for v in seed_vals]
-        # NOT_ASSESSED marks predate the compliance field: unknown, not
-        # violations. Excluding them keeps a legacy lane from publishing
-        # as a collapse; the exclusion is surfaced below, not silent.
-        assessed = [v for v in vals if v != NOT_ASSESSED]
-        if len(assessed) < len(vals):
-            print(
-                f"  NOTE: {key[0]}/{key[1]}: {len(vals) - len(assessed)} of "
-                f"{len(vals)} marks pre-date compliance assessment; the "
-                "census rate covers the assessed remainder only.",
-                file=sys.stderr,
-            )
-        if not assessed:
+        if not vals:
             continue
-        modes = Counter(v for v in assessed if v != COMPLIANT)
-        # Every seed of the cell appears, including one whose marks are all
-        # NOT_ASSESSED: it contributes (0, 0), which a subset rate must count
-        # as "nothing measured here" rather than silently skip.
         per_seed = {
-            seed: (
-                sum(1 for v in seed_vals if v not in (COMPLIANT, NOT_ASSESSED)),
-                sum(1 for v in seed_vals if v != NOT_ASSESSED),
-            )
+            seed: (sum(1 for v in seed_vals if v != COMPLIANT), len(seed_vals))
             for seed, seed_vals in by_seed.items()
         }
         out[key] = dict(
-            rate=sum(v != COMPLIANT for v in assessed) / len(assessed),
-            n=len(assessed), modes=modes, per_seed=per_seed,
+            rate=sum(v != COMPLIANT for v in vals) / len(vals),
+            n=len(vals), modes=Counter(v for v in vals if v != COMPLIANT),
+            per_seed=per_seed,
         )
     return out
 
@@ -251,8 +227,8 @@ def collapse_note(key, census: dict) -> str:
     return f"{key[0]}/{key[1]} {cell['rate']:.1%} non-compliant{mode}"
 
 
-def classify(label: str, key_a, key_b) -> str:
-    """Bucket a contrast from its two ``(model, info)`` keys (`label` is unused).
+def classify(key_a, key_b) -> str:
+    """Bucket a contrast from its two ``(model, info)`` keys.
 
     Returns
     -------
@@ -268,6 +244,13 @@ def classify(label: str, key_a, key_b) -> str:
     if za or zb:
         return "arm-vs-floor"
     return "finding"
+
+
+def _print_signed(rows: list, sign: str, key: str) -> None:
+    """Print one correction-cost block, sorted on `key` and marked with `sign`."""
+    for r in sorted(rows, key=lambda r: r[key]):
+        print(f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
+              f"cluster {r['p_cluster']:.3e}")
 
 
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
@@ -338,7 +321,7 @@ def main() -> None:
             p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
             p_item=mcnemar_exact_p(nb, nc),
             p_unpaired=cmh_unpaired_p(a, b, sidx),
-            kind=classify(label, key_a, key_b),
+            kind=classify(key_a, key_b),
             kind_is_ladder="ladder" in label,
         ))
 
@@ -349,6 +332,16 @@ def main() -> None:
 
     hp = holm(p_cl, ALPHA)
     hb = hochberg(p_cl, ALPHA)
+    # Every correction pass this report needs, taken ONCE: each is O(m log m)
+    # and the summary table below would otherwise re-run three of them.
+    h_item = holm(p_item, ALPHA)
+    rej_by_test = {
+        "seed sign-flip (PRIMARY)": (p_cl, {"Holm": hp, "Hochberg": hb}),
+        "item McNemar (descript.)": (p_item, {"Holm": h_item,
+                                              "Hochberg": hochberg(p_item, ALPHA)}),
+        "unpaired CMH (descript.)": (p_unp, {"Holm": holm(p_unp, ALPHA),
+                                             "Hochberg": hochberg(p_unp, ALPHA)}),
+    }
 
     # ---- DEPTH GUARD: is any rejection arithmetically reachable at all? -----
     # Depths come from `rows`, not from the census or the loader: a contrast is
@@ -415,17 +408,9 @@ def main() -> None:
     print(f"{'test':26s} {'procedure':10s} {'rejected':>9s}  "
           f"{'uncorrected p<0.05':>19s}")
     print("-" * 70)
-    for name, pv, procs in (
-        ("seed sign-flip (PRIMARY)", p_cl, ("Holm", "Hochberg", "Bonferroni")),
-        ("item McNemar (descript.)", p_item, ("Holm", "Hochberg", "Bonferroni")),
-        ("unpaired CMH (descript.)", p_unp, ("Holm", "Hochberg", "Bonferroni")),
-    ):
-        # One dict per test, not per procedure: each entry is a full
-        # O(m log m) correction pass.
-        rej_by = {"Holm": holm(pv, ALPHA), "Hochberg": hochberg(pv, ALPHA),
-                  "Bonferroni": pv <= ALPHA / m}
-        for proc in procs:
-            print(f"{name:26s} {proc:10s} {int(rej_by[proc].sum()):9d}  "
+    for name, (pv, rej_by) in rej_by_test.items():
+        for proc, rej in (*rej_by.items(), ("Bonferroni", pv <= ALPHA / m)):
+            print(f"{name:26s} {proc:10s} {int(rej.sum()):9d}  "
                   f"{int((pv < ALPHA).sum()):19d}")
 
     n_lad_all = sum(1 for r in rows if r["kind_is_ladder"])
@@ -436,17 +421,12 @@ def main() -> None:
           f"{m - n_lad_all} INFO-ARM contrasts\n  (both counts include the "
           f"zero-arm controls; the findings-only split is further down).")
 
-    h_item = holm(p_item)  # hoisted: one correction pass, not one per row
     lost = [rows[i] for i in range(m) if h_item[i] and not hp[i]]
     gained = [rows[i] for i in range(m) if hp[i] and not h_item[i]]
     print(f"\nCost of the correction: Holm loses {len(lost)} and gains "
           f"{len(gained)} against the item-level p.")
-    for r in sorted(lost, key=lambda r: r["p_item"]):
-        print(f"   -{r['label']:52s} item {r['p_item']:.3e} -> "
-              f"cluster {r['p_cluster']:.3e}")
-    for r in sorted(gained, key=lambda r: r["p_cluster"]):
-        print(f"   +{r['label']:52s} item {r['p_item']:.3e} -> "
-              f"cluster {r['p_cluster']:.3e}")
+    _print_signed(lost, "-", "p_item")
+    _print_signed(gained, "+", "p_cluster")
     n_lad = sum(1 for r in lost if r["kind_is_ladder"])
     # The conclusion is conditional on the counts that precede it, in three
     # cases, because there are three things this loss set can mean.
@@ -498,11 +478,8 @@ def main() -> None:
 
     # Built BEFORE the prose, because every count printed in this section is
     # taken from the rows actually built -- including the intro sentence's
-    # denominator. A lane can be ABSENT from this table: it needs a census cell
-    # for BOTH arms, and a wholly pre-compliance-field arm has none (its marks
-    # are all NOT_ASSESSED, so `compliance_census` omits the cell). The roster
-    # size `len(MODELS)` is therefore the wrong denominator -- it counts lanes
-    # this comparison was never able to make.
+    # denominator. A lane needs a census cell for BOTH arms, so `len(MODELS)`
+    # is the wrong denominator: it counts lanes this comparison cannot make.
     pad_rows = []
     for model in MODELS:
         ci = census.get((model, "intens"))
@@ -519,9 +496,8 @@ def main() -> None:
         rate_i = common_seed_rate(ci, common)
         rate_n = common_seed_rate(cn, common)
         if rate_i is None or rate_n is None:
-            # No assessed marks on the shared seeds: there is no rate to
-            # report, so the lane is skipped exactly as a missing census cell
-            # already is -- never published as 0% with a 0-seed basis.
+            # No marks on the shared seeds: never published as 0% on a 0-seed
+            # basis, so the lane is skipped as a missing census cell is.
             continue
         pad_rows.append(dict(model=model, delta=rate_n - rate_i, rate_i=rate_i,
                              rate_n=rate_n, n_common=len(common), cn=cn))
@@ -699,11 +675,8 @@ def main() -> None:
             # identified by its own info label rather than by position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
             cell = census.get(info_key)
-            # `cell is None` means UNMEASURED (a wholly pre-compliance-field
-            # arm), which is not the same as measured-and-collapsed and cannot
-            # support the padding explanation -- so it does not qualify. Written
-            # as an explicit None test rather than a `.get(...)["rate"]` chain,
-            # which would raise on exactly that lane.
+            # An UNMEASURED arm cannot support the padding explanation, so an
+            # explicit None test rather than a `.get(...)["rate"]` chain.
             if (info_key[1] == "noise_intens" and cell is not None
                     and cell["rate"] >= COLLAPSE_THRESHOLD):
                 qualifying.append(r)

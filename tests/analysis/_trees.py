@@ -38,7 +38,7 @@ import numpy as np
 import pytest
 
 from smolbench.evals import Mark, Marks
-from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
+from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS
 
 ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
@@ -60,9 +60,7 @@ def _marks_for(rate: float, noncompliance: float, mode, rng) -> Marks:
     instead of `COMPLIANT`. Compliance is drawn INDEPENDENTLY of the score, so
     a lane can be well-formed and wrong, or malformed and (by luck) right --
     the two axes the census and the contrast machinery are supposed to keep
-    separate. ``mode=None`` writes the whole replicate as `NOT_ASSESSED`
-    (a pre-compliance-field legacy lane), which the census must EXCLUDE
-    rather than publish as 0% non-compliant.
+    separate.
     """
     scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
     bad = rng.random(N_HARMONICS) < noncompliance
@@ -70,8 +68,7 @@ def _marks_for(rate: float, noncompliance: float, mode, rng) -> Marks:
         model="stub-model",
         marks=tuple(
             Mark(query=f"q{i}", answer=i, response=str(i), score=int(s),
-                 compliance=(NOT_ASSESSED if mode is None
-                             else (mode if b else COMPLIANT)))
+                 compliance=(mode if b else COMPLIANT))
             for i, (s, b) in enumerate(zip(scores, bad))
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),

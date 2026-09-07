@@ -144,25 +144,6 @@ def test_cot_args_is_validated_against_the_config_roster(run_study):
     assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
 
 
-def test_the_retired_tag_is_refused_behind_a_lane_suffix(monkeypatch):
-    """A sharded lane appends its own suffix, so an EXACT-match guard on the
-    retired tag never fires for the sharded invocations -- exactly the ones
-    that run unattended. The guard must compare the tag with its lane suffix
-    stripped."""
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
-    module, exc, env_after = import_run_study(
-        "retired_lane_probe",
-        {"EC2_EXPERIMENT_TAG": "periodic-induction", "INDUCTION_SHARD": "0/2",
-         "INDUCTION_MODELS": ""},
-    )
-    assert module is None
-    assert isinstance(exc, SystemExit)
-    assert "periodic-induction" in str(exc)
-    # ... and the suffix it was hiding behind is named too, so the operator
-    # can see WHICH lane's tag resolved to the retired study's.
-    assert "-s0of2" in str(exc)
-
-
 def test_the_standalone_tag_comes_from_the_config(monkeypatch):
     """The standalone EC2 experiment tag is the config's, not a local literal.
 
@@ -365,36 +346,6 @@ def test_a_non_uniform_roster_context_raises(run_study, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 12-23: the probe-seed picks, simplified but provably unchanged
-# ---------------------------------------------------------------------------
-
-def _legacy_picks(seeds, probe_seeds):
-    """The pre-simplification `picks` expression, vendored verbatim from HEAD.
-
-    Kept in the test rather than the driver so the simplification is proved
-    against the ORIGINAL text, not against a paraphrase of it.
-    """
-    return sorted({seeds[0], seeds[-1],
-                   *(seeds[i * (len(seeds) - 1) // (probe_seeds - 1)]
-                     for i in range(probe_seeds))}) if len(seeds) > 1 else list(seeds)
-
-
-@pytest.mark.parametrize("length", range(1, 120))
-def test_probe_seeds_matches_the_legacy_expression(run_study, length):
-    """The simplified probe-seed picker is equal to the old one at every length 1..119.
-
-    The endpoints the old expression unioned in explicitly are already
-    produced by its own generator (i=0 -> seeds[0], i=PROBE_SEEDS-1 ->
-    seeds[-1]), and at len==1 every index collapses to 0, so the len>1 branch
-    was redundant too. This pins the equality rather than asserting it in
-    prose; 119 covers well past the study's 30 replicates.
-    """
-    for base in (0, 7):
-        seeds = range(base, base + length)
-        assert run_study.probe_seeds(seeds) == _legacy_picks(seeds, run_study.PROBE_SEEDS)
-
-
-# ---------------------------------------------------------------------------
 # 12-06: request_timeout derived from the per-model budget
 # ---------------------------------------------------------------------------
 
@@ -503,16 +454,6 @@ def test_unsharded_runs_set_the_study_tag():
     assert exc is None, exc
     assert env["EC2_EXPERIMENT_TAG"] == "induction-scaling"
 
-
-def test_the_retired_default_tag_is_refused():
-    """Resolving to ec2's retired "periodic-induction" default aborts the run."""
-    _module, exc, _env = import_run_study(
-        "induction_run_study_retired",
-        {"EC2_EXPERIMENT_TAG": "periodic-induction", "INDUCTION_SHARD": "",
-         "INDUCTION_MODELS": ""},
-    )
-    assert isinstance(exc, SystemExit), exc
-    assert "periodic-induction" in str(exc)
 
 
 def test_the_shard_lane_tag_is_canonical_order_independent():

@@ -142,22 +142,13 @@ class StudyConfig:
     roster: RosterConfig
 
 
-def _require_section(data: dict, section: str) -> dict:
-    """Return ``data[section]``, raising ``ValueError`` naming `section` if absent."""
-    if section not in data:
+def _require(mapping: dict, name: str, within: str = ""):
+    """Return ``mapping[name]``, raising ``ValueError`` naming it if absent."""
+    if name not in mapping:
         raise ValueError(
-            f"study_config.toml is missing the required [{section}] section"
+            f"study_config.toml{within} is missing the required {name!r}"
         )
-    return data[section]
-
-
-def _require_key(section_data: dict, section: str, key: str):
-    """Return ``section_data[key]``, raising ``ValueError`` naming `section`/`key` if absent."""
-    if key not in section_data:
-        raise ValueError(
-            f"study_config.toml [{section}] is missing the required key {key!r}"
-        )
-    return section_data[key]
+    return mapping[name]
 
 
 def _parse_study_config(data: dict) -> StudyConfig:
@@ -185,23 +176,23 @@ def _parse_study_config(data: dict) -> StudyConfig:
     # Phase 1: presence -- every declared section/key must exist before we
     # attempt to interpret its contents, so a missing key never surfaces as
     # a confusing KeyError three functions downstream.
-    results_raw = _require_section(data, "results")
+    results_raw = _require(data, "results")
     results = ResultsConfig(
-        bucket=_require_key(results_raw, "results", "bucket"),
-        region=_require_key(results_raw, "results", "region"),
-        base_prefix=_require_key(results_raw, "results", "base_prefix"),
+        bucket=_require(results_raw, "bucket", " [results]"),
+        region=_require(results_raw, "region", " [results]"),
+        base_prefix=_require(results_raw, "base_prefix", " [results]"),
     )
 
-    fleet_raw = _require_section(data, "fleet")
+    fleet_raw = _require(data, "fleet")
     fleet = FleetConfig(
-        regions=tuple(_require_key(fleet_raw, "fleet", "regions")),
-        tag_prefix=_require_key(fleet_raw, "fleet", "tag_prefix"),
-        standalone_tag=_require_key(fleet_raw, "fleet", "standalone_tag"),
+        regions=tuple(_require(fleet_raw, "regions", " [fleet]")),
+        tag_prefix=_require(fleet_raw, "tag_prefix", " [fleet]"),
+        standalone_tag=_require(fleet_raw, "standalone_tag", " [fleet]"),
     )
 
-    roster_raw = _require_section(data, "roster")
-    families_raw = _require_key(roster_raw, "roster", "families")
-    tags_raw = _require_key(roster_raw, "roster", "tags")
+    roster_raw = _require(data, "roster")
+    families_raw = _require(roster_raw, "families", " [roster]")
+    tags_raw = _require(roster_raw, "tags", " [roster]")
 
     # Design: families_raw/tags_raw are themselves dicts (TOML's
     # "roster.families" / "roster.tags" dotted headers implicitly nest them

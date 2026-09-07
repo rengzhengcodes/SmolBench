@@ -8,6 +8,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from smolbench.evals import Mark, Marks, Numeric, _aws, provider, replicates
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals import results_store as rs
 from smolbench.evals.results_store import (
     LocalResultsStore, ReplicateAddress, S3ResultsStore, experiment_name,
@@ -23,7 +24,8 @@ TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
 def sample_marks(model="stub-model", n=2, score=1) -> Marks:
     # A pinned date keeps Marks equality (and dumped bytes) exact.
-    marks = tuple(Mark(query=f"q{i}", answer=i, response=str(i), score=score) for i in range(n))
+    marks = tuple(Mark(query=f"q{i}", answer=i, response=str(i), score=score,
+                       compliance=COMPLIANT) for i in range(n))
     return Marks(model=model, marks=marks, date=datetime(2026, 8, 10, tzinfo=timezone.utc))
 
 
@@ -295,7 +297,8 @@ def s3_harness(fake_repo, s3_env, fake_s3, monkeypatch):
     def _evaluate(quiz, model, seed, **kwargs):
         calls.append((seed, len(quiz)))
         return Marks(model=model, marks=tuple(
-            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
+            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1,
+                 compliance=COMPLIANT)
             for q in quiz))
     monkeypatch.setattr(provider, "evaluate", _evaluate)
     return replicates.ReplicateHarness(

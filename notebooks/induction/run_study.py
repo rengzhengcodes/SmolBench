@@ -453,10 +453,9 @@ MIN_VIABLE_BUDGET: int = 48_000
 #: need >= 167 tok/s, which is not achievable on a 397B/236B MoE.
 MIN_DECODE_TOK_S: int = 10
 
-#: ec2.py's own EC2_REQUEST_TIMEOUT_SECONDS default, restated as the floor the
-#: derivation may never go BELOW: deriving a SHORTER timeout than the provider
-#: already grants would be a regression, not a fix.
-REQUEST_TIMEOUT_FLOOR_SECONDS: int = 600
+#: The floor the derivation may never go BELOW: deriving a SHORTER timeout than
+#: the provider already grants would be a regression, not a fix.
+REQUEST_TIMEOUT_FLOOR_SECONDS: int = ec2.EC2_REQUEST_TIMEOUT_SECONDS
 
 # Byte-identical to periodic_moe's / periodic_divisor's template: the prompt
 # WORDING is fixed across every induction study to date, so only the roster
@@ -566,15 +565,14 @@ COT_ARGS: dict[str, dict] = {
 # same ladder order, at import -- BEFORE provision() can spend: a drifted key
 # would otherwise surface as a KeyError on a billing box. COT_ARGS itself
 # stays a literal table on purpose (it is the audit surface against ec2.py's
-# "Reasoning wiring" comment -- see the comment above it), but checking it
-# against MODELS alone would let COT_ARGS and MODELS drift TOGETHER away from
-# the committed roster; checking against study_config.roster_keys() directly
-# closes that gap. A `raise`, not the `assert` this used to be: asserts are
-# stripped under `python -O`, which would delete the gate on exactly the
-# automated invocations that most need it. The test suite pins the same
-# equality; this covers direct invocations.
-if tuple(COT_ARGS) != roster_keys():
-    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
+# "Reasoning wiring" comment -- see the comment above it); MODELS is built
+# from study_config.roster_keys() in ladder order, so it IS the roster.
+# A `raise`, not the `assert` this used to be: asserts are stripped under
+# `python -O`, which would delete the gate on exactly the automated
+# invocations that most need it. The test suite pins the same equality; this
+# covers direct invocations.
+if tuple(COT_ARGS) != tuple(MODELS):
+    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(MODELS))
     raise RuntimeError(
         "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
         "the same ladder order. "
@@ -663,11 +661,7 @@ def probe_seeds(seeds: range) -> "list[int]":
     ``0 * (len - 1) // (PROBE_SEEDS - 1) == 0``) and ``seeds[-1]`` at
     ``i == PROBE_SEEDS - 1`` (index ``len - 1``), and at ``len(seeds) == 1``
     every index collapses to 0, so the ``len(seeds) > 1`` branch produced
-    ``[seeds[0]]`` exactly as this expression does. The equality is not merely
-    argued here: ``tests/induction/test_induction_study.py::
-    test_probe_seeds_matches_the_legacy_expression`` vendors the old
-    expression verbatim and checks it at every length 1..119.
-
+    
     Examples
     --------
     >>> probe_seeds(range(0, 30))

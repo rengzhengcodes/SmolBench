@@ -238,12 +238,6 @@ def for_model(model: str) -> Tokenizer:
     return HFTokenizer.from_repo(repo_id)
 
 
-# ---------------------------------------------------------------------------
-# Token-matched whitespace padding: public API. Originally lived in
-# smolbench.induction._common, which imports these names back (never copies
-# them -- see that module's own comment) so existing callers keep resolving.
-# ---------------------------------------------------------------------------
-
 # Whitespace units tried, in order, as the repeating pad atom; a unit must cost
 # ~1 token per repetition under the tokenizer in play. BPE vocabularies carry
 # dedicated tokens for RUNS of a single whitespace character (`" " * 128` is ONE

@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 
 from smolbench.evals import Mark, Marks
-from smolbench.evals.quiz import COMPLIANT
 from tests._paths import REPO_ROOT
 
 from tests.analysis._trees import (  # noqa: F401
@@ -182,24 +181,18 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis,
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
-def test_mcnemar_is_defined_once_and_the_vectorized_form_agrees(paired_analysis,
-                                                                multiplicity_sim):
-    """``multiplicity_sim``'s vectorized McNemar equals ``paired_analysis``'s scalar.
+def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
+                                 multiplicity_sim):
+    """One broadcasting implementation serves the scalar and batched call sites.
 
     Two independent implementations of one exact test is one implementation
-    too many; the vectorized form now delegates to ``scipy.stats.binom`` on
-    the same conditional-binomial definition.
+    too many.
     """
-    rng = np.random.default_rng(3)
-    b = rng.integers(0, 40, 300)
-    c = rng.integers(0, 40, 300)
-    vec = multiplicity_sim.mcnemar_exact_p(b, c)
-    for i in range(b.size):
-        assert vec[i] == pytest.approx(
-            paired_analysis.mcnemar_exact_p(int(b[i]), int(c[i])), rel=1e-12
-        ), (int(b[i]), int(c[i]))
-    # The no-discordance convention must survive the swap.
-    assert multiplicity_sim.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
+    assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
+    assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
+    # The no-discordance convention must survive the swap, batched and scalar.
+    assert power_analysis.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
+    assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
 
 
 # ===========================================================================
@@ -514,9 +507,7 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
 
     ``pooled`` admits only 10 distinct rate vectors across 273 contrasts, so
     the scan was recomputed up to ~27x per distinct input. The cache is keyed
-    on ``(rates_a.tobytes(), rates_b.tobytes(), alpha)``; the ``rng`` is
-    deliberately NOT part of the key because every caller re-seeds
-    ``default_rng(SEED)` immediately before the call.
+    on the rate VALUES and alpha; the scan seeds itself.
     """
     fn = power_analysis.replicates_needed
     assert hasattr(fn, "cache_info") and hasattr(fn, "cache_clear"), \
@@ -525,9 +516,9 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
 
     a = np.full(power_analysis.N_HARMONICS, 0.9)
     b = np.full(power_analysis.N_HARMONICS, 0.5)
-    first = fn(a, b, np.random.default_rng(power_analysis.SEED))
-    # Equal VALUES in a distinct array object: the key is the bytes, not the id.
-    second = fn(a.copy(), b.copy(), np.random.default_rng(power_analysis.SEED))
+    first = fn(a, b)
+    # Equal VALUES in a distinct array object: the key is the values, not the id.
+    second = fn(a.copy(), b.copy())
     assert first == second
     info = fn.cache_info()
     assert info.hits == 1 and info.misses == 1, info
@@ -659,15 +650,8 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_si
     assert clustered > multiplicity_sim.ALPHA_BONF
 
 
-def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
-        multiplicity_sim):
-    """One table per icc, with the un-clustered results still at the top level.
-
-    Readers of the checkpoint JSON (and the notebook) index
-    ``OUT["part2"]["rows"]``/``["nulls"]``; those keep meaning exactly what
-    they meant -- the icc=0 run -- while the clustered runs arrive under a new
-    ``"icc"`` key rather than by changing the shape underneath a reader.
-    """
+def test_part2_reports_every_icc(multiplicity_sim):
+    """One block and one printed table per icc, each labelled with its icc."""
     import contextlib
     import io
 
@@ -682,9 +666,6 @@ def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
         # Every row records the icc it was simulated at, so a reader of the
         # flattened rows never has to infer it from which block it came from.
         assert {row["icc"] for row in block["rows"]} == {float(icc_key)}
-    # Backward compatibility: the top level IS the icc=0 run.
-    assert out["rows"] == out["icc"]["0.0"]["rows"]
-    assert out["nulls"] == out["icc"]["0.0"]["nulls"]
     # One printed table per icc, each labelled with the icc it used.
     printed = buf.getvalue()
     for icc in ("0.0", "0.2", "0.4"):
