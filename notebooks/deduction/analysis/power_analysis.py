@@ -389,17 +389,23 @@ def load_joint_cells(
     starts writing real replicates (`N_REPLICATES_GRID` only sizes a FUTURE need).
     Prints one stderr warning per call naming the dropped-row count and file(s).
 
-    Returns (models, blocks, prompt_rungs): sorted paired spec-keys;
-    ``{theorem_id: {(k, prompt_rung): {model: 1 or 0}}}`` restricted to fully-graded
-    cells; sorted distinct ``rung`` values present. Prints the `_warn_unverified`
-    banner if any input is named ``all_rows.jsonl`` or any loaded cell is still
-    ``"unverified"``.
+    Prints the `_warn_unverified` banner if any input is named ``all_rows.jsonl`` or
+    any loaded cell is still ``"unverified"``.
 
     Parameters
     ----------
+    row_files : list[Path]
+        Row files to load and pair.
     models : tuple[str, ...] | None, optional
         Restrict pairing to this set (default: every model present); a cell is
         kept only if graded for EVERY member.
+
+    Returns
+    -------
+    tuple[list[str], dict, list[str]]
+        Sorted paired spec-keys; ``{theorem_id: {(k, prompt_rung): {model: 1 or
+        0}}}`` restricted to fully-graded cells; sorted distinct ``rung`` values
+        present.
     """
     reject_superseded(row_files)
     cell_rows: list[dict] = []

@@ -99,11 +99,20 @@ def lane_env_defaults(
 
     Parameters
     ----------
+    key : str
+        Model lane key.
+    repo_root : Path
+        Repository root anchoring relative state-file paths.
     state_file : str | None, optional
         ``None`` derives ``repo_root / f".ec2_state_scaling_{key}.json"``;
         a bare or relative name resolves against `repo_root`, not the process cwd
         -- anchoring both phases to the same root is how this lane reattaches to
         induction's box.
+
+    Returns
+    -------
+    dict[str, str]
+        Environment defaults for the lane.
     """
     if state_file is None:
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"
@@ -602,6 +611,8 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
 
     Parameters
     ----------
+    run_dir : Path
+        Local run directory to upload and prune.
     key : str
         The destination prefix ``f"{runner.spool_prefix()}/scaling_{key}/"``
         is built from this, not ``run_dir.name``, so the S3 layout stays
@@ -717,6 +728,8 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
 
     Parameters
     ----------
+    config : dict
+        Sweep configuration to enumerate.
     run_dir : Path
         Need not exist; an absent ``all_rows.jsonl`` reads as "nothing done".
 
@@ -726,6 +739,11 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
         Propagated from ``runner._select_theorems`` or
         ``runner.load_cell_whitelist`` -- the same conditions that would
         make ``runner.sweep`` itself raise before doing any work.
+
+    Returns
+    -------
+    set[tuple]
+        Cell keys not already recorded on disk.
     """
     all_rows_path = run_dir / "all_rows.jsonl"
 

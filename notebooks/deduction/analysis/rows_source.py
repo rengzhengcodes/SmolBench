@@ -102,7 +102,7 @@ def download_scaling_rows(
     retired-artifact guard before anything downloads, and turns a missing
     candidate into a listing fact instead of a caught ``ClientError``.
 
-    Returns the downloaded local paths, sorted. A run with none of
+    A run with none of
     `candidates` present is silently omitted rather than raising: a partially
     collected study is a legitimate input to `power_analysis` (its
     ``--models`` filter exists for that), while ``error_bars`` and
@@ -110,6 +110,8 @@ def download_scaling_rows(
 
     Parameters
     ----------
+    dest_dir : Path
+        Local directory for downloaded row files.
     prefix : str
         S3 key prefix WITH a trailing "/"; callers resolve it
         (`spool_prefix`, or a CLI value) rather than a module constant, so a
@@ -122,6 +124,11 @@ def download_scaling_rows(
         optional S3 client, for tests; only
         ``get_paginator("list_objects_v2")`` and ``download_file`` are called
         on it.
+
+    Returns
+    -------
+    list[Path]
+        Downloaded local paths, sorted.
     """
     if client is None:
         # Lazy, and skipped entirely for an injected client: keeps every
@@ -192,10 +199,21 @@ def resolve_rows_dir(
 
     Parameters
     ----------
+    rows_dir : Path | None
+        Existing local rows directory.
     s3_prefix : str | None
         normalized to a single trailing "/"; an empty prefix is
         refused (`ValueError`) rather than guessed at, since it would
         silently list the whole bucket.
+    candidates : tuple[str, ...], optional
+        Row-file basenames tried in preference order.
+    client : Any, optional
+        S3 client for downloads.
+
+    Returns
+    -------
+    Path
+        Local directory containing the resolved row files.
     """
     if (rows_dir is None) == (s3_prefix is None):
         raise ValueError(

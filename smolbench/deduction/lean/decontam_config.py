@@ -254,6 +254,11 @@ def load_decontam_config(path: "Optional[Path]" = None) -> DecontamConfig:
     path : Optional[Path], optional
         ``None`` (the default) resolves to ``decontam_config.toml`` beside
         this module; tests pass an explicit path to load a scratch fixture.
+
+    Returns
+    -------
+    DecontamConfig
+        Parsed, digested, and validated configuration.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)

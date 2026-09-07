@@ -321,13 +321,26 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     Monte-Carlo correction that keeps the test exact-valid at finite B. With one cell
     per theorem this degenerates to cell-level exact McNemar.
 
-    Returns one p-value per contrast, in `contrasts` order.
-
     Parameters
     ----------
+    succ : np.ndarray
+        Per-theorem success counts by model.
+    models : list[str]
+        Model names matching the columns of `succ`.
     contrasts : list
         ``(label, a, b)`` triples, all permuted with the SAME eps draws, at no
         extra cost, keeping the family's dependence structure intact.
+    B : int, optional
+        Number of sign-flip permutations.
+    seed : int, optional
+        Random-number generator seed.
+    chunk : int, optional
+        Number of permutations processed at once.
+
+    Returns
+    -------
+    np.ndarray
+        One p-value per contrast, in `contrasts` order.
     """
     n_thm = succ.shape[0]
     jmap = {m: j for j, m in enumerate(models)}
@@ -430,17 +443,24 @@ def _rate(hits: int, n: int) -> float | None:
 def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
                count_as_failure: bool = True) -> tuple:
     """Build the paired 21-way pool under an explicit denominator rule.
-    Returns (models, blocks, prompt_rungs, meta): sorted model names; blocks as
-    ``{theorem_id: {(k, prompt_rung): {model: 0 or 1}}}``; sorted distinct prompt
-    rungs; and `meta`, recording what the rule actually did (cells added per lane,
-    each lane's own-denominator rate) so the report can print its cost rather than
-    assert it's negligible.
 
     Parameters
     ----------
+    rows_dir : Path
+        Root directory containing verified row files.
+    recovery_dir : Path | None, optional
+        Root directory containing DojoInit recovery row files.
     count_as_failure : bool, optional
         score a model-dependent no-survivor cell as 0 instead of
         dropping it (the module docstring's denominator rule); default True.
+
+    Returns
+    -------
+    tuple
+        Sorted model names; blocks as ``{theorem_id: {(k, prompt_rung): {model: 0 or
+        1}}}``; sorted distinct prompt rungs; and `meta`, recording what the rule
+        actually did (cells added per lane, each lane's own-denominator rate) so the
+        report can print its cost rather than assert it's negligible.
     """
     graded, nosurv = {}, {}
     for model in MODELS:
@@ -561,9 +581,25 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
 
     Parameters
     ----------
+    succ : np.ndarray
+        Per-theorem success counts by model.
+    size : np.ndarray
+        Per-theorem cell counts.
+    models : list[str]
+        Column labels for `succ`.
+    blocks : dict
+        Paired outcomes grouped by theorem and cell.
     per_lane : dict[str, float]
         model -> that lane's rate over its OWN measurable denominator
         (`build_pool`'s ``meta["own_rate"]``).
+    B : int
+        Number of bootstrap resamples.
+    out_json : Path | None
+        Destination for the JSON summary.
+    meta : dict[str, Any] | None, optional
+        Pool metadata describing the denominator rule.
+    sensitivity : list[tuple] | None, optional
+        Alternate denominator-pool summaries.
     """
     bs = bootstrap_stats(succ, size, B, seed=20260816)
     n_thm = succ.shape[0]

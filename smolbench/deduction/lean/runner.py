@@ -139,14 +139,41 @@ def run_cell(
 
     Parameters
     ----------
+    provider : str
+        Provider identifier for model completion.
+    model : str
+        Model identifier for model completion.
+    theorem : BenchmarkTheorem
+        Theorem to prove.
+    k : int
+        Theorem context index.
+    chain : Chain
+        Prompt chain for rendering the theorem.
+    level : int
+        Prompt rung level.
+    n_replicates : int
+        Number of completion replicates to generate.
+    temperature : float, optional
+        Sampling temperature for model completion.
+    max_tokens : int, optional
+        Maximum generated tokens per completion.
     dojo_timeout : int, optional
         kept spelled this way, not `repl_timeout` -- pinned across
         `run_cell`, `sweep`, and `cli`'s defaults (see `DEFAULT_DOJO_TIMEOUT`).
     seed : int, optional
         replicate `i` decodes at `seed + i`, so the replicate index, not
         theorem/rung/model, is the seed-varying axis.
+    request_timeout : int, optional
+        Completion request timeout in seconds.
+    max_retries : int, optional
+        Maximum completion retry attempts.
     verifier : Any, optional
         `None` resolves `_default_verifier()`; tests pass a fake.
+
+    Yields
+    ------
+    dict
+        One JSONL-serializable row per replicate.
     """
     if verifier is None:
         verifier = _default_verifier()
