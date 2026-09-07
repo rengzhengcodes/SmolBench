@@ -261,6 +261,16 @@ def resolve_from_args(args: argparse.Namespace) -> Path:
     is resolved here rather than as an argparse default. The single-element
     `candidates` default stands: neither caller has an ``all_rows.jsonl``
     fallback, and those rows carry the ungraded "unverified" sentinel.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed source arguments.
+
+    Returns
+    -------
+    Path
+        Resolved rows directory.
     """
     return resolve_rows_dir(
         rows_dir=args.rows_dir,

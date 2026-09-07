@@ -332,6 +332,16 @@ def _stamp_path(path: Path) -> str:
     `build_config`'s provenance stamps (``sweep_config`` and
     ``decontam_config``) so the two cannot drift apart in how they spell a
     path.
+
+    Parameters
+    ----------
+    path : Path
+        Path to spell for manifest provenance.
+
+    Returns
+    -------
+    str
+        Repo-relative path when possible, otherwise an absolute path.
     """
     resolved = path.resolve()
     try:
@@ -380,6 +390,18 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     cached; ``run_name`` defaults to ``f"scaling_{key}"`` plus a
     ``_shard<i>of<n>`` suffix when sharding, matching
     ``scripts/fleet/run_fleet.py``'s ``Lane`` naming.
+
+    Parameters
+    ----------
+    key : str
+        Model key for this lane.
+    sweep_config_path : Path | None, optional
+        Test seam (default ``None`` reads the committed file).
+
+    Returns
+    -------
+    dict
+        Configuration for this lane's ``runner.sweep`` invocation.
 
     Raises
     ------
@@ -776,7 +798,10 @@ def main(argv: list[str] | None = None) -> None:
     attempt reached the S3 spool -- true because ``spool_to_s3`` keeps that
     file across its prune (see its docstring).
 
-    `argv` is a parameter so tests can call this without a subprocess.
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Argument vector so tests can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description=(

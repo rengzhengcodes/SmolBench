@@ -249,6 +249,11 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
 
     Names the first 5 offending theorems plus a total count, so a large bad
     pool doesn't dump thousands of names into the message.
+
+    Parameters
+    ----------
+    pool : list[BenchmarkTheorem]
+        Theorems to validate for post-cutoff status.
     """
     bad = [t.full_name for t in pool if not t.postcutoff]
     if not bad:
@@ -266,12 +271,25 @@ def _select_theorems(
 ) -> list[BenchmarkTheorem]:
     """Resolve a config `theorems` block into a concrete BenchmarkTheorem list.
 
-    `cell_whitelist` narrows the pool to theorems owning at least one of its
-    cell keys; it's a parameter, not a `spec` field, because `sweep` loads it
-    once from `LEAN_CELL_WHITELIST` rather than duplicating it into config.
+    Parameters
+    ----------
+    spec : dict
+        Configuration `theorems` block.
+    cell_whitelist : frozenset[tuple] | None, optional
+        Narrows the pool to theorems owning at least one of its cell keys; it's a parameter,
+        not a `spec` field, because `sweep` loads it once from `LEAN_CELL_WHITELIST` rather than
+        duplicating it into config.
 
-    Raises `ValueError` for an unknown `source`, a malformed `shard`, or (when
-    `require_postcutoff` is set) a pool containing a non-post-cutoff theorem.
+    Returns
+    -------
+    list[BenchmarkTheorem]
+        Selected theorems.
+
+    Raises
+    ------
+    ValueError
+        For an unknown `source`, a malformed `shard`, or (when `require_postcutoff` is set) a
+        pool containing a non-post-cutoff theorem.
     """
     require_postcutoff = bool(spec.get("require_postcutoff", False))
     source = spec.get("source", "replay_passing")
@@ -369,13 +387,23 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     """Load and validate a `LEAN_CELL_WHITELIST` JSON file into a key set.
 
-    Entries are 5-element ``[model, theorem, k, rung, replicate_idx]`` arrays,
-    matching `_row_key`'s order so keys compare equal to `sweep`'s. Duplicates
-    collapse; source order is not preserved.
+    Parameters
+    ----------
+    path_str : str
+        Path to the JSON file.
 
-    Raises `ValueError` (naming `path_str`) on any read/parse/shape problem: a
-    missing or malformed file must abort before generating a cell, not
-    degrade into a full, expensive re-run.
+    Returns
+    -------
+    frozenset[tuple]
+        5-element ``[model, theorem, k, rung, replicate_idx]`` arrays, matching `_row_key`'s
+        order so keys compare equal to `sweep`'s. Duplicates collapse; source order is not
+        preserved.
+
+    Raises
+    ------
+    ValueError
+        (Naming `path_str`) on any read/parse/shape problem: a missing or malformed file must
+        abort before generating a cell, not degrade into a full, expensive re-run.
     """
     path = Path(path_str)
     try:
@@ -417,6 +445,16 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
     list (as `load_cell_whitelist` returns) fingerprint identically. Used by
     `run_study.py` to stamp "this exact set of cells" into a manifest;
     change-detection, not security.
+
+    Parameters
+    ----------
+    keys : Iterable[tuple]
+        Cell keys to encode canonically.
+
+    Returns
+    -------
+    str
+        Lowercase hex SHA-256 fingerprint.
     """
     canonical = json.dumps(
         sorted(list(key) for key in keys), separators=(",", ":")
@@ -447,6 +485,16 @@ def load_sweep_config(path: str | Path) -> tuple[dict, str]:
     COMMENT changes -- deliberate, since `sweep.yaml`'s rationale comments are
     part of what a run's provenance claims. `yaml` imports locally: this
     module is also imported by callers with no reason to require PyYAML.
+
+    Parameters
+    ----------
+    path : str | Path
+        YAML configuration file.
+
+    Returns
+    -------
+    tuple[dict, str]
+        Parsed configuration and SHA-256 of its raw bytes.
     """
     import yaml
 
@@ -481,8 +529,17 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
     than rewriting surviving content back out, so a second crash can't lose
     rows that were never torn.
 
-    Returns bytes discarded (``0`` means untouched, not "no file"); logs a
-    WARNING on any repair.
+    Logs a WARNING on any repair.
+
+    Parameters
+    ----------
+    jsonl_path : Path
+        JSONL file to repair in place.
+
+    Returns
+    -------
+    int
+        Bytes discarded (``0`` means untouched, not "no file").
     """
     if not jsonl_path.exists():
         return 0
@@ -522,6 +579,16 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
     Single reader for `all_rows.jsonl`-shaped files. Only the last line can be
     torn (a SIGKILL mid-append); dropped with a WARNING, not silently, so real
     corruption elsewhere still raises `json.JSONDecodeError` naming the line.
+
+    Parameters
+    ----------
+    path : Path
+        JSONL file to parse.
+
+    Returns
+    -------
+    list[dict]
+        Parsed rows, dropping a torn FINAL line; missing file -> ``[]``.
     """
     if not path.exists():
         return []
@@ -584,6 +651,16 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     -- that is data); else the cell re-runs. Re-running an asked-and-empty
     cell would resample until a proof happened to appear, inflating pass@1.
     ``prompt_tokens`` is also the signal `audit_run_completeness.py` uses.
+
+    Parameters
+    ----------
+    jsonl_path : Path
+        JSONL file containing existing rows.
+
+    Returns
+    -------
+    set[tuple]
+        Cell keys for cells that must NOT re-run.
     """
     cell_rows = [r for r in read_jsonl_tolerating_torn_tail(jsonl_path)
                  if r.get("kind") == "cell"]
@@ -603,9 +680,18 @@ def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
     over this function's output instead.
 
     Groups by `_existing_keys`' own field names/defaults, not this module's
-    stricter `_row_key`, so the two agree on "same cell". Returns the
-    earliest non-exception row per key, or the first row if every row for
-    that key is an exception (so it still counts once, not vanishes).
+    stricter `_row_key`, so the two agree on "same cell".
+
+    Parameters
+    ----------
+    rows : Iterable[dict]
+        Cell rows to deduplicate.
+
+    Returns
+    -------
+    list[dict]
+        The earliest non-exception row per key, or the first row if every row for that key is an
+        exception (so it still counts once, not vanishes).
     """
     deduped: list[dict] = []
     for group in group_cell_rows(rows, _cell_key).values():
@@ -625,6 +711,16 @@ def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     study -- the caller's gate check, not this function, lets it through.
     Never triggers a re-replay for an existing row of any verdict; a second
     sanity row per theorem would break `merge_lean_shards.py`'s `--expect-sanity` count gate.
+
+    Parameters
+    ----------
+    jsonl_path : Path
+        JSONL file containing sanity rows.
+
+    Returns
+    -------
+    dict[str, str]
+        Theorem names mapped to their recorded sanity verdicts.
     """
     return {r.get("theorem_id", ""): r.get("verdict", "")
             for r in read_jsonl_tolerating_torn_tail(jsonl_path)
@@ -744,6 +840,17 @@ def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     `write_theorem_summary` runs inside a per-theorem worker that -- under
     `theorem_workers > 1` -- swallows exceptions into one THEOREM-WORKER-FAIL
     line (serial runs propagate).
+
+    Parameters
+    ----------
+    paths : Iterable[str | Path]
+        Row-file paths to validate.
+
+    Raises
+    ------
+    ValueError
+        Naming every offending path, rather than warning and skipping: these files parse perfectly and
+        would otherwise yield a complete, plausible, WRONG summary instead of a crash.
     """
     bad = [str(p) for p in paths if is_retired(p)]
     if bad:
@@ -857,6 +964,11 @@ def write_run_analysis(run_dir: Path) -> None:
     `lean3.corrupt_tail`'s repair training aims to drive to zero. Cell rows
     are deduped through `dedupe_cell_rows` first, so "N cells" and every
     per-cell `n` count distinct cells, not raw rows.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory containing `all_rows.jsonl`.
     """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
@@ -1019,6 +1131,60 @@ def _run_cells_at_step_concurrent(
     empty pending list returns without opening the REPL session, so a
     fully-resumed (theorem, k) pays no Lean startup. Written rows
     `_existing_keys` would later count are added to `written_keys`, if given.
+
+    Parameters
+    ----------
+    all_rows : TextIO
+        Open JSONL output stream.
+    theorem : BenchmarkTheorem
+        Theorem being evaluated.
+    k : int
+        Tactic-step index.
+    rungs : list[str]
+        Rungs to evaluate.
+    rendered_by_rung : dict
+        Rendered prompts keyed by rung.
+    models_cfg : list[dict]
+        Model configuration entries.
+    n_replicates : int
+        Number of replicates per cell.
+    temperature : float
+        Generation temperature.
+    max_tokens : int
+        Maximum generation tokens.
+    provider_factory : Callable[[dict], tuple[Any, int]]
+        Creates a provider and its context length from a model configuration.
+    base_seed : int
+        Base seed for replicate generation.
+    request_timeout : int
+        Request timeout in seconds.
+    max_retries : int
+        Maximum request retries.
+    done_keys : set
+        Cell keys already completed.
+    tdir : Path
+        Per-theorem output directory.
+    dojo_timeout : int
+        Lean Dojo timeout in seconds.
+    verifier : Any
+        Verifier for generated proof tails.
+    max_workers : int, optional
+        Maximum concurrent generation workers.
+    write_lock : threading.Lock | None, optional
+        Serializes writes to `all_rows`.
+    print_lock : threading.Lock | None, optional
+        Serializes status output.
+    model_semaphores : dict[str, threading.Semaphore] | None, optional
+        Per-model generation semaphores.
+    cell_whitelist : frozenset[tuple] | None, optional
+        Allowed cell keys.
+    written_keys : set[tuple] | None, optional
+        Receives keys for rows `_existing_keys` would count.
+
+    Returns
+    -------
+    tuple[int, int, int]
+        Counts of written, successful, and skipped cells.
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
@@ -1232,6 +1398,16 @@ def _provider_for(mc: dict) -> Any:
     Explicit, not via the env-dispatched `provider.complete`: one process-wide
     `INFERENCE_PROVIDER` can't express a lineup mixing providers across
     `config["models"]`.
+
+    Parameters
+    ----------
+    mc : dict
+        Model configuration entry.
+
+    Returns
+    -------
+    Any
+        Provider module.
     """
     return provider_module(mc["provider"])
 
@@ -1243,6 +1419,18 @@ def _ctx_len_for(mc: dict, mod: Any) -> int:
     `complete()`'s token-usage guard never fires for this model; a genuine
     overflow then surfaces later as that guard's `ValueError`, recorded
     per-cell as a resumable exception row rather than a hard abort.
+
+    Parameters
+    ----------
+    mc : dict
+        Model configuration entry.
+    mod : Any
+        Provider module.
+
+    Returns
+    -------
+    int
+        Model context window.
     """
     try:
         return mod.get_model_context_length(mc["model"])
@@ -1276,6 +1464,22 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     mathlib4 checkout, `skip_trivial` judges fewer rungs trivial, so which
     cells a run produces can depend on a directory outside the results tree
     (logged as a WARNING at start).
+
+    Parameters
+    ----------
+    config : dict
+        Sweep configuration.
+    run_dir : Path
+        Directory for per-theorem outputs and run artifacts.
+    resume : bool, optional
+        Skips cells already recorded in `all_rows.jsonl` (`_existing_keys`).
+    verifier : Any, optional
+        Verifier for sanity replays and generated proof tails.
+
+    Returns
+    -------
+    int
+        Number of successful cells.
     """
     if verifier is None:
         verifier = _default_verifier()

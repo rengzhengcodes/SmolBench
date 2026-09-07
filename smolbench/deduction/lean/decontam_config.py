@@ -108,9 +108,22 @@ def _require_key(section_data: dict, section: str, key: str) -> Any:
 def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfig:
     """Build and validate a :class:`DecontamConfig` from a parsed TOML document.
 
-    `sha256` is passed in rather than recomputed, so the digest provably
-    describes the parsed document. Does not check that a ``lean_noise`` entry
-    is a usable identifier -- that's `premises._validate_lean_noise`'s job.
+    Does not check that a ``lean_noise`` entry is a usable identifier -- that's
+    `premises._validate_lean_noise`'s job.
+
+    Parameters
+    ----------
+    data : dict
+        Parsed TOML document.
+    path : Path
+        Path to the parsed configuration file.
+    sha256 : str
+        Passed in rather than recomputed, so the digest provably describes the parsed document.
+
+    Returns
+    -------
+    DecontamConfig
+        Validated decontamination policy configuration.
     """
     # Every declared [minhash] key must exist before any is range-checked, so
     # a missing key never surfaces as a confusing KeyError further down.
@@ -211,6 +224,16 @@ def _load_cached(resolved_path: Path) -> DecontamConfig:
 
     Split out from :func:`load_decontam_config` so the cache key is always
     the resolved path, never the raw ``Path | None`` a caller passed in.
+
+    Parameters
+    ----------
+    resolved_path : Path
+        Resolved configuration path used as the cache key.
+
+    Returns
+    -------
+    DecontamConfig
+        Parsed, digested, and validated configuration.
     """
     raw = resolved_path.read_bytes()
     sha256 = hashlib.sha256(raw).hexdigest()

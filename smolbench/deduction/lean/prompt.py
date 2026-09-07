@@ -34,9 +34,18 @@ def _find_closed_fenced_blocks(s: str) -> list[tuple[str, str]]:
     open a new match on a preceding block's closer and pair it with the
     wrong fence. Tracking open/closed state explicitly avoids that.
 
-    Returns one ``(tag, body)`` pair per closed block, in appearance order.
     An opening fence with no matching close by end of ``s`` is dropped,
     matching the unclosed-fence fallback in `extract_tactic_block`.
+
+    Parameters
+    ----------
+    s : str
+        Text to scan for fenced code blocks.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        One ``(tag, body)`` pair per closed block, in appearance order.
     """
     # `tag is None` is the sole open/closed flag; `buf` starts as `[]` rather
     # than `None` so it needs no `Optional` narrowing when consumed on close.
@@ -70,8 +79,18 @@ def extract_tactic_block(text: str) -> str:
     their closer isn't mistaken for the next block's start) but never
     returned.
 
-    Returns ``""`` for an UNCLOSED ``<think>`` block: no recoverable
-    tactics, and scoring it would pollute ``lean_error`` stats.
+    An UNCLOSED ``<think>`` block has no recoverable tactics, and scoring it
+    would pollute ``lean_error`` stats.
+
+    Parameters
+    ----------
+    text : str
+        LLM response containing tactics.
+
+    Returns
+    -------
+    str
+        ``""`` for an UNCLOSED ``<think>`` block.
     """
     s = text.strip()
     if s.startswith("<think>"):

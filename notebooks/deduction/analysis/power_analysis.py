@@ -151,6 +151,16 @@ def _seed_of(name: str) -> int:
     SHA-256, never builtin ``hash``: the latter is salted per process
     (``PYTHONHASHSEED``), which would make every per-pair RNG stream -- and so every
     reported power value and CI -- irreproducible across runs.
+
+    Parameters
+    ----------
+    name : str
+        model name
+
+    Returns
+    -------
+    int
+        deterministic 32-bit seed
     """
     return int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "little")
 
@@ -162,7 +172,20 @@ def _seed_of(name: str) -> int:
 # --------------------------------------------------------------------------- #
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Probability at least one of `n` conditionally-independent replicates succeeds:
-    ``1 - (1 - p)**n``, for `p` in ``[0, 1]`` and `n >= 1`."""
+    ``1 - (1 - p)**n``, for `p` in ``[0, 1]`` and `n >= 1`.
+
+    Parameters
+    ----------
+    p : np.ndarray | float
+        per-replicate success probability
+    n : int
+        number of conditionally-independent replicates
+
+    Returns
+    -------
+    np.ndarray | float
+        probability that at least one replicate succeeds
+    """
     return 1.0 - (1.0 - np.asarray(p, dtype=float)) ** n
 
 
@@ -172,7 +195,18 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 
     Under H0, ``b`` is ``Binomial(b + c, 0.5)``, so
     ``p = min(1, 2 * P(X <= min(b, c)))`` via ``scipy.stats.binom.cdf``.
-    b, c: counts where A succeeds/B fails, and the reverse; 1.0 when ``b + c == 0``.
+
+    Parameters
+    ----------
+    b : int
+        counts where A succeeds and B fails
+    c : int
+        counts where B succeeds and A fails
+
+    Returns
+    -------
+    float
+        1.0 when ``b + c == 0``; otherwise the two-sided p-value
     """
     n = b + c
     if n == 0:
@@ -190,6 +224,18 @@ def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
     bound, and why the exploratory SECONDARY tier uses BH rather than Bonferroni.
 
     Returns a boolean mask in `pvalues`' input order, not sorted order.
+
+    Parameters
+    ----------
+    pvalues : np.ndarray
+        p-values in input order
+    q : float
+        false-discovery-rate level
+
+    Returns
+    -------
+    np.ndarray
+        boolean mask in `pvalues`' input order, not sorted order
     """
     pvalues = np.asarray(pvalues, dtype=float)
     if pvalues.ndim != 1:
@@ -220,6 +266,11 @@ def _warn_unverified(reasons: list[str]) -> None:
 
     Called by `load_joint_cells` for an ``all_rows.jsonl`` input or an
     ``"unverified"`` cell row; each `reasons` entry becomes one banner line, verbatim.
+
+    Parameters
+    ----------
+    reasons : list[str]
+        banner lines describing why rows are unverified
     """
     lines = [f"!!  {reason}" for reason in reasons] + [
         "!!",
@@ -260,7 +311,19 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
     differ (`error_bars.lane_outcomes` checks ``"verdict"`` on primary rows and
     ``"recovered_verdict"`` on its recovery sibling, which has no ``"verdict"``).
 
-    Raises SystemExit if any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
+    Parameters
+    ----------
+    rows : Iterable[dict[str, Any]]
+        already-parsed rows from one source file
+    field : str
+        verdict field to inspect
+    source : str | Path
+        source file represented by the rows
+
+    Raises
+    ------
+    SystemExit
+        if any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
     """
     count = sum(
         1 for row in rows
@@ -297,9 +360,19 @@ def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
     taking it would report pass@N as pass@1; an `UNMEASURABLE_VERDICTS` verdict is not
     a measurement, so it neither scores 0 nor claims the cell.
 
-    Returns 1 (success), 0 (failure), or None (no surviving attempt). Callers resolve
-    None differently: this file and ``hint_vs_noise.load_rungs`` leave the cell absent,
-    ``error_bars.build_pool`` may score it 0 when another lane graded it.
+    Callers resolve None differently: this file and ``hint_vs_noise.load_rungs`` leave
+    the cell absent, ``error_bars.build_pool`` may score it 0 when another lane graded
+    it.
+
+    Parameters
+    ----------
+    verdicts : Iterable[str | None]
+        cell verdicts in file order
+
+    Returns
+    -------
+    int | None
+        1 (success), 0 (failure), or None (no surviving attempt)
     """
     for verdict in verdicts:
         if verdict in UNMEASURABLE_VERDICTS:
@@ -437,7 +510,20 @@ def load_joint_cells(
 
 def marginal_rates(models: list[str], blocks: dict) -> dict[str, float]:
     """Each model's pass@1 rate over all paired `blocks` cells (the pilot point
-    estimate); ``float("nan")`` for every model if `blocks` is empty."""
+    estimate); ``float("nan")`` for every model if `blocks` is empty.
+
+    Parameters
+    ----------
+    models : list[str]
+        models to score
+    blocks : dict
+        paired theorem cells
+
+    Returns
+    -------
+    dict[str, float]
+        pass@1 rate for each model
+    """
     succ = {m: 0 for m in models}
     tot = 0
     for cmap in blocks.values():
@@ -454,6 +540,18 @@ def union_solvable_fraction(models: list[str], blocks: dict) -> float:
     Feeds `passn_power`'s "solvable at all" anchor. Called with just a contrast's two
     models, never the whole roster: across 21 models "did any solve it" trends to 1.0
     regardless of the pair.
+
+    Parameters
+    ----------
+    models : list[str]
+        models in the contrast
+    blocks : dict
+        paired theorem cells
+
+    Returns
+    -------
+    float
+        fraction of paired cells solved by at least one model
     """
     solved = tot = 0
     for cmap in blocks.values():
@@ -469,7 +567,19 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
     Pooled over every paired theorem and prompt rung, unstratified -- the conservative
     single-stratum collapse of the rung-stratified CMH test.
 
-    Returns (b, c): `model_a` succeeds and `model_b` fails, and the reverse.
+    Parameters
+    ----------
+    blocks : dict
+        paired theorem cells
+    model_a : str
+        first model in the pair
+    model_b : str
+        second model in the pair
+
+    Returns
+    -------
+    tuple
+        (b, c): `model_a` succeeds and `model_b` fails, and the reverse
     """
     disc_b = disc_c = 0
     for cmap in blocks.values():
@@ -553,8 +663,29 @@ def bootstrap_power(
     their cells, and computes McNemar's exact p over `sims` simulations. `rng` is
     freshly seeded by the caller (see `_seed_of`) so runs are byte-identical.
 
-    Returns (power, gap_lo, gap_hi): rejection fraction at `alpha`, and the
-    5th/95th-percentile bootstrap CI of ``rate_a - rate_b`` (for the near-tie verdict).
+    Parameters
+    ----------
+    blocks : dict
+        paired theorem cells
+    model_a : str
+        first model in the pair
+    model_b : str
+        second model in the pair
+    n_theorems : int
+        theorem blocks sampled per simulation
+    alpha : float
+        McNemar significance threshold
+    sims : int
+        number of bootstrap simulations
+    rng : np.random.Generator
+        freshly seeded random-number generator
+
+    Returns
+    -------
+    tuple
+        (power, gap_lo, gap_hi): rejection fraction at `alpha`, and the
+        5th/95th-percentile bootstrap CI of ``rate_a - rate_b`` (for the near-tie
+        verdict)
     """
     thm_ids = list(blocks.keys())
     # Pre-flatten each theorem's per-cell (a, b) outcomes so the inner sim loop
@@ -602,14 +733,37 @@ def passn_power(
     model's calibrated solvable-cell mean. `pass_at_n` converts cells to pass@N;
     McNemar's p is computed per simulation on an `n_theorems` x `n_prompt_rungs` grid.
 
-    Returns the rejection fraction at `alpha`, or ``nan`` if either model's implied
-    solvable-cell mean falls outside ``(0, 1]``. Adding replicates re-samples the SAME
-    theorem's difficulty, so this saturates: theorems, not replicates, are the lever.
+    Adding replicates re-samples the SAME theorem's difficulty, so this saturates:
+    theorems, not replicates, are the lever.
 
     Parameters
     ----------
+    rate_a : float
+        first model's pass@1 rate
+    rate_b : float
+        second model's pass@1 rate
     frac_solvable : float
         from `union_solvable_fraction` on just this pair; must be ``> 0``.
+    n_theorems : int
+        number of theorem blocks per simulation
+    n_replicates : int
+        replicates per cell
+    n_prompt_rungs : int
+        prompt rungs per theorem
+    alpha : float
+        McNemar significance threshold
+    sims : int
+        number of simulations
+    beta_conc : float
+        Beta-mixture concentration
+    rng : np.random.Generator
+        random-number generator
+
+    Returns
+    -------
+    float
+        rejection fraction at `alpha`, or ``nan`` if either model's implied
+        solvable-cell mean falls outside ``(0, 1]``
     """
     ma = rate_a / frac_solvable
     mb = rate_b / frac_solvable
@@ -652,6 +806,36 @@ def needed_replicates(
     Scans `grid` ascending, stopping at the first sufficient point. ``None`` also
     covers the uncalibratable case where `passn_power` is NaN at every grid point,
     which no number of replicates can fix.
+
+    Parameters
+    ----------
+    rate_a : float
+        first model's pass@1 rate
+    rate_b : float
+        second model's pass@1 rate
+    frac_solvable : float
+        fraction of cells solvable by either model
+    n_theorems : int
+        number of theorem blocks per simulation
+    n_prompt_rungs : int
+        prompt rungs per theorem
+    alpha : float
+        McNemar significance threshold
+    sims : int
+        number of simulations
+    beta_conc : float
+        Beta-mixture concentration
+    rng : np.random.Generator
+        random-number generator
+    grid : tuple, optional
+        replicate counts to scan
+    target : float, optional
+        required rejection fraction
+
+    Returns
+    -------
+    int | None
+        first sufficient `grid` value, or ``None``
     """
     for n_rep in sorted(grid):
         power = passn_power(
@@ -717,8 +901,30 @@ def compute_contrast_sizing(
     produces byte-identical output. `prompt_rungs` is used only for its length (the
     Beta-mixture's per-theorem cell count).
 
-    Returns None if either model is absent from `rates`, so a pre-registered contrast
-    the current data doesn't cover is skipped, not raised on.
+    Parameters
+    ----------
+    blocks : dict
+        paired theorem cells
+    label : str
+        contrast label
+    model_a : str
+        first model in the contrast
+    model_b : str
+        second model in the contrast
+    rates : dict
+        observed pass@1 rates by model
+    prompt_rungs : list
+        prompt rungs represented in the paired cells
+    alpha : float
+        significance threshold for sizing simulations
+    sims : int
+        number of simulations per grid point
+
+    Returns
+    -------
+    ContrastSizing | None
+        None if either model is absent from `rates`, so a pre-registered contrast the
+        current data doesn't cover is skipped, not raised on
     """
     if model_a not in rates or model_b not in rates:
         return None
@@ -803,6 +1009,23 @@ def _print_tier_report(
     silently. `secondary`: True = SECONDARY cross-family tier (sized at
     `ALPHA_SECONDARY`, decided by `benjamini_hochberg` at `Q_SECONDARY`); False =
     PRIMARY, at the fixed `ALPHA_PRIMARY` Bonferroni threshold.
+
+    Parameters
+    ----------
+    tier_label : str
+        label displayed for the contrast tier
+    contrasts : list
+        full pre-registered list of contrasts
+    blocks : dict
+        paired theorem cells
+    rates : dict
+        observed pass@1 rates by model
+    prompt_rungs : list
+        prompt rungs represented in the paired cells
+    secondary : bool
+        whether to use the SECONDARY tier procedure
+    sims : int
+        number of simulations per grid point
     """
     alpha_sizing = ALPHA_SECONDARY if secondary else ALPHA_PRIMARY
     sizings: list[ContrastSizing] = []
@@ -960,8 +1183,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Load the requested run files (S3 or local), pair joint cells, print the report.
 
-    Returns 0 on a normal report, 1 if no row files or no fully-paired cells for the
-    requested model set were found.
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        command-line arguments
+
+    Returns
+    -------
+    int
+        0 on a normal report, 1 if no row files or no fully-paired cells for the
+        requested model set were found
     """
     args = parse_args(argv)
     models_filter = (
