@@ -46,6 +46,11 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     client_factory : Optional[Any], optional
         `None` builds a boto3 client lazily per region, keeping boto3 out of
         the import chain.
+
+    Returns
+    -------
+    list[dict]
+        The rows actually terminated.
     """
     fleet_status = _fleet_status()
     factory = client_factory or fleet_status._default_client_factory

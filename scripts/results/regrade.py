@@ -56,11 +56,11 @@ def split_condition_dirname(name: str) -> Optional[Tuple[str, str]]:
     Both halves may themselves contain ``_`` (``gemma4_e2b``; also the
     ``noise_intens`` arm), so this matches against the known arm names as a
     ``_<info>`` suffix, longest arm first, instead of splitting positionally.
-    
+
     Parameters
     ----------
     name : str
-        condition directory name to split.
+        Condition directory name to split.
 
     Returns
     -------
@@ -104,7 +104,7 @@ def roster_conditions(
     store : rs.ResultsStore
         S3-backed results store to enumerate.
     arms : Optional[List[str]]
-        suffixes that limit the enumerated conditions.
+        Suffixes that limit the enumerated conditions.
 
     Returns
     -------
@@ -145,11 +145,11 @@ def tree_conditions(
     Parameters
     ----------
     store : rs.ResultsStore
-        local results store to enumerate.
+        Local results store to enumerate.
     tree : Path
-        results tree to walk.
+        Results tree to walk.
     arms : Optional[List[str]]
-        suffixes that limit the enumerated conditions.
+        Suffixes that limit the enumerated conditions.
 
     Returns
     -------
@@ -198,11 +198,11 @@ def enumerate_conditions(
     Parameters
     ----------
     store : rs.ResultsStore
-        results store that determines the enumeration route.
+        Results store that determines the enumeration route.
     tree : Path
-        local results tree for local stores.
+        Local results tree for local stores.
     arms : Optional[List[str]]
-        suffixes that limit the enumerated conditions.
+        Suffixes that limit the enumerated conditions.
 
     Returns
     -------
@@ -232,9 +232,9 @@ def load_for_regrade(
     Parameters
     ----------
     store : rs.ResultsStore
-        results store from which to load the replicate.
+        Results store from which to load the replicate.
     addr : rs.ReplicateAddress
-        replicate address to load.
+        Replicate address to load.
 
     Returns
     -------
@@ -259,14 +259,14 @@ def regrade_marks(marks: Marks, parse: Callable[[str], ParseResult]) -> Dict:
     Parameters
     ----------
     marks : Marks
-        replicate marks to re-parse.
+        Replicate marks to re-parse.
     parse : Callable[[str], ParseResult]
-        parser applied to each mark response.
+        Parser applied to each mark response.
 
     Returns
     -------
     Dict
-        dict: the re-scored ``marks``, plus tallies (``n``, ``before_correct``,
+        The re-scored ``marks``, plus tallies (``n``, ``before_correct``,
         ``before_invalid``, ``changed``, ``recovered`` invalid->real, ``broke``
         real->invalid, ``violations``).
     """
@@ -312,9 +312,8 @@ def regrade_marks(marks: Marks, parse: Callable[[str], ParseResult]) -> Dict:
 def main(argv: Optional[List[str]] = None) -> int:
     """Re-grade every requested study and return a process exit code.
 
-    Addresses are enumerated for the whole
-    study up front, before any write, so a seed listing can never observe the
-    runs this same pass just appended.
+    Addresses are enumerated for the whole study up front, before any write, so a
+    seed listing can never observe the runs this same pass just appended.
 
     Each regrade is stamped with its own :func:`results_store.utcnow`. If that
     instant falls in the same whole second as the run it replaces, the new
@@ -324,7 +323,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     Parameters
     ----------
     argv : Optional[List[str]], optional
-        command-line arguments to parse.
+        Command-line arguments to parse.
 
     Returns
     -------

@@ -43,7 +43,7 @@ def policy_document(bucket: str) -> dict:
     Parameters
     ----------
     bucket : str
-        bucket whose ARN the policy grants access to.
+        Bucket whose ARN the policy grants access to.
 
     Returns
     -------
@@ -93,9 +93,9 @@ def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
     s3 : Any
         S3 client that creates the bucket.
     bucket : str
-        bucket to create.
+        Bucket to create.
     region : str, optional
-        region for the bucket's location constraint.
+        Region for the bucket's location constraint.
     """
     from botocore.exceptions import ClientError
 
@@ -121,7 +121,7 @@ def put_public_access_block(s3: Any, bucket: str) -> None:
     s3 : Any
         S3 client that sets the access block.
     bucket : str
-        bucket whose public access is blocked.
+        Bucket whose public access is blocked.
     """
     s3.put_public_access_block(
         Bucket=bucket,
@@ -146,7 +146,7 @@ def enable_versioning(s3: Any, bucket: str) -> None:
     s3 : Any
         S3 client that enables versioning.
     bucket : str
-        bucket on which to enable versioning.
+        Bucket on which to enable versioning.
     """
     s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
 
@@ -163,9 +163,9 @@ def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
     iam : Any
         IAM client that creates or lists policies.
     bucket : str
-        bucket the policy grants access to.
+        Bucket the policy grants access to.
     name : str, optional
-        managed policy name.
+        Managed policy name.
 
     Returns
     -------
@@ -233,26 +233,26 @@ class _ProvisionAccessDenied(Exception):
 def _run_step(label: str, operation: str, call: Callable[[], Any]) -> Any:
     """Run one provisioning step with a progress line and AccessDenied handling.
 
-    other exceptions propagate.
+    Exceptions other than a denied ``ClientError`` propagate.
 
     Parameters
     ----------
     label : str
-        progress label to print.
+        Progress label to print.
     operation : str
         AWS operation named in an access-denied message.
     call : Callable[[], Any]
-        provisioning operation to invoke.
+        Provisioning operation to invoke.
 
     Returns
     -------
     Any
-        value returned by `call`.
+        Value returned by `call`.
 
     Raises
     ------
     _ProvisionAccessDenied
-        after printing the denial if `call` raises a ``ClientError`` in
+        After printing the denial if `call` raises a ``ClientError`` in
         `_ACCESS_DENIED_CODES`.
     """
     from botocore.exceptions import ClientError
