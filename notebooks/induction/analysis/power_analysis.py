@@ -191,7 +191,7 @@ def shrunk_rates(y: np.ndarray, c: float = SHRINKAGE) -> np.ndarray:
     return (y + c * y.mean()) / (1.0 + c)
 
 
-def mcnemar_exact_p(b, c):
+def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndarray:
     """Two-sided exact conditional (binomial) McNemar p for discordant counts `b`, `c`.
 
     ``min(1, 2 * P[Bin(b + c, 1/2) <= min(b, c)])``, 1.0 where ``b + c == 0``

@@ -3,6 +3,8 @@
 import dataclasses
 import re
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,7 +16,7 @@ from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 RUN_TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
 
-def make_quizzes(seed: int, model: str):
+def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
     """Two info types of different sizes so pooled slicing is observable."""
     return {
         "intens": (Numeric(prompt=f"i1/{seed}", answer=1), Numeric(prompt=f"i2/{seed}", answer=2)),
@@ -23,7 +25,7 @@ def make_quizzes(seed: int, model: str):
 
 
 @pytest.fixture
-def harness(tmp_path):
+def harness(tmp_path: Path) -> ReplicateHarness:
     return ReplicateHarness(
         results_dir=tmp_path, archetype_tags={"stub-model": "decode"}, make_quizzes=make_quizzes,
         seeds=(1, 2), info_types=("intens", "extens"),
@@ -31,11 +33,13 @@ def harness(tmp_path):
 
 
 @pytest.fixture
-def fake_evaluate(monkeypatch):
+def fake_evaluate(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Answers every question correctly; records call shapes."""
     calls = []
 
-    def _evaluate(quiz, model, seed, **kwargs):
+    def _evaluate(
+        quiz: tuple[Numeric, ...], model: str, seed: int, **kwargs: Any,
+    ) -> Marks:
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
         marks = tuple(
             Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1,
@@ -47,7 +51,9 @@ def fake_evaluate(monkeypatch):
     return calls
 
 
-def test_run_replicates_pools_and_serializes(harness, fake_evaluate, tmp_path):
+def test_run_replicates_pools_and_serializes(
+    harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]], tmp_path: Path,
+) -> None:
     harness.run_replicates("stub-model", extra_args={"max_completion_tokens": 64})
     assert [c["n"] for c in fake_evaluate] == [3, 3]
     assert fake_evaluate[0]["kwargs"] == {"extra_args": {"max_completion_tokens": 64}}
@@ -68,7 +74,9 @@ def test_run_replicates_pools_and_serializes(harness, fake_evaluate, tmp_path):
     assert stored.server_config == cfg and stored.server_config is not cfg
 
 
-def test_run_replicates_resume(harness, fake_evaluate, tmp_path):
+def test_run_replicates_resume(
+    harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]], tmp_path: Path,
+) -> None:
     assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
     fake_evaluate.clear()
@@ -81,11 +89,13 @@ def test_run_replicates_resume(harness, fake_evaluate, tmp_path):
     assert [c["n"] for c in fake_evaluate] == [1]
 
 
-def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
+def test_run_replicates_passes_model_to_quiz_factory(
+    tmp_path: Path, fake_evaluate: list[dict[str, Any]],
+) -> None:
     """The quiz factory receives (seed, model): the noise arm is token-matched per model."""
     seen: list = []
 
-    def recording_factory(seed: int, model: str):
+    def recording_factory(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
         seen.append((seed, model))
         return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
 
@@ -97,7 +107,7 @@ def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
     assert Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query == "i/1/stub-model"
 
 
-def test_force_seeds(harness, fake_evaluate):
+def test_force_seeds(harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]]) -> None:
     """force_seeds bypasses the resume-skip for exactly the forced seeds."""
     harness.run_replicates("stub-model")
     assert not harness.has_outstanding("stub-model")
@@ -116,7 +126,9 @@ def test_force_seeds(harness, fake_evaluate):
     )
 
 
-def test_cot_chain_lengths(harness, capsys):
+def test_cot_chain_lengths(
+    harness: ReplicateHarness, capsys: pytest.CaptureFixture[str],
+) -> None:
     """Word-count stats pool over seeds, skipping falsy reasoning."""
     for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
         marks = tuple(
@@ -132,7 +144,9 @@ def test_cot_chain_lengths(harness, capsys):
     assert "cot/extens:noreasoningchainsfound" in out
 
 
-def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
+def test_store_is_local_and_cached(
+    harness: ReplicateHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The store resolves once, stays local for a non-repo dir, and honours prefix."""
     assert isinstance(harness.store, LocalResultsStore)
     assert harness.store.root == tmp_path
@@ -145,8 +159,10 @@ def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
 
 
-def test_forcing_a_seed_supersedes_its_stored_run_first(harness, fake_evaluate,
-                                                       tmp_path, monkeypatch):
+def test_forcing_a_seed_supersedes_its_stored_run_first(
+    harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A forced re-collection is what a reader returns, on either backend:
     `ResultsStore.supersede_all` runs before the replacement is collected, and
     the retired bytes stay on disk under `SUPERSEDED-<ts>`."""

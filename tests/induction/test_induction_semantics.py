@@ -7,6 +7,7 @@ generation fails here even when tests/induction/test_golden_quizzes.py agrees.
 import re
 import string
 from math import lcm, prod
+from typing import Any
 
 import pytest
 
@@ -33,7 +34,7 @@ NUM_TMPL = string.Template("$positive_info\nHow many of positions 1..$seq_len in
 TOF_TMPL = string.Template("$positive_info\nDoes position $pos include '$label'? True/False.")
 
 
-def _check_counts(cfg):
+def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
     """Assert every Numeric answer equals a brute-force divisible-position tally."""
     period_to_label, pos_to_compound = generate_sequence(cfg)
     label_to_period = {label: period for period, label in period_to_label.items()}
@@ -52,7 +53,7 @@ def _check_counts(cfg):
     return period_to_label, pos_to_compound
 
 
-def test_periodic_tof_answers_match_divisibility_rule():
+def test_periodic_tof_answers_match_divisibility_rule() -> None:
     """ToF answers must equal ``pos % period == 0``, identically across all three arms."""
     cfg = PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=7)
     period_to_label, _ = generate_sequence(cfg)
@@ -75,7 +76,7 @@ def test_periodic_tof_answers_match_divisibility_rule():
     assert [q.answer for q in noise_intens] == [q.answer for q in intens]
 
 
-def test_periodic_numeric_answers_and_default_pathway():
+def test_periodic_numeric_answers_and_default_pathway() -> None:
     """Default (no ``periods``) config yields periods 1..n, seq_len lcm(1..n), exact counts."""
     cfg = PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=11)
     assert cfg.periods is None
@@ -84,7 +85,7 @@ def test_periodic_numeric_answers_and_default_pathway():
     assert max(pos_to_compound) == lcm(1, 2, 3, 4) == 12
 
 
-def test_coprime_periods_make_sequence_length_the_product():
+def test_coprime_periods_make_sequence_length_the_product() -> None:
     """A pairwise-coprime period set gives seq_len == prod(periods), order-independently."""
     periods = (1, 2, 3, 7, 11, 13)
     labels = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
@@ -99,7 +100,7 @@ def test_coprime_periods_make_sequence_length_the_product():
     assert generate_sequence(shuffled)[0] == period_to_label
 
 
-def test_divisor_periods_add_harmonics_without_moving_sequence_length():
+def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
     """A divisor set adds harmonics while seq_len stays at the declared length."""
     base = tuple(range(1, 10))
     # 2520 = lcm(1..9) = the base sequence length; the rest are its divisors
@@ -134,13 +135,13 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length():
         (dict(n=4, labels=4, expect_seq_len=60), "only means something alongside"),
     ],
 )
-def test_period_validation(kwargs, match):
+def test_period_validation(kwargs: dict[str, Any], match: str) -> None:
     """Malformed period sets must raise at construction, not silently resize the sequence."""
     with pytest.raises(ValueError, match=match):
         PeriodicConfig(seed=3, **kwargs)
 
 
-def test_labels_must_be_distinct():
+def test_labels_must_be_distinct() -> None:
     """A duplicate explicit label is rejected at construction: two rules for one
     string would give a single prompt two contradictory ground truths."""
     with pytest.raises(ValueError, match="distinct"):
@@ -156,11 +157,11 @@ def test_labels_must_be_distinct():
 NUM_TMPL_RANGE_FREE = string.Template("$positive_info\nHow many positions include '$label'?")
 
 
-def numeric_prompter(**kwargs):
+def numeric_prompter(**kwargs: Any) -> Prompter:
     return Prompter(NUM_TMPL, numeric_count_query_gen, **kwargs)
 
 
-def test_the_quiz_is_keyed_by_condition_in_mapping_order():
+def test_the_quiz_is_keyed_by_condition_in_mapping_order() -> None:
     """`get_periodic_numeric_quiz` returns a dict keyed by condition name in the
     mapping's order, not a positional 3-tuple with a fourth arm bolted on."""
     quizzes = get_periodic_numeric_quiz(
@@ -173,7 +174,7 @@ def test_the_quiz_is_keyed_by_condition_in_mapping_order():
     assert {len(q) for q in quizzes.values()} == {4}
 
 
-def test_a_single_condition_mapping_renders_exactly_that_arm():
+def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
     """`conditions` is a real parameter: a one-entry mapping is a shape the
     render loop can't produce by ignoring it."""
     quizzes = get_periodic_numeric_quiz(
@@ -183,7 +184,7 @@ def test_a_single_condition_mapping_renders_exactly_that_arm():
     assert list(quizzes) == ["intens"]
 
 
-def test_the_zero_arm_states_no_range_and_leaks_no_answer():
+def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
     """The zero arm must not print any answer in its prompt: the period-1
     harmonic's answer is seq_len, so a range-stating question would leak it and
     inflate the information-gap floor by the resulting free hit (11.1 pp)."""
@@ -207,7 +208,7 @@ def test_the_zero_arm_states_no_range_and_leaks_no_answer():
     assert seq_len in [q.answer for q in zero]
 
 
-def test_a_range_free_template_that_still_states_the_range_is_refused():
+def test_a_range_free_template_that_still_states_the_range_is_refused() -> None:
     """The leak gate checks the rendered prompt, not the promised template: any
     range substitution surviving into the text raises, naming the key."""
     leaky = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")
@@ -220,7 +221,7 @@ def test_a_range_free_template_that_still_states_the_range_is_refused():
     assert "seq_len" in str(exc.value)
 
 
-def test_an_omit_range_condition_without_its_template_is_refused():
+def test_an_omit_range_condition_without_its_template_is_refused() -> None:
     """No silent fallback to the range-stating template: a zero arm rendered
     from it would be the leak this condition exists to remove."""
     with pytest.raises(ValueError) as exc:
@@ -235,7 +236,7 @@ def test_an_omit_range_condition_without_its_template_is_refused():
     ("nope", "nope"),            # names a condition that is not in the mapping
     ("noise_intens", "noise_intens"),  # names a condition that is itself padded
 ])
-def test_a_bad_token_target_is_refused(target, match):
+def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
     """`match_tokens_to` must name a condition that exists and isn't itself
     padded, or the render loop has no valid count to pad against."""
     from smolbench.induction.periodic import Condition
@@ -252,7 +253,7 @@ def test_a_bad_token_target_is_refused(target, match):
     assert match in str(exc.value)
 
 
-def test_rendered_queries_carry_the_token_count_of_every_arm():
+def test_rendered_queries_carry_the_token_count_of_every_arm() -> None:
     """Generation already tokenizes each prompt; reporting those counts lets a
     caller size a completion budget without re-tokenizing the whole quiz."""
     from smolbench.induction.periodic import get_periodic_prompts
