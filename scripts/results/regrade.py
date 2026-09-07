@@ -382,13 +382,9 @@ def regrade_marks(marks: Marks, parse) -> Dict:
                 recovered += 1
             elif mark.score is not None and score is None:
                 broke += 1
-        # A regrade is a PRODUCER of compliance labels, so it spells the
-        # compliant case OUT rather than storing the pre-COMPLIANT
-        # `compliance: null` that `Marks.loads`' read-compat shim exists to
-        # translate on the way back IN. Written as an explicit `is None` test
-        # and not `result.violation or COMPLIANT`: the latter would relabel any
-        # future falsy violation label (an empty string, say) as compliant --
-        # the exact inversion of what it means.
+        # An explicit `is None` test, not `result.violation or COMPLIANT`: the
+        # latter would relabel any future falsy violation label (an empty
+        # string, say) as compliant -- the exact inversion of what it means.
         compliance = COMPLIANT if result.violation is None else result.violation
         new_marks.append(replace(mark, score=score, compliance=compliance))
 

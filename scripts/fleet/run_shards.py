@@ -15,22 +15,7 @@ script supervises ONE shard group:
   decides reclaim-vs-crash from the log tail; a crash gets
   ``MAX_CRASH_RELAUNCHES`` immediate relaunches, a reclaim
   ``MAX_RECLAIM_RELAUNCHES`` relaunches on an exponential, capped backoff, then
-  the shard HALTS either way. This script used to answer the same question with
-  a private vocabulary, and both halves of it are gone:
-
-  * the ``CAPACITY_MARKER`` substring (``"No spot capacity for any"``) is
-    subsumed by the shared ``RECLAIM_PATTERNS``' ``spot capacity`` pattern --
-    the producing line is ``providers/ec2.py``'s "No spot capacity for any
-    (instance type, region) combination:" -- alongside seven other reclaim
-    spellings this script never matched at all, and its flat 300s retry was
-    UNBOUNDED, so a permanently dry pool was re-hunted for the whole run.
-  * the consecutive-fast-crash detector (``FAST_CRASH_SECONDS`` /
-    ``MAX_FAST_CRASHES``) has no counterpart in the shared policy, which
-    counts relaunches rather than timing them. Its "consecutive" reset is
-    precisely what let a SLOW crash loop run forever: one crash slower than
-    the threshold zeroed the counter, so a shard that failed every 6 minutes
-    never reached the halt.
-
+  the shard HALTS either way.
 - On a shard's clean exit, terminates its instance through its state file --
   direct runs do no teardown, so the box would otherwise idle ~30 minutes until
   the on-box watchdog fires.
@@ -70,22 +55,17 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # By hand, and only for `_config` itself: `load_module_by_path` is a
+    # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# By file path, not a bare `import _config`: `scripts/fleet` has no
-# `__init__.py` (it is not a package), and every module in it is already
-# loaded under a private module name by its own callers (see `_config.py`'s
-# module docstring for the full list), so a bare import name is ambiguous or
-# absent from `sys.path`.
 _config = _load_fleet_config()
 
 # Everything OTHER than `_config` itself now loads through the one loader
@@ -173,36 +153,9 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
 
     Sharded runs derive ``.ec2_state_induction-<model>-s<i>of<n>.json``
     (mirroring ``run_study``'s ``_LANE`` suffix); unsharded runs use
-    ``--state-file`` verbatim.
-
-    Why not the fleet scheme
-    ------------------------
-    This deliberately does NOT match `fleet_status`/`fleet_teardown`'s
-    ``.ec2_state_scaling_<lane>.json`` naming. When a shard tag landed inside
-    the fleet's blast radius (the bug `refuse_fleet_prefix_tag` now refuses),
-    the fix is that refusal, not renaming these files INTO the fleet's
-    scheme, for three reasons:
-
-    1. `terminate_shard_box` already unlinks its own state file on the
-       success path -- this script owns that file's whole lifecycle, so
-       there is no handoff to `fleet_teardown.py` to align the name with.
-       (Still true now that `terminate_shard_box` takes a `shards.Shard`
-       rather than ``(args, index)``: the path it unlinks is the one THIS
-       function produced, carried on the shard as ``state_file``.)
-    2. `fleet_teardown.delete_state_files` only ever sees rows produced by
-       `fleet_status.fleet_rows`, which filters server-side on the
-       ``scaling-*`` tag prefix. With a ``--tag`` outside that prefix (the
-       default, ``"induction-scaling"``), a shard box is never in those
-       rows, so teardown never needs -- and must never be handed -- a state
-       file matching its glob.
-    3. Renaming shard state files INTO ``.ec2_state_scaling_*`` would put
-       them in `fleet_teardown`'s deletion glob, risking a collision with
-       (deletion of, or deletion alongside) a real fleet lane's file.
-
-    Note that this function never reads `args.tag`: the ``induction-``
-    prefix here is fixed regardless of what ``--tag`` is (default or
-    otherwise), so it only coincidentally echoes the word in the new default
-    tag ``"induction-scaling"`` -- the two are not derived from each other.
+    ``--state-file`` verbatim. This script owns the whole lifecycle of the
+    file, so the name is deliberately distinct from the fleet's
+    ``.ec2_state_scaling_<lane>.json`` and is never derived from `args.tag`.
     """
     if args.no_shard:
         return REPO / args.state_file
@@ -421,18 +374,7 @@ def supervise(shard_list: list) -> int:
             # would then get `MAX_RECLAIM_RELAUNCHES` backed-off relaunches
             # instead of `MAX_CRASH_RELAUNCHES` immediate ones, and would never
             # be reported as the crash it is.
-            verdict = _policy.classify_exit(tail, True)
-
-            # Increment first, then ask: the policy's `attempt` is defined as
-            # the POST-increment count, so the first relaunch is attempt 1 and
-            # the cap is exceeded at MAX + 1.
-            if verdict == "reclaim":
-                shard.reclaim_relaunches += 1
-                attempt = shard.reclaim_relaunches
-            else:
-                shard.crash_relaunches += 1
-                attempt = shard.crash_relaunches
-            decision = _policy.decide_relaunch(verdict, attempt=attempt, rc=rc)
+            decision = _policy.count_and_decide(shard, tail, True, rc)
 
             if decision.action == "halt":
                 shard.status = "halted"
@@ -539,7 +481,6 @@ def main() -> int:
         pid = find_adoptable(args.model, shard.selector)
         if pid is not None:
             shard.adopted_pid = pid
-            shard.launched_at = time.time()  # true start unknown; use now, conservative
             shard.status = "running"
             logging.info(f"shard {shard.index}: adopted live pid {pid}")
         else:

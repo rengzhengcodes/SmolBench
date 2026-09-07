@@ -70,10 +70,3 @@ field suggests.
 `tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
 pins against, on the four fields both hold; a mismatch means an upstream
 checkpoint moved under the study.
-
-## Not here: an HTML atlas page
-
-There is no page builder in this directory and none should be added -- the
-page was a presentation artifact, not study tooling. Its two built outputs
-(`page_data.json`, `model_architectures.html`) survive only in the release
-archives; see `notebooks/ARCHIVE.md`.

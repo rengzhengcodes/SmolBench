@@ -28,15 +28,8 @@ import json
 import sys
 from typing import Any
 
-from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET, resolve_results_location
+from smolbench.evals.results_store import resolve_results_location
 
-# Design: no literal bucket string lives here -- the fallback is declared
-# once in results_store (the module that owns the S3 URI resolution) and
-# aliased as BUCKET, which is the documented fallback each step function
-# (ensure_bucket / put_public_access_block / enable_versioning /
-# ensure_policy) takes as its default argument when a caller does not pass
-# one; main() always passes the CALL-TIME resolved bucket instead.
-BUCKET = DEFAULT_RESULTS_BUCKET
 REGION = "us-west-2"
 POLICY_NAME = "SmolbenchResultsBucketRW"
 GROUP_NAME = "smolbench-ec2-operators"
@@ -51,21 +44,6 @@ _ACCESS_DENIED_CODES = frozenset(
 # ---------------------------------------------------------------------------
 # Pure functions (no AWS, no I/O)
 # ---------------------------------------------------------------------------
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse this script's command line; the namespace is always empty.
-
-    There are no flags -- what varies is the module-level constants -- but the
-    parse still runs so ``--help`` and a stray argument behave as elsewhere.
-    """
-    parser = argparse.ArgumentParser(
-        description=(
-            "Idempotently provision the S3-backed replicate results bucket "
-            "(smolbench.evals.results_store)."
-        ),
-    )
-    return parser.parse_args(argv)
-
-
 def policy_document(bucket: str) -> dict:
     """Build the IAM policy document granting read/write on ``bucket``.
 
@@ -107,7 +85,7 @@ def access_denied_message(operation: str) -> str:
 # is testable against a fake with no AWS SDK installed; none builds a client
 # itself, and none runs at import time.
 # ---------------------------------------------------------------------------
-def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
+def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
     """Create ``bucket`` in ``region``, tolerating "already provisioned".
 
     ``CreateBucketConfiguration={"LocationConstraint": region}`` is REQUIRED:
@@ -115,7 +93,7 @@ def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
     client's region binding. ``BucketAlreadyOwnedByYou`` and
     ``BucketAlreadyExists`` both count as idempotent success; the latter
     ordinarily means a DIFFERENT account owns the globally-unique name, but
-    `BUCKET` embeds this account's id as a suffix.
+    the resolved bucket embeds this account's id as a suffix.
 
     Raises
     ------
@@ -137,7 +115,7 @@ def ensure_bucket(s3: Any, bucket: str = BUCKET, region: str = REGION) -> None:
             raise
 
 
-def put_public_access_block(s3: Any, bucket: str = BUCKET) -> None:
+def put_public_access_block(s3: Any, bucket: str) -> None:
     """Block all public access on ``bucket``, setting all four flags to True.
 
     A PUT (replace), so re-running is idempotent with no error-code handling.
@@ -153,7 +131,7 @@ def put_public_access_block(s3: Any, bucket: str = BUCKET) -> None:
     )
 
 
-def enable_versioning(s3: Any, bucket: str = BUCKET) -> None:
+def enable_versioning(s3: Any, bucket: str) -> None:
     """Enable S3 versioning on ``bucket`` (an idempotent call).
 
     A replicate ``rep_*.yaml`` is written exactly once and never mutated (see
@@ -164,7 +142,7 @@ def enable_versioning(s3: Any, bucket: str = BUCKET) -> None:
     s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
 
 
-def ensure_policy(iam: Any, bucket: str = BUCKET, name: str = POLICY_NAME) -> str:
+def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
     """Create the managed policy granting read/write on ``bucket``, or reuse it.
 
     Create-or-REUSE, not create-or-update: refreshing the document via
@@ -280,17 +258,17 @@ def main(argv: list[str] | None = None) -> int:
     call was denied. Clients come from ``smolbench.evals._aws.fresh_client``,
     never a cached/default-session one: S3 bound to `REGION`, IAM global.
     """
-    parse_args(argv)
+    argparse.ArgumentParser(
+        description=(
+            "Idempotently provision the S3-backed replicate results bucket "
+            "(smolbench.evals.results_store)."
+        ),
+    ).parse_args(argv)
 
-    # Design: resolve the target bucket at CALL time from whatever
-    # SMOLBENCH_RESULTS_S3 the harness is actually configured with (falling
-    # back to DEFAULT_RESULTS_BUCKET when unset), rather than the module-level
-    # BUCKET constant -- otherwise this script could provision one bucket
-    # while ReplicateHarness / S3ResultsStore write to another, silently.
-    # base_prefix is deliberately unused: public-access-block, versioning, and
-    # the read/write IAM policy are all BUCKET-level configuration, not
-    # prefix-scoped, so a base prefix in SMOLBENCH_RESULTS_S3 has nothing to
-    # apply it to here.
+    # Resolved at CALL time from whatever SMOLBENCH_RESULTS_S3 the harness is
+    # configured with, or this script could provision one bucket while the
+    # store writes to another. base_prefix is unused: every step below is
+    # BUCKET-level configuration, not prefix-scoped.
     bucket, _base_prefix = resolve_results_location()
 
     # Imported lazily (not at module scope) for two independent reasons: it

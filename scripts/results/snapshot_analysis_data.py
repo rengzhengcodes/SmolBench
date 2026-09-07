@@ -4,8 +4,7 @@ Every byte already lives in S3, but in the layout the RUNNERS wanted
 (``induction/<model>/seed=<s>/<arm>--<ts>.yaml`` versus
 ``<deduction-prefix>/scaling_<model>/...``, where ``<deduction-prefix>``
 defaults to the re-collection's `runner.spool_prefix()` and is overridable via
-``--spool-prefix`` -- the published pre-cutoff study lives at
-``deduction/runs``), so a model's two legs sit under different names,
+``--spool-prefix``), so a model's two legs sit under different names,
 deduction a level deeper. Republished as analysis reads them:
 
     <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
@@ -51,11 +50,9 @@ SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents copied alongside the data, so the snapshot explains
 #: itself: README.md indexes the tree, ARCHIVE.md locates the archived docs,
 #: and SNAPSHOT_NOTES.md documents how to READ the rows (verdict semantics,
-#: the earliest-surviving-row rule, and this dataset's measured counts). That
-#: last doc replaces the manifest's old `notes` field: it is a dated,
-#: version-controlled document that gets copied next to the data, instead of
-#: one dataset's measured counts being re-emitted as literal prose on every
-#: run regardless of `--dest`/`--spool-prefix`.
+#: the earliest-surviving-row rule, and this dataset's measured counts). Those
+#: counts live in a dated, version-controlled document rather than in
+#: `MANIFEST.json`, which carries only fields computed from the run.
 PROVENANCE_DOCS = (
     "notebooks/README.md",
     "notebooks/ARCHIVE.md",
@@ -89,13 +86,9 @@ def iter_source_keys(
         listed.
     deduction_prefix : str, optional
         S3 key prefix the deduction leg lives under, WITH a trailing "/".
-        ``None`` (the default) resolves it lazily via `runner.spool_prefix()`
-        -- a key prefix is CONFIGURATION, not audited logic, so importing the
-        single source of truth for it here is not a hazard; `main` always
-        resolves it once (also via a lazy import) and passes it down
-        explicitly, so a caller reading the published pre-cutoff study passes
-        ``"deduction/runs/"`` explicitly. This default only backstops a
-        direct caller that omits it.
+        ``None`` (the default) resolves it lazily via `runner.spool_prefix()`;
+        `main` always resolves it once and passes it down explicitly, so this
+        default only backstops a direct caller that omits it.
     """
     if deduction_prefix is None:
         from smolbench.deduction.lean.runner import spool_prefix
@@ -175,18 +168,13 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
         "--spool-prefix", default=None,
-        help="S3 key prefix the deduction leg spooled under (default: the "
-             "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
-             "deduction_postcutoff/runs if unset). The published pre-cutoff "
-             "study lives at deduction/runs; pass that explicitly to "
-             "snapshot it (no env opt-in needed on this read-only path).",
+        help="S3 key prefix the deduction leg spooled under (default: "
+             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    # Resolved AFTER parse_args, not at import or parser-build time -- a
-    # module-level `spool_prefix()` call, or an eagerly-evaluated argparse
-    # default, would make `LEAN_SPOOL_PREFIX=deduction/runs --help` explode.
+    # Resolved AFTER parse_args, so `--help` never has to run `spool_prefix()`.
     from smolbench.deduction.lean.runner import spool_prefix
 
     deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"

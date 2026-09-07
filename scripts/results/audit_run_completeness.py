@@ -41,13 +41,9 @@ from smolbench.evals.results_store import S3ResultsStore, resolve_results_locati
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-#: The induction study's ``S3ResultsStore.experiment`` key segment -- the same
-#: ``induction/`` prefix the old hand-rolled-regex walk named via
-#: ``INDUCTION_PREFIX`` (removed with FINDING 14-04's fix; see `audit_induction`
-#: and `_induction_store`). Kept as a constant, not re-derived per call, since
-#: it is the study's fixed notebook directory name
-#: (``results_store.experiment_name``'s output for ``notebooks/induction/results``),
-#: not something that varies with environment the way the bucket/prefix do.
+#: The induction study's ``S3ResultsStore.experiment`` key segment. A constant,
+#: not re-derived per call: it is the study's fixed notebook directory name, not
+#: something that varies with environment the way the bucket/prefix do.
 INDUCTION_EXPERIMENT = "induction"
 
 #: Substrings that mark a row's failure as INFRASTRUCTURE, not model
@@ -198,32 +194,12 @@ def audit_lane(text: str) -> Dict[str, object]:
 def _induction_driver() -> Any:
     """Load ``notebooks/induction/run_study.py`` by file path; cached.
 
-    LAZY BY DESIGN -- call this only from inside a function body, never at
-    module import time. Executing the driver module runs its OWN
-    ``load_dotenv(notebooks/induction/keys.env)`` (and, under
-    ``INDUCTION_SHARD``, mutates ``EC2_EXPERIMENT_TAG``); this script's
-    ``--local`` deduction path must stay usable with no induction environment
-    configured at all, which a module-scope call here would break.
-
-    Loaded BY FILE PATH, exactly as ``scripts/fleet/lane_env.py`` does at its
-    own module scope (see that file's "the induction driver import" comment):
-    a bare ``import run_study`` is ambiguous once the DEDUCTION study's
-    same-named ``notebooks/deduction/run_study.py`` is ALSO importable on
-    ``sys.path`` (this same file's `main` already imports
-    ``smolbench.deduction.lean.runner``, so both trees are live in one
-    process). The module is registered in ``sys.modules`` under a distinct
-    name (``"induction_run_study"``) BEFORE ``exec_module`` runs, matching
-    ``lane_env.py``'s ordering, so any import inside the driver that looks
-    itself up by that name mid-exec finds a (partially-initialized) module
-    object rather than re-triggering this load.
-
-    Returns
-    -------
-    module
-        The executed driver module, exposing ``MODELS``, ``INFO_TYPES``,
-        ``BASE_SEED`` and ``N_REPLICATES``. Memoized via ``lru_cache``, so a
-        second call is a cache hit, not a second ``load_dotenv``/import-time
-        side effect.
+    LAZY BY DESIGN -- never at module import time: executing the driver runs
+    its own ``load_dotenv``, and this script's ``--local`` deduction path must
+    stay usable with no induction environment configured. BY PATH because a
+    bare ``import run_study`` is ambiguous once the deduction study's
+    same-named module is on ``sys.path`` too, and registered in
+    ``sys.modules`` before ``exec_module`` so a self-lookup mid-exec finds it.
     """
     path = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
     spec = importlib.util.spec_from_file_location("induction_run_study", path)
@@ -236,19 +212,9 @@ def _induction_driver() -> Any:
 def _induction_store() -> S3ResultsStore:
     """Build the ``S3ResultsStore`` `audit_induction` reads real seeds from.
 
-    Split out from `audit_induction` so the S3 construction step alone is
-    small, testable and independently patchable; the audit function's default
-    seam is "call `_induction_store()` when `store` is not supplied".
-
-    Bucket and base prefix come from `resolve_results_location`, i.e. from
-    ``SMOLBENCH_RESULTS_S3`` (falling back to
-    `smolbench.evals.results_store.DEFAULT_RESULTS_BUCKET`) -- the SAME
-    resolution `iter_deduction_lanes` now uses for the deduction bucket, so one
-    redirected results store reaches both audits. Region mirrors
-    `smolbench.evals.results_store.resolve_store`'s own resolution rule (see
-    that function's docstring, step 4-6): ``SMOLBENCH_RESULTS_S3_REGION``,
-    else ``AWS_REGION``, else ``None`` (boto3's own credential/region chain
-    decides).
+    Split out so the S3 construction step alone is independently patchable.
+    Region follows ``resolve_store``'s own rule: ``SMOLBENCH_RESULTS_S3_REGION``,
+    else ``AWS_REGION``, else boto3's chain.
     """
     bucket, base_prefix = resolve_results_location()
     region = os.environ.get("SMOLBENCH_RESULTS_S3_REGION") or os.environ.get("AWS_REGION") or None
@@ -262,12 +228,9 @@ def audit_induction(
 ) -> Tuple[Dict[str, Dict[str, Dict[str, List[int]]]], int]:
     """Report induction ``(model, arm)`` seed-set mismatches against the pinned grid.
 
-    FINDING 14-04 fix: the previous implementation built its report ONLY from
-    S3 listing hits, so a ``(model, arm)`` with ZERO objects in S3 (an absent
-    model, or a wholly empty bucket) never entered its ``seen`` dict and was
-    never reported -- a vacuous pass, exactly the failure mode this file's
-    module docstring says an audit must never exhibit. This version walks the
-    EXPECTED grid instead -- every model in `models` (or, by default, every key
+    Walks the EXPECTED grid, never only the S3 listing hits: a ``(model, arm)``
+    with ZERO objects in S3 must be REPORTED, not silently absent from the
+    report -- every model in `models` (or, by default, every key
     of the driver's ``MODELS``) crossed with every arm in ``INFO_TYPES`` -- so
     a cell with nothing landed is EXAMINED and reported like any other, not
     silently absent.
@@ -376,19 +339,12 @@ def main() -> int:
     )
     ap.add_argument(
         "--spool-prefix", default=None,
-        help="S3 key prefix the deduction lanes spooled under (default: the "
-             "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
-             "deduction_postcutoff/runs if unset). The published pre-cutoff "
-             "study lives at deduction/runs; pass that explicitly to audit "
-             "it (no env opt-in needed on this read-only path).",
+        help="S3 key prefix the deduction lanes spooled under (default: "
+             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args()
 
-    # Resolved AFTER parse_args, not at import or parser-build time: a
-    # module-level `spool_prefix()` call, or an eagerly-evaluated argparse
-    # default, would make `LEAN_SPOOL_PREFIX=deduction/runs --help` explode
-    # (see `iter_deduction_lanes`'s docstring for the same lazy-import
-    # rationale).
+    # Resolved AFTER parse_args, so `--help` never has to run `spool_prefix()`.
     deduction_prefix = (args.spool_prefix or runner.spool_prefix()) + "/"
 
     print(f"{'lane':38s} {'cells':>6s} {'INFRA':>6s} {'genuine':>8s} {'status':>8s}")

@@ -21,35 +21,18 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # By hand, and only for `_config` itself: `load_module_by_path` is a
+    # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# By file path, not a bare `import _config`: `scripts/fleet` has no
-# `__init__.py` (it is not a package), and every module in it is already
-# loaded under a private module name by its own callers (see this file's own
-# module docstring, and `_config.py`'s), so a bare import name is ambiguous
-# or absent from `sys.path`.
 _config = _load_fleet_config()
-
-#: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``). Sourced from `_config`, the ONE
-#: place this prefix is declared for every fleet script that needs it,
-#: including `run_fleet.py`. Reading from the same file, rather than each
-#: module spelling its own literal, is what makes the two unable to drift
-#: apart.
-SCALING_TAG_PREFIX = _config.SCALING_TAG_PREFIX
-#: Every region a lane might have provisioned in. Sourced from `_config` --
-#: see the note on `SCALING_TAG_PREFIX` just above; tier D's override still
-#: spans the same three regions.
-STATUS_REGIONS: tuple[str, ...] = _config.REGION_TUPLE
 
 
 def _default_client_factory(region: str) -> Any:
@@ -60,8 +43,8 @@ def _default_client_factory(region: str) -> Any:
 
 
 def fleet_rows(
-    regions: Sequence[str] = STATUS_REGIONS,
-    tag_prefix: str = SCALING_TAG_PREFIX,
+    regions: Sequence[str] = _config.REGION_TUPLE,
+    tag_prefix: str = _config.SCALING_TAG_PREFIX,
     client_factory: Optional[Callable[[str], Any]] = None,
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
@@ -145,22 +128,15 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
     line, so an empty fleet and a broken query read differently to the operator.
     """
     if not rows:
-        return f"fleet_status: no {SCALING_TAG_PREFIX}* instances found in any region.\n"
+        return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"
 
     columns = ("lane", "instance_id", "instance_type", "availability_zone", "state", "age", "region")
-    formatted_rows = []
-    for row in rows:
-        formatted_rows.append(
-            {
-                "lane": str(row.get("lane", "?")),
-                "instance_id": str(row.get("instance_id", "?")),
-                "instance_type": str(row.get("instance_type", "?")),
-                "availability_zone": str(row.get("availability_zone", "?")),
-                "state": str(row.get("state", "?")),
-                "age": f"{row.get('age_hours', 0.0):.1f}h",
-                "region": str(row.get("region", "?")),
-            }
-        )
+    # No `.get` defaults: `fleet_rows` is the only producer and its docstring
+    # guarantees exactly these keys.
+    formatted_rows = [
+        {c: f"{row['age_hours']:.1f}h" if c == "age" else str(row[c]) for c in columns}
+        for row in rows
+    ]
 
     widths = {c: len(c) for c in columns}
     for formatted in formatted_rows:

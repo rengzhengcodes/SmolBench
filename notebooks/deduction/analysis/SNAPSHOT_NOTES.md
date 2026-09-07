@@ -1,17 +1,8 @@
 # Reading the deduction snapshot: rules vs. one dataset's measured findings
 
-> **Provenance.** The counts in this document were measured on the family-ladder
-> re-collection as published under `analysis/2026-08-16`
-> (`scripts/results/snapshot_analysis_data.py --dest analysis/2026-08-16`).
-> They describe **that dataset**. A snapshot taken with a different
-> `--spool-prefix`, or the same prefix re-collected at a later date, is a
-> different set of rows and must be re-measured before any of the specific
-> numbers below are trusted again. `scripts/results/audit_run_completeness.py`
-> is the tool that re-measures them.
->
-> This file is checked into git (dated, reviewable) rather than being
-> re-emitted as literal prose inside `MANIFEST.json` on every snapshot run --
-> the manifest only ever carries fields computed from the run that wrote it.
+> **Provenance.** The counts below were measured on the family-ladder
+> re-collection published under `analysis/2026-08-16`. Re-measure them with
+> `scripts/results/audit_run_completeness.py` for any other snapshot.
 
 ## Rules (hold for any snapshot of this study)
 

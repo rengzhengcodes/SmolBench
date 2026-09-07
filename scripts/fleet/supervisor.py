@@ -31,8 +31,7 @@ It deliberately does NOT own three things:
 Import-time cost is deliberately small: binding `_lane_env` and `_policy`,
 and one ``smolbench.evals.results_store`` import for `reasoning_fraction`'s
 address type. ``fleet_status.py`` and ``notebooks/deduction/run_study.py``
-are loaded LAZILY, on first use, by `_fleet_status_module` and
-`_deduction_driver` -- see those functions for why. No AWS SDK is imported at
+are loaded LAZILY, on first use. No AWS SDK is imported at
 module scope here or in ``lane_env.py``: ``results_store`` defers ``boto3``
 into ``smolbench.evals._aws``, and every ``os.environ`` read it does happens
 at call time, not import time, so loading it AFTER ``lane_env``'s
@@ -47,7 +46,6 @@ every fleet consumer now calls.
 
 from __future__ import annotations
 
-import functools
 import importlib.util
 import json
 import logging
@@ -68,22 +66,17 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # By hand, and only for `_config` itself: `load_module_by_path` is a
+    # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# Bootstrapped by hand, and only for `_config` itself: `load_fleet_module` is
-# a function ON that module, so it cannot load it. Everything else below goes
-# through the loader. Cached under the shared `_CONFIG_MODULE_NAME` key, so
-# whichever fleet module happens to run first this process, there is one
-# `_config` object -- see `_config.py`'s own module docstring.
 _config = _load_fleet_config()
 
 # The roster and the per-lane environment. Eager, at module scope: `LANES` is
@@ -102,10 +95,9 @@ _lane_env = _config.load_fleet_module("lane_env")
 # both supervisors load through `_config.load_fleet_module` -- and therefore
 # as ONE module object per process, not a copy each.
 #
-# Loaded eagerly, at module scope, not lazily like `_fleet_status_module`
-# below: `policy.py` imports nothing but `re` and `dataclasses`, so it cannot
-# fail, read the environment or pull in an AWS SDK, and `_apply_restart_policy`
-# needs it on every supervision tick anyway.
+# Loaded eagerly, unlike `_deduction_driver` below: `policy.py` imports nothing
+# but `re` and `dataclasses`, so it cannot fail, read the environment or pull in
+# an AWS SDK, and `_apply_restart_policy` needs it on every tick anyway.
 _policy = _config.load_fleet_module("policy")
 
 
@@ -266,13 +258,6 @@ def build_results_store() -> Any:
 # Loop constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
 # ---------------------------------------------------------------------------
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
-# The relaunch caps and the reclaim backoff schedule that used to sit beside
-# `GATE_MODELS`, in the pre-split `run_fleet.py`, are now
-# `_policy.MAX_CRASH_RELAUNCHES`, `_policy.MAX_RECLAIM_RELAUNCHES`
-# and `_policy.reclaim_backoff_seconds` -- see `scripts/fleet/policy.py` for
-# the values and for why a reclaim is no longer retried without limit. They
-# are not re-exported here: a module-level alias is exactly the second
-# spelling this move exists to remove.
 LAUNCH_STAGGER_SECONDS = 30
 MONITOR_INTERVAL_SECONDS = 60
 DESCRIBE_EVERY_N_TICKS = 5
@@ -383,56 +368,19 @@ def fleet_image_digest() -> Optional[str]:
 # name each lane's scheduled phases.
 
 
-@functools.lru_cache(maxsize=1)
-def _fleet_status_module():
-    """Lazily load ``scripts/fleet/fleet_status.py`` by file path; cached.
-
-    By path, like ``lane_env.py``'s `run_study` loader, to avoid colliding
-    with the private module name ``tests/tooling/test_run_fleet.py`` loads
-    ``fleet_status.py`` under.
-    """
-    path = Path(__file__).resolve().parent / "fleet_status.py"
-    spec = importlib.util.spec_from_file_location("run_fleet_fleet_status_dep", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@functools.lru_cache(maxsize=1)
 def _deduction_driver():
-    """Lazily load ``notebooks/deduction/run_study.py`` by file path; cached.
+    """Load ``notebooks/deduction/run_study.py``, LAZILY -- never at module scope.
 
-    Finding 14-11: this supervisor used to re-implement the S3 spool upload
-    itself (`sync_deduction_spool`, now DELETED), without the driver's own
-    ``head_object``/``ContentLength`` verification -- an unverified upload
-    followed by a local delete can lose rows silently. Loading the driver and
-    calling its OWN ``spool_to_s3`` instead means one verified implementation,
-    not two that can drift.
-
-    LAZY on purpose, never imported at module scope: that module pulls in
-    ``smolbench.deduction.lean.runner`` (which pulls ``tiktoken``, unneeded by
-    every OTHER path through this supervisor) and, at MODULE SCOPE, runs
-    ``os.environ.setdefault`` work keyed on ``LEAN_MODEL`` plus a guard that
-    raises ``SystemExit`` when ``EC2_EXPERIMENT_TAG`` is not exactly
-    ``f"scaling-{LEAN_MODEL}"`` (see that file's module docstring). Neither
-    variable is set in THIS process's environment (they are per-lane
-    subprocess env, built by ``lane_env.lane_env`` and never written to
-    `os.environ` here), so that guard's ``if _RAW_LEAN_MODEL:`` gate is false
-    and the whole block -- setdefaults and guard alike -- is skipped on load,
-    regardless of which lane's `_advance_finished` call triggers it first.
-    Called only from `_advance_finished`.
-
-    Registered in `sys.modules` under a distinct private name BEFORE
-    ``exec_module``, exactly as the induction loader at the top of
-    ``lane_env.py`` does (a ``@dataclass`` applied inside a module not yet in
-    `sys.modules` raises ``AttributeError`` -- see that loader's comment).
+    That module pulls ``tiktoken`` (unneeded by every other path through this
+    supervisor) and, at MODULE SCOPE, runs ``os.environ.setdefault`` work keyed
+    on ``LEAN_MODEL`` plus a ``SystemExit`` guard on ``EC2_EXPERIMENT_TAG``.
+    Neither variable is set in THIS process (they are per-lane subprocess env),
+    so that block is skipped on load. Called only from `_advance_finished`.
     """
-    path = _lane_env.REPO_ROOT / "notebooks" / "deduction" / "run_study.py"
-    spec = importlib.util.spec_from_file_location("run_fleet_deduction_run_study_dep", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return _config.load_module_by_path(
+        "run_fleet_deduction_run_study_dep",
+        _lane_env.REPO_ROOT / "notebooks" / "deduction" / "run_study.py",
+    )
 
 
 @dataclass
@@ -586,19 +534,9 @@ class _LaneRun:
 # ---------------------------------------------------------------------------
 # The supervisor state file: one file, so a replacement supervisor can resume
 # ---------------------------------------------------------------------------
-# Every counter below used to live in memory ONLY. If the supervisor host
-# dropped, 21 GPU boxes kept billing with nobody advancing phases, and a
-# replacement supervisor restarted every lane's crash and reclaim budget from
-# zero -- so a lane already at its cap got a second full budget's worth of
-# relaunches, silently and expensively. One file, rewritten every tick, is
-# what makes a restart pick the fleet up where it was left.
+# One file, rewritten every tick: without it a replaced supervisor re-grants
+# every lane a full crash and reclaim budget while 21 GPU boxes keep billing.
 FLEET_STATE_FILENAME = "fleet_state.json"
-
-#: Written into every document and required back on load. A file this
-#: supervisor cannot interpret is refused (see `load_fleet_state`), never
-#: partially applied: a half-restored lane is worse than an announced clean
-#: start, because nothing tells the operator which half was lost.
-_FLEET_STATE_VERSION = 1
 
 #: The `_LaneRun` fields carried verbatim -- plain JSON scalars, no conversion.
 #: Declared ONCE so `save_fleet_state` and `load_fleet_state` cannot drift into
@@ -823,7 +761,6 @@ def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
         lanes[key] = entry
 
     document = {
-        "version": _FLEET_STATE_VERSION,
         "written_at": datetime.now(timezone.utc).isoformat(),
         "lanes": lanes,
     }
@@ -858,8 +795,8 @@ def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
     Raises
     ------
     ValueError
-        If the file exists but cannot be read, does not parse as JSON, carries
-        an unrecognised ``version``, or has the wrong shape (missing or
+        If the file exists but cannot be read, does not parse as JSON, or has
+        the wrong shape (missing or
         non-mapping ``lanes``, a non-mapping lane entry, a lane entry missing
         a persisted field). The message NAMES the path and tells the operator
         to delete it to start fresh. This is deliberately loud rather than a
@@ -933,12 +870,6 @@ def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
         raise ValueError(
             f"run_fleet: the supervisor state file {path} is not a JSON object "
             f"(found {type(document).__name__}). {remedy}"
-        )
-    version = document.get("version")
-    if version != _FLEET_STATE_VERSION:
-        raise ValueError(
-            f"run_fleet: the supervisor state file {path} has version {version!r}; "
-            f"this supervisor writes and reads version {_FLEET_STATE_VERSION}. {remedy}"
         )
     stored = document.get("lanes")
     if not isinstance(stored, dict):
@@ -1152,7 +1083,7 @@ def _monitor_tick(
     """
     if tick == 1 or tick % DESCRIBE_EVERY_N_TICKS == 0:
         try:
-            rows = _fleet_status_module().fleet_rows()
+            rows = _config.load_fleet_module("fleet_status").fleet_rows()
         except Exception as exc:  # noqa: BLE001 -- one bad sweep must not crash the monitor
             logging.warning(f"run_fleet: describe_instances sweep failed this tick: {exc}")
         else:
@@ -1163,7 +1094,7 @@ def _monitor_tick(
         run = runs[key]
         alive = run.proc is not None and run.proc.poll() is None
         status = "halted" if run.halted else ("done" if run.done else (run.current_phase or "?"))
-        last_line = _tail_log(log_dir, key, n=1)
+        last_line = _tail_log(log_dir, key, n=1, max_bytes=4096)
         print(f"{key:<28} status={status:<10} alive={str(alive):<5} last: {last_line[-120:]}")
 
         if run.proc is not None and not alive and not run.halted and not run.done:
@@ -1194,11 +1125,7 @@ def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _P
     asks the same function about a dead shard): a CRASH gets
     `_policy.MAX_CRASH_RELAUNCHES` immediate relaunches then a halt; a RECLAIM
     gets `_policy.MAX_RECLAIM_RELAUNCHES` BACKED-OFF relaunches, on
-    `_policy.reclaim_backoff_seconds`' schedule, then a halt too. Reclaims are
-    not unlimited: an empty or failed describe sweep used to make every exit
-    look like a reclaim, so an unbounded retry policy on that misclassification
-    meant a lane could relaunch forever with no crash counting and no budget
-    alert ever firing.
+    `_policy.reclaim_backoff_seconds`' schedule, then a halt too.
 
     This function owns only the TICK-DRIVEN half of that: it never sleeps,
     because it supervises 21 lanes from a single loop and blocking in one
@@ -1250,18 +1177,8 @@ def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _P
         if rc is None or rc == 0:
             continue  # still running, or a clean exit (handled by _advance_finished)
 
-        tail = _tail_log(log_dir, key)
-        verdict = _policy.classify_exit(tail, presence.present(key))
-        # The counter is incremented FIRST, then handed to the policy: its
-        # `attempt` is defined as the post-increment count, so `attempt == 1`
-        # is the first relaunch and the cap is exceeded at MAX + 1.
-        if verdict == "reclaim":
-            run.reclaim_relaunches += 1
-            attempt = run.reclaim_relaunches
-        else:
-            run.crash_relaunches += 1
-            attempt = run.crash_relaunches
-        decision = _policy.decide_relaunch(verdict, attempt=attempt, rc=rc)
+        decision = _policy.count_and_decide(
+            run, _tail_log(log_dir, key), presence.present(key), rc)
 
         if decision.action == "halt":
             run.halted = True
@@ -1280,11 +1197,20 @@ def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _P
 
 def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = build_results_store) -> None:
     """Run the CoT-ON assertion once per lane; halt any lane below `COT_MIN_FRACTION`."""
-    for key, run in runs.items():
-        if run.cot_checked or run.halted or run.done or run.current_phase != "induction":
-            continue
+    pending = [
+        (key, run) for key, run in runs.items()
+        if not (run.cot_checked or run.halted or run.done
+                or run.current_phase != "induction")
+    ]
+    if not pending:
+        return
+    try:
+        store = store_factory()  # once per tick, not once per unchecked lane
+    except Exception as exc:  # noqa: BLE001 -- a store failure must not crash the monitor
+        logging.warning(f"run_fleet: reasoning_fraction store unavailable: {exc}")
+        return
+    for key, run in pending:
         try:
-            store = store_factory()
             # intens ONLY: this is a WIRING check -- "did the thinking toggle
             # reach the model" -- and intens is the short, well-formed arm where
             # every wired model reasons. An all-arms pool would halt lanes that
@@ -1327,8 +1253,7 @@ def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
         if run.proc.poll() != 0:
             continue  # not a clean exit (still running, or handled by the restart policy)
 
-        finished_phase = run.current_phase
-        if finished_phase == "deduction":
+        if run.current_phase == "deduction":
             # `run_dir` is built from `lane_env.REPO_ROOT` EXPLICITLY, not from
             # the driver's own `runner.results_root()`: that helper reads
             # `SMOLBENCH_LEAN_RESULTS` from whatever process calls it -- here,
@@ -1380,6 +1305,20 @@ def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
         run.done = True
 
 
+def _tick(runs: dict[str, _LaneRun], log_dir: Path, presence: _Presence, tick: int) -> None:
+    """Run one monitor pass, ending with the state save.
+
+    Saved at the END of every tick, so the most a supervisor-host failure can
+    cost is the tick in progress.
+    """
+    time.sleep(MONITOR_INTERVAL_SECONDS)
+    _monitor_tick(runs, log_dir, tick, presence)
+    _apply_restart_policy(runs, log_dir, presence)
+    _check_cot(runs)
+    _advance_finished(runs, log_dir)
+    save_fleet_state(runs, log_dir)
+
+
 def _all_terminal(runs: dict[str, _LaneRun]) -> bool:
     """Check whether every lane has halted or fully finished its phase sequence."""
     return all(run.halted or run.done for run in runs.values())
@@ -1426,36 +1365,22 @@ def _run_fleet(
     gate_keys = [k for k in GATE_MODELS if k in runs] if gate else []
     while gate_keys and not all(_lane_gate_passed(runs[k], log_dir) for k in gate_keys):
         tick += 1
-        time.sleep(MONITOR_INTERVAL_SECONDS)
-        _monitor_tick(runs, log_dir, tick, presence)
-        _apply_restart_policy(runs, log_dir, presence)
-        _check_cot(runs)
-        _advance_finished(runs, log_dir)
-        # Every tick, at its END: the file then reflects the state the
-        # supervisor just reached, so the most a host failure can cost is the
-        # one tick in progress. Saving only at exit would lose everything to
-        # exactly the failure this file exists for. BEFORE the gate-failure
-        # branch below, whose `break` would otherwise skip the save.
-        save_fleet_state(runs, log_dir)
+        _tick(runs, log_dir, presence, tick)
         if all(runs[k].halted for k in gate_keys):
             logging.error(
                 "run_fleet: FAMILY GATE FAILED -- every GATE_MODELS lane halted; NOT "
                 "launching tiers B/C. Investigate FLEET_IMAGE before retrying."
             )
-            # Finding 14-03: these tier B/C lanes were never launched (proc is
-            # still None), so without marking them HALTED here they sit
-            # forever with halted=False, done=False -- `_all_terminal` never
-            # returns True, both policy loops `continue` on `proc is None`,
-            # and the supervisor spins with the tier-D boxes still up,
-            # printing ticks forever and never reaching the closing report or
-            # the teardown reminder below. HALT, not `done`: these lanes
-            # produced no data and the operator must see them in the closing
-            # summary, not have them silently disappear from it.
+            # HALT, not `done`: these lanes were never launched, so without a
+            # terminal state `_all_terminal` never returns True and the loop
+            # spins forever -- and the operator must still see them in the
+            # closing summary rather than have them disappear from it.
             for bc_key in tier_bc:
                 runs[bc_key].halted = True
                 runs[bc_key].halt_reason = (
                     "never launched: family gate failed (every GATE_MODELS lane halted)"
                 )
+            save_fleet_state(runs, log_dir)  # the `break` skips the loop's own save
             gate_keys = []  # stop waiting; skip the else-clause launch below
             break
     else:
@@ -1464,12 +1389,7 @@ def _run_fleet(
 
     while not _all_terminal(runs):
         tick += 1
-        time.sleep(MONITOR_INTERVAL_SECONDS)
-        _monitor_tick(runs, log_dir, tick, presence)
-        _apply_restart_policy(runs, log_dir, presence)
-        _check_cot(runs)
-        _advance_finished(runs, log_dir)
-        save_fleet_state(runs, log_dir)  # every tick -- see the gate loop's comment
+        _tick(runs, log_dir, presence, tick)
 
     halted = {key: run.halt_reason for key, run in runs.items() if run.halted}
     if halted:
@@ -1483,11 +1403,6 @@ def _run_fleet(
             f"run_fleet: {len(spool_errors)} lane(s) had a post-deduction spool failure "
             f"(data is collected locally, NOT confirmed in S3): {spool_errors}"
         )
-    # Once more after the closing summary, so the FINAL state of every lane is
-    # on disk: the gate-failure path breaks out of the loop above before its
-    # tier-B/C halts have been written, and a `--phase induction` run leaves
-    # boxes up for a later `--phase deduction` invocation to resume against.
-    save_fleet_state(runs, log_dir)
     if phase_name == "induction":
         print(
             "\nrun_fleet: induction-only run complete. Boxes are left RUNNING on purpose "

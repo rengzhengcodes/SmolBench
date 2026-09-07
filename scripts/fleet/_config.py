@@ -1,27 +1,16 @@
 """Constants -- and the by-path module loader -- shared across ``scripts/fleet``.
 
 This file exists so the study's ``scaling-`` EC2 tag prefix and its default
-region list have exactly ONE place the fleet family reads them from --
-``run_fleet.py`` (and the modules it was split into, ``lane_env.py`` and
-``supervisor.py``), ``fleet_status.py``, ``fleet_teardown.py`` (via
-``fleet_status``, which it already imports) and ``run_shards.py`` all come
-here -- instead of each spelling its own copy that can silently drift from
-the others, the way
-``fleet_status.SCALING_TAG_PREFIX``/``STATUS_REGIONS`` and the supervisor's
-own ``DEFAULT_REGIONS``/``Lane.experiment_tag`` (then in ``run_fleet.py``,
-today in ``lane_env.py``) did before this file existed, with only a comment
-(not code) asserting they agreed.
+region list have exactly ONE place the fleet family reads them from, instead
+of each module spelling its own copy that can silently drift from the others.
 
-No CONSTANT below is DECLARED here any more: every one is a VIEW on
+No CONSTANT below is DECLARED here: every one is a VIEW on
 ``smolbench/evals/study_config.toml``, read through
 ``smolbench.evals.study_config``. That file is the study's single committed
 audit surface for its results bucket, fleet regions/tag vocabulary and
 21-checkpoint roster, and ``providers/ec2.py``, ``run_study.py`` and
-``analysis/power_analysis.py`` already read from it; the fleet scripts used
-to re-type the region list, the tag prefix and the standalone tag as their
-own literals, with nothing keeping any of them equal to the TOML. Sourcing
-them removes that whole class of drift: editing the TOML moves the fleet
-with it.
+``analysis/power_analysis.py`` already read from it. Editing the TOML moves
+the fleet with it.
 
 The cost of that sourcing is ONE non-stdlib import --
 ``smolbench.evals.study_config``; everything else this module imports is
@@ -55,29 +44,14 @@ It is loaded BY FILE PATH, never a bare ``import _config`` or
 consumer defines): ``scripts/fleet`` has no ``__init__.py`` -- it is not a
 package -- and every module in it is already loaded under a private module
 name by its callers (``tests/tooling/test_run_fleet.py``,
-``supervisor._fleet_status_module``, ``fleet_teardown._fleet_status``), so a
-bare import name would be ambiguous at best and simply absent from
-``sys.path`` at worst.
+``fleet_teardown._fleet_status``), so a bare import name would be ambiguous at
+best and simply absent from ``sys.path`` at worst.
 
-That by-path load is now implemented ONCE, here, as `load_fleet_module` --
-the generalisation of the ``_load_fleet_config`` snippet each consumer used
-to copy for every sibling it needed. This file is its natural home because it
-is the one module every other fleet module already bootstraps by hand, so
-importing the loader costs a consumer nothing it was not already paying.
-Two consequences worth spelling out:
-
-- The hand-written ``_load_fleet_config`` bootstrap stays in each consumer,
-  but ONLY for ``_config`` itself: this module cannot load itself through its
-  own function, since that function does not exist until the module has been
-  executed. Everything else -- ``policy.py``, ``shards.py``, ``lane_env.py``
-  and ``supervisor.py`` -- goes through `load_fleet_module`, so there is one
-  loader implementation instead of one per consumer.
-- `load_fleet_module` adds only ``importlib.util``, ``sys`` and ``pathlib``,
-  all stdlib. This module's documented properties -- no AWS SDK anywhere in
-  its import chain, environment-blind, and no side effect on import beyond
-  parsing one committed config file -- are unchanged, and
-  ``fleet_status.py`` stays importable in an analysis notebook with no AWS
-  SDK installed.
+That by-path load is implemented ONCE, here, as `load_module_by_path`. The
+hand-written ``_load_fleet_config`` bootstrap stays in each consumer, but ONLY
+for ``_config`` itself: this module cannot load itself through its own
+function, since that function does not exist until the module has been
+executed.
 
 NOTE (scope): ``smolbench.evals.providers.ec2._DEFAULT_REGIONS`` is a THIRD,
 deliberately DIFFERENT region spelling -- it puts the calling process's own
@@ -87,14 +61,6 @@ non-fleet callers (e.g. a lone ``notebooks/induction/run_study.py`` launch),
 where "closest region first" is the right hunt order. That spelling is out
 of scope for this file; do not fold it in here.
 
-Every fleet script now reads these from here: ``fleet_status.py``
-(``SCALING_TAG_PREFIX``/``STATUS_REGIONS``, the latter from `REGION_TUPLE`),
-``lane_env.py`` (its ``DEFAULT_REGIONS`` constant, ``TIER_REGIONS``,
-``Lane.experiment_tag`` from `SCALING_TAG_PREFIX`, and its ``LANES`` table
-and ``_drift_guard`` from `ROSTER_KEYS`/`ROSTER_TAGS`), ``run_shards.py``
-(via its own ``_load_fleet_config``: `SCALING_TAG_PREFIX` for
-``refuse_fleet_prefix_tag`` and `STANDALONE_TAG` for its ``--tag`` default)
-and ``fleet_teardown.py`` (transitively, through ``fleet_status``).
 ``run_fleet.py`` and ``supervisor.py`` read none of these constants
 directly: they take the roster and the per-lane environment from
 ``lane_env.py``, which is the point of the split.
@@ -111,86 +77,41 @@ from typing import Mapping
 from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
 
 
-def load_fleet_module(stem: str) -> ModuleType:
-    """Load ``scripts/fleet/<stem>.py`` by file path, cached in ``sys.modules``.
+def load_module_by_path(name: str, path) -> ModuleType:
+    """Execute `path` as a module under `name`, cached in ``sys.modules``.
 
-    Parameters
-    ----------
-    stem : str
-        The sibling module's file stem, without ``.py`` -- e.g. ``"policy"``
-        or ``"shards"``. Resolved against THIS file's directory, so it does
-        not matter what working directory the calling script was launched
-        from.
+    Every caller in a process gets the SAME object, which is the point: both
+    supervisors reading ``load_fleet_module("policy")`` share one restart
+    policy rather than a copy each.
 
-    Returns
-    -------
-    types.ModuleType
-        The loaded module, registered in ``sys.modules`` under
-        ``f"smolbench_fleet_{stem}"``. Every caller in a process therefore
-        gets the SAME object: ``supervisor`` and ``run_shards`` both reading
-        ``load_fleet_module("policy")`` share one policy module, which is the
-        whole point of having one restart policy rather than two copies (and
-        ``run_fleet`` and ``supervisor`` likewise share one ``lane_env``, so
-        there is one roster per process).
-
-    Raises
-    ------
-    ImportError
-        If ``importlib`` produces no spec or no loader for the path -- the
-        file exists but is not something it knows how to execute. Raised
-        explicitly rather than letting ``module_from_spec`` fail on ``None``
-        with an opaque ``AttributeError``.
-    FileNotFoundError
-        If ``scripts/fleet/<stem>.py`` does not exist. Note that this does NOT
-        come out as an ``ImportError``: ``spec_from_file_location`` builds a
-        perfectly good spec for a path that is not there, and the failure
-        surfaces later, from ``exec_module``, when the loader tries to read
-        the source.
-    Exception
-        Anything the loaded module itself raises while executing is
-        propagated unchanged, after the half-initialised module is removed
-        from ``sys.modules`` so a later call retries a clean load instead of
-        handing out a partially executed module.
-
-    Notes
-    -----
-    The module object is registered in ``sys.modules`` BEFORE
-    ``exec_module`` runs, not after. That ordering is load-bearing, not
-    tidiness: under PEP 563 (``from __future__ import annotations``, which
-    every module here uses) ``@dataclass`` resolves a class's module through
-    ``sys.modules[cls.__module__]``, so a dataclass defined in a module that
-    is not yet registered raises ``AttributeError`` during its own class
-    body. ``policy.Decision`` is exactly such a dataclass. The existing
-    ``_load_fleet_config`` bootstraps already do this; the ordering is
-    preserved here rather than reinvented.
-
-    Examples
-    --------
-    >>> policy = load_fleet_module("policy")
-    >>> policy.classify_exit("InsufficientInstanceCapacity", True)
-    'reclaim'
+    The module is registered in ``sys.modules`` BEFORE ``exec_module``, and
+    that ordering is load-bearing: under PEP 563 ``@dataclass`` resolves a
+    class's module through ``sys.modules[cls.__module__]``, so a dataclass in
+    an unregistered module (``policy.Decision``, ``shards.Shard``) raises
+    ``AttributeError`` during its own class body.
     """
-    name = f"smolbench_fleet_{stem}"
     module = sys.modules.get(name)
     if module is not None:
         return module
-    path = Path(__file__).resolve().parent / f"{stem}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load fleet module {stem!r} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    # Registered BEFORE exec_module -- see Notes; a PEP 563 dataclass in the
-    # module being executed looks itself up here while its class body runs.
-    sys.modules[name] = module
+        raise ImportError(f"cannot load {name!r} from {path}")
+    sys.modules[name] = module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except BaseException:
-        # Not a fallback: the error is re-raised untouched. Only the cache
-        # entry is undone, so a failed load cannot leave a half-executed
-        # module behind for the next caller to receive as a cache hit.
+        # Only the cache entry is undone (the error re-raises untouched), so a
+        # failed load cannot hand the next caller a half-executed module.
         sys.modules.pop(name, None)
         raise
     return module
+
+
+def load_fleet_module(stem: str) -> ModuleType:
+    """Load the sibling ``scripts/fleet/<stem>.py``, resolved against THIS file."""
+    return load_module_by_path(
+        f"smolbench_fleet_{stem}", Path(__file__).resolve().parent / f"{stem}.py"
+    )
 
 # Read once, at import: `load_study_config` is memoized on the resolved config
 # path, so this is the same object every other consumer in the process holds

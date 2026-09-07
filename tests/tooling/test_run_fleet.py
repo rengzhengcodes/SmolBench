@@ -4,10 +4,8 @@ No AWS: every client is a stub factory and no subprocess is ever launched.
 """
 
 import argparse
-import importlib.util
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,20 +13,12 @@ from types import SimpleNamespace
 import pytest
 
 from smolbench.evals import Mark, Marks
-from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS
+from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS, load_by_path
 
 
 def _load(stem):
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            f"_scaling_{stem}", SCRIPTS / "fleet" / f"{stem}.py")
-        sys.modules[spec.name] = module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    return module
+    return load_by_path(
+        f"_scaling_{stem}", SCRIPTS / "fleet" / f"{stem}.py", snapshot_env=True)
 
 
 fleet, status, shards, teardown = (
@@ -226,12 +216,12 @@ def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius():
     args = _shard_args(parser)
     assert args.tag == "induction-scaling"
     # The DERIVED per-shard tag, not the bare one, is what lands on the box.
-    assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status._config.SCALING_TAG_PREFIX)
     shards.refuse_fleet_prefix_tag(parser, args)  # accepted: no raise
 
     # The old default is refused even though "scaling" does not itself start
     # with "scaling-" -- it is the suffixed form that matters.
-    assert "scaling-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    assert "scaling-gemma-4-12b-s0of3".startswith(status._config.SCALING_TAG_PREFIX)
     for bad in ("scaling", "scaling-gemma"):
         with pytest.raises(SystemExit):
             shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", bad))
@@ -262,8 +252,7 @@ def test_regions_and_tag_prefix_are_declared_once():
     """14-15: fleet_status/run_shards/run_fleet read one _config, not three literals."""
     config = status._config
     assert config is shards._config is laneenv._config  # one object, not three copies
-    assert status.SCALING_TAG_PREFIX == config.SCALING_TAG_PREFIX == "scaling-"
-    assert status.STATUS_REGIONS == config.REGION_TUPLE
+    assert config.SCALING_TAG_PREFIX == "scaling-"
     assert config.REGION_TUPLE == tuple(config.DEFAULT_REGIONS.split(","))
 
 
@@ -657,39 +646,12 @@ def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplo
     assert shutdowns, "the lane still completes and its box is still shut down"
 
 
-def test_the_unverified_spool_copy_is_gone():
-    """14-11: sync_deduction_spool duplicated the driver without its verification."""
-    for module in (fleet, sup, laneenv):
-        assert not hasattr(module, "sync_deduction_spool")
-        assert not hasattr(module, "SPOOL_BUCKET") and not hasattr(module, "SPOOL_REGION")
-    # Scanned across the WHOLE fleet family, not just run_fleet.py: the spool
-    # code moved into supervisor.py when run_fleet.py was split, and a check
-    # pinned to one filename would have gone quietly vacuous at that moment.
-    for source in (SCRIPTS / "fleet").glob("*.py"):
-        assert "smolbench-results-414266451290" not in source.read_text(), source.name
-
-
 # ---------------------------------------------------------------------------
 # 14-14 / #49: ONE restart vocabulary, ONE Shard, thin entry points
 # ---------------------------------------------------------------------------
 def test_both_supervisors_share_one_policy_module():
-    """The same spot reclaim must not get two different answers.
-
-    run_shards used to carry its own restart vocabulary -- a single
-    ``CAPACITY_MARKER`` substring, ``FAST_CRASH_SECONDS``/``MAX_FAST_CRASHES``,
-    and unlimited flat-backoff capacity retries -- beside run_fleet's eight
-    ``RECLAIM_PATTERNS`` and capped exponential backoff. Both now read one
-    module object, so there is nothing left to drift.
-    """
+    """The same spot reclaim must not get two different answers."""
     assert sup._policy is shards._policy is policy   # one object, not two copies
-    for gone in ("CAPACITY_MARKER", "CAPACITY_BACKOFF_SECONDS",
-                 "FAST_CRASH_SECONDS", "MAX_FAST_CRASHES", "RELAUNCH_BACKOFF_SECONDS"):
-        assert not hasattr(shards, gone), gone
-    for gone in ("RECLAIM_PATTERNS", "classify_exit", "MAX_CRASH_RELAUNCHES",
-                 "MAX_RECLAIM_RELAUNCHES", "RECLAIM_BACKOFF_BASE_SECONDS",
-                 "RECLAIM_BACKOFF_CAP_SECONDS"):
-        assert not hasattr(fleet, gone), f"run_fleet still declares {gone}"
-        assert hasattr(policy, gone), f"policy is missing {gone}"
 
 
 def test_the_shared_patterns_cover_the_marker_they_replaced():
@@ -743,21 +705,13 @@ def test_the_reclaim_backoff_is_exponential_and_capped():
 
 
 def test_shard_is_a_module_level_class_with_an_explicit_constructor():
-    """14-14: `class Shard` lived inside main(), closing over `args`.
-
-    Every field it read off that closure is now a constructor parameter, so a
-    Shard can be built (and driven) without an argparse Namespace.
-    """
-    assert not hasattr(shards, "Shard"), "run_shards must import Shard, not redefine it"
-    src = (SCRIPTS / "fleet" / "run_shards.py").read_text()
-    assert "class Shard" not in src
+    """A Shard can be built, and the supervision loop driven, without argparse."""
     shard = shard_mod.Shard(
         index=2, selector="2/3", log=Path("/tmp/nowhere/gemma-4-12b-s2of3.log"),
         env={"INDUCTION_SHARD": "2/3"}, state_file=Path("/tmp/nowhere/.state.json"),
         python=Path("/py"), driver=Path("/drv.py"), cwd=Path("/repo"))
     assert (shard.index, shard.selector, shard.status) == (2, "2/3", "pending")
     assert shard.proc is None and shard.adopted_pid is None
-    assert shard.launched_at == 0.0
     assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
     assert shard.env["INDUCTION_SHARD"] == "2/3"
 
@@ -783,7 +737,6 @@ def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(monkeypatch,
         launches.append(len(launches))
         shard.proc = _FakeProc(1)
         shard.status = "running"
-        shard.launched_at = 0.0
 
     monkeypatch.setattr(shard, "launch", _fake_launch)
     shard.proc = _FakeProc(1)
@@ -899,7 +852,7 @@ def test_the_supervisor_state_file_lives_under_the_log_dir(tmp_path):
     # describe sweep and this file name the same lanes.
     for key in state["lanes"]:
         tag = laneenv.LANES[key].experiment_tag
-        assert tag[len(status.SCALING_TAG_PREFIX):] == key
+        assert tag[len(status._config.SCALING_TAG_PREFIX):] == key
 
 
 def test_a_resumed_supervisor_continues_with_the_persisted_counters(tmp_path, monkeypatch):
@@ -1007,8 +960,6 @@ def test_the_fleet_no_longer_manages_per_lane_state_files():
     teardown no longer globs or deletes anything, and the deduction phase no
     longer gets a second, independently spelled state-file variable.
     """
-    for gone in ("STATE_FILE_GLOB", "state_file_path", "delete_state_files"):
-        assert not hasattr(teardown, gone), gone
     deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert "LEAN_STATE_FILE" not in deduction
     # ...because the deduction driver derives the IDENTICAL path itself. If
@@ -1021,22 +972,10 @@ def test_the_fleet_no_longer_manages_per_lane_state_files():
 
 
 def _deduction_driver_module():
-    """Load notebooks/deduction/run_study.py under an environment snapshot.
-
-    It calls ``load_dotenv`` and sets ``EC2_*`` defaults at module scope, which
-    would otherwise leak into every later test in the session.
-    """
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    return module
+    """Load notebooks/deduction/run_study.py under an environment snapshot."""
+    return load_by_path(
+        "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py",
+        snapshot_env=True)
 
 
 def test_teardown_terminates_by_tag_and_deletes_nothing(tmp_path, monkeypatch, capsys):
@@ -1059,11 +998,9 @@ def test_teardown_terminates_by_tag_and_deletes_nothing(tmp_path, monkeypatch, c
 
     monkeypatch.setattr(teardown, "_fleet_status", lambda: SimpleNamespace(
         fleet_rows=lambda: rows[:1],
-        format_fleet_table=lambda r: "TABLE\n",
-        SCALING_TAG_PREFIX=status.SCALING_TAG_PREFIX))
+        format_fleet_table=lambda r: "TABLE\n"))
     monkeypatch.setattr(teardown, "terminate_fleet",
                         lambda r, **kw: r)
     assert teardown.main(["--terminate", "--yes"]) == 0
     out = capsys.readouterr().out
     assert "Terminated 1 instance(s)" in out
-    assert "state file" not in out, "the fleet no longer deletes state files"

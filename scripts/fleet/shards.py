@@ -2,14 +2,9 @@
 
 `Shard` is the unit ``scripts/fleet/run_shards.py`` supervises: one child
 process, its log file, its EC2 state file and the counters the shared restart
-policy (``scripts/fleet/policy.py``) needs. It used to be declared INSIDE
-``run_shards.main()``, closing over that function's ``args`` namespace, which
-meant it could only be built by parsing a command line -- so nothing could
-construct one to drive the supervision loop, and every field it read was
-invisible in its own definition. Lifting it here with an explicit constructor
-makes each of those fields a named parameter and leaves ``run_shards.main()``
-holding only argument parsing and the derivations that turn ``args`` into
-these parameters.
+policy (``scripts/fleet/policy.py``) needs. Every field is a constructor
+parameter, so a shard can be built -- and the supervision loop driven --
+without an argparse namespace.
 
 It is loaded BY FILE PATH, never a bare ``import shards``: ``scripts/fleet``
 has no ``__init__.py`` -- it is not a package -- so a bare import name is
@@ -22,11 +17,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
 
 
+@dataclass
 class Shard:
     """One shard of a direct ``run_study.py`` run, and its supervision state.
 
@@ -72,14 +68,6 @@ class Shard:
         launched.
     adopted_pid : int or None
         The pid of an already-running shard this supervisor took over.
-    launched_at : float
-        ``time.time()`` of the most recent launch, or of adoption (whose true
-        start is unknowable, so adoption uses "now", the conservative choice).
-        ``0.0`` before either. Launch PROVENANCE only: nothing in the restart
-        path reads it any more, because the shared policy counts relaunches
-        rather than timing them. Its former reader was the deleted
-        fast-crash-window test, whose age comparison is exactly what let a
-        slow crash loop escape the halt.
     status : str
         One of ``"pending"``, ``"running"``, ``"done"``, ``"halted"``.
     crash_relaunches : int
@@ -91,9 +79,7 @@ class Shard:
     -----
     The two counters exist because ``policy.decide_relaunch`` takes the
     POST-increment attempt number: the supervisor bumps the counter matching
-    the verdict and passes it straight in. They replace the old
-    consecutive-fast-crash counter, which RESET on any slow crash and so could
-    never stop a crash loop whose iterations happened to be slow.
+    the verdict and passes it straight in.
 
     Known limitation (out of scope here): `alive` tests an ADOPTED shard's
     liveness with a ``/proc/<pid>`` existence check, and a pid is a recycled
@@ -106,31 +92,19 @@ class Shard:
     named here rather than left silently in the code.
     """
 
-    def __init__(
-        self,
-        index: int,
-        selector: Optional[str],
-        log: Path,
-        env: Mapping[str, str],
-        state_file: Path,
-        python: Path,
-        driver: Path,
-        cwd: Path,
-    ) -> None:
-        self.index = index
-        self.selector = selector
-        self.log = log
-        self.env = env
-        self.state_file = state_file
-        self.python = python
-        self.driver = driver
-        self.cwd = cwd
-        self.proc: Optional[subprocess.Popen] = None
-        self.adopted_pid: Optional[int] = None
-        self.launched_at = 0.0
-        self.status = "pending"  # pending|running|done|halted
-        self.crash_relaunches = 0
-        self.reclaim_relaunches = 0
+    index: int
+    selector: Optional[str]
+    log: Path
+    env: Mapping[str, str] = field(repr=False)  # holds AWS/HF credentials
+    state_file: Path
+    python: Path
+    driver: Path
+    cwd: Path
+    proc: Optional[subprocess.Popen] = None
+    adopted_pid: Optional[int] = None
+    status: str = "pending"  # pending|running|done|halted
+    crash_relaunches: int = 0
+    reclaim_relaunches: int = 0
 
     def alive(self) -> bool:
         """Report whether this shard's process is still running.
@@ -188,8 +162,8 @@ class Shard:
         Side effects
         ------------
         Creates ``log.parent``, appends to `log`, spawns a process, and sets
-        `proc`, `launched_at` and `status`; clears `adopted_pid`, because this
-        process now owns a real handle and must stop consulting ``/proc``.
+        `proc` and `status`; clears `adopted_pid`, because this process now
+        owns a real handle and must stop consulting ``/proc``.
         """
         self.log.parent.mkdir(parents=True, exist_ok=True)
         with self.log.open("ab") as sink:
@@ -203,6 +177,5 @@ class Shard:
                 cwd=str(self.cwd), start_new_session=True,
             )
         self.adopted_pid = None
-        self.launched_at = time.time()
         self.status = "running"
         logging.info(f"shard {self.index}: launched pid {self.proc.pid}")

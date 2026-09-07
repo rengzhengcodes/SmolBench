@@ -54,33 +54,17 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # By hand, and only for `_config` itself: `load_module_by_path` is a
+    # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# By file path, not a bare `import _config`: `scripts/fleet` has no
-# `__init__.py` (it is not a package), and every module in it is already
-# loaded under a private module name by its own callers (this file itself is
-# loaded under a private name by `_config.load_fleet_module`, from
-# `run_fleet.py` and `supervisor.py`), so a bare import name would be
-# ambiguous at best and simply absent from `sys.path` at worst -- see
-# `_config.py`'s own module docstring for the fuller argument. Cached under
-# the shared `_CONFIG_MODULE_NAME` key in `sys.modules`: if `fleet_status.py`
-# (loaded lazily by `supervisor._fleet_status_module`, by the identical
-# pattern) has already loaded `_config.py` this process, this is a cache hit,
-# not a second, independent module object.
-#
-# Bootstrapped BY HAND rather than through `_config.load_fleet_module`, and
-# FIRST, before anything below: that loader is a function on the very module
-# being loaded here, so it cannot load `_config` itself -- and every block
-# after this one needs `_config` to already exist.
 _config = _load_fleet_config()
 
 # Configured HERE, immediately before the driver load below, not in
@@ -133,20 +117,11 @@ from smolbench.evals.providers.ec2 import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # Constants (exact names/values -- pinned by tests/tooling/test_run_fleet.py)
 # ---------------------------------------------------------------------------
-#: Sourced from ``scripts/fleet/_config.py`` (loaded above), the ONE place
-#: this string is now declared for every fleet script that needs it --
-#: previously an independently-typed copy here could silently drift from
-#: ``fleet_status.STATUS_REGIONS`` (finding 14-15).
+#: Sourced from ``scripts/fleet/_config.py`` (loaded above), the ONE place this
+#: string is declared for every fleet script that needs it.
 DEFAULT_REGIONS = _config.DEFAULT_REGIONS
-# ec2.py's OWN resolved value: `EC2_VLLM_IMAGE` there defaults to a
-# digest-pinned, certified-deterministic vLLM nightly build and is read from
-# the environment at ec2.py's IMPORT time. This constant used to carry an
-# independently-typed COPY of that digest, and `lane_env` set `EC2_VLLM_IMAGE`
-# unconditionally FROM this copy -- so bumping the digest in ec2.py alone left
-# every lane silently pinned to the stale one here (finding 14-12). Aliasing
-# it means an operator's export reaches every lane through the ONE
-# resolution -- this module's, via ec2.py -- instead of two that could
-# disagree. Bump only on purpose, and bump it in ec2.py.
+# ec2.py's OWN resolved value, aliased rather than re-typed, so a lane and this
+# supervisor cannot pin two different digests. Bump it in ec2.py.
 FLEET_IMAGE = EC2_VLLM_IMAGE
 # Per-lane image pins (default: FLEET_IMAGE). The V4 lanes run the tagged
 # v0.27.1 release, digest-pinned: that version's SM90 serving path (Marlin
@@ -164,23 +139,8 @@ REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value
 # under the fleet-wide 3600s timeout those cells retry forever; 14400s lets a
 # worst-case cell finish in ONE attempt. The box-side idle watchdog keys on
 # vLLM metrics activity, so an hours-long in-flight generation cannot trip it.
-#
-# NOTE (finding 14-10, recomputed): this dict used to also carry 10800s
-# entries for gemma-4-12b and ministral-3-14b, derived as "~90 min at 3
-# concurrent with 2x headroom". That assumed 3 requests in flight; the real
-# client fan-out is `ChatClient.evaluate`'s `EC2_MAX_PARALLEL_REQUESTS`
-# default of 8, against ec2.py's `--max-num-seqs 1` serving, so requests
-# actually SERIALIZE and the in-flight count that matters is whatever
-# `lane_env` pins -- see that function's `EC2_MAX_PARALLEL_REQUESTS` comment.
-# `lane_env` now pins it to "1" for every lane, so the values below all
-# assume in-flight 1. Recomputed from this comment's own two anchors:
-#   anchor 1 (per-cell wall time): ~90 min at 3 concurrent -> ~30 min
-#     (1800s) for one cell alone. At in-flight 1: 1 x 1800s x 2 (headroom)
-#     = 3600s -- exactly REQUEST_TIMEOUT_SECONDS, the fleet-wide default --
-#     so a per-lane override for these two lanes is now redundant. REMOVED.
-#   anchor 2 (aggregate throughput): an 87k-token cell at ~146 tok/s
-#     aggregate -> ~596s alone -- an even smaller number, so 3600s is safe
-#     under either reading.
+# Every other lane fits inside REQUEST_TIMEOUT_SECONDS at the in-flight count
+# `lane_env` pins (1), so no other lane needs an entry here.
 LANE_REQUEST_TIMEOUT_OVERRIDES = {
     # >1h at eager Pro throughput (see the comment above) is a SINGLE-request
     # figure that does not depend on the in-flight count, so it is unaffected
@@ -189,18 +149,10 @@ LANE_REQUEST_TIMEOUT_OVERRIDES = {
 }
 
 TIER_INSTANCE_TYPES = {
-    # NARROWED to one GPU count (finding 14-06): this list used to also hunt
-    # g6e.12xlarge (4x L40S) as a capacity fallback, mixing it with the
-    # 1-GPU types it hunts alongside (g6e.4xlarge, g6e.8xlarge).
-    # `ec2.derive_tp` = gcd(attention heads, landed GPU count), so a reclaim
-    # onto that fallback changed a tier-A lane's derived tp from 1 to 4
-    # MID-LANE -- rows collected before and after the fallback are not
-    # comparable. The TRADE: dropping the 4-GPU fallback means a reclaimed
-    # tier-A lane now waits for 1-GPU g6e capacity instead of silently
-    # switching tp -- the residual cost is that such a lane can idle longer
-    # when 1-GPU g6e capacity is tight. g6e.8xlarge remains as a same-tp,
-    # larger-host fallback. `TIER_REQUIRE_GPU` below pins this tier's GPU
-    # count/silicon so a mixed-count hunt list here cannot recur unnoticed.
+    # ONE GPU count per tier: `ec2.derive_tp` is gcd(attention heads, landed
+    # GPU count), so a reclaim onto a differently-sized fallback would change
+    # a lane's derived tp mid-lane and make its rows incomparable. The cost is
+    # that a reclaimed tier-A lane waits for 1-GPU g6e capacity.
     "A": "g6e.4xlarge,g6e.8xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
@@ -547,7 +499,6 @@ def lane_env(
     ``PASSTHROUGH_ENV`` -- see that tuple's comment for why.
     """
     if base_env is None:
-
         base_env = os.environ
 
     env: dict[str, str] = {key: base_env[key] for key in PASSTHROUGH_ENV if key in base_env}
@@ -555,19 +506,11 @@ def lane_env(
         {
             "INFERENCE_PROVIDER": "ec2",
             "EC2_EXPERIMENT_TAG": lane.experiment_tag,
-            # This one STAYS, and must: it is not the redundant half of the
-            # pair `LEAN_STATE_FILE` was. `notebooks/induction/run_study.py`'s
-            # own default is `f".ec2_state_induction{_LANE}.json"`, and
-            # `_LANE` is EMPTY for a fleet lane (it is non-empty only under
-            # `INDUCTION_SHARD`), so with this unset all 21 lanes would
-            # resolve the SAME `.ec2_state_induction.json`. Verified: running
-            # that driver with EC2_EXPERIMENT_TAG=scaling-glm-4.7,
-            # INDUCTION_MODELS=glm-4.7 and no INDUCTION_STATE_FILE yields
-            # `EXPERIMENT.state_file == '.ec2_state_induction.json'`. And
-            # `ec2._reattach_existing_instance` trusts that file WITHOUT
-            # re-checking the tag, so every lane would reattach to whichever
-            # box the shared file last named and swap that lane's checkpoint
-            # out from under it.
+            # Required: the driver's own default resolves to the SAME
+            # `.ec2_state_induction.json` for all 21 lanes, and
+            # `ec2._reattach_existing_instance` trusts that file without
+            # re-checking the tag -- so every lane would reattach to whichever
+            # box it last named.
             "INDUCTION_STATE_FILE": lane.state_file,
             "INDUCTION_MODELS": lane.key,
             "EC2_INSTANCE_TYPES": lane.instance_types,
@@ -597,11 +540,9 @@ def lane_env(
     if phase == "deduction":
         env.update(
             {
-                # No LEAN_STATE_FILE: this driver's own `lane_env_defaults`
-                # derives `repo_root / f".ec2_state_scaling_{key}.json"` when
-                # it is unset -- byte-identical to what was being passed here
-                # -- so setting it only added a second spelling of one path.
-                # See this function's Notes on the reattach contract.
+                # No LEAN_STATE_FILE: the deduction driver's own
+                # `lane_env_defaults` derives the identical path when it is
+                # unset. See this function's Notes on the reattach contract.
                 "LEAN_MODEL": lane.key,
                 "LEAN_RUN_NAME": f"scaling_{lane.key}",
             }

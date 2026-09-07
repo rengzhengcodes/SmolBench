@@ -1,7 +1,6 @@
 """Statistical contracts of the family-ladder analysis scripts (offline)."""
 
 import argparse
-import importlib.util
 import itertools
 import json
 import sys
@@ -10,13 +9,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests._paths import NOTEBOOKS
+from tests._paths import NOTEBOOKS, load_by_path
 
 def _load(name: str, rel: str):
-    spec = importlib.util.spec_from_file_location(name, NOTEBOOKS / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod  # dataclass annotation resolution needs it early
-    spec.loader.exec_module(mod)
+    mod = load_by_path(name, NOTEBOOKS / rel)
     sys.modules[Path(rel).stem] = mod  # siblings import each other by bare name
     return mod
 

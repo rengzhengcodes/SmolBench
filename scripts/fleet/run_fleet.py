@@ -48,10 +48,6 @@ the loop and the command line each have exactly one home:
   ``run_shards.py``; reached through ``supervisor._policy``.
 - ``scripts/fleet/_config.py`` -- the study's tag prefix, region list and
   roster, read from the committed ``smolbench/evals/study_config.toml``.
-
-Nothing moved is re-exported here. Use ``_lane_env.LANES``,
-``_supervisor.preflight``, and so on: a convenience alias in this file is
-exactly the second spelling the split exists to remove.
 """
 
 from __future__ import annotations
@@ -73,27 +69,17 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # By hand, and only for `_config` itself: `load_module_by_path` is a
+    # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# By file path, not a bare `import _config`: `scripts/fleet` has no
-# `__init__.py` (it is not a package), and every module in it is already
-# loaded under a private module name by its own callers (this file itself is
-# loaded under a private name by `tests/tooling/test_run_fleet.py`), so a
-# bare import name would be ambiguous at best and simply absent from
-# `sys.path` at worst -- see `_config.py`'s own module docstring for the
-# fuller argument. Bootstrapped BY HAND, unlike the two bindings below,
-# because `load_fleet_module` is a function ON this module and so cannot load
-# it; cached under the shared `_CONFIG_MODULE_NAME` key, so there is one
-# `_config` object per process however many fleet modules ask for it.
 _config = _load_fleet_config()
 
 # The roster/lane-environment module, then the supervision loop -- in that
@@ -167,19 +153,9 @@ def _selected_lanes(raw: str) -> dict[str, _lane_env.Lane]:
     return {k: lanes[k] for k in lanes if k in chosen}
 
 
-#: Printed verbatim under the DRY RUN header, worded for the OPERATOR: one who
-#: reads a clean `--dry-run` as "the launch will work" would otherwise meet a
-#: tokenizer-fetch failure or a budget-floor `SystemExit` only on the live run,
-#: which is what `supervisor.preflight()` exists to surface EARLIER.
 _DRY_RUN_NOTICE = (
-    "NOTE: this is a WIRING preview only. It did NOT run preflight (per-lane\n"
-    "HuggingFace tokenizer warm-up + completion-budget derivation) and did NOT\n"
-    "check that the digest-pinned FLEET_IMAGE resolves -- both do real\n"
-    "network I/O (HuggingFace, Docker Hub) and only run on the live path\n"
-    "(drop --dry-run). A clean plan below means the commands and per-lane\n"
-    "environment are correct; it does NOT mean the lanes will actually start --\n"
-    "a tokenizer fetch failure or a too-small completion budget can still\n"
-    "surface for the first time on the live launch.\n"
+    "NOTE: WIRING preview only -- preflight and the image-digest check run on "
+    "the live path.\n"
 )
 
 

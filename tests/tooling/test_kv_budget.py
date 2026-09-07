@@ -170,12 +170,8 @@ def test_replication_is_per_layer():
 def test_tp_and_attention_kind():
     """Neither one-row-per-token mechanism replicates across tp; a bare window is not applied.
 
-    Rewritten for the DeepSeek-V4 fix: this test used to assert that
-    ``kv(tp=8) == 8 * kv(tp=1)`` for deepseek-v4-pro and that its corrected
-    figure equalled its naive one. Both held only because V4 fell through to
-    the GQA path -- the very defect. They are replaced here by assertions on
-    the MECHANISM that decides the arithmetic, so a future regression that
-    re-routes V4 to GQA fails on the reason, not on a re-tuned number.
+    Asserted on the MECHANISM that decides the arithmetic, so a regression that
+    re-routes V4 to the GQA path fails on the reason, not on a re-tuned number.
     """
     pro = _text_config(RAW["deepseek-v4-pro"])
     # V4 is detected as a shared latent by BOTH readings the tool accepts.

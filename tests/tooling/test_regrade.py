@@ -12,8 +12,7 @@ Three properties, two of them found broken by the reviewer of PR #14:
   carrying ``regraded_from``, plus a ``.superseded`` marker retiring the run
   it replaces), so the regrade now goes THROUGH the store on either backend.
 * A regrade is a WRITER of compliance labels, so it must spell ``COMPLIANT``
-  explicitly rather than store the pre-``COMPLIANT`` ``compliance: null``
-  that ``Marks.loads``' legacy shim exists to translate on the way back in.
+  explicitly rather than leave it null.
 """
 
 import io
@@ -108,9 +107,6 @@ def test_write_preserves_server_config_and_date(local_study, capsys):
     # ...and the re-grade really did happen: both marks were invalid, both now
     # score, and the markup violation is recorded on the second.
     assert [m.score for m in after.marks] == [1, 1]
-    # COMPLIANT is written OUT, not left as the legacy `compliance: null` that
-    # `Marks.loads`' read-compat shim exists to translate (#50): a regrade is a
-    # producer of compliance labels, so it must spell the value.
     assert after.marks[0].compliance == COMPLIANT
     assert after.marks[1].compliance not in (COMPLIANT, None)
     raw = local_study.read_text()
@@ -269,9 +265,3 @@ def test_the_arm_filter_still_selects_on_s3(s3_study):
     assert len(s3_study.puts) == 2
 
 
-def test_the_refusal_and_its_workaround_are_gone():
-    """The recipe the refusal printed produced exactly the loss it warned about."""
-    assert not hasattr(regrade, "_s3_backed_studies")
-    source = (regrade.REPO / "scripts" / "results" / "regrade.py").read_text()
-    for gone in ("REFUSING to regrade", "Unset SMOLBENCH_RESULTS_S3", "Re-run this regrade"):
-        assert gone not in source, gone

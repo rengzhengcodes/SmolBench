@@ -4,14 +4,8 @@
 ``scripts/fleet/run_shards.py`` (one shard group of a direct
 ``notebooks/induction/run_study.py`` run) both watch a child process die and
 have to answer the same question: was that a spot reclaim, which will very
-likely succeed on a later attempt, or a real crash, which will not? They used
-to answer it with two unrelated vocabularies -- ``run_fleet`` with the eight
-`RECLAIM_PATTERNS` below, a cap of `MAX_RECLAIM_RELAUNCHES` and exponential
-backoff; ``run_shards`` with a single ``"No spot capacity for any"`` substring,
-a consecutive-fast-crash counter and an UNBOUNDED flat 300s retry. The same
-reclaim therefore got two different answers depending on which supervisor
-happened to be watching. Everything either of them needs to answer it now
-lives here, once.
+likely succeed on a later attempt, or a real crash, which will not?
+Everything either of them needs to answer it lives here, once.
 
 The two supervisors still SPEND the answer differently, and that difference is
 deliberate rather than an inconsistency:
@@ -60,11 +54,6 @@ from dataclasses import dataclass
 # wording counts: capacity/quota errors, and the "endpoint unreachable" message
 # ec2.py raises after its connection-failure cap trips (the spot-reclaim/IP-drift
 # symptom).
-#
-# The `spot capacity` pattern is also what covers `providers/ec2.py`'s
-# "No spot capacity for any (instance type, region) combination:" -- the line
-# `run_shards.py` used to match with a private `CAPACITY_MARKER` substring of
-# its own.
 RECLAIM_PATTERNS: tuple[re.Pattern, ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -113,24 +102,11 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
 # Caps and backoff schedule
 # ---------------------------------------------------------------------------
 MAX_CRASH_RELAUNCHES = 2
-# A RECLAIM verdict used to get unlimited relaunches, on the theory that a spot
-# reclaim is never the lane's fault. But an empty or failed
-# `describe_instances` sweep (see `supervisor._Presence`) made EVERY exit look
-# like a reclaim, so "unlimited" meant a lane could relaunch forever with no
-# crash counting and no budget alert ever firing (`supervisor._monitor_tick`'s
-# 2x-budget check keys on `lane_started_at`, which a relaunch never resets, but
-# nothing stopped the relaunches themselves). Bounding it, with backoff so a
-# lane genuinely fighting spot capacity is not hammered every tick:
-#   delay before relaunch n = min(RECLAIM_BACKOFF_CAP_SECONDS,
-#                                  RECLAIM_BACKOFF_BASE_SECONDS * 2 ** (n - 1))
-#   = 60, 120, 240, 480, 960, then 1800s thereafter.
-# MAX_RECLAIM_RELAUNCHES=12 relaunches therefore span about 4h of backoff
-# (60+120+240+480+960+1800*7 ~= 4.15h) against a 9-14h tier budget
-# (`lane_env.TIER_BUDGET_HOURS`), so a lane fighting genuine capacity pressure
-# still gets most of its budget, while the pathological misclassification above
-# stops at 12 relaunches instead of running for the fleet's whole lifetime.
-# `run_shards.py` now reads this same schedule for its own capacity-shaped
-# retries, so a shard hunting a dry pool is bounded exactly like a lane is.
+# A reclaim verdict is BOUNDED, not unlimited: an empty or failed
+# `describe_instances` sweep (see `supervisor._Presence`) makes every exit look
+# like a reclaim, so an unlimited budget lets a lane relaunch for the fleet's
+# whole lifetime with no crash counting. 12 relaunches span ~4.15h of backoff
+# against a 9-14h tier budget (`lane_env.TIER_BUDGET_HOURS`).
 MAX_RECLAIM_RELAUNCHES = 12
 RECLAIM_BACKOFF_BASE_SECONDS = 60
 RECLAIM_BACKOFF_CAP_SECONDS = 1800
@@ -312,3 +288,19 @@ def decide_relaunch(verdict: str, *, attempt: int, rc) -> Decision:
         f"unknown verdict {verdict!r}: classify_exit returns only "
         "'reclaim' or 'crash'"
     )
+
+
+def count_and_decide(counters, log_tail: str, instance_present: bool, rc) -> Decision:
+    """Classify a dead child's exit, bump the matching counter, and decide.
+
+    The sequence both supervisors share; only the SCHEDULING of
+    ``Decision.delay_seconds`` differs between them. `counters` is any object
+    with ``crash_relaunches``/``reclaim_relaunches`` attributes (a
+    ``supervisor._LaneRun`` or a ``shards.Shard``); the counter is incremented
+    FIRST because `decide_relaunch`'s ``attempt`` is the post-increment count.
+    """
+    verdict = classify_exit(log_tail, instance_present)
+    name = "reclaim_relaunches" if verdict == "reclaim" else "crash_relaunches"
+    attempt = getattr(counters, name) + 1
+    setattr(counters, name, attempt)
+    return decide_relaunch(verdict, attempt=attempt, rc=rc)

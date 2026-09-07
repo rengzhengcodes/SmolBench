@@ -80,9 +80,8 @@ class FakeAwsClient:
 def fake_aws(monkeypatch):
     """Routes every client construction to one FakeAwsClient.
 
-    Also clears ``SMOLBENCH_RESULTS_S3``, so the default-bucket tests below
-    describe the documented fallback deliberately instead of inheriting
-    whatever a developer's shell exports.
+    Clears ``SMOLBENCH_RESULTS_S3`` so the default-bucket tests below do not
+    inherit whatever a developer's shell exports.
     """
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
     client = FakeAwsClient()
@@ -176,7 +175,7 @@ def test_ensure_bucket_tolerates_already_owned(fake_aws, monkeypatch):
     """A re-run must not fail on the bucket it already owns."""
     monkeypatch.setattr(fake_aws, "create_bucket",
                         _raiser("BucketAlreadyOwnedByYou", "CreateBucket"))
-    p.ensure_bucket(fake_aws)
+    p.ensure_bucket(fake_aws, "any-bucket")
 
 
 def test_ensure_policy_reuses_an_existing_policy_without_new_versions(fake_aws, monkeypatch):
@@ -190,7 +189,7 @@ def test_ensure_policy_reuses_an_existing_policy_without_new_versions(fake_aws, 
                         _raiser("EntityAlreadyExists", "CreatePolicy"))
     monkeypatch.setattr(fake_aws, "list_policies", lambda **kw: {
         "Policies": [{"PolicyName": "SmolbenchResultsBucketRW", "Arn": existing}]})
-    assert p.ensure_policy(fake_aws) == existing
+    assert p.ensure_policy(fake_aws, "any-bucket") == existing
     assert not any(c[0] == "create_policy_version" for c in fake_aws.calls)
 
 

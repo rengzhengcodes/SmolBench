@@ -15,31 +15,34 @@ terminating the instance is what stops the billing.
 
 That leaves ONE safety invariant re-checked in code at the point of action:
 `terminate_fleet` skips any row whose ``experiment_tag`` does not start with
-`fleet_status.SCALING_TAG_PREFIX`. It is re-checked rather than trusted
+the study's ``scaling-`` tag prefix. It is re-checked rather than trusted
 because that tag is an AWS tag value this script does not control.
 """
 
 from __future__ import annotations
 
 import argparse
-import functools
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 
-@functools.lru_cache(maxsize=1)
 def _fleet_status():
-    """Load ``scripts/fleet/fleet_status.py`` by file path, lazily; cached.
+    """Load the sibling ``fleet_status.py``, LAZILY -- through `_config`'s loader.
 
-    By path rather than a bare import: avoids colliding with the private module
-    names ``tests/tooling/test_run_fleet.py`` loads these files under.
+    `_config` is bootstrapped by hand here for the same reason every fleet
+    module does it: `scripts/fleet` is not a package and that module cannot
+    load itself through its own function.
     """
-    path = Path(__file__).resolve().parent / "fleet_status.py"
-    spec = importlib.util.spec_from_file_location("fleet_teardown_fleet_status_dep", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    name = "smolbench_fleet_config"
+    config = sys.modules.get(name)
+    if config is None:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[name] = config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+    return config.load_fleet_module("fleet_status")
 
 
 def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -> list[dict]:
@@ -50,7 +53,7 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     rows : list[dict]
         `fleet_status.fleet_rows`-shaped; needs `region`, `instance_id` and
         `experiment_tag`. A row whose `experiment_tag` lacks the
-        `fleet_status.SCALING_TAG_PREFIX` prefix is SKIPPED -- the safety
+        study's ``scaling-`` tag prefix is SKIPPED -- the safety
         re-check that stops this terminating another experiment's instance.
     client_factory : Any, optional
         Region -> object with ``terminate_instances(InstanceIds=...)``; ``None``
@@ -62,17 +65,11 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
         The rows actually terminated.
     """
     fleet_status = _fleet_status()
-
-    def _default_factory(region: str) -> Any:
-        import boto3
-
-        return boto3.client("ec2", region_name=region)
-
-    factory = client_factory or _default_factory
+    factory = client_factory or fleet_status._default_client_factory
     terminated: list[dict] = []
     for row in rows:
         tag = row.get("experiment_tag", "")
-        if not tag.startswith(fleet_status.SCALING_TAG_PREFIX):
+        if not tag.startswith(fleet_status._config.SCALING_TAG_PREFIX):
             continue  # should be unreachable through fleet_rows -- see docstring
         client = factory(row["region"])
         client.terminate_instances(InstanceIds=[row["instance_id"]])
