@@ -97,7 +97,7 @@ def compliance_census(compliance: dict) -> dict:
     Returns
     -------
     dict
-        Cell key -> ``rate``, ``n``, ``modes`` (Counter of violation labels),.
+        Cell key -> ``rate``, ``n``, ``modes`` (Counter of violation labels),
         and ``per_seed`` (so a caller can re-take the rate over any seed
         subset, as the padding table does). Cells with no marks at all are
         omitted -- an unmeasured cell must never read as compliant or
@@ -138,7 +138,7 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
     Returns
     -------
     float | None
-        `None`, not 0.0, when the subset has no marks at all, so an unmeasured.
+        `None`, not 0.0, when the subset has no marks at all, so an unmeasured
         subset cannot publish as perfectly compliant.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]

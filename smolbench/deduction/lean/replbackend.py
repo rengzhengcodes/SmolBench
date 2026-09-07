@@ -702,7 +702,7 @@ class ReplSession:
         Returns
         -------
         StepOutcome
-        Classified result of applying the tactic.
+            Classified result of applying the tactic.
 
         Raises
         ------
