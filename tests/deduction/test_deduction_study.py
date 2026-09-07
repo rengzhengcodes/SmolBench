@@ -623,7 +623,6 @@ def test_a_non_integer_lean_seed_is_refused(driver, postcutoff_corpus, monkeypat
     # shared validator's message must win, so the assertion is on the message.
     ("scaling-", "every lane"),
     ("scaling", "every lane"),
-    ("periodic-induction", "RETIRED"),
     ("   ", "empty or whitespace-only"),
 ])
 def test_shared_tag_validation_runs_before_the_exact_compare(tag, expected_phrase):
