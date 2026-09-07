@@ -145,11 +145,6 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     paired test's apparent power advantage -- the opposite of what `icc`
     exists to expose. The mix is unit-variance, so it reproduces the same
     marginal rate (`p_a`, `p_b`) as `icc=0`.
-
-    Raises
-    ------
-    ValueError
-        If `icc` is outside ``[0.0, 1.0)``.
     """
     if not (0.0 <= icc < 1.0):
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
