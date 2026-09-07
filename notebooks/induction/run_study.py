@@ -337,9 +337,8 @@ MIN_VIABLE_BUDGET: int = 48_000
 #: not achievable on a 397B/236B MoE.
 MIN_DECODE_TOK_S: int = 10
 
-#: The floor the derivation may never go below: deriving a shorter timeout
-#: than the provider already grants would be a regression, not a fix.
-REQUEST_TIMEOUT_FLOOR_SECONDS: int = ec2.EC2_REQUEST_TIMEOUT_SECONDS
+#: A literal: ec2's env-overridable constant could set the floor below 600 s.
+REQUEST_TIMEOUT_FLOOR_SECONDS: int = 600
 
 # Byte-identical to periodic_moe's / periodic_divisor's template: prompt
 # wording is fixed across every induction study, so only the roster (model,

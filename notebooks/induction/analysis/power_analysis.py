@@ -206,7 +206,9 @@ def mcnemar_exact_p(b, c):
     p = 2.0 * binom.cdf(np.minimum(b, c), np.maximum(nd, 1), 0.5)
     # Doubling a one-sided tail exceeds 1 whenever b == c; the 0.0 bound is
     # inert (a CDF is never negative) and kept only so this reads as a range.
-    return np.where(nd == 0, 1.0, np.clip(p, 0.0, 1.0))
+    p = np.where(nd == 0, 1.0, np.clip(p, 0.0, 1.0))
+    # Scalar in, scalar out: a 0-d array is not JSON-serializable.
+    return p[()] if p.ndim == 0 else p
 
 
 def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pytest
+from scipy.stats import binom
 
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
@@ -163,6 +164,11 @@ def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
     # The no-discordance convention must survive the swap, batched and scalar.
     assert power_analysis.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
     assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
+    rng = np.random.default_rng(3)
+    b, c = rng.integers(0, 40, 300), rng.integers(0, 40, 300)
+    ref = np.minimum(1.0, 2 * binom.cdf(np.minimum(b, c), b + c, 0.5))
+    np.testing.assert_allclose(power_analysis.mcnemar_exact_p(b, c), ref, rtol=1e-12)
+    assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
 # ===========================================================================

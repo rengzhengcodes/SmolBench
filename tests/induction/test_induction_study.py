@@ -235,6 +235,18 @@ def test_completion_budget_exits_below_the_viability_floor(run_study, monkeypatc
         run_study.completion_budget(BUDGET_MODEL, range(0, 1))
 
 
+@pytest.mark.parametrize("length", (1, 2, 5, 6, 7, 30, 119))
+def test_probe_seeds_span_the_range_sorted_and_deduplicated(run_study, length):
+    """At most ``PROBE_SEEDS`` probes, ascending and unique, always including
+    both ends of `seeds` -- what `completion_budget` relies on to size the
+    worst prompt from a subsample."""
+    seeds = range(length)
+    probes = run_study.probe_seeds(seeds)
+    assert probes == sorted(set(probes))
+    assert len(probes) <= run_study.PROBE_SEEDS
+    assert {seeds[0], seeds[-1]} <= set(probes) <= set(seeds)
+
+
 class CountingTokenizer(StubTokenizer):
     """`StubTokenizer` that records how many times `count` was called."""
 

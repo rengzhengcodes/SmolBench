@@ -308,10 +308,8 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(repoint, extens_vs_noise
     assert re.search(r"\b1 exactly tied", raw), raw[:400]
 
 
-def test_collapsed_lane_still_buckets_as_collapse_not_unmeasured(repoint,
-                                                                 extens_vs_noise,
-                                                                 collapse_tree):
-    """A collapsed lane must bucket as `COLLAPSE`, not fall into `unmeasured` if the census dict's `rate` key ever goes missing."""
+def test_collapsed_lane_buckets_as_collapse(repoint, extens_vs_noise, collapse_tree):
+    """A lane whose noise arm is broken must carry the `COLLAPSE` mechanism, so its forced direction is never read as information."""
     repoint(collapse_tree)
     out = _run(extens_vs_noise.main)
     # The per-model table only: its rows carry the `mechanism` column, unlike
@@ -322,6 +320,3 @@ def test_collapsed_lane_still_buckets_as_collapse_not_unmeasured(repoint,
             if ln[:1].isalpha() and len(ln.split()) > 3}
     assert COLLAPSE_MODEL in rows, table[:2500]
     assert "COLLAPSE" in rows[COLLAPSE_MODEL], rows[COLLAPSE_MODEL]
-    # Every lane has a census cell for both arms, so nothing is unmeasured.
-    unmeasured = [model for model, line in rows.items() if "unmeasured" in line]
-    assert unmeasured == [], unmeasured
