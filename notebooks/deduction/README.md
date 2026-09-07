@@ -167,9 +167,9 @@ sorted names), and `tests/deduction/test_lean_pinning_audit.py` pins that
 digest -- the only in-tree answer to which theorems the pre-cutoff study
 ran, since the corpus and sidecars are archived out of the tree.
 `scripts/results/audit_lean_pinning.py` confirms all 21 lanes ran that
-same 300 theorems and 944 cells (`runner.EXPECTED_THEOREMS`/
-`EXPECTED_CELLS`/`EXPECTED_SANITY_ROWS`, still 300/944/300) with
-byte-identical rendered prompts (compared by ETag, so no spool download)
+same 300 theorems and 944 cells (`--expect-theorems 300
+--expect-cells 944`, plus 300 sanity rows) with byte-identical rendered
+prompts (compared by ETag, so no spool download)
 -- byte equality, not set equality, since it must prove the same theorem
 was asked at the same step under the same context, including `noise:3`'s
 token-matched padding. That pre-cutoff study's published pools

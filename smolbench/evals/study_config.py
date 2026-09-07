@@ -71,12 +71,18 @@ class StudyConfig:
 
 
 def _require(mapping: dict, name: str, within: str = ""):
-    """Return ``mapping[name]``, raising ``ValueError`` naming it if absent."""
-    if name not in mapping:
+    """Return ``mapping[name]``, raising ``ValueError`` naming it if absent.
+
+    A ``"[table]"``-spelled `name` reads as its unbracketed key but reports as
+    the TOML table the reader has to add.
+    """
+    key = name.strip("[]")
+    if key not in mapping:
+        label = name if name.startswith("[") else repr(name)
         raise ValueError(
-            f"study_config.toml{within} is missing the required {name!r}"
+            f"study_config.toml{within} is missing the required {label}"
         )
-    return mapping[name]
+    return mapping[key]
 
 
 def _parse_study_config(data: dict) -> StudyConfig:
@@ -88,21 +94,21 @@ def _parse_study_config(data: dict) -> StudyConfig:
     """
     # Presence checked before content, so a missing key surfaces as a
     # ValueError naming it rather than a KeyError three functions downstream.
-    results_raw = _require(data, "results")
+    results_raw = _require(data, "[results]")
     results = ResultsConfig(
         bucket=_require(results_raw, "bucket", " [results]"),
         region=_require(results_raw, "region", " [results]"),
         base_prefix=_require(results_raw, "base_prefix", " [results]"),
     )
 
-    fleet_raw = _require(data, "fleet")
+    fleet_raw = _require(data, "[fleet]")
     fleet = FleetConfig(
         regions=tuple(_require(fleet_raw, "regions", " [fleet]")),
         tag_prefix=_require(fleet_raw, "tag_prefix", " [fleet]"),
         standalone_tag=_require(fleet_raw, "standalone_tag", " [fleet]"),
     )
 
-    roster_raw = _require(data, "roster")
+    roster_raw = _require(data, "[roster]")
     families_raw = _require(roster_raw, "families", " [roster]")
     tags_raw = _require(roster_raw, "tags", " [roster]")
 

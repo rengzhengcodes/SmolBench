@@ -5,11 +5,12 @@ place: the noise-padding ablation is comparable across evals only when the
 noise profile is identical, and a seed must always map to the same label set.
 
 The noise pad is whitespace sized in TOKENS
-(:func:`token_matched_noise_prompt`) under the tokenizer of the model under
-test, verified to hit the target exactly -- characters are the wrong unit, as
-a character-matched pad over-pads the control arm. The pad search itself and
-its unit table live in :mod:`smolbench.evals.tokenization`; this module holds
-``Prompter``, the substitution merge, and the random label/string generators.
+(:func:`~smolbench.evals.tokenization.token_matched_noise_prompt`) under the
+tokenizer of the model under test, verified to hit the target exactly --
+characters are the wrong unit, as a character-matched pad over-pads the
+control arm. The pad search itself and its unit table live in
+:mod:`smolbench.evals.tokenization`; this module holds ``Prompter``, the
+substitution merge, and the random label/string generators.
 """
 
 import string
@@ -107,8 +108,9 @@ def context_renderer(
 ) -> Callable[[str], str]:
     """Build one query's deterministic ``context -> rendered prompt`` function.
 
-    :func:`token_matched_noise_prompt` needs the rendering as a reusable
-    callable. ``template`` defaults to ``prompter.template``.
+    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` needs
+    the rendering as a reusable callable. ``template`` defaults to
+    ``prompter.template``.
     """
     resolved: string.Template = template if template is not None else prompter.template
 

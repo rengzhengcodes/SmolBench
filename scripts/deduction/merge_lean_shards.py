@@ -1,4 +1,4 @@
-"""Merge a sharded deduction lane's run directories into the canonical run.
+r"""Merge a sharded deduction lane's run directories into the canonical run.
 
 ``run_study.py`` can run a lane as N theorem-stride shards, each writing a
 NON-canonical ``runs/scaling_<key>_shard<i>of<n>`` under ``--no-s3``: shard
@@ -10,7 +10,8 @@ written; see the per-gate messages in ``merge_shards``.
 
 Run from the repo root after the shard drivers have exited::
 
-    .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 --spool
+    .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 \
+        --expect-cells <N> --expect-sanity <N> --spool
 """
 
 import argparse

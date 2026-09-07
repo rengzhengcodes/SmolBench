@@ -55,8 +55,8 @@ class ReplicateHarness:
     #: re-collected and re-logged under a fresh ``run_ts``. Forcing is
     #: PER-SEED: it re-collects ALL of that seed's info arms in one pooled
     #: call, never just one arm. `run_replicates` supersedes every existing
-    #: run for a forced address before collecting its replacement (see that
-    #: method's Notes), so the re-run is what every reader returns.
+    #: run for a forced address before collecting its replacement, so the
+    #: re-run is what every reader returns.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property

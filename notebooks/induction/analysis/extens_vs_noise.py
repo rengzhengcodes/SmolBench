@@ -5,8 +5,8 @@ under the model's own tokenizer), isolating whether the tokens carry information
 they are merely long. Whitespace padding breaks the output contract in some models, so lanes
 are bucketed by measured non-compliance: INFORMATION (both arms well-formed, enumerated
 evidence really is harder to induce at equal length), COLLAPSE (noise arm broken, so
-extens > noise is forced, not evidence about information), "extens degraded", or "unmeasured"
--- no lane is classified by default.
+extens > noise is forced, not evidence about information), or "extens degraded" -- no lane
+is classified by default.
 
 PRIMARY p is the exact seed-level sign-flip test: the 30 seeds are the independent unit, since
 item-level McNemar (kept as a descriptive column) would treat each seed's 9 harmonic items,
@@ -45,13 +45,7 @@ from significance_report import (  # noqa: E402
 
 
 def mechanism(nc_e: float, nc_n: float) -> str:
-    """Classify which of the two mechanisms a lane's contrast can speak to.
-
-    Returns "unmeasured" when either rate is NaN: NaN fails every `>=` below, so without this
-    check a missing census cell would fall through to "information", the affirmative claim.
-    """
-    if np.isnan(nc_e) or np.isnan(nc_n):
-        return "unmeasured"        # no census cell: evidence of nothing
+    """Classify which of the two mechanisms a lane's contrast can speak to."""
     if nc_n >= COLLAPSE_THRESHOLD:
         return "COLLAPSE"          # noise arm broken: extens-higher is forced
     if nc_e >= COLLAPSE_THRESHOLD:
@@ -85,8 +79,8 @@ def main() -> None:
     census = compliance_census(compliance)
 
     def nc(key) -> float:
-        cell = census.get(key)
-        return float("nan") if cell is None else cell["rate"]
+        # Indexed, not `.get`: `aligned` above already exits on a cell with no marks.
+        return census[key]["rate"]
 
     # Computed once over the full m=210 family, not recomputed for these 21: signflip_exact_p
     # is an exact randomization test, so the 210-pass already has every number the 21-row table
@@ -233,15 +227,6 @@ def main() -> None:
             print(f"  => direction among the significant ones: {up} "
                   f"noise-higher, {down} extens-higher, "
                   f"{len(sel_sig) - up - down} tied.")
-
-    # Unmeasured lanes get their own section rather than vanishing: a missing census cell is a
-    # sync problem, not a mechanism verdict.
-    unmeasured = [r for r in rows if r["mech"] == "unmeasured"]
-    if unmeasured:
-        print(f"\n-- UNMEASURED (no census cell for one or both arms): "
-              f"{len(unmeasured)} lane{'' if len(unmeasured) == 1 else 's'} -- "
-              f"{', '.join(r['model'] for r in unmeasured)}. Fix the sync "
-              "before reading these rows as evidence.")
 
     # ---- the raw direction, unfiltered, because filtering is the hazard ----
     up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])

@@ -18,8 +18,8 @@ LEAN_NB = NOTEBOOKS / "deduction" / "lean_eval.ipynb"
 README = NOTEBOOKS / "deduction" / "README.md"
 
 #: Counts that describe the old, pre-cutoff study only. ``300`` is excluded:
-#: it is the live ``theorems.limit`` in `run_study.build_config` and the live
-#: `runner.EXPECTED_THEOREMS`, so demanding a "pre-cutoff" marker beside it
+#: it is the live ``theorems.limit`` in `run_study.build_config`, so
+#: demanding a "pre-cutoff" marker beside it
 #: would mislabel current configuration as history. 805 (the retired
 #: ``novel_premises``/``val`` pool) and 944 (that pool's rendered cell count)
 #: remain: neither describes anything the post-cutoff corpus produces.

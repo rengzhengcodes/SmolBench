@@ -34,6 +34,8 @@ def test_dump_dumps_load_loads_round_trip(tmp_path):
     marks.dump(out)
     text = out.read_text()
     yaml.safe_load(text)
+    # A python-object tag would force readers onto yaml.unsafe_load.
+    assert "!!python/object" not in text
     assert marks.dumps() == text
     assert Marks.load(out) == Marks.loads(text) == marks
     assert "compliance" in text

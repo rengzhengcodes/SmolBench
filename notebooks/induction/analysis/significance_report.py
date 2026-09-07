@@ -106,17 +106,17 @@ def compliance_census(compliance: dict) -> dict:
 def common_seed_rate(cell: dict, seeds) -> float | None:
     """Non-compliance rate of one census `cell` (from `compliance_census`), restricted to `seeds`.
 
-    Pools the counts before dividing -- ``sum(noncompliant) / sum(assessed)``
-    -- rather than averaging per-seed rates, so a seed with 2 assessed marks
-    does not weigh the same as one with 9. Returns `None`, not 0.0, when the
-    subset has no assessed marks at all, so an unmeasured subset cannot
-    publish as perfectly compliant.
+    Pools the counts before dividing -- ``sum(noncompliant) / sum(marks)`` --
+    rather than averaging per-seed rates, so a seed with 2 marks does not
+    weigh the same as one with 9. Returns `None`, not 0.0, when the subset
+    has no marks at all, so an unmeasured subset cannot publish as perfectly
+    compliant.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
-    assessed = sum(a for _nc, a in counts)
-    if assessed == 0:
+    total = sum(t for _nc, t in counts)
+    if total == 0:
         return None
-    return sum(nc for nc, _a in counts) / assessed
+    return sum(nc for nc, _t in counts) / total
 
 
 def collapse_note(key, census: dict) -> str:
@@ -192,11 +192,8 @@ def main() -> None:
         rows.append(dict(
             label=label, key_a=key_a, key_b=key_b,
             acc_a=a.mean(), acc_b=b.mean(), n=a.size,
-            # The discordance counts are KEPT, under `paired_analysis`'s row
-            # spelling (`b`/`c`), not consumed and dropped. The NOT-significant
-            # section reports how many ceiling pairs have ZERO discordant items
-            # -- a number that was previously asserted as the adjective "many"
-            # precisely because these two counts were thrown away here.
+            # Discordance counts kept under `paired_analysis`'s row spelling (`b`/`c`):
+            # the NOT-significant section counts ceiling pairs with zero discordant items.
             b=nb, c=nc,
             n_seeds=int(np.unique(sidx).size),
             p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
