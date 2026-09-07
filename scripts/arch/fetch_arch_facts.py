@@ -124,9 +124,9 @@ def _fetch(repo: str, filename: str, revision: str) -> Tuple[Optional[Any], Opti
     Returns
     -------
     Tuple[Optional[Any], Optional[str], Optional[str]]
-        ``(payload, resolved_revision, error)``; ``error`` is ``"absent"`` when the repo ships no
-        such file at this revision (not every repo ships a generation_config.json), otherwise the
-        exception string.
+        ``(payload, resolved_revision, error)``; ``error`` is ``"absent"``
+        when the repo ships no such file at this revision (not every repo
+        ships a generation_config.json), otherwise the exception string.
     """
     try:
         path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
@@ -181,8 +181,9 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        None when the sequence doesn't tile (DeepSeek's leading dense layers, Nemotron's irregular
-        hybrid), which sends the caller to the run-length view instead.
+        None when the sequence doesn't tile (DeepSeek's leading dense layers,
+        Nemotron's irregular hybrid), which sends the caller to the run-length
+        view instead.
     """
     n = len(items)
     if n == 0:

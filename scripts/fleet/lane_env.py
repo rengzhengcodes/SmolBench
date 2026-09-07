@@ -166,7 +166,8 @@ def _tier_gpu_pin(tier: str) -> str:
     Raises
     ------
     SystemExit
-        When the hunt list is unmappable or spans more than one GPU count.
+        When the hunt list is unmappable or spans more than one GPU count (never ``assert``,
+        stripped under ``python -O``).
     """
     types = TIER_INSTANCE_TYPES[tier].split(",")
     unmapped = [
@@ -506,7 +507,7 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
     Raises
     ------
     ValueError
-        For a `phase` outside induction/deduction/shutdown.
+        Any `phase` outside induction/deduction/shutdown.
     """
     if phase == "induction":
         return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "induction" / "run_study.py")]

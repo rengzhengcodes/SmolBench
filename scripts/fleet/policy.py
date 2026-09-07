@@ -112,8 +112,8 @@ def reclaim_backoff_seconds(attempt: int) -> float:
     Raises
     ------
     ValueError
-        below 1: a 0-based or negative `attempt` would give a shorter delay than
-        the base (``2 ** -1`` is 0.5), inverting the schedule.
+        When `attempt` is below 1: a 0-based or negative `attempt` would give a shorter delay
+        than the base (``2 ** -1`` is 0.5), inverting the schedule.
     """
     if attempt < 1:
         raise ValueError(f"attempt must be >= 1 (1-based), got {attempt}")

@@ -196,7 +196,7 @@ def terminate_shard_box(shard: _shards.Shard) -> None:
     Parameters
     ----------
     shard : _shards.Shard
-        Completed shard whose instance state file is terminated.
+        Completed shard whose instance is terminated via its state file.
     """
     path = shard.state_file
     index = shard.index

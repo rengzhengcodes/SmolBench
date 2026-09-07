@@ -55,9 +55,8 @@ def iter_deduction_lanes(
 ) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
-    `deduction_prefix` defaults to `runner.spool_prefix()`; ignored when
-    `local` is set. Yields ``""`` for a lane with no ``all_rows.jsonl`` in S3 --
-    itself a finding, not skipped. The bucket is resolved via
+    A lane with no ``all_rows.jsonl`` in S3 yields ``""`` -- itself a finding, not
+    skipped. The bucket is resolved via
     `resolve_results_location` (``SMOLBENCH_RESULTS_S3``, else
     `DEFAULT_RESULTS_BUCKET`) so a redirected results store reaches this
     auditor too.
@@ -67,7 +66,7 @@ def iter_deduction_lanes(
     local : bool
         Whether to read local deduction run directories.
     deduction_prefix : Optional[str], optional
-        S3 prefix containing deduction lane results.
+        Defaults to `runner.spool_prefix()`; ignored when `local` is set.
 
     Yields
     ------

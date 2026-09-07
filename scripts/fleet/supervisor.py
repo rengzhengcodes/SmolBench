@@ -93,7 +93,7 @@ def _tail_log(log_dir: Path, key: str, n: int = 40, *, max_bytes: int = TAIL_MAX
     n : int, optional
         Number of trailing lines to return.
     max_bytes : int, optional
-        Reads at most `max_bytes` from the end of the file, never the whole file.
+        At most this many bytes are read from the end of the file, never the whole file.
 
     Returns
     -------
@@ -230,7 +230,7 @@ def preflight(lanes: Sequence[_lane_env.Lane]) -> dict[str, int]:
     Raises
     ------
     SystemExit
-        Listing every failed lane at once, if any lane failed.
+        If any lane failed, listing every failed lane at once.
     """
     run_study = _lane_env.run_study
     budgets: dict[str, int] = {}
@@ -813,10 +813,9 @@ def _monitor_tick(
 ) -> None:
     """Run one polling pass over every lane: refresh presence, print the table, alert.
 
-    A sweep that raises is logged and skipped, leaving `presence` untouched
-    (a failed sweep tells you nothing);
-    one that returns, even empty, updates `presence` since that is real
-    information (see `_Presence`).
+    A sweep that raises is logged and skipped, leaving `presence` untouched (a failed sweep tells
+    you nothing); one that returns, even empty, updates `presence` since that is real information
+    (see `_Presence`).
 
     Parameters
     ----------
@@ -825,8 +824,8 @@ def _monitor_tick(
     log_dir : Path
         Directory containing lane log files.
     tick : int
-        `tick` is 1-based; the describe sweep runs on tick 1 and every
-        `DESCRIBE_EVERY_N_TICKS`-th tick after.
+        1-based; the describe sweep runs on tick 1 and every
+        ``DESCRIBE_EVERY_N_TICKS``-th tick after.
     presence : _Presence
         Presence state updated by successful describe sweeps.
     """

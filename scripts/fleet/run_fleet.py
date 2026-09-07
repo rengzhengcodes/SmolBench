@@ -104,7 +104,7 @@ def _selected_lanes(raw: str) -> dict[str, _lane_env.Lane]:
     Parameters
     ----------
     raw : str
-        Comma-separated lane keys from ``--lanes``.
+        Comma-separated lane keys from ``--lanes``; empty selects every lane.
 
     Returns
     -------
