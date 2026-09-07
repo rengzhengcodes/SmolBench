@@ -855,7 +855,7 @@ def test_the_state_file_is_rewritten_every_tick(monkeypatch, tmp_path):
 
 
 def test_the_fleet_no_longer_manages_per_lane_state_files():
-    """Three state-file naming schemes used to coexist; now the fleet manages none of it."""
+    """Each lane gets one state file, not two: the deduction phase no longer gets its own spelling."""
     deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert "LEAN_STATE_FILE" not in deduction
     # ...because the driver derives the identical path itself; if the two ever

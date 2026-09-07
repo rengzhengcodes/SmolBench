@@ -35,7 +35,6 @@ everywhere else under `scripts/`, runs under `.venv`.
 
 | File | What it's for |
 | --- | --- |
-| `split_lean_run_into_shards.py` | Splits an unsharded deduction run's outputs into pre-seeded shard run directories, so a lane can be resharded mid-flight. |
 | `merge_lean_shards.py` | Merges a sharded deduction lane's run directories back into the canonical run the verify pass and analysis read. |
 | `lean_verify_rows.py` | The deferred Lean verification pass: replays recorded generation rows against a real Lean/Dojo session and writes real verdicts. |
 

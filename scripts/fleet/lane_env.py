@@ -371,7 +371,10 @@ def lane_env(
     base_env: `None` reads `os.environ`. Returns every `PASSTHROUGH_ENV` key
     present verbatim (missing stays absent) plus the per-lane
     `INFERENCE_PROVIDER`/`EC2_*`/`INDUCTION_*` settings; phase
-    ``"deduction"`` also adds `LEAN_MODEL`/`LEAN_RUN_NAME`.
+    ``"deduction"`` also adds `LEAN_MODEL` and `LEAN_RUN_NAME` =
+    ``scaling_<key>`` -- the run-directory name
+    `supervisor._advance_finished` rebuilds to spool from, so the two must
+    stay equal (a mismatch makes that confirming re-spool a silent no-op).
 
     Reattach contract: both drivers must resolve the same state-file path
     for a lane -- induction from `INDUCTION_STATE_FILE` set below, deduction

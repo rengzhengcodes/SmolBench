@@ -212,8 +212,8 @@ def audit_induction(
     for model in selected:
         tag = roster[model]
         for info in info_types:
-            # Not wrapped in try/except: a real backend error must propagate
-            # (see Raises), never read as an empty seed set.
+            # Not wrapped in try/except: a real backend error must propagate,
+            # never read as an empty seed set.
             landed = set(store.list_seeds(model, tag, info))
             missing = sorted(expected - landed)
             unexpected = sorted(landed - expected)
