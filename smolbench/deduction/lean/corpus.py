@@ -118,6 +118,16 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
 
     ``annotated_tactic`` is nominally an ``[text, premises]`` pair but some
     records give only ``[text]``; both normalize to ``premises == []``.
+
+    Parameters
+    ----------
+    rec : dict
+        Raw split-file JSON record.
+
+    Returns
+    -------
+    BenchmarkTheorem
+        Parsed benchmark theorem.
     """
     tts = []
     for tt in rec["traced_tactics"]:
@@ -151,7 +161,23 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
     Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations); the
     key excludes `data_root()`, so repointing ``SMOLBENCH_LEAN_DATA``
     mid-process keeps serving the first root until `reset_caches` runs.
-    Raises `FileNotFoundError` naming the remedy if the split file is missing.
+
+    Parameters
+    ----------
+    kind : SplitKind, optional
+        Corpus split family.
+    split : Split, optional
+        Corpus partition to load.
+
+    Returns
+    -------
+    list[BenchmarkTheorem]
+        Every theorem in ``<data_root()>/<kind>/<split>.json``, in file order.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the split file is missing, naming the remedy.
     """
     path = data_root() / kind / f"{split}.json"
     if not path.exists():
@@ -167,6 +193,18 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
     """Yield ``load_split(kind, split)``'s traced theorems, in file order.
 
     Skips theorems whose `has_proof` is False (typically term-mode).
+
+    Parameters
+    ----------
+    kind : SplitKind, optional
+        Corpus split family.
+    split : Split, optional
+        Corpus partition to scan.
+
+    Yields
+    ------
+    BenchmarkTheorem
+        Traced theorem in file order.
     """
     for t in load_split(kind, split):
         if t.has_proof:
@@ -286,6 +324,18 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl`` -- beside the
     dataset directory, so these small committed sidecars stay out of the
     gitignored ~700 MB download. Not guaranteed to exist.
+
+    Parameters
+    ----------
+    kind : SplitKind
+        Corpus split family.
+    split : Split
+        Corpus partition.
+
+    Returns
+    -------
+    Path
+        `filter`-generated replay-passing sidecar path.
     """
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
@@ -294,8 +344,24 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
     """Yield theorems recorded ``verdict == "success"`` in the replay sidecar.
 
     Membership comes from `replay_passing_path`; yielded in `load_split` file
-    order. Raises `FileNotFoundError` naming the `filter` command to run if
-    the sidecar is missing.
+    order.
+
+    Parameters
+    ----------
+    kind : SplitKind, optional
+        Corpus split family.
+    split : Split, optional
+        Corpus partition to scan.
+
+    Yields
+    ------
+    BenchmarkTheorem
+        Theorem recorded with ``verdict == "success"`` in the replay sidecar.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the sidecar is missing, naming the `filter` command to run.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():

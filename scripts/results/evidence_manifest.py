@@ -62,8 +62,16 @@ class ResolutionError(FileNotFoundError):
 def _split_reference(relpath: str) -> tuple[str, str | None]:
     """Split a manifest ``relpath`` into its on-disk path and optional tarball member.
 
-    Splits ``tarball:<tarball>!<member>`` on the FIRST ``!``, since a member
-    may contain one but a tarball path effectively cannot.
+    Parameters
+    ----------
+    relpath : str
+        Splits ``tarball:<tarball>!<member>`` on the FIRST ``!``, since a member
+        may contain one but a tarball path effectively cannot.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        on-disk path and optional tarball member
     """
     if not relpath.startswith(TARBALL_PREFIX):
         return relpath, None
@@ -79,8 +87,16 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
 def _candidates(relpath: str) -> list[str]:
     """Return the path strings a citation may be matched against.
 
-    A tarball reference offers both the archive's own path and the member
-    path, so a writeup can cite either.
+    Parameters
+    ----------
+    relpath : str
+        A tarball reference offers both the archive's own path and the member
+        path, so a writeup can cite either.
+
+    Returns
+    -------
+    list[str]
+        path strings that may cover a citation
     """
     path, member = _split_reference(relpath)
     return [path] if member is None else [path, member]
@@ -93,6 +109,18 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
     Streams a tarball member via ``extractfile`` rather than
     ``extract``/``extractall``, so the filesystem stays byte-for-byte as
     found.
+
+    Parameters
+    ----------
+    manifest_dir : Path
+        directory containing the manifest and referenced artifacts
+    relpath : str
+        manifest reference to open
+
+    Yields
+    ------
+    IO[bytes]
+        binary stream for the reference
     """
     tar_relpath, member = _split_reference(relpath)
     target = manifest_dir / tar_relpath
@@ -129,8 +157,24 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
 def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     """Stream a reference and return its sha256 as 64 lowercase hex chars.
 
-    Reads in :data:`CHUNK_BYTES` blocks; raises `ResolutionError` if the
-    reference does not resolve.
+    Reads in :data:`CHUNK_BYTES` blocks.
+
+    Parameters
+    ----------
+    manifest_dir : Path
+        Directory containing the manifest and referenced artifacts.
+    relpath : str
+        Manifest reference to hash.
+
+    Returns
+    -------
+    str
+        Sha256 as 64 lowercase hex chars.
+
+    Raises
+    ------
+    ResolutionError
+        If the reference does not resolve.
     """
     digest = hashlib.sha256()
     with _open_reference(manifest_dir, relpath) as stream:
@@ -144,10 +188,20 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
-    Returns sorted, deduplicated tokens verbatim: backtick-quoted,
-    whitespace-free, ending in a :data:`CITED_SUFFIXES` suffix. Kept as a
+    Kept as a
     hard rule rather than a heuristic -- a miss only costs one citation
     going ungated.
+
+    Parameters
+    ----------
+    text : str
+        writeup text to scan
+
+    Returns
+    -------
+    list[str]
+        sorted, deduplicated tokens verbatim: backtick-quoted, whitespace-free,
+        ending in a :data:`CITED_SUFFIXES` suffix.
     """
     found: set[str] = set()
     for raw in _BACKTICKED.findall(text):
@@ -163,6 +217,18 @@ def covers(cited: str, entry_path: str) -> bool:
     """Is ``cited`` a whole-path-component suffix of ``entry_path``?
 
     Asymmetric: a longer citation is never covered by a shorter entry path.
+
+    Parameters
+    ----------
+    cited : str
+        citation path to check
+    entry_path : str
+        manifest entry path that may cover the citation
+
+    Returns
+    -------
+    bool
+        whether the entry path covers the citation
     """
     cited_parts = cited.split("/")
     entry_parts = entry_path.split("/")
@@ -185,6 +251,24 @@ def build(manifest_dir: str | Path,
     rebuilds are byte-identical. Coverage is NOT checked here; only
     :func:`verify` judges a writeup's claims. A supplied ``sha256`` is
     checked against the computed digest, never trusted.
+
+    Parameters
+    ----------
+    manifest_dir : str | Path
+        directory in which to build the manifest
+    entries : Iterable[Mapping[str, Any]]
+        artifact entries to hash
+    allowlist : Iterable[Mapping[str, Any]], optional
+        citation exceptions with names and reasons
+    note : str | None, optional
+        manifest note
+    write : bool, optional
+        whether to write ``EVIDENCE.json`` to the manifest directory
+
+    Returns
+    -------
+    dict[str, Any]
+        constructed manifest data
     """
     mdir = Path(manifest_dir)
 
@@ -271,6 +355,20 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
 
     Every check runs before returning, so a hand-edited entry reports all
     its defects in one pass, not just the first.
+
+    Parameters
+    ----------
+    index : int
+        entry position in the manifest
+    entry : Any
+        raw manifest entry to validate
+    failures : list[str]
+        defects to append
+
+    Returns
+    -------
+    bool
+        whether the entry is schema-valid
     """
     if not isinstance(entry, Mapping):
         failures.append(f"entry {index}: not an object: {entry!r}")
@@ -316,6 +414,18 @@ def _check_allowlist_schema(raw_allowlist: Any,
 
     An entry missing ``reason`` is reported AND dropped -- keeping it would
     let deleting the justification silently pass a coverage failure.
+
+    Parameters
+    ----------
+    raw_allowlist : Any
+        raw allowlist from the manifest
+    failures : list[str]
+        defects to append
+
+    Returns
+    -------
+    list[dict]
+        usable allowlist entries
     """
     if not isinstance(raw_allowlist, list):
         failures.append(f"allowlist: not a list: {raw_allowlist!r}")
@@ -348,6 +458,16 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
     every defect rather than raising -- a drifted writeup's sha256 mismatch
     still gets its citations scanned -- except a missing manifest or bad
     JSON, which propagate since there's no partial census to report.
+
+    Parameters
+    ----------
+    manifest_dir : str | Path
+        directory containing ``EVIDENCE.json``
+
+    Returns
+    -------
+    VerifyResult
+        verification outcome and failure census
     """
     mdir = Path(manifest_dir)
     manifest_path = mdir / MANIFEST_NAME
@@ -422,6 +542,16 @@ def find_manifests(root: Path | None = None) -> list[Path]:
 
     Searches at any depth below a results directory, so a package under
     ``results/runs/<name>/`` counts too.
+
+    Parameters
+    ----------
+    root : Path | None, optional
+        root directory to search
+
+    Returns
+    -------
+    list[Path]
+        manifest paths in sorted order
     """
     base = REPO if root is None else Path(root)
     return sorted(base.glob(f"notebooks/*/results/**/{MANIFEST_NAME}"))
@@ -442,6 +572,16 @@ def _census_lines(result: VerifyResult) -> list[str]:
 
     Excludes the FAIL lines, which the caller prints unindented so they grep
     cleanly out of a long run.
+
+    Parameters
+    ----------
+    result : VerifyResult
+        verification outcome to render
+
+    Returns
+    -------
+    list[str]
+        human-readable census lines
     """
     lines = [f"{_display_dir(result.manifest_dir)}: {result.n_entries} entries"]
     if result.roles:
@@ -460,7 +600,15 @@ def _census_lines(result: VerifyResult) -> list[str]:
 def _cmd_verify(dirs: Sequence[str]) -> int:
     """Verify ``dirs``, or every :func:`find_manifests` manifest when empty.
 
-    Returns 0 if every manifest verified, 1 otherwise.
+    Parameters
+    ----------
+    dirs : Sequence[str]
+        manifest directories to verify
+
+    Returns
+    -------
+    int
+        0 if every manifest verified, 1 otherwise.
     """
     targets = ([Path(d) for d in dirs] if dirs
                else [p.parent for p in find_manifests()])
@@ -498,6 +646,18 @@ def _cmd_build(manifest_dir: str, spec_path: str) -> int:
 
     The spec carries no hashes -- they're computed here, so it can be
     hand-written and re-run after the evidence legitimately changes.
+
+    Parameters
+    ----------
+    manifest_dir : str
+        directory in which to write the manifest
+    spec_path : str
+        path to the JSON build specification
+
+    Returns
+    -------
+    int
+        command exit status
     """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     manifest = build(manifest_dir,

@@ -97,6 +97,20 @@ class NullVerifier:
 
         Unlike `verify.open_at_step`, never raises `ValueError` for out-of-range
         `k` -- there is no prefix to replay.
+
+        Parameters
+        ----------
+        bt : BenchmarkTheorem
+            The theorem whose proof step would be opened.
+        k : int
+            Proof-step index.
+        timeout : int, optional
+            Timeout accepted for API compatibility.
+
+        Yields
+        ------
+        tuple[None, None]
+            ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
         """
         yield None, None
 
@@ -111,7 +125,22 @@ class NullVerifier:
     ) -> NullProofResult:
         """One-shot `try_tail` variant, for the `run-cell` CLI's session-per-call path.
 
-        Returns ``verdict="unverified"``; `k` is never range-checked, since no
-        session is opened.
+        `k` is never range-checked, since no session is opened.
+
+        Parameters
+        ----------
+        bt : BenchmarkTheorem
+            The theorem whose proof tail is reported.
+        k : int
+            Proof-step index.
+        tail : str
+            Candidate tactic tail.
+        timeout : int, optional
+            Timeout accepted for API compatibility.
+
+        Returns
+        -------
+        NullProofResult
+            ``verdict="unverified"``.
         """
         return NullProofResult(theorem=bt.full_name, verdict="unverified", tail_tried=tail)

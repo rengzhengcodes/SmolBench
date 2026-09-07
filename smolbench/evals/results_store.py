@@ -69,9 +69,23 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     or writer and reader drift and orphan history under a prefix neither finds. `uri` is not
     stripped here; `resolve_store` strips its env value first, so whitespace around the URI
     stays distinct from whitespace inside it. `base_prefix` is ``""`` for a bucket-only URI,
-    never carrying a leading or trailing ``"/"``. Raises ValueError on a missing ``"s3://"``
-    scheme or an empty/whitespace-bearing segment -- a name S3 never accepts, which would give a
-    store that can never find what it writes.
+    never carrying a leading or trailing ``"/"``.
+
+    Parameters
+    ----------
+    uri : str
+        S3 URI to parse.
+
+    Returns
+    -------
+    tuple[str, str]
+        Bucket and base prefix.
+
+    Raises
+    ------
+    ValueError
+        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment -- a name S3.
+        never accepts, which would give a store that can never find what it writes.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
@@ -178,6 +192,16 @@ def format_run_ts(when: datetime) -> str:
     inspected and the ``"Z"`` is a literal, so a naive or non-UTC datetime is silently
     mislabeled. Returns exactly 16 characters (``"20260810T193000Z"``); the fixed width makes
     lexicographic order equal chronological order for earliest-wins reads.
+
+    Parameters
+    ----------
+    when : datetime
+        UTC datetime to format.
+
+    Returns
+    -------
+    str
+        Formatted UTC timestamp.
     """
     return when.strftime("%Y%m%dT%H%M%SZ")
 
@@ -189,8 +213,20 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     caller, has already confirmed that); raises ValueError via `Path.relative_to` otherwise.
     Repo-relative ``notebooks/<nb>/results`` gives ``<nb>``; any other shape falls back to its
     full repo-relative POSIX path, except ``repo_root()`` itself, which gives ``""``, never
-    ``"."``. A non-empty `prefix` folds in as a sub-level with exactly one trailing ``"_"``
-    stripped: ``"induction/one_hop"``.
+    ``"."``.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Results directory under ``repo_root()``.
+    prefix : str, optional
+        Non-empty `prefix` folds in as a sub-level with exactly one trailing ``"_"`` stripped:.
+        ``"induction/one_hop"``.
+
+    Returns
+    -------
+    str
+        Experiment segment for an S3 log key.
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -248,6 +284,16 @@ class ResultsStore(abc.ABC):
         keeps a resumed run from re-billing work that was already collected and only later
         retired. Backend errors other than "not found" propagate rather than read as False: a
         credentials failure isn't "not run yet".
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to check.
+
+        Returns
+        -------
+        bool
+            whether a replicate result is already stored.
         """
 
     @abc.abstractmethod
@@ -258,6 +304,10 @@ class ResultsStore(abc.ABC):
 
         Parameters
         ----------
+        marks : Marks
+            replicate result to persist.
+        addr : ReplicateAddress
+            destination replicate address.
         run_ts : datetime
             collection instant; `ReplicateHarness.run_replicates` captures :func:`utcnow`
             once per seed so a pooled `evaluate()` is one run.
@@ -267,15 +317,25 @@ class ResultsStore(abc.ABC):
     def load_marks(self, addr: ReplicateAddress) -> Marks:
         """Deserialize the replicate result stored/logged at `addr`.
 
-        Returns the single local file, or on S3 the earliest logged run. Raises
-        FileNotFoundError when nothing is stored/logged for `addr` (S3 names the missing prefix).
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to load.
+
+        Returns
+        -------
+        Marks
+            the single local file, or on S3 the earliest logged run.
+
+        Raises
+        ------
+        FileNotFoundError
+            when nothing is stored/logged for `addr` (S3 names the missing prefix).
         """
 
     @abc.abstractmethod
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
         """List every seed with at least one stored/logged replicate.
-        Returns a sorted, distinct list (a seed re-collected many times counts once); empty
-        when nothing is stored yet, which is not an error.
 
         Parameters
         ----------
@@ -283,6 +343,14 @@ class ResultsStore(abc.ABC):
             the S3 key dimension; None yields [].
         tag : str
             the local key dimension.
+        info : str
+            condition information dimension.
+
+        Returns
+        -------
+        list[int]
+            a sorted, distinct list (a seed re-collected many times counts once); empty when
+            nothing is stored yet, which is not an error.
         """
 
     @abc.abstractmethod
@@ -295,14 +363,19 @@ class ResultsStore(abc.ABC):
         precisely so an append-only log never has an object edited or deleted to void it; the
         call shape is identical on both backends so a caller never branches.
 
-        Returns how many runs were retired; 0 (nothing was stored/logged at `addr`) is normal,
-        not an error.
-
         Parameters
         ----------
+        addr : ReplicateAddress
+            address whose surviving runs are retired.
         reason : str
             freeform operator-facing text naming why the retirement happened; recorded in
             each S3 marker's body, only logged on the local store (nowhere durable to put it).
+
+        Returns
+        -------
+        int
+            how many runs were retired; 0 (nothing was stored/logged at `addr`) is normal, not
+            an error.
         """
 
     def regrade(
@@ -327,6 +400,8 @@ class ResultsStore(abc.ABC):
             replacement that doesn't name what it replaced would defeat the point of a regrade
             in a log where nothing can be rewritten. Raises ValueError before touching the store
             if it's None.
+        addr : ReplicateAddress
+            Address of the run to replace.
         run_ts : datetime
             stamp for the new run; forwarded to :meth:`dump_marks`.
         reason : str
@@ -373,19 +448,50 @@ class LocalResultsStore(ResultsStore):
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
 
     def exists(self, addr: ReplicateAddress) -> bool:
-        """See ``ResultsStore.exists``. Backed by ``Path.exists``."""
+        """See ``ResultsStore.exists``. Backed by ``Path.exists``.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to check.
+
+        Returns
+        -------
+        bool
+            whether the local result file exists.
+        """
         return self._path(addr).exists()
 
     def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
         """See ``ResultsStore.dump_marks``. Ignores `run_ts`; mkdirs its own
         parents, so one call is a complete unit of work on both backends.
+
+        Parameters
+        ----------
+        marks : Marks
+            replicate result to persist.
+        addr : ReplicateAddress
+            destination replicate address.
+        run_ts : datetime
+            collection timestamp ignored by the local store.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
         marks.dump(path)
 
     def load_marks(self, addr: ReplicateAddress) -> Marks:
-        """See ``ResultsStore.load_marks``. Backed by ``Marks.load``."""
+        """See ``ResultsStore.load_marks``. Backed by ``Marks.load``.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to load.
+
+        Returns
+        -------
+        Marks
+            deserialized local result.
+        """
         return Marks.load(self._path(addr))
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
@@ -395,6 +501,20 @@ class LocalResultsStore(ResultsStore):
         directory globs to nothing rather than raising) -- which is also how a superseded
         ``rep_<seed>.SUPERSEDED-<run_ts>.yaml`` drops out with no special-casing, since its
         ``"rep_"``-stripped stem fails the same `int()` parse.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            ignored by the local store.
+        tag : str
+            local key dimension.
+        info : str
+            condition information dimension.
+
+        Returns
+        -------
+        list[int]
+            sorted seed values from local replicate filenames.
         """
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
@@ -414,16 +534,23 @@ class LocalResultsStore(ResultsStore):
         bytes survive on disk (an operator can restore them by renaming back); nothing reads
         them again on its own.
 
-        Returns the renamed file's new path, or None when nothing was stored at `addr` (a no-op,
-        not an error). Backed by ``os.replace``; two supersedes of the same address within the
+        Backed by ``os.replace``; two supersedes of the same address within the
         same second produce the identical name, and the second silently overwrites the first
         retired file -- the same one-file-per-address property the live path already has.
 
         Parameters
         ----------
+        addr : ReplicateAddress
+            Address of the stored run to retire.
         reason : str
             logged only, at INFO level -- unlike the S3 marker, the local layout has no
             per-file side channel to persist it in.
+
+        Returns
+        -------
+        Optional[Path]
+            Renamed file's new path, or None when nothing was stored at `addr` (a no-op, not an
+            error).
         """
         path = self._path(addr)
         if not path.exists():
@@ -441,6 +568,18 @@ class LocalResultsStore(ResultsStore):
         The local layout stores at most ONE run per address, so this is
         :meth:`supersede` recast as a count: ``1`` when something was there
         to retire, ``0`` when nothing was.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            address whose local run is retired.
+        reason : str
+            operator-facing retirement reason.
+
+        Returns
+        -------
+        int
+            number of retired local runs.
         """
         return 1 if self.supersede(addr, reason) is not None else 0
 
@@ -458,6 +597,16 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     writers -- so it touches no filesystem. Returns None unless `rel` matches that shape
     (callers skip such keys as "not one of ours"); the stem splits on the first ``"--"``,
     unambiguous since no `info` has one.
+
+    Parameters
+    ----------
+    rel : str
+        Key remainder with its leading log prefix removed.
+
+    Returns
+    -------
+    Optional[tuple[int, str, str]]
+        Parsed seed, info, and run timestamp, or None.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -550,6 +699,16 @@ class S3ResultsStore(ResultsStore):
         """See ``ResultsStore.exists``. Backed by ``list_objects_v2(MaxKeys=1)``, not
         ``head_object``, since it never raises for "not found" (200 with empty Contents), so a
         credentials failure still propagates. `addr.model is None` -> False.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to check.
+
+        Returns
+        -------
+        bool
+            whether any logged run exists.
         """
         if addr.model is None:
             return False
@@ -565,6 +724,15 @@ class S3ResultsStore(ResultsStore):
         `run_ts`; raises ValueError for `model=None` before the call, so a refused write leaves
         no object -- the S3 log is keyed by model, and a model-less address must never be
         written into a log where a bad object can't later be corrected, only deleted by hand.
+
+        Parameters
+        ----------
+        marks : Marks
+            replicate result to persist.
+        addr : ReplicateAddress
+            destination replicate address.
+        run_ts : datetime
+            timestamp embedded in the logged key.
         """
         if addr.model is None:
             raise ValueError(
@@ -584,11 +752,21 @@ class S3ResultsStore(ResultsStore):
     def _list_run_partition(self, addr: ReplicateAddress) -> "tuple[list[str], int]":
         """One paginated listing over `addr`'s ``<info>--`` prefix, partitioned.
 
-        Returns ``(survivor_run_ts, marker_count)``: survivors sorted ascending (lexicographic
-        order equals chronological order), marker_count the number of ``.superseded`` keys seen
-        regardless of whether their run is still present. Shared by :meth:`list_runs` and
-        :meth:`load_marks` (which also needs the marker count for its FileNotFoundError message)
-        so the survival rule lives in one traversal instead of two.
+        Shared by :meth:`list_runs` and :meth:`load_marks` (which also needs the marker count
+        for its FileNotFoundError message) so the survival rule lives in one traversal instead
+        of two.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            Replicate address whose run partition is listed.
+
+        Returns
+        -------
+        tuple[list[str], int]
+            ``(survivor_run_ts, marker_count)``: survivors sorted ascending (lexicographic
+            order equals chronological order), marker_count the number of ``.superseded`` keys
+            seen regardless of whether their run is still present.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -613,6 +791,16 @@ class S3ResultsStore(ResultsStore):
         definition is written down, shared by :meth:`load_marks` (takes the earliest) and
         :meth:`supersede_all` (retires every one). Empty covers both "nothing was ever logged"
         and "everything logged was superseded"; :meth:`load_marks` is what tells those apart.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address whose surviving runs are listed.
+
+        Returns
+        -------
+        list[str]
+            surviving run timestamps in ascending order.
         """
         survivors, _marker_count = self._list_run_partition(addr)
         return survivors
@@ -624,6 +812,16 @@ class S3ResultsStore(ResultsStore):
         the reason is that every logged run was superseded rather than never logged, so an
         operator can tell "never collected" from "retired and not yet replaced" from the message
         alone.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            replicate address to load.
+
+        Returns
+        -------
+        Marks
+            deserialized earliest surviving logged result.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         survivors, marker_count = self._list_run_partition(addr)
@@ -654,6 +852,8 @@ class S3ResultsStore(ResultsStore):
 
         Parameters
         ----------
+        addr : ReplicateAddress
+            Address of the logged run to retire.
         run_ts : str
             the fixed-width stamp exactly as it appears in the run's key, not a `datetime`;
             this method never lists to find the run, it trusts the caller's stamp and writes the
@@ -661,6 +861,11 @@ class S3ResultsStore(ResultsStore):
         reason : str
             freeform operator-facing text stored in the marker body; not interpreted by this
             module.
+
+        Returns
+        -------
+        str
+            Key of the written supersession marker.
         """
         if addr.model is None:
             raise ValueError(
@@ -677,6 +882,18 @@ class S3ResultsStore(ResultsStore):
         """See ``ResultsStore.supersede_all``. Supersedes every ``list_runs`` entry.
 
         Idempotent: a second call finds no survivors left and writes nothing new, returning 0.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            address whose surviving runs are retired.
+        reason : str
+            operator-facing retirement reason.
+
+        Returns
+        -------
+        int
+            number of retired logged runs.
         """
         survivors = self.list_runs(addr)
         for run_ts in survivors:
@@ -692,6 +909,20 @@ class S3ResultsStore(ResultsStore):
         parse and is skipped the same way as any other key that isn't one of ours -- a seed
         whose only logged run was superseded still counts, since the run object itself was never
         deleted.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            S3 model key dimension; None returns an empty list.
+        tag : str
+            Unused on this backend.
+        info : str
+            condition information dimension.
+
+        Returns
+        -------
+        list[int]
+            sorted seed values with logged entries for `info`.
         """
         if model is None:
             return []
@@ -734,10 +965,15 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
-        need not exist -- resolved non-strictly, since an S3-first run may never create
+        Need not exist -- resolved non-strictly, since an S3-first run may never create.
         its local results directory.
     prefix : str, optional
-        becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+        Becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+
+    Returns
+    -------
+    ResultsStore
+        Local or S3 results store for the experiment.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -777,9 +1013,17 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
 def _etag_md5(etag: Optional[str]) -> Optional[str]:
     """Extract a whole-object MD5 hex digest from an S3 ``ETag`` value.
 
-    Returns the unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None
-    for missing/falsy or multipart (``<hex>-<partcount>``, never an MD5 of the bytes), which a
-    caller must treat as "assume different" (download).
+    Parameters
+    ----------
+    etag : Optional[str]
+        S3 ETag value.
+
+    Returns
+    -------
+    Optional[str]
+        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None for.
+        missing/falsy or multipart (``<hex>-<partcount>``, never an MD5 of the bytes), which a
+        caller must treat as "assume different" (download).
     """
     if not etag:
         return None
@@ -793,9 +1037,27 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     """Join `rel` under the already-resolved `resolved_dir`, refusing traversal.
 
     `rel` is validated rather than trusted since its components trace back to an S3 key, and
-    this module's writers aren't the only thing that can put an object under a prefix. Raises
-    ValueError naming `key` when the destination equals or lies outside `resolved_dir`, before
-    the caller mkdirs or writes, so a refused key leaves no trace.
+    this module's writers aren't the only thing that can put an object under a prefix.
+
+    Parameters
+    ----------
+    resolved_dir : Path
+        Resolved local results directory.
+    rel : str
+        Destination path relative to `resolved_dir`.
+    key : str
+        S3 key being downloaded.
+
+    Returns
+    -------
+    Path
+        Validated destination path.
+
+    Raises
+    ------
+    ValueError
+        Naming `key` when the destination equals or lies outside `resolved_dir`, before the.
+        caller mkdirs or writes, so a refused key leaves no trace.
     """
     candidate = (resolved_dir / rel).resolve()
     if candidate == resolved_dir or not candidate.is_relative_to(resolved_dir):
@@ -814,7 +1076,6 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     One-way and destructive: overwrites local files and never touches the log, so a local-only
     regrade is silently destroyed.
 
-    Returns the count of objects actually downloaded, excluding those skipped as identical.
     Raises RuntimeError if `results_dir` resolves to a `LocalResultsStore` (no log to sync), or
     ValueError if a destination resolves outside `results_dir`.
 
@@ -831,11 +1092,18 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
 
     Parameters
     ----------
+    results_dir : Path
+        Local directory receiving downloaded logs.
     tags : Mapping[str, str]
-        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
+        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't.
         supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
     prefix : str, optional
-        forwarded to :func:`experiment_name`, and used in each local directory name.
+        Forwarded to :func:`experiment_name`, and used in each local directory name.
+
+    Returns
+    -------
+    int
+        Count of objects downloaded.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):
@@ -942,6 +1210,16 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     this CLI re-types the mapping as repeated ``--tag MODEL=TAG`` flags, each split on the first
     ``"="`` (later ``"="`` are literal; a repeated model silently overwrites). Prints one summary
     line and returns 0.
+
+    Parameters
+    ----------
+    argv : Sequence[str] | None, optional
+        Command-line arguments passed to the parser.
+
+    Returns
+    -------
+    int
+        CLI status code.
     """
     import argparse
 

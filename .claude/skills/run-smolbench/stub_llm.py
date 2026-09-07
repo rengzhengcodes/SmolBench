@@ -91,6 +91,18 @@ def make_server(stub: str, answer: str) -> StubServer:
     back to the request's model when the body omits one, so `rsp.model` (and
     a row's `api_model`) is still correct; `test_lean_runner.py` already
     relies on that same fallback with model-less `chat_completion` bodies.
+
+    Parameters
+    ----------
+    stub : str
+        Label written with each logged request.
+    answer : str
+        Response body for every completion.
+
+    Returns
+    -------
+    StubServer
+        Configured logging server.
     """
     server = StubServer()
     server.requests = _LoggingRequestList(stub, REQLOG)

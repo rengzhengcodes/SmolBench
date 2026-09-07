@@ -82,6 +82,16 @@ def lookup(full_name: str) -> Premise | None:
     Absent means declared outside the traced repo, or dropped as a duplicate
     by `_index`. Callers treat None as "premise unavailable", not an error --
     `_render_hint_parts` renders a placeholder instead of raising.
+
+    Parameters
+    ----------
+    full_name : str
+        Fully-qualified premise name.
+
+    Returns
+    -------
+    Premise | None
+        Matching premise, or None when absent.
     """
     return _index().get(full_name)
 
@@ -93,6 +103,16 @@ def signature(p: Premise) -> str:
     syntax like ``@[to_additive (attr := simp) "..."]`` puts a ``:=`` inside the
     attribute, so a naive split would chop the declaration in half. Many mathlib
     theorems have no top-level ``:=``; those return the full `code`.
+
+    Parameters
+    ----------
+    p : Premise
+        Premise whose source text is parsed.
+
+    Returns
+    -------
+    str
+        Signature text with trailing whitespace removed.
     """
     s = p.code
     depth = 0
@@ -165,6 +185,16 @@ def _resolve_source(file_path: str) -> Path | None:
     """Resolve a corpus `file_path` against the traced repo root; None if absent.
 
     Also ``None`` when there is no traced repo at all (`_traced_root`).
+
+    Parameters
+    ----------
+    file_path : str
+        Corpus-relative source path.
+
+    Returns
+    -------
+    Path | None
+        Resolved source path, or None if absent.
     """
     root = _traced_root()
     if root is None:
@@ -180,8 +210,23 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
     Reads `file_path` (corpus-relative, via `_resolve_source`) from 1-indexed
     `start_line` and stops at the first of: the next column-0 line matching a
     top-level keyword (theorem/def/...), searched from 1-indexed `end_line`
-    onward; `max_lines` lines consumed; or end of file. Returns the slice
-    rstripped, or ``""`` if the source file is not found.
+    onward; `max_lines` lines consumed; or end of file.
+
+    Parameters
+    ----------
+    file_path : str
+        Corpus-relative source path.
+    start_line : int
+        1-indexed declaration start line.
+    end_line : int
+        1-indexed declaration end line.
+    max_lines : int, optional
+        Maximum number of lines to consume.
+
+    Returns
+    -------
+    str
+        The slice rstripped, or ``""`` if the source file is not found.
     """
     src = _resolve_source(file_path)
     if src is None:
@@ -203,6 +248,16 @@ def body_with_proof(p: Premise) -> str:
     """The full declaration including any proof body, via `slice_full_decl`.
 
     Falls back to `body(p)` when the source file is not accessible.
+
+    Parameters
+    ----------
+    p : Premise
+        Premise whose declaration is retrieved.
+
+    Returns
+    -------
+    str
+        Full declaration text, or the corpus source fallback.
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
@@ -219,6 +274,16 @@ def has_full_source(p: Premise) -> bool:
     depend on it always returning usable text, never a bool. Calling
     `slice_full_decl` again here is cheap: it's `lru_cache`d on
     ``(file_path, start, end)``.
+
+    Parameters
+    ----------
+    p : Premise
+        Premise whose source availability is checked.
+
+    Returns
+    -------
+    bool
+        Whether `body_with_proof(p)` returned a real traced-repo slice.
     """
     return bool(slice_full_decl(p.file_path, p.start[0], p.end[0]))
 
@@ -245,6 +310,21 @@ def _validate_lean_noise(entries: "frozenset[str]") -> "frozenset[str]":
     Refusing them at import keeps that cleanup from regressing now that the
     list is edited as data rather than as code. Raises `ValueError` naming
     every offender.
+
+    Parameters
+    ----------
+    entries : frozenset[str]
+        Tokens configured as Lean noise.
+
+    Returns
+    -------
+    frozenset[str]
+        `entries` unchanged.
+
+    Raises
+    ------
+    ValueError
+        If any entry could never match a token.
     """
     dead = sorted(e for e in entries if len(e) <= 1 or not _IDENT_RE.fullmatch(e))
     if dead:
@@ -292,8 +372,18 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 
     Resolves each identifier-like token against the premise index by exact
     full-name match, or by short-name match when unambiguous, filtering out
-    `_LEAN_NOISE`. Returns a tuple so the result stays hashable and
-    lru-cacheable; empty if `full_name` is unknown or references nothing.
+    `_LEAN_NOISE`. Returned as a tuple so the result stays hashable and
+    lru-cacheable.
+
+    Parameters
+    ----------
+    full_name : str
+        Fully-qualified premise name.
+
+    Returns
+    -------
+    tuple[Premise, ...]
+        Referenced premises, empty if `full_name` is unknown or references nothing.
     """
     p = lookup(full_name)
     if p is None:
@@ -337,6 +427,20 @@ def premise_dep_closure(
     order (within a hop: frontier order, then per-premise reference order),
     deduped at first-discovered hop, so the `max_premises` cut always drops
     the deepest, least-relevant tail.
+
+    Parameters
+    ----------
+    seeds : list[Premise]
+        Starting premises, excluded from the result.
+    depth : int
+        Maximum reference-hop depth.
+    max_premises : int, optional
+        Maximum number of premises to return.
+
+    Returns
+    -------
+    list[Premise]
+        BFS-ordered referenced-premise closure.
     """
     if depth <= 0 or not seeds:
         return []

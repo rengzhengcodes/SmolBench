@@ -57,13 +57,24 @@ def load_rungs(path: Path) -> dict:
     be graded at R=1 -- this prints one stderr warning per call naming the
     dropped-row count when that happens.
 
-    Returns ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``; a cell
-    with no measurable row stays absent, never scored 0.
+    Parameters
+    ----------
+    path : Path
+        Model's ``verified_rows.jsonl`` file.
 
-    Raises `SystemExit` from `rows_source.reject_superseded`, or from
-    `reject_unverified_verdicts` (which runs at ingestion, before the rung
-    filter, so an ungraded row in a rung this comparison never reads still
-    raises).
+    Returns
+    -------
+    dict
+        ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``; a cell with
+        no measurable row stays absent, never scored 0.
+
+    Raises
+    ------
+    SystemExit
+        From `rows_source.reject_superseded`, or from
+        `reject_unverified_verdicts` (which runs at ingestion, before the rung
+        filter, so an ungraded row in a rung this comparison never reads still
+        raises).
     """
     rows_source.reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
@@ -102,6 +113,21 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     Power has a closed form here (b is Binomial(`n_disc`, pi) under a true
     discordant-favour probability pi), so the fixed 200-step bisection needs
     no convergence check: deterministic, same result every run.
+
+    Parameters
+    ----------
+    n_disc : int
+        Number of discordant pairs.
+    k_crit : int
+        Critical discordant-pair count.
+    target : float, optional
+        Target exact power.
+
+    Returns
+    -------
+    float
+        Smallest pi >= 0.5 whose exact power reaches `target` at this rejection
+        region.
     """
     lo, hi = 0.5, 1.0
     for _ in range(200):
@@ -122,10 +148,24 @@ def main(argv: list[str] | None = None) -> int:
     ``--rows-dir`` are interchangeable: everything below reads one resolved
     local directory of ``<model>/verified_rows.jsonl``, one lane per model.
 
-    Always returns 0; there is no failure exit here -- a missing or
-    unverified lane raises instead (`SystemExit` from `resolve_rows_dir` or
-    `load_rungs`'s retired/ungraded checks; `FileNotFoundError` for a lane
-    missing from the resolved directory).
+    There is no failure exit here -- a missing or unverified lane raises instead.
+
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        Always 0.
+
+    Raises
+    ------
+    SystemExit
+        From `resolve_rows_dir` or `load_rungs`'s retired/ungraded checks.
+    FileNotFoundError
+        If a lane is missing from the resolved directory.
     """
     ap = argparse.ArgumentParser(description=__doc__)
     rows_source.add_source_args(ap)

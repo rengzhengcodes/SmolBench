@@ -75,6 +75,20 @@ def _require(mapping: dict, name: str, within: str = "") -> Any:
 
     A ``"[table]"``-spelled `name` reads as its unbracketed key but reports as
     the TOML table the reader has to add.
+
+    Parameters
+    ----------
+    mapping : dict
+        Mapping containing the required key.
+    name : str
+        Key to retrieve, optionally spelled as a TOML table.
+    within : str, optional
+        TOML section suffix included in an error message.
+
+    Returns
+    -------
+    Any
+        Value associated with `name`.
     """
     key = name.strip("[]")
     if key not in mapping:
@@ -91,6 +105,16 @@ def _parse_study_config(data: dict) -> StudyConfig:
     Validates that every family member has a tag, every tag names a family
     member, and tags are unique; the ``ValueError`` message names the
     offending section, key, or checkpoint/tag.
+
+    Parameters
+    ----------
+    data : dict
+        Parsed TOML document.
+
+    Returns
+    -------
+    StudyConfig
+        Validated study configuration.
     """
     # Presence checked before content, so a missing key surfaces as a
     # ValueError naming it rather than a KeyError three functions downstream.
@@ -168,6 +192,16 @@ def _load_cached(resolved_path: Path) -> StudyConfig:
 
     Split out from :func:`load_study_config` so the cache key is always the
     resolved path, never the raw ``Path | None`` argument a caller passed in.
+
+    Parameters
+    ----------
+    resolved_path : Path
+        Resolved TOML config path.
+
+    Returns
+    -------
+    StudyConfig
+        Parsed and validated study configuration.
     """
     with resolved_path.open("rb") as fh:
         data = tomllib.load(fh)
@@ -181,6 +215,16 @@ def load_study_config(path: "Optional[Path]" = None) -> StudyConfig:
     module; tests pass an explicit `path` to load a scratch fixture. Cached:
     repeated calls resolving to the same file return the SAME object, so a
     consumer must never mutate it.
+
+    Parameters
+    ----------
+    path : Optional[Path], optional
+        Config path to load.
+
+    Returns
+    -------
+    StudyConfig
+        Loaded and validated study configuration.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)
@@ -205,6 +249,19 @@ def families() -> "Mapping[str, tuple[str, ...]]":
 def tag_for(key: str) -> str:
     """Return the short analysis tag for roster checkpoint `key`.
 
-    Raises ``KeyError`` if `key` is not in the roster.
+    Parameters
+    ----------
+    key : str
+        Roster checkpoint spec key.
+
+    Returns
+    -------
+    str
+        Short analysis tag for `key`.
+
+    Raises
+    ------
+    KeyError
+        If `key` is not in the roster.
     """
     return load_study_config().roster.tags[key]

@@ -48,6 +48,16 @@ def slug_theorem(name: str) -> str:
     Duplicated rather than imported, so this audit can't inherit a bug from
     the module it audits; a mismatch here misreports ~18 phantom out-of-set
     cells per lane. Kept in step by ``tests/deduction/test_lean_pinning_audit.py``.
+
+    Parameters
+    ----------
+    name : str
+        Theorem name to make filesystem-safe.
+
+    Returns
+    -------
+    str
+        Filesystem-safe theorem name.
     """
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
@@ -89,6 +99,18 @@ def fetch_spool_index(
     Small single-part uploads make the ETag the object's MD5, so comparing
     ETags across lanes checks byte equality without downloading ~19 MB x 21
     of spool.
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client.
+    run_prefix : str | None, optional
+        Prefix for the audited run.
+
+    Returns
+    -------
+    tuple[dict[str, set[str]], dict[str, dict[str, str]]]
+        Per-lane output-cell keys and prompt ETags.
     """
     run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
     cells: dict[str, set[str]] = {}
@@ -118,6 +140,16 @@ def _is_missing_key(exc: Exception) -> bool:
     double needs no botocore. Deliberately narrow: an expired credential or
     throttle must not read as "this lane recovered nothing", which would
     silently pass layer 5.
+
+    Parameters
+    ----------
+    exc : Exception
+        Exception returned by S3.
+
+    Returns
+    -------
+    bool
+        Whether the exception denotes a missing S3 object.
     """
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
@@ -132,6 +164,18 @@ def fetch_recovery(s3: Any, *, run_prefix: str | None = None) -> dict[str, set[s
 
     A lane with no recovery object contributes ``set()``; every other S3 error
     propagates (`_is_missing_key`).
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client.
+    run_prefix : str | None, optional
+        Prefix for the audited run.
+
+    Returns
+    -------
+    dict[str, set[str]]
+        Recovered cell keys by lane.
     """
     run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
     out: dict[str, set[str]] = {}
@@ -156,6 +200,18 @@ def fetch_flip_cells(s3: Any, *, run_prefix: str | None = None) -> dict[str, set
 
     These spool in the normal ``theorems/<slug>/outputs/`` layout, not the
     recovery run's flat ``recovered_rows.jsonl``.
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client.
+    run_prefix : str | None, optional
+        Prefix for the audited run.
+
+    Returns
+    -------
+    dict[str, set[str]]
+        Reached cell keys by flip-rate run.
     """
     run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
     out: dict[str, set[str]] = {}
@@ -179,6 +235,18 @@ def divergent_prompt_cells(
     A missing artifact contributes ``None``, which counts as divergent --
     otherwise a cell no lane spooled a prompt for would be certified
     byte-identical on absent evidence.
+
+    Parameters
+    ----------
+    cell_keys : set[str]
+        Cell keys to compare.
+    prompts : dict[str, dict[str, str]]
+        Prompt ETags by lane and cell key.
+
+    Returns
+    -------
+    set[str]
+        Cell keys with divergent prompt ETags.
     """
     out: set[str] = set()
     for key in cell_keys:
@@ -197,8 +265,23 @@ def reproduce_pin(
     whose ground-truth proof replays, then sample `limit` of them with
     ``random.Random(seed).sample`` only when ``0 < limit < len(pool)`` --
     otherwise the whole pool is kept unsampled. Split order is load-bearing,
-    since ``rng.sample`` is order-sensitive. Returns ``(names, pool_size)``,
-    with ``pool_size`` measured before sampling.
+    since ``rng.sample`` is order-sensitive.
+
+    Parameters
+    ----------
+    val_json : Path
+        Benchmark validation JSON file.
+    replay_jsonl : Path
+        Replay results JSONL file.
+    limit : int
+        Maximum number of passing theorems to sample.
+    seed : int
+        Random-sampling seed.
+
+    Returns
+    -------
+    tuple[list[str], int]
+        ``(names, pool_size)``, with ``pool_size`` measured before sampling.
     """
     val = json.loads(val_json.read_text())
     passing = {
