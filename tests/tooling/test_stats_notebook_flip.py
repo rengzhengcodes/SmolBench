@@ -1,13 +1,8 @@
 """Section 8's measurability rule, pinned to the live grader.
 
-The notebook's ``measurable_cell_keys`` selects the population section 8
-samples from. It used to decide membership with a positive verdict whitelist
-that was, by construction, the complement of ``power_analysis``'s
-``UNMEASURABLE_VERDICTS`` -- two tables that must stay exact complements, free
-to drift, in different files. These tests derive every expectation from
-``grade_verdicts``' documented rule instead.
-
-See ``tests/tooling/_notebook_cells.py`` for the cell-extraction machinery.
+``measurable_cell_keys`` selects the population section 8 samples from; these
+tests derive every expectation from ``grade_verdicts``' documented rule so it
+cannot silently drift from ``power_analysis``'s ``UNMEASURABLE_VERDICTS``.
 """
 
 from __future__ import annotations
@@ -49,32 +44,28 @@ def _rows(*verdicts, theorem="t1", file_path="Mathlib/Data/Nat/Defs.lean"):
              "file_path": file_path} for v in verdicts]
 
 
-#: ``(verdicts, measurable)``. The expectations come from
-#: ``ded_pa.grade_verdicts``' contract -- earliest SURVIVING attempt wins, an
-#: ``UNMEASURABLE_VERDICTS`` verdict is skipped rather than scored -- not from
-#: whatever the notebook currently does.
+#: ``(verdicts, measurable)``, derived from ``grade_verdicts``' contract
+#: (earliest surviving attempt wins; unmeasurable verdicts are skipped), not
+#: from whatever the notebook currently does.
 MEASURABILITY_CASES = [
     pytest.param(("success",), True, id="success"),
-    # `verify.Verdict` is a closed Literal today, but the rule must be the
-    # COMPLEMENT of the unmeasurable set, not an enumeration: a verdict added to
-    # the taxonomy tomorrow has to arrive as a measurement (and be graded), not
-    # vanish from the population because a whitelist never heard of it.
-    # ``"failure"`` is the suite's stand-in for such a graded non-success
-    # (tests/tooling/test_analysis_stats.py uses it throughout).
+    # The rule must be the COMPLEMENT of the unmeasurable set, not an
+    # enumeration, so a verdict added to the taxonomy tomorrow is measured by
+    # default. `"failure"` stands in for such a verdict here.
     pytest.param(("failure",), True, id="unknown-graded-verdict"),
     pytest.param(("lean_error",), True, id="lean_error"),
     pytest.param(("incomplete",), True, id="incomplete"),
     pytest.param(("given_up",), True, id="given_up"),
-    # THE FINDING: dedupe-then-whitelist kept the exception row and dropped the
-    # cell; grade_verdicts skips the exception and scores the retry 1.
+    # Regression: dedupe-then-whitelist kept the exception row and dropped the
+    # cell; grade_verdicts skips the exception and scores the retry.
     pytest.param(("exception", "success"), True, id="exception-then-success"),
     pytest.param(("replay_failed", "failure"), True, id="replay_failed-then-failure"),
     pytest.param(("exception", "replay_failed"), False, id="no-surviving-attempt"),
     pytest.param(("exception",), False, id="exception-only"),
     pytest.param((), False, id="no-rows"),
-    # The generation-time sentinel is NOT in UNMEASURABLE_VERDICTS (on purpose:
-    # power_analysis makes it a loud error, not a silent drop), and `is_pass`
-    # raises on it. It must not be selected into a sample.
+    # The generation-time sentinel is deliberately not in UNMEASURABLE_VERDICTS
+    # (power_analysis treats it as a loud error, not a silent drop); `is_pass`
+    # raises on it, so it must not be selected into a sample.
     pytest.param(("unverified",), False, id="ungraded-sentinel"),
     pytest.param(("exception", "unverified"), False, id="ungraded-after-exception"),
 ]
@@ -82,13 +73,7 @@ MEASURABILITY_CASES = [
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
 def test_measurability_follows_the_live_grader(flip_ns, ded_pa, verdicts, measurable):
-    """The cell's answer, and the grader's rule it must be the complement of.
-
-    ``grade_verdicts`` returns None exactly when nothing survived; the only
-    other reason a surviving verdict is not a measurement is the ungraded
-    sentinel, which grades as a failure but was never measured. Derived here
-    rather than restated, so the two tables cannot drift apart.
-    """
+    """The cell's answer must equal the grader's rule, derived here rather than restated so the two cannot drift apart."""
     keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
     assert bool(keys) is measurable, (verdicts, keys)
 
@@ -110,11 +95,7 @@ def test_no_positive_whitelist_survives(nb, flip_ns):
 
 
 def test_every_selected_cell_is_safe_for_is_pass(flip_ns):
-    """`is_pass` raises on ``unverified`` and points the caller at this filter.
-
-    So the filter has to be the thing that removes it -- otherwise the
-    docstring's cross-reference sends callers at a filter that lets it through.
-    """
+    """`is_pass` raises on `unverified`, so this filter must be the thing that removes it before callers reach is_pass."""
     is_pass, measurable_cell_keys = flip_ns["is_pass"], flip_ns["measurable_cell_keys"]
     with pytest.raises(ValueError, match="unverified"):
         is_pass("unverified")
@@ -151,12 +132,7 @@ def test_selection_is_sorted_and_order_independent(flip_ns):
 
 
 def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
-    """Every name the section advertises must be defined; none may dangle.
-
-    Two places name the ported functions -- the section-8 markdown's "What was
-    ported" sentence and the cell's own closing ``print`` -- and both went stale
-    the moment a helper was renamed.
-    """
+    """Every name the section advertises (markdown "What was ported" sentence and the cell's print) must be defined; none may dangle."""
     import re
 
     src = cell_source(nb, "def measurable_cell_keys")
@@ -175,21 +151,14 @@ def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
 
 
 def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb, ded_pa):
-    """The cell's own assertion loop must actually fire when a grader is bound.
-
-    It is guarded on ``"ded_pa" in globals()`` so that
-    ``test_postcutoff_docs.py::test_dependency_filter_covers_every_lake_package``
-    can still exec this cell into an empty namespace. A guard like that is only
-    safe if it is proven to open: substituting a grader that disagrees with the
-    earliest-surviving rule must raise, or the pin is decoration.
-    """
+    """The cell's own assertion loop must actually fire (not just be present) when a grader disagreeing with the earliest-surviving rule is bound."""
     class _WrongGrader:
         UNMEASURABLE_VERDICTS = ded_pa.UNMEASURABLE_VERDICTS
 
         @staticmethod
         def grade_verdicts(verdicts):
-            # LATEST surviving attempt wins -- pass@N dressed up as pass@1,
-            # the rule grade_verdicts exists to prevent.
+            # Latest surviving attempt wins: pass@N dressed up as pass@1,
+            # exactly what grade_verdicts exists to prevent.
             survivors = [v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS]
             return None if not survivors else int(survivors[-1] == "success")
 
@@ -199,14 +168,7 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb, ded_pa):
 
 
 def test_a_row_with_no_verdict_is_not_a_measurement(flip_ns):
-    """Documented divergence from ``grade_verdicts``, and the safe direction.
-
-    ``grade_verdicts`` would score a missing verdict 0 -- a real failure. Here
-    the cell is dropped instead: this function chooses what to SAMPLE, and
-    ``is_pass(None)`` would quietly return False, booking "never recorded" as
-    "measured and lost" in every paired b/c statistic. Dropping is the
-    conservative direction and the cell's docstring says so.
-    """
+    """A missing verdict must be dropped, not scored 0 like `grade_verdicts` would: this chooses what to SAMPLE, and scoring it would book "never recorded" as "measured and lost"."""
     rows = _rows("success", theorem="ok")
     orphan = _rows("success", theorem="orphan")
     for row in orphan:

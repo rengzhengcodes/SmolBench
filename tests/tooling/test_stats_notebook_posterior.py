@@ -1,14 +1,11 @@
 """Section 7's bootstrap resolution and its behaviour under clustering.
 
-Two contracts live here. First, the number of bootstrap resamples must follow
-the alpha in use: a fixed 4,000 puts 0.2 draws in the tail the posterior
-family's alpha asks about, and an endpoint that IS the extreme order statistic
-is biased inward -- toward EQUIVALENT, the verdict that closes a contrast.
-Second, the classifier's synthetic self-test must exercise data shaped like the
-study's own: harmonics inside a replicate are strata, not exchangeable draws,
-and an arm-specific replicate effect changes the verdicts materially.
-
-See ``tests/tooling/_notebook_cells.py`` for the cell-extraction machinery.
+Two contracts: the number of bootstrap resamples must follow the alpha in use
+(a fixed 4,000 puts 0.2 draws in the tail the posterior family's alpha asks
+about, biasing the endpoint toward EQUIVALENT); and the classifier's synthetic
+self-test must exercise data shaped like the study's own, where harmonics
+inside a replicate are strata, not exchangeable draws, and an arm-specific
+replicate effect changes the verdicts materially.
 """
 
 from __future__ import annotations
@@ -49,11 +46,9 @@ def posterior_ns(nb) -> dict:
     return namespace
 
 
-#: ``(two-sided alpha, resamples)``. ``bootstrap_stats`` takes a TWO-SIDED
-#: level and cuts each tail at ``alpha/2``, so the criterion "at least
-#: `BOOT_TAIL_TARGET` resamples land in the tail being read" is
-#: ``ceil(TARGET / (alpha/2))``, capped. Values computed from the rule, not
-#: read off the cell.
+#: ``(two-sided alpha, resamples)``. ``bootstrap_stats`` cuts each tail at
+#: ``alpha/2``, so B = ``ceil(BOOT_TAIL_TARGET / (alpha/2))``, capped. Values
+#: computed from the rule, not read off the cell.
 BOOT_CASES = [
     pytest.param(0.1, 1_000, id="alpha=0.1"),
     pytest.param(0.01, 10_000, id="alpha=0.01"),
@@ -66,12 +61,7 @@ BOOT_CASES = [
 
 @pytest.mark.parametrize("alpha, expected", BOOT_CASES)
 def test_boot_resamples_is_derived_from_the_alpha_in_use(posterior_ns, alpha, expected):
-    """4,000 resamples put 0.2 draws in the tail this notebook reads at alpha/2.
-
-    An endpoint that IS the extreme order statistic is biased inward, which
-    biases the classifier toward EQUIVALENT -- the verdict that closes a
-    contrast. B has to follow alpha.
-    """
+    """B must follow alpha: 4,000 resamples put only 0.2 draws in the tail read at alpha/2, biasing the endpoint toward EQUIVALENT."""
     assert posterior_ns["boot_resamples"](alpha) == expected
 
 
@@ -86,11 +76,7 @@ def test_boot_resamples_meets_its_own_tail_criterion(posterior_ns):
 
 
 def test_boot_resamples_warns_when_it_caps(posterior_ns, capsys):
-    """A capped B does not meet the criterion; saying so is the whole point.
-
-    Silently returning the cap would restore the defect in a new place: the
-    reader would believe the endpoint resolves alpha when it does not.
-    """
+    """A capped B must warn: silently returning the cap would let a reader believe the endpoint resolves alpha when it does not."""
     alpha = 2 * 0.05 / 966
     # An earlier test in this module already asked for this exact alpha, and the
     # warn-once ledger is module state; clear it or this test reads an empty
@@ -140,12 +126,7 @@ def test_no_hardcoded_resample_count_survives(nb):
 
 
 def test_synth_iid_path_draws_exactly_what_it_used_to(nb, posterior_ns):
-    """``cluster_sd=0`` must consume the SAME RNG stream as before the change.
-
-    The self-test threads one generator through its cases in order; an extra
-    draw taken on the i.i.d. path would shift every case after it and could
-    silently flip the EQUIVALENT assertion this fix is required to KEEP.
-    """
+    """`cluster_sd=0` must consume the same RNG stream as before: an extra draw would shift every later case and could flip an EQUIVALENT assertion."""
     import numpy as np
 
     namespace = dict(posterior_ns)
@@ -163,12 +144,7 @@ def test_synth_iid_path_draws_exactly_what_it_used_to(nb, posterior_ns):
 
 
 def test_clustered_synth_reaches_the_target_design_effect(nb, posterior_ns):
-    """The clustered arm must actually be clustered, measured by the live metric.
-
-    ``paired_analysis.design_effect`` is the same statistic section 2 reports
-    on the real data. A clustered case whose deff is ~1 would be an i.i.d. case
-    with a different name, and the diagnostic below would prove nothing.
-    """
+    """The clustered arm must measure as clustered by the live `design_effect` metric, not just be an i.i.d. case with a different name."""
     import numpy as np
 
     namespace = dict(posterior_ns)
@@ -192,13 +168,7 @@ def test_clustered_synth_reaches_the_target_design_effect(nb, posterior_ns):
 
 
 def test_clustering_inflates_the_decided_rate_on_a_true_null(nb, posterior_ns):
-    """The diagnostic must be able to come out the other way, and does not.
-
-    This is the PR #12 ``multiplicity_sim`` finding recurring: with an
-    arm-specific replicate effect the unpaired CMH denominator is too small, so
-    a TRUE NULL is 'DECIDED' far more often than alpha allows. A diagnostic
-    whose two columns agreed would be evidence of nothing.
-    """
+    """The diagnostic must be able to come out the other way: with an arm-specific replicate effect, a true null is DECIDED far more often than alpha allows."""
     namespace = dict(posterior_ns)
     exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
     exec(compile(cell_source(nb, "def verdict_distribution"), str(STATS_NB), "exec"),
@@ -224,11 +194,7 @@ def test_clustering_inflates_the_decided_rate_on_a_true_null(nb, posterior_ns):
 
 
 def test_self_test_asserts_no_equivalence_under_clustering(nb):
-    """The clustered case is reported, never asserted.
-
-    Asserting EQUIVALENT on clustered data is exactly the defect: the reviewer
-    measured that assertion failing 38 times in 60 at deff 3.19.
-    """
+    """The clustered case must be reported, never asserted: asserting EQUIVALENT on clustered data failed 38 times in 60 at deff 3.19."""
     import ast
 
     source = cell_source(nb, "self-test PASSED")
@@ -242,39 +208,21 @@ def test_self_test_asserts_no_equivalence_under_clustering(nb):
 
 
 def test_section_7_markdown_names_the_recurrence(nb):
-    """The reviewer drew the parallel to PR #12; the section has to acknowledge it.
-
-    It must also name ``design_effect`` -- the live metric section 2 already
-    reports on the real data, and the one this diagnostic is calibrated against
-    -- so a reader can check the clustered case against the study's own numbers
-    instead of taking the notebook's word for it.
-    """
+    """Section 7 must name `design_effect` and the PR #12 parallel, so a reader can check the clustered case against the study's own numbers."""
     joined = _section_7_markdown(nb)
     for token in ("design_effect", "multiplicity_sim", "PR #12"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
 
 
 def test_resample_sweep_reuses_error_bars_grid_and_tolerance(nb):
-    """The sweep must not fork ``B_GRID``/``DRIFT_TOL`` into local literals.
-
-    ``error_bars.py`` chooses B against exactly this criterion and sweeps that
-    grid; a private copy here would drift from the module whose convention it
-    claims to mirror.
-    """
+    """The sweep must reuse `error_bars.B_GRID`/`DRIFT_TOL`, not fork them into local literals that could drift."""
     source = cell_source(nb, "def resample_sweep")
     assert "error_bars.B_GRID" in source
     assert "error_bars.DRIFT_TOL" in source
 
 
 def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(nb, posterior_ns):
-    """At the posterior alpha, no B on the grid reaches the drift tolerance.
-
-    This is the honest outcome, and the reason the derived count is capped
-    rather than obeyed: 500,000 resamples put 25.9 draws in a tail that wants
-    50, and the endpoints still move by an order of magnitude more than
-    ``DRIFT_TOL``. A sweep that came out under tolerance would mean the cap was
-    harmless -- it is not, and the cell has to say so.
-    """
+    """At the posterior alpha, no B on the grid reaches DRIFT_TOL: 500,000 resamples put only 25.9 draws in a tail that wants 50, which is why the derived count is capped rather than obeyed."""
     import numpy as np
 
     namespace = dict(posterior_ns)
@@ -307,22 +255,19 @@ def test_section_7_markdown_explains_the_block_count_limit(nb):
 # --- the false-DECIDED calibration at the study's own R and alpha ----------
 #
 # The verdict-distribution cell above measures the mechanism at R=40,
-# alpha=0.05, where 60 simulations are enough to see it. That is not the
-# operating point: the study collected R = `run_study.N_REPLICATES` and reads
-# the all-pairs family's `ALPHA_POSTERIOR`. The calibration cell answers the
-# question the classifier's user actually has -- "how clustered may my data be
-# before a DECIDED verdict stops meaning what it says?" -- and the tests below
-# pin that it measures rather than asserts, and that it cannot quietly stop
-# measuring.
+# alpha=0.05; the study's own operating point is R = `run_study.N_REPLICATES`
+# and `ALPHA_POSTERIOR`. This calibration answers "how clustered may my data
+# be before DECIDED stops meaning what it says?" at that real point, and the
+# tests below pin that it measures rather than asserts.
 
 
 @pytest.fixture(scope="module")
 def calibration(nb, posterior_ns) -> tuple[dict, str]:
     """Execute the calibration cell once; return its namespace and its output.
 
-    Module-scoped and captured with ``redirect_stdout`` rather than ``capsys``
-    (which is function-scoped) because the cell simulates a full ladder: paying
-    for it once per module keeps the suite honest about cost.
+    Module-scoped, using ``redirect_stdout`` (``capsys`` is function-scoped):
+    the cell simulates a full ladder, so paying for it once per module keeps
+    the suite honest about cost.
     """
     import contextlib
     import io
@@ -336,13 +281,7 @@ def calibration(nb, posterior_ns) -> tuple[dict, str]:
 
 
 def test_calibration_runs_at_the_studys_own_R_and_alpha(calibration, posterior_ns):
-    """The calibration's parameters must BE the study's, read from the live sources.
-
-    A calibration at some other R or alpha would be a different question with
-    the same name: the false-DECIDED rate is a tail probability, so it moves by
-    orders of magnitude with alpha, and the tail is exactly where clustering
-    bites hardest.
-    """
+    """The calibration's R and alpha must be the study's own, read from live sources: a different alpha is a different question with the same name."""
     namespace, _out = calibration
     assert namespace["STUDY_R"] == posterior_ns["run_study"].N_REPLICATES
     rows = namespace["CALIBRATION_ROWS"]
@@ -354,13 +293,7 @@ def test_calibration_runs_at_the_studys_own_R_and_alpha(calibration, posterior_n
 
 
 def test_calibration_reports_both_numbers(calibration):
-    """Both headline numbers must reach the reader's screen, not just the namespace.
-
-    The two are the whole deliverable: the design-effect ceiling below which no
-    inflation was measured, and what the rate actually is on data shaped like
-    the study's. A cell that computed them and printed a summary without them
-    would leave the verdict table beside it uninterpreted.
-    """
+    """Both headline numbers (the deff ceiling and the study-shaped rate) must reach the reader's screen, not just the namespace."""
     namespace, out = calibration
     ceiling = namespace["CALIBRATED_DEFF_CEILING"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -369,13 +302,7 @@ def test_calibration_reports_both_numbers(calibration):
 
 
 def test_calibration_states_its_detection_floor(calibration):
-    """"No measured inflation" is not "calibrated to alpha", and must say so.
-
-    At this alpha a nominal run puts well under one false DECIDED in `n_sim`
-    draws, so an admissible rung's zero count bounds its rate only at roughly
-    ``3/n_sim`` -- orders of magnitude above alpha. Without that floor on the
-    screen the ceiling reads far stronger than the evidence behind it.
-    """
+    """"No measured inflation" is not "calibrated to alpha": the cell must state the detection floor, or the ceiling reads stronger than the evidence behind it."""
     _namespace, out = calibration
     lowered = out.lower()
     assert "detect" in lowered, out[-1500:]
@@ -384,13 +311,7 @@ def test_calibration_states_its_detection_floor(calibration):
 
 
 def test_the_ceiling_sits_below_the_studys_own_design_effect(calibration):
-    """The substantive claim: at deff ~3 the classifier's DECIDED is not valid.
-
-    Section 2 reports `design_effect` on the real induction data in this range,
-    and `CLUSTER_SD` is calibrated to it. If the ceiling were at or above that,
-    the note this cell justifies would be pointless -- so this is the assertion
-    that makes the whole calibration worth printing.
-    """
+    """The substantive claim: at the study's own deff (~3, from `CLUSTER_SD`'s calibration), the classifier's DECIDED is not valid."""
     namespace, _out = calibration
     ceiling = namespace["CALIBRATED_DEFF_CEILING"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -410,15 +331,11 @@ def test_the_studys_shaped_rate_is_inflated_by_orders_of_magnitude(calibration,
 
 
 def test_false_decided_rate_can_come_out_the_other_way(calibration, posterior_ns):
-    """The estimator must be able to report NO inflation, and does on i.i.d. draws.
-
-    A measurement that cannot return the negative answer is not a measurement.
-    Run at a small `n_sim` on purpose: this is the control, not the ladder.
-    """
+    """The estimator must be able to report no inflation (and does, on i.i.d. draws): a measurement that cannot return the negative answer is not one."""
     namespace, _out = calibration
-    # 400 draws, not 200: at the study-shaped rate (about 2%) a 200-draw
-    # control has a few percent chance of coming back empty, which would read
-    # as "the estimator cannot see clustering" rather than as thin sampling.
+    # 400 draws, not 200: at the study-shaped rate (~2%) a 200-draw control has
+    # a few percent chance of coming back empty, which would misread as "the
+    # estimator cannot see clustering" rather than as thin sampling.
     iid = namespace["false_decided_rate"](0.0, n_sim=400)
     clustered = namespace["false_decided_rate"](namespace["CLUSTER_SD"], n_sim=400)
     assert iid["decided"] == 0, iid
@@ -428,12 +345,7 @@ def test_false_decided_rate_can_come_out_the_other_way(calibration, posterior_ns
 
 
 def test_the_calibration_prints_beside_the_verdict_table(nb):
-    """The two must read as one exhibit: same section, nothing but prose between.
-
-    The calibration answers a question the verdict table raises (it is measured
-    at the study's own R and alpha, where the table's 60 draws could see
-    nothing), so a reader who stops at the table must not have to go looking.
-    """
+    """The verdict table and its calibration must read as one exhibit: same section, no code cell between them."""
     sources = ["".join(cell["source"]) for cell in nb["cells"]]
     table = next(i for i, s in enumerate(sources) if "def verdict_distribution" in s)
     calibration = next(i for i, s in enumerate(sources) if "def false_decided_rate" in s)
@@ -445,13 +357,7 @@ def test_the_calibration_prints_beside_the_verdict_table(nb):
 
 
 def test_section_7_markdown_states_the_validity_rule_without_a_literal(nb, calibration):
-    """The note states the RULE; the number lives only in the cell's output.
-
-    Cell 27 already establishes the house convention ("the conclusion as
-    computed figures, so it cannot drift from the table above"). A threshold
-    typed into markdown is exactly the drift that convention exists to
-    prevent -- it would keep reading as authoritative after a re-run moved it.
-    """
+    """The markdown states the rule, not the number: a hardcoded threshold would keep reading as authoritative after a re-run moved it."""
     namespace, _out = calibration
     joined = _section_7_markdown(nb)
     lowered = joined.lower()

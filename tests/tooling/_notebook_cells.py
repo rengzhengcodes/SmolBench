@@ -1,19 +1,12 @@
 """Shared machinery for the ``statistical_analyses.ipynb`` cell tests.
 
-``tests/tooling/test_analysis_stats.py`` exercises the analysis MODULES that
-notebook imports. Its ``test_stats_notebook_*`` siblings exercise the code the
-notebook implements INLINE: sections 0, 7 and 8 define an archive reader, a
-posterior-power classifier and a set of flip-rate estimators that live nowhere
-else in the tree, so nothing else in the suite can catch them drifting from the
-live modules they are supposed to agree with.
+Sections 0, 7 and 8 define an archive reader, a posterior-power classifier and
+flip-rate estimators inline in the notebook, with no module copy elsewhere to
+pin them, so tests pull each cell's source by a stable needle and ``exec`` it.
+The S3-building cell is handed a stubbed ``_aws.fresh_client`` so no AWS call
+is possible.
 
-Each test pulls one cell's source out of the ``.ipynb`` by a stable needle and
-``exec``s it, the same way ``tests/deduction/test_postcutoff_docs.py`` already
-does for ``is_mathlib_cell``. Nothing here executes the notebook: the cells
-under test are pure, and the one that builds an S3 client is handed a stubbed
-``_aws.fresh_client`` so no AWS call is possible.
-
-Not named ``test_*`` on purpose -- it holds no tests and must not be collected.
+Not named ``test_*``: it holds no tests and must not be collected.
 """
 
 from __future__ import annotations
@@ -59,18 +52,14 @@ def _load(name: str, rel: str):
 def load_analysis_modules() -> dict:
     """Execute the notebook's OWN loader cell and return the namespace it binds.
 
-    Exec'd rather than mirrored: both legs ship a ``power_analysis.py`` whose
-    siblings import it by BARE name, so the bind-and-unbind order is
-    load-bearing, and a second copy of it here would be free to drift from the
-    order the notebook actually runs.
+    Exec'd rather than mirrored: a hand-copied loader could drift from the
+    bind order the notebook actually runs, and siblings import
+    ``power_analysis`` by bare name so that order is load-bearing.
 
-    The cell anchors the repo on ``Path.cwd()``, prints a provenance banner,
-    inserts the repo root on ``sys.path``, and loads
-    ``notebooks/induction/run_study.py``, which calls ``load_dotenv`` and parses
-    ``INDUCTION_SHARD`` at MODULE SCOPE. So it is run from the repo root with
-    its banner swallowed, and the whole environment is snapshotted and restored
-    around it: ``load_dotenv`` writes keys that cannot be named in advance, so a
-    per-key monkeypatch would not cover it.
+    Run from the repo root (the cell's ``run_study`` import parses
+    ``INDUCTION_SHARD`` at module scope) with sys.modules/os.environ/sys.path
+    snapshotted and restored: ``load_dotenv`` writes keys that cannot be named
+    in advance, so a per-key monkeypatch would not cover them.
     """
     namespace: dict = {}
     saved_modules = {k: sys.modules.get(k)

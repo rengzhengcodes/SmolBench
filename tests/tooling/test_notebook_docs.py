@@ -1,24 +1,18 @@
 """``notebooks/README.md`` and ``notebooks/ARCHIVE.md``, pinned against the code.
 
-These two files are the entry points a reader hits before any script: ARCHIVE.md
-says where the artifacts live and how they are addressed on S3, and the
-notebooks README says what each study directory holds and which paths may not
-move. Both were written when a run was retired by hand, when a regrade REFUSED,
-and when reading the deduction rows meant syncing a snapshot to local disk --
-none of which is true now:
+Entry points a reader hits before any script: ARCHIVE.md says where artifacts
+live on S3, the README says what each study directory holds and which paths
+may not move.
 
-* retirement is a store operation with two spellings, one per backend
-  (``smolbench.evals.results_store``: a sibling ``.superseded`` marker key on
-  S3, a ``rep_<seed>.SUPERSEDED-<run_ts>.yaml`` rename locally), and readers
-  skip retired runs and then apply earliest-wins over what survives;
-* ``scripts/results/regrade.py`` writes a replacement carrying
-  ``regraded_from`` and supersedes the run it replaces;
-* the deduction analysis scripts read their rows straight out of S3
-  (``--s3``, through ``notebooks/deduction/analysis/rows_source.py``).
+* retirement writes a ``.superseded`` S3 marker key or renames the local file
+  to ``rep_<seed>.SUPERSEDED-<run_ts>.yaml``; readers skip retired runs, then
+  earliest-wins over what survives.
+* ``regrade.py`` writes a replacement carrying ``regraded_from`` and
+  supersedes the run it replaces.
+* deduction analysis reads rows straight from S3 via ``rows_source.py``.
 
-The marker spellings are read FROM the store module rather than typed here, so
-this cannot pass while the docs quote a marker the code does not write, and
-every path the notebooks README names has to resolve.
+Marker spellings below are imported from the store module, not typed here, so
+a doc quoting a marker the code no longer writes fails this file.
 """
 
 from __future__ import annotations
@@ -53,27 +47,16 @@ def _store_markers() -> tuple[str, str]:
 
 
 def test_archive_documents_both_supersede_spellings(archive):
-    """A reader of the bucket meets ``.superseded`` keys; the map must name them.
-
-    Both backends, because both appear in the artifacts this file indexes: the
-    S3 log carries marker keys and the local replicate trees carry renamed
-    files. Quoting only one leaves the other looking like corruption.
-    """
+    """Both supersede spellings must be named: quoting only one leaves the other looking like corruption."""
     s3_suffix, local_infix = _store_markers()
     assert s3_suffix in archive, f"ARCHIVE.md never names the {s3_suffix} marker key"
     assert local_infix in archive, \
         f"ARCHIVE.md never names the local {local_infix} rename"
-    # and says what a reader does with them
     assert "earliest-wins" in archive
 
 
 def test_both_docs_describe_the_regrade_path(archive, readme):
-    """Regrading goes THROUGH the store now; the refusal is gone.
-
-    ``regraded_from`` is the field that makes a regraded run traceable to the
-    run it replaced, so it is the thing a reader of the archive needs to know
-    exists -- a replacement without it is indistinguishable from a re-run.
-    """
+    """`regraded_from` makes a regraded run traceable to the run it replaced; both docs must mention it."""
     from smolbench.evals.quiz import Marks
 
     assert "regraded_from" in Marks.__dataclass_fields__, \
@@ -84,12 +67,7 @@ def test_both_docs_describe_the_regrade_path(archive, readme):
 
 
 def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive, readme):
-    """No sync-down instructions: the report scripts read S3 themselves.
-
-    ``rows_source.resolve_rows_dir`` fetches what a report needs into scratch,
-    so prose telling a reader to mirror a prefix locally first is both wasted
-    bandwidth and a second, divergent way in.
-    """
+    """No sync-down instructions: report scripts read S3 directly, so a local-mirror step is wasted bandwidth and a second, divergent path in."""
     for name, text in (("ARCHIVE.md", archive), ("README.md", readme)):
         assert "aws s3 sync" not in text, f"notebooks/{name} still tells a reader to sync"
     assert "--s3" in readme, "notebooks/README.md never mentions the --s3 readers"
@@ -98,13 +76,7 @@ def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive, readme):
 
 
 def test_archive_locates_the_recovery_rows_the_notebook_reads(archive):
-    """The sensitivity arm's inputs are archived artifacts; this file locates them.
-
-    ``statistical_analyses.ipynb`` section 5 now fetches
-    ``<spool>/dojoinit_recovery_2026-08-18/<lane>/recovered_rows.jsonl`` for its
-    post-recovery pool, and ``scripts/results/audit_lean_pinning.py`` reads the
-    same tree. A reader who cannot find that prefix here cannot check either.
-    """
+    """A reader who cannot find the recovery-run prefix here cannot verify what the notebook and audit script both read."""
     from tests._paths import SCRIPTS
 
     audit = (SCRIPTS / "results" / "audit_lean_pinning.py").read_text()
@@ -116,13 +88,7 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive):
 
 
 def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
-    """The deduction spool row must be the re-collection's prefix, not the retired one.
-
-    ``rows_source.spool_prefix()`` defaults to the re-collection and RAISES for
-    the published pre-cutoff prefix unless ``LEAN_ALLOW_LEGACY_PREFIX=1``, so a
-    table that lists only the pre-cutoff prefix sends a reader to the one
-    location every reader in the tree refuses by default.
-    """
+    """Must name the re-collection prefix, not the pre-cutoff one every reader refuses by default (`LEAN_ALLOW_LEGACY_PREFIX` opts back in)."""
     import importlib.util
     import sys
 
@@ -138,12 +104,7 @@ def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme):
-    """No path in the README may point at a file the tree does not have.
-
-    The counterpart to the root README's own map check: this file names the
-    drivers, the analysis modules and the tests that pin their path
-    conventions, and a reader follows those names literally.
-    """
+    """No path in the README may point at a file the tree does not have (counterpart to the root README's own map check)."""
     named = sorted(set(re.findall(r"[\w./-]*[\w-]+\.(?:py|ipynb|md|yaml|toml)", readme)))
     assert named, "the README names no files at all"
     skip = {"pyproject.toml"}                     # named as a concept, at the root

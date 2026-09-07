@@ -1,12 +1,9 @@
 """Section 0's archive reader, exercised without touching AWS.
 
 ``S3Archive`` is copied into the notebook rather than imported (``tests/`` is
-not an importable package), so nothing else in the suite pins it. What it must
-NOT be is a private re-implementation of primitives ``smolbench`` already
-exports: the client and the URI parser are shared, and these tests are what
-keeps them shared.
-
-See ``tests/tooling/_notebook_cells.py`` for the cell-extraction machinery.
+not an importable package), so nothing else in the suite pins it. It must not
+re-implement primitives ``smolbench`` already exports: the client and the URI
+parser are shared, and these tests are what keeps them shared.
 """
 
 from __future__ import annotations
@@ -24,20 +21,7 @@ def nb() -> dict:
 
 
 def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
-    """``S3Archive`` must use ``_aws.fresh_client`` and ``results_store.parse_s3_uri``.
-
-    ``boto3.client`` goes through the process-wide default session, which
-    resolves credentials ONCE; ``_aws.fresh_client``'s docstring names
-    "notebook kernels driving multi-hour evals" as the exact process it exists
-    for, so a cached session here keeps signing every archive read with
-    credentials that expired hours ago. A privately re-declared
-    ``parse_s3_uri`` is a second implementation of the key layout the results
-    store writes, free to drift from the writer's.
-
-    The stub is installed on the module attribute, so this passes only if the
-    cell calls ``_aws.fresh_client`` rather than binding the function at import
-    time -- which is also what makes the call swappable at all.
-    """
+    """``S3Archive`` must call `_aws.fresh_client` and `results_store.parse_s3_uri`, not private re-implementations that sign with stale credentials or drift from the writer's key layout."""
     from smolbench.evals import _aws
     from smolbench.evals.results_store import parse_s3_uri
 
@@ -61,11 +45,7 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
 
 
 def test_archive_cell_carries_no_unused_aws_surface(nb):
-    """``keys()``/``exists()`` are never called; a lister that nothing calls is dead.
-
-    They also widen what this notebook can do to the archive beyond the ruling
-    it states one line above -- read the bytes, write nothing.
-    """
+    """`keys()`/`exists()` are dead code and widen the archive's read-only contract; neither may exist."""
     src = cell_source(nb, "class S3Archive")
     assert "def keys(" not in src
     assert "def exists(" not in src

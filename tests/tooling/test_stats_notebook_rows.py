@@ -1,23 +1,17 @@
 """Section 5 and 6 of ``statistical_analyses.ipynb`` read rows from S3, not from disk.
 
-The heavy deduction cells used to shell out to ``aws s3 sync``, materialise the
-``analysis/2026-08-16`` snapshot in a scratch directory and analyse that, and
-they left the post-recovery sensitivity arm out entirely -- the notebook said so
-in prose ("the post-recovery SENSITIVITY pool is NOT computed below"). Both are
-now the shared reader's job: ``rows_source.resolve_rows_dir`` fetches the 21
-lanes' ``verified_rows.jsonl`` from the study's spool prefix, and the SAME
-function -- one directory over, with the run marker and the candidate file name
-overridden -- fetches the DojoInit recovery rows the sensitivity pool needs.
+Both are the shared reader's job: ``rows_source.resolve_rows_dir`` fetches the
+21 lanes' ``verified_rows.jsonl`` from the study's spool prefix, and the same
+function -- one directory over, with the run marker and file name overridden --
+fetches the DojoInit recovery rows the sensitivity pool needs.
 
-These tests drive the extracted cell source against an INJECTED fake S3, the
-way ``tests/deduction/test_deduction_rows_source.py`` drives the scripts: a fake
-``boto3`` module in ``sys.modules`` means the cells run their production code
-path (no client parameter, no test-only hook in the notebook) with no network,
-no credentials and no real boto3 needed.
+These tests drive the extracted cell source against an injected fake S3, the
+way ``tests/deduction/test_deduction_rows_source.py`` drives the scripts: a
+fake ``boto3`` module in ``sys.modules`` runs the cells' production code path
+(no client parameter, no test-only hook) with no network or credentials.
 
-Nothing here executes the notebook end to end; each cell is extracted by a
-stable needle and ``exec``ed on its own namespace. See
-``tests/tooling/_notebook_cells.py`` for that machinery.
+Each cell is extracted by a stable needle and ``exec``ed on its own namespace;
+nothing here runs the notebook end to end.
 """
 
 from __future__ import annotations
@@ -36,10 +30,9 @@ from tests.tooling._notebook_cells import (
     load_notebook,
 )
 
-#: The recovery run whose rows the sensitivity pool needs, as
-#: ``scripts/results/audit_lean_pinning.RECOVERY_RUN`` spells it. The notebook
-#: has to name the same run: a sensitivity arm computed from a different
-#: recovery would not be the one section 5's report.json summarises.
+#: Must match ``scripts/results/audit_lean_pinning.RECOVERY_RUN``: a
+#: sensitivity arm computed from a different recovery would not be the one
+#: section 5's report summarises.
 RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 
 #: Theorem ids and rungs the fake lanes carry. Three rungs because
@@ -69,9 +62,8 @@ def _fake_bucket(models) -> dict[str, str]:
                 for i, theorem in enumerate(THEOREMS) for rung in RUNGS]
         objects[f"deduction_postcutoff/runs/scaling_{model}/verified_rows.jsonl"] = \
             "".join(json.dumps(row) + "\n" for row in rows)
-        # The recovery rows carry `recovered_verdict`, not `verdict`, and cover
-        # theorems the verified pool does not have: that is what makes the
-        # post-recovery pool a DIFFERENT pool, which the report must show.
+        # `recovered_verdict` (not `verdict`) on theorems the verified pool
+        # lacks is what makes this a DIFFERENT pool, which the report must show.
         recovered = []
         for theorem in THEOREMS[:2]:
             row = _cell_row(model, f"rec_{theorem}", "success", "stepk:1")
@@ -86,10 +78,8 @@ def _fake_bucket(models) -> dict[str, str]:
 class FakePaginator:
     """``list_objects_v2`` over an in-memory bucket, in two pages.
 
-    Two pages regardless of size, exactly as
-    ``tests/deduction/test_deduction_rows_source.py`` does it: ``ListObjectsV2``
-    caps a response at 1000 keys, so a single-page reader would pass here and
-    silently truncate a real listing.
+    Two pages because real ``ListObjectsV2`` caps a response at 1000 keys; a
+    single-page fake would pass here and hide a reader that truncates.
     """
 
     def __init__(self, objects: dict[str, str], calls: list):
@@ -144,10 +134,9 @@ def modules() -> dict:
 def fake_s3(modules, monkeypatch) -> FakeS3:
     """A fake S3 the cells reach through their own ``import boto3``.
 
-    Injected as a fake ``boto3`` MODULE rather than passed as a ``client=``
-    argument: ``rows_source`` imports boto3 inside the download function, and
-    the notebook must not carry a client-injection hook that exists only for
-    tests. This exercises the production path.
+    Injected as a fake ``boto3`` module, not a ``client=`` argument:
+    ``rows_source`` imports boto3 inside the download function, and the
+    notebook must not carry a test-only injection hook.
     """
     client = FakeS3(_fake_bucket(modules["ded_pa"].MODELS))
     monkeypatch.setitem(sys.modules, "boto3",
@@ -164,7 +153,7 @@ def _exec_cell(nb, needle, namespace):
 # --- the sync is gone ------------------------------------------------------
 
 def test_no_cell_shells_out_to_aws_s3_sync(nb):
-    """The whole point of #44: no cell materialises the store with the AWS CLI."""
+    """No cell materialises the store with the AWS CLI."""
     offenders = [i for i, cell in enumerate(nb["cells"])
                  if "s3\", \"sync" in "".join(cell["source"])
                  or "aws s3 sync" in "".join(cell["source"])]
@@ -172,24 +161,14 @@ def test_no_cell_shells_out_to_aws_s3_sync(nb):
 
 
 def test_the_gate_cell_declares_no_local_rows_tree(nb):
-    """``RUN_HEAVY``'s cell must not pre-declare a scratch rows directory.
-
-    The reader owns the destination now (a fresh temp directory it reports), so
-    a ``ROWS_DIR`` under a notebook-chosen ``SCRATCH`` is dead configuration --
-    and dead configuration in a gate cell reads as the supported way in.
-    """
+    """`RUN_HEAVY`'s cell must not pre-declare a scratch rows directory: dead config in a gate cell reads as the supported way in."""
     source = cell_source(nb, "RUN_HEAVY = ")
     for dead in ("ROWS_DIR", "SCRATCH", "SNAPSHOT_S3", "SNAPSHOT_REGION"):
         assert dead not in source, f"the RUN_HEAVY cell still declares {dead}"
 
 
 def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb):
-    """Section 5's markdown and its recovery-report cell must not contradict the code.
-
-    Both used to state that the post-recovery sensitivity pool is NOT computed,
-    which is now false. A stale disclaimer is worse than none: a reader who
-    believes it will not look for the row that is right there.
-    """
+    """Section 5's prose must not claim the post-recovery pool is skipped: a stale disclaimer hides a row that is right there."""
     joined = "\n".join("".join(cell["source"]) for cell in nb["cells"])
     for claim in ("SENSITIVITY pool is NOT computed",
                   "sensitivity arm is left out",
@@ -201,13 +180,7 @@ def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb):
 
 def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(nb, modules, fake_s3,
                                                              capsys):
-    """The heavy cell downloads both trees through `rows_source` and reports both.
-
-    Three claims in one run, because they are one behaviour: the verified rows
-    come from the spool prefix through the shared reader, the recovery rows come
-    from the same reader one directory over, and the report that prints carries
-    the post-recovery sensitivity row that the notebook could not produce before.
-    """
+    """The heavy cell must download both trees through `rows_source` and report both in one run."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     out = capsys.readouterr().out
@@ -218,14 +191,10 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(nb, modules, fake_s
     assert len(recovered) == len(modules["ded_pa"].MODELS), recovered
     assert all(f"/{RECOVERY_RUN}/" in k for k in recovered), recovered
 
-    # The report itself: the recovery pool is a sensitivity ROW, never the
-    # headline. Asserted on the affirmative label `mode_report` prints for a
-    # pool that exists (``label += " + DojoInit recovery" if rec else ...``),
-    # NOT on the word "recovery": the fallback row for a report run WITHOUT
-    # --recovery-dir reads "Post-recovery pools are NOT shown", and the
-    # section's standing blurb names the recovery too -- so a substring test
-    # would pass on a cell that fetched the rows and then failed to pass them
-    # on. The negative assertion below is the other half of that.
+    # Asserted on the affirmative label `mode_report` prints when a recovery
+    # pool exists, not the substring "recovery": the no-recovery fallback and
+    # the section's own blurb both name "recovery" too, so a plain substring
+    # check would pass even if the cell fetched rows and dropped them.
     assert "+ DojoInit recovery" in out, out[-2500:]
     assert "Post-recovery pools are NOT shown" not in out, out[-2500:]
     assert namespace["ROWS_DIR"].is_dir()
@@ -237,12 +206,7 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(nb, modules, fake_s
 
 
 def test_section_5_reads_the_prefix_the_scripts_read(nb, modules, fake_s3):
-    """The listing prefixes must be the study's spool prefix and its recovery run.
-
-    Pinned because the cell used to read a THIRD location (the
-    ``analysis/2026-08-16`` snapshot), so "it downloaded something" is not
-    evidence that it downloaded the rows the published report reads.
-    """
+    """The listing prefixes must be the study's spool prefix and its recovery run, not just "something downloaded"."""
     spool = modules["rows_source"].spool_prefix()
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
@@ -253,11 +217,7 @@ def test_section_5_reads_the_prefix_the_scripts_read(nb, modules, fake_s3):
 
 def test_section_6_reuses_the_rows_section_5_already_fetched(nb, modules, fake_s3,
                                                              capsys):
-    """hint-vs-noise runs against the SAME directory, downloading nothing again.
-
-    A second ``--s3`` would pull all 21 lanes twice for one report; the reader's
-    ``--rows-dir`` exists precisely so a tree already on disk is reused.
-    """
+    """hint-vs-noise must reuse section 5's directory, not re-download all 21 lanes via a second `--s3`."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     downloads_after_section_5 = len(fake_s3.downloads)
@@ -270,12 +230,7 @@ def test_section_6_reuses_the_rows_section_5_already_fetched(nb, modules, fake_s
 
 
 def test_the_heavy_cells_stay_gated(nb, modules, fake_s3, capsys):
-    """With ``RUN_HEAVY`` false the cells touch S3 not at all, and say why.
-
-    The gate is the notebook's contract with a reader who has no credentials:
-    it must be the FIRST thing each heavy cell consults, not a branch after the
-    download.
-    """
+    """With `RUN_HEAVY` false, the cells must touch S3 not at all and say so: the gate must be checked before any download, not after."""
     namespace = dict(modules, RUN_HEAVY=False)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     _exec_cell(nb, "hint_vs_noise.main(", namespace)
@@ -286,15 +241,7 @@ def test_the_heavy_cells_stay_gated(nb, modules, fake_s3, capsys):
 
 
 def test_an_incomplete_recovery_fetch_stops_the_cell_by_name(nb, modules, monkeypatch):
-    """A partial recovery tree must refuse loudly, not quietly change the pool.
-
-    ``error_bars.lane_outcomes`` reads ``<recovery_dir>/<model>/
-    recovered_rows.jsonl`` for EVERY model once a recovery directory is given,
-    so a lane missing from S3 would otherwise surface as a bare
-    ``FileNotFoundError`` deep inside the report -- or, worse, invite a
-    "skip the missing lanes" fallback that would compare a 20-lane recovery
-    pool against a 21-lane headline.
-    """
+    """A partial recovery tree must refuse loudly by naming the missing model, not silently compare a short pool against the full headline."""
     objects = _fake_bucket(modules["ded_pa"].MODELS)
     dropped = modules["ded_pa"].MODELS[3]
     del objects[

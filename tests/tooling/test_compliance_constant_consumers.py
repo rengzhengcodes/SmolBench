@@ -15,8 +15,7 @@ from tests._paths import REPO_ROOT
 #: Package roots whose modules read or write compliance labels.
 SOURCE_ROOTS = ("smolbench", "scripts", "notebooks")
 
-#: The one module allowed to spell the label as a literal: it is the module
-#: that DEFINES it.
+#: The one module allowed to spell the label as a literal: it defines it.
 LABEL_HOME = REPO_ROOT / "smolbench" / "evals" / "quiz.py"
 
 
@@ -40,12 +39,7 @@ def modules():
 
 
 def test_the_compliant_label_is_spelled_only_where_it_is_defined(modules):
-    """No second copy of the literal ``"compliant"``.
-
-    A copy would keep working right up until the label changes, and then keep
-    working -- wrongly -- in whichever module still carries the old spelling.
-    The label has one home; everyone else imports it.
-    """
+    """No second literal copy of `"compliant"`: a copy would silently diverge if the label ever changes."""
     offenders = []
     for path, tree in modules:
         if path == LABEL_HOME:
@@ -57,13 +51,7 @@ def test_the_compliant_label_is_spelled_only_where_it_is_defined(modules):
 
 
 def test_the_statistics_notebook_delegates_compliance_entirely(modules):
-    """The notebook holds no compliance logic of its own -- section 3 imports it.
-
-    Its significance-report section calls the live module
-    (``notebooks/induction/analysis/significance_report.py``, which imports
-    `COMPLIANT` and `NOT_ASSESSED` from the datamodel); the notebook itself must
-    not grow a private census that could disagree with the published one.
-    """
+    """The notebook delegates compliance entirely to `significance_report.py`; it must not grow a private census that could disagree with the published one."""
     import json
 
     from tests.tooling._notebook_cells import STATS_NB
