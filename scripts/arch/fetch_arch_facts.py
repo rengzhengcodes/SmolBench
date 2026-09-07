@@ -109,11 +109,24 @@ def _fetch(repo: str, filename: str, revision: str) -> Tuple[Optional[Any], Opti
     """Fetch one JSON file from a Hugging Face repo at a pinned revision.
 
     The one seam the offline tests monkeypatch (by name and signature), so
-    `collect` never calls `huggingface_hub` directly. Returns ``(payload,
-    resolved_revision, error)``; ``error`` is ``"absent"`` when the repo ships
-    no such file at this revision (not every repo ships a
-    generation_config.json), otherwise the exception string. Never raises --
+    `collect` never calls `huggingface_hub` directly. Never raises --
     one rung's fetch failure must not abort the whole roster sweep.
+
+    Parameters
+    ----------
+    repo : str
+        Hugging Face repository identifier.
+    filename : str
+        JSON filename to retrieve.
+    revision : str
+        Pinned repository revision.
+
+    Returns
+    -------
+    Tuple[Optional[Any], Optional[str], Optional[str]]
+        ``(payload, resolved_revision, error)``; ``error`` is ``"absent"`` when the repo ships no
+        such file at this revision (not every repo ships a generation_config.json), otherwise the
+        exception string.
     """
     try:
         path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
@@ -158,9 +171,18 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     """Find the shortest repeating motif that tiles ``items`` exactly.
 
     A block diagram draws the repeating unit and an ``x N`` multiplier, not 61
-    individual layers. Returns None when the sequence doesn't tile (DeepSeek's
-    leading dense layers, Nemotron's irregular hybrid), which sends the caller
-    to the run-length view instead.
+    individual layers.
+
+    Parameters
+    ----------
+    items : List[Any]
+        Layer sequence to inspect.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        None when the sequence doesn't tile (DeepSeek's leading dense layers, Nemotron's irregular
+        hybrid), which sends the caller to the run-length view instead.
     """
     n = len(items)
     if n == 0:
@@ -181,6 +203,16 @@ def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     language-model fields live in ``text_config``; the study serves them with
     ``--language-model-only``, exactly that inner model. Top-level keys win on
     collision, since they describe the wrapper.
+
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Model configuration, possibly with a ``text_config`` wrapper.
+
+    Returns
+    -------
+    Tuple[Dict[str, Any], List[str]]
+        The hoisted configuration and names of sibling modality towers.
     """
     text_config = config.get("text_config")
     if not isinstance(text_config, dict):
@@ -229,6 +261,16 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
     Normalises the two encodings to one list of strings: ``layer_types`` (a
     list; Qwen3.5 / Gemma-4 / GLM / EXAONE-4.x) and ``hybrid_override_pattern``
     (a character string; Nemotron-3).
+
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Model configuration containing a layer encoding.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Drawable layer sequence metadata.
     """
     view: Dict[str, Any] = {}
     layer_types = config.get("layer_types")
@@ -256,10 +298,24 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
 def spec_revision(spec: Dict[str, Any]) -> str:
     """Return the commit SHA a deploy spec pins with its ``--revision`` flag.
 
-    Raises ValueError if ``vllm_args`` has no ``--revision`` flag or no SHA
-    after it. Deliberately does not fall back to ``"main"``: silently
+    Deliberately does not fall back to ``"main"``: silently
     auditing an unpinned rung against a moving branch is exactly the defect
     this function exists to prevent.
+
+    Parameters
+    ----------
+    spec : Dict[str, Any]
+        Deploy specification containing ``vllm_args``.
+
+    Returns
+    -------
+    str
+        Commit SHA pinned by ``--revision``.
+
+    Raises
+    ------
+    ValueError
+        If ``vllm_args`` has no ``--revision`` flag or no SHA after it.
     """
     vllm_args = spec.get("vllm_args", [])
     repo = spec.get("hf_model_id", "<unknown repo>")
@@ -359,7 +415,17 @@ def cross_check(facts: Dict[str, Any]) -> List[str]:
     compares each record's own pinned vs. resolved revision -- the
     vendor-force-push case this whole fix targets -- independently of the
     fixture, since that invariant holds regardless of what the fixture
-    covers. Returns one line per problem found; empty when everything agrees.
+    covers.
+
+    Parameters
+    ----------
+    facts : Dict[str, Any]
+        Fetched architecture facts keyed by roster specification.
+
+    Returns
+    -------
+    List[str]
+        One line per problem found; empty when everything agrees.
     """
     problems: List[str] = []
 

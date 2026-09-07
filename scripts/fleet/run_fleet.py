@@ -101,7 +101,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _selected_lanes(raw: str) -> dict[str, _lane_env.Lane]:
     """Resolve ``--lanes`` into a ``{key: Lane}`` map, in ``lane_env.LANES`` order.
 
-    Raises ``SystemExit`` for a key not in ``lane_env.LANES``.
+    Parameters
+    ----------
+    raw : str
+        Comma-separated lane keys from ``--lanes``.
+
+    Returns
+    -------
+    dict[str, _lane_env.Lane]
+        Selected lanes in ``lane_env.LANES`` order.
+
+    Raises
+    ------
+    SystemExit
+        For a key not in ``lane_env.LANES``.
     """
     lanes = _lane_env.LANES
     if not raw.strip():
@@ -125,6 +138,13 @@ def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane], phase_name: str) -> No
 
     Never calls ``supervisor.preflight``/``fleet_image_digest`` (real network
     I/O); `_DRY_RUN_NOTICE` says so under the header.
+
+    Parameters
+    ----------
+    lanes : dict[str, _lane_env.Lane]
+        Lanes to include in the plan.
+    phase_name : str
+        Requested phase selection.
     """
     phases = _supervisor._phase_sequence(phase_name)
     print(f"run_fleet DRY RUN -- phase={phase_name!r}, {len(lanes)} lane(s) selected\n")
@@ -147,8 +167,16 @@ def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane], phase_name: str) -> No
 def main(argv: Optional[list[str]] = None) -> int:
     """Parse args, then print the dry-run plan or launch the fleet live.
 
-    Returns ``0`` once the live fleet is all-terminal; individual lanes may
-    still be halted (see the printed summary).
+    Parameters
+    ----------
+    argv : Optional[list[str]], optional
+        Command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        ``0`` once the live fleet is all-terminal; individual lanes may still be
+        halted (see the printed summary).
     """
     args = _build_arg_parser().parse_args(argv)
     lanes = _selected_lanes(args.lanes)

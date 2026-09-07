@@ -86,6 +86,18 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
     hand launches' tags -- the driver derives the per-shard tag and
     state-file suffix from ``INDUCTION_SHARD`` -- which is what makes
     adoption and reattach work.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed shard-launch arguments.
+    index : int
+        Zero-based shard index.
+
+    Returns
+    -------
+    Dict[str, str]
+        Complete child-process environment.
     """
     env = dict(os.environ)
     env["INDUCTION_MODELS"] = args.model
@@ -110,6 +122,18 @@ def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
     Matches ``INDUCTION_MODELS``/``INDUCTION_SHARD`` in ``/proc/<pid>/environ``.
     First match wins; the launch discipline guarantees at most one per
     (model, shard).
+
+    Parameters
+    ----------
+    model : str
+        Model identifier to match.
+    shard : Optional[str]
+        Shard selector to match.
+
+    Returns
+    -------
+    Optional[int]
+        PID of the matching live process, or None.
     """
     try:
         pids = subprocess.run(
@@ -139,6 +163,18 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
     (mirroring ``run_study``'s ``_LANE`` suffix); unsharded runs use
     ``--state-file`` verbatim. Deliberately distinct from the fleet's
     ``.ec2_state_scaling_<lane>.json`` and never derived from `args.tag`.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed shard-launch arguments.
+    index : int
+        Zero-based shard index.
+
+    Returns
+    -------
+    Path
+        Shard EC2 state-file path anchored at the repository root.
     """
     if args.no_shard:
         return REPO / args.state_file
@@ -156,6 +192,11 @@ def terminate_shard_box(shard: _shards.Shard) -> None:
     launched against, not one re-derived from arguments that may have moved
     on. Unlinks `shard.state_file` after a successful terminate, so a later
     reattach can't latch onto an instance id that no longer exists.
+
+    Parameters
+    ----------
+    shard : _shards.Shard
+        Completed shard whose instance state file is terminated.
     """
     path = shard.state_file
     index = shard.index
@@ -238,9 +279,18 @@ def refuse_fleet_prefix_tag(parser: argparse.ArgumentParser, args: argparse.Name
     fleet teardown would terminate these hand-launched shard boxes as though
     they were fleet lane instances.
 
-    Raises `SystemExit` via `parser.error` (not an ``assert``, which
-    ``python -O`` strips) when that would happen and
-    ``args.allow_fleet_prefix`` is false.
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+        Parser that reports an unsafe tag.
+    args : argparse.Namespace
+        Parsed arguments containing the base tag and override flag.
+
+    Raises
+    ------
+    SystemExit
+        Via `parser.error` (not an ``assert``, which ``python -O`` strips) when that would
+        happen and ``args.allow_fleet_prefix`` is false.
     """
     if args.allow_fleet_prefix:
         return
@@ -261,8 +311,7 @@ def supervise(shard_list: list) -> int:
 
     One pass per `POLL_SECONDS`: every shard that was ``"running"`` and is no
     longer `alive` is either recorded complete (and its box terminated),
-    relaunched, or halted, on `_policy`'s verdict. Returns ``1`` if any shard
-    halted, else ``0``.
+    relaunched, or halted, on `_policy`'s verdict.
 
     `shard_list` takes a plain list of shards and no argparse namespace
     (their `status`, counters and `proc` are mutated in place), so a caller
@@ -274,6 +323,16 @@ def supervise(shard_list: list) -> int:
     whereas the fleet's single loop is shared by 21 lanes and must never
     block in one of them. Both take their delay from `_policy`, so only the
     scheduling differs.
+
+    Parameters
+    ----------
+    shard_list : list
+        Shards whose status, counters, and processes are supervised.
+
+    Returns
+    -------
+    int
+        ``1`` if any shard halted, else ``0``.
     """
     while True:
         for shard in shard_list:

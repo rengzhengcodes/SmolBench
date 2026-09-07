@@ -141,9 +141,7 @@ def _tier_gpu_pin(tier: str) -> str:
     can never drift from that module's hardware data. Derived, never a
     hand-written table: an edit to ``TIER_INSTANCE_TYPES`` unsafe for this
     function to run against is exactly the drift ``EC2_REQUIRE_GPU`` exists
-    to catch. Raises `SystemExit` (never ``assert``, stripped under
-    ``python -O``) when the hunt list is unmappable or spans more than one
-    GPU count.
+    to catch.
 
     An empty-name, count-only result (e.g. ``":8"``) is a weaker pin by
     construction -- ``ec2._assert_required_gpu``'s membership check treats an
@@ -154,6 +152,21 @@ def _tier_gpu_pin(tier: str) -> str:
     still blocks a tp-changing GPU-count substitution, but cannot (and is not
     meant to) catch the same-count, different-silicon substitution that
     changes numerics without changing tp.
+
+    Parameters
+    ----------
+    tier : str
+        Tier whose instance-type hunt list is pinned.
+
+    Returns
+    -------
+    str
+        ``EC2_REQUIRE_GPU`` pin for the tier.
+
+    Raises
+    ------
+    SystemExit
+        When the hunt list is unmappable or spans more than one GPU count.
     """
     types = TIER_INSTANCE_TYPES[tier].split(",")
     unmapped = [
@@ -467,8 +480,24 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
     """Build the subprocess argv for one lane's `phase`.
 
     The ``"shutdown"`` argv must run under ``lane_env(lane, "shutdown")`` so
-    ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS lane's box. Any
-    `phase` outside induction/deduction/shutdown raises ``ValueError``.
+    ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS lane's box.
+
+    Parameters
+    ----------
+    lane : Lane
+        Lane whose subprocess command is built.
+    phase : str
+        Subprocess phase to run.
+
+    Returns
+    -------
+    list[str]
+        Subprocess argument vector.
+
+    Raises
+    ------
+    ValueError
+        For a `phase` outside induction/deduction/shutdown.
     """
     if phase == "induction":
         return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "induction" / "run_study.py")]
