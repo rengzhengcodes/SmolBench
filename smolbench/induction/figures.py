@@ -34,7 +34,7 @@ def accuracy(marks: Marks) -> float:
     Raises
     ------
     ValueError
-        If ``correct + incorrect + invalid == 0``: the ``Marks`` graded.
+        If ``correct + incorrect + invalid == 0``: the ``Marks`` graded
         nothing. A genuine 0% and an ungraded replicate are different results,
         so this refuses rather than returning ``0.0`` for both; table builders
         map the refusal to their own "not a measurement" value (see
@@ -125,7 +125,7 @@ def plot_archetype_accuracy(
     title : str
         Figure title.
     chance : float, optional
-        Y-value of the dashed "chance" line; pass the quiz's own floor.
+        Y-value of the dashed "chance" line; pass the quiz's own floor
         (0.5 for a binary ToF quiz).
     bar_width : float, optional
         Width allocated to each condition bar.

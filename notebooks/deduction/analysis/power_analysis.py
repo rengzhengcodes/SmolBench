@@ -403,7 +403,7 @@ def load_joint_cells(
     Returns
     -------
     tuple[list[str], dict, list[str]]
-        Sorted paired spec-keys; ``{theorem_id: {(k, prompt_rung): {model: 1 or
+        ``(models, blocks, prompt_rungs)``: sorted paired spec-keys; ``{theorem_id: {(k, prompt_rung): {model: 1 or
         0}}}`` restricted to fully-graded cells; sorted distinct ``rung`` values
         present.
     """

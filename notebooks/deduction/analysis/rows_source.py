@@ -200,7 +200,7 @@ def resolve_rows_dir(
     Parameters
     ----------
     rows_dir : Path | None
-        Existing local rows directory.
+        Local rows directory returned as-is; mutually exclusive with `s3_prefix`.
     s3_prefix : str | None
         normalized to a single trailing "/"; an empty prefix is
         refused (`ValueError`) rather than guessed at, since it would

@@ -84,7 +84,7 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Raises
     ------
     ValueError
-        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment -- a name S3.
+        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment -- a name S3
         never accepts, which would give a store that can never find what it writes.
     """
     if not uri.startswith("s3://"):
@@ -220,7 +220,7 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     results_dir : Path
         Results directory under ``repo_root()``.
     prefix : str, optional
-        Non-empty `prefix` folds in as a sub-level with exactly one trailing ``"_"`` stripped:.
+        Non-empty `prefix` folds in as a sub-level with exactly one trailing ``"_"`` stripped:
         ``"induction/one_hop"``.
 
     Returns
@@ -401,7 +401,7 @@ class ResultsStore(abc.ABC):
             in a log where nothing can be rewritten. Raises ValueError before touching the store
             if it's None.
         addr : ReplicateAddress
-            Address of the run to replace.
+            Address whose surviving runs are replaced.
         run_ts : datetime
             stamp for the new run; forwarded to :meth:`dump_marks`.
         reason : str
@@ -965,7 +965,7 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
-        Need not exist -- resolved non-strictly, since an S3-first run may never create.
+        Need not exist -- resolved non-strictly, since an S3-first run may never create
         its local results directory.
     prefix : str, optional
         Becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
@@ -1021,7 +1021,7 @@ def _etag_md5(etag: Optional[str]) -> Optional[str]:
     Returns
     -------
     Optional[str]
-        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None for.
+        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None for
         missing/falsy or multipart (``<hex>-<partcount>``, never an MD5 of the bytes), which a
         caller must treat as "assume different" (download).
     """
@@ -1056,7 +1056,7 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     Raises
     ------
     ValueError
-        Naming `key` when the destination equals or lies outside `resolved_dir`, before the.
+        Naming `key` when the destination equals or lies outside `resolved_dir`, before the
         caller mkdirs or writes, so a refused key leaves no trace.
     """
     candidate = (resolved_dir / rel).resolve()
@@ -1095,7 +1095,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     results_dir : Path
         Local directory receiving downloaded logs.
     tags : Mapping[str, str]
-        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't.
+        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
         supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
     prefix : str, optional
         Forwarded to :func:`experiment_name`, and used in each local directory name.
@@ -1103,7 +1103,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     Returns
     -------
     int
-        Count of objects downloaded.
+        Count of objects actually downloaded, excluding those skipped as identical.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):

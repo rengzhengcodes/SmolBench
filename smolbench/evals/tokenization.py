@@ -237,7 +237,7 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
-        A key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's.
+        A key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's
         ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only quantized repos.
 
     Returns
@@ -314,7 +314,7 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Raises
     ------
     ValueError
-        If no candidate in :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that.
+        If no candidate in :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that
         silently saturates, leaving the length-control arm shorter than the arm it controls for.
     """
     for unit in WHITESPACE_UNITS:
@@ -361,10 +361,10 @@ def token_matched_noise_prompt(
     target_tokens : int
         Exact token count for the rendered prompt.
     tokenizer : Tokenizer
-        Must be the model under test's, or the control de-calibrates by however much the.
+        Must be the model under test's, or the control de-calibrates by however much the
         two tokenizers disagree.
     unit : str | None
-        Defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when.
+        Defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
         padding many prompts with one tokenizer.
 
     Returns
