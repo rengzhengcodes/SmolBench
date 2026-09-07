@@ -99,11 +99,20 @@ def lane_env_defaults(
 
     Parameters
     ----------
+    key : str
+        Model lane key.
+    repo_root : Path
+        Repository root anchoring relative state-file paths.
     state_file : str | None, optional
         ``None`` derives ``repo_root / f".ec2_state_scaling_{key}.json"``;
         a bare or relative name resolves against `repo_root`, not the process cwd
         -- anchoring both phases to the same root is how this lane reattaches to
         induction's box.
+
+    Returns
+    -------
+    dict[str, str]
+        Environment defaults for the lane.
     """
     if state_file is None:
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"
@@ -332,6 +341,16 @@ def _stamp_path(path: Path) -> str:
     `build_config`'s provenance stamps (``sweep_config`` and
     ``decontam_config``) so the two cannot drift apart in how they spell a
     path.
+
+    Parameters
+    ----------
+    path : Path
+        Path to spell for manifest provenance.
+
+    Returns
+    -------
+    str
+        Repo-relative path when possible, otherwise an absolute path.
     """
     resolved = path.resolve()
     try:
@@ -372,14 +391,25 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     ``target_date`` is earlier than `ROSTER_LATEST_RELEASE` (some checkpoint
     may already have seen the theorems during training).
 
-    `sweep_config_path` is a test seam (default ``None`` reads the committed
-    file); a path outside the repo is stamped absolute, since it has no
-    repo-relative spelling. ``LEAN_SHARD``, ``LEAN_RUN_NAME``,
+    A path outside the repo is stamped absolute, since it has no repo-relative
+    spelling. ``LEAN_SHARD``, ``LEAN_RUN_NAME``,
     ``LEAN_CELL_WHITELIST``, ``LEAN_CORPUS_KIND``, ``LEAN_CORPUS_SPLIT`` and
     ``LEAN_SEED`` are all read at call time, never at import and never
     cached; ``run_name`` defaults to ``f"scaling_{key}"`` plus a
     ``_shard<i>of<n>`` suffix when sharding, matching
     ``scripts/fleet/run_fleet.py``'s ``Lane`` naming.
+
+    Parameters
+    ----------
+    key : str
+        Model key for this lane.
+    sweep_config_path : Path | None, optional
+        Alternate sweep-config file read instead of the committed one.
+
+    Returns
+    -------
+    dict
+        Configuration for this lane's ``runner.sweep`` invocation.
 
     Raises
     ------
@@ -581,6 +611,8 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
 
     Parameters
     ----------
+    run_dir : Path
+        Local run directory to upload and prune.
     key : str
         The destination prefix ``f"{runner.spool_prefix()}/scaling_{key}/"``
         is built from this, not ``run_dir.name``, so the S3 layout stays
@@ -696,6 +728,8 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
 
     Parameters
     ----------
+    config : dict
+        Sweep configuration to enumerate.
     run_dir : Path
         Need not exist; an absent ``all_rows.jsonl`` reads as "nothing done".
 
@@ -705,6 +739,11 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
         Propagated from ``runner._select_theorems`` or
         ``runner.load_cell_whitelist`` -- the same conditions that would
         make ``runner.sweep`` itself raise before doing any work.
+
+    Returns
+    -------
+    set[tuple]
+        Cell keys not already recorded on disk.
     """
     all_rows_path = run_dir / "all_rows.jsonl"
 
@@ -776,7 +815,10 @@ def main(argv: list[str] | None = None) -> None:
     attempt reached the S3 spool -- true because ``spool_to_s3`` keeps that
     file across its prune (see its docstring).
 
-    `argv` is a parameter so tests can call this without a subprocess.
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Command-line arguments, so tests can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description=(

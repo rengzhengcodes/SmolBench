@@ -61,6 +61,20 @@ def iter_source_keys(
     of a model share one name. `bucket` is a parameter, not a module constant,
     so a redirected ``SMOLBENCH_RESULTS_S3`` is honored. `deduction_prefix`
     defaults to `runner.spool_prefix()`; `main` always passes it explicitly.
+
+    Parameters
+    ----------
+    client : Any
+        S3 client that lists the study objects.
+    bucket : str
+        Bucket containing the study objects.
+    deduction_prefix : Optional[str], optional
+        Prefix containing deduction objects.
+
+    Returns
+    -------
+    List[Tuple[str, str, str, int]]
+        Study-object leg, model, source key, and size tuples.
     """
     if deduction_prefix is None:
         from smolbench.deduction.lean.runner import spool_prefix
@@ -90,8 +104,30 @@ def copy_one(client: Any, bucket: str, src_key: str, dest_key: str, size: int) -
 
     A within-bucket copy: source and destination are the same resolved bucket.
     `size` (the expected source size) decides whether an already-present
-    destination object can be skipped. Returns ``"skipped"`` or ``"copied"``;
-    raises `RuntimeError` if the copied object's size doesn't match.
+    destination object can be skipped.
+
+    Parameters
+    ----------
+    client : Any
+        S3 client that copies and checks objects.
+    bucket : str
+        Resolved bucket for the source and destination.
+    src_key : str
+        Source object key.
+    dest_key : str
+        Destination object key.
+    size : int
+        Expected source size.
+
+    Returns
+    -------
+    str
+        ``"skipped"`` or ``"copied"``.
+
+    Raises
+    ------
+    RuntimeError
+        if the copied object's size doesn't match.
     """
     try:
         head = client.head_object(Bucket=bucket, Key=dest_key)

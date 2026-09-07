@@ -75,6 +75,22 @@ class ReplicateHarness:
 
         ``model=None`` is the valid tag-only-read case (see
         ``ReplicateAddress.model``), used by `cot_chain_lengths`.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            Model name, or None for a tag-only read.
+        tag : str
+            Archetype tag in the store address.
+        info : str
+            Information type in the store address.
+        seed : int
+            Replicate seed in the store address.
+
+        Returns
+        -------
+        ReplicateAddress
+            the store address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
@@ -85,6 +101,16 @@ class ReplicateHarness:
         run counts as "not outstanding", including a superseded one
         (``exists`` is marker-blind by design); a seed in ``force_seeds``
         always counts as outstanding regardless.
+
+        Parameters
+        ----------
+        model : str
+            Model whose replicate addresses are checked.
+
+        Returns
+        -------
+        bool
+            whether any replicate still needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -120,6 +146,19 @@ class ReplicateHarness:
         superseded, and recovery is either re-running this seed or deleting
         the marker(s) by hand; locally, the ``SUPERSEDED-<ts>`` file is the
         recoverable prior run.
+
+        Parameters
+        ----------
+        model : str
+            Model whose outstanding replicates are collected.
+        extra_args : Optional[dict], optional
+            Extra arguments forwarded to ``evaluate()``.
+        max_parallel : Optional[int], optional
+            Maximum parallel requests forwarded to ``evaluate()``.
+        request_timeout : Optional[int], optional
+            Per-request read timeout forwarded to ``evaluate()``.
+        server_config : Optional[Mapping], optional
+            Server configuration persisted with each replicate.
         """
         tag: str = self.archetype_tags[model]
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
@@ -179,6 +218,11 @@ class ReplicateHarness:
         Against S3, "stored" means "has at least one logged run"; totals come
         from the EARLIEST logged run of each seed, and the printed count is of
         distinct seeds, not log objects.
+
+        Parameters
+        ----------
+        model : str
+            Model whose stored replicates are summarized.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
@@ -207,6 +251,11 @@ class ReplicateHarness:
         ``archetype_tags`` to the FIRST model carrying it (models sharing a
         tag already share one local directory). With no such model every
         (seed, info) is skipped.
+
+        Parameters
+        ----------
+        tag : str, optional
+            Archetype tag whose stored CoT replicates are analyzed.
         """
         model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
         lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}

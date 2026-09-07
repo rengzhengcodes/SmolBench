@@ -57,6 +57,18 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
     the instance still present. A backwards verdict either abandons a lane on
     a routine interruption or burns money relaunching one that will always
     fail the same way.
+
+    Parameters
+    ----------
+    log_tail : str
+        Recent child-process log output.
+    instance_present : bool
+        Whether the lane's EC2 instance remains present.
+
+    Returns
+    -------
+    str
+        The ``"reclaim"`` or ``"crash"`` verdict.
     """
     if not instance_present:
         return "reclaim"
@@ -87,8 +99,21 @@ def reclaim_backoff_seconds(attempt: int) -> float:
     on. Monotonically non-decreasing, so a lane fighting a persistently dry
     capacity pool never waits less than it did last time.
 
-    Raises `ValueError` below 1: a 0-based or negative `attempt` would give a
-    shorter delay than the base (``2 ** -1`` is 0.5), inverting the schedule.
+    Parameters
+    ----------
+    attempt : int
+        1-based reclaim relaunch number.
+
+    Returns
+    -------
+    float
+        Delay in seconds before the relaunch.
+
+    Raises
+    ------
+    ValueError
+        When `attempt` is below 1: a 0-based or negative `attempt` would give a shorter delay
+        than the base (``2 ** -1`` is 0.5), inverting the schedule.
     """
     if attempt < 1:
         raise ValueError(f"attempt must be >= 1 (1-based), got {attempt}")
@@ -136,13 +161,10 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     exists only for the reclaim path, where the thing being waited on (spot
     capacity, a quota window) actually frees up on its own.
 
-    Raises `ValueError`, never an assert (stripped under ``python -O``), for
-    a `verdict` outside ``"reclaim"``/``"crash"``: silently treating an
-    unrecognised verdict as one of the two would apply the wrong cap to a
-    real failure.
-
     Parameters
     ----------
+    verdict : str
+        Exit classification: ``"reclaim"`` or ``"crash"``.
     attempt : int
         the POST-increment count of relaunches of this verdict's kind
         for this lane/shard (the caller bumps its counter first, then asks), so
@@ -152,6 +174,18 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
         operator. never compared against: callers differ in what they can
         supply (`subprocess.Popen.poll()`, or an inferred 0/1 for an adopted
         process with no waitable handle).
+
+    Returns
+    -------
+    Decision
+        Relaunch decision for the exit.
+
+    Raises
+    ------
+    ValueError
+        Raised, never an assert (stripped under ``python -O``), for a `verdict`
+        outside ``"reclaim"``/``"crash"``: silently treating an unrecognised
+        verdict as one of the two would apply the wrong cap to a real failure.
     """
     if verdict == "reclaim":
         if attempt > MAX_RECLAIM_RELAUNCHES:
@@ -206,6 +240,22 @@ def count_and_decide(
     with `crash_relaunches`/`reclaim_relaunches` attributes (a
     `supervisor._LaneRun` or a `shards.Shard`); incremented first, since
     `decide_relaunch`'s `attempt` is the post-increment count.
+
+    Parameters
+    ----------
+    counters : Any
+        Object holding crash and reclaim relaunch counters.
+    log_tail : str
+        Recent child-process log output.
+    instance_present : bool
+        Whether the lane's EC2 instance remains present.
+    rc : int | None
+        Child-process exit status.
+
+    Returns
+    -------
+    Decision
+        Relaunch or halt decision for the exit.
     """
     verdict = classify_exit(log_tail, instance_present)
     name = "reclaim_relaunches" if verdict == "reclaim" else "crash_relaunches"

@@ -61,6 +61,16 @@ def normalize_text(s: str) -> str:
     collapses above, then whitespace (incl. newlines) to one space, so
     multi-line and one-line renderings of the same state collide. Applied
     identically on index and query sides, so it can only add matches.
+
+    Parameters
+    ----------
+    s : str
+        Lean text to normalize.
+
+    Returns
+    -------
+    str
+        normalized fingerprint text.
     """
     s = unicodedata.normalize("NFC", s)
     s = _METAVAR_RE.sub("?m", s)
@@ -74,6 +84,16 @@ def state_variants(state_pp: str) -> list[str]:
 
     Covers a hypotheses-stripped copy of an eval state matching the eval's own
     ``stepk:0`` rendering, which is goal-only.
+
+    Parameters
+    ----------
+    state_pp : str
+        Pretty-printed Lean state.
+
+    Returns
+    -------
+    list[str]
+        Full state and, if different, its goal-only form (empties dropped).
     """
     full = normalize_text(state_pp)
     goal = normalize_text(extract_goal_only(state_pp))
@@ -94,6 +114,16 @@ def _index_variants(state_pp: str) -> list[str]:
     form, including a hypothesis-free state (``⊢ False``) that collapses to
     one variant equal to its own goal-only form -- otherwise that short key
     would match every row sharing it.
+
+    Parameters
+    ----------
+    state_pp : str
+        Pretty-printed Lean state.
+
+    Returns
+    -------
+    list[str]
+        State variants eligible as statement/state keys.
     """
     goal_only = normalize_text(extract_goal_only(state_pp))
     return [
@@ -142,6 +172,16 @@ def _shingles(text: str) -> frozenset[str]:
     surface rather than adding one, and costs no accuracy: MEASURED over the
     840-candidate corpus in `test_lean_decontam.py`, the max Jaccard
     difference between gram-string and hashed-gram sets is exactly ``0.0``.
+
+    Parameters
+    ----------
+    text : str
+        Text to split into character shingles.
+
+    Returns
+    -------
+    frozenset[str]
+        Character shingle set.
     """
     if len(text) <= _SHINGLE_N:
         grams = [text] if text else []
@@ -153,9 +193,19 @@ def _shingles(text: str) -> frozenset[str]:
 def _minhash(shingles: frozenset[str]) -> MinHash:
     """Seeded MinHash signature of a shingle set.
 
-    `shingles` must be non-empty: signing an empty set gives the all-max-hash
-    vector, which collides with every other empty query. Iteration order over
-    the set doesn't matter -- a MinHash signature is an elementwise minimum.
+    Iteration order over the set doesn't matter -- a MinHash signature is an
+    elementwise minimum.
+
+    Parameters
+    ----------
+    shingles : frozenset[str]
+        Must be non-empty: signing an empty set gives the all-max-hash
+        vector, which collides with every other empty query.
+
+    Returns
+    -------
+    MinHash
+        Seeded MinHash signature of the shingle set.
     """
     sig = MinHash(num_perm=_NUM_PERM, seed=_PERM_SEED)
     sig.update_batch([g.encode() for g in shingles])
@@ -168,6 +218,18 @@ def _stmt_key(full_name: str, variant_index: int) -> str:
     NUL-separated: no Lean identifier can contain NUL, so the encoding is
     injective and two distinct pairs can never collide into one key.
     `HoldoutIndex._stmt_variants` maps the result back to the pair.
+
+    Parameters
+    ----------
+    full_name : str
+        Eval theorem full name.
+    variant_index : int
+        Index of the statement variant.
+
+    Returns
+    -------
+    str
+        Hashable LSH key for the theorem and variant pair.
     """
     return f"{full_name}\x00{variant_index}"
 
@@ -249,6 +311,16 @@ class HoldoutIndex:
         ``filter`` sidecar is needed. `load_split` is memoized on
         ``(kind, split)``, so a caller that repoints ``SMOLBENCH_LEAN_DATA``
         must also call `corpus.reset_caches` to see the new root's theorems.
+
+        Parameters
+        ----------
+        eval_specs : Iterable[tuple[SplitKind, Split]] | None, optional
+            Eval split specifications to index.
+
+        Returns
+        -------
+        HoldoutIndex
+            Index built from the eval splits.
         """
         if eval_specs is None:
             eval_specs = corpus.eval_split_specs()
@@ -308,6 +380,16 @@ class HoldoutIndex:
         surfaces. Candidates are walked in sorted key order because
         `MinHashLSH.query` returns a `set`-derived list ordered by
         PYTHONHASHSEED, and this module promises byte-reproducible results.
+
+        Parameters
+        ----------
+        variant : str
+            Normalized candidate statement variant.
+
+        Returns
+        -------
+        Hit | None
+            Matching holdout hit, if one qualifies.
         """
         shingles = _shingles(variant)
         if not shingles:
@@ -338,6 +420,24 @@ class HoldoutIndex:
         iff the returned list is non-empty. `statement` checks K2 (exact +
         near-dup) and K3, since a state-shaped row's "statement" may be a
         mid-proof eval state.
+
+        Parameters
+        ----------
+        name : str | None, optional
+            Candidate theorem name.
+        statement : str | None, optional
+            Candidate statement or state-shaped row.
+        states : Iterable[str], optional
+            Candidate proof states.
+        tactics : Sequence[str], optional
+            Candidate tactic chain.
+        pairs : Iterable[tuple[str, str]], optional
+            Candidate state and next-tactic pairs.
+
+        Returns
+        -------
+        list[Hit]
+            Matches across every key family.
         """
         hits: list[Hit] = []
         if name is not None and name in self.names:
@@ -398,6 +498,16 @@ class HoldoutIndex:
         proof, so such rows are reported, not dropped. Matches are
         non-overlapping and identifier-bounded, so ``Nat.add_comm`` doesn't
         fire inside ``Nat.add_comm'`` or ``Foo.Nat.add_comm``.
+
+        Parameters
+        ----------
+        text : str
+            Text to scan for eval-theorem names.
+
+        Returns
+        -------
+        int
+            Number of non-overlapping, identifier-bounded name matches.
         """
         if self._name_re is None:
             # Longest-first: a name can never be shadowed by a prefix of it,

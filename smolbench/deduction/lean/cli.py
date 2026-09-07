@@ -27,7 +27,20 @@ from .runner import (
 def cmd_metadata(_: argparse.Namespace) -> int:
     """Print the benchmark's `metadata.json` as indented JSON; always returns 0.
 
-    Raises `FileNotFoundError` (from `corpus.metadata`) if the dataset is not bootstrapped.
+    Parameters
+    ----------
+    _ : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        0 if the sweep completes, else 1.
+
+    Raises
+    ------
+    FileNotFoundError
+        (from `corpus.metadata`) if the dataset is not bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -38,6 +51,16 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     ``--limit`` caps only how many are PRINTED; the reported total is the
     full matching count.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        0.
     """
     items = list(iter_with_proof(args.kind, args.split))
     print(f"# {len(items)} theorems with traced tactics in {args.kind}/{args.split}")
@@ -50,8 +73,17 @@ def cmd_replay(args: argparse.Namespace) -> int:
     """Replay ground-truth tactics through a Lean REPL session for a sample of theorems.
 
     Requires `lean_interact`. ``--full-name`` replays that theorem instead of sampling
-    ``-n`` from the ``--max-tactics`` pool under ``--seed``. Returns 2 if ``--full-name``
-    matches no theorem, 0 if every replay succeeds, else 1.
+    ``-n`` from the ``--max-tactics`` pool under ``--seed``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        2 if ``--full-name`` matches no theorem, 0 if every replay succeeds, else 1.
     """
     # Local import: `.verify` requires `lean_interact`, so deferring it here
     # keeps every OTHER subcommand importable without lean_interact installed.
@@ -99,7 +131,17 @@ def cmd_filter(args: argparse.Namespace) -> int:
     Requires `lean_interact`. Appends to `corpus.replay_passing_path(kind, split)`,
     flushing after each theorem and resuming by skipping theorems already
     recorded there, so an interrupt loses at most the in-flight theorem.
-    ``--fresh`` deletes the sidecar; ``--limit 0`` means no cap. Always 0.
+    ``--fresh`` deletes the sidecar; ``--limit 0`` means no cap.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        0.
     """
     # Local import: see `cmd_replay`.
     from .verify import replay_ground_truth
@@ -169,8 +211,17 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     Requires `lean_interact`, reached through `runner.run_cell`'s lazily-resolved default
     verifier. ``--k -1`` means the last step; ``--rung`` is ``<chain>:<level>``, validated
     via `context.validate`; replicate ``i`` uses seed ``--seed + i``. Writes to
-    ``<results_root()>/runs/<new_run_id()>.jsonl``. Returns 2 if ``--full-name``/``--rung``
-    is bad, 0 if every replicate succeeds, else 1.
+    ``<results_root()>/runs/<new_run_id()>.jsonl``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        2 if ``--full-name``/``--rung`` is bad, 0 if every replicate succeeds, else 1.
     """
     pool = list(iter_with_proof(args.kind, args.split))
     matches = [t for t in pool if t.full_name == args.full_name]
@@ -235,9 +286,23 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 
     No Lean toolchain needed. Pool is replay-passing theorems only, filtered/sampled by
     ``--max-tactics``/``--limit``/``--seed``. Tokens use `tiktoken` ``cl100k_base`` with no
-    char-based fallback (unlike `context._count_tokens`), so a missing `tiktoken` raises
-    `ImportError`. A `render` exception counts as a skipped render error. Returns 1 on an
-    empty pool, else 0.
+    char-based fallback (unlike `context._count_tokens`). A `render` exception counts as a
+    skipped render error.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        1 on an empty pool, else 0.
+
+    Raises
+    ------
+    ImportError
+        If `tiktoken` is missing.
     """
     import statistics as stats
     import tiktoken
@@ -302,7 +367,17 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     ``<think>`` block without closing it, or died in the reasoning channel. A pass@N table
     follows only when some cell has more than one distinct ``replicate_idx``; N is the max
     seen in the data, not the sweep config, so a partially-generated run still reports
-    honestly. Returns 1 if `path` has no cell rows, else 0.
+    honestly.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        1 if `path` has no cell rows, else 0.
     """
     from collections import defaultdict
 
@@ -501,8 +576,26 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     uses, so the two spellings of this schema cannot drift apart, and it refuses a
     non-mapping document up front instead of failing as an `AttributeError` mid-sweep.
     ``--out`` defaults to ``results_root()/runs/<run_name or new_run_id()>``; ``--fresh``
-    passes ``resume=False``. Propagates `FileNotFoundError`/`ValueError`/`yaml.YAMLError`
-    from `load_sweep_config`.
+    passes ``resume=False``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        0.
+
+    Raises
+    ------
+    FileNotFoundError
+        If `load_sweep_config` cannot read the config file.
+    ValueError
+        If `load_sweep_config` rejects the config structure.
+    yaml.YAMLError
+        If `load_sweep_config` cannot parse the YAML.
     """
     # Discarded: unlike the study driver, this subcommand has no provenance sidecar to
     # stamp the digest into; `sweep` records only the `config` mapping.
@@ -518,8 +611,17 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     Pure JSONL comparison over ``<run_dir>/all_rows.jsonl``: no Lean toolchain, no writes.
     Reports regressions (rung_a ✓ → rung_b ✘) and, unless ``--regressions-only``,
-    improvements; compares only replicate ``--replicate``. Returns 2 if ``all_rows.jsonl``
-    is missing, else 0.
+    improvements; compares only replicate ``--replicate``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        2 if ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     all_rows = run_dir / "all_rows.jsonl"
@@ -581,6 +683,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
         """Print one labeled section of ``(theorem_id, row_a, row_b)`` triples.
 
         Prints nothing at all, not even `label`, when `items` is empty.
+
+        Parameters
+        ----------
+        label : str
+            Section label.
+        items : list[tuple[str, dict, dict]]
+            Triples to print.
         """
         if not items:
             return
@@ -608,8 +717,18 @@ def cmd_show(args: argparse.Namespace) -> int:
     """Print a theorem's summary.md, or list theorems with pass counts.
 
     No Lean toolchain. Listing mode (no ``theorem`` arg) tallies rates by re-scanning each
-    theorem's ``outputs/*.jsonl``, not its possibly-stale `summary.md`. Returns 2 if
-    ``<run_dir>/theorems`` is missing, 1 if a named theorem has no ``summary.md``, else 0.
+    theorem's ``outputs/*.jsonl``, not its possibly-stale `summary.md`.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        2 if ``<run_dir>/theorems`` is missing, 1 if a named theorem has no ``summary.md``,
+        else 0.
     """
     from .runner import slug_theorem
     run_dir = Path(args.run_dir)
@@ -661,7 +780,17 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     Delegates to `runner.regenerate_run_artifacts`, which reads only `all_rows.jsonl` and
     each theorem's `meta.json`/`outputs/*.jsonl` (no Lean toolchain) and OVERWRITES both
-    outputs. Returns 2 if ``all_rows.jsonl`` is missing, else 0.
+    outputs.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    Returns
+    -------
+    int
+        2 if ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "all_rows.jsonl").exists():
@@ -789,6 +918,16 @@ def main(argv: list[str] | None = None) -> int:
 
     `argparse` calls `sys.exit` on ``-h``, a missing/unknown subcommand, or
     malformed arguments, before this function returns.
+
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        The subcommand's exit code.
     """
     args = build_parser().parse_args(argv)
     return args.func(args)

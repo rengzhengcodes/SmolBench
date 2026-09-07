@@ -38,6 +38,16 @@ def split_state(state_pp: str) -> tuple[str, str]:
 
     `goals` starts at the first `⊢` line, with any preceding `case ...`
     headers attached. A state with no `⊢` line yields `(state_pp, "")`.
+
+    Parameters
+    ----------
+    state_pp : str
+        Lean tactic-state pretty-print.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(hypotheses, goals)`` split of the state.
     """
     lines = state_pp.splitlines()
     for i, line in enumerate(lines):
@@ -62,7 +72,15 @@ def extract_goal_only(state_pp: str) -> str:
     start at column 0 -- that indentation is the only signal for telling a continuation apart
     from the next goal's hypotheses, so it is what this function keys on.
 
-    Returns `state_pp` completely unchanged if it has no `⊢` line at all.
+    Parameters
+    ----------
+    state_pp : str
+        Lean tactic-state pretty-print.
+
+    Returns
+    -------
+    str
+        `state_pp` completely unchanged if it has no `⊢` line at all.
     """
     lines = state_pp.splitlines()
     if not any(line.lstrip().startswith("⊢") for line in lines):
@@ -164,6 +182,16 @@ def _count_tokens(s: str) -> int:
     control instead, so it uses `TiktokenTokenizer` directly rather than this fallback.
     `_render_hint_parts`'s hint:3+ budget re-implements this same policy inline as a local
     ``tok()`` (not a call here); change both together.
+
+    Parameters
+    ----------
+    s : str
+        Text to count.
+
+    Returns
+    -------
+    int
+        Token count.
     """
     try:
         import tiktoken
@@ -181,6 +209,18 @@ def _as_full_prompt(level: int, text: str) -> str:
 
     Imports `prompt` lazily: it imports `RenderedContext` from this module at module scope,
     so an eager import here would be a cycle (`runner.py` imports `context` at top level).
+
+    Parameters
+    ----------
+    level : int
+        Noise rung level.
+    text : str
+        Context text to wrap.
+
+    Returns
+    -------
+    str
+        Full user prompt.
     """
     from . import prompt as _prompt
     return _prompt.build_user_prompt(RenderedContext(chain="noise", level=level, text=text))
@@ -206,8 +246,25 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     the helper's own internal check. Imports that module lazily: it pulls in
     `requests`/`joblib`/`numpy`/`psutil` via `openai_compat`, needed only by this rung.
 
-    Raises `ImportError` if `tiktoken` is missing (`TiktokenTokenizer` does not degrade the
-    way `_count_tokens` does -- an exact control cannot tolerate the approximation).
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        The theorem containing the tactic step.
+    k : int
+        Index of the tactic step.
+    level : int
+        Noise rung level.
+
+    Returns
+    -------
+    list[str]
+        Rendered context parts.
+
+    Raises
+    ------
+    ImportError
+        If `tiktoken` is missing (`TiktokenTokenizer` does not degrade the way `_count_tokens`
+        does -- an exact control cannot tolerate the approximation).
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
@@ -393,6 +450,13 @@ def validate(chain: Chain, level: int) -> None:
 
     Only checks `_MAX_LEVEL`'s range, not narrower per-chain rules -- e.g. ``noise:0``
     passes here and `_render_noise_parts` rejects it later.
+
+    Parameters
+    ----------
+    chain : Chain
+        Rung chain to validate.
+    level : int
+        Rung level to validate.
     """
     if chain not in _MAX_LEVEL:
         raise ValueError(f"unknown chain: {chain!r}")
@@ -406,9 +470,31 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
     `k` is the 0-indexed step about to be proved: context describes the state immediately
     before `theorem.traced_tactics[k]`, and the model is expected to produce the tail
-    starting there. `(chain, level)` is checked by `validate`, but ``noise`` can still raise
-    `ValueError`/`ImportError` from `_render_noise_parts` even after that check passes (e.g.
-    ``noise:0``, which `validate` allows through).
+    starting there. `(chain, level)` is checked by `validate`.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        The theorem containing the tactic step.
+    k : int
+        Index of the tactic step.
+    chain : Chain
+        Context chain to render.
+    level : int
+        Rung level to render.
+
+    Returns
+    -------
+    RenderedContext
+        Rendered context for the requested rung.
+
+    Raises
+    ------
+    ValueError
+        If `k` is outside the theorem's traced tactics, or `chain`/`level` is invalid.
+    ImportError
+        ``noise`` can still raise this from `_render_noise_parts` even after
+        validation passes (e.g. ``noise:0``, which `validate` allows through).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")
@@ -445,12 +531,29 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
     Skipping these cells keeps per-rung pass rates apples-to-apples: every counted cell saw
     a real context expansion. Only caller is `runner.sweep`, gated by ``skip_trivial``.
 
-    Returns False, not an exception, for an unrecognized `chain` or out-of-range `k`, so the
-    cell still runs rather than being silently dropped.
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+        The theorem containing the tactic step.
+    k : int
+        Index of the tactic step.
+    chain : Chain
+        Rung chain to inspect.
+    level : int
+        Rung level to inspect.
 
-    Raises `ImportError` for ``noise`` when `tiktoken` is missing, rather than guessing
-    True/False: `_render_noise_parts` cannot build that rung either without it, and a wrong
-    guess here could tell `runner.sweep` a rung is safe to render when it would raise.
+    Returns
+    -------
+    bool
+        False, not an exception, for an unrecognized `chain` or out-of-range `k`, so the cell
+        still runs rather than being silently dropped.
+
+    Raises
+    ------
+    ImportError
+        For ``noise`` when `tiktoken` is missing, rather than guessing True/False:
+        `_render_noise_parts` cannot build that rung either without it, and a wrong guess here
+        could tell `runner.sweep` a rung is safe to render when it would raise.
     """
     if not 0 <= k < len(theorem.traced_tactics):
         return False

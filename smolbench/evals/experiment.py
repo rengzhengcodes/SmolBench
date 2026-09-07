@@ -186,6 +186,10 @@ class Experiment:
         ----------
         model : str
             must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
+        extra_args : Optional[dict], optional
+            Arguments forwarded to ``run_replicates``.
+        max_parallel : Optional[int], optional
+            Maximum concurrent replicate requests.
         request_timeout : int, optional
             CoT archetypes raise this so the longest chain finishes on attempt 1.
         """
@@ -219,8 +223,17 @@ class Experiment:
         """Print per-info-type totals for ``model`` over every stored replicate.
 
         A pure ``ReplicateHarness.summarize`` delegate: no environment applied,
-        no EC2/inference cost, but S3 reads under an S3-backed store. ``model``
-        must be a key of ``archetype_tags``; ``KeyError`` otherwise.
+        no EC2/inference cost, but S3 reads under an S3-backed store.
+
+        Parameters
+        ----------
+        model : str
+            Key of ``archetype_tags``.
+
+        Raises
+        ------
+        KeyError
+            ``model`` is not a key of ``archetype_tags``.
         """
         self.harness.summarize(model)
 
@@ -284,8 +297,10 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
 
     Parameters
     ----------
+    tag : str
+        Experiment tag to validate.
     lane : str, optional
-        the suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check
+        The suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check.
         below so a sharded lane's suffix can't defeat the exact-match guard.
     """
     # Strip the lane suffix first: every check below reasons about the study identity the tag

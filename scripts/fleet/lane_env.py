@@ -141,9 +141,7 @@ def _tier_gpu_pin(tier: str) -> str:
     can never drift from that module's hardware data. Derived, never a
     hand-written table: an edit to ``TIER_INSTANCE_TYPES`` unsafe for this
     function to run against is exactly the drift ``EC2_REQUIRE_GPU`` exists
-    to catch. Raises `SystemExit` (never ``assert``, stripped under
-    ``python -O``) when the hunt list is unmappable or spans more than one
-    GPU count.
+    to catch.
 
     An empty-name, count-only result (e.g. ``":8"``) is a weaker pin by
     construction -- ``ec2._assert_required_gpu``'s membership check treats an
@@ -154,6 +152,22 @@ def _tier_gpu_pin(tier: str) -> str:
     still blocks a tp-changing GPU-count substitution, but cannot (and is not
     meant to) catch the same-count, different-silicon substitution that
     changes numerics without changing tp.
+
+    Parameters
+    ----------
+    tier : str
+        Tier whose instance-type hunt list is pinned.
+
+    Returns
+    -------
+    str
+        ``EC2_REQUIRE_GPU`` pin for the tier.
+
+    Raises
+    ------
+    SystemExit
+        When the hunt list is unmappable or spans more than one GPU count (never ``assert``,
+        stripped under ``python -O``).
     """
     types = TIER_INSTANCE_TYPES[tier].split(",")
     unmapped = [
@@ -390,6 +404,10 @@ def lane_env(
 
     Parameters
     ----------
+    lane : Lane
+        Lane whose environment is constructed.
+    phase : str
+        Driver phase for the subprocess.
     base_env : Optional[Mapping[str, str]], optional
         `None` reads `os.environ`. Returns every `PASSTHROUGH_ENV` key present
         verbatim (missing stays absent) plus the per-lane
@@ -398,6 +416,11 @@ def lane_env(
         ``scaling_<key>`` -- the run-directory name
         `supervisor._advance_finished` rebuilds to spool from, so the two must
         stay equal (a mismatch makes that confirming re-spool a silent no-op).
+
+    Returns
+    -------
+    dict[str, str]
+        Complete environment for the lane subprocess.
     """
     if base_env is None:
         base_env = os.environ
@@ -467,8 +490,24 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
     """Build the subprocess argv for one lane's `phase`.
 
     The ``"shutdown"`` argv must run under ``lane_env(lane, "shutdown")`` so
-    ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS lane's box. Any
-    `phase` outside induction/deduction/shutdown raises ``ValueError``.
+    ``EC2_EXPERIMENT_TAG``/``EC2_STATE_FILE`` resolve to THIS lane's box.
+
+    Parameters
+    ----------
+    lane : Lane
+        Lane whose subprocess command is built.
+    phase : str
+        Subprocess phase to run.
+
+    Returns
+    -------
+    list[str]
+        Subprocess argument vector.
+
+    Raises
+    ------
+    ValueError
+        Any `phase` outside induction/deduction/shutdown.
     """
     if phase == "induction":
         return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "induction" / "run_study.py")]

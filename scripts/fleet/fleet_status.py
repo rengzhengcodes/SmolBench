@@ -49,6 +49,7 @@ def fleet_rows(
     client_factory: Optional[Callable[[str], Any]] = None,
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
+
     `tag_prefix` is applied server-side (EC2 tag filters accept a trailing
     ``*``) and re-checked client-side, so a regression in one can't leak a
     sibling experiment's instances in. A region that raises (no
@@ -56,9 +57,18 @@ def fleet_rows(
 
     Parameters
     ----------
+    regions : Sequence[str], optional
+        Regions to list.
+    tag_prefix : str, optional
+        Experiment-tag prefix the instances must carry.
     client_factory : Optional[Callable[[str], Any]], optional
         `None` uses `_default_client_factory`, the seam tests use to stub in a
-        fake with no AWS SDK. Returns one dict per instance with exactly
+        fake with no AWS SDK.
+
+    Returns
+    -------
+    list[dict]
+        One dict per instance with exactly
         region/experiment_tag/lane/instance_id/instance_type/availability_zone/
         state/launch_time/age_hours -- `format_fleet_table` relies on this exact
         set.
@@ -113,6 +123,16 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 
     Never empty: empty `rows` render an explicit "no scaling-* instances found"
     line, so an empty fleet and a broken query read differently to the operator.
+
+    Parameters
+    ----------
+    rows : Sequence[dict]
+        Fleet rows returned by `fleet_rows`.
+
+    Returns
+    -------
+    str
+        Fixed-width text table.
     """
     if not rows:
         return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"

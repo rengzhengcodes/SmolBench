@@ -127,6 +127,11 @@ def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
     the session is an injectable seam: a substitute backend that returns the
     outcome instead must not have its infrastructure failure silently treated
     as "keep going" against a dead REPL.
+
+    Parameters
+    ----------
+    outcome : replbackend.StepOutcome
+        REPL-level outcome to inspect.
     """
     if outcome.kind == "exception":
         raise replbackend.ReplError(outcome.error or "REPL-level failure with no message")
@@ -135,11 +140,23 @@ def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
 def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResult:
     """Open a REPL session, apply the recorded tactics in order, report verdict.
 
-    Returns "incomplete" with zero counts, without opening a session, when
-    `bt.has_proof` is False. Every exception from opening or driving the
-    session is reported as `verdict="exception"` rather than propagated:
+    Every exception from opening or driving the session is reported as
+    `verdict="exception"` rather than propagated:
     callers loop over many theorems, and one failure must not abort the
     batch.
+
+    Parameters
+    ----------
+    bt : BenchmarkTheorem
+        Theorem whose recorded tactics are replayed.
+    timeout : int, optional
+        REPL session timeout.
+
+    Returns
+    -------
+    ReplayResult
+        "incomplete" with zero counts, without opening a session, when
+        `bt.has_proof` is False.
     """
     if not bt.has_proof:
         return ReplayResult(bt.full_name, "incomplete", 0, 0, error="no traced tactics")
@@ -216,6 +233,16 @@ def _split_tactics(tail: str) -> list[str]:
     The REPL's `ProofStep` takes one tactic per request. Deliberately does *not*
     split on ``;`` or ``<;>``: those are combinators, and ``t1 <;> t2`` is one
     tactic.
+
+    Parameters
+    ----------
+    tail : str
+        LLM-produced tactic text.
+
+    Returns
+    -------
+    list[str]
+        Stripped, non-blank tactic lines.
     """
     return [line.strip() for line in tail.splitlines() if line.strip()]
 
@@ -227,19 +254,37 @@ def try_tail(
 
     Proof states are immutable and `replbackend.ReplSession.step` returns a
     new one, so many calls branch independently from the same `state_at_k`
-    checkpoint with no re-replay. `theorem_name` is caller-supplied (neither
-    `session` nor `state_at_k` identifies a theorem) and recorded verbatim.
-    The four parameters are positional: `runner.py` calls them positionally.
+    checkpoint with no re-replay. The four parameters are positional:
+    `runner.py` calls them positionally.
 
-    Returns "success", "given_up", "incomplete" (`final_state_pp` holds the
-    last goals), "lean_error" (`error` names which step Lean rejected), or
-    "no_answer" (`tail` splits to no tactics). Never "exception" or
-    "replay_failed" -- wrappers produce those.
-
-    Raises `replbackend.ReplError` if the REPL itself fails (timeout, closed
-    pipe, unknown proof state); deliberately propagated rather than turned
+    `replbackend.ReplError` is deliberately propagated rather than turned
     into a verdict, so callers' `except Exception -> "exception"` handlers
     never record an infrastructure outage as a Lean judgement.
+
+    Parameters
+    ----------
+    session : replbackend.ReplSession
+        REPL session that applies the candidate tactics.
+    state_at_k : int
+        Proof-state checkpoint from which to start.
+    tail : str
+        Candidate proof-tail text.
+    theorem_name : str
+        Caller-supplied (neither `session` nor `state_at_k` identifies a theorem) and
+        recorded verbatim.
+
+    Returns
+    -------
+    ProofResult
+        "success", "given_up", "incomplete" (`final_state_pp` holds the last
+        goals), "lean_error" (`error` names which step Lean rejected), or
+        "no_answer" (`tail` splits to no tactics). Never "exception" or
+        "replay_failed" -- wrappers produce those.
+
+    Raises
+    ------
+    replbackend.ReplError
+        If the REPL itself fails (timeout, closed pipe, unknown proof state).
     """
     tactics = _split_tactics(tail)
     if not tactics:
@@ -281,11 +326,31 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     same checkpoint. The session always closes, whether the `with`-block
     completes, raises, or the prefix replay raises first.
 
-    Raises `ValueError` if `k` is outside ``[0, len(bt.traced_tactics))``,
-    before any session opens. Raises a plain `RuntimeError` (not
-    `replbackend.ReplError`) if a prefix tactic doesn't leave an open goal
-    state -- a ground-truth problem, distinct from a tail-verification
-    failure, which is reported as a `ProofResult` verdict, never raised.
+    That is a ground-truth problem, distinct from a tail-verification failure, which is
+    reported as a `ProofResult` verdict, never raised.
+
+    Parameters
+    ----------
+    bt : BenchmarkTheorem
+        Theorem whose tactic prefix is replayed.
+    k : int
+        Index of the proof-state checkpoint to open.
+    timeout : int, optional
+        REPL session timeout.
+
+    Yields
+    ------
+    tuple
+        REPL session and proof state at step `k`.
+
+    Raises
+    ------
+    ValueError
+        If `k` is outside ``[0, len(bt.traced_tactics))``, before any session
+        opens.
+    RuntimeError
+        If a prefix tactic doesn't leave an open goal state; a plain `RuntimeError`, not
+        `replbackend.ReplError`.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         raise ValueError(f"k={k} out of range [0, {len(bt.traced_tactics)})")
@@ -314,11 +379,25 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
     each cell being independent; contrast `runner.sweep`, which shares one
     session per ``(theorem, k)`` via `open_at_step` + `try_tail`.
 
-    Returns "exception" without opening a session if `k` is out of range,
-    "no_answer" if `tail` splits to no tactics (checked before opening a
-    session, same reason), "replay_failed" if the prefix replay raises
-    `RuntimeError`, "exception" if anything else raises, otherwise
-    `try_tail`'s result.
+    Parameters
+    ----------
+    bt : BenchmarkTheorem
+        Theorem whose proof tail is verified.
+    k : int
+        Proof-state checkpoint at which to start the tail.
+    tail : str
+        Candidate proof-tail text.
+    timeout : int, optional
+        REPL session timeout.
+
+    Returns
+    -------
+    ProofResult
+        "exception" without opening a session if `k` is out of range,
+        "no_answer" if `tail` splits to no tactics (checked before opening a
+        session, same reason), "replay_failed" if the prefix replay raises
+        `RuntimeError`, "exception" if anything else raises, otherwise
+        `try_tail`'s result.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         return ProofResult(bt.full_name, "exception", tail, error=f"k={k} out of range")

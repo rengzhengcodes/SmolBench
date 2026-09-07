@@ -201,6 +201,16 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
 
     The only point where the default 1..n and explicit-``periods`` pathways
     differ; everything downstream is shared verbatim.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration specifying the harmonic periods.
+
+    Returns
+    -------
+    Tuple[int, ...]
+        Harmonic periods in ascending order.
     """
     if config.periods is None:
         return tuple(range(1, config.n + 1))
@@ -218,6 +228,16 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     Covers positions 1..lcm(periods), each mapped to the sep-joined labels whose
     periods divide it, in ascending period order (``labels[i]`` belonging to the
     i-th smallest period).
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration supplying the periods, labels, and separator.
+
+    Returns
+    -------
+    Tuple[PeriodToLabel, PosToCompound]
+        Period-to-label and position-to-compound mappings.
     """
     periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
@@ -330,11 +350,29 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` conditions render from ``prompter.range_free_template``;
-    every other condition renders from ``prompter.template``. Raises
-    ``ValueError`` if `condition` is ``omit_range=True`` and
-    ``prompter.range_free_template`` is ``None``: no silent fallback to
+    every other condition renders from ``prompter.template``. No silent fallback to
     ``prompter.template``, since that fallback is exactly the leak an
     ``omit_range`` condition exists to avoid.
+
+    Parameters
+    ----------
+    name : str
+        Name of the information condition.
+    condition : Condition
+        Information condition being rendered.
+    prompter : Prompter
+        Prompt templates and query generator.
+
+    Returns
+    -------
+    string.Template
+        Template selected for the condition.
+
+    Raises
+    ------
+    ValueError
+        If `condition` is ``omit_range=True`` and ``prompter.range_free_template`` is.
+        ``None``.
     """
     if not condition.omit_range:
         return prompter.template
@@ -355,6 +393,15 @@ def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> No
 
     Checked against the rendered prompt, not the template used to build it
     (see ``RANGE_KEYS``). Naming the offending key and its value on failure.
+
+    Parameters
+    ----------
+    name : str
+        Name of the information condition.
+    query : Dict[str, str]
+        Query substitutions whose range values must remain hidden.
+    rendered : str
+        Rendered prompt to inspect.
     """
     for key in RANGE_KEYS:
         if key in query and str(query[key]) in rendered:
@@ -378,26 +425,40 @@ def get_periodic_prompts(
     For each query :func:`generate_sequence` (via ``prompter.query_gen``)
     produces, renders every entry of `conditions` and yields one
     :class:`~smolbench.induction._common.RenderedQuery` carrying all of them.
-    `tokenizer` must be the model under test's own, since it defines every
-    padded arm's token target.
-
     Rendering happens in two stages per query: first every condition without
     ``match_tokens_to`` (recording its rendered prompt and token count), then
     every condition with one, padded against the already-recorded target
     condition's count.
 
-    Raises ``ValueError``:
-    once, before any query is rendered, if some condition's
-    ``match_tokens_to`` names a condition absent from `conditions` or one
-    that is itself padded (a padded arm's own count isn't available yet to
-    pad against); propagated from
-    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the
-    noise arm's precondition fails for some query (its extensional prompt is
-    not strictly longer, in tokens, than its intensional one -- deliberately
-    not caught here, so the confound stays out of collected data rather than
-    silently shipping a control identical to the arm it controls for); or
-    from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
-    ``omit_range`` condition missing its template or leaking a range key.
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration for the periodic sequence.
+    prompter : Prompter
+        Prompt templates and query generator.
+    tokenizer : Tokenizer
+        Must be the model under test's own, since it defines every padded arm's token.
+        target.
+    conditions : Mapping[str, Condition], optional
+        Information conditions to render.
+
+    Yields
+    ------
+    RenderedQuery
+        One rendered query containing prompts and token counts for every condition.
+
+    Raises
+    ------
+    ValueError
+        Once, before any query is rendered, if some condition's ``match_tokens_to`` names a.
+        condition absent from `conditions` or one that is itself padded (a padded arm's own
+        count isn't available yet to pad against); propagated from
+        :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the noise arm's
+        precondition fails for some query (its extensional prompt is not strictly longer, in
+        tokens, than its intensional one -- deliberately not caught here, so the confound stays
+        out of collected data rather than silently shipping a control identical to the arm it
+        controls for); or from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
+        ``omit_range`` condition missing its template or leaking a range key.
     """
     # Validated once, before any query is rendered: a bad `match_tokens_to`
     # is a construction-time mistake in `conditions`, not something that
@@ -497,6 +558,22 @@ def get_periodic_quiz(
     A ``dict``, not a positional tuple: a caller reads a specific arm by name
     (``quizzes["extens"]``), so reordering `conditions` can never silently
     relabel an existing caller's arms.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration for the periodic prompt sequence.
+    prompter : Prompter
+        Prompter that generates the periodic prompts.
+    tokenizer : Tokenizer
+        Tokenizer for rendering prompts.
+    conditions : Mapping[str, Condition], optional
+        Named experimental conditions.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -516,6 +593,22 @@ def get_periodic_numeric_quiz(
 
     See :func:`get_periodic_quiz`'s docstring for the return shape rationale;
     this is the same wrapper over ``Numeric`` instead of ``ToF``.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration for the periodic prompt sequence.
+    prompter : Prompter
+        Prompter that generates the periodic prompts.
+    tokenizer : Tokenizer
+        Tokenizer for rendering prompts.
+    conditions : Mapping[str, Condition], optional
+        Named experimental conditions.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -541,11 +634,24 @@ def tof_membership_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], bool]]:
     """Yield True/False queries of the form "Does label appear at position pos?"
 
-    Yields ``({"pos": ..., "label": ...}, answer)`` pairs: at most
-    ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
-    if the pattern admits fewer of either polarity), sampled without replacement
-    under ``seed``; period-1 labels are excluded as trivially True. Both mappings
-    come from :func:`generate_sequence`.
+    Both mappings come from :func:`generate_sequence`.
+
+    Parameters
+    ----------
+    period_to_label : PeriodToLabel
+        Mapping from each period to its label.
+    pos_to_compound : PosToCompound
+        Mapping from positions to generated compounds.
+    seed : int
+        Random seed for sampling queries.
+
+    Yields
+    ------
+    Tuple[Dict[str, str], bool]
+        ``({"pos": ..., "label": ...}, answer)`` pairs: at most.
+        ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
+        if the pattern admits fewer of either polarity), sampled without replacement
+        under ``seed``; period-1 labels are excluded as trivially True.
     """
     rng = np.random.default_rng(seed)
 
@@ -582,14 +688,26 @@ def numeric_count_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], int]]:
     """Yield count queries of the form "How many positions 1..seq_len contain label?"
 
-    Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label,
-    the answer being floor(seq_len / period) -- always exact, since seq_len
-    is the lcm of the harmonic periods on every pathway.
-
     Deterministic and ignores `seed`: the parameter stays so this generator
     stays substitutable for the sibling :func:`tof_membership_query_gen`
     under ``Prompter.query_gen``'s one shared protocol. A seed still reaches
     the output indirectly, since ``PeriodicConfig`` draws the labels with it.
+
+    Parameters
+    ----------
+    period_to_label : PeriodToLabel
+        Mapping from each period to its label.
+    pos_to_compound : PosToCompound
+        Mapping from positions to generated compounds.
+    seed : int
+        Seed accepted by the shared query-generator protocol.
+
+    Yields
+    ------
+    Tuple[Dict[str, str], int]
+        One ``({"label": ..., "seq_len": ...}, answer)`` pair per label,.
+        the answer being floor(seq_len / period) -- always exact, since seq_len
+        is the lcm of the harmonic periods on every pathway.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):

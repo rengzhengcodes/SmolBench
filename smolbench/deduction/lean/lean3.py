@@ -82,6 +82,16 @@ def _is_head_position(line_prefix: str) -> bool:
     Shared by `find_relics`' rule 2 and `_head_rfl_matches`, so an injected
     `refl` is re-detectable by construction: a term-position `rfl`
     (`exact rfl`) is never targeted, since rule 2 doesn't flag `exact refl`.
+
+    Parameters
+    ----------
+    line_prefix : str
+        Text preceding the possible tactic.
+
+    Returns
+    -------
+    bool
+        Whether the following text is in tactic-head position.
     """
     p = line_prefix.rstrip()
     return p == "" or p.endswith(_REFL_HEAD_MARKERS)
@@ -92,10 +102,20 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
 
     Shared by the `binder-comma` rule and the `binder` transform. Depth is
     relative to `start` (just past `fun`/`λ`), so a nested comma doesn't count
-    -- in `fun ⟨a, b⟩ ↦ e` the comma is inside the just-opened `⟨`. `text` is
-    the whole text, since a binder's arrow or comma may fall on the next line.
-    Returns ``("comma"|"arrow", start, end)`` for whichever comes first, or
-    `None`.
+    -- in `fun ⟨a, b⟩ ↦ e` the comma is inside the just-opened `⟨`.
+
+    Parameters
+    ----------
+    text : str
+        The whole text, since a binder's arrow or comma may fall on the next
+        line.
+    start : int
+        Position just past `fun` or `λ`.
+
+    Returns
+    -------
+    tuple[str, int, int] | None
+        ``("comma"|"arrow", start, end)`` for whichever comes first, or `None`.
     """
     depth = 0
     i = start
@@ -125,10 +145,19 @@ def find_relics(text: str) -> list[Relic]:
     constructs that merely resemble a relic; pinned by `test_lean_lean3.py`.
     Bracket depth accumulates across the whole text, not per line.
 
-    Returns one `Relic` per distinct (kind, text, line) triple, in scan order
-    -- two `refl` tactics on one line report as one relic. Rules 1/2/3/5 run
-    line by line; `binder-comma` (rule 4) is a separate whole-text pass since
-    its arrow or comma can follow a line break.
+    Rules 1/2/3/5 run line by line; `binder-comma` (rule 4) is a separate
+    whole-text pass since its arrow or comma can follow a line break.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to scan.
+
+    Returns
+    -------
+    list[Relic]
+        One `Relic` per distinct (kind, text, line) triple, in scan order -- two
+        `refl` tactics on one line report as one relic.
     """
     relics: list[Relic] = []
     seen: set[tuple[str, str, int]] = set()
@@ -201,6 +230,16 @@ def _head_rfl_matches(text: str) -> list[re.Match]:
 
     Shares `_is_head_position` with rule 2: a term-position `rfl`
     (`exact rfl`, `⟨rfl, h⟩`) rewritten to `refl` would not be re-detected.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to scan.
+
+    Returns
+    -------
+    list[re.Match]
+        Tactic-head `rfl` token matches.
     """
     out = []
     for m in _RFL_RE.finditer(text):
@@ -232,7 +271,16 @@ def _first_binder_arrow(text: str) -> tuple[re.Match, int, int] | None:
     `_binder_forward_scan`'s relative depth, since `binder` only corrupts a
     top-level binder. A binder already followed by a comma before any arrow is
     already a `binder-comma` relic, so a "comma" scan result doesn't count.
-    Returns ``(binder_match, arrow_start, arrow_end)``, or `None`.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to scan.
+
+    Returns
+    -------
+    tuple[re.Match, int, int] | None
+        ``(binder_match, arrow_start, arrow_end)``, or `None`.
     """
     for m in _BINDER_RE.finditer(text):
         # Proof-tail-sized text, so re-walking the prefix per candidate binder
@@ -256,6 +304,18 @@ def _apply_binder(text: str, rng: random.Random) -> tuple[str, list[Relic]] | No
     Removing the arrow makes it a `binder-comma` relic. `fun` becomes `λ`
     too, since Lean 3 has no `fun` keyword and `fun x, e` is a syntax the
     detector flags but Lean 3 never produced.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to corrupt.
+    rng : random.Random
+        Seeded random generator.
+
+    Returns
+    -------
+    tuple[str, list[Relic]] | None
+        Corrupted text and its injected relic, or `None` when no binder applies.
     """
     found = _first_binder_arrow(text)
     if found is None:
@@ -276,6 +336,16 @@ def _trailing_eligible_lines(text: str) -> list[int]:
 
     Eligible = non-blank, cumulative bracket depth 0 at line end, and not
     already comma-terminated.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to inspect.
+
+    Returns
+    -------
+    list[int]
+        0-indexed lines eligible for the `trailing` transform.
     """
     lines = text.split("\n")
     depth = 0
@@ -299,6 +369,19 @@ def _apply_trailing(text: str, rng: random.Random) -> tuple[str, list[Relic]] | 
     The only transform that can inject several relics at once. A random
     subset, not every eligible line, mimics a model dropping commas
     inconsistently.
+
+    Parameters
+    ----------
+    text : str
+        Lean text to corrupt.
+    rng : random.Random
+        Seeded random generator.
+
+    Returns
+    -------
+    tuple[str, list[Relic]] | None
+        Corrupted text and injected trailing-comma relics, or `None` when no
+        line applies.
     """
     eligible = _trailing_eligible_lines(text)
     if not eligible:
@@ -357,12 +440,22 @@ def corrupt_tail(tail: str, rng: random.Random) -> tuple[str, list[Relic]] | Non
     transform can consume what a later one needed. Deterministic given
     `(tail, rng-state)`.
 
-    Returns ``(corrupted, injected)``, or `None` if no transform applies,
-    every attempt is a no-op, ``corrupted == tail``, or the post-condition
-    below empties `injected`. The post-condition re-runs `find_relics` and
-    keeps only injected relics whose kind is re-detected, enforcing the
-    shared-vocabulary invariant so no phantom claim leaks into `synth_error` /
-    repair-row metadata.
+    The post-condition re-runs `find_relics` and keeps only injected relics
+    whose kind is re-detected, enforcing the shared-vocabulary invariant so no
+    phantom claim leaks into `synth_error` / repair-row metadata.
+
+    Parameters
+    ----------
+    tail : str
+        Clean Lean 4 tactic tail to corrupt.
+    rng : random.Random
+        Seeded random generator.
+
+    Returns
+    -------
+    tuple[str, list[Relic]] | None
+        ``(corrupted, injected)``, or `None` if no transform applies, every attempt is a
+        no-op, ``corrupted == tail``, or the post-condition above empties `injected`.
     """
     applicable_names = [
         name for name, (is_applicable, _apply) in _TRANSFORMS.items() if is_applicable(tail)
@@ -413,8 +506,23 @@ def synth_error(relics: list[Relic]) -> str:
 
     Only the first relic decides the message: a real compiler stops at its
     first error. Message shapes mimic cases pinned in `test_lean_lean3.py`,
-    not Lean's real diagnostics. Raises `ValueError` if `relics` is empty or
-    its first element's `kind` isn't one of the five `find_relics` produces.
+    not Lean's real diagnostics.
+
+    Parameters
+    ----------
+    relics : list[Relic]
+        Relics whose first item determines the message.
+
+    Returns
+    -------
+    str
+        Lean-compiler-shaped error message.
+
+    Raises
+    ------
+    ValueError
+        If `relics` is empty or its first element's `kind` isn't one of the five
+        `find_relics` produces.
     """
     if not relics:
         raise ValueError("synth_error requires at least one relic")
@@ -441,9 +549,22 @@ _REPAIR_INSTRUCTIONS = (
 def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     """Append a previous-attempt repair block to a user turn.
 
-    `error` is typically `synth_error`'s output or a real replay error; its
-    block is omitted when `None`. The layout's exact bytes are a coordination
-    contract, so no parameters vary it.
+    The layout's exact bytes are a coordination contract, so no parameters vary it.
+
+    Parameters
+    ----------
+    user : str
+        User turn to extend.
+    attempt : str
+        Previous Lean tactic attempt.
+    error : str | None, optional
+        Typically `synth_error`'s output or a real replay error; its block is omitted when
+        `None`.
+
+    Returns
+    -------
+    str
+        User turn with the previous-attempt repair block appended.
     """
     error_block = f"Lean reported:\n```\n{error}\n```\n\n" if error is not None else ""
     return (

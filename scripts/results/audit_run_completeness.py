@@ -55,12 +55,23 @@ def iter_deduction_lanes(
 ) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
-    `deduction_prefix` defaults to `runner.spool_prefix()`; ignored when
-    `local` is set. Yields ``""`` for a lane with no ``all_rows.jsonl`` in S3 --
-    itself a finding, not skipped. The bucket is resolved via
+    A lane with no ``all_rows.jsonl`` in S3 yields ``""`` -- itself a finding, not
+    skipped. The bucket is resolved via
     `resolve_results_location` (``SMOLBENCH_RESULTS_S3``, else
     `DEFAULT_RESULTS_BUCKET`) so a redirected results store reaches this
     auditor too.
+
+    Parameters
+    ----------
+    local : bool
+        Whether to read local deduction run directories.
+    deduction_prefix : Optional[str], optional
+        Defaults to `runner.spool_prefix()`; ignored when `local` is set.
+
+    Yields
+    ------
+    Tuple[str, str]
+        Deduction lane name and its complete rows text.
     """
     if local:
         runs = REPO_ROOT / "notebooks/deduction/results/runs"
@@ -97,10 +108,17 @@ def iter_deduction_lanes(
 def audit_lane(text: str) -> Dict[str, object]:
     """Classify one lane's cells into ok, infra-dead, or genuine-empty.
 
-    `text` is raw ``all_rows.jsonl`` (as yielded by `iter_deduction_lanes`).
-    Returns counts: ``cells``, ``infra`` (dead cells lost to infrastructure),
-    ``genuine`` (dead cells the model answered emptily), ``sanity_missing``
-    (sanity theorems with no passing verdict).
+    Parameters
+    ----------
+    text : str
+        Raw ``all_rows.jsonl`` (as yielded by `iter_deduction_lanes`).
+
+    Returns
+    -------
+    Dict[str, object]
+        counts: ``cells``, ``infra`` (dead cells lost to infrastructure),
+        ``genuine`` (dead cells the model answered emptily), ``sanity_missing``
+        (sanity theorems with no passing verdict).
     """
     rows_by_key: Dict[tuple, List[dict]] = collections.defaultdict(list)
     sanity: Dict[str, bool] = {}
@@ -185,10 +203,20 @@ def audit_induction(
     real one via `_induction_store`; a fake with a matching `list_seeds` is the
     seam the offline test suite uses to run with no AWS credentials.
 
-    Returns ``({model: {arm: {"missing": [...], "unexpected": [...]}}},
-    examined)``, omitting a ``(model, arm)`` whose seed set exactly matches the
-    expected range. ``examined`` is the grid cells walked, so a caller can
-    refuse to call a zero-cell grid a pass (see `main`'s ``--induction`` block).
+    Parameters
+    ----------
+    models : Optional[List[str]], optional
+        Induction model keys to audit.
+    store : Any, optional
+        Results store providing `list_seeds`.
+
+    Returns
+    -------
+    Tuple[Dict[str, Dict[str, Dict[str, List[int]]]], int]
+        ``({model: {arm: {"missing": [...], "unexpected": [...]}}}, examined)``,
+        omitting a ``(model, arm)`` whose seed set exactly matches the expected range.
+        ``examined`` is the grid cells walked, so a caller can refuse to call a
+        zero-cell grid a pass (see `main`'s ``--induction`` block).
     """
     driver = _induction_driver()
     roster: Dict[str, str] = driver.MODELS
