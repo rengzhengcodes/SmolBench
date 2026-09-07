@@ -210,8 +210,7 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
     Reads `file_path` (corpus-relative, via `_resolve_source`) from 1-indexed
     `start_line` and stops at the first of: the next column-0 line matching a
     top-level keyword (theorem/def/...), searched from 1-indexed `end_line`
-    onward; `max_lines` lines consumed; or end of file. Returns the slice
-    rstripped, or ``""`` if the source file is not found.
+    onward; `max_lines` lines consumed; or end of file.
 
     Parameters
     ----------
@@ -373,8 +372,8 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 
     Resolves each identifier-like token against the premise index by exact
     full-name match, or by short-name match when unambiguous, filtering out
-    `_LEAN_NOISE`. Returns a tuple so the result stays hashable and
-    lru-cacheable; empty if `full_name` is unknown or references nothing.
+    `_LEAN_NOISE`. Returned as a tuple so the result stays hashable and
+    lru-cacheable.
 
     Parameters
     ----------
@@ -441,7 +440,7 @@ def premise_dep_closure(
     Returns
     -------
     list[Premise]
-    BFS-ordered referenced-premise closure.
+        BFS-ordered referenced-premise closure.
     """
     if depth <= 0 or not seeds:
         return []

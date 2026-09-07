@@ -131,8 +131,9 @@ def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarra
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        Successes in `models`/sorted-theorem order and per-block cell counts resampled
-        together with `succ` so a theorem is always drawn whole.
+        ``(succ, size)``: successes, shape ``(n_theorems, n_models)``, in `models`/sorted-theorem
+        order, and per-block cell counts resampled together with `succ` so a theorem is always
+        drawn whole.
     """
     thms = sorted(blocks)
     succ = np.zeros((len(thms), len(models)), dtype=np.int32)
@@ -163,7 +164,7 @@ def _bca_bounds(theta_star: np.ndarray, theta_hat: float, jack: np.ndarray,
     Returns
     -------
     tuple[float, float, bool]
-        ``(lo, hi, used_percentile_fallback)``; the flag is True when the bias
+        (lo, hi, used_percentile_fallback); the flag is True when the bias
         correction z0 was undefined and a percentile interval was used instead.
     """
     lo_pct, hi_pct = np.percentile(theta_star, [100 * alpha / 2,
@@ -294,7 +295,7 @@ def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
     Returns
     -------
     tuple
-        ``(nb, nc, p)``: cells where `a` succeeds and `b` fails, the reverse, and the
+        (nb, nc, p): cells where `a` succeeds and `b` fails, the reverse, and the
         exact two-sided McNemar p.
     """
     nb = nc = 0
@@ -377,7 +378,7 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     Returns
     -------
     tuple[dict, set]
-        ``(graded, no_survivor)``: graded is ``(theorem_id, k, prompt_rung) -> 0/1``
+        (graded, no_survivor): graded is ``(theorem_id, k, prompt_rung) -> 0/1``
         under `power_analysis.grade_verdicts`; no_survivor is cell keys that rule
         couldn't grade, left unresolved since only a cross-lane comparison (done by
         `build_pool`) can separate a model-dependent fault from an unrunnable cell.
@@ -519,7 +520,7 @@ def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
     size : np.ndarray
         Per-theorem cell counts.
     models : list[str]
-        Models matching `succ`'s column order.
+        Column labels for `succ`.
     """
     print(f"Resample-count sweep -- {succ.shape[0]} theorem blocks, "
           f"{int(size.sum())} cells, {len(models)} models")

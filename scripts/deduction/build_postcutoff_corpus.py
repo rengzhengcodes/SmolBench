@@ -65,9 +65,8 @@ SPLIT_RULE = (
 def validate_export(export: Path) -> list[str]:
     """Check that ``export`` looks like a LeanDojo-v2 ``generate_benchmark`` output.
 
-    An individual
-    missing split file is not an error -- v2 exports legitimately omit empty
-    splits -- but zero split files means no theorems to build from.
+    An individual missing split file is not an error -- v2 exports legitimately
+    omit empty splits -- but zero split files means no theorems to build from.
 
     Parameters
     ----------
@@ -267,8 +266,8 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
     Raises
     ------
     SystemExit
-        if a row's ``commit`` differs from ``names["new_commit"]`` -- that row was traced against
-        another tree, so the whole export is mixed.
+        If a row's ``commit`` differs from ``names["new_commit"]`` -- that row was traced
+        against another tree, so the whole export is mixed.
     """
     new_commit = names["new_commit"]
     out: list[dict] = []
@@ -338,9 +337,9 @@ def write_corpus(
     """Write the ``leandojo_benchmark_4`` tree under ``out_root``.
 
     All six split files are always written, empty ones as ``[]``, so every
-    ``load_split(kind, split)`` call reaches a file; ``novel_premises``
-    receives the same rows as ``random``. ``corpus.jsonl``/``traced_files.jsonl`` are
-    copied with `shutil.copyfile` rather than re-serialised: the real
+    ``load_split(kind, split)`` call reaches a file; ``novel_premises`` receives
+    the same rows as ``random``. ``corpus.jsonl``/``traced_files.jsonl`` are copied
+    with `shutil.copyfile` rather than re-serialised: the real
     ``corpus.jsonl`` is hundreds of MB and there is nothing in it to filter.
 
     Parameters

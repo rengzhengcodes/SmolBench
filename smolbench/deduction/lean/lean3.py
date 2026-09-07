@@ -102,8 +102,7 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
 
     Shared by the `binder-comma` rule and the `binder` transform. Depth is
     relative to `start` (just past `fun`/`λ`), so a nested comma doesn't count
-    -- in `fun ⟨a, b⟩ ↦ e` the comma is inside the just-opened `⟨`. `text` is
-    the whole text, since a binder's arrow or comma may fall on the next line.
+    -- in `fun ⟨a, b⟩ ↦ e` the comma is inside the just-opened `⟨`.
 
     Parameters
     ----------
@@ -454,7 +453,7 @@ def corrupt_tail(tail: str, rng: random.Random) -> tuple[str, list[Relic]] | Non
     -------
     tuple[str, list[Relic]] | None
         ``(corrupted, injected)``, or `None` if no transform applies, every attempt is a
-        no-op, ``corrupted == tail``, or the post-condition below empties `injected`.
+        no-op, ``corrupted == tail``, or the post-condition above empties `injected`.
     """
     applicable_names = [
         name for name, (is_applicable, _apply) in _TRANSFORMS.items() if is_applicable(tail)
@@ -548,8 +547,7 @@ _REPAIR_INSTRUCTIONS = (
 def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     """Append a previous-attempt repair block to a user turn.
 
-    `error` is typically `synth_error`'s output or a real replay error; its
-    block is omitted when `None`. The layout's exact bytes are a coordination
+    The layout's exact bytes are a coordination
     contract, so no parameters vary it.
 
     Parameters

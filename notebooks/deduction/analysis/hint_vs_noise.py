@@ -148,10 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     ``--rows-dir`` are interchangeable: everything below reads one resolved
     local directory of ``<model>/verified_rows.jsonl``, one lane per model.
 
-    There is no failure exit here -- a missing or unverified lane raises
-    instead (`SystemExit` from `resolve_rows_dir` or `load_rungs`'s
-    retired/ungraded checks; `FileNotFoundError` for a lane missing from the
-    resolved directory).
+    There is no failure exit here -- a missing or unverified lane raises instead.
 
     Parameters
     ----------

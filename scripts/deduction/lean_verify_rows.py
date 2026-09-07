@@ -86,6 +86,20 @@ def run_object_key(key_prefix: str, run: str, filename: str) -> str:
 
     Empty segments are dropped and stray slashes stripped, so the key never
     has a leading or doubled ``"/"`` (`key_prefix` may be ``""``).
+
+    Parameters
+    ----------
+    key_prefix : str
+        Prefix for the run object.
+    run : str
+        Run name.
+    filename : str
+        Object filename.
+
+    Returns
+    -------
+    str
+        The normalized S3 object key.
     """
     segments = (key_prefix.strip("/"), run.strip("/"), filename.strip("/"))
     return "/".join(segment for segment in segments if segment)
@@ -98,9 +112,18 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
     """Group still-unverified cell rows by their ``(theorem_id, k)`` pair.
 
     That pair is the unit of work: every cell row sharing it can share one
-    Dojo session. Returns ``(theorem_id, k) -> ascending indices into rows``,
-    first-seen key order, restricted to ``kind == "cell"`` and
-    ``verdict == "unverified"``.
+    Dojo session.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows to filter and group.
+
+    Returns
+    -------
+    dict[tuple[str, int], list[int]]
+        ``(theorem_id, k) -> ascending indices into rows``, first-seen key order,
+        restricted to ``kind == "cell"`` and ``verdict == "unverified"``.
     """
     groups: dict[tuple[str, int], list[int]] = {}
     for index, row in enumerate(rows):
@@ -118,7 +141,18 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     Lean replay is deterministic, so rows sharing candidate text need exactly
     one ``try_tail`` call. No normalisation: a one-character difference is
     correctly two groups, since Lean need not treat them identically either.
-    A missing or ``None`` candidate groups under ``""``.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows containing candidate proofs.
+    indices : list[int]
+        Indices of rows to group.
+
+    Returns
+    -------
+    dict[str, list[int]]
+        Candidate text mapped to row indices; a missing or ``None`` candidate groups under ``""``.
     """
     groups: dict[str, list[int]] = {}
     for index in indices:
@@ -133,6 +167,15 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
     `result` must carry ``verdict``, ``lean_error``, ``final_state_pp`` and
     ``verify_ms``; nothing else on the row is read or written, so `seed` and
     every other recorded field survives untouched.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows updated in place.
+    indices : list[int]
+        Indices of rows to update.
+    result : Mapping[str, Any]
+        Verification fields to copy to each row.
     """
     for index in indices:
         row = rows[index]
@@ -147,6 +190,16 @@ def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict
 
     Shared by :func:`resume_done_groups` and :func:`verify_run`'s never-measured
     diagnostic, so the two agree on what a "group" is by construction.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows containing cell records.
+
+    Returns
+    -------
+    dict[tuple[str, int], list[dict]]
+        Cell rows grouped by ``(theorem_id, k)``.
     """
     return group_cell_rows(
         (r for r in rows if r.get("kind") == "cell"),
@@ -158,6 +211,16 @@ def _never_measured(cell_rows: list[dict]) -> bool:
     """True iff every row in `cell_rows` carries a :data:`_NEVER_MEASURED_VERDICTS`
     verdict -- i.e. NOTHING in this group was ever actually tested against Lean,
     as opposed to tested and failed.
+
+    Parameters
+    ----------
+    cell_rows : list[dict]
+        Cell rows in one group.
+
+    Returns
+    -------
+    bool
+        Whether every row has a never-measured verdict.
     """
     return all(row.get("verdict") in _NEVER_MEASURED_VERDICTS for row in cell_rows)
 
@@ -183,6 +246,16 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     from a transient REPL hiccup, so such a group is re-attempted on every
     subsequent full pass, forever -- bounded to one REPL-open attempt per
     pending group per pass. See :func:`verify_run`'s never-measured diagnostic.
+
+    Parameters
+    ----------
+    verified_rows : list[dict]
+        Paired output rows from the current and prior passes.
+
+    Returns
+    -------
+    set[tuple[str, int]]
+        Groups a later pass should not re-attempt.
     """
     groups = _group_cell_rows_by_key(verified_rows)
     return {
@@ -200,6 +273,16 @@ def row_identity(row: dict) -> tuple:
     yields ``None`` there instead of raising. The trailing five fields mirror
     ``runner._row_key`` with `kind` prepended, so a cell and sanity row for one
     theorem never collide.
+
+    Parameters
+    ----------
+    row : dict
+        Row whose identity is extracted.
+
+    Returns
+    -------
+    tuple
+        ``(kind, model, theorem_id, k, rung, replicate_idx)``.
     """
     return (
         row.get("kind"),
@@ -214,12 +297,6 @@ def row_identity(row: dict) -> tuple:
 def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dict], int]:
     """Pair a prior pass's rows onto the current rows, by identity and occurrence order.
 
-    Returns ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the
-    matching PRIOR row at that identity's next unclaimed occurrence, else the
-    current row; then every unmatched prior row ("orphan") appended in its
-    original order. This keeps the output's row order identical to
-    ``all_rows.jsonl`` regardless of a prior pass's own order or length.
-
     Pairing is by :func:`row_identity` plus occurrence ordinal: a positional
     seed breaks once ``all_rows.jsonl`` grows or reorders between passes, and
     a ``dict[identity] -> row`` map would seed one survivor into every slot of
@@ -228,6 +305,21 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     regenerated lane. Orphans are appended, never inserted or dropped: the
     prefix shared with `rows` stays intact, so indices computed against
     `rows` stay valid against `out_rows`.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Current-pass rows.
+    verified_rows : list[dict]
+        Prior verified rows.
+
+    Returns
+    -------
+    tuple[list[dict], int]
+        ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the matching PRIOR row at
+        that identity's next unclaimed occurrence, else the current row; then every unmatched prior
+        row ("orphan") appended in its original order. This keeps the output's row order identical
+        to ``all_rows.jsonl`` regardless of a prior pass's own order or length.
     """
     prior_by_identity: dict[tuple, collections.deque[tuple[int, dict]]] = (
         collections.defaultdict(collections.deque)
@@ -266,8 +358,22 @@ def available_ram_gb(meminfo_text: str) -> float:
     """Extract ``MemAvailable`` (kB in the file) from ``/proc/meminfo`` TEXT, in GiB.
 
     Takes the text rather than reading ``/proc`` itself, so the budget math is
-    unit-testable against a literal fixture. Raises ValueError if there is no
-    ``"MemAvailable:"`` line.
+    unit-testable against a literal fixture.
+
+    Parameters
+    ----------
+    meminfo_text : str
+        Contents of ``/proc/meminfo``.
+
+    Returns
+    -------
+    float
+        Available RAM in GiB.
+
+    Raises
+    ------
+    ValueError
+        If there is no ``"MemAvailable:"`` line.
     """
     for line in meminfo_text.splitlines():
         if line.startswith("MemAvailable:"):
@@ -285,6 +391,16 @@ def max_workers_allowed(meminfo_text: str) -> int:
     Floored quotient, never below 1, so a host under one worker's budget still
     yields a comparable cap :func:`check_workers` can refuse against, not a
     confusing 0.
+
+    Parameters
+    ----------
+    meminfo_text : str
+        Contents of ``/proc/meminfo``.
+
+    Returns
+    -------
+    int
+        RAM-budgeted worker cap.
     """
     return max(int(available_ram_gb(meminfo_text) // RAM_GB_PER_WORKER), 1)
 
@@ -295,6 +411,13 @@ def check_workers(requested: int, meminfo_text: str) -> None:
     A Dojo session (live Lean process + loaded environment) costs
     `RAM_GB_PER_WORKER` (6) GiB empirically; oversubscription otherwise fails
     hours in as an OOM kill, not fast.
+
+    Parameters
+    ----------
+    requested : int
+        Requested worker count.
+    meminfo_text : str
+        Contents of ``/proc/meminfo``.
     """
     if requested < 1:
         raise SystemExit(f"check_workers: --workers must be >= 1, got {requested}")
@@ -344,6 +467,16 @@ def dojo_failure_hint(exc: BaseException) -> str:
     """Build operator guidance for a session-open-class failure: `exc`'s text plus
     the toolchain/checkout remedies (``replbackend`` has already retried server
     start and imports).
+
+    Parameters
+    ----------
+    exc : BaseException
+        Session-open failure.
+
+    Returns
+    -------
+    str
+        Operator guidance for the failure.
     """
     return (
         f"Lean REPL session failed to open: {type(exc).__name__}: {exc}\n"
@@ -385,8 +518,21 @@ def _theorem_index() -> dict[str, BenchmarkTheorem]:
 def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     """Resolve a row's `theorem_id` (== ``BenchmarkTheorem.full_name``) to its theorem.
 
-    Raises LookupError if `theorem_id` is in no locally bootstrapped
-    ``(kind, split)`` combination (:func:`_theorem_index`).
+    Parameters
+    ----------
+    theorem_id : str
+        Theorem full name.
+
+    Returns
+    -------
+    BenchmarkTheorem
+        The matching theorem.
+
+    Raises
+    ------
+    LookupError
+        If `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination
+        (:func:`_theorem_index`).
     """
     index = _theorem_index()
     if theorem_id not in index:
@@ -418,8 +564,23 @@ def list_runs(
     """List run directory names directly under `key_prefix`, filtered by `pattern`.
 
     `pattern` is an `fnmatch` pattern against a run's NAME, not its full key.
-    Returns matching ``CommonPrefixes`` names of a ``Delimiter="/"`` listing,
-    all pages, sorted ascending.
+
+    Parameters
+    ----------
+    client : Any
+        S3 client.
+    bucket : str
+        S3 bucket name.
+    key_prefix : str
+        Prefix containing run directories.
+    pattern : str, optional
+        Pattern for run names.
+
+    Returns
+    -------
+    list[str]
+        Matching ``CommonPrefixes`` names of a ``Delimiter="/"`` listing, all pages,
+        sorted ascending.
     """
     prefix = f"{key_prefix}/" if key_prefix else ""
     names: list[str] = []
@@ -435,12 +596,27 @@ def list_runs(
 def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     """Download one JSONL object to `dest` (parents created) and return its parsed rows.
 
-    Returns ``[]`` when the object does not exist (NORMAL for a
-    not-yet-created ``verified_rows.jsonl``), detected as a ``ClientError``
-    with ``Error.Code`` ``"NoSuchKey"`` or ``"404"``; any other S3 failure
-    propagates, since it must never read as "nothing to verify yet". `dest`
-    is always written the full `body` bytes verbatim -- this function reads,
+    `dest` is always written the full `body` bytes verbatim -- this function reads,
     it never "repairs" the S3 object or the local copy.
+
+    Parameters
+    ----------
+    client : Any
+        S3 client.
+    bucket : str
+        S3 bucket name.
+    key : str
+        Object key.
+    dest : Path
+        Local destination path.
+
+    Returns
+    -------
+    list[dict]
+        ``[]`` when the object does not exist (NORMAL for a not-yet-created
+        ``verified_rows.jsonl``), detected as a ``ClientError`` with ``Error.Code``
+        ``"NoSuchKey"`` or ``"404"``; any other S3 failure propagates, since it must
+        never read as "nothing to verify yet".
     """
     from botocore.exceptions import ClientError  # lazy: importing must not need boto3
 
@@ -463,6 +639,19 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
 
     `workdir`'s `VERIFIED_FILENAME` scratch file is rewritten with the full
     row set each call, so repeated checkpoint uploads are safe.
+
+    Parameters
+    ----------
+    client : Any
+        S3 client.
+    rows : list[dict]
+        Rows to serialize and upload.
+    bucket : str
+        S3 bucket name.
+    key : str
+        Destination object key.
+    workdir : Path
+        Scratch directory.
     """
     workdir.mkdir(parents=True, exist_ok=True)
     scratch = workdir / VERIFIED_FILENAME
@@ -512,6 +701,17 @@ def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[s
     Writes `payload`'s required ``verdict``/``tactics_applied``/``tactics_total``/
     ``error`` plus ``ms`` (wall-clock). A fresh row is APPENDED, never inserted, so the
     prefix shared with ``all_rows.jsonl`` never shifts.
+
+    Parameters
+    ----------
+    out_rows : list[dict]
+        Output rows updated in place.
+    theorem_id : str
+        Theorem identifier for the sanity row.
+    payload : Mapping[str, Any]
+        Sanity replay fields.
+    ms : int
+        Wall-clock replay duration in milliseconds.
     """
     for row in out_rows:
         if row.get("kind") == "sanity" and row.get("theorem_id") == theorem_id:
@@ -557,14 +757,42 @@ def verify_run(
     `verifier=None` resolves :func:`_default_verifier`, but only once a group
     is pending -- an empty pending set or `dry_run` never imports it.
 
-    Returns ``0`` on success, including "nothing to do", partial passes
-    (``--limit``, ``--theorem``, ``--dry-run``), and a full pass whose only
-    unresolved groups ended entirely on :data:`_NEVER_MEASURED_VERDICTS`
-    (that's a separate diagnostic, not folded into ``2`` -- see the gate
-    comment in the body for why a corpus-stable population must not flip the
-    return code); ``1`` if the run has no ``all_rows.jsonl``; ``2`` if a full
-    pass left a cell on the ``"unverified"`` sentinel after its final upload
-    (the output is still uploaded -- the gate reports, never withholds).
+    Parameters
+    ----------
+    client : Any
+        S3 client.
+    bucket : str
+        S3 bucket name.
+    key_prefix : str
+        Prefix containing the run.
+    run : str
+        Run name.
+    workers : int
+        Number of verification workers.
+    theorem : Optional[str], optional
+        Restrict verification to this theorem identifier.
+    limit : int, optional
+        Maximum number of groups to process.
+    workdir : Path
+        Parent of this run's private scratch directory ``workdir / run``.
+    dry_run : bool, optional
+        Whether to preview pending groups without importing the verifier.
+    no_resume : bool, optional
+        Whether to discard prior verification rows.
+    verifier : Any, optional
+        Verifier instance; `verifier=None` resolves :func:`_default_verifier`, but only once a group
+        is pending -- an empty pending set or `dry_run` never imports it.
+
+    Returns
+    -------
+    int
+        ``0`` on success, including "nothing to do", partial passes (``--limit``, ``--theorem``,
+        ``--dry-run``), and a full pass whose only unresolved groups ended entirely on
+        :data:`_NEVER_MEASURED_VERDICTS` (that's a separate diagnostic, not folded into ``2`` -- see
+        the gate comment in the body for why a corpus-stable population must not flip the return
+        code); ``1`` if the run has no ``all_rows.jsonl``; ``2`` if a full pass left a cell on the
+        ``"unverified"`` sentinel after its final upload (the output is still uploaded -- the gate
+        reports, never withholds).
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)
@@ -728,6 +956,16 @@ def verify_run(
         That function already records every documented failure on its rows, so
         this only catches an unanticipated bug, still landing an "exception"
         verdict on every row of the group and never raising into the executor.
+
+        Parameters
+        ----------
+        key : tuple[str, int]
+            ``(theorem_id, k)`` group key.
+
+        Returns
+        -------
+        tuple[str, int]
+            The processed group key.
         """
         theorem_id, k = key
         try:
@@ -895,10 +1133,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     (all three skipped under ``--dry-run``), then :func:`verify_run` per
     :func:`list_runs` match.
 
-    Returns ``0`` when every matching run was processed (even with nothing to
-    verify); otherwise the count of runs that either returned non-zero or
-    raised (`_verify_every_run` isolates each run so one lane's exception
-    doesn't abort the runs after it).
+    Parameters
+    ----------
+    argv : Optional[list[str]], optional
+        Command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        ``0`` when every matching run was processed (even with nothing to verify); otherwise the
+        count of runs that either returned non-zero or raised (`_verify_every_run` isolates each
+        run so one lane's exception doesn't abort the runs after it).
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)

@@ -48,8 +48,8 @@ def merge_shards(
 ) -> Path:
     """Fold ``n`` shard run directories into the canonical ``scaling_<key>`` directory.
 
-    Never touches the shard dirs -- only
-    ``main`` prunes those, after a verified S3 spool.
+    Never touches the shard dirs -- only ``main`` prunes those, after a verified
+    S3 spool.
 
     Parameters
     ----------
@@ -72,7 +72,7 @@ def merge_shards(
     Raises
     ------
     SystemExit
-        on any failed gate (see module docstring); may leave the canonical dir absent or partial.
+        On any failed gate (see module docstring); may leave the canonical dir absent or partial.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]

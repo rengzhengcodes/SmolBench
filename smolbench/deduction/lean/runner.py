@@ -387,6 +387,9 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     """Load and validate a `LEAN_CELL_WHITELIST` JSON file into a key set.
 
+    Entries are 5-element ``[model, theorem, k, rung, replicate_idx]`` arrays,
+    matching `_row_key`'s order so keys compare equal to `sweep`'s.
+
     Parameters
     ----------
     path_str : str
@@ -395,14 +398,12 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     Returns
     -------
     frozenset[tuple]
-        5-element ``[model, theorem, k, rung, replicate_idx]`` arrays, matching `_row_key`'s
-        order so keys compare equal to `sweep`'s. Duplicates collapse; source order is not
-        preserved.
+        Cell keys in `_row_key` order; duplicates collapse, source order is not preserved.
 
     Raises
     ------
     ValueError
-        (Naming `path_str`) on any read/parse/shape problem: a missing or malformed file must
+        (naming `path_str`) on any read/parse/shape problem: a missing or malformed file must
         abort before generating a cell, not degrade into a full, expensive re-run.
     """
     path = Path(path_str)
@@ -834,9 +835,7 @@ def spool_prefix() -> str:
 def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     """Reject any path whose FILE NAME carries a `retired_markers.RETIRED_MARKERS` marker.
 
-    Raises `ValueError` naming every offending path, rather than warning and
-    skipping: these files parse perfectly and would otherwise yield a
-    complete, plausible, WRONG summary instead of a crash. Also logs, since
+    Also logs, since
     `write_theorem_summary` runs inside a per-theorem worker that -- under
     `theorem_workers > 1` -- swallows exceptions into one THEOREM-WORKER-FAIL
     line (serial runs propagate).
@@ -849,8 +848,9 @@ def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     Raises
     ------
     ValueError
-        Naming every offending path, rather than warning and skipping: these files parse perfectly and
-        would otherwise yield a complete, plausible, WRONG summary instead of a crash.
+        Naming every offending path, rather than warning and skipping: these files parse
+        perfectly and would otherwise yield a complete, plausible, WRONG summary instead of a
+        crash.
     """
     bad = [str(p) for p in paths if is_retired(p)]
     if bad:
@@ -1448,8 +1448,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
 
     Loops theorem, then k, then rung, then model, then replicate. One Lean REPL
     session per (theorem, k), shared across every branch from it; one further
-    per-theorem session re-runs the full proof as a sanity gate. `resume=True`
-    skips cells already recorded in `all_rows.jsonl` (`_existing_keys`).
+    per-theorem session re-runs the full proof as a sanity gate.
 
     `LEAN_CELL_WHITELIST` (env, optional JSON file of cell keys): when set,
     only those cells generate, and a theorem owning none of them is dropped
@@ -1479,7 +1478,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     Returns
     -------
     int
-        Number of successful cells.
+        Number of cells written.
     """
     if verifier is None:
         verifier = _default_verifier()

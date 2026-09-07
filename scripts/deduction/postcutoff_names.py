@@ -169,6 +169,16 @@ def normalise_line(line: str) -> str:
     No comment stripping or case folding. Feeds both :attr:`Decl.statement` and
     :func:`collect_normalised_lines`, so the move heuristic in
     :func:`select_postcutoff_names` compares like with like.
+
+    Parameters
+    ----------
+    line : str
+        source line to normalise.
+
+    Returns
+    -------
+    str
+        normalised source line.
     """
     return _WHITESPACE_RUN_RE.sub(" ", line).strip()
 
@@ -181,6 +191,18 @@ def _strip_comments(line: str, depth: int) -> tuple[str, int]:
     closes mid-line loses column-0 status by design: ``/- x -/ theorem foo``
     then declares nothing. That's the conservative direction, and mathlib
     doesn't write declarations that way regardless.
+
+    Parameters
+    ----------
+    line : str
+        source line to process.
+    depth : int
+        current nested block-comment depth.
+
+    Returns
+    -------
+    tuple[str, int]
+        uncommented text and remaining block-comment depth.
     """
     out: list[str] = []
     i = 0
@@ -212,8 +234,18 @@ def _strip_comments(line: str, depth: int) -> tuple[str, int]:
 def _consume_attribute(text: str, balance: int) -> tuple[str, int, str]:
     """Consume attribute-block characters from ``text``, tracking bracket balance.
 
-    Returns the consumed text, the balance still open (0 once the block
-    closes), and the remainder after the closing bracket (empty while still open).
+    Parameters
+    ----------
+    text : str
+        attribute-block text to consume.
+    balance : int
+        current open-bracket balance.
+
+    Returns
+    -------
+    tuple[str, int, str]
+        the consumed text, the balance still open (0 once the block closes), and the
+        remainder after the closing bracket (empty while still open).
     """
     for i, ch in enumerate(text):
         if ch == "[":
@@ -232,6 +264,16 @@ def _strip_modifiers(text: str) -> tuple[list[str], str]:
     declaration named like a modifier isn't consumed. Feeds both the
     declaration and scope-keyword branches of the scanner, since
     ``noncomputable section`` must still push a scope.
+
+    Parameters
+    ----------
+    text : str
+        column-0 declaration or scope text.
+
+    Returns
+    -------
+    tuple[list[str], str]
+        modifiers and remaining text.
     """
     modifiers: list[str] = []
     rest = text
@@ -251,6 +293,16 @@ def _name_token(text: str) -> str:
     means the declaration is unnamed (``instance : Foo Bar where``) and must be
     skipped. A universe binder leaves a trailing dot (``def foo.{u}`` gives
     ``foo.``), which :func:`_qualify` strips.
+
+    Parameters
+    ----------
+    text : str
+        text following a declaration keyword.
+
+    Returns
+    -------
+    str
+        declaration name token.
     """
     for i, ch in enumerate(text):
         if ch.isspace() or ch in _NAME_STOP_CHARS:
@@ -261,10 +313,22 @@ def _name_token(text: str) -> str:
 def _qualify(token: str, prefix: str) -> str:
     """Apply the ambient namespace prefix to a declared name token.
 
-    Returns ``""`` when the token carries no name at all (empty, a bare
-    ``_root_.``, or all dots), which the caller must skip. ``_root_.`` is
+    ``_root_.`` is
     honoured before the trailing-dot strip, so its dot is never mistaken for a
     universe binder's (``def foo.{u}`` reads as ``foo.``).
+
+    Parameters
+    ----------
+    token : str
+        declared name token.
+    prefix : str
+        ambient namespace prefix.
+
+    Returns
+    -------
+    str
+        ``""`` when the token carries no name at all (empty, a bare ``_root_.``, or all
+        dots), which the caller must skip.
     """
     if token.startswith(_ROOT_PREFIX):
         return token[len(_ROOT_PREFIX) :].rstrip(".")
@@ -282,6 +346,18 @@ def _alias_targets(text: str, prefix: str) -> tuple[str, ...]:
     would resolve. A multi-line alias whose ``:=`` is on a later line resolves
     to ``()`` here, so a deprecated multi-line alias excludes its own name but
     not its target.
+
+    Parameters
+    ----------
+    text : str
+        alias text following its left-hand side.
+    prefix : str
+        ambient namespace prefix.
+
+    Returns
+    -------
+    tuple[str, ...]
+        candidate full names for the alias target.
     """
     marker = text.find(":=")
     if marker == -1:
@@ -307,6 +383,16 @@ def _alias_names(text: str) -> tuple[list[str], str]:
     Handles plain ``alias X := Y`` and the iff-splitting forms
     ``alias ⟨X, Y⟩ := Z`` / ``alias ⟨_, X⟩ := Z``. An unterminated ``⟨`` yields
     no names, skipping the declaration.
+
+    Parameters
+    ----------
+    text : str
+        alias text following the keyword.
+
+    Returns
+    -------
+    tuple[list[str], str]
+        alias names and remaining text.
     """
     if text.startswith("⟨"):
         close = text.find("⟩")
@@ -333,6 +419,18 @@ def scan_lean_text(text: str, file_path: str) -> list[Decl]:
     direction. ``private`` declarations produce no :class:`Decl` at all, since
     Lean mangles their real full names and a mangled name could never match
     across two trees.
+
+    Parameters
+    ----------
+    text : str
+        contents of a Lean source file.
+    file_path : str
+        path recorded on emitted declarations.
+
+    Returns
+    -------
+    list[Decl]
+        top-level declarations found in the source text.
     """
     decls: list[Decl] = []
     scopes: list[str | None] = []
@@ -466,9 +564,20 @@ def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
     """List the ``.lean`` files of a tree in a deterministic (sorted) order.
 
     Shared by :func:`scan_tree` and :func:`collect_normalised_lines` so both
-    see exactly the same files in the same order. Returns ``[]`` when the
-    directory is absent -- an empty side inverts the module's conservative
-    direction; see :func:`main`.
+    see exactly the same files in the same order.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        root of the Lean tree.
+    subdir : str
+        subdirectory to scan.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        ``[]`` when the directory is absent -- an empty side inverts the module's
+        conservative direction; see :func:`main`.
     """
     base = root / subdir if subdir else root
     # A directory named `*.lean` would make callers' `read_text` raise; filter it here.
@@ -483,6 +592,18 @@ def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
     first occurrence (sorted-file, source order) wins, which only matters for
     making the result independent of filesystem iteration order -- mathlib
     itself never defines the same name twice.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        root of the Lean tree.
+    subdir : str, optional
+        subdirectory containing Lean files.
+
+    Returns
+    -------
+    dict[str, Decl]
+        declarations indexed by full name.
     """
     out: dict[str, Decl] = {}
     for path in _iter_lean_files(root, subdir):
@@ -506,6 +627,18 @@ def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set
     order of a million short strings (a few hundred MB); accepted because the
     alternative (re-reading the old tree per candidate) is orders of magnitude
     slower and the script runs once, offline.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        root of the Lean tree.
+    subdir : str, optional
+        subdirectory containing Lean files.
+
+    Returns
+    -------
+    set[str]
+        non-empty normalised source lines.
     """
     lines: set[str] = set()
     for path in _iter_lean_files(root, subdir):
@@ -521,9 +654,18 @@ def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
 
     Pass the NEW commit's whole declaration set, not just the diff: a
     deprecated alias outside the diff can still name a target inside it.
-    Returns every deprecated declaration's name plus every ``alias_targets``
-    entry of a deprecated alias -- both candidate resolutions are dropped,
-    since which one Lean means needs elaboration.
+
+    Parameters
+    ----------
+    decls : Iterable[Decl]
+        Declarations from the new commit.
+
+    Returns
+    -------
+    set[str]
+        Every deprecated declaration's name plus every ``alias_targets`` entry of a
+        deprecated alias -- both candidate resolutions are dropped, since which one
+        Lean means needs elaboration.
     """
     excluded: set[str] = set()
     for decl in decls:
@@ -543,6 +685,16 @@ def parse_pr_number(commit_message: str) -> int | None:
 
     mathlib's merge queue appends ``(#NNNNN)`` to the first line only; a match
     elsewhere in the message, or a non-numeric body, yields ``None``.
+
+    Parameters
+    ----------
+    commit_message : str
+        git commit message to inspect.
+
+    Returns
+    -------
+    int | None
+        PR number from the first line, if present.
     """
     first_line = commit_message.splitlines()[:1]
     if not first_line:
@@ -569,9 +721,22 @@ def select_postcutoff_names(
     keeps a genuinely new declaration from being dropped for coincidentally
     duplicating a line in its own unchanged file.
 
-    Returns the kept declarations (sorted by name) and the funnel counts
-    ``n_old_decls``, ``n_new_decls``, ``n_name_diff``, ``n_after_deprecated``,
-    ``n_after_move``.
+    Parameters
+    ----------
+    new_decls : dict[str, Decl]
+        declarations from the new tree.
+    old_decls : dict[str, Decl]
+        declarations from the old tree.
+    old_lines : set[str]
+        normalised source lines from the old tree.
+    old_files : set[str]
+        Lean file paths from the old tree.
+
+    Returns
+    -------
+    tuple[dict[str, Decl], dict[str, int]]
+        the kept declarations (sorted by name) and the funnel counts ``n_old_decls``,
+        ``n_new_decls``, ``n_name_diff``, ``n_after_deprecated``, ``n_after_move``.
     """
     diff = {name: decl for name, decl in new_decls.items() if name not in old_decls}
 
@@ -606,6 +771,18 @@ def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.Com
     Private: callers normally want :func:`run_git`'s stdout-or-raise contract.
     The exceptions are presence probes (``git cat-file -e`` only has an exit
     code to check) and steps that must branch on the exit code themselves.
+
+    Parameters
+    ----------
+    args : list[str]
+        git command arguments.
+    cwd : pathlib.Path | None, optional
+        working directory for the command.
+
+    Returns
+    -------
+    subprocess.CompletedProcess
+        completed git process.
     """
     return subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=_GIT_TIMEOUT
@@ -620,6 +797,20 @@ def run_git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True
     :data:`_GIT_TIMEOUT` seconds regardless of ``check``: it's an
     infrastructure failure, not an unresolved declaration. The GitHub token is
     never passed to git, so no argument list here can leak it.
+
+    Parameters
+    ----------
+    args : list[str]
+        git command arguments.
+    cwd : pathlib.Path | None, optional
+        working directory for the command.
+    check : bool, optional
+        whether a nonzero exit status raises an error.
+
+    Returns
+    -------
+    str
+        standard output from the command.
     """
     proc = _run_git(args, cwd=cwd)
     if check and proc.returncode != 0:
@@ -636,10 +827,21 @@ def _commit_present(clone: pathlib.Path, commit: str) -> bool:
 def _ensure_commits_present(clone: pathlib.Path, commits: Iterable[str]) -> None:
     """Fetch any of ``commits`` the clone does not already have.
 
-    Raises if a commit is still missing after the fetch, rather than let a
-    missing endpoint silently turn into an empty or wrong diff. The fetch
-    itself is judged by exit code, not exception, since a shallow or partial
-    remote may legitimately refuse a fetch-by-sha; only the re-check decides.
+    The fetch itself is judged by exit code, not exception, since a shallow or
+    partial remote may legitimately refuse a fetch-by-sha; only the re-check decides.
+
+    Parameters
+    ----------
+    clone : pathlib.Path
+        Local clone to inspect and fetch into.
+    commits : Iterable[str]
+        Commit identifiers to ensure are present.
+
+    Raises
+    ------
+    RuntimeError
+        If a commit is still missing after the fetch, rather than let a missing
+        endpoint silently turn into an empty or wrong diff.
     """
     for commit in commits:
         if _commit_present(clone, commit):
@@ -667,6 +869,20 @@ def ensure_clone(
     file blobs, which worktrees fetch lazily as needed. Some servers reject an
     object filter, so a failed filtered clone falls back to one plain-clone
     attempt.
+
+    Parameters
+    ----------
+    workdir : pathlib.Path
+        directory that holds the local clone.
+    repo_url : str, optional
+        remote repository URL.
+    commits : Iterable[str], optional
+        Commit identifiers to ensure are present.
+
+    Returns
+    -------
+    pathlib.Path
+        usable local clone path.
     """
     clone = workdir / "mathlib4"
     preexisting = clone.exists()
@@ -699,6 +915,20 @@ def ensure_worktree(clone: pathlib.Path, path: pathlib.Path, commit: str) -> pat
     blame reads new); swapping one checkout back and forth would be slower and
     racy. A worktree already at ``commit`` is left alone, which is what makes a
     re-run cheap.
+
+    Parameters
+    ----------
+    clone : pathlib.Path
+        local clone that owns the worktree.
+    path : pathlib.Path
+        desired worktree path.
+    commit : str
+        commit to check out.
+
+    Returns
+    -------
+    pathlib.Path
+        worktree checked out at the commit.
     """
     if not path.exists():
         run_git(["-C", str(clone), "worktree", "add", "--detach", "-f", str(path), commit])
@@ -726,8 +956,26 @@ def prefetch_range_objects(
     This is the one place besides :func:`apply_pr_filter` that catches and
     swallows a failure (logged as a warning; the run continues with lazy
     fetching), since it is pure performance and nothing else here may degrade
-    silently. Returns 0 without calling ``git fetch`` when nothing is missing,
-    since an empty object list would otherwise fetch the entire remote.
+    silently.
+
+    Parameters
+    ----------
+    clone : pathlib.Path
+        blobless clone to fetch into.
+    old : str
+        older commit in the range.
+    new : str
+        newer commit in the range.
+    subdir : str, optional
+        subdirectory whose objects are needed.
+    chunk_size : int, optional
+        maximum object identifiers per fetch.
+
+    Returns
+    -------
+    int
+        0 without calling ``git fetch`` when nothing is missing, since an empty object list
+        would otherwise fetch the entire remote.
     """
     if chunk_size < 1:
         raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
@@ -781,6 +1029,22 @@ def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> d
     filter. A git failure returns ``{}`` rather than raising, so the affected
     declarations are simply dropped as unresolved; a `TimeoutExpired` still
     propagates, since a hung git is an infrastructure fault, not "no such line".
+
+    Parameters
+    ----------
+    worktree : pathlib.Path
+        checked-out new tree to blame.
+    old : str
+        older commit boundary.
+    new : str
+        newer commit boundary.
+    file_path : str
+        file path relative to the worktree.
+
+    Returns
+    -------
+    dict[int, str]
+        mapping from line numbers to introducing commits.
     """
     out = run_git(
         ["-C", str(worktree), "blame", "--line-porcelain", f"{old}..{new}", "--", file_path],
@@ -800,6 +1064,16 @@ def _iso_utc(raw: str) -> str:
     Author dates are compared against GitHub's ``created_at``, which is always
     UTC with a ``Z``; comparing a ``+02:00`` local timestamp as text would
     misdate commits near midnight.
+
+    Parameters
+    ----------
+    raw : str
+        git author timestamp.
+
+    Returns
+    -------
+    str
+        timestamp normalised to UTC.
     """
     moment = datetime.datetime.fromisoformat(raw.strip())
     return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -813,6 +1087,18 @@ def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]
     startup would dominate. ``-z`` plus the two ``%x00`` separators make the
     stream split into groups of three regardless of message contents; the
     record count is validated rather than assumed.
+
+    Parameters
+    ----------
+    clone : pathlib.Path
+        local clone to query.
+    shas : Iterable[str]
+        commit identifiers to inspect.
+
+    Returns
+    -------
+    dict[str, dict]
+        metadata indexed by commit identifier.
     """
     unique = sorted({sha for sha in shas if sha})
     if not unique:
@@ -848,6 +1134,18 @@ def _is_rate_limited(headers: object, body: str) -> bool:
 
     GitHub uses 403 for both rate limiting and plain authorisation failures,
     so the two must be told apart before a whole run is abandoned.
+
+    Parameters
+    ----------
+    headers : object
+        HTTP response headers.
+    body : str
+        HTTP response body.
+
+    Returns
+    -------
+    bool
+        whether the response indicates rate limiting.
     """
     remaining = headers.get("X-RateLimit-Remaining") if hasattr(headers, "get") else None
     return remaining == "0" or "rate limit" in body.lower()
@@ -862,6 +1160,18 @@ def fetch_pr_created_at(pr_number: int, token: str | None) -> str | None:
     message, never written to the artifact. A 404 is a definitive answer and
     is never retried; a rate limit is never retried either, since retrying is
     exactly what it forbids.
+
+    Parameters
+    ----------
+    pr_number : int
+        pull request number to query.
+    token : str | None
+        GitHub token for the Authorization header.
+
+    Returns
+    -------
+    str | None
+        pull request creation timestamp, if available.
     """
     url = _PR_API_URL.format(number=pr_number)
     headers = dict(_API_HEADERS)
@@ -912,6 +1222,26 @@ def resolve_provenance(
     sorted order, results are collected in input (not completion) order, and
     the output is built by sorted name. Declarations with no blamed line are
     omitted and counted, never guessed at.
+
+    Parameters
+    ----------
+    kept : dict[str, Decl]
+        declarations retained by the scanner filters.
+    worktree : pathlib.Path
+        checked-out new tree to blame.
+    clone : pathlib.Path
+        local clone containing commit history.
+    old : str
+        older commit boundary.
+    new : str
+        newer commit boundary.
+    jobs : int, optional
+        maximum concurrent blame jobs.
+
+    Returns
+    -------
+    dict[str, dict]
+        provenance records indexed by declaration name.
     """
     by_file: dict[str, list[str]] = {}
     for name in sorted(kept):
@@ -984,6 +1314,24 @@ def apply_pr_filter(
     declaration kept on name-newness alone. This pipeline always demands date
     evidence, so it never emits that value -- it exists for a caller that
     relaxes the rule.
+
+    Parameters
+    ----------
+    provenance : dict[str, dict]
+        provenance records to filter.
+    target_date : str
+        cutoff date in ISO format.
+    token : str | None
+        GitHub token for pull request lookups.
+    cache : dict
+        pull request creation dates, updated in place.
+    counters : dict
+        pipeline counters, updated in place.
+
+    Returns
+    -------
+    dict[str, dict]
+        declarations with post-cutoff date evidence.
     """
     selected: dict[str, dict] = {}
     rate_limited = False
@@ -1064,6 +1412,26 @@ def build_artifact(
     No wall clock, hostname, duration or tool version is included, so two runs
     over the same commits are byte-identical and a re-run can be diffed
     against its predecessor to prove nothing moved.
+
+    Parameters
+    ----------
+    old : str
+        older commit identifier.
+    new : str
+        newer commit identifier.
+    target_date : str
+        cutoff date in ISO format.
+    counts : dict
+        funnel counts from declaration selection.
+    selected : dict[str, dict]
+        selected provenance records.
+    kept : dict[str, Decl]
+        retained declaration records.
+
+    Returns
+    -------
+    dict
+        JSON-serializable artifact.
     """
     decls: dict[str, dict] = {}
     for name in sorted(selected):
@@ -1129,6 +1497,16 @@ def main(argv: list[str] | None = None) -> int:
     or an exception still keeps every date already paid for, and the next run
     resumes from there. Logging is configured here, not at import, so
     importing this module stays free of side effects.
+
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        command-line arguments excluding the program name.
+
+    Returns
+    -------
+    int
+        process exit status.
     """
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

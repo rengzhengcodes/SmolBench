@@ -199,7 +199,7 @@ def _minhash(shingles: frozenset[str]) -> MinHash:
     Parameters
     ----------
     shingles : frozenset[str]
-        Non-empty shingle set: signing an empty set gives the all-max-hash
+        Must be non-empty: signing an empty set gives the all-max-hash
         vector, which collides with every other empty query.
 
     Returns

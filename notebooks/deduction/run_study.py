@@ -382,9 +382,8 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     ``target_date`` is earlier than `ROSTER_LATEST_RELEASE` (some checkpoint
     may already have seen the theorems during training).
 
-    `sweep_config_path` is a test seam (default ``None`` reads the committed
-    file); a path outside the repo is stamped absolute, since it has no
-    repo-relative spelling. ``LEAN_SHARD``, ``LEAN_RUN_NAME``,
+    A path outside the repo is stamped absolute, since it has no repo-relative
+    spelling. ``LEAN_SHARD``, ``LEAN_RUN_NAME``,
     ``LEAN_CELL_WHITELIST``, ``LEAN_CORPUS_KIND``, ``LEAN_CORPUS_SPLIT`` and
     ``LEAN_SEED`` are all read at call time, never at import and never
     cached; ``run_name`` defaults to ``f"scaling_{key}"`` plus a
@@ -396,7 +395,7 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     key : str
         Model key for this lane.
     sweep_config_path : Path | None, optional
-        Test seam (default ``None`` reads the committed file).
+        Alternate sweep-config file read instead of the committed one.
 
     Returns
     -------
@@ -801,7 +800,7 @@ def main(argv: list[str] | None = None) -> None:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Argument vector so tests can call this without a subprocess.
+        A parameter so tests can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description=(

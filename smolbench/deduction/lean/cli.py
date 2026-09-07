@@ -286,8 +286,8 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 
     No Lean toolchain needed. Pool is replay-passing theorems only, filtered/sampled by
     ``--max-tactics``/``--limit``/``--seed``. Tokens use `tiktoken` ``cl100k_base`` with no
-    char-based fallback (unlike `context._count_tokens`), so a missing `tiktoken` raises
-    `ImportError`. A `render` exception counts as a skipped render error.
+    char-based fallback (unlike `context._count_tokens`). A `render` exception counts as a
+    skipped render error.
 
     Parameters
     ----------
@@ -298,6 +298,11 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
     -------
     int
         1 on an empty pool, else 0.
+
+    Raises
+    ------
+    ImportError
+        If `tiktoken` is missing.
     """
     import statistics as stats
     import tiktoken
@@ -581,12 +586,16 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        0 if the sweep completes, else 1.
+        0.
 
     Raises
     ------
-    FileNotFoundError, ValueError, yaml.YAMLError
-        Propagated from `load_sweep_config`.
+    FileNotFoundError
+        If `load_sweep_config` cannot read the config file.
+    ValueError
+        If `load_sweep_config` rejects the config structure.
+    yaml.YAMLError
+        If `load_sweep_config` cannot parse the YAML.
     """
     # Discarded: unlike the study driver, this subcommand has no provenance sidecar to
     # stamp the digest into; `sweep` records only the `config` mapping.
@@ -672,6 +681,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     def _dump(label: str, items: list[tuple[str, dict, dict]]) -> None:
         """Print one labeled section of ``(theorem_id, row_a, row_b)`` triples.
+
         Prints nothing at all, not even `label`, when `items` is empty.
 
         Parameters

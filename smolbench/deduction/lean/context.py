@@ -36,6 +36,9 @@ _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 def split_state(state_pp: str) -> tuple[str, str]:
     """Return `(hypotheses, goals)` from a Lean tactic-state pretty-print.
 
+    `goals` starts at the first `⊢` line, with any preceding `case ...`
+    headers attached. A state with no `⊢` line yields `(state_pp, "")`.
+
     Parameters
     ----------
     state_pp : str
@@ -44,8 +47,7 @@ def split_state(state_pp: str) -> tuple[str, str]:
     Returns
     -------
     tuple[str, str]
-    `goals` starts at the first `⊢` line, with any preceding `case ...`
-    headers attached. A state with no `⊢` line yields `(state_pp, "")`.
+        ``(context, goals)`` split of the state.
     """
     lines = state_pp.splitlines()
     for i, line in enumerate(lines):
@@ -468,9 +470,7 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
     `k` is the 0-indexed step about to be proved: context describes the state immediately
     before `theorem.traced_tactics[k]`, and the model is expected to produce the tail
-    starting there. `(chain, level)` is checked by `validate`, but ``noise`` can still raise
-    `ValueError`/`ImportError` from `_render_noise_parts` even after that check passes (e.g.
-    ``noise:0``, which `validate` allows through).
+    starting there. `(chain, level)` is checked by `validate`.
 
     Parameters
     ----------
@@ -487,6 +487,12 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     -------
     RenderedContext
         Rendered context for the requested rung.
+
+    Raises
+    ------
+    ValueError, ImportError
+        ``noise`` can still raise these from `_render_noise_parts` even after
+        that check passes (e.g. ``noise:0``, which `validate` allows through).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")

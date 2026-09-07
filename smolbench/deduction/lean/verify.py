@@ -140,8 +140,8 @@ def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
 def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResult:
     """Open a REPL session, apply the recorded tactics in order, report verdict.
 
-    Every exception from opening or driving the
-    session is reported as `verdict="exception"` rather than propagated:
+    Every exception from opening or driving the session is reported as
+    `verdict="exception"` rather than propagated:
     callers loop over many theorems, and one failure must not abort the
     batch.
 
@@ -270,7 +270,8 @@ def try_tail(
     tail : str
         Candidate proof-tail text.
     theorem_name : str
-        Caller-supplied theorem name, recorded verbatim.
+        Caller-supplied (neither `session` nor `state_at_k` identifies a theorem) and recorded
+        verbatim.
 
     Returns
     -------
@@ -325,10 +326,8 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     same checkpoint. The session always closes, whether the `with`-block
     completes, raises, or the prefix replay raises first.
 
-    A plain `RuntimeError` (not `replbackend.ReplError`) is raised if a prefix
-    tactic doesn't leave an open goal
-    state -- a ground-truth problem, distinct from a tail-verification
-    failure, which is reported as a `ProofResult` verdict, never raised.
+    A ground-truth problem, distinct from a tail-verification failure, which is
+    reported as a `ProofResult` verdict, never raised.
 
     Parameters
     ----------

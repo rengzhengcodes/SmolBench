@@ -155,7 +155,7 @@ def _seed_of(name: str) -> int:
     Parameters
     ----------
     name : str
-        model name
+        Model name.
 
     Returns
     -------
@@ -177,9 +177,9 @@ def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     Parameters
     ----------
     p : np.ndarray | float
-        per-replicate success probability
+        Per-replicate success probability.
     n : int
-        number of conditionally-independent replicates
+        Number of conditionally-independent replicates.
 
     Returns
     -------
@@ -199,9 +199,9 @@ def mcnemar_exact_p(b: int, c: int) -> float:
     Parameters
     ----------
     b : int
-        counts where A succeeds and B fails
+        Counts where A succeeds and B fails.
     c : int
-        counts where B succeeds and A fails
+        Counts where B succeeds and A fails.
 
     Returns
     -------
@@ -223,14 +223,12 @@ def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
     p-value ever faces ``q / m`` -- why sizing can use that as a conservative upper
     bound, and why the exploratory SECONDARY tier uses BH rather than Bonferroni.
 
-    Returns a boolean mask in `pvalues`' input order, not sorted order.
-
     Parameters
     ----------
     pvalues : np.ndarray
-        p-values in input order
+        P-values in input order.
     q : float
-        false-discovery-rate level
+        False-discovery-rate level.
 
     Returns
     -------
@@ -265,12 +263,12 @@ def _warn_unverified(reasons: list[str]) -> None:
     """Print a hard-to-miss stderr banner that loaded rows are unverified.
 
     Called by `load_joint_cells` for an ``all_rows.jsonl`` input or an
-    ``"unverified"`` cell row; each `reasons` entry becomes one banner line, verbatim.
+    ``"unverified"`` cell row.
 
     Parameters
     ----------
     reasons : list[str]
-        banner lines describing why rows are unverified
+        Each `reasons` entry becomes one banner line, verbatim.
     """
     lines = [f"!!  {reason}" for reason in reasons] + [
         "!!",
@@ -314,11 +312,11 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
     Parameters
     ----------
     rows : Iterable[dict[str, Any]]
-        already-parsed rows from one source file
+        Already-parsed rows from one source file.
     field : str
-        verdict field to inspect
+        Verdict field to inspect.
     source : str | Path
-        source file represented by the rows
+        Source file represented by the rows.
 
     Raises
     ------
@@ -367,7 +365,7 @@ def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
     Parameters
     ----------
     verdicts : Iterable[str | None]
-        cell verdicts in file order
+        Cell verdicts in file order.
 
     Returns
     -------
@@ -400,7 +398,7 @@ def load_joint_cells(
     Parameters
     ----------
     models : tuple[str, ...] | None, optional
-        restrict pairing to this set (default: every model present); a cell is
+        Restrict pairing to this set (default: every model present); a cell is
         kept only if graded for EVERY member.
     """
     reject_superseded(row_files)
@@ -515,9 +513,9 @@ def marginal_rates(models: list[str], blocks: dict) -> dict[str, float]:
     Parameters
     ----------
     models : list[str]
-        models to score
+        Models to score.
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
 
     Returns
     -------
@@ -544,9 +542,9 @@ def union_solvable_fraction(models: list[str], blocks: dict) -> float:
     Parameters
     ----------
     models : list[str]
-        models in the contrast
+        Models in the contrast.
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
 
     Returns
     -------
@@ -570,11 +568,11 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
     Parameters
     ----------
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
     model_a : str
-        first model in the pair
+        First model in the pair.
     model_b : str
-        second model in the pair
+        Second model in the pair.
 
     Returns
     -------
@@ -660,25 +658,24 @@ def bootstrap_power(
     """Bootstrap McNemar power and the paired rate-gap CI for one model pair.
 
     Resamples `n_theorems` whole theorem blocks with replacement from `blocks`, pools
-    their cells, and computes McNemar's exact p over `sims` simulations. `rng` is
-    freshly seeded by the caller (see `_seed_of`) so runs are byte-identical.
+    their cells, and computes McNemar's exact p over `sims` simulations.
 
     Parameters
     ----------
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
     model_a : str
-        first model in the pair
+        First model in the pair.
     model_b : str
-        second model in the pair
+        Second model in the pair.
     n_theorems : int
-        theorem blocks sampled per simulation
+        Theorem blocks sampled per simulation.
     alpha : float
-        McNemar significance threshold
+        McNemar significance threshold.
     sims : int
-        number of bootstrap simulations
+        Number of bootstrap simulations.
     rng : np.random.Generator
-        freshly seeded random-number generator
+        Freshly seeded by the caller (see `_seed_of`) so runs are byte-identical.
 
     Returns
     -------
@@ -739,25 +736,25 @@ def passn_power(
     Parameters
     ----------
     rate_a : float
-        first model's pass@1 rate
+        First model's pass@1 rate.
     rate_b : float
-        second model's pass@1 rate
+        Second model's pass@1 rate.
     frac_solvable : float
-        from `union_solvable_fraction` on just this pair; must be ``> 0``.
+        From `union_solvable_fraction` on just this pair; must be ``> 0``.
     n_theorems : int
-        number of theorem blocks per simulation
+        Number of theorem blocks per simulation.
     n_replicates : int
-        replicates per cell
+        Replicates per cell.
     n_prompt_rungs : int
-        prompt rungs per theorem
+        Prompt rungs per theorem.
     alpha : float
-        McNemar significance threshold
+        McNemar significance threshold.
     sims : int
-        number of simulations
+        Number of simulations.
     beta_conc : float
-        Beta-mixture concentration
+        Beta-mixture concentration.
     rng : np.random.Generator
-        random-number generator
+        Random-number generator.
 
     Returns
     -------
@@ -810,27 +807,27 @@ def needed_replicates(
     Parameters
     ----------
     rate_a : float
-        first model's pass@1 rate
+        First model's pass@1 rate.
     rate_b : float
-        second model's pass@1 rate
+        Second model's pass@1 rate.
     frac_solvable : float
-        fraction of cells solvable by either model
+        Fraction of cells solvable by either model.
     n_theorems : int
-        number of theorem blocks per simulation
+        Number of theorem blocks per simulation.
     n_prompt_rungs : int
-        prompt rungs per theorem
+        Prompt rungs per theorem.
     alpha : float
-        McNemar significance threshold
+        McNemar significance threshold.
     sims : int
-        number of simulations
+        Number of simulations.
     beta_conc : float
-        Beta-mixture concentration
+        Beta-mixture concentration.
     rng : np.random.Generator
-        random-number generator
+        Random-number generator.
     grid : tuple, optional
-        replicate counts to scan
+        Replicate counts to scan.
     target : float, optional
-        required rejection fraction
+        Required rejection fraction.
 
     Returns
     -------
@@ -898,27 +895,26 @@ def compute_contrast_sizing(
 
     Reseeds two independent generators per contrast (bootstrap curve, replicate
     projection), both derived from ``(model_a, model_b)`` via `_seed_of`, so re-running
-    produces byte-identical output. `prompt_rungs` is used only for its length (the
-    Beta-mixture's per-theorem cell count).
+    produces byte-identical output.
 
     Parameters
     ----------
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
     label : str
-        contrast label
+        Contrast label.
     model_a : str
-        first model in the contrast
+        First model in the contrast.
     model_b : str
-        second model in the contrast
+        Second model in the contrast.
     rates : dict
-        observed pass@1 rates by model
+        Observed pass@1 rates by model.
     prompt_rungs : list
-        prompt rungs represented in the paired cells
+        Used only for its length (the Beta-mixture's per-theorem cell count).
     alpha : float
-        significance threshold for sizing simulations
+        Significance threshold for sizing simulations.
     sims : int
-        number of simulations per grid point
+        Number of simulations per grid point.
 
     Returns
     -------
@@ -1006,26 +1002,26 @@ def _print_tier_report(
 
     `contrasts`: the tier's full pre-registered list (21 or 63); contrasts whose
     models are absent from the loaded data are skipped with a summary line, not
-    silently. `secondary`: True = SECONDARY cross-family tier (sized at
-    `ALPHA_SECONDARY`, decided by `benjamini_hochberg` at `Q_SECONDARY`); False =
-    PRIMARY, at the fixed `ALPHA_PRIMARY` Bonferroni threshold.
+    silently.
 
     Parameters
     ----------
     tier_label : str
-        label displayed for the contrast tier
+        Label displayed for the contrast tier.
     contrasts : list
-        full pre-registered list of contrasts
+        Full pre-registered list of contrasts.
     blocks : dict
-        paired theorem cells
+        Paired theorem cells.
     rates : dict
-        observed pass@1 rates by model
+        Observed pass@1 rates by model.
     prompt_rungs : list
-        prompt rungs represented in the paired cells
+        Prompt rungs represented in the paired cells.
     secondary : bool
-        whether to use the SECONDARY tier procedure
+        True = SECONDARY cross-family tier (sized at `ALPHA_SECONDARY`, decided by
+        `benjamini_hochberg` at `Q_SECONDARY`); False = PRIMARY, at the fixed
+        `ALPHA_PRIMARY` Bonferroni threshold.
     sims : int
-        number of simulations per grid point
+        Number of simulations per grid point.
     """
     alpha_sizing = ALPHA_SECONDARY if secondary else ALPHA_PRIMARY
     sizings: list[ContrastSizing] = []
@@ -1186,7 +1182,7 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        command-line arguments
+        Command-line arguments.
 
     Returns
     -------

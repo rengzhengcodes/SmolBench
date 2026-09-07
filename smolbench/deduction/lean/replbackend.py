@@ -128,8 +128,10 @@ def mathlib_root(root: str | Path | None = None) -> Path:
     Resolution order: the `root` argument, else ``SMOLBENCH_MATHLIB_ROOT`` read AT CALL TIME
     (nothing cached, nothing read at import), so the variable can be set after this module
     is imported. Symlinks are NOT resolved: callers/tests compare against the literal path
-    given, and a Lean project reached through a symlink works. `open_session` runs this before
-    starting any Lean process, so a misconfiguration costs milliseconds, not a REPL startup.
+    given, and a Lean project reached through a symlink works.
+
+    `open_session` runs this before starting any Lean process, so a misconfiguration costs
+    milliseconds, not a REPL startup.
 
     Parameters
     ----------
@@ -458,8 +460,7 @@ def declaration_text(root: Path, file_path: str, start_line: int, max_lines: int
     declaration (`_TOP_LEVEL_KEYWORDS`, plus ``@[``/``/--``). That stop rule only arms once
     the declaration's own keyword line has been consumed, so a declaration whose first line
     is a docstring or attribute doesn't stop at its own ``theorem`` line and return only the
-    header. Lines inside an open ``/- ... -/`` block never stop the slice. `max_lines`
-    (default 400) caps the return so a missing stop keyword can't drag a whole file in.
+    header. Lines inside an open ``/- ... -/`` block never stop the slice.
 
     Parameters
     ----------
@@ -667,6 +668,16 @@ class ReplSession:
         ``lean_error`` column, and a uniform `ReplError` with a ``timeout:``-shaped message
         keeps timeouts greppable without adding a seventh verdict string. A `LeanError`
         reply is returned as a value here, not raised (see `classify_step`).
+
+        Parameters
+        ----------
+        request : Any
+            Request sent to the Lean server.
+
+        Returns
+        -------
+        Any
+            Lean server reply.
         """
         try:
             return self.server.run(request, timeout=self.timeout)
@@ -680,9 +691,25 @@ class ReplSession:
 
         Proof states are immutable, so many calls may branch from the same id. Combinators
         (``;``, ``<;>``) are part of a single tactic and must not be split by the caller.
-        Raises `ReplError` for any REPL-level trouble -- transport failure (`run`) or the
-        REPL's own error channel (`classify_step` kind ``"exception"``) -- so callers cannot
-        silently record it as a Lean verdict.
+
+        Parameters
+        ----------
+        proof_state : int
+            Proof-state id to which the tactic is applied.
+        tactic : str
+            Lean tactic to apply.
+
+        Returns
+        -------
+        StepOutcome
+        Classified result of applying the tactic.
+
+        Raises
+        ------
+        ReplError
+            For any REPL-level trouble -- transport failure (`run`) or the REPL's own error
+            channel (`classify_step` kind ``"exception"``) -- so callers cannot silently record
+            it as a Lean verdict.
         """
         outcome = classify_step(self.run(ProofStep(proof_state=proof_state, tactic=tactic)))
         if outcome.kind == "exception":
@@ -723,6 +750,16 @@ def _default_server_factory(root: Path) -> LeanServer:
     and a pooled/remote server can be dropped in without touching the open/retry logic.
     `LeanServer.__init__` asserts its config and starts the process, so this returns a live
     server or raises.
+
+    Parameters
+    ----------
+    root : Path
+        Mathlib4 checkout path.
+
+    Returns
+    -------
+    LeanServer
+        Started Lean server.
     """
     return LeanServer(LeanREPLConfig(project=LocalProject(directory=str(root))))
 
@@ -742,22 +779,38 @@ def open_session(
 ) -> tuple[ReplSession, int]:
     """Start a REPL, elaborate `bt`'s statement as a stub, return its proof state.
 
-    `server_factory` is an injection seam: takes the resolved root `Path`, returns a
-    started server exposing ``run``/``kill``; defaults to `_default_server_factory`.
-    Returns the live session and the proof-state id of the stub's ``sorry`` (the state
-    tactic 0 of the proof should apply to).
-
-    Raises `ReplError` if the checkout is misconfigured, the server failed to start, or the
-    module failed to import (never a bare `RuntimeError`: `verify.verify_proof_tail` reads
-    that as ``"replay_failed"``, a claim about the corpus -- see the translation comment
-    below). Raises `StatementError` (a non-retried `ReplError` subclass) if the declaration
-    has no statement/proof boundary, or its stub didn't elaborate.
-
     Configuration and statement derivation happen before any Lean process starts, so a
     misconfiguration or unusable declaration fails in milliseconds rather than after a REPL
     startup; both are deterministic, so they sit outside the retry loop. Inside the loop the
     same rule applies one level down: server start and ``import`` are retried, stub
     elaboration (`StatementError`) is not.
+
+    Parameters
+    ----------
+    bt : BenchmarkTheorem
+        Benchmark theorem to open.
+    timeout : int, optional
+        Per-request timeout in seconds.
+    root : str | Path | None, optional
+        Mathlib4 checkout root.
+    server_factory : Callable[[Path], object] | None, optional
+        Injection seam: takes the resolved root `Path`, returns a started server exposing
+        ``run``/``kill``; defaults to `_default_server_factory`.
+
+    Returns
+    -------
+    tuple[ReplSession, int]
+    The live session and the proof-state id of the stub's ``sorry`` (the state tactic 0 of the
+    proof should apply to).
+
+    Raises
+    ------
+    ReplError
+        If the checkout is misconfigured, the server failed to start, or the module failed to
+        import (never a bare `RuntimeError`: `verify.verify_proof_tail` reads that as
+        ``"replay_failed"``, a claim about the corpus -- see the translation comment below).
+    StatementError
+        If the declaration has no statement/proof boundary, or its stub didn't elaborate.
     """
     # `mathlib_root` signals misconfiguration with a plain `RuntimeError` -- right for a
     # direct caller, pinned by its own tests, but wrong once it travels toward
@@ -811,13 +864,32 @@ def _open_proof_state(
     Two REPL round trips: a fresh-environment ``import`` (``env=None`` starts a new session
     in which ``import`` is legal), then the stub in the environment that produced.
 
-    Raises `ReplError` (retryable) if the ``import`` round trip failed -- routinely a
-    cold/racing ``lake`` build cache, which is what `open_session`'s backoff exists for.
-    Raises `StatementError` (deterministic, not retried) if the stub didn't elaborate or
-    produced no ``sorry`` to branch from -- the single most likely failure mode in
-    production (see the module docstring on import-only environments), so every message
-    carries the REPL's own text verbatim rather than degrading a whole eval into unexplained
-    `exception` rows.
+    Parameters
+    ----------
+    session : ReplSession
+        Active REPL session.
+    bt : BenchmarkTheorem
+        Benchmark theorem whose statement is elaborated.
+    module : str
+        Lean module to import.
+    stub : str
+        Theorem statement stub to elaborate.
+
+    Returns
+    -------
+    int
+    State id of the elaborated stub's ``sorry``.
+
+    Raises
+    ------
+    ReplError
+        If the ``import`` round trip failed -- routinely a cold/racing ``lake`` build cache,
+        which is what `open_session`'s backoff exists for.
+    StatementError
+        If the stub didn't elaborate or produced no ``sorry`` to branch from -- the single most
+        likely failure mode in production (see the module docstring on import-only environments),
+        so every message carries the REPL's own text verbatim rather than degrading a whole eval
+        into unexplained `exception` rows.
     """
     imported = session.run(Command(cmd=f"import {module}"))
     if isinstance(imported, LeanError) or imported.get_errors():
