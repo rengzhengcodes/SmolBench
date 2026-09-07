@@ -300,7 +300,7 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     tag : str
         Experiment tag to validate.
     lane : str, optional
-        The suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check.
+        The suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check
         below so a sharded lane's suffix can't defeat the exact-match guard.
     """
     # Strip the lane suffix first: every check below reasons about the study identity the tag
