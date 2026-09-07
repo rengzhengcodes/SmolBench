@@ -294,7 +294,9 @@ def _recovery_bucket(**lanes: str) -> "dict[str, str]":
             for lane, body in lanes.items()}
 
 
-def test_an_unmarked_run_layout_lands_under_its_own_directory_name(rows_source, tmp_path):
+def test_an_unmarked_run_layout_lands_under_its_own_directory_name(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """``run_marker=""`` accepts every run directory and strips nothing from it.
 
     The landed tree has to be ``<lane>/recovered_rows.jsonl``, because that is
@@ -311,7 +313,9 @@ def test_an_unmarked_run_layout_lands_under_its_own_directory_name(rows_source, 
     assert all(p.read_text() == "R\n" for p in landed)
 
 
-def test_the_default_marker_still_excludes_the_recovery_run(rows_source, tmp_path):
+def test_the_default_marker_still_excludes_the_recovery_run(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """The default is unchanged: without the override the recovery tree is invisible.
 
     This is the behaviour ``error_bars.py``'s ``--recovery-dir`` help text
@@ -329,7 +333,9 @@ def test_the_default_marker_still_excludes_the_recovery_run(rows_source, tmp_pat
     assert all("dojoinit" not in key for key in client.downloads), client.downloads
 
 
-def test_the_retired_artifact_guard_covers_the_unmarked_layout(rows_source, tmp_path):
+def test_the_retired_artifact_guard_covers_the_unmarked_layout(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """Turning the marker off must not turn the superseded guard off with it.
 
     The recovery tree is archived data that has been re-spooled before; a
@@ -348,7 +354,7 @@ def test_the_retired_artifact_guard_covers_the_unmarked_layout(rows_source, tmp_
     assert list(tmp_path.iterdir()) == [], "wrote to disk before refusing"
 
 
-def test_resolve_rows_dir_passes_the_marker_through(rows_source):
+def test_resolve_rows_dir_passes_the_marker_through(rows_source: ModuleType) -> None:
     """The one-call entry point reaches the recovery tree too, guard and all.
 
     The notebook's section 5 calls `resolve_rows_dir`, not the downloader, so
