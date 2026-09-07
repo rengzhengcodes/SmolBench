@@ -189,7 +189,7 @@ class Experiment:
         extra_args : Optional[dict], optional
             Arguments forwarded to ``run_replicates``.
         max_parallel : Optional[int], optional
-            Maximum concurrent replicate requests.
+            Maximum parallel requests forwarded to ``run_replicates``.
         request_timeout : int, optional
             CoT archetypes raise this so the longest chain finishes on attempt 1.
         """

@@ -59,7 +59,7 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     api_key : str
         Bearer token for the request.
     check_status : bool
-        True raises before parsing (``list_models``: AWS, EC2); False parses.
+        True raises before parsing (``list_models``: AWS, EC2); False parses
         regardless of status (``get_model_context_length``: OpenRouter, Prime
         Intellect, where an error body instead raises in the caller's own
         indexing). Keyword-only with NO default, so the split can never be
@@ -142,7 +142,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
-        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or.
+        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or
         any ``finish_reason`` (truncated body) -- retryable, like the
         non-streamed transport's parse failure on a truncated body.
     """

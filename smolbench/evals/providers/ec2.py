@@ -538,7 +538,7 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     instance_type : str
         Landed EC2 instance type whose GPU count is considered.
     spec : Dict[str, Any]
-        Deploy spec; its ``"tp"`` is the fallback when `model` is absent from.
+        Deploy spec; its ``"tp"`` is the fallback when `model` is absent from
         ``MODEL_ATTENTION_HEADS`` or `instance_type` from
         ``_INSTANCE_GPU_COUNTS``.
 
@@ -622,7 +622,7 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
     Raises
     ------
     RuntimeError
-        The pin is set and the landed instance type is either absent from this.
+        The pin is set and the landed instance type is either absent from this
         module's GPU tables (unknown hardware is reported, never treated as a
         match) or names silicon that does not match the pin.
     """
@@ -762,7 +762,7 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        None only when the state-file read itself raised; otherwise every key.
+        None only when the state-file read itself raised; otherwise every key
         is present (None for unknown/unreachable pieces), so readers always
         see the full schema. Four groups:
 
@@ -938,7 +938,7 @@ def _clear_state(instance_id: Optional[str] = None) -> None:
     Parameters
     ----------
     instance_id : Optional[str]
-        The instance being torn down; when the file names a DIFFERENT one (a.
+        The instance being torn down; when the file names a DIFFERENT one (a
         second run for the same experiment tag provisioned a fresh box
         mid-teardown) it is left alone, since deleting it strands a live,
         billing GPU box with no driver and no local record. None deletes
@@ -1028,7 +1028,7 @@ def list_models(model: str = "") -> List[str]:
     Parameters
     ----------
     model : str
-        Accepted and IGNORED; it exists only for signature parity with.
+        Accepted and IGNORED; it exists only for signature parity with
         ``smolbench.evals.providers.aws.list_models`` so
         ``smolbench.evals.provider`` can dispatch uniformly.
 
@@ -1601,7 +1601,7 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     Raises
     ------
     RuntimeError
-        The instance went ``shutting-down``/``terminated`` before ever getting.
+        The instance went ``shutting-down``/``terminated`` before ever getting
         an IP (spot reclaimed right after launch), or stayed absent from
         DescribeInstances for ``_ABSENT_STREAK_LIMIT`` consecutive polls; a
         single absent poll is tolerated as eventual consistency.
@@ -1648,7 +1648,7 @@ def _agent(
     Parameters
     ----------
     state : Dict[str, Any]
-        Control-agent connection state.
+        Needs ``public_ip`` and ``control_token``.
     method : str
         HTTP method for the agent request.
     path : str
@@ -1658,7 +1658,7 @@ def _agent(
     timeout : int, optional
         Request timeout in seconds.
     connect_retries : int
-        Extra attempts, 15s apart, on CONNECT-level failures only.
+        Extra attempts, 15s apart, on CONNECT-level failures only
         (``requests.ConnectionError``, which covers ConnectTimeout): the
         caller's egress NAT drops connections in bursts and killed one-shot
         ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint is
@@ -1707,7 +1707,7 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     Raises
     ------
     RuntimeError
-        The liveness check found the instance no longer ``pending``/``running``.
+        The liveness check found the instance no longer ``pending``/``running``
         (spot reclaimed while waiting for its agent).
     TimeoutError
         The agent never answered within ``timeout_min``.
@@ -1812,7 +1812,7 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        The refreshed, already-saved state dict when the recorded instance is.
+        The refreshed, already-saved state dict when the recorded instance is
         still ``pending``/``running``, else None.
     """
     state = _load_state()
@@ -1848,13 +1848,13 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        The recovered, already-saved state dict, or None when no tagged.
+        The recovered, already-saved state dict, or None when no tagged
         instance exists (the caller proceeds to a fresh launch).
 
     Raises
     ------
     RuntimeError
-        A tagged live instance exists but its user-data would not parse for.
+        A tagged live instance exists but its user-data would not parse for
         the control token (foreign or older-format box) -- refuse to reuse a
         box this process cannot authenticate to.
     """
@@ -1954,16 +1954,16 @@ def _run_instances_kwargs(
     volume_gb : int
         Root volume size, in GiB.
     user_data : bytes
-        Gzip-compressed cloud-init script (``payloads.pack_user_data``),.
+        Gzip-compressed cloud-init script (``payloads.pack_user_data``),
         passed through UNENCODED: boto3's ``base64_encode_user_data`` handler
         base64-encodes bytes ``UserData`` itself.
     key_name : str
         EC2 key pair for SSH debugging; ``""`` omits ``KeyName`` entirely.
     iam_profile : Optional[str]
-        Instance profile for the S3 model cache; ``None``/``""`` omits.
+        Instance profile for the S3 model cache; ``None``/``""`` omits
         ``IamInstanceProfile`` (no S3 cache).
     capacity_reservation_id : Optional[str]
-        Purchased EC2 Capacity Block id. When set, MarketType becomes.
+        Purchased EC2 Capacity Block id. When set, MarketType becomes
         ``"capacity-block"`` (required by the API) and the instance is pinned
         to the block instead of the Spot market; the caller must pass the
         block's own AZ subnet and instance type or RunInstances rejects it.
@@ -2081,19 +2081,19 @@ def _launch_fresh(
     max_lifetime_min : int
         Boot-scheduled-halt budget in minutes.
     my_ip : str
-        Caller's public IP, resolved ONCE by the caller (one.
+        Caller's public IP, resolved ONCE by the caller (one
         ``checkip.amazonaws.com`` round trip, not one per region).
 
     Returns
     -------
     Dict[str, Any]
-        The new instance's state dict, already saved to ``EC2_STATE_FILE``,.
+        The new instance's state dict, already saved to ``EC2_STATE_FILE``,
         once its agent answers.
 
     Raises
     ------
     RuntimeError
-        No ``(instance_type, region)`` combination yielded capacity; the.
+        No ``(instance_type, region)`` combination yielded capacity; the
         message lists every attempt and its failure reason/code.
     """
     control_token = secrets.token_urlsafe(32)
@@ -2362,7 +2362,7 @@ def provision_spot_instance(
     Returns
     -------
     Dict[str, Any]
-        State dict, also persisted to ``EC2_STATE_FILE``: instance_id, region,.
+        State dict, also persisted to ``EC2_STATE_FILE``: instance_id, region,
         public_ip, instance_type, control_token, vllm_api_key, ...
     """
     instance_types = tuple(instance_types or EC2_INSTANCE_TYPES)
@@ -2496,7 +2496,7 @@ def serve_model(
     timeout_min : Optional[int]
         Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
     force : bool
-        Swap even when the box is already healthy on ``model`` with the same.
+        Swap even when the box is already healthy on ``model`` with the same
         launch payload. The default fast path skips the swap, so re-running a
         section cell after an interruption costs seconds, not a reload.
 
@@ -2510,7 +2510,7 @@ def serve_model(
     KeyError
         ``model`` has no ``EC2_DEPLOY_SPECS`` entry.
     RuntimeError
-        The instance became healthy serving something else (another process.
+        The instance became healthy serving something else (another process
         swapped the model).
     """
     spec = EC2_DEPLOY_SPECS.get(model)
@@ -2644,7 +2644,7 @@ def shutdown_instance(wait: bool = True) -> None:
     Parameters
     ----------
     wait : bool
-        Block on the ``instance_terminated`` waiter. A waiter timeout is logged.
+        Block on the ``instance_terminated`` waiter. A waiter timeout is logged
         and swallowed: TerminateInstances already succeeded, and p5-class
         teardown can outlast botocore's 10-minute budget.
     """
