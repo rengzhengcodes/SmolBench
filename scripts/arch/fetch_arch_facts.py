@@ -345,6 +345,11 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
     fetch : Optional[_FetchFn], optional
         injectable in place of `_fetch` so offline tests can pass a fake with
         no network access, without monkeypatching module globals.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Raw fetch results and normalised architecture facts.
     """
     fetch = fetch or _fetch
     roster = {

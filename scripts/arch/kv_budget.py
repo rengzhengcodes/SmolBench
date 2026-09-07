@@ -187,6 +187,10 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
 
     Parameters
     ----------
+    cfg : Dict[str, Any]
+        Model configuration whose cache geometry is calculated.
+    ctx : int
+        Sequence length in tokens.
     tp : int, optional
         for models that are neither MLA nor shared-latent, KV heads replicate
         when ``tp > n_kv``, applied per layer since Gemma-4's two blocks hold
@@ -195,6 +199,11 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     naive : bool, optional
         assume every layer holds full-context GQA KV at the model-level head
         geometry -- the uncorrected comparison column.
+
+    Returns
+    -------
+    int
+        Total KV-cache size in bytes.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

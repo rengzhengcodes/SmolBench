@@ -161,13 +161,10 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     exists only for the reclaim path, where the thing being waited on (spot
     capacity, a quota window) actually frees up on its own.
 
-    Raises `ValueError`, never an assert (stripped under ``python -O``), for
-    a `verdict` outside ``"reclaim"``/``"crash"``: silently treating an
-    unrecognised verdict as one of the two would apply the wrong cap to a
-    real failure.
-
     Parameters
     ----------
+    verdict : str
+        Exit classification: ``"reclaim"`` or ``"crash"``.
     attempt : int
         the POST-increment count of relaunches of this verdict's kind
         for this lane/shard (the caller bumps its counter first, then asks), so
@@ -177,6 +174,18 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
         operator. never compared against: callers differ in what they can
         supply (`subprocess.Popen.poll()`, or an inferred 0/1 for an adopted
         process with no waitable handle).
+
+    Returns
+    -------
+    Decision
+        Relaunch decision for the exit.
+
+    Raises
+    ------
+    ValueError
+        Raised, never an assert (stripped under ``python -O``), for a `verdict`
+        outside ``"reclaim"``/``"crash"``: silently treating an unrecognised
+        verdict as one of the two would apply the wrong cap to a real failure.
     """
     if verdict == "reclaim":
         if attempt > MAX_RECLAIM_RELAUNCHES:

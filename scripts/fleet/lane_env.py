@@ -403,6 +403,10 @@ def lane_env(
 
     Parameters
     ----------
+    lane : Lane
+        Lane whose environment is constructed.
+    phase : str
+        Driver phase for the subprocess.
     base_env : Optional[Mapping[str, str]], optional
         `None` reads `os.environ`. Returns every `PASSTHROUGH_ENV` key present
         verbatim (missing stays absent) plus the per-lane
@@ -411,6 +415,11 @@ def lane_env(
         ``scaling_<key>`` -- the run-directory name
         `supervisor._advance_finished` rebuilds to spool from, so the two must
         stay equal (a mismatch makes that confirming re-spool a silent no-op).
+
+    Returns
+    -------
+    dict[str, str]
+        Complete environment for the lane subprocess.
     """
     if base_env is None:
         base_env = os.environ
