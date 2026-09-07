@@ -43,7 +43,7 @@ def test_tof_extraction(text, value, violation):
      # A worked calculation after an "answer" lead-in: the terminal integer is
      # the result; the first-after-lead would score the operand 2520.
      ("The answer is computed as 2520 / 8 = 315", 315, MULTIPLE_VALUES),
-     # Over-long but varied bare integer: out of range, NOT a repetition
+     # Over-long but varied bare integer: out of range, not a repetition
      # collapse -- must not inflate the DEGENERATE census.
      ("1234567890" * 5, None, UNPARSEABLE),
      ("2520//2", 1260, EXPRESSION), ("1260 + 0", 1260, EXPRESSION),

@@ -1,9 +1,9 @@
 """The committed study config: roster, results bucket, regions, fleet tag prefix.
 
-``smolbench/evals/study_config.toml`` is meant to be the ONE place the 21-model
-roster, the results bucket and the fleet's regions/tag prefix are written down;
-these tests pin every slice-2 consumer against it, so a table that drifts away
-from the file fails here rather than on a billing box.
+``smolbench/evals/study_config.toml`` is the one place the 21-model roster,
+the results bucket and the fleet's regions/tag prefix are written down; these
+tests pin every consumer against it, so a table that drifts away from the
+file fails here rather than on a billing box.
 """
 
 import tomllib
@@ -49,7 +49,7 @@ def test_fleet_section_carries_the_regions_and_the_tag_vocabulary():
 
 
 def test_the_roster_is_exactly_the_non_smoke_deploy_specs():
-    """C1's pin: [roster] and EC2_DEPLOY_SPECS name the same 21 checkpoints."""
+    """``[roster]`` and ``EC2_DEPLOY_SPECS`` name the same 21 checkpoints."""
     assert sorted(sc.roster_keys()) == sorted(set(EC2_DEPLOY_SPECS) - {SMOKE_KEY})
     assert len(sc.roster_keys()) == 21
 
@@ -72,18 +72,12 @@ def test_tag_for_is_total_over_the_roster_and_injective():
 
 
 def test_load_study_config_is_cached():
-    """Repeated loads return the SAME object: no re-parse per consumer import."""
+    """Repeated loads return the same object: no re-parse per consumer import."""
     assert sc.load_study_config() is sc.load_study_config()
 
 
 def test_the_config_reads_no_environment(monkeypatch):
-    """Env precedence belongs to each consumer, not to the cached config object.
-
-    Baking ``EC2_REGIONS``/``SMOLBENCH_RESULTS_S3`` into the cached object would
-    freeze whichever value the first importer happened to see -- and ``ec2``
-    freezes its constants at import while ``results_store`` reads at call time,
-    so the two would silently disagree.
-    """
+    """Env precedence belongs to each consumer, not the cached config object, since ``ec2`` freezes constants at import while ``results_store`` reads at call time."""
     before = sc.load_study_config()
     monkeypatch.setenv("EC2_REGIONS", "eu-west-1")
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://somebody-elses-bucket")
@@ -93,12 +87,7 @@ def test_the_config_reads_no_environment(monkeypatch):
 
 
 def test_ec2_default_regions_are_built_from_the_config():
-    """``ec2._DEFAULT_REGIONS`` is the config's region list, not a second copy.
-
-    ``AWS_REGION`` still leads (a caller's own region is tried first) and the
-    ``EC2_REGIONS`` environment override is unchanged -- this pins only where
-    the DEFAULT comes from.
-    """
+    """``ec2._DEFAULT_REGIONS`` is the config's region list, not a second copy, with ``AWS_REGION`` still leading."""
     regions = sc.load_study_config().fleet.regions
     assert ec2._DEFAULT_REGIONS == ",".join(
         dict.fromkeys((ec2.AWS_REGION, *regions))
@@ -108,11 +97,7 @@ def test_ec2_default_regions_are_built_from_the_config():
 
 
 def test_the_toml_is_declared_as_package_data():
-    """A non-editable install must ship the .toml, or every consumer dies at import.
-
-    ``include-package-data = false`` in pyproject means setuptools picks up
-    ``*.py`` only; the config file needs an explicit package-data entry.
-    """
+    """A non-editable install must ship the .toml, or every consumer dies at import."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     package_data = pyproject["tool"]["setuptools"]["package-data"]
     assert "*.toml" in package_data["smolbench.evals"]
@@ -149,9 +134,7 @@ def write_config(tmp_path, text):
 
 
 def test_a_well_formed_file_loads(tmp_path):
-    """The fixture text below is a VALID config, so the rejection cases that
-    follow are rejected for the mutation they carry and not for some other
-    defect they all share."""
+    """The fixture text below is a valid config, so later rejections are for the mutation they carry, not a shared defect."""
     cfg = sc.load_study_config(write_config(tmp_path, GOOD_TOML))
     assert cfg.results.bucket == "b"
     assert cfg.roster.families["fam"] == ("a", "b")
@@ -176,7 +159,7 @@ def test_a_well_formed_file_loads(tmp_path):
     ],
 )
 def test_a_malformed_config_raises_naming_the_defect(tmp_path, mutation, expected):
-    """Every structural defect raises at LOAD, with the offending name in the message."""
+    """Every structural defect raises at load, with the offending name in the message."""
     with pytest.raises(ValueError) as exc:
         sc.load_study_config(write_config(tmp_path, mutation(GOOD_TOML)))
     assert expected in str(exc.value)
@@ -187,7 +170,7 @@ def test_a_malformed_config_raises_naming_the_defect(tmp_path, mutation, expecte
 # ---------------------------------------------------------------------------
 
 def test_the_default_results_uri_is_rendered_from_the_config():
-    """The canonical ``s3://...`` spelling has ONE home, not a literal per script."""
+    """The canonical ``s3://...`` spelling has one home, not a literal per script."""
     from smolbench.evals.results_store import default_results_uri
 
     assert default_results_uri() == f"s3://{BUCKET}"

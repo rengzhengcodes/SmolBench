@@ -1,9 +1,8 @@
 # Where the historical artifacts live
 
-Result trees, evidence packages, data sidecars, analysis writeups, and
-concluded probe scripts are not kept in this tree. They live in two places,
-and docstrings across the repo that cite `notebooks/README.md` or
-`notebooks/ARCHIVE.md` as provenance mean this file.
+Result trees, evidence packages, data sidecars, analysis writeups and
+concluded probe scripts are not kept in this tree. Docstrings that cite
+`notebooks/README.md` or `notebooks/ARCHIVE.md` as provenance mean this file.
 
 ## S3
 
@@ -20,8 +19,7 @@ Everything is under `s3://smolbench-results-414266451290/` (`us-west-2`):
 Paths inside an archive are the flat layout of the tree on the day it was
 taken; they are never rewritten to match today's grouped layout.
 
-The tests that pin archived evidence stream it from S3 and never write a
-local copy (archived data is read on AWS, not pulled down):
+Tests that pin archived evidence stream it from S3, never a local copy:
 
 ```bash
 SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
@@ -30,10 +28,9 @@ SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
 
 ## GitHub releases
 
-The same archive zips are attached to GitHub releases created for the pull
-requests that removed them (releases attach to tags, not PRs -- e.g.
-`gh release view pr4-regenerable-artifacts`; `gh release list` shows every
-archive tag, with sha256s in the release notes).
+The same zips are attached to releases created for the pull requests that
+removed them. Releases attach to tags, not PRs: `gh release list` shows every
+archive tag, with sha256s in the release notes.
 
 ## What is regenerable, and what is not
 
@@ -62,10 +59,4 @@ bytes / 36,474 lines) regenerates with:
     --workdir <scratch dir> --github-token <token or $GITHUB_ACCESS_TOKEN>
 ```
 
-This needs network access and a GitHub token: the script's only network calls
-go through `fetch_pr_created_at`, which resolves each candidate declaration's
-evidence date against the GitHub API. Regenerable, but not cheaply -- and the
-result can drift if a PR's metadata changes, which is exactly why the sha256
-above is recorded rather than assumed stable. It is expected to be attached to
-a GitHub release the same way the S3 archives are (see "GitHub releases"
-above); that has not happened yet for this file.
+Needs network and a GitHub token (each candidate's evidence date is resolved against the GitHub API), and the result can drift if PR metadata changes, which is why the sha256 is recorded.

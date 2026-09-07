@@ -1,29 +1,18 @@
 """Focused test: extensional vs noise-padded intensional, one contrast per model.
 
-Both arms are LONG: `extens` is the fully enumerated position -> label listing,
-`noise_intens` the compact rule form padded with whitespace to exactly the same
-token count under the model's own tokenizer, so the contrast holds prompt LENGTH
-fixed and varies only whether the tokens carry information.
+Both arms are token-matched in length (`noise_intens` is whitespace-padded to the same count
+under the model's own tokenizer), isolating whether the tokens carry information from whether
+they are merely long. Whitespace padding breaks the output contract in some models, so lanes
+are bucketed by measured non-compliance: INFORMATION (both arms well-formed, enumerated
+evidence really is harder to induce at equal length), COLLAPSE (noise arm broken, so
+extens > noise is forced, not evidence about information), "extens degraded", or "unmeasured"
+-- no lane is classified by default.
 
-TWO MECHANISMS, not one. "extens < noise means length is not the explanation"
-holds only where the noise arm is a working control, and whitespace padding
-DESTROYS the output contract in a substantial minority of models. So all 21
-lanes print their measured non-compliance on both arms and are bucketed by
-`mechanism`, making the split visible rather than editorial: INFORMATION /
-LABEL-DENSITY (both arms well-formed, so enumerated evidence really is harder
-to induce from at equal length) vs PADDING-ROBUSTNESS COLLAPSE (noise arm
-largely non-compliant, so extens > noise is mechanically forced -- a padding
-finding, NOT excluded and NOT evidence about information). The symmetric
-"extens degraded" case and an "unmeasured" guard complete the bucketing, so
-no lane is classified by default.
-
-PRIMARY p = the exact seed-level sign-flip test; the 30 replicate seeds are the
-independent unit, since the 9 harmonic items in a seed share one answer vector
-that item-level McNemar (kept as a DESCRIPTIVE column) would treat as 270
-independent pairs. These 21 contrasts are a SUBSET of the pre-registered PRIMARY
-family, so the inference stays at m = 210: re-correcting at m = 21 after picking
-the subset because it looked interesting would be data-dependent family sizing,
-and the m = 21 column is a SENSITIVITY check only.
+PRIMARY p is the exact seed-level sign-flip test: the 30 seeds are the independent unit, since
+item-level McNemar (kept as a descriptive column) would treat each seed's 9 harmonic items,
+which share one answer vector, as independent too. These 21 contrasts stay inside the
+pre-registered m=210 family; re-correcting at m=21 after picking the subset would be
+data-dependent family sizing.
 
 Run:
     .venv/bin/python notebooks/induction/analysis/extens_vs_noise.py
@@ -58,24 +47,8 @@ from significance_report import (  # noqa: E402
 def mechanism(nc_e: float, nc_n: float) -> str:
     """Classify which of the two mechanisms a lane's contrast can speak to.
 
-    Same symmetric criterion as the significance report, applied to both arms
-    alike; never a hand-written lane list.
-
-    Parameters
-    ----------
-    nc_e, nc_n : float
-        Measured non-compliance rates of the `extens` and `noise_intens` arms;
-        NaN for a cell the census could not measure.
-
-    Returns
-    -------
-    str
-        ``"COLLAPSE"`` (noise arm at or above `COLLAPSE_THRESHOLD`),
-        ``"extens degraded"`` (only the extens arm is), ``"information"``
-        (both arms well-formed) or ``"unmeasured"`` (a census cell is
-        missing). The last is load-bearing: NaN fails every ``>=`` below,
-        so without it an unmeasured cell would fall through to "information",
-        the affirmative both-arms-well-formed claim.
+    Returns "unmeasured" when either rate is NaN: NaN fails every `>=` below, so without this
+    check a missing census cell would fall through to "information", the affirmative claim.
     """
     if np.isnan(nc_e) or np.isnan(nc_n):
         return "unmeasured"        # no census cell: evidence of nothing
@@ -89,45 +62,10 @@ def mechanism(nc_e: float, nc_n: float) -> str:
 def direction(acc_e: float, acc_n: float) -> str:
     """Label which arm scored higher, with an explicit branch for an exact tie.
 
-    ONE spelling of the comparison, shared by every place in this report that
-    prints a direction, so the significant-lane list, the per-mechanism rows and
-    the raw-direction tally cannot disagree about the same lane.
-
-    Parameters
-    ----------
-    acc_e, acc_n : float
-        Accuracy of the `extens` and `noise_intens` arms respectively, over the
-        SAME matched items (`paired_analysis.aligned` intersects the two arms'
-        seeds before scoring either), so the two figures are directly
-        comparable and an equality between them is meaningful.
-
-    Returns
-    -------
-    str
-        ``"noise HIGHER"``, ``"extens HIGHER"``, or ``"exactly tied"`` when the
-        two accuracies are equal.
-
-    Notes
-    -----
-    An exact tie is a REAL and REACHABLE outcome here, not a floating-point
-    curiosity to be rounded away. Both arms are scored over the same items, so
-    two arms that agree item for item -- or merely agree on their totals --
-    produce bit-identical means. The predecessor spelled the label as
-    ``"noise HIGHER" if acc_n > acc_e else "extens HIGHER"``, a two-way branch
-    which silently awards every tie to `extens` and so MANUFACTURES a direction
-    the data does not have. The RAW DIRECTION block at the end of this report
-    has always counted ties as a third category, so the two-way label made the
-    one report contradict itself: a lane printed as "0.759 vs 0.759 extens
-    HIGHER" reappeared two screens later inside "1 exactly tied".
-
-    Examples
-    --------
-    >>> direction(0.500, 0.750)
-    'noise HIGHER'
-    >>> direction(0.750, 0.500)
-    'extens HIGHER'
-    >>> direction(0.759, 0.759)
-    'exactly tied'
+    An exact tie is reachable, not a rounding artifact: both arms score the same matched items
+    (`paired_analysis.aligned` intersects seeds first), so item-for-item agreement is exact. A
+    two-way `>` branch would silently award every tie to `extens`, disagreeing with the RAW
+    DIRECTION block below, which counts ties as their own category.
     """
     if acc_n > acc_e:
         return "noise HIGHER"
@@ -139,15 +77,9 @@ def direction(acc_e: float, acc_n: float) -> str:
 def main() -> None:
     """Run the extens-vs-noise focused test and print the report.
 
-    Sections (methodology in the module docstring): the per-model table,
-    seed-level vs item-level agreement, the lanes significant under the primary
-    correction, the three mechanism buckets, and the unfiltered raw direction
-    across all 21 lanes.
-
-    Every direction label and every direction tally printed below is THREE-WAY
-    (noise-higher / extens-higher / tied), via `direction` and via explicit
-    ``>`` and ``<`` counts, so the per-lane labels, the per-bucket tallies and
-    the RAW DIRECTION block all classify a given lane the same way.
+    Every direction label and tally below is three-way (noise-higher / extens-higher / tied),
+    via `direction`, so per-lane labels, per-bucket tallies and the raw-direction block never
+    disagree about a given lane.
     """
     correct, valid, compliance = load_marks()
     census = compliance_census(compliance)
@@ -156,17 +88,9 @@ def main() -> None:
         cell = census.get(key)
         return float("nan") if cell is None else cell["rate"]
 
-    # p-values for the FULL pre-registered family, so the m=210 Holm decision
-    # for these 21 is the real one, not a recomputation on a subset.
-    #
-    # This pass now stores EVERY per-contrast figure the 21-row table needs,
-    # not just the two p-values, so the table can look its rows up instead of
-    # rebuilding them. The 21 focused contrasts are a SUBSET of these 210, and
-    # `signflip_exact_p` is an exact randomization test: recomputing 21 of them
-    # was 231 enumerations where 210 suffice, for numbers guaranteed identical.
-    # Scalars are kept, not the `aligned` arrays -- the table prints summaries,
-    # and holding 210 item-matched mark arrays would trade the saved time for
-    # memory the report never reads.
+    # Computed once over the full m=210 family, not recomputed for these 21: signflip_exact_p
+    # is an exact randomization test, so the 210-pass already has every number the 21-row table
+    # needs. Only scalars are kept, not the `aligned` arrays, since the table prints summaries.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
         a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
@@ -186,16 +110,13 @@ def main() -> None:
     rows = []
     for model in MODELS:
         ka, kb = (model, "extens"), (model, "noise_intens")
-        # Arm A is `extens` and arm B is `noise_intens`, matching the order
-        # `build_primary_contrasts` emits this pair in -- so the family pass's
-        # acc_a/acc_b ARE this table's acc_e/acc_n, with no re-derivation.
+        # Arm order here (extens, noise_intens) matches build_primary_contrasts, so the family
+        # pass's acc_a/acc_b are already this table's acc_e/acc_n.
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        # `cmh_unpaired_p` is NOT part of the family pass (that pass computes
-        # only the two p-values the m=210 Holm decisions need), so it is
-        # computed here for these 21 rows alone, where it is a DESCRIPTIVE
-        # column. That needs the item-matched arrays back, hence the `aligned`
-        # call -- cheap array work, not a second randomization test.
+        # cmh_unpaired_p isn't part of the family pass (which computes only the two Holm
+        # p-values), so it's computed here as a descriptive column, needing the item-matched
+        # arrays back via `aligned`.
         a, b, sidx = aligned(correct, valid, ka, kb, drop_invalid=False)
         rows.append(dict(
             model=model, acc_e=fr["acc_a"], acc_n=fr["acc_b"], n=fr["n"],
@@ -305,19 +226,16 @@ def main() -> None:
                   f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   "
                   f"p={r['p_cluster']:.2e}")
         if sel_sig:
-            # Ties are counted as their own category, matching `direction` above
-            # and the RAW DIRECTION block below. `down` is an explicit `<` and
-            # NOT `len(sel_sig) - up`: that subtraction folds every exact tie
-            # into the extens-higher count, which is how this line came to
-            # disagree with the raw tally printed a few screens later.
+            # `down` is an explicit `<`, not `len(sel_sig) - up`: that subtraction would fold
+            # every tie into extens-higher, disagreeing with `direction` and the raw tally below.
             up = sum(1 for r in sel_sig if r["acc_n"] > r["acc_e"])
             down = sum(1 for r in sel_sig if r["acc_n"] < r["acc_e"])
             print(f"  => direction among the significant ones: {up} "
                   f"noise-higher, {down} extens-higher, "
                   f"{len(sel_sig) - up - down} tied.")
 
-    # Unmeasured lanes get their own loud section rather than vanishing: a
-    # missing census cell is a sync problem, never a mechanism verdict.
+    # Unmeasured lanes get their own section rather than vanishing: a missing census cell is a
+    # sync problem, not a mechanism verdict.
     unmeasured = [r for r in rows if r["mech"] == "unmeasured"]
     if unmeasured:
         print(f"\n-- UNMEASURED (no census cell for one or both arms): "

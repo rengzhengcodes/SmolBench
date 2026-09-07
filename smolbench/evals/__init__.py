@@ -1,8 +1,7 @@
 """Evaluation harness for OpenAI-compatible inference providers.
 
 ``quiz.py``'s public names are re-exported below so ``from smolbench.evals
-import Marks`` keeps working and the legacy YAML tag
-``!!python/object:smolbench.evals.Marks`` still resolves. Layout and rationale:
+import Marks`` keeps working. Layout and rationale:
 ``smolbench/evals/README.md``.
 """
 
