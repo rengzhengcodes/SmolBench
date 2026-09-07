@@ -695,7 +695,8 @@ def _monitor_tick(
         run = runs[key]
         alive = run.proc is not None and run.proc.poll() is None
         status = "halted" if run.halted else ("done" if run.done else (run.current_phase or "?"))
-        last_line = _tail_log(log_dir, key, n=1, max_bytes=4096)
+        # _tail_log drops its first line when it seeks: a newline-free 4 KiB window blanked this.
+        last_line = _tail_log(log_dir, key, n=1, max_bytes=65536)
         print(f"{key:<28} status={status:<10} alive={str(alive):<5} last: {last_line[-120:]}")
 
         if run.proc is not None and not alive and not run.halted and not run.done:

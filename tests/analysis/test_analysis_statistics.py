@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pytest
+from scipy.stats import binom
 
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
@@ -163,6 +164,11 @@ def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
     # The no-discordance convention must survive the swap, batched and scalar.
     assert power_analysis.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
     assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
+    rng = np.random.default_rng(3)
+    b, c = rng.integers(0, 40, 300), rng.integers(0, 40, 300)
+    ref = np.minimum(1.0, 2 * binom.cdf(np.minimum(b, c), b + c, 0.5))
+    np.testing.assert_allclose(power_analysis.mcnemar_exact_p(b, c), ref, rtol=1e-12)
+    assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
 # ===========================================================================
@@ -328,7 +334,7 @@ def test_design_constants_are_imported_not_re_declared(multiplicity_sim,
 
 
 def test_no_bare_replicate_count_literals_survive(multiplicity_sim):
-    """``part2`` no longer spells `30` twice beside ``R_DEFAULT``."""
+    """``part2`` spells the replicate count only as ``R_DEFAULT``, so a re-sizing cannot apply to half a report."""
     source = inspect.getsource(multiplicity_sim.part2)
     assert "30" not in source.replace("R_DEFAULT", ""), source
 
@@ -339,14 +345,14 @@ def test_no_bare_replicate_count_literals_survive(multiplicity_sim):
     # elsewhere couldn't express eq_R == R_DEFAULT.
     assert multiplicity_sim.EQ_R_GRID[0] == multiplicity_sim.R_DEFAULT
     assert list(multiplicity_sim.EQ_R_GRID) == sorted(multiplicity_sim.EQ_R_GRID)
-    # part2's `cap` default is the ladder's top, so its docstring's "largest
-    # entry `cap`" holds by construction rather than by two literals agreeing.
+    # part2's `cap` default is the ladder's top rung, so its docstring's ceiling
+    # claim holds by construction rather than by two literals agreeing.
     assert (inspect.signature(multiplicity_sim.part2).parameters["cap"].default
             == multiplicity_sim.EQ_R_GRID[-1])
 
 
 def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim):
-    """``main`` seeded ``default_rng(1/3/5/2/4)`` though ``_power_common.SEED`` exists."""
+    """``main`` derives every part's RNG from ``_power_common.SEED`` rather than a per-part literal."""
     import _power_common
 
     source = inspect.getsource(multiplicity_sim.main)

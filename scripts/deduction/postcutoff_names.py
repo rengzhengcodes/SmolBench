@@ -1040,6 +1040,8 @@ def apply_pr_filter(
                 "reason": "commit-date",
             }
         else:
+            # One counter for both commit-date failures: no author date and an
+            # author date before the target both mean no evidence the declaration is new.
             _bump(counters, "dropped_no_date")
     return selected
 

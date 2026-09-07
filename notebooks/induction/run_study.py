@@ -337,9 +337,8 @@ MIN_VIABLE_BUDGET: int = 48_000
 #: not achievable on a 397B/236B MoE.
 MIN_DECODE_TOK_S: int = 10
 
-#: The floor the derivation may never go below: deriving a shorter timeout
-#: than the provider already grants would be a regression, not a fix.
-REQUEST_TIMEOUT_FLOOR_SECONDS: int = ec2.EC2_REQUEST_TIMEOUT_SECONDS
+#: A literal: ec2's env-overridable constant could set the floor below 600 s.
+REQUEST_TIMEOUT_FLOOR_SECONDS: int = 600
 
 # Byte-identical to periodic_moe's / periodic_divisor's template: prompt
 # wording is fixed across every induction study, so only the roster (model,
@@ -442,8 +441,8 @@ COT_ARGS: dict[str, dict] = {
 # would otherwise surface as a KeyError on a billing box. A `raise`, not an
 # `assert`: asserts are stripped under `python -O`, which would delete this
 # gate on exactly the automated invocations that most need it.
-if tuple(COT_ARGS) != tuple(MODELS):
-    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(MODELS))
+if tuple(COT_ARGS) != roster_keys():
+    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
     raise RuntimeError(
         "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
         "the same ladder order. "

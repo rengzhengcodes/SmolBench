@@ -734,8 +734,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_cell.add_argument("--model", default="anthropic/claude-haiku-4.5")
     p_cell.add_argument("--temperature", type=float, default=0.7)
     p_cell.add_argument("--max-tokens", type=int, default=4096)
-    # DEFAULT_DOJO_TIMEOUT (600s): see runner.py's Design comment for why this stays 600,
-    # not unified down to filter's 300.
+    # DEFAULT_DOJO_TIMEOUT (600s) stays 600 here, not unified down to filter's 300:
+    # this is the library-wide fallback, not this study's pinned sweep value.
     p_cell.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_cell.add_argument(
         "--seed", type=int, default=1776,

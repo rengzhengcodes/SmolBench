@@ -282,8 +282,9 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
 
     Only ``replicate_idx == 0`` rows are read -- this study collects R=1, so a
     ``replicate_idx > 0`` row is dropped, not aggregated, and stays dropped even once a
-    source starts carrying real replicates. Prints one stderr warning per call naming
-    the dropped count and source whenever it fires.
+    source starts carrying real replicates. Prints one stderr warning naming the
+    dropped count and source whenever it fires (once per distinct argument tuple,
+    since this function is memoized).
 
     Returns (graded, no_survivor): graded is ``(theorem_id, k, prompt_rung) -> 0/1``
     under `power_analysis.grade_verdicts`; no_survivor is cell keys that rule couldn't

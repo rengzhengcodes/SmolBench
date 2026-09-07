@@ -582,6 +582,29 @@ def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplo
     assert shutdowns, "the lane still completes and its box is still shut down"
 
 
+def test_no_fleet_script_names_the_results_bucket():
+    """The bucket is study_config's to name, not a fleet script's."""
+    banned = ("smolbench-results-414266451290", "sync_deduction_spool",
+              "SPOOL_BUCKET", "SPOOL_REGION")
+    for source in (SCRIPTS / "fleet").glob("*.py"):
+        text = source.read_text()
+        assert not [b for b in banned if b in text], source.name
+
+
+def test_a_store_outage_leaves_the_lane_unchecked_instead_of_halting_it():
+    """A store that cannot be built says nothing about the lane's CoT fraction."""
+    calls = []
+
+    def _boom():
+        calls.append(1)
+        raise RuntimeError("no credentials")
+
+    runs = {"gemma-4-e2b": _lane_run("gemma-4-e2b")}
+    sup._check_cot(runs, store_factory=_boom)
+    run = runs["gemma-4-e2b"]
+    assert calls and not run.halted and not run.cot_checked
+
+
 # ---------------------------------------------------------------------------
 # one restart vocabulary, one Shard, thin entry points
 # ---------------------------------------------------------------------------
@@ -634,7 +657,7 @@ def test_the_reclaim_backoff_is_exponential_and_capped():
     assert seq == sorted(seq), "backoff must never shrink"
 
 
-def test_shard_is_a_module_level_class_with_an_explicit_constructor():
+def test_a_shard_is_constructible_without_argparse():
     """A Shard can be built, and the supervision loop driven, without argparse."""
     shard = shard_mod.Shard(
         index=2, selector="2/3", log=Path("/tmp/nowhere/gemma-4-12b-s2of3.log"),
@@ -644,6 +667,7 @@ def test_shard_is_a_module_level_class_with_an_explicit_constructor():
     assert shard.proc is None and shard.adopted_pid is None
     assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
     assert shard.env["INDUCTION_SHARD"] == "2/3"
+    assert not hasattr(shards, "Shard"), "run_shards must import Shard, not redefine it"
 
 
 def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(monkeypatch, tmp_path):
@@ -855,7 +879,7 @@ def test_the_state_file_is_rewritten_every_tick(monkeypatch, tmp_path):
 
 
 def test_the_fleet_no_longer_manages_per_lane_state_files():
-    """Three state-file naming schemes used to coexist; now the fleet manages none of it."""
+    """Each lane gets one state file, not two: the deduction phase no longer gets its own spelling."""
     deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert "LEAN_STATE_FILE" not in deduction
     # ...because the driver derives the identical path itself; if the two ever

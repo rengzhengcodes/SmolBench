@@ -52,6 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # import would resolve only by accident. `error_bars.py`/`hint_vs_noise.py` carry the same.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Repo root: the documented run mode is ``uv run --no-project`` (no smolbench
+# installed), so `study_config` below must resolve from this source tree.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from _power_common import (
@@ -238,6 +240,10 @@ def _warn_unverified(reasons: list[str]) -> None:
 #: Verdicts meaning "this cell was never measured for ANY model" (reasoning and
 #: measurements in load_joint_cells): cells carrying only these are excluded from
 #: the paired blocks rather than scored 0.
+#: Must equal `smolbench.deduction.lean.runner.NEVER_MEASURED_VERDICTS`, restated
+#: rather than imported because that module pulls the provider and corpus stacks
+#: this ``uv run --no-project`` script cannot load; drift makes this loader and
+#: `lean_verify_rows.py` disagree about what "measured" means for the same rows.
 UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 
 
@@ -509,6 +515,18 @@ def build_cross_family_contrasts() -> list:
             label = f"[SECONDARY | {pos_name}] {model_a} vs {model_b}"
             contrasts.append((label, model_a, model_b))
     return contrasts
+
+
+if len(build_within_family_contrasts()) != N_PRIMARY:
+    raise ValueError(
+        f"N_PRIMARY={N_PRIMARY} but the within-family builder returns "
+        f"{len(build_within_family_contrasts())} contrasts; ALPHA_PRIMARY is frozen"
+    )
+if len(build_cross_family_contrasts()) != N_SECONDARY:
+    raise ValueError(
+        f"N_SECONDARY={N_SECONDARY} but the cross-family builder returns "
+        f"{len(build_cross_family_contrasts())} contrasts; ALPHA_SECONDARY is frozen"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -887,7 +905,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"Download this study's run files from s3://{S3_BUCKET}/<spool-prefix> "
             "into a temp dir and analyze those (preferring verified_rows.jsonl, "
             "falling back to all_rows.jsonl per run -- see the module docstring's "
-            "LOUD WARNING). Overrides --results-dir. <spool-prefix> is set by "
+            "warning about \"unverified\" verdicts). Overrides --results-dir. "
+            "<spool-prefix> is set by "
             "--spool-prefix, below."
         ),
     )

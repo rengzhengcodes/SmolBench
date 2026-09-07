@@ -38,9 +38,7 @@
 # `build_config` also refuses this file if any key below is MISSING, naming
 # every one it could not find. A missing key would otherwise fall through to
 # `runner.sweep`'s own library default, which is precisely the silent drift
-# these explicit values exist to prevent (see `runner.DEFAULT_DOJO_TIMEOUT`'s
-# Design comment, which spells out that this study's explicit
-# `dojo_timeout: 300` is what keeps it pinned independently of that default).
+# these explicit values exist to prevent.
 #
 # Every value below carries a one-line rationale comment: anywhere a real
 # derivation could not be found in the repo, the comment says so explicitly
@@ -112,10 +110,9 @@ k:
 # than analysing more than one draw per cell right now.
 n_replicates: 1
 
-# Reproduces the ORIGINAL published study's shape verbatim:
-# runner.py's own EXPECTED_THEOREMS/EXPECTED_CELLS comment records
-# "300 theorems x 4 rungs ... -> 944 cells" for exactly this rung
-# list. Changing it would break comparability with that baseline.
+# Reproduces the ORIGINAL published study's shape verbatim: 300
+# theorems x 4 rungs -> 944 cells for exactly this rung list.
+# Changing it would break comparability with that baseline.
 rungs:
   - stepk:1
   - hint:2
@@ -167,8 +164,8 @@ theorems:
   # LEAN_CORPUS_SPLIT override replaces, and that a blank override falls
   # back to.
   split: val
-  # Matches notebooks/deduction/pinned_theorems.json's own `count` (300)
-  # and runner.EXPECTED_THEOREMS: this reproduces the ORIGINAL published
+  # Matches notebooks/deduction/pinned_theorems.json's own `count` (300):
+  # this reproduces the ORIGINAL published
   # study's theorem-pool SIZE. It is not, once require_postcutoff draws
   # from the new corpus, the same theorem IDENTITIES as that study.
   limit: 300

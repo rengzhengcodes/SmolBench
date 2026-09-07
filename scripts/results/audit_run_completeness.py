@@ -11,7 +11,7 @@ it just resamples until the model happens to answer, inflating the numerator.
 Exits 1 on INFRA loss, a short lane, a missing sanity row, or an empty
 selection. Genuine empties are reported but never fail the run.
 
-    scripts/results/audit_run_completeness.py [--lane L] [--local] [--induction]
+    scripts/results/audit_run_completeness.py --expect-cells N [--lane L] [--local] [--induction]
 """
 
 import argparse
@@ -212,8 +212,8 @@ def audit_induction(
     for model in selected:
         tag = roster[model]
         for info in info_types:
-            # Not wrapped in try/except: a real backend error must propagate
-            # (see Raises), never read as an empty seed set.
+            # Not wrapped in try/except: a real backend error must propagate,
+            # never read as an empty seed set.
             landed = set(store.list_seeds(model, tag, info))
             missing = sorted(expected - landed)
             unexpected = sorted(landed - expected)
