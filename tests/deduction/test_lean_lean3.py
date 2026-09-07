@@ -1,17 +1,11 @@
-"""Test smolbench.deduction.lean.lean3, whose detection is now PARSE-LEVEL only.
+"""Test smolbench.deduction.lean.lean3, whose relic detection is parse-level
+only: a name-level rule (Lean 3 -> Lean 4 declaration renames) was removed
+because its on-disk map was never built anywhere in this tree.
 
-The module used to carry a second, name-level rule (mathlib3 lemma names the
-mathlib4 port renamed) resolved through a Lean 3 <-> Lean 4 declaration-name map,
-plus a matching corrupter transform. That map's on-disk asset was never built
-anywhere in this tree, so the rule was inert on every machine; both were removed
-and the tests that existed only for them went with them. What remains here is
-the surviving contract:
-
-* the five parse-level relic kinds `find_relics` reports, with the mathlib3-name
-  cases kept as NEGATIVE controls (a lemma name alone must now be reported as
-  clean, not merely undetected by accident);
-* `corrupt_tail`'s shared-vocabulary invariant and its determinism;
-* `synth_error` and `build_repair_user`'s frozen byte-level output.
+Covers: the five parse-level relic kinds `find_relics` reports, with
+mathlib3-name cases kept as negative controls (a lemma name alone must
+report clean); `corrupt_tail`'s shared-vocabulary invariant and its
+determinism; `synth_error`/`build_repair_user`'s frozen byte-level output.
 """
 
 import random
@@ -41,10 +35,9 @@ _GOLDEN = "USER TURN\n\n## Previous attempt\n```lean\nATTEMPT LINE\n```\n"
     pytest.param("exact le_refl x", set(), id="refl-not-in-head-position"),
     pytest.param("refine ⟨foo,\n  bar⟩", set(), id="trailing-comma-inside-open-bracket"),
     pytest.param("simp only [stdBasis_eq_pi_diag]", set(), id="snake-ish-identifier"),
-    # Negative controls for the REMOVED name-level rule: a mathlib3 lemma name
-    # carries no parse-level relic, so a syntactically clean line holding one is
-    # now reported clean. Were that rule ever reintroduced, these flip and this
-    # file says so at the point of the change.
+    # Negative controls for the removed name-level rule: a mathlib3 lemma name
+    # carries no parse-level relic, so a clean line holding one now reports
+    # clean. If that rule returns, these flip.
     pytest.param("rw [iso.inv_comp_eq]", set(), id="mathlib3-name-alone-is-clean"),
     pytest.param("exact funext (λ i, eval_f i (finset.mem_univ _))", {"binder-comma"}, id="mathlib3-name-only-its-binder-comma-counts"),
     pytest.param("apply supr_le,", {"trailing-comma"}, id="mathlib3-name-only-its-trailing-comma-counts"),
@@ -97,11 +90,8 @@ def test_corrupt_tail_invariants(tail):
 
 
 def test_corrupt_tail_single_seed_cases():
-    """Seed pins.
-
-    These are implementation artifacts of the seeded transform draw, kept as a
-    regression tripwire: an unannounced change to `_TRANSFORMS`' membership or
-    order silently re-shuffles every repair dataset built from this module.
+    """Seed pins: an unannounced change to `_TRANSFORMS`' membership or order
+    silently re-shuffles every repair dataset built from this module.
     """
     assert corrupt_tail("", random.Random(1776)) is None
     corrupted, injected = corrupt_tail("norm_num", random.Random(1776))

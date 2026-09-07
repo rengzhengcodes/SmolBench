@@ -73,15 +73,13 @@ def test_verdict_classification(tmp_path):
 
 
 def test_no_answer_is_measurable_and_scores_zero(tmp_path):
-    """13-01: `no_answer` is a real 0, not an unmeasurable cell.
+    """`no_answer` is a real 0, not an unmeasurable cell.
 
-    The new verdict marks "the model was asked and returned nothing
-    extractable". That IS a measurement -- the request completed -- so it must
-    score 0 and enter the paired denominator, unlike `exception` /
-    `replay_failed`, which mean the model was never actually tested. Pins both
-    halves: the exact `UNMEASURABLE_VERDICTS` membership (so a later edit
-    cannot quietly add `no_answer` and silently shrink every denominator), and
-    the resulting grade.
+    It marks "the model was asked and returned nothing extractable" -- the
+    request completed, so it scores 0 and enters the paired denominator,
+    unlike `exception`/`replay_failed` where the model was never actually
+    tested. Pins `UNMEASURABLE_VERDICTS`' exact membership so a later edit
+    can't quietly add `no_answer` and shrink every denominator.
     """
     assert pa.UNMEASURABLE_VERDICTS == frozenset({"exception", "replay_failed"})
     assert pa.grade_verdicts(["no_answer"]) == 0

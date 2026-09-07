@@ -143,12 +143,11 @@ def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
                for e in entries), "the true raw is not pinned"
 
 
-#: The archived Lean3 -> Lean4 declaration-name map. Spelled here rather than
-#: imported from `lean3`: this test's subject is the ARCHIVE's contents, and
-#: `lean3` no longer carries name-level detection (or this asset's name) after
-#: the never-built asset and its rule were removed. The object itself is still
-#: in the archive and is still pinned, so a future reader can tell whether it
-#: was deleted from S3 or merely stopped being read.
+#: The archived Lean3 -> Lean4 declaration-name map. Spelled here, not
+#: imported from `lean3`: this test's subject is the archive's contents, and
+#: `lean3` no longer carries name-level detection after that asset and its
+#: rule were removed. The object is still pinned so a reader can tell
+#: whether it was deleted from S3 or merely stopped being read.
 ALIGN_ASSET_NAME = "lean3_align.json.gz"
 
 

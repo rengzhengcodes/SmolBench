@@ -1,14 +1,10 @@
-"""Pure-logic tests for scripts/results/provision_results_bucket.py.
+"""Pure-logic tests for scripts/results/provision_results_bucket.py; no AWS.
 
-No AWS, no network: every client is a fake, so the live bucket is never touched.
-
-The fake records EVERY call, including operations it does not implement (see
-`FakeAwsClient.__getattr__`). That matters for the 5-version-cap guarantee:
-the assertion "``create_policy_version`` was never called" is only meaningful
-if that name COULD have been recorded, and the earlier fake, which implemented
-exactly seven methods and nothing else, made it unfalsifiable -- a regression
-would have surfaced as an ``AttributeError`` raised by the fake, not as that
-assertion failing. `test_unknown_calls_are_recorded` is its positive control.
+`FakeAwsClient` records every call, including operations it doesn't
+implement (`__getattr__`), so an assertion like "create_policy_version was
+never called" is falsifiable -- the earlier fake, which implemented only
+seven methods, would raise ``AttributeError`` instead of letting that
+assertion fail. `test_unknown_calls_are_recorded` is its positive control.
 """
 
 import json
@@ -23,9 +19,9 @@ from smolbench.evals import _aws
 class FakeAwsClient:
     """One fake standing in for both the S3 and IAM clients.
 
-    Records every call as ``(operation, kwargs)`` onto `calls`, in ORDER and
-    with duplicates kept -- collapsing them into an operation-keyed dict would
-    hide a second ``create_bucket`` behind the first.
+    Records every call as ``(operation, kwargs)`` onto `calls`, in order,
+    with duplicates kept -- an operation-keyed dict would hide a second
+    ``create_bucket`` behind the first.
     """
 
     def __init__(self):
@@ -35,12 +31,10 @@ class FakeAwsClient:
         self.calls.append((op, kwargs))
 
     def __getattr__(self, name):
-        """Record any operation this fake does not implement, and return ``{}``.
+        """Record any operation this fake doesn't implement, and return ``{}``.
 
-        Only reached for attributes not found normally, so the explicit methods
-        below keep their own return values. Dunder lookups are refused, so copy,
-        pickle and pytest introspection still see a normal object rather than a
-        callable for every conceivable name.
+        Dunder lookups are refused, so copy, pickle and pytest introspection
+        still see a normal object rather than a callable for every name.
         """
         if name.startswith("__"):
             raise AttributeError(name)
@@ -80,9 +74,8 @@ class FakeAwsClient:
 def fake_aws(monkeypatch):
     """Routes every client construction to one FakeAwsClient.
 
-    Also clears ``SMOLBENCH_RESULTS_S3``, so the default-bucket tests below
-    describe the documented fallback deliberately instead of inheriting
-    whatever a developer's shell exports.
+    Clears ``SMOLBENCH_RESULTS_S3`` so the default-bucket tests below do not
+    inherit whatever a developer's shell exports.
     """
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
     client = FakeAwsClient()
@@ -135,8 +128,8 @@ def test_main_provisions_bucket_policy_and_group_attachment(fake_aws):
         {"service": "iam", "region": None},
     ]
 
-    # Each mutating step runs EXACTLY once (kept as a list, so a duplicate
-    # cannot hide behind the last call of the same name).
+    # Each mutating step runs exactly once (kept as a list, so a duplicate
+    # can't hide behind the last call of the same name).
     assert [name for name, _kw in calls].count("create_bucket") == 1
     assert _kwargs_for(calls, "create_bucket") == [{
         "Bucket": "smolbench-results-414266451290",
@@ -158,12 +151,7 @@ def test_main_provisions_bucket_policy_and_group_attachment(fake_aws):
 
 
 def test_main_provisions_the_bucket_smolbench_results_s3_names(fake_aws, monkeypatch):
-    """The provisioner targets the CONFIGURED store, not a stale literal (14-15).
-
-    Otherwise it provisions one bucket while ``S3ResultsStore`` writes to
-    another. The base prefix in the URI is deliberately ignored here:
-    everything this script provisions is bucket-level.
-    """
+    """The provisioner targets the configured store, not a stale literal."""
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/analysis/2026-08-16")
     assert p.main([]) == 0
     assert _kwargs_for(fake_aws.calls, "create_bucket")[0]["Bucket"] == "redirected-bucket"
@@ -176,21 +164,17 @@ def test_ensure_bucket_tolerates_already_owned(fake_aws, monkeypatch):
     """A re-run must not fail on the bucket it already owns."""
     monkeypatch.setattr(fake_aws, "create_bucket",
                         _raiser("BucketAlreadyOwnedByYou", "CreateBucket"))
-    p.ensure_bucket(fake_aws)
+    p.ensure_bucket(fake_aws, "any-bucket")
 
 
 def test_ensure_policy_reuses_an_existing_policy_without_new_versions(fake_aws, monkeypatch):
-    """Create-or-reuse, never create-a-new-VERSION (5-version cap).
-
-    The negative assertion has teeth only because the fake records unknown
-    operations -- see `test_unknown_calls_are_recorded`.
-    """
+    """Create-or-reuse, never create a new version (the 5-version cap)."""
     existing = "arn:aws:iam::414266451290:policy/SmolbenchResultsBucketRW"
     monkeypatch.setattr(fake_aws, "create_policy",
                         _raiser("EntityAlreadyExists", "CreatePolicy"))
     monkeypatch.setattr(fake_aws, "list_policies", lambda **kw: {
         "Policies": [{"PolicyName": "SmolbenchResultsBucketRW", "Arn": existing}]})
-    assert p.ensure_policy(fake_aws) == existing
+    assert p.ensure_policy(fake_aws, "any-bucket") == existing
     assert not any(c[0] == "create_policy_version" for c in fake_aws.calls)
 
 

@@ -1,11 +1,10 @@
 """Offline contract for scripts/results/audit_run_completeness.py; no AWS.
 
-Covers the PR #14 finding that ``audit_induction`` reported only what it
-found: a ``(model, arm)`` with zero objects in S3 never entered its ``seen``
-dict, so an absent model -- or a wholly empty bucket -- printed
-"ok: every (model, arm) has all 30 seeds". The audit now walks the EXPECTED
-grid and set-differences against it, so an unlanded cell is examined like any
-other and a 31st seed is named rather than counted as ``-1``.
+``audit_induction`` used to report only what it found: a ``(model, arm)``
+with zero objects in S3 never entered its ``seen`` dict, so an absent model
+printed "ok". It now walks the expected grid and set-differences against
+it, so an unlanded cell is examined and a 31st seed is named, not counted
+as ``-1``.
 """
 
 import os
@@ -45,17 +44,17 @@ class FakeStore:
 def fake_driver(monkeypatch):
     """Stand in for notebooks/induction/run_study.py.
 
-    Injected rather than loaded so this test never runs the driver's
+    Injected rather than loaded, so this never runs the driver's
     module-scope ``load_dotenv``, which would mutate the environment for the
-    whole pytest session. `test_the_real_roster_is_the_grid` covers the real
-    driver, under an environment snapshot.
+    whole pytest session (`test_the_real_roster_is_the_grid` covers the real
+    driver).
     """
     monkeypatch.setattr(audit, "_induction_driver", lambda: FAKE_DRIVER)
     return FAKE_DRIVER
 
 
 def test_a_cell_with_nothing_landed_is_examined_and_reported(fake_driver):
-    """THE regression: an empty store used to yield {} and read as 'ok'."""
+    """An empty store used to yield {} and read as 'ok'."""
     store = FakeStore()  # every cell empty
     gaps, examined = audit.audit_induction(store=store)
     assert examined == 4
@@ -110,12 +109,7 @@ def test_a_store_failure_propagates(fake_driver):
 
 
 def test_the_real_roster_is_the_grid():
-    """The default grid is the study's real 21 models x 4 arms x 30 seeds.
-
-    Loads the induction driver for real, restoring ``os.environ`` afterwards:
-    that module calls ``load_dotenv`` at import, which would otherwise leak
-    into every later test in the session.
-    """
+    """os.environ is restored after, since the driver's import-time load_dotenv would otherwise leak into later tests."""
     saved = dict(os.environ)
     try:
         driver = audit._induction_driver()
@@ -132,17 +126,10 @@ def test_the_real_roster_is_the_grid():
 
 
 # ---------------------------------------------------------------------------
-# 14-15 / #46: both S3 seams resolve the bucket from one place
+# both S3 seams resolve the bucket from one place
 # ---------------------------------------------------------------------------
 def test_both_audits_follow_smolbench_results_s3(monkeypatch):
-    """A redirected results store must reach the induction AND deduction halves.
-
-    The bucket used to be a module-level literal, so pointing
-    ``SMOLBENCH_RESULTS_S3`` at another bucket silently audited the old one.
-    Both seams now call ``results_store.resolve_results_location`` at CALL
-    time, which is what this pins -- one for the induction store it builds,
-    one for the deduction lane listing.
-    """
+    """A redirected results store must reach both the induction and deduction halves."""
     from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET
 
     listed = []
@@ -164,7 +151,7 @@ def test_both_audits_follow_smolbench_results_s3(monkeypatch):
     assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
     assert listed == ["redirected-bucket"]
 
-    # ...and unset falls back to the ONE committed default, not a local copy.
+    # ...and unset falls back to the one committed default, not a local copy.
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
     assert audit._induction_store().bucket == DEFAULT_RESULTS_BUCKET
     assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []

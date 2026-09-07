@@ -10,19 +10,13 @@ import pytest
 from smolbench.evals import Numeric
 from smolbench.evals.providers import ec2
 from smolbench.evals.replicates import ReplicateHarness
-from smolbench.induction.experiment import InductionExperiment, repo_root
+from smolbench.evals.results_store import repo_root
+from smolbench.induction.experiment import InductionExperiment
 
 
 def make_quizzes(seed: int, model: str):
-    """One-question-per-info-type stub quiz factory, keyed by seed AND model.
-
-    The signature is the contract ``InductionExperiment.make_quizzes``
-    declares (``Callable[[int, str], Dict[str, Quiz]]``) and the one
-    ``ReplicateHarness.run_replicates`` calls with -- ``make_quizzes(seed,
-    model)``. It used to take ``seed`` alone, which nothing caught because no
-    test ever invoked it (12-20); ``test_run_replicates_calls_make_quizzes_
-    with_seed_and_model`` below now does.
-    """
+    """One-question-per-info-type stub quiz factory, keyed by seed and model:
+    matches the `Callable[[int, str], Dict[str, Quiz]]` contract `make_quizzes` declares."""
     return {
         "intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),),
         "extens": (Numeric(prompt=f"e/{seed}/{model}", answer=2),),
@@ -220,17 +214,10 @@ def test_invalid_shards_are_rejected(bad):
 
 
 def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp, tmp_path):
-    """The harness really drives ``make_quizzes(seed, model)`` and stores per arm.
-
-    Closes 12-20: every prior test only asserted ``harness.make_quizzes is
-    make_quizzes`` and monkeypatched ``run_replicates`` away, so inserting
-    ``raise AssertionError`` as the stub's first statement left all 16 tests
-    passing -- the stub's wrong arity was invisible. This drives the real
-    ``run_replicates`` against a real ``LocalResultsStore`` on tmp_path with
-    only the provider stubbed, so the call arity, the per-info split of the
-    pooled marks, and the stored layout are all exercised.
-    """
+    """Drives the real `run_replicates` against a real `LocalResultsStore` with
+    only the provider stubbed, so call arity, per-info split, and stored layout are all exercised."""
     from smolbench.evals import Mark, Marks
+    from smolbench.evals.quiz import COMPLIANT
     from smolbench.evals import replicates as replicates_mod
     from smolbench.evals.results_store import LocalResultsStore
 
@@ -251,7 +238,8 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
         return Marks(
             model=model,
             marks=tuple(
-                Mark(query=q.prompt, answer=q.answer, response="1", score=1)
+                Mark(query=q.prompt, answer=q.answer, response="1", score=1,
+                     compliance=COMPLIANT)
                 for q in quiz
             ),
         )
@@ -262,7 +250,6 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
 
     # Called once per seed, with (seed, model) -- not (seed,).
     assert calls == [(1776, "stub-model"), (1777, "stub-model"), (1778, "stub-model")]
-    # Both arms landed, one mark each, under the archetype tag.
     for info in ("intens", "extens"):
         for seed in (1776, 1777, 1778):
             stored = tmp_path / f"decode_{info}" / f"rep_{seed}.yaml"
@@ -273,14 +260,13 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
 
 
 def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one():
-    """The lifecycle lives in ``smolbench.evals.experiment``; this class only
-    supplies induction's defaults, so a sibling study's driver inherits the
-    same provision/run/teardown code instead of re-implementing it inline."""
+    """InductionExperiment only supplies induction's defaults; the lifecycle
+    lives in `smolbench.evals.experiment` so other studies share it."""
     from smolbench.evals.experiment import Experiment
 
     assert issubclass(InductionExperiment, Experiment)
-    # Every lifecycle method is INHERITED, not redefined here -- except
-    # cot_chain_lengths, which the subclass overrides only to default `tag`.
+    # Every lifecycle method is inherited, not redefined here, except
+    # cot_chain_lengths, which overrides only to default `tag`.
     for name in ("provision", "run", "summarize", "agent_status", "teardown",
                  "_apply_env", "harness", "seeds", "results_dir"):
         assert name not in vars(InductionExperiment), name

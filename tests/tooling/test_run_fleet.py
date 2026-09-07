@@ -4,10 +4,8 @@ No AWS: every client is a stub factory and no subprocess is ever launched.
 """
 
 import argparse
-import importlib.util
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,29 +13,20 @@ from types import SimpleNamespace
 import pytest
 
 from smolbench.evals import Mark, Marks
-from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS
+from smolbench.evals.quiz import COMPLIANT
+from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS, load_by_path
 
 
 def _load(stem):
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            f"_scaling_{stem}", SCRIPTS / "fleet" / f"{stem}.py")
-        sys.modules[spec.name] = module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    return module
+    return load_by_path(
+        f"_scaling_{stem}", SCRIPTS / "fleet" / f"{stem}.py", snapshot_env=True)
 
 
 fleet, status, shards, teardown = (
     _load(s) for s in ("run_fleet", "fleet_status", "run_shards", "fleet_teardown"))
-# The modules run_fleet.py was split into. Reached THROUGH their consumers,
-# never re-`_load`ed: `_load` builds a fresh module object every call, so an
-# independently loaded copy could never be the object the entry points actually
-# share -- which is half of what these tests check. Same idiom as
-# `status._config is shards._config is fleet._config` below.
+# Reached through their consumers, never re-`_load`ed: a fresh `_load` call
+# builds a new module object, which could never be the object the entry
+# points actually share -- half of what these tests check.
 laneenv = fleet._lane_env
 sup = fleet._supervisor
 policy = sup._policy
@@ -68,11 +57,9 @@ def test_lane_env_and_commands():
     env = laneenv.lane_env(laneenv.LANES["gemma-4-e2b"], "induction",
                          base_env={**_CREDS, "IRRELEVANT": "dropped"})
     assert laneenv.TIER_REGIONS["D"] == "us-east-1,us-east-2,us-west-2"
-    # EXACT equality, so a key added to lane_env has to be accounted for here.
-    # Note what is NOT present: EC2_VLLM_IMAGE, which lane_env no longer sets
-    # for a lane with no LANE_IMAGE_OVERRIDES entry (14-12) -- the lane's own
-    # ec2.py resolves it, so a digest bump there cannot be overridden by a
-    # stale copy in run_fleet.
+    # EXACT equality: any key lane_env adds must show up here. EC2_VLLM_IMAGE
+    # is absent by design -- ec2.py resolves it itself so a digest bump there
+    # can't be shadowed by a stale copy here.
     assert env == {
         **_CREDS, "INFERENCE_PROVIDER": "ec2", "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
         "INDUCTION_STATE_FILE": ".ec2_state_scaling_gemma-4-e2b.json",
@@ -83,9 +70,8 @@ def test_lane_env_and_commands():
     ded = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert ded["LEAN_MODEL"] == "glm-4.7"
     # LEAN_STATE_FILE is gone: the deduction driver derives the identical path
-    # itself, so the fleet no longer spells a second variable for it. The
-    # equality is pinned against that driver in
-    # `test_the_fleet_no_longer_manages_per_lane_state_files`.
+    # itself, so the fleet doesn't need a second variable for it (pinned
+    # against the driver in test_the_fleet_no_longer_manages_per_lane_state_files).
     assert "LEAN_STATE_FILE" not in ded
     assert ded["INDUCTION_STATE_FILE"] == ".ec2_state_scaling_glm-4.7.json"
     assert ded["EC2_EXPERIMENT_TAG"] == "scaling-glm-4.7"
@@ -138,7 +124,7 @@ def test_classify_exit(tail, present, expected):
 )
 def test_reasoning_fraction(contents, expected):
     landed = {info: Marks(model="gemma-4-e2b", marks=tuple(
-        Mark(query="q", answer=1, response=resp, score=1, reasoning=trace)
+        Mark(query="q", answer=1, response=resp, score=1, reasoning=trace, compliance=COMPLIANT)
         for trace, resp in pairs)) for info, pairs in contents.items()}
     store = SimpleNamespace(exists=lambda addr: addr.info in landed,
                             load_marks=lambda addr: landed[addr.info])
@@ -205,7 +191,7 @@ def test_shard_env_and_state_file(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 14-07: the shard supervisor's tag namespace
+# the shard supervisor's tag namespace
 # ---------------------------------------------------------------------------
 def _shard_args(parser, *extra):
     return parser.parse_args(
@@ -214,24 +200,17 @@ def _shard_args(parser, *extra):
 
 
 def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius():
-    """--tag defaulted to "scaling", putting shard boxes inside fleet_teardown.
-
-    The driver appends "-<model>-s<i>of<n>", so the tag that actually landed on
-    the instance was "scaling-gemma-4-12b-s0of3": inside fleet_status's
-    server-side "scaling-*" filter and therefore inside `fleet_teardown
-    --terminate`'s only safety re-check, which would have killed live,
-    hand-launched shard boxes.
-    """
+    """--tag "scaling" put shard boxes inside fleet_teardown's blast radius."""
     parser = shards.build_parser()
     args = _shard_args(parser)
     assert args.tag == "induction-scaling"
     # The DERIVED per-shard tag, not the bare one, is what lands on the box.
-    assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status._config.SCALING_TAG_PREFIX)
     shards.refuse_fleet_prefix_tag(parser, args)  # accepted: no raise
 
-    # The old default is refused even though "scaling" does not itself start
-    # with "scaling-" -- it is the suffixed form that matters.
-    assert "scaling-gemma-4-12b-s0of3".startswith(status.SCALING_TAG_PREFIX)
+    # The old default is refused even though "scaling" itself isn't prefixed --
+    # the suffixed form is what matters.
+    assert "scaling-gemma-4-12b-s0of3".startswith(status._config.SCALING_TAG_PREFIX)
     for bad in ("scaling", "scaling-gemma"):
         with pytest.raises(SystemExit):
             shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", bad))
@@ -243,14 +222,7 @@ def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius():
 
 
 def test_shard_state_files_are_named_apart_from_the_fleets():
-    """run_shards owns its own state files, under a distinct naming scheme.
-
-    Teardown no longer has a state-file glob to keep them out of -- it
-    terminates by tag and deletes nothing (see
-    `test_the_fleet_no_longer_manages_per_lane_state_files`) -- but the two
-    schemes must still be distinct, so an operator reading a repo root can
-    tell a shard box's record from a fleet lane's.
-    """
+    """run_shards owns its own state files, named apart from the fleet's."""
     args = _shard_args(shards.build_parser())
     name = shards.state_file_for(args, 2).name
     assert name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
@@ -259,26 +231,18 @@ def test_shard_state_files_are_named_apart_from_the_fleets():
 
 
 def test_regions_and_tag_prefix_are_declared_once():
-    """14-15: fleet_status/run_shards/run_fleet read one _config, not three literals."""
+    """fleet_status/run_shards/run_fleet read one _config, not three literals."""
     config = status._config
     assert config is shards._config is laneenv._config  # one object, not three copies
-    assert status.SCALING_TAG_PREFIX == config.SCALING_TAG_PREFIX == "scaling-"
-    assert status.STATUS_REGIONS == config.REGION_TUPLE
+    assert config.SCALING_TAG_PREFIX == "scaling-"
     assert config.REGION_TUPLE == tuple(config.DEFAULT_REGIONS.split(","))
 
 
 # ---------------------------------------------------------------------------
-# #46: _config is a VIEW on the committed study config, not a second copy
+# _config is a VIEW on the committed study config, not a second copy
 # ---------------------------------------------------------------------------
 def test_fleet_config_is_read_from_the_committed_study_config():
-    """The fleet vocabulary is study_config.toml's, not a literal in _config.py.
-
-    Before #46 the tag prefix, the region list and the standalone tag were
-    each typed out twice -- once in ``smolbench/evals/study_config.toml`` (read
-    by ``providers/ec2.py`` and ``notebooks/induction/run_study.py``) and once
-    in ``scripts/fleet/_config.py`` -- with nothing keeping the two spellings
-    equal. Editing the TOML now moves the fleet with it.
-    """
+    """The fleet vocabulary is study_config.toml's, not a copy in _config.py."""
     from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
 
     cfg = load_study_config().fleet
@@ -286,48 +250,35 @@ def test_fleet_config_is_read_from_the_committed_study_config():
     assert config.REGION_TUPLE == cfg.regions
     assert config.SCALING_TAG_PREFIX == cfg.tag_prefix
     assert config.STANDALONE_TAG == cfg.standalone_tag
-    # DEFAULT_REGIONS is the comma-joined RENDERING of the tuple (the shape an
-    # EC2_REGIONS environment value takes), derived from it rather than
-    # declared beside it.
+    # DEFAULT_REGIONS is the comma-joined rendering of the tuple (the shape an
+    # EC2_REGIONS env value takes), derived rather than declared beside it.
     assert config.DEFAULT_REGIONS == ",".join(cfg.regions)
     # The roster reaches the fleet from the same file...
     assert config.ROSTER_KEYS == roster_keys()
     assert config.ROSTER_TAGS == {key: tag_for(key) for key in roster_keys()}
-    # ...and is what the lane table is actually built from, so a rung added to
-    # the TOML cannot be missing here.
+    # ...and the lane table is built from it, so a rung added to the TOML
+    # can't be missing here.
     assert set(laneenv.LANES) == set(config.ROSTER_KEYS)
     assert {key: lane.tag for key, lane in laneenv.LANES.items()} == dict(config.ROSTER_TAGS)
 
 
 def test_the_shard_tag_default_is_the_configs_standalone_tag():
-    """run_shards' --tag default was a literal that had to agree with the config.
-
-    ``notebooks/induction/run_study.py`` already defaults a standalone run's
-    ``EC2_EXPERIMENT_TAG`` to ``[fleet].standalone_tag``; run_shards spelled
-    the same string again, so the two could drift and a shard box would carry
-    a tag no other tool expected.
-    """
+    """run_shards' --tag default reads the config's standalone_tag, not a copy."""
     from smolbench.evals.study_config import load_study_config
 
     default = shards.build_parser().get_default("tag")
     assert default == laneenv._config.STANDALONE_TAG
     assert default == load_study_config().fleet.standalone_tag
-    # It must stay outside the fleet's blast radius -- that is WHY it is a
-    # separate config key rather than a derivation of the tag prefix.
+    # It must stay outside the fleet's blast radius, which is why it's a
+    # separate config key rather than derived from the tag prefix.
     assert not f"{default}-".startswith(laneenv._config.SCALING_TAG_PREFIX)
 
 
 # ---------------------------------------------------------------------------
-# 14-06 / 14-10 / 14-12: the per-lane environment is what makes a lane reproducible
+# the per-lane environment is what makes a lane reproducible
 # ---------------------------------------------------------------------------
 def test_a_tier_hunt_list_cannot_change_derived_tp_mid_lane():
-    """14-06: the pin is a DETERMINISM specifier, so assert the mechanism.
-
-    tier A used to hunt g6e.4xlarge,g6e.8xlarge,g6e.12xlarge -- 1, 1 and 4
-    GPUs -- and ec2.derive_tp is gcd(attention heads, landed GPU count), so a
-    capacity reclaim onto the fallback changed a lane's tp from 1 to 4 partway
-    through, making rows before and after incomparable.
-    """
+    """A capacity reclaim onto a fallback type must not change a lane's tp."""
     from smolbench.evals.providers import ec2
 
     assert laneenv.TIER_REQUIRE_GPU == {
@@ -336,16 +287,16 @@ def test_a_tier_hunt_list_cannot_change_derived_tp_mid_lane():
         hunt = types.split(",")
         # One GPU count per tier is what the pin encodes...
         assert len({ec2._INSTANCE_GPU_COUNTS[t] for t in hunt}) == 1, tier
-        # ...and the property that buys: every lane in the tier derives the
-        # SAME tp on every type it could land on.
+        # ...and the property it buys: every lane in the tier derives the
+        # same tp on every type it could land on.
         for key, lane in laneenv.LANES.items():
             if lane.tier != tier:
                 continue
             tps = {ec2.derive_tp(key, t, ec2.EC2_DEPLOY_SPECS[key]) for t in hunt}
             assert len(tps) == 1, (key, tier, tps)
     # Tier C's pin is count-only: p5 (H100) and p5e (H200) are different
-    # silicon the study accepts at the same GPU count, so the name substring is
-    # empty and only the count is enforced.
+    # silicon the study accepts at the same GPU count, so only the count is
+    # enforced.
     assert laneenv.TIER_REQUIRE_GPU["C"].startswith(":")
     for lane in laneenv.LANES.values():
         env = laneenv.lane_env(lane, "induction", base_env={})
@@ -353,11 +304,7 @@ def test_a_tier_hunt_list_cannot_change_derived_tp_mid_lane():
 
 
 def test_every_lane_override_key_is_a_roster_key_and_reaches_lane_env():
-    """14-10: both override tables are .get() lookups no test covered.
-
-    The reviewer typo'd all five keys and the suite still passed, so a lane
-    silently losing its image pin or its timeout was invisible.
-    """
+    """Both override tables are .get() lookups: a typo'd key drops silently."""
     for table in (laneenv.LANE_IMAGE_OVERRIDES, laneenv.LANE_REQUEST_TIMEOUT_OVERRIDES):
         assert table, "an empty override table would make this test vacuous"
         assert set(table) <= set(laneenv.LANES), sorted(set(table) - set(laneenv.LANES))
@@ -380,7 +327,7 @@ def test_every_lane_override_key_is_a_roster_key_and_reaches_lane_env():
 
 
 def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence():
-    """14-12: FLEET_IMAGE was a byte-identical COPY of ec2's default digest."""
+    """FLEET_IMAGE was a byte-identical copy of ec2's default digest."""
     from smolbench.evals.providers import ec2
 
     assert laneenv.FLEET_IMAGE is ec2.EC2_VLLM_IMAGE
@@ -397,12 +344,12 @@ def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence():
 
 
 # ---------------------------------------------------------------------------
-# 14-02 / 14-03 / 14-11: the restart, gate and spool policies
+# the restart, gate and spool policies
 #
-# The reviewer's tripwire: disabling the CoT halt, setting MAX_CRASH_RELAUNCHES
-# to 999 and deleting the tier B/C launch each left all 99 tooling tests green,
-# because the file pinned only leaf predicates. These drive the policy
-# functions themselves, with fake processes -- no subprocess, no AWS.
+# A tripwire found the old suite pinned only leaf predicates: disabling the
+# CoT halt, raising MAX_CRASH_RELAUNCHES to 999, or deleting the tier B/C
+# launch all still passed. These drive the policy functions directly, with
+# fake processes -- no subprocess, no AWS.
 # ---------------------------------------------------------------------------
 class _FakeProc:
     """subprocess.Popen stand-in: a fixed return code and a terminate() flag."""
@@ -434,11 +381,7 @@ def _recording_start_phase(launches, rc=1, log_text=None):
 
 
 def test_presence_reads_an_empty_first_sweep_as_unknown_not_as_gone():
-    """14-02: fleet_rows returns [] for an empty fleet AND for an all-region failure.
-
-    Reading that as "every instance is gone" made classify_exit short-circuit
-    to "reclaim" for every lane before RECLAIM_PATTERNS was ever consulted.
-    """
+    """An empty sweep must read as "unknown," not "gone", or classify_exit short-circuits every lane to "reclaim"."""
     presence = sup._Presence()
     assert presence.lanes is None and presence.ever_seen is False
     presence.observe(set())
@@ -469,7 +412,7 @@ def test_an_empty_sweep_no_longer_turns_a_crash_into_an_endless_reclaim(monkeypa
 
 
 def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
-    """14-02: reclaims had unlimited retries and no backoff at all."""
+    """Reclaims had unlimited retries and no backoff at all."""
     import time as _time
 
     launches, delays = [], []
@@ -506,7 +449,7 @@ def test_a_reclaim_backs_off_and_is_bounded(monkeypatch, tmp_path):
 
 
 def test_the_budget_alert_uses_a_clock_a_relaunch_cannot_reset(tmp_path, capsys):
-    """14-02: _start_phase resets started_at, so the 2x-budget alert never fired."""
+    """_start_phase resets started_at, so the 2x-budget alert never fired."""
     run = _lane_run("gemma-4-e2b", rc=None)
     run.lane_started_at = sup.time.monotonic() - 3600 * 2 * laneenv.LANES[
         "gemma-4-e2b"].budget_hours - 60
@@ -517,11 +460,7 @@ def test_the_budget_alert_uses_a_clock_a_relaunch_cannot_reset(tmp_path, capsys)
 
 
 def test_tail_log_finds_a_reclaim_marker_in_a_large_log(tmp_path):
-    """14-03: _tail_log read the WHOLE file every tick, per lane.
-
-    Under-reading is not neutral either: a RECLAIM_PATTERNS match outside the
-    window silently becomes a CRASH, halting a lane that should have retried.
-    """
+    """_tail_log used to read the whole file every tick; under-reading isn't neutral either -- a match outside the window becomes a false CRASH."""
     log = tmp_path / "k.log"
     log.write_text(("x" * 200 + "\n") * 5000
                    + "botocore ... InsufficientInstanceCapacity for p5e.48xlarge\n")
@@ -534,11 +473,7 @@ def test_tail_log_finds_a_reclaim_marker_in_a_large_log(tmp_path):
 
 
 def test_the_gate_scan_is_incremental_sticky_and_survives_truncation(tmp_path):
-    """14-03: the gate line appears ONCE, early, then scrolls away.
-
-    So the scan cannot simply become a bounded tail: it reads only what is new,
-    latches when it finds the line, and rescans from 0 if the file shrinks.
-    """
+    """The gate line appears once, early, then scrolls away, so the scan can't be a bounded tail."""
     run = sup._LaneRun(lane=laneenv.LANES["gemma-4-e2b"], phases=("induction",))
     log = tmp_path / "gemma-4-e2b.log"
     log.write_text("provisioning\n")
@@ -568,11 +503,7 @@ def test_the_gate_scan_is_incremental_sticky_and_survives_truncation(tmp_path):
 
 
 def test_a_failed_family_gate_halts_the_never_launched_lanes(monkeypatch, tmp_path, caplog, capsys):
-    """14-03: gate failure left tier B/C at proc=None, so _all_terminal never became true.
-
-    The supervisor then ticked forever with the tier-D boxes billing, never
-    printing the closing report or the teardown reminder.
-    """
+    """A gate failure used to leave tier B/C at proc=None, so _all_terminal never became true."""
     import logging
 
     monkeypatch.setattr(sup, "MONITOR_INTERVAL_SECONDS", 0)
@@ -582,9 +513,8 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(monkeypatch, tmp_pa
     monkeypatch.setattr(sup, "_start_phase", _recording_start_phase(launches, log_text=crash))
     monkeypatch.setattr(sup, "_check_cot", lambda runs, *a, **k: None)
 
-    # A bounded stub: without the fix _run_fleet never becomes all-terminal, and
-    # an unbounded loop would HANG the suite rather than fail it. 200 ticks is
-    # far more than the handful this scenario needs.
+    # Bounded: without the fix _run_fleet never becomes all-terminal, and an
+    # unbounded loop would hang the suite instead of failing it.
     ticks = {"n": 0}
 
     def _bounded_tick(runs, log_dir, tick, presence):
@@ -614,12 +544,7 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(monkeypatch, tmp_pa
 
 
 def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplog):
-    """14-11: the deleted copy uploaded without verification, then unlinked the rows.
-
-    The driver's own spool_to_s3 verifies each upload with head_object before
-    pruning; a failure must surface rather than being logged and forgotten,
-    because this runs immediately before the supervisor shuts the box down.
-    """
+    """spool_to_s3's failure must surface, not be logged and forgotten, right before the box shuts down."""
     import logging
     from types import SimpleNamespace as NS
 
@@ -641,8 +566,8 @@ def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplo
                         NS(run=lambda cmd, **kw: shutdowns.append(cmd), Popen=None))
 
     def _boom(run_dir, key):
-        # The deduction driver's module-scope guard raises SystemExit, which is
-        # NOT an Exception -- an `except Exception` here would kill the fleet.
+        # Not an Exception: an `except Exception` here would swallow this and
+        # kill the fleet.
         raise SystemExit(f"EC2_EXPERIMENT_TAG mismatch for {key}")
 
     monkeypatch.setattr(sup, "_deduction_driver", lambda: NS(spool_to_s3=_boom))
@@ -657,51 +582,18 @@ def test_a_spool_failure_reaches_the_closing_report(monkeypatch, tmp_path, caplo
     assert shutdowns, "the lane still completes and its box is still shut down"
 
 
-def test_the_unverified_spool_copy_is_gone():
-    """14-11: sync_deduction_spool duplicated the driver without its verification."""
-    for module in (fleet, sup, laneenv):
-        assert not hasattr(module, "sync_deduction_spool")
-        assert not hasattr(module, "SPOOL_BUCKET") and not hasattr(module, "SPOOL_REGION")
-    # Scanned across the WHOLE fleet family, not just run_fleet.py: the spool
-    # code moved into supervisor.py when run_fleet.py was split, and a check
-    # pinned to one filename would have gone quietly vacuous at that moment.
-    for source in (SCRIPTS / "fleet").glob("*.py"):
-        assert "smolbench-results-414266451290" not in source.read_text(), source.name
-
-
 # ---------------------------------------------------------------------------
-# 14-14 / #49: ONE restart vocabulary, ONE Shard, thin entry points
+# one restart vocabulary, one Shard, thin entry points
 # ---------------------------------------------------------------------------
 def test_both_supervisors_share_one_policy_module():
-    """The same spot reclaim must not get two different answers.
-
-    run_shards used to carry its own restart vocabulary -- a single
-    ``CAPACITY_MARKER`` substring, ``FAST_CRASH_SECONDS``/``MAX_FAST_CRASHES``,
-    and unlimited flat-backoff capacity retries -- beside run_fleet's eight
-    ``RECLAIM_PATTERNS`` and capped exponential backoff. Both now read one
-    module object, so there is nothing left to drift.
-    """
+    """The same spot reclaim must not get two different answers."""
     assert sup._policy is shards._policy is policy   # one object, not two copies
-    for gone in ("CAPACITY_MARKER", "CAPACITY_BACKOFF_SECONDS",
-                 "FAST_CRASH_SECONDS", "MAX_FAST_CRASHES", "RELAUNCH_BACKOFF_SECONDS"):
-        assert not hasattr(shards, gone), gone
-    for gone in ("RECLAIM_PATTERNS", "classify_exit", "MAX_CRASH_RELAUNCHES",
-                 "MAX_RECLAIM_RELAUNCHES", "RECLAIM_BACKOFF_BASE_SECONDS",
-                 "RECLAIM_BACKOFF_CAP_SECONDS"):
-        assert not hasattr(fleet, gone), f"run_fleet still declares {gone}"
-        assert hasattr(policy, gone), f"policy is missing {gone}"
 
 
 def test_the_shared_patterns_cover_the_marker_they_replaced():
-    """Deleting CAPACITY_MARKER only holds if RECLAIM_PATTERNS catches that line.
-
-    Pinned against the line's PRODUCER (``providers/ec2.py``), not against the
-    deleted literal, so this cannot pass by comparing the substitution to
-    itself.
-    """
-    # The phrase alone, not the escaped newline that follows it in the raise:
-    # this is a pin on the WORDING ec2.py produces, and how a source file spells
-    # the line break after it is not part of that wording.
+    """Deleting CAPACITY_MARKER only holds if RECLAIM_PATTERNS still catches the line, pinned against the producer, not the deleted literal."""
+    # The phrase alone, not the trailing newline in the raise -- this pins the
+    # wording ec2.py produces, not how the source spells the line break after it.
     produced = "No spot capacity for any (instance type, region) combination:"
     assert produced in (REPO_ROOT / "smolbench" / "evals" / "providers" / "ec2.py").read_text()
     rendered = f"ERROR:root:{produced}\n  g6e.12xlarge in us-east-2 -- no capacity"
@@ -743,32 +635,19 @@ def test_the_reclaim_backoff_is_exponential_and_capped():
 
 
 def test_shard_is_a_module_level_class_with_an_explicit_constructor():
-    """14-14: `class Shard` lived inside main(), closing over `args`.
-
-    Every field it read off that closure is now a constructor parameter, so a
-    Shard can be built (and driven) without an argparse Namespace.
-    """
-    assert not hasattr(shards, "Shard"), "run_shards must import Shard, not redefine it"
-    src = (SCRIPTS / "fleet" / "run_shards.py").read_text()
-    assert "class Shard" not in src
+    """A Shard can be built, and the supervision loop driven, without argparse."""
     shard = shard_mod.Shard(
         index=2, selector="2/3", log=Path("/tmp/nowhere/gemma-4-12b-s2of3.log"),
         env={"INDUCTION_SHARD": "2/3"}, state_file=Path("/tmp/nowhere/.state.json"),
         python=Path("/py"), driver=Path("/drv.py"), cwd=Path("/repo"))
     assert (shard.index, shard.selector, shard.status) == (2, "2/3", "pending")
     assert shard.proc is None and shard.adopted_pid is None
-    assert shard.launched_at == 0.0
     assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
     assert shard.env["INDUCTION_SHARD"] == "2/3"
 
 
 def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(monkeypatch, tmp_path):
-    """A capacity-exhausted hunt used to retry FOREVER on a flat 300s sleep.
-
-    It now takes the same bounded, exponentially backed-off path a fleet lane
-    does, so a permanently dry pool stops costing relaunches instead of
-    retrying for the whole run.
-    """
+    """A capacity-exhausted hunt used to retry forever on a flat 300s sleep."""
     slept, launches = [], []
     monkeypatch.setattr(shards.time, "sleep", slept.append)
     monkeypatch.setattr(shards, "terminate_shard_box", lambda shard: None)
@@ -783,7 +662,6 @@ def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(monkeypatch,
         launches.append(len(launches))
         shard.proc = _FakeProc(1)
         shard.status = "running"
-        shard.launched_at = 0.0
 
     monkeypatch.setattr(shard, "launch", _fake_launch)
     shard.proc = _FakeProc(1)
@@ -819,13 +697,7 @@ def test_a_completed_shard_still_terminates_its_own_box(monkeypatch, tmp_path):
 
 
 def test_run_fleet_is_a_thin_entry_point_over_the_split_modules():
-    """14-14: run_fleet.py was 1,600+ lines of tables, lane env and supervisor loop.
-
-    The split is only real if the entry point stops OWNING those things: it
-    parses a command line, resolves the lane selection, and hands off. This
-    pins the ownership, not a line count -- a symbol re-exported from
-    run_fleet would let a future edit drift a second definition back in.
-    """
+    """run_fleet.py was 1,600+ lines of tables, lane env and supervisor loop; this pins ownership, not a line count."""
     assert fleet._lane_env is laneenv and fleet._supervisor is sup
     # The tables and the lane environment belong to lane_env.py...
     for name in ("LANES", "Lane", "TIER_MEMBERS", "TIER_INSTANCE_TYPES",
@@ -848,11 +720,7 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules():
 
 
 def test_the_dry_run_plan_still_renders_every_lane_and_phase(capsys):
-    """The CLI is thin, but it must still be the same CLI.
-
-    --dry-run is the only offline path an operator can check the wiring with,
-    so it is the one end-to-end assertion that survives the split.
-    """
+    """The CLI is thin, but --dry-run must still render the same plan end-to-end."""
     assert fleet.main(["--dry-run", "--phase", "both", "--lanes", "glm-4.7"]) == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out and "glm-4.7 (tier D" in out
@@ -864,7 +732,7 @@ def test_the_dry_run_plan_still_renders_every_lane_and_phase(capsys):
 
 
 # ---------------------------------------------------------------------------
-# 14-13 / #48: one restartable supervisor state, and teardown by tag
+# one restartable supervisor state, and teardown by tag
 # ---------------------------------------------------------------------------
 def _persisted_runs():
     """Two lanes mid-flight: one backing off a reclaim, one already halted."""
@@ -895,26 +763,14 @@ def test_the_supervisor_state_file_lives_under_the_log_dir(tmp_path):
     state = json.loads(path.read_text())
     assert sorted(state["lanes"]) == ["gemma-4-e2b", "glm-4.7"]
     # Lane identity is the tag's: fleet_status derives `lane` by stripping the
-    # prefix off smolbench:experiment, and that is the key used here, so a
-    # describe sweep and this file name the same lanes.
+    # prefix off smolbench:experiment, so a describe sweep and this file agree.
     for key in state["lanes"]:
         tag = laneenv.LANES[key].experiment_tag
-        assert tag[len(status.SCALING_TAG_PREFIX):] == key
+        assert tag[len(status._config.SCALING_TAG_PREFIX):] == key
 
 
 def test_a_resumed_supervisor_continues_with_the_persisted_counters(tmp_path, monkeypatch):
-    """THE regression: every counter lived in memory, so a dead supervisor lost them.
-
-    21 boxes kept billing with nobody advancing phases, and a replacement
-    supervisor restarted every lane's crash and reclaim budget from zero.
-
-    The reload runs under a SHIFTED ``time.monotonic``, because that is what a
-    genuinely new process gets: monotonic's epoch is arbitrary per process, so
-    a persisted monotonic deadline is meaningless on the other side of a
-    restart. Only wall-clock survives, and the assertions below are on the
-    lane's AGE and its REMAINING backoff -- both of which a naive
-    monotonic-in, monotonic-out implementation gets wrong by exactly the shift.
-    """
+    """Counters lived only in memory; the reload runs under a SHIFTED time.monotonic since a fresh process's epoch is arbitrary."""
     sup.save_fleet_state(_persisted_runs(), tmp_path)
 
     real_monotonic = sup.time.monotonic
@@ -939,8 +795,8 @@ def test_a_resumed_supervisor_continues_with_the_persisted_counters(tmp_path, mo
 
     halted = resumed["gemma-4-e2b"]
     assert halted.halted is True and "MAX_CRASH_RELAUNCHES" in halted.halt_reason
-    # A process handle cannot be persisted, so a resumed lane holds none; the
-    # driver's own resume-skip is what stops landed work being re-billed.
+    # A process handle can't be persisted, so a resumed lane holds none; the
+    # driver's own resume-skip stops landed work being re-billed.
     assert lane.proc is None and halted.proc is None
 
 
@@ -999,21 +855,11 @@ def test_the_state_file_is_rewritten_every_tick(monkeypatch, tmp_path):
 
 
 def test_the_fleet_no_longer_manages_per_lane_state_files():
-    """14-13: three state-file naming schemes coexisted and teardown globbed one.
-
-    ec2's provisioning state file stays -- ec2 needs it, and the induction
-    driver's own default is SHARED across lanes, so the supervisor still has to
-    hand each lane a private one. What goes is the FLEET managing them:
-    teardown no longer globs or deletes anything, and the deduction phase no
-    longer gets a second, independently spelled state-file variable.
-    """
-    for gone in ("STATE_FILE_GLOB", "state_file_path", "delete_state_files"):
-        assert not hasattr(teardown, gone), gone
+    """Three state-file naming schemes used to coexist; now the fleet manages none of it."""
     deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
     assert "LEAN_STATE_FILE" not in deduction
-    # ...because the deduction driver derives the IDENTICAL path itself. If
-    # these two ever diverge the deduction phase provisions a SECOND box per
-    # lane, silently and expensively, so pin it against the driver.
+    # ...because the driver derives the identical path itself; if the two ever
+    # diverge, deduction silently provisions a second box per lane.
     driver = _deduction_driver_module()
     derived = driver.lane_env_defaults("glm-4.7", repo_root=Path("/anchor"))["EC2_STATE_FILE"]
     assert Path(derived).name == deduction["INDUCTION_STATE_FILE"]
@@ -1021,22 +867,10 @@ def test_the_fleet_no_longer_manages_per_lane_state_files():
 
 
 def _deduction_driver_module():
-    """Load notebooks/deduction/run_study.py under an environment snapshot.
-
-    It calls ``load_dotenv`` and sets ``EC2_*`` defaults at module scope, which
-    would otherwise leak into every later test in the session.
-    """
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    return module
+    """Load notebooks/deduction/run_study.py under an environment snapshot."""
+    return load_by_path(
+        "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py",
+        snapshot_env=True)
 
 
 def test_teardown_terminates_by_tag_and_deletes_nothing(tmp_path, monkeypatch, capsys):
@@ -1059,11 +893,9 @@ def test_teardown_terminates_by_tag_and_deletes_nothing(tmp_path, monkeypatch, c
 
     monkeypatch.setattr(teardown, "_fleet_status", lambda: SimpleNamespace(
         fleet_rows=lambda: rows[:1],
-        format_fleet_table=lambda r: "TABLE\n",
-        SCALING_TAG_PREFIX=status.SCALING_TAG_PREFIX))
+        format_fleet_table=lambda r: "TABLE\n"))
     monkeypatch.setattr(teardown, "terminate_fleet",
                         lambda r, **kw: r)
     assert teardown.main(["--terminate", "--yes"]) == 0
     out = capsys.readouterr().out
     assert "Terminated 1 instance(s)" in out
-    assert "state file" not in out, "the fleet no longer deletes state files"

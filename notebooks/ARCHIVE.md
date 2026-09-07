@@ -1,9 +1,8 @@
 # Where the historical artifacts live
 
-Result trees, evidence packages, data sidecars, analysis writeups, and
-concluded probe scripts are not kept in this tree. They live in two places,
-and docstrings across the repo that cite `notebooks/README.md` or
-`notebooks/ARCHIVE.md` as provenance mean this file.
+Result trees, evidence packages, data sidecars, analysis writeups and
+concluded probe scripts are not kept in this tree. Docstrings that cite
+`notebooks/README.md` or `notebooks/ARCHIVE.md` as provenance mean this file.
 
 ## S3
 
@@ -23,28 +22,15 @@ Paths inside an archive are the flat layout of the tree on the day it was
 taken; they are never rewritten to match today's grouped layout.
 
 A run in the live log is retired, never edited or deleted in place. On S3,
-`S3ResultsStore.supersede` writes a sibling marker key beside the run it
-retires -- the same key with its `.yaml` swapped for `.superseded`
-(`S3_SUPERSEDED_SUFFIX`) -- whose body is a JSON object
-`{"superseded_at": ..., "reason": ...}`; `list_runs`, `load_marks` and
-`sync_down` all skip any run_ts carrying such a marker and then apply
-earliest-wins (the lexicographically-least, hence chronologically-earliest,
-surviving `run_ts`) over what is left. The local replicate trees mirror this
-with a rename instead of a sibling key: `LocalResultsStore.supersede` renames
-a retired `rep_<seed>.yaml` to `rep_<seed>.SUPERSEDED-<run_ts>.yaml`
-(`LOCAL_SUPERSEDED_INFIX`), and every local reader already ignores a name in
-that shape: `list_seeds` skips it because its seed portion fails the `int()`
-parse, while `load_marks`/`exists` never even look at it, since both address
-a replicate by the literal `rep_<seed>.yaml` path built from the seed number,
-which a renamed file no longer matches. `scripts/results/regrade.py`
-retires a run the same way: it goes through `ResultsStore.regrade`, which
-supersedes every surviving run at an address first and only then appends the
-replacement, and that replacement's `regraded_from` field names the `run_ts`
-of the run it replaced -- the old refusal-to-regrade path is gone, on both
-backends.
+`S3ResultsStore.supersede` writes a sibling marker key (`.yaml` swapped for
+`.superseded`, `S3_SUPERSEDED_SUFFIX`) and every reader skips a marked
+`run_ts` before applying earliest-wins; locally `LocalResultsStore.supersede`
+renames `rep_<seed>.yaml` to `rep_<seed>.SUPERSEDED-<run_ts>.yaml`
+(`LOCAL_SUPERSEDED_INFIX`). `scripts/results/regrade.py` goes through
+`ResultsStore.regrade`: supersede every surviving run at an address, then
+append the replacement with `regraded_from` naming the run it replaced.
 
-The tests that pin archived evidence stream it from S3 and never write a
-local copy (archived data is read on AWS, not pulled down):
+Tests that pin archived evidence stream it from S3, never a local copy:
 
 ```bash
 SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
@@ -53,16 +39,10 @@ SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
 
 ## GitHub releases
 
-The same archive zips are attached to GitHub releases created for the pull
-requests that removed them (releases attach to tags, not PRs -- e.g.
-`gh release view pr4-regenerable-artifacts`; `gh release list` shows every
-archive tag). The `pr4-regenerable-artifacts` release has 5 assets, but its
-release notes carry sha256s for only 2 of them; the other 3 were posted only
-in PR #4's issue comments. The evidence tree these zips hold is marked NOT
-regenerable in "What is regenerable, and what is not" below, so its integrity
-hash -- the only way to tell a good copy from a corrupted one -- needs a
-durable home in the tree itself, not only in a release body or a PR comment
-thread. This file is that home, for all five assets on the release:
+The same zips are attached to releases created for the pull requests that
+removed them (`gh release list` shows every archive tag). The evidence tree
+they hold is not regenerable, so its sha256s live here as well as in the
+release notes:
 
 | Asset | Date | Size (bytes) | sha256 | Contents |
 | --- | --- | --- | --- | --- |
@@ -72,9 +52,8 @@ thread. This file is that home, for all five assets on the release:
 | `pr4_scripts_2026-08-25.zip` | 2026-08-25 | 151482 | `c75e6e013e49cd583e465914006e9bbb2713e2aa64f76924792db03e469fd677` | 17 files under `scripts/` (concluded determinism/delivery probes, the 2026-08-14/16 incident launchers, `recover_dojoinit_std`, and the three statistical scripts `posterior_power` / `flip_probe` / `flip_free_bound`) plus the 4 test modules that only loaded them |
 | `pr4_induction_audits_2026-08-30.zip` | 2026-08-30 | 5558 | `f5a3079c34656862ccff7c08a5548a6aa76863f1bda93a4d2b67005f4655eccf` | the three concluded induction audit probes `notebooks/induction/audits/{check_currency,response_audit,verify_survivorship}.py` -- same zip named in the S3 table above |
 
-All five are mirrored in S3 next to the unpacked archive: the first four
-under `archives/2026-08-25/`, the induction-audits zip under
-`archives/2026-08-30/` (see the S3 table above).
+
+All five are mirrored in S3 under `archives/<date>/` (see the S3 table above).
 
 ## What is regenerable, and what is not
 
@@ -103,10 +82,4 @@ bytes / 36,474 lines) regenerates with:
     --workdir <scratch dir> --github-token <token or $GITHUB_ACCESS_TOKEN>
 ```
 
-This needs network access and a GitHub token: the script's only network calls
-go through `fetch_pr_created_at`, which resolves each candidate declaration's
-evidence date against the GitHub API. Regenerable, but not cheaply -- and the
-result can drift if a PR's metadata changes, which is exactly why the sha256
-above is recorded rather than assumed stable. It is expected to be attached to
-a GitHub release the same way the S3 archives are (see "GitHub releases"
-above); that has not happened yet for this file.
+Needs network and a GitHub token (each candidate's evidence date is resolved against the GitHub API), and the result can drift if PR metadata changes, which is why the sha256 is recorded.

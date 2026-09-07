@@ -44,10 +44,8 @@ RoPE fields nothing reads).
 
 ## Family facts
 
-One row per family. Only claims read from `config.json` or confirmed
-against the cited source; nothing inferred. Divergences are config fields
-the served implementation does not read, or reads differently than the
-field suggests.
+One row per family; see "Where each claim comes from" for what a claim
+requires and what a divergence means.
 
 | Family | Rungs (spec keys, params) | Token mixing | Positional encoding | FFN / sparsity | Reasoning toggle (as served) | Config-vs-implementation divergences | Primary sources |
 |---|---|---|---|---|---|---|---|
@@ -70,10 +68,3 @@ field suggests.
 `tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
 pins against, on the four fields both hold; a mismatch means an upstream
 checkpoint moved under the study.
-
-## Not here: an HTML atlas page
-
-There is no page builder in this directory and none should be added -- the
-page was a presentation artifact, not study tooling. Its two built outputs
-(`page_data.json`, `model_architectures.html`) survive only in the release
-archives; see `notebooks/ARCHIVE.md`.

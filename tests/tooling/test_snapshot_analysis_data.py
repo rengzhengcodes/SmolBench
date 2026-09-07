@@ -1,11 +1,8 @@
 """Offline contract for scripts/results/snapshot_analysis_data.py; no AWS.
 
-Pins the PR #14 finding that ``MANIFEST.json``'s ``notes`` list asserted ONE
-dataset's measured counts ("74 cells across 3 lanes", "the SAME 232 cells in
-every lane", "944 - 232 = 712", "68/30/50") verbatim for any ``--dest`` and any
-``--spool-prefix``, while every neighbouring field was computed from the walk
-the run actually did. The reading rules now live in a dated, version-controlled
-provenance document that is copied next to the data.
+``MANIFEST.json`` no longer carries hand-written per-dataset notes; the
+reading rules live in a dated, version-controlled provenance doc copied
+next to the data instead.
 """
 
 import json
@@ -99,11 +96,10 @@ def test_manifest_carries_only_computed_fields(run_snapshot):
     # Computed from this run's walk, not from constants.
     assert manifest["total_objects"] == 2 and manifest["total_bytes"] == 30
     assert manifest["copied"] == 2
-    # provenance_keys mirrors the put_object calls actually made -- so a doc
-    # missing from disk is visible instead of being claimed as present.
-    # (NB: notebooks/README.md and notebooks/deduction/README.md share a
-    # basename and therefore one destination key; that pre-existing collision
-    # is a reported follow-up, and this assertion holds either way.)
+    # provenance_keys mirrors the actual put_object calls, so a missing doc
+    # shows up instead of being claimed present. notebooks/README.md and
+    # notebooks/deduction/README.md share a basename and collide to one key;
+    # this assertion holds either way.
     put_provenance = [key for _b, key, _body in fake.puts if "/provenance/" in key]
     assert manifest["provenance_keys"] == put_provenance
     assert manifest["provenance_docs"] == len(put_provenance)
@@ -125,7 +121,7 @@ def test_the_reading_rules_ship_as_a_dated_document():
 
 
 def test_the_bucket_follows_smolbench_results_s3(run_snapshot):
-    """14-15: a redirected results store must not silently miss this script."""
+    """A redirected results store must not silently miss this script."""
     fake, manifest = run_snapshot(bucket_env="s3://redirected-bucket/base")
     assert manifest["source_bucket"] == "redirected-bucket"
     assert {b for b, _p in fake.listed} == {"redirected-bucket"}

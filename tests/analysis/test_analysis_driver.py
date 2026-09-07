@@ -1,10 +1,6 @@
-"""The one driver over the analysis chain, and power_analysis's section split.
-
-``analysis/`` had five separate ``__main__`` entry points chained by sibling
-imports and no driver at all, while ``power_analysis.main()`` interleaved 8
-numbered sections of computation with 43 ``print`` calls. These pin the shape
-that replaced both: one data function per section, a ``render_*`` that prints
-it, a short ``main()``, and ``run_all.py`` over the chain.
+"""Pins the analysis driver's shape and power_analysis's section split: one
+data function per section, a ``render_*`` that prints it, a short ``main()``,
+and ``run_all.py`` running the chain in order.
 
 See ``tests/analysis/_trees.py`` for the synthetic replicate tree and for why
 this directory has no ``conftest.py``.
@@ -28,9 +24,8 @@ from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
 )
 
 #: The chain, in the order the driver must run it. `multiplicity_sim` is
-#: deliberately absent: its simulation consumes design constants rather than
-#: results (it reads the study's measured design effect for context, and
-#: nothing else), and it costs minutes, so it runs only behind an explicit flag.
+#: absent: it consumes design constants rather than results and costs
+#: minutes, so it runs only behind an explicit flag.
 CHAIN = ("power_analysis", "paired_analysis", "significance_report",
          "extens_vs_noise")
 
@@ -60,10 +55,10 @@ def driver_tree(tmp_path_factory, power_analysis):
 def recorded(monkeypatch, run_all, multiplicity_sim):
     """Replace every script's ``main`` with a recorder; return the call list.
 
-    The scripts themselves are covered by their own tests; what the driver
-    owns is WHICH ones run and in WHAT ORDER, and stubbing is also what keeps
-    this test off ``power_analysis.main``'s ~2-minute Monte Carlo and
-    ``multiplicity_sim.main``'s much longer one.
+    The scripts themselves are covered by their own tests; the driver only
+    owns which ones run and in what order, so stubbing also keeps this off
+    ``power_analysis.main``'s ~2-minute Monte Carlo and
+    ``multiplicity_sim.main``'s longer one.
     """
     calls: list = []
 
@@ -86,9 +81,7 @@ def test_the_driver_runs_the_chain_in_order(run_all, recorded):
 
 
 def test_the_simulation_runs_only_behind_its_flag(run_all, recorded):
-    """`multiplicity_sim` is a Monte Carlo study whose figures do not come from
-    the results tree, so a default run must not spend minutes on it -- and a
-    caller who wants it must not have to invoke a second script by hand."""
+    """A default run must not spend minutes on the Monte Carlo, and enabling it must not require a second script."""
     run_all.main([])
     assert "multiplicity_sim" not in recorded
     recorded.clear()
@@ -98,15 +91,7 @@ def test_the_simulation_runs_only_behind_its_flag(run_all, recorded):
 
 def test_the_driver_really_runs_the_chain_in_one_process(run_all, repoint,
                                                          driver_tree, monkeypatch):
-    """End to end on a synthetic tree, with only the slow script stubbed.
-
-    The three fast scripts run FOR REAL here (about a second all told), so
-    this catches a driver that imports the chain but cannot actually drive it
-    -- a wrong call signature, a missing sys.path insert, or a script that
-    only works as ``__main__``. ``power_analysis.main`` is stubbed because its
-    10,000-sim sizing takes about two minutes; its own sections are pinned
-    below.
-    """
+    """End to end on a synthetic tree, with only the slow ``power_analysis.main`` stubbed (its Monte Carlo sizing takes minutes)."""
     import sys
 
     repoint(driver_tree)
@@ -115,12 +100,10 @@ def test_the_driver_really_runs_the_chain_in_one_process(run_all, repoint,
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         assert run_all.main([]) == 0
     out = buf.getvalue()
-    # One banner per script, in order, so a reader of a long log can tell
-    # whose output they are looking at.
+    # One banner per script, in order, so a long log stays attributable.
     positions = [out.find(name) for name in CHAIN]
     assert all(p >= 0 for p in positions), positions
     assert positions == sorted(positions), positions
-    # ... and the real scripts' own output is in there too.
     assert "compliance" in out.lower()
 
 
@@ -136,9 +119,7 @@ def section_pairs(module):
 
 
 def test_every_printed_section_has_a_data_function_behind_it(power_analysis):
-    """One function per numbered section returning plain data, one ``render_*``
-    printing it -- so the numbers can be tested, and reused, without capturing
-    stdout. ``main()`` had 8 numbered sections; each keeps its pair."""
+    """Each of the 8 numbered sections keeps a data/render pair, so figures can be tested and reused without capturing stdout."""
     pairs = section_pairs(power_analysis)
     assert len(pairs) >= 8, [name for name, _ in pairs]
     for render_name, data_name in pairs:
@@ -148,23 +129,14 @@ def test_every_printed_section_has_a_data_function_behind_it(power_analysis):
 
 
 def test_the_data_functions_do_not_print(power_analysis):
-    """A section's data function returns; only its ``render_*`` twin prints.
-
-    Checked on the SOURCE rather than by capturing stdout, because that is the
-    property being fixed: computation and printing were interleaved, 43 print
-    calls deep, so the numbers could not be consumed by anything but a human.
-    """
+    """A section's data function returns; only its ``render_*`` twin prints."""
     for _render_name, data_name in section_pairs(power_analysis):
         source = inspect.getsource(getattr(power_analysis, data_name))
         assert "print(" not in source, f"{data_name} prints"
 
 
 def test_main_is_a_short_orchestrator(power_analysis):
-    """``main()`` calls the pairs above and does nothing else.
-
-    It was 227 lines interleaving computation with printing; the ceiling here
-    is the spec's, and it is what stops the split from silently regrowing.
-    """
+    """``main()`` calls the pairs above and does nothing else; the 60-line ceiling stops the split from silently regrowing."""
     lines = inspect.getsource(power_analysis.main).splitlines()
     assert len(lines) <= 60, len(lines)
 
@@ -176,9 +148,7 @@ def test_main_is_a_short_orchestrator(power_analysis):
 def legacy_apply_corrections(pv, is_null, m, alpha):
     """The pre-split ``apply_corrections``, vendored verbatim from HEAD.
 
-    ``is_null`` was never read and ``m`` was always ``pv.shape[1]``; the three
-    sort-scatter idioms below are what one ``_stepup`` helper replaces. Kept
-    here so the rewrite is pinned to produce IDENTICAL rejections, procedure
+    Kept so the rewrite is pinned against identical rejections, procedure
     for procedure, rather than merely something plausible.
     """
     import numpy as np
@@ -212,21 +182,13 @@ def legacy_apply_corrections(pv, is_null, m, alpha):
 
 
 def test_apply_corrections_keeps_only_the_parameter_it_reads(multiplicity_sim):
-    """``apply_corrections(pv)``: ``is_null`` was never read and ``m`` was
-    always ``pv.shape[1]``, so a caller could pass a wrong ``m`` and get
-    silently mis-corrected p-values."""
+    """Drops `is_null` (never read) and `m` (always `pv.shape[1]`), so a wrong `m` can no longer silently mis-correct p-values."""
     assert list(inspect.signature(multiplicity_sim.apply_corrections)
                 .parameters) == ["pv"]
 
 
 def test_apply_corrections_is_unchanged_procedure_for_procedure(multiplicity_sim):
-    """Every procedure's rejection mask matches the vendored pre-split code.
-
-    The p-value families below straddle each procedure's step-up boundary:
-    all-null, all-significant, and a mixture with exact ties and values
-    exactly at a threshold, which is where a rewritten step-up is most likely
-    to be off by one rank.
-    """
+    """Matches the vendored pre-split code across all-null, all-significant, and boundary-tie families, where an off-by-one rank is most likely."""
     import numpy as np
 
     alpha = multiplicity_sim.ALPHA

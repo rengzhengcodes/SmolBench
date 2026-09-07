@@ -1,15 +1,13 @@
 """Acceptance tests for scripts/deduction/postcutoff_names.py.
 
-The script builds the provably post-cutoff mathlib4 declaration set between
-two commits. These tests pin the parts that decide *what lands in the
-artifact*: the namespace-aware Lean scanner, the deprecation/move filters,
-the Bors ``(#NNNNN)`` commit-message parser, the PR-date provenance filter
-and the JSON artifact shape.
+The script builds the provably post-cutoff mathlib4 declaration set between two
+commits; these tests pin what decides *what lands in the artifact*: the
+namespace-aware Lean scanner, deprecation/move filters, the Bors ``(#NNNNN)``
+commit-message parser, the PR-date provenance filter, and the JSON artifact shape.
 
-Everything here is offline. The provenance tests drive the real script
-against a throwaway *local* git repository built in ``tmp_path`` (so `git
-clone`, `git blame` and the commit walk are genuinely exercised) with the
-GitHub PR lookup replaced by an in-test stub; no test reaches the network.
+Everything here is offline: the provenance tests drive the real script against
+a throwaway local git repo built in ``tmp_path`` (so clone/blame/commit-walk run
+for real), with only the GitHub PR lookup replaced by an in-test stub.
 """
 
 import importlib.util
@@ -176,7 +174,7 @@ def test_deprecation_excluded_names_covers_alias_targets(sample_decls):
     # deprecated declarations and the targets of deprecated aliases go
     assert {"Alpha.deprecatedThm", "Alpha.oldName", "newName", "Alpha.newName",
             "Alpha.iffBackward", "someIff", "Alpha.someIff"} <= excluded
-    # a NON-deprecated alias must not drag its (real, live) target out
+    # a non-deprecated alias must not drag its (real, live) target out
     assert "Alpha.plainAlias" not in excluded
     assert "Alpha.inNamespace" not in excluded
     assert "inNamespace" not in excluded
@@ -337,10 +335,8 @@ def test_collect_normalised_lines_is_normalised(two_trees):
 # End-to-end: provenance, PR-date filter, artifact
 # ---------------------------------------------------------------------------
 #
-# These drive the real CLI against a throwaway local git repository, so the
-# clone, worktree, blame and commit-metadata code all run for real. Only the
-# single GitHub entry point (`fetch_pr_created_at`) is stubbed, which is also
-# the assertion that no other code path talks to the network.
+# Stubbing only `fetch_pr_created_at` also asserts that no other code path
+# talks to the network.
 
 TARGET_DATE = "2026-06-01"
 
@@ -369,7 +365,7 @@ REPO_A_NO_PR = REPO_A_LONG_LIVED.replace(
 )
 
 #: PR number -> GitHub ``created_at``. #200 was opened after the cutoff (its
-#: declaration is post-cutoff); #150 was opened BEFORE the cutoff and merged
+#: declaration is post-cutoff); #150 was opened before the cutoff and merged
 #: after it -- the case the whole PR-date filter exists for.
 STUB_PRS = {200: "2026-06-10T09:00:00Z", 150: "2026-05-20T09:00:00Z"}
 
@@ -419,7 +415,7 @@ def fake_mathlib(tmp_path_factory):
 
 @pytest.fixture
 def stub_pr_lookup(monkeypatch):
-    """Replace the ONE GitHub entry point; count its calls."""
+    """Replace the one GitHub entry point; count its calls."""
     calls = []
 
     def _fake(pr_number, token):
@@ -462,7 +458,7 @@ def test_artifact_top_level_shape(artifact):
 
 
 def test_pr_opened_before_the_target_date_is_dropped(artifact):
-    """#150 was merged after the cutoff but OPENED before it: not post-cutoff."""
+    """#150 was merged after the cutoff but opened before it: not post-cutoff."""
     data, _, _, _ = artifact
     assert "Old.longLived" not in data["decls"]
 

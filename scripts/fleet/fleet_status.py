@@ -1,10 +1,10 @@
 """List the family-ladder scaling study's live EC2 fleet, read-only.
 
-Companion to ``scripts/fleet/run_fleet.py`` (launches and monitors) and
-``scripts/fleet/fleet_teardown.py`` (terminates); both import it, as do
-analysis notebooks. Importing needs no AWS SDK -- boto3 is imported lazily
-inside `_default_client_factory`, never at module scope -- and tests inject a
-fake through `client_factory`.
+Companion to ``run_fleet.py`` (launches and monitors) and
+``fleet_teardown.py`` (terminates); both import it, as do analysis
+notebooks. Importing needs no AWS SDK: boto3 is imported lazily inside
+`_default_client_factory`, never at module scope, and tests inject a fake
+through `client_factory`.
 """
 
 from __future__ import annotations
@@ -21,35 +21,18 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    """Load ``scripts/fleet/_config.py`` by file path (see its docstring)."""
+    # Bootstrapped by hand: load_module_by_path lives on _config itself,
+    # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
-        path = Path(__file__).resolve().parent / "_config.py"
-        spec = importlib.util.spec_from_file_location(_CONFIG_MODULE_NAME, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_CONFIG_MODULE_NAME] = module
+        spec = importlib.util.spec_from_file_location(
+            _CONFIG_MODULE_NAME, Path(__file__).resolve().parent / "_config.py")
+        sys.modules[_CONFIG_MODULE_NAME] = module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     return module
 
 
-# By file path, not a bare `import _config`: `scripts/fleet` has no
-# `__init__.py` (it is not a package), and every module in it is already
-# loaded under a private module name by its own callers (see this file's own
-# module docstring, and `_config.py`'s), so a bare import name is ambiguous
-# or absent from `sys.path`.
 _config = _load_fleet_config()
-
-#: Every lane's EC2 experiment tag is ``f"{SCALING_TAG_PREFIX}{spec_key}"``
-#: (see ``run_fleet.Lane.experiment_tag``). Sourced from `_config`, the ONE
-#: place this prefix is declared for every fleet script that needs it,
-#: including `run_fleet.py`. Reading from the same file, rather than each
-#: module spelling its own literal, is what makes the two unable to drift
-#: apart.
-SCALING_TAG_PREFIX = _config.SCALING_TAG_PREFIX
-#: Every region a lane might have provisioned in. Sourced from `_config` --
-#: see the note on `SCALING_TAG_PREFIX` just above; tier D's override still
-#: spans the same three regions.
-STATUS_REGIONS: tuple[str, ...] = _config.REGION_TUPLE
 
 
 def _default_client_factory(region: str) -> Any:
@@ -60,38 +43,22 @@ def _default_client_factory(region: str) -> Any:
 
 
 def fleet_rows(
-    regions: Sequence[str] = STATUS_REGIONS,
-    tag_prefix: str = SCALING_TAG_PREFIX,
+    regions: Sequence[str] = _config.REGION_TUPLE,
+    tag_prefix: str = _config.SCALING_TAG_PREFIX,
     client_factory: Optional[Callable[[str], Any]] = None,
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
 
-    Parameters
-    ----------
-    client_factory : Callable[[str], Any] or None, optional
-        Region name -> object exposing ``describe_instances(**kwargs)``; ``None``
-        uses `_default_client_factory`. The seam that makes this testable with no
-        AWS SDK (``tests/tooling/test_run_fleet.py`` injects a stub factory).
+    client_factory: `None` uses `_default_client_factory`, the seam tests
+    use to stub in a fake with no AWS SDK. Returns one dict per instance
+    with exactly region/experiment_tag/lane/instance_id/instance_type/
+    availability_zone/state/launch_time/age_hours -- `format_fleet_table`
+    relies on this exact set.
 
-    Returns
-    -------
-    list[dict]
-        One dict per instance, with exactly these keys: `region`,
-        `experiment_tag`, `lane` (the tag minus `tag_prefix`), `instance_id`,
-        `instance_type`, `availability_zone`, `state`, `launch_time` (raw
-        ``datetime``, or ``None`` if EC2 reported none) and `age_hours` (float,
-        against ``datetime.now(timezone.utc)`` at call time; ``0.0`` when
-        `launch_time` is ``None``).
-
-    Notes
-    -----
-    Only ``running``/``pending`` are queried -- the LIVE fleet, and what
-    ``fleet_teardown.py --terminate`` reads to decide what to kill. The
-    `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept a
-    trailing ``*``), so this never lists the whole account, and re-checked
-    CLIENT-SIDE so a regression there still cannot let a sibling experiment's
-    instances leak in. A region that raises (no credentials, disabled region,
-    throttle) is logged and skipped, so one bad region cannot hide the rest.
+    `tag_prefix` is applied server-side (EC2 tag filters accept a trailing
+    ``*``) and re-checked client-side, so a regression in one can't leak a
+    sibling experiment's instances in. A region that raises (no
+    credentials, disabled, throttled) is logged and skipped.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -145,22 +112,14 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
     line, so an empty fleet and a broken query read differently to the operator.
     """
     if not rows:
-        return f"fleet_status: no {SCALING_TAG_PREFIX}* instances found in any region.\n"
+        return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"
 
     columns = ("lane", "instance_id", "instance_type", "availability_zone", "state", "age", "region")
-    formatted_rows = []
-    for row in rows:
-        formatted_rows.append(
-            {
-                "lane": str(row.get("lane", "?")),
-                "instance_id": str(row.get("instance_id", "?")),
-                "instance_type": str(row.get("instance_type", "?")),
-                "availability_zone": str(row.get("availability_zone", "?")),
-                "state": str(row.get("state", "?")),
-                "age": f"{row.get('age_hours', 0.0):.1f}h",
-                "region": str(row.get("region", "?")),
-            }
-        )
+    # No `.get` defaults: fleet_rows is the only producer and guarantees these keys.
+    formatted_rows = [
+        {c: f"{row['age_hours']:.1f}h" if c == "age" else str(row[c]) for c in columns}
+        for row in rows
+    ]
 
     widths = {c: len(c) for c in columns}
     for formatted in formatted_rows:
@@ -175,11 +134,7 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Print the live fleet table; always returns ``0``.
-
-    No flags: `fleet_rows`'s defaults cover every region this study could have
-    provisioned in, and it logs and skips a region that fails to describe.
-    """
+    """Print the live fleet table; always returns ``0``. No flags."""
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."
     )

@@ -1,20 +1,16 @@
 """A verifier that verifies nothing -- for generation-only sweeps with no Lean toolchain.
 
-`runner.sweep` / `runner.run_cell` reach Lean only through an injected
-`verifier`, so ``sweep(config, run_dir, verifier=NullVerifier())`` runs phase 1
--- call the model, write every row -- with no `lean_interact`, no elan, and no
-built mathlib4 checkout for ``SMOLBENCH_MATHLIB_ROOT`` to point at. Phase 2
-(replaying the recorded tails against a real Lean REPL session) is a separate
-pass, not implemented here.
+Injected into `runner.sweep`/`run_cell` as ``verifier=NullVerifier()``: phase 1
+(call the model, write every row) then needs no `lean_interact`, elan, or
+mathlib4 checkout. Phase 2 (replaying tails against a real Lean REPL) is a
+separate pass, not implemented here.
 
-Never import `smolbench.deduction.lean.verify` here, even lazily inside a method
-body: that module's unconditional top-level ``import lean_interact`` raises
-`ImportError` wherever `lean_interact` is absent. Hence the local mirror
-dataclasses.
+Never import `smolbench.deduction.lean.verify` here, even lazily: its
+unconditional top-level ``import lean_interact`` raises `ImportError` wherever
+`lean_interact` is absent. Hence the local mirror dataclasses.
 
-``"skipped"``, the only verdict `replay_ground_truth` produces, is deliberately
-absent from `runner.SANITY_FAILURE_VERDICTS`: this module never replays, so it
-cannot claim a ground truth failed, and suppressing those theorems would leave a
+``"skipped"`` is deliberately absent from `runner.SANITY_FAILURE_VERDICTS`:
+this module never replays, so suppressing those theorems would leave a
 generation-only sweep with zero cells.
 """
 
@@ -35,17 +31,13 @@ class NullReplayResult:
     `runner.py`'s per-theorem sanity-row code works unchanged.
     """
 
-    #: The theorem's `full_name`.
     theorem: str
     #: Always ``"skipped"``: replay was not attempted.
     verdict: str
-    #: Always ``0``.
     tactics_applied: int
     #: ``len(bt.traced_tactics)``, for parity though no tactics were run.
     tactics_total: int
-    #: Always ``None``.
     error: str | None = None
-    #: Always ``None``.
     final_state_pp: str | None = None
 
 
@@ -54,22 +46,16 @@ class NullProofResult:
     """Placeholder outcome of a (never-attempted) proof-tail verification.
 
     Field-for-field mirror of `verify.ProofResult`, so `runner.py`'s
-    generation-exception handlers can construct one exactly as they construct a
-    real `ProofResult`, bypassing `try_tail`/`verify_proof_tail`. `verdict` is
-    therefore NOT restricted to ``"unverified"``; only this module's own methods
-    always set that.
+    exception handlers can construct one without importing `verify`.
+    `verdict` is therefore not restricted to ``"unverified"`` -- only this
+    module's own methods always set that.
     """
 
-    #: The theorem's `full_name`.
     theorem: str
-    #: ``"unverified"`` from this module's own methods; `runner.py`'s exception
-    #: handlers may construct any other verdict (see the class docstring).
     verdict: str
     #: The candidate tail that was (not) attempted, recorded for parity.
     tail_tried: str
-    #: Always ``None`` from this module's own methods; `runner.py` may set it.
     error: str | None = None
-    #: Always ``None``.
     final_state_pp: str | None = None
 
 
@@ -85,17 +71,12 @@ class NullVerifier:
     including across the runner's concurrent-generation worker threads.
     """
 
-    #: See `NullProofResult`; `runner.py` calls it as `verifier.ProofResult(...)`.
-    #: A class attribute that is itself a class is not a descriptor, so no implicit
-    #: `self` is injected -- matching the real `verify` module's plain function.
+    #: A class attribute that is itself a class is not a descriptor, so
+    #: `runner.py` can call `verifier.ProofResult(...)` with no implicit `self`.
     ProofResult = NullProofResult
 
     def replay_ground_truth(self, bt: BenchmarkTheorem, timeout: int = 600) -> NullReplayResult:
-        """Report that the ground-truth sanity replay was not attempted.
-
-        Returns ``verdict="skipped"``, which deliberately does not trip
-        `runner.sweep`'s per-theorem sanity gate (see the module docstring).
-        """
+        """Report that the ground-truth sanity replay was not attempted."""
         return NullReplayResult(
             theorem=bt.full_name,
             verdict="skipped",
@@ -110,14 +91,12 @@ class NullVerifier:
     ) -> Iterator[tuple[None, None]]:
         """Yield ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
 
-        (The real `verify.open_at_step` now yields a
-        `replbackend.ReplSession` as that first element, not a LeanDojo
-        ``Dojo``; the parameter name is kept because `runner.py` calls
-        `try_tail` positionally.)
+        The real `verify.open_at_step` yields a `replbackend.ReplSession` as
+        that first element, not a LeanDojo ``Dojo``; the parameter name is
+        kept because `runner.py` calls `try_tail` positionally.
 
         Unlike `verify.open_at_step`, never raises `ValueError` for out-of-range
-        `k` -- there is no prefix to replay. The `contextmanager` wrapping exists
-        only for `runner.py`'s ``with ... as (dojo, state):`` protocol.
+        `k` -- there is no prefix to replay.
         """
         yield None, None
 

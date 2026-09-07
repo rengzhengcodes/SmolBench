@@ -1,46 +1,14 @@
 """KV-cache sizing for the family-ladder roster.
 
-A naive figure assuming every layer holds full-context KV is wrong for two
-thirds of the roster: five attention mechanisms shrink KV by 4-25x, and tp
-replication grows it. Per layer, per token of effective context, at BF16:
+A naive figure assuming every layer holds full-context KV is wrong for most of
+the roster: sliding, linear-attention, hybrid, MLA and shared-latent layers
+each shrink KV differently, and tp replication grows it back except for MLA
+and shared-latent layers (see `kv_bytes`, `_layer_mix`, `_is_shared_latent`).
 
-* **full attention**: ``2 * n_kv * head_dim * 2`` bytes.
-* **sliding/local layers**: the same, over ``min(ctx, sliding_window)`` tokens
-  (Gemma-4: 40 of 48 layers at window 1024; EXAONE's ``LLLG`` at 4096).
-* **linear-attention layers**: ~0 -- constant state, not ctx-proportional KV
-  (Qwen3.5-27B: 48 of 64 layers; NemotronH's Mamba-2 mixers).
-* **hybrid layer stacks**: NemotronH's ``hybrid_override_pattern`` names one
-  mixer per layer -- ``*`` attention, ``M`` Mamba-2, ``-``/``E`` an MLP/MoE-only
-  layer with no attention block. Only ``*`` caches KV: 4 of 42, 6 of 52, 8 of 88.
-* **Gemma-4's two attention blocks**: global (``full_attention``) layers use
-  ``global_head_dim`` 512 and ``num_global_key_value_heads``, sliding layers
-  ``head_dim`` 256 and ``num_key_value_heads`` -- so head geometry is per layer,
-  not per model. The last ``num_kv_shared_layers`` layers reuse an earlier
-  layer's KV and allocate none (E2B: 20 of 35). ``attention_k_eq_v`` does not
-  halve anything: both K and V are written, so the ``x2`` stands.
-* **MLA**: ``(kv_lora_rank + qk_rope_head_dim) * 2``, one latent per token
-  instead of ``n_kv_heads * head_dim`` (GLM-4.7-Flash, DeepSeek-V3.1).
-* **DeepSeek-V4's shared latent**: ``(head_dim + qk_rope_head_dim) * 2``, one
-  row per token shared by K and V -- no ``kv_lora_rank`` field, but the same
-  "one row, no per-head replication" shape as MLA (see `_is_shared_latent`).
-* vLLM **replicates KV heads when tp exceeds a layer's KV-head count**,
-  multiplying that layer's non-MLA, non-shared-latent KV by
-  ``max(1, tp / n_kv)``: Gemma-4-12B's 1-head global layers replicate at tp=4
-  while its 8-head sliding layers do not. DeepSeek-V4's single KV head does
-  *not* replicate this way -- there is one shared row per token per layer, not
-  one per KV head, so a tp shard cannot be "a per-head copy".
-
-The layer mix comes from ``hybrid_override_pattern`` (a per-layer string), else
-``layer_types`` (a list), else ``sliding_window_pattern`` (a cycling string,
-``L`` local / ``G`` global), else every layer counts as full attention; a bare
-``sliding_window`` with neither mix field is deliberately NOT applied (see
-`_layer_mix`).
-
-For box sizing, budget ``weights + 2.0 x KV@131k`` (about 8 concurrent
-requests) against ``0.90 x total VRAM``; a box sized for one sequence goes
-negative at real concurrency. Weight sizes come from checkpoint shard totals,
-not this tool. ``kv_budget.py [--ctx 131072]`` prints, per roster model, the
-naive figure against the corrected one at tp=1 and at the deploy spec's tp.
+Box sizing budgets ``weights + 2.0 x KV@131k`` (about 8 concurrent requests)
+against ``0.90 x total VRAM``, since sizing for one sequence goes negative at
+real concurrency. ``kv_budget.py [--ctx 131072]`` prints, per roster model,
+the naive figure against the corrected one at tp=1 and at the deploy spec's tp.
 """
 
 from __future__ import annotations
@@ -57,9 +25,8 @@ _CONFIGS = _HERE / "arch_configs_raw.json"
 BYTES_BF16 = 2
 DEFAULT_CTX = 131072
 
-# NemotronH ``hybrid_override_pattern`` alphabet, one character per layer.
-# 'M' Mamba-2 is a linear mixer (constant state); '-' (dense MLP) and 'E' (MoE)
-# layers carry no attention block at all, so neither kind holds KV.
+# NemotronH's per-layer alphabet: 'M' Mamba-2 has constant state, '-'/'E'
+# (MLP/MoE) carry no attention block -- neither holds KV.
 _HYBRID_KINDS = {"*": "full", "M": "linear", "-": "none", "E": "none"}
 
 # Kinds that allocate no ctx-proportional KV cache.
@@ -114,10 +81,9 @@ def _layer_mix(cfg: Dict[str, Any]) -> List[str]:
             "sliding" if pattern[i % len(pattern)] == "L" else "full"
             for i in range(n_layers)
         ]
-    # NOT a bug: a bare ``sliding_window`` with neither mix field is ignored.
+    # A bare ``sliding_window`` with neither mix field is deliberately ignored:
     # DeepSeek-V4 carries ``sliding_window=128`` as CSA/HCA scaffolding while
-    # keeping full-length KV; applying it would shrink KV ~1000x and size boxes
-    # that OOM at serve.
+    # keeping full-length KV; applying it would undersize the box and OOM it.
     return ["full"] * n_layers
 
 
@@ -138,11 +104,9 @@ def _kv_layers(cfg: Dict[str, Any]) -> List[str]:
 def _layer_kv_shape(cfg: Dict[str, Any], kind: str) -> Tuple[int, int]:
     """Return ``(kv_heads, head_dim)`` for one layer of mixer `kind`.
 
-    Gemma-4 is the only roster family whose two attention blocks differ: its
-    global layers cache ``global_head_dim`` 512 rows over
-    ``num_global_key_value_heads``. E2B leaves that head count null (and the
-    override is gated on ``attention_k_eq_v``, false there), so it falls back to
-    ``num_key_value_heads`` -- both readings give the same figure.
+    Gemma-4's global layers cache ``global_head_dim`` 512 rows over
+    ``num_global_key_value_heads``; E2B leaves that head count null, so it
+    falls back to ``num_key_value_heads`` -- both readings give the same figure.
     """
     n_heads = cfg["num_attention_heads"]
     n_kv = cfg.get("num_key_value_heads") or n_heads
@@ -157,31 +121,15 @@ def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
     """Return whether `cfg` describes DeepSeek-V4's shared-latent KV cache.
 
     DeepSeek-V4 caches one ``head_dim + qk_rope_head_dim``-wide row per token
-    per layer, shared by K and V, with no per-head replication -- structurally
-    close to MLA, but keyed under different fields (no ``kv_lora_rank``).
+    per layer, shared by K and V, with no per-head replication -- close to MLA
+    but keyed under different fields (no ``kv_lora_rank``).
 
-    Two independent readings are OR-ed together so a later V4 point release
-    that renames ``model_type`` still lands on the right arithmetic:
-
-    * the label reading -- ``model_type == "deepseek_v4"``;
-    * the structural reading -- a single KV head (``num_key_value_heads == 1``)
-      with a rope split (``qk_rope_head_dim`` present) but *no* MLA latent rank.
-
-    The ``kv_lora_rank is None`` clause in the structural reading is load-
-    bearing: a config *with* ``kv_lora_rank`` set is ordinary MLA (DeepSeek-V3.1,
-    GLM-4.7-Flash) and must fall to the existing MLA branch in `kv_bytes`, not
-    be stolen here just because it also happens to have one KV head and a rope
-    split.
-
-    Parameters
-    ----------
-    cfg : dict
-        The (text) config block for one checkpoint.
-
-    Returns
-    -------
-    bool
-        True if the shared-latent branch applies to this config.
+    Two independent readings are OR-ed so a later point release that renames
+    ``model_type`` still lands on the right arithmetic: the label
+    (``model_type == "deepseek_v4"``) and the structure (one KV head, a rope
+    split, no MLA latent rank). The ``kv_lora_rank is None`` clause matters: a
+    config that also sets ``kv_lora_rank`` is ordinary MLA (DeepSeek-V3.1,
+    GLM-4.7-Flash) and must fall to `kv_bytes`'s MLA branch instead.
     """
     if cfg.get("model_type") == "deepseek_v4":
         return True
@@ -195,23 +143,12 @@ def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
     """Total KV-cache bytes for one sequence of `ctx` tokens, over all layers and tp shards.
 
-    Parameters
-    ----------
-    cfg : dict
-        The (text) config block for one checkpoint.
-    tp : int
-        Tensor-parallel degree. For models that are neither MLA nor
-        shared-latent (see `_is_shared_latent`) KV heads replicate when
-        ``tp > n_kv``, multiplying a layer's total by ``tp / n_kv``. Applied per
-        layer, because Gemma-4's two blocks hold different KV-head counts.
-    naive : bool
-        Assume every layer holds full-context GQA KV at the model-level head
-        geometry -- the uncorrected comparison column.
-
-    Returns
-    -------
-    int
-        Replication only ever raises the total above the tp=1 figure.
+    tp: for models that are neither MLA nor shared-latent, KV heads replicate
+        when ``tp > n_kv``, applied per layer since Gemma-4's two blocks hold
+        different KV-head counts (see `_is_shared_latent`); this only ever
+        raises the total above the tp=1 figure.
+    naive: assume every layer holds full-context GQA KV at the model-level
+        head geometry -- the uncorrected comparison column.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]
@@ -225,13 +162,8 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
         return per_token * ctx * n_layers
 
     if _is_shared_latent(cfg) and not naive:
-        # DeepSeek-V4: one (head_dim + qk_rope_head_dim)-wide row per token per
-        # layer, shared by K and V -- no ``2 *`` (there is no separate K and V
-        # to double) and no tp replication (one row per token, not one per KV
-        # head, so a tp shard is not "a per-head copy"; see `_replication`).
-        # Hand check for deepseek-v4-pro: 61 layers x (512 + 64) x 2 B x
-        # 131072 tokens = 9.21 GB, against 16.37 GB naive at tp=1 and 131.0 GB
-        # on the old (wrong) replicated-at-tp=8 GQA reading this fix removes.
+        # One row per token per layer, shared by K and V: no ``2 *``, and no tp
+        # replication since a shard isn't "a per-head copy" here.
         per_token = (head_dim + cfg.get("qk_rope_head_dim", 0)) * BYTES_BF16
         return per_token * ctx * n_layers
 

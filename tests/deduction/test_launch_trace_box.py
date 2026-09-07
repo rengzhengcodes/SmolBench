@@ -1,25 +1,21 @@
-"""Offline acceptance tests for scripts/deduction/launch_trace_box.sh (13-15).
+"""Offline acceptance tests for scripts/deduction/launch_trace_box.sh.
 
-The launcher's whole job is to emit an EC2 user-data script, so the guarantees
-worth pinning are properties OF THAT EMITTED TEXT plus the order of the AWS
-calls around it. Both are checked by running the real script with a fake ``aws``
-first on ``PATH``: no credentials, no network, no instance, and the fake records
-every argv it is handed -- including the ``--user-data`` blob, which is the
-artifact the review finding was actually about.
+The launcher's job is to emit an EC2 user-data script, so what's pinned is
+properties of that emitted text plus the order of the AWS calls around it,
+checked by running the real script with a fake ``aws`` first on ``PATH`` (no
+credentials, no network, no instance) that records every argv it is handed,
+including the ``--user-data`` blob.
 
 What is pinned, and why:
 
-* **The GitHub token never reaches the instance as a value.** The prior revision
-  interpolated ``$GITHUB_ACCESS_TOKEN`` into the unquoted heredoc AND into a
-  ``su ubuntu -c "... GITHUB_ACCESS_TOKEN='...' ..."`` argv. User-data is
-  readable from the EC2 console and is not secret storage; a ``-c`` argv is
-  readable from ``ps``. These tests export a sentinel token into the launcher's
-  own environment and assert it appears nowhere in what the launcher emits.
-* **The token is resolved on the box, from SSM, decrypted.** Only the parameter
-  NAME travels.
-* **``run-instances`` is guarded by a ``describe-instances`` check on the tag,**
-  filtered to pending/running so a terminated box from a prior trace of the same
-  commit cannot block a relaunch.
+* The GitHub token never reaches the instance as a value -- user-data is
+  readable from the EC2 console and a ``-c`` argv is readable from ``ps``, so
+  these tests export a sentinel token and assert it appears nowhere emitted.
+* The token is resolved on the box, from SSM, decrypted; only the parameter
+  name travels.
+* ``run-instances`` is guarded by a ``describe-instances`` check on the tag,
+  filtered to pending/running so a terminated box from a prior trace of the
+  same commit cannot block a relaunch.
 """
 
 from __future__ import annotations
@@ -33,8 +29,8 @@ from tests._paths import SCRIPTS
 
 SCRIPT = SCRIPTS / "deduction" / "launch_trace_box.sh"
 
-#: Written into the launcher's environment under the OLD variable name. If any
-#: of it survives into the emitted user-data, the review finding is not fixed.
+#: Written into the launcher's environment under the old variable name; must
+#: not survive into the emitted user-data.
 SENTINEL = "ghp_SENTINEL_TOKEN_MUST_NOT_LEAK_0123456789"
 
 
@@ -42,13 +38,11 @@ SENTINEL = "ghp_SENTINEL_TOKEN_MUST_NOT_LEAK_0123456789"
 def fake_aws(tmp_path):
     """Put a recording ``aws`` stub first on PATH; yield the call-log directory.
 
-    The stub appends one line per invocation to ``calls.log`` (subcommand only,
-    for ordering) and dumps each invocation's full argv to its own
-    ``argv.<n>`` file, NUL-separated, so a test can inspect the ``--user-data``
-    blob verbatim without shell-quoting games -- and, crucially, without a
-    newline-separated dump splitting that multi-line blob across records.
-    ``describe-instances`` answers ``None`` -- awscli's ``--output text``
-    spelling for "no match" -- so the launcher proceeds to launch.
+    The stub logs each invocation's subcommand (for ordering) and dumps its
+    full argv NUL-separated to its own ``argv.<n>`` file, so a multi-line
+    ``--user-data`` blob can be inspected verbatim without a newline-separated
+    dump splitting it across records. ``describe-instances`` answers
+    ``None`` -- awscli's "no match" -- so the launcher proceeds to launch.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -93,11 +87,9 @@ def test_script_parses():
 
 
 def test_dry_run_needs_no_aws_at_all(tmp_path):
-    """The plan prints with an EMPTY environment and no `aws` binary on PATH.
-
-    `env -i` with a minimal PATH is the check: it proves the dry-run makes no
-    AWS call whatsoever (the AMI lookup is skipped and printed unresolved),
-    which is what makes this script reviewable without an account.
+    """The plan prints with an empty environment and no `aws` binary on PATH,
+    proving the dry-run makes no AWS call at all (the AMI lookup is skipped
+    and printed unresolved) -- reviewable without an account.
     """
     proc = subprocess.run(
         ["env", "-i", "PATH=/usr/bin:/bin", f"HOME={tmp_path}",
@@ -110,12 +102,8 @@ def test_dry_run_needs_no_aws_at_all(tmp_path):
 
 
 def test_token_value_never_reaches_the_user_data(fake_aws):
-    """13-15: the emitted user-data carries the SSM parameter NAME, never a token.
-
-    Was: the unquoted heredoc expanded ``$GITHUB_ACCESS_TOKEN`` into user-data
-    and into the ``su ubuntu -c`` command string, so the token was readable
-    from the EC2 console and from ``ps`` on the box. Now the box resolves it
-    itself, through its instance role.
+    """The emitted user-data carries the SSM parameter name, never a token
+    value -- the box resolves the token itself, through its instance role.
     """
     workdir, bindir = fake_aws
     proc = _run(bindir)
@@ -139,11 +127,8 @@ def test_token_value_never_reaches_the_user_data(fake_aws):
 
 
 def test_launcher_env_token_is_not_required(fake_aws):
-    """The launcher no longer needs the token in its own environment.
-
-    The old `: "${GITHUB_ACCESS_TOKEN:?...}"` guard made an operator export the
-    secret on the workstation that runs this script; the whole point of moving
-    to SSM is that nothing but the instance ever holds it.
+    """The launcher no longer needs the token in its own environment: the
+    point of moving to SSM is that nothing but the instance ever holds it.
     """
     workdir, bindir = fake_aws
     env = dict(os.environ)
@@ -156,10 +141,10 @@ def test_launcher_env_token_is_not_required(fake_aws):
 
 
 def test_describe_instances_guards_run_instances(fake_aws):
-    """13-15: an in-flight box for this commit's tag stops a second launch.
+    """An in-flight box for this commit's tag stops a second launch.
 
     Three properties, because only the combination is the fix: the check runs
-    BEFORE `run-instances`; it filters on instance-state-name so a terminated
+    before `run-instances`; it filters on instance-state-name so a terminated
     box from a prior trace of the same commit does not block a relaunch; and
     `--force` skips it.
     """

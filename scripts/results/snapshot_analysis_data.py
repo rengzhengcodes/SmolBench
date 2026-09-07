@@ -1,28 +1,17 @@
 """Publish an analysis-ready snapshot of the family-ladder study to S3.
 
-Every byte already lives in S3, but in the layout the RUNNERS wanted
-(``induction/<model>/seed=<s>/<arm>--<ts>.yaml`` versus
-``<deduction-prefix>/scaling_<model>/...``, where ``<deduction-prefix>``
-defaults to the re-collection's `runner.spool_prefix()` and is overridable via
-``--spool-prefix`` -- the published pre-cutoff study lives at
-``deduction/runs``), so a model's two legs sit under different names,
-deduction a level deeper. Republished as analysis reads them:
+Every byte already lives in S3, but under the layout the runners wanted, with
+induction and deduction legs named differently and deduction a level deeper.
+Republished under one shared ``<dest>/<leg>/<model>/...`` layout that analysis
+reads, plus ``<dest>/provenance/*.md`` (how to read the rows) and
+``<dest>/MANIFEST.json`` (computed counts only, no prose).
 
-    <dest>/induction/<model>/seed=<s>/<arm>--<ts>.yaml
-    <dest>/deduction/<model>/verified_rows.jsonl    # the analysis input
-    <dest>/deduction/<model>/all_rows.jsonl         # raw candidates, pre-verification
-    <dest>/deduction/<model>/server_config.yaml     # hardware provenance
-    <dest>/deduction/<model>/theorems/...           # prompts + per-theorem outputs
-    <dest>/provenance/*.md                          # incl. SNAPSHOT_NOTES.md: how to read the rows
-    <dest>/MANIFEST.json                            # purely computed -- byte counts, no prose notes
+A snapshot, not a move: no source object is modified or deleted. Re-runs
+resume, skipping a destination object already present at a matching size, and
+every copy is verified against its source size. Copies run server-side, so
+~4.5 GB across ~55k objects never transits this host.
 
-A SNAPSHOT, NOT A MOVE: no source object is ever modified or deleted (the study
-bucket is an append-only experiment log); everything is written under ``--dest``.
-Re-runs resume, skipping any destination object already present at a matching
-size, and every copy's size is verified against its source before being counted.
-Copies run SERVER-SIDE, so ~4.5 GB across ~55k objects never transits this host.
-
-``*_SUPERSEDED-*``, ``*_STALE-*`` and ``*_BROKEN-*`` files are copied on purpose:
+``*_SUPERSEDED-*``/``*_STALE-*``/``*_BROKEN-*`` files are copied on purpose:
 they are the repair audit trail, and their names say they are not current data.
 
     scripts/results/snapshot_analysis_data.py [--dry-run] [--dest analysis/2026-08-16]
@@ -40,22 +29,15 @@ from smolbench.evals.results_store import resolve_results_location
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# NOTE: no bucket literal here. `main` resolves the bucket at call time via
-# `resolve_results_location()` (the same seam `provision_results_bucket.py`
-# and `audit_run_completeness.py` use), so a redirected `SMOLBENCH_RESULTS_S3`
-# is honored instead of silently missing this script. `iter_source_keys` and
-# `copy_one` each take `bucket` explicitly rather than reaching for a module
-# global.
+# No bucket literal here: `main` resolves it at call time via
+# `resolve_results_location()`, so a redirected `SMOLBENCH_RESULTS_S3` is
+# honored instead of silently missed. `iter_source_keys`/`copy_one` take
+# `bucket` explicitly rather than reaching for a module global.
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents copied alongside the data, so the snapshot explains
-#: itself: README.md indexes the tree, ARCHIVE.md locates the archived docs,
-#: and SNAPSHOT_NOTES.md documents how to READ the rows (verdict semantics,
-#: the earliest-surviving-row rule, and this dataset's measured counts). That
-#: last doc replaces the manifest's old `notes` field: it is a dated,
-#: version-controlled document that gets copied next to the data, instead of
-#: one dataset's measured counts being re-emitted as literal prose on every
-#: run regardless of `--dest`/`--spool-prefix`.
+#: itself. Kept as documents rather than `MANIFEST.json` fields: dataset-specific
+#: measured counts belong in a dated, version-controlled document, not code.
 PROVENANCE_DOCS = (
     "notebooks/README.md",
     "notebooks/ARCHIVE.md",
@@ -76,26 +58,9 @@ def iter_source_keys(
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
     The deduction leg carries a ``scaling_`` prefix, stripped here so both legs
-    of a model share one name.
-
-    Parameters
-    ----------
-    bucket : str
-        Bucket to list, keyword-only alongside `deduction_prefix` so a caller
-        cannot pass it positionally and mix it up with `client`. Read from a
-        parameter, not a module constant, so `main`'s
-        ``resolve_results_location()`` result (which may point at a
-        redirected ``SMOLBENCH_RESULTS_S3`` bucket) is what actually gets
-        listed.
-    deduction_prefix : str, optional
-        S3 key prefix the deduction leg lives under, WITH a trailing "/".
-        ``None`` (the default) resolves it lazily via `runner.spool_prefix()`
-        -- a key prefix is CONFIGURATION, not audited logic, so importing the
-        single source of truth for it here is not a hazard; `main` always
-        resolves it once (also via a lazy import) and passes it down
-        explicitly, so a caller reading the published pre-cutoff study passes
-        ``"deduction/runs/"`` explicitly. This default only backstops a
-        direct caller that omits it.
+    of a model share one name. `bucket` is a parameter, not a module constant,
+    so a redirected ``SMOLBENCH_RESULTS_S3`` is honored. `deduction_prefix`
+    defaults to `runner.spool_prefix()`; `main` always passes it explicitly.
     """
     if deduction_prefix is None:
         from smolbench.deduction.lean.runner import spool_prefix
@@ -123,29 +88,10 @@ def iter_source_keys(
 def copy_one(client, bucket: str, src_key: str, dest_key: str, size: int) -> str:
     """Copy one object server-side within `bucket`, and verify its size.
 
-    Parameters
-    ----------
-    bucket : str
-        Bucket holding both `src_key` and `dest_key`. Positional, right after
-        `client`: it mirrors the ``(Bucket, Key)`` argument order of every S3
-        call it wraps below, and this function has exactly one call site
-        (inside `main`), so there is no ambiguity to buy back with a keyword.
-        This is a WITHIN-BUCKET copy -- source and destination are the SAME
-        resolved bucket, which is why one resolved name serves both
-        `CopySource` and the destination `Bucket`.
-    size : int
-        Expected source size in bytes: decides whether an already-present
-        destination object can be skipped.
-
-    Returns
-    -------
-    str
-        ``"skipped"`` or ``"copied"``.
-
-    Raises
-    ------
-    RuntimeError
-        The copied object's size does not match `size`.
+    A within-bucket copy: source and destination are the same resolved bucket.
+    `size` (the expected source size) decides whether an already-present
+    destination object can be skipped. Returns ``"skipped"`` or ``"copied"``;
+    raises `RuntimeError` if the copied object's size doesn't match.
     """
     try:
         head = client.head_object(Bucket=bucket, Key=dest_key)
@@ -175,27 +121,19 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
         "--spool-prefix", default=None,
-        help="S3 key prefix the deduction leg spooled under (default: the "
-             "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
-             "deduction_postcutoff/runs if unset). The published pre-cutoff "
-             "study lives at deduction/runs; pass that explicitly to "
-             "snapshot it (no env opt-in needed on this read-only path).",
+        help="S3 key prefix the deduction leg spooled under (default: "
+             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    # Resolved AFTER parse_args, not at import or parser-build time -- a
-    # module-level `spool_prefix()` call, or an eagerly-evaluated argparse
-    # default, would make `LEAN_SPOOL_PREFIX=deduction/runs --help` explode.
+    # Resolved after parse_args, so `--help` never has to run `spool_prefix()`.
     from smolbench.deduction.lean.runner import spool_prefix
 
     deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
 
-    # Resolved at call time, same as `runner.spool_prefix()` above: this is
-    # the study bucket (via SMOLBENCH_RESULTS_S3, or the account default), and
-    # source/destination are the SAME bucket -- a within-bucket server-side
-    # copy -- so one resolved name threads through every call below instead of
-    # a module-level literal that would silently miss a redirected bucket.
+    # Source and destination are the same bucket (a within-bucket server-side
+    # copy), resolved here so a redirected SMOLBENCH_RESULTS_S3 isn't missed.
     bucket, _base_prefix = resolve_results_location()
 
     client = _s3()
@@ -220,9 +158,8 @@ def main() -> int:
         logging.info("--dry-run: nothing written.")
         return 0
 
-    # Each copy is two S3 round trips (copy, then verify), so 55k objects
-    # serially would be ~5 hours of pure latency; the work is entirely network
-    # wait, so threads are the right tool.
+    # Two S3 round trips per copy (copy, then verify) is pure network wait, so
+    # threads are the right tool for 55k objects.
     counts = collections.Counter()
     done = 0
 
@@ -239,10 +176,8 @@ def main() -> int:
             if done % 5000 == 0:
                 logging.info(f"  {done}/{total_objects} ... ({dict(counts)})")
 
-    # Track the provenance keys we actually WROTE, not `PROVENANCE_DOCS` itself:
-    # the copy loop below already skips a doc that doesn't exist on disk, and
-    # the manifest must agree with what was actually copied -- so a missing
-    # doc is visible in MANIFEST.json rather than silently claimed as present.
+    # Tracks keys actually written, not `PROVENANCE_DOCS` itself, so a doc
+    # missing from disk is visible in MANIFEST.json instead of claimed present.
     provenance_keys: List[str] = []
     for doc in PROVENANCE_DOCS:
         path = REPO_ROOT / doc
@@ -255,17 +190,9 @@ def main() -> int:
             counts["provenance"] += 1
             provenance_keys.append(dest_key)
 
-    # NOTE: no `notes` field. Every other field here is computed from the
-    # walk this run actually did; the previous `notes` list instead asserted
-    # one specific dataset's measured multi-attempt-cell and
-    # verification-failure counts verbatim for any `--dest`/`--spool-prefix`,
-    # which is wrong for any snapshot other than the one they were measured
-    # on. The reading rules -- both the parts that are invariant rules and the
-    # parts that are that dataset's measured findings -- now live in a dated,
-    # version-controlled document (`notebooks/deduction/analysis/
-    # SNAPSHOT_NOTES.md`) that is copied next to the data via
-    # `PROVENANCE_DOCS`/`provenance_keys` above, instead of being re-emitted
-    # as literals here.
+    # No `notes` field: every field here is computed from this run's walk.
+    # Dataset-specific measured counts belong in SNAPSHOT_NOTES.md (copied via
+    # PROVENANCE_DOCS above), not hardcoded here for every future snapshot.
     manifest = {
         "snapshot_prefix": args.dest,
         "source_bucket": bucket,

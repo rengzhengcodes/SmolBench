@@ -13,24 +13,18 @@ POWER_TARGETS = (0.80, 0.90)
 
 
 def results_dir(file: str, up: int = 0) -> Path:
-    """Resolve a study's ``results/`` dir, anchored on `file` and never the process cwd.
+    """Resolve a study's ``results/`` dir, anchored on `file`, never the process cwd.
 
-    `up` is a level count rather than a study path because
-    `results_store.experiment_name` matches ``notebooks/<study>/results`` exactly three
-    components deep: a typo in a caller-supplied path would mint a new S3 prefix.
-
-    Parameters
-    ----------
-    file : str
-        The caller's ``__file__``.
-    up : int
-        Levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
-        caller in a role subdirectory like ``notebooks/induction/analysis/``.
+    `up` is a level count, not a study path: `results_store.experiment_name` matches
+    ``notebooks/<study>/results`` exactly three components deep, so a typo in a
+    caller-supplied path would mint a new S3 prefix.
+    up: levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
+    caller in a role subdirectory like ``notebooks/induction/analysis/``.
     """
     return Path(file).resolve().parents[up] / "results"
 
 
 def fmt_r(r: int | None, max_replicates: int) -> str:
-    """Format a replicate count; ``None`` means the caller's scan cap was reached
-    without hitting the target, and renders as ``">max_replicates"``."""
+    """Format a replicate count. ``None`` means the scan cap was reached without
+    hitting the target; renders as ``">max_replicates"``."""
     return f">{max_replicates}" if r is None else str(r)

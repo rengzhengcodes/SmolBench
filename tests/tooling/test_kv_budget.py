@@ -168,17 +168,9 @@ def test_replication_is_per_layer():
 
 
 def test_tp_and_attention_kind():
-    """Neither one-row-per-token mechanism replicates across tp; a bare window is not applied.
-
-    Rewritten for the DeepSeek-V4 fix: this test used to assert that
-    ``kv(tp=8) == 8 * kv(tp=1)`` for deepseek-v4-pro and that its corrected
-    figure equalled its naive one. Both held only because V4 fell through to
-    the GQA path -- the very defect. They are replaced here by assertions on
-    the MECHANISM that decides the arithmetic, so a future regression that
-    re-routes V4 to GQA fails on the reason, not on a re-tuned number.
-    """
+    """Neither one-row-per-token mechanism replicates across tp; asserted on the mechanism, not a re-tuned number."""
     pro = _text_config(RAW["deepseek-v4-pro"])
-    # V4 is detected as a shared latent by BOTH readings the tool accepts.
+    # V4 is detected as a shared latent by both readings the tool accepts.
     assert pro["model_type"] == "deepseek_v4"
     assert pro["num_key_value_heads"] == 1 and pro["qk_rope_head_dim"] == 64
     assert "kv_lora_rank" not in pro
@@ -190,8 +182,8 @@ def test_tp_and_attention_kind():
     assert _kv_gb("deepseek-v4-pro", tp=8) == _kv_gb("deepseek-v4-pro", tp=1)
     assert _replication(pro, 8) == 1.0
 
-    # MLA is the same one-row shape keyed on a different field, and must NOT be
-    # claimed by the shared-latent predicate.
+    # MLA is the same one-row shape keyed on a different field, and must not
+    # be claimed by the shared-latent predicate.
     v31 = _text_config(RAW["deepseek-v3.1"])
     assert v31["kv_lora_rank"] == 512 and not _is_shared_latent(v31)
     assert _kv_gb("deepseek-v3.1", tp=8) == _kv_gb("deepseek-v3.1", tp=1)

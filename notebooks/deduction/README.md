@@ -2,14 +2,11 @@
 
 This is the DEDUCTION side of the family-ladder scaling study. The sweep
 configuration is assembled by `run_study.py` (`build_config`) out of the knobs
-in `sweep.yaml`, the roster is
-imported from `notebooks/induction/run_study.py` (`MODELS`, `COT_ARGS`),
-and the fleet-aware entry point for exploring and validating the study is
-`lean_eval.ipynb`. This file documents this directory's layout, the data
-layout, the results/verification contracts, and how to run one lane by
-hand. There is no run-from-cells workflow: this study's driver is a
-per-lane subprocess launched from a terminal (see `lean_eval.ipynb`'s
-"Fleet Launch" section).
+in `sweep.yaml`, the roster is imported from `notebooks/induction/run_study.py`
+(`MODELS`, `COT_ARGS`), and the fleet-aware entry point for exploring and
+validating the study is `lean_eval.ipynb`. There is no run-from-cells
+workflow: this study's driver is a per-lane subprocess launched from a
+terminal (see `lean_eval.ipynb`'s "Fleet Launch" section).
 
 ## Layout
 
@@ -18,7 +15,7 @@ deduction/
   run_study.py           the per-lane, generation-only driver  <- pinned here
   sweep.yaml             the sweep knobs every lane ran under  <- see below
   lean_eval.ipynb        the exploration notebook
-  pinned_theorems.json   the 300 theorems every lane ran  <- see "The pinned 300"
+  pinned_theorems.json   the 300 theorems every lane ran  <- see "History: the pre-cutoff study"
   results/, data/        S3-mirrored; both archived out of the tree
   analysis/              the numbers that got published
 ```
@@ -64,9 +61,9 @@ the retired-artifact guard and the downloader itself live once, in
 
 | File | What it's for |
 | --- | --- |
-| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver and its refusal of the published pre-cutoff prefix, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
+| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
 | `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3` (with `--spool-prefix`) or `--results-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
-| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`, plus `--no-count-as-failure` to drop cells with no surviving rollout instead of counting them as failures. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
+| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
 | `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
 
 Note both legs ship a file named `power_analysis.py`. A process loading
@@ -144,9 +141,8 @@ exact resolution order.
 corpus gate"): every roster checkpoint's knowledge cutoff postdates the
 original LeanDojo Benchmark 4 snapshot's 2024-03-24 trace, so a pre-cutoff
 corpus's theorems are not a valid held-out set -- a model may simply have
-memorised their proofs during training. (The historical exception is the
-ORIGINAL study, which predates this gate and ran directly against that
-pre-cutoff snapshot -- see "History: the pre-cutoff study" below.)
+memorised their proofs during training. (The pre-cutoff study predates
+this gate -- see "History: the pre-cutoff study" below.)
 
 Every loader in `smolbench.deduction.lean.corpus` raises an actionable
 `FileNotFoundError` naming the exact missing path if the corpus has not been
@@ -158,63 +154,30 @@ copies.
 
 ### History: the pre-cutoff study
 
-Everything below this point through "The pinned 300" (and the FIRST two
-paragraphs of "Corpus date vs. model cutoffs" just after it) describes the
-ORIGINAL, COMPLETED, pre-cutoff study: LeanDojo Benchmark 4, pre-cutoff Zenodo record 10929138, traced mathlib4 commit `fe4454af`, `creation_time` 2024-03-24 -- not a live default for new runs. ("Corpus
-date vs. model cutoffs"'s own "What the code now enforces" subsection is
-NOT historical: it documents the gate the driver enforces today.)
-`pinned_theorems.json`'s recorded derivation, the published `deduction/runs`
-S3 prefix (see "Results policy: S3-only" below), and
-`smolbench.deduction.lean.runner`'s `EXPECTED_THEOREMS` / `EXPECTED_CELLS` /
-`EXPECTED_SANITY_ROWS` (300/944/300 -- "the OLD published study's pinned
-shape", per that module's own comment) all still describe that pre-cutoff
-study; they are retained as the historical record of what was measured,
-not as instructions for a new run. New runs draw from the post-cutoff
-corpus described above, whose pool size is not yet fixed.
-
-### The pinned 300 (pre-cutoff study)
-
-The PRE-CUTOFF study's `build_config` drew its sample with
-`random.Random(0).sample(pool, 300)` over that study's 805-theorem pool (see
-"History: the pre-cutoff study" above), so the drawn set was fixed only as
-long as that pool was -- and the pool is not stable by construction. It came
-from the `replay_passing` sidecars, which are produced by live Dojo replay,
-and Dojo init fails nondeterministically. Regenerating a sidecar can add or
-drop a theorem, and because `rng.sample` depends on both the membership AND
-the order of its population, one changed theorem would have reshuffled the
-entire 300. Nothing downstream compared the drawn set against anything, so
-that reshuffle would have been silent.
-
-`pinned_theorems.json` therefore records that pre-cutoff study's drawn set
-verbatim: the 300 `full_name`s, the corpus provenance, the derivation
-recipe, and a sha256 over the sorted names. `tests/deduction/
-test_lean_pinning_audit.py` pins that digest, so a reshuffle of the archived
-pre-cutoff sidecars would fail a test instead of quietly changing which
-theorems the historical record claims that study measured. That file is
-also the only in-tree answer to "which theorems did the pre-cutoff study
-run": the corpus and both sidecars are archived out of the tree.
-
-`scripts/results/audit_lean_pinning.py` checks that drawn set against what
-the pre-cutoff study's 21 lanes actually ran, from the S3 spool -- identical
-`theorems` config and seed, identical theorem sets, identical `(theorem,
-rung)` cell keys, byte-identical rendered prompts (compared by ETag, so no
-spool download), and containment of the recovery and flip side-runs. All 21
-lanes ran the same 300 theorems and 944 cells (that pre-cutoff study's
-pinned shape, `runner.EXPECTED_THEOREMS`/`EXPECTED_CELLS`) with
-byte-identical prompts.
-
-Byte equality is the load-bearing check, not set equality: it proves the
-same theorem was asked at the same step `k` under the same rendered context.
-It also covers `noise:3`, which is whitespace padded to a token-matched
-length -- the induction leg pads under each model's own tokenizer, and had
-this leg done the same, that rung would not have been comparable across
-models.
-
-This gated the questions ASKED, not the data that came back. Cells can be
-present and dead, and that pre-cutoff study's published pools (707/828/833
-cells) are smaller than its 944 because dead cells and verdict filtering
-shrink it unevenly. Use `scripts/results/audit_run_completeness.py` for
-that axis on any run, pre- or post-cutoff.
+Before this gate existed, the study ran directly against the original
+LeanDojo Benchmark 4 snapshot: pre-cutoff Zenodo record 10929138, traced
+mathlib4 commit `fe4454af`, `creation_time` 2024-03-24.
+`random.Random(0).sample(pool, 300)` drew 300 theorems from that study's
+805-theorem `replay_passing` pool -- a pool that is not stable by
+construction, since a regenerated sidecar can add or drop a theorem and
+`rng.sample` depends on both membership and population order. So
+`pinned_theorems.json` records that pre-cutoff draw verbatim (the 300
+`full_name`s, corpus provenance, derivation recipe, a sha256 over the
+sorted names), and `tests/deduction/test_lean_pinning_audit.py` pins that
+digest -- the only in-tree answer to which theorems the pre-cutoff study
+ran, since the corpus and sidecars are archived out of the tree.
+`scripts/results/audit_lean_pinning.py` confirms all 21 lanes ran that
+same 300 theorems and 944 cells (`runner.EXPECTED_THEOREMS`/
+`EXPECTED_CELLS`/`EXPECTED_SANITY_ROWS`, still 300/944/300) with
+byte-identical rendered prompts (compared by ETag, so no spool download)
+-- byte equality, not set equality, since it must prove the same theorem
+was asked at the same step under the same context, including `noise:3`'s
+token-matched padding. That pre-cutoff study's published pools
+(707/828/833 cells) are smaller than its 944 because dead cells and
+verdict filtering shrink it unevenly; use
+`scripts/results/audit_run_completeness.py` for that axis on any run,
+pre- or post-cutoff. New runs draw from the post-cutoff corpus described
+above, whose pool size is not yet fixed.
 
 ### Corpus date vs. model cutoffs
 
@@ -291,25 +254,17 @@ recorded proof). This is exactly the content
 "goal state" and K4 "tactic chain" key families) to catch a candidate
 training corpus that reproduces an eval theorem's states or tactic chains
 inside some OTHER, differently-named theorem -- a leak channel a
-`full_name`-only holdout cannot see. See that module's own docstring for
-the full key-family breakdown (K1 name, K2 statement, K3 goal state, K4
-tactic chain).
+`full_name`-only holdout cannot see. See that module's docstring for the
+full K1-K4 breakdown.
 
 ## Results policy: S3-only
 
 Every lane's results are spooled to S3, never accumulated locally for the
 long term. Bucket `smolbench-results-414266451290`, region `us-west-2`,
-key layout `deduction/runs/scaling_<spec-key>/<relative path>` (e.g.
-`deduction/runs/scaling_glm-4.7/all_rows.jsonl`) -- but that prefix is the
-PUBLISHED pre-cutoff study's location and must never be written again. New
-runs against the post-cutoff corpus spool under
-`deduction_postcutoff/runs/scaling_<spec-key>/<relative path>` instead
-(`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
-by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`);
-`spool_prefix()` refuses to resolve back to `deduction/runs` unless
-`LEAN_ALLOW_LEGACY_PREFIX=1` is set, since overwriting it would silently
-destroy the unrecoverable published record. `deduction/runs` itself is
-retained read-only, for analysis of the published study only.
+key layout `deduction_postcutoff/runs/scaling_<spec-key>/<relative path>`
+(e.g. `deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl`) -- from
+`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
+by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`.
 
 `run_study.py`'s `spool_to_s3` runs exactly once, after the sweep returns:
 it uploads every file under the run directory, verifies each upload
@@ -522,16 +477,11 @@ study's code, notebooks, and documentation.
   a deeper hop count is progressively more likely to hit the renderer's own
   50k-token cap before its expanded content actually reaches a rendered
   prompt.
-- **The `novel_premises` split kind, post-cutoff.** The PRE-CUTOFF study's
-  pool selector was fixed to `kind == "novel_premises"` (the harder
-  generalization slice; see "History: the pre-cutoff study" above). That is
-  now backwards: the re-collection's post-cutoff corpus has a single
-  meaningful split family -- `build_postcutoff_corpus.py` writes a
-  `novel_premises/` directory too, but as a real copy of `random/`'s rows,
-  not an independent curated slice (see "Data layout" above) -- so
-  `run_study.build_config` now reads `random`/`val` by default
-  (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`), and `random` IS what every sweep
-  this study runs draws from.
+- **The `novel_premises` split kind, post-cutoff.** Redundant with `random`
+  now: `build_postcutoff_corpus.py` writes `novel_premises/` as a real copy
+  of `random/`'s rows rather than an independent curated slice (see "Data
+  layout" above), so `run_study.build_config` reads `random`/`val` by
+  default (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`).
 - **Live REPL interaction during generation.** Everything in this
   study's generation phase (`run_study.py`, and by extension
   `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore

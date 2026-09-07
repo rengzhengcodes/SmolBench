@@ -1,17 +1,14 @@
 """`.claude/skills/run-smolbench/stub_llm.py` reuses the offline suite's stub server.
 
-`lean_smoke.sh --e2e` drives a REAL Lean sweep against two fake LLMs. Those two
-servers used to be a second, hand-rolled OpenAI-compatible stub sitting beside
-`driver.py` in the same directory -- and `driver.py` already imports
-`tests/conftest.py`'s `StubServer` "so the stub dialect has one source of
-truth". Two stubs meant the dialect the smoke path exercised could drift from
-the one the offline suite exercises, silently.
+`lean_smoke.sh --e2e` drives a real Lean sweep against two fake LLMs, served
+through `tests/conftest.py`'s `StubServer` (the same one `driver.py` uses) so
+the smoke path's dialect cannot drift from the offline suite's.
 
-`--e2e` itself needs `elan`, a built mathlib4 checkout and a real corpus, so it
-cannot run here. What CAN be checked offline is the contract that script depends
-on, which is exactly what would break if the reuse were done wrong: the ports
-line, the two fixed answers, the context-length GET routes, and the on-disk
-request log. This drives the real script in a subprocess and asserts each.
+`--e2e` itself needs `elan`, a built mathlib4 checkout and a real corpus, so
+it cannot run here. What can be checked offline is the contract that script
+depends on -- the ports line, the two fixed answers, the context-length GET
+routes, and the on-disk request log -- by driving the real script in a
+subprocess.
 """
 
 from __future__ import annotations
@@ -62,9 +59,9 @@ def stub_process(tmp_path):
         [sys.executable, str(STUB), str(reqlog)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(REPO_ROOT))
     try:
-        # The script prints its ports line BEFORE either server starts serving,
-        # so a reader can never poll a port that is not yet bound -- the same
-        # ordering `lean_smoke.sh` relies on when it polls ports.json.
+        # The script prints its ports line before either server starts
+        # serving, so a reader never polls a port that is not yet bound --
+        # the same ordering `lean_smoke.sh` relies on when it polls ports.json.
         line = proc.stdout.readline()
         if not line:
             proc.wait(timeout=30)
@@ -98,13 +95,12 @@ def test_the_stub_serves_both_answers_and_both_context_length_shapes(stub_proces
 
 
 def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(stub_process):
-    """The log line keys `lean_smoke.sh --e2e` actually reads.
+    """The log line keys `lean_smoke.sh --e2e` actually reads: `path` and `body`.
 
-    That script does ``[r for r in reqs if r["path"].endswith("/chat/completions")]``
-    and then reads ``r["body"]["model"]`` and ``r["body"].get("seed")``, so
-    `path` and `body` are the load-bearing keys. The `path` filter is also what
-    makes logging GETs harmless: conftest's handler records them too, with
-    ``"body": null``, and they never reach a subscript of ``None``.
+    The script filters on ``r["path"].endswith("/chat/completions")`` then
+    reads ``r["body"]["model"]``/``r["body"].get("seed")``. The `path` filter
+    is also what makes logging GETs harmless -- they get ``"body": null`` and
+    never reach a subscript of ``None``.
     """
     ports, reqlog = stub_process
     _post_completion(ports["pi"], "stub-good-model", 4242)
@@ -130,12 +126,10 @@ def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(stub_pr
 def test_the_skill_does_not_hand_roll_a_second_stub_dialect():
     """The response shapes and GET routes come from `tests/conftest.py`, not a copy.
 
-    Checked on the module's AST, not by substring: the file legitimately
-    mentions `ThreadingHTTPServer` in a comment explaining why its log writes
-    need a lock, and a bare ``in`` test flags that prose as if it were a
-    reimplementation. What must be absent is an `http.server` IMPORT or a
-    handler method DEFINITION -- the things that would constitute a second
-    dialect.
+    Checked on the AST, not by substring: the file legitimately mentions
+    `ThreadingHTTPServer` in a comment about its log-write lock, and a bare
+    ``in`` test would flag that prose as a reimplementation. What must be
+    absent is an `http.server` import or a handler method definition.
     """
     import ast
 

@@ -1,45 +1,17 @@
 """Load the committed Lean decontamination policy config.
 
-``smolbench/deduction/lean/decontam_config.toml`` (parsed here) is the ONE
-place the decontamination POLICY is written down: the MinHash/LSH
-near-duplicate parameters `decontam` fingerprints eval statements with, the
-statement/state key-length floor, and the identifier stoplist `premises`
-filters premise references through. Before this module existed, each of those
-was a code constant -- ``decontam._SHINGLE_N``/``_NUM_PERM``/``_BANDS``/
-``_JACCARD_THRESHOLD``/``_PERM_SEED``/``_MIN_GOAL_KEY_CHARS`` and
-``premises._LEAN_NOISE``, a hand-maintained ~100-entry list. None of them is
-logic: they decide what a run CONTAINS, which is what makes them worth
-reviewing in one file and stamping into a manifest.
+``decontam_config.toml`` is the one place the decontamination POLICY lives:
+`decontam`'s MinHash/LSH near-duplicate parameters, the statement/state
+key-length floor, and the identifier stoplist `premises` filters references
+through. None of it is logic, which is what makes it worth reviewing in one
+file and stamping into a manifest.
 
-Digest
-------
-:class:`DecontamConfig` carries `sha256`, the hex SHA-256 of the config
-file's RAW BYTES, produced from the SAME single read that is parsed. Hashing
-and parsing one byte string, rather than re-reading the file to hash it, is
-deliberate: a second read opens a window in which the digest and the parsed
-values describe different file contents. ``notebooks/deduction/run_study.py``
-stamps that digest into every run's ``manifest.json``, so an archived run
-records which stoplist produced its prompts.
-
-Imports
--------
-STANDARD LIBRARY ONLY, deliberately, so this stays a leaf module `premises`
-can import without closing an import cycle. ``decontam`` -> ``context`` ->
-``premises`` already exists; a ``premises`` -> ``decontam`` edge would close
-the loop.
-
-Caching
--------
-:func:`load_decontam_config` is memoized with :func:`functools.lru_cache`,
-keyed on the RESOLVED config path (not the raw argument), so the file is
-parsed at most once per distinct path -- typically exactly once, since every
-production caller uses the default path. That matters here beyond mere
-economy: `premises.referenced_premises` consults the stoplist once per
-identifier token of every premise body it scans, so re-parsing per lookup
-would be a per-token file read. Keying on the resolved path rather than the
-raw argument means ``Path("decontam_config.toml")`` and an equivalent
-absolute path share one cache entry, and a test that points the loader at a
-``tmp_path`` fixture never collides with the committed file's entry.
+`sha256` on :class:`DecontamConfig` hashes the same bytes used to parse the
+file, not a second read, so the digest can never describe different content
+than what was parsed. Standard library only, so `premises` can import this
+leaf module without closing the ``decontam`` -> ``context`` -> ``premises``
+cycle. :func:`load_decontam_config` caches on the resolved path, so a
+``tmp_path`` fixture never shares the committed file's cache entry.
 """
 
 from __future__ import annotations
@@ -60,25 +32,10 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("decontam_config.toml"
 class MinHashConfig:
     """Parameters of `decontam`'s MinHash + banded-LSH near-duplicate index.
 
-    Parameters
-    ----------
-    shingle_n : int
-        Character n-gram width of a shingle set. ``>= 1``.
-    num_perm : int
-        MinHash permutation count, i.e. the signature length. ``>= 1``, and
-        an exact multiple of `bands`.
-    bands : int
-        LSH band count. ``>= 1``.
-    rows : int
-        Rows per band. DERIVED as ``num_perm // bands``, never configured --
-        stating it in the file as well would let the two disagree.
-    jaccard_threshold : float
-        Decision threshold on EXACT shingle-set Jaccard similarity, in
-        ``(0, 1]``. The LSH only proposes candidates; this is what actually
-        makes a row a near-duplicate.
-    perm_seed : int
-        Seed for the MinHash permutations, so every index built anywhere
-        hashes identically.
+    rows: derived as ``num_perm // bands``, never read from the file --
+    stating it there too would let the two disagree.
+    jaccard_threshold: decision threshold on exact shingle-set Jaccard
+    similarity; the LSH only proposes candidates, this is what decides.
     """
 
     shingle_n: int
@@ -93,11 +50,8 @@ class MinHashConfig:
 class KeyConfig:
     """Eligibility rules for `decontam`'s statement/state index keys.
 
-    Parameters
-    ----------
-    min_goal_key_chars : int
-        Minimum normalized length for a goal-only state variant to become an
-        index key. ``>= 0``; ``0`` disables the floor.
+    min_goal_key_chars: minimum normalized length for a goal-only state
+    variant to become an index key; ``0`` disables the floor.
     """
 
     min_goal_key_chars: int
@@ -107,33 +61,12 @@ class KeyConfig:
 class DecontamConfig:
     """The whole committed decontamination policy, plus the file's digest.
 
-    Parameters
-    ----------
-    minhash : MinHashConfig
-        The ``[minhash]`` section.
-    keys : KeyConfig
-        The ``[keys]`` section.
-    lean_noise : frozenset of str
-        The ``[premises]`` section's ``lean_noise`` list, as a set. A
-        `frozenset` rather than a tuple because every consumer asks
-        membership questions of it and nothing depends on its order; the
-        duplicate check happens at LOAD time (see
-        :func:`_parse_decontam_config`), before set-ification could hide one.
-    path : pathlib.Path
-        RESOLVED path the config was read from -- the same value
-        :func:`_load_cached` is memoized on, so it cannot disagree with the
-        bytes `sha256` covers. The other half of the provenance pair: `path`
-        says WHICH file, `sha256` says WHICH bytes of it, and
-        ``notebooks/deduction/run_study.py`` stamps both into a run's
-        manifest. Carried here, rather than left for a consumer to re-spell,
-        precisely so a stamp cannot name a different file from the one that
-        was loaded. ``smolbench/evals/study_config.py`` -- which this module is
-        otherwise modelled on closely -- deliberately carries no such field;
-        it feeds no provenance stamp and so has nothing to keep honest.
-    sha256 : str
-        Hex SHA-256 of the config file's raw bytes -- see the module
-        docstring's "Digest" section for why it is computed from the parsed
-        bytes rather than from a second read.
+    lean_noise: a frozenset, not a tuple, since every consumer only asks
+    membership questions and the duplicate check happens at load time,
+    before set-ification could hide one.
+    path: the resolved path :func:`_load_cached` is memoized on, carried here
+    so a manifest stamp can't name a different file than the one `sha256`
+    covers.
     """
 
     minhash: MinHashConfig
@@ -164,40 +97,12 @@ def _require_key(section_data: dict, section: str, key: str):
 def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfig:
     """Build and validate a :class:`DecontamConfig` from a parsed TOML document.
 
-    Parameters
-    ----------
-    data : dict
-        The document ``tomllib.loads``/``tomllib.load`` produced.
-    path : Path
-        Resolved path `data` was read from, passed through onto the result.
-    sha256 : str
-        Hex digest of the bytes `data` was parsed from, passed in rather than
-        recomputed so the digest provably describes the parsed document.
-
-    Returns
-    -------
-    DecontamConfig
-        Fully validated: every declared section/key present, every numeric
-        bound satisfied, ``num_perm`` exactly partitioned by ``bands``, and
-        the stoplist non-empty and duplicate-free.
-
-    Raises
-    ------
-    ValueError
-        On any structural or range defect. The message names the offending
-        section, key, or VALUE, so the failure points straight at the line to
-        fix in ``decontam_config.toml``.
-
-    Notes
-    -----
-    Deliberately does NOT check that a ``lean_noise`` entry is a usable
-    identifier. That check belongs to `premises`, which owns the
-    ``_IDENT_RE`` an entry has to match and the ``len(tok) <= 1`` arm that
-    makes a one-character entry dead; see `premises._validate_lean_noise`.
+    `sha256` is passed in rather than recomputed, so the digest provably
+    describes the parsed document. Does not check that a ``lean_noise`` entry
+    is a usable identifier -- that's `premises._validate_lean_noise`'s job.
     """
-    # Phase 1: presence and interpretation of [minhash]. Every declared key
-    # must exist before any is range-checked, so a missing key never surfaces
-    # as a confusing KeyError further down.
+    # Every declared [minhash] key must exist before any is range-checked, so
+    # a missing key never surfaces as a confusing KeyError further down.
     minhash_raw = _require_section(data, "minhash")
     shingle_n = _require_key(minhash_raw, "minhash", "shingle_n")
     num_perm = _require_key(minhash_raw, "minhash", "num_perm")
@@ -205,9 +110,8 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
     jaccard_threshold = _require_key(minhash_raw, "minhash", "jaccard_threshold")
     perm_seed = _require_key(minhash_raw, "minhash", "perm_seed")
 
-    # Phase 2: range guards, each naming the value it rejected. Checked before
-    # the divisibility guard below so a nonsensical `bands = 0` is reported as
-    # a bad band count rather than as a ZeroDivisionError inside it.
+    # Checked before the divisibility guard below so a nonsensical `bands = 0`
+    # is reported as a bad band count, not a ZeroDivisionError inside it.
     if shingle_n < 1:
         raise ValueError(
             f"decontam_config.toml [minhash] shingle_n must be >= 1, got {shingle_n}"
@@ -226,9 +130,8 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
             f"got {jaccard_threshold}"
         )
 
-    # Guard: the bands must partition the signature EXACTLY. A leftover slot
-    # would be silently excluded from every band, so a `num_perm` the band
-    # count does not divide describes an index that hashes fewer permutations
+    # Bands must partition num_perm exactly, or a leftover slot is silently
+    # excluded from every band -- an index that hashes fewer permutations
     # than the file claims.
     if num_perm % bands:
         raise ValueError(
@@ -242,7 +145,6 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
         shingle_n=shingle_n,
         num_perm=num_perm,
         bands=bands,
-        # DERIVED, never read from the file: see MinHashConfig.rows.
         rows=num_perm // bands,
         jaccard_threshold=jaccard_threshold,
         perm_seed=perm_seed,
@@ -260,9 +162,8 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
     premises_raw = _require_section(data, "premises")
     lean_noise_raw = list(_require_key(premises_raw, "premises", "lean_noise"))
 
-    # Guard: a non-empty stoplist. An empty one would let every Lean keyword
-    # and tactic name resolve as a premise reference, silently changing what
-    # the hint:3/hint:4 rungs contain rather than failing.
+    # An empty stoplist would let every Lean keyword and tactic name resolve
+    # as a premise reference, silently changing what hint:3/hint:4 contain.
     if not lean_noise_raw:
         raise ValueError(
             "decontam_config.toml [premises] lean_noise is empty; an empty "
@@ -270,10 +171,9 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
             "premise reference"
         )
 
-    # Guard: no duplicates, checked BEFORE set-ification -- which is the whole
-    # point. This is a hand-maintained list, so a repeated entry is a sign of a
-    # bad merge (two branches appending to the same tail), and building the set
-    # first would erase that evidence with no change in behaviour.
+    # Checked before set-ification: this is a hand-maintained list, so a
+    # repeated entry is a sign of a bad merge, and building the set first
+    # would erase that evidence with no change in behaviour.
     seen: "set[str]" = set()
     for entry in lean_noise_raw:
         if entry in seen:
@@ -298,18 +198,13 @@ def _parse_decontam_config(data: dict, path: Path, sha256: str) -> DecontamConfi
 def _load_cached(resolved_path: Path) -> DecontamConfig:
     """Parse, digest and validate `resolved_path`, memoized on the resolved path.
 
-    Split out from :func:`load_decontam_config` so the cache key is always the
-    fully resolved path (see that function's docstring), never the raw
-    ``Path | None`` argument a caller passed in.
-
-    The file is read ONCE, into `raw`; the digest and the parsed document both
-    come from those bytes. See the module docstring's "Digest" section.
+    Split out from :func:`load_decontam_config` so the cache key is always
+    the resolved path, never the raw ``Path | None`` a caller passed in.
     """
     raw = resolved_path.read_bytes()
     sha256 = hashlib.sha256(raw).hexdigest()
-    # tomllib.loads takes str, so the bytes are decoded here rather than handed
-    # to tomllib.load -- TOML is defined as UTF-8, so a file that is not valid
-    # UTF-8 is not valid TOML and raising UnicodeDecodeError says so precisely.
+    # Decoded here rather than handed to tomllib.load: TOML is defined as
+    # UTF-8, so a non-UTF-8 file is not valid TOML, and UnicodeDecodeError says so.
     data = tomllib.loads(raw.decode("utf-8"))
     return _parse_decontam_config(data, resolved_path, sha256)
 
@@ -317,50 +212,12 @@ def _load_cached(resolved_path: Path) -> DecontamConfig:
 def load_decontam_config(path: "Optional[Path]" = None) -> DecontamConfig:
     """Load and validate the committed decontamination policy config.
 
-    Parameters
-    ----------
-    path : pathlib.Path or None, optional
-        Config file to load. ``None`` (the default) resolves to
-        ``decontam_config.toml`` beside this module -- the committed file
-        every production caller should use; tests pass an explicit `path` to
-        load a scratch fixture instead.
+    path: ``None`` (the default) resolves to ``decontam_config.toml`` beside
+    this module; tests pass an explicit path to load a scratch fixture.
 
-    Returns
-    -------
-    DecontamConfig
-        Validated and cached: repeated calls with a path that resolves to the
-        same file return the SAME object (see the module docstring's
-        "Caching" section), so a consumer must never mutate it. Every field is
-        either an immutable scalar or a `frozenset`, which makes that
-        impossible rather than merely discouraged.
-
-    Raises
-    ------
-    ValueError
-        The file is structurally invalid: see :func:`_parse_decontam_config`
-        for the specific checks and their messages.
-    FileNotFoundError
-        `path` (or the default) does not exist.
-    UnicodeDecodeError
-        The file is not valid UTF-8, and so is not valid TOML.
-    tomllib.TOMLDecodeError
-        The file is not valid TOML.
-
-    Notes
-    -----
-    Reads no environment variables and imports only the standard library --
-    see the module docstring's "Imports" section for the import-cycle reason
-    that second point is load-bearing. Pure I/O + parsing.
-
-    Examples
-    --------
-    >>> cfg = load_decontam_config()
-    >>> cfg.minhash.num_perm, cfg.minhash.bands, cfg.minhash.rows
-    (64, 8, 8)
-    >>> "simp" in cfg.lean_noise
-    True
-    >>> cfg.path.name, len(cfg.sha256)
-    ('decontam_config.toml', 64)
+    Cached: repeated calls that resolve to the same file return the SAME
+    object, and every field is an immutable scalar or `frozenset`, so a
+    consumer cannot mutate it.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)

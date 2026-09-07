@@ -36,7 +36,7 @@ smolbench/                 the installable library
     openai_compat.py         the shared HTTP + response-parsing engine
     _aws.py                  the shared AWS primitives
     tokenization.py          text/token helpers, incl. the noise-pad search
-    parsing.py, replicates.py, results_store.py
+    parsing.py, replicates.py, results_store.py, retired_markers.py
   induction/                the periodic benchmark (see smolbench/induction/README.md)
     _common.py                generation machinery
     periodic.py                the benchmark family
@@ -126,7 +126,7 @@ requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 
 The suite needs no AWS credentials or network access: it drives the real
 quiz-generation, provider-dispatch, and grading code paths against a local
-OpenAI-compatible stub server. This prints `1349 passed, 5 skipped`.
+OpenAI-compatible stub server. This prints `1182 passed, 5 skipped`.
 
 All 5 skips are the same opt-in gate: `tests/deduction/test_s3_archive.py`
 pins archived evidence that lives only on S3, so it skips unless

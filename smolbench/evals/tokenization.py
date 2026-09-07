@@ -1,33 +1,20 @@
 """Tokenize prompts for the model under test, to size token-matched prompts.
 
-The induction ``noise_intens`` arm pads the intensional (rule) prompt to the
-extensional (listing) prompt's length, so an intens-vs-extens gap cannot be
-blamed on prompt length. Length means TOKENS under the tested model's OWN
-tokenizer, not characters: at the periodic production config (``n=9``, seed
-1776, ``cl100k_base``) a character-matched pad ran 1.62x the extensional
-prompt's 26,279 tokens. `for_model` maps an eval model alias (also vLLM's
-``--served-model-name``) to that checkpoint's `Tokenizer`.
+The induction ``noise_intens`` arm pads the intensional prompt to the extensional prompt's
+length, so an intens-vs-extens gap can't be blamed on prompt length. Length means tokens under
+the tested model's own tokenizer, not characters: a character-matched pad measured 1.62x the
+target token count at the periodic production config. `for_model` maps an eval model alias to
+that checkpoint's `Tokenizer`.
 
-Pad CONTENT is whitespace only, which is a separate choice from the unit and
-needs its own justification. Whitespace carries no token-level information a
-model can condition on, so the padded arm differs from the unpadded intensional
-arm in LENGTH and nothing else -- exactly the one variable this control exists
-to vary. Random alphanumerics (an earlier, since-deleted generator padded with
-letters + digits + whitespace) inject spurious tokens the model may try to
-interpret as part of the task, confounding the length control with an
-unmeasured distractor-content effect. The KNOWN COST, stated honestly rather
-than sold as free: whitespace padding is harder on the OUTPUT CONTRACT.
-``notebooks/induction/analysis/extens_vs_noise.py`` measures per-lane
-non-compliance on both arms and buckets a substantial minority of models into
-"padding-robustness collapse" (noise arm largely non-compliant), where
-``extens > noise`` is mechanically forced and the row is a padding finding, not
-evidence about information. That is a measured trade-off accepted with the
-mechanism made visible, not a win.
+Pad content is whitespace only, not random alphanumerics: whitespace carries no token-level
+information a model can condition on, so the padded arm differs from the intensional arm in
+length alone, where random content would add an unmeasured distractor-content confound. Known
+cost: whitespace padding is harder on the output contract in some models --
+``notebooks/induction/analysis/extens_vs_noise.py`` measures this per lane rather than hiding it.
 
-NO SILENT FALLBACKS: every constructor raises when it cannot load its
-tokenizer. A count fixes PROMPT BYTES, so a fallback would pad differently
-under the same seed and break byte-for-byte regeneration of a replicate from
-its ``rep_{seed}.yaml`` filename.
+Every constructor raises rather than falling back when it cannot load its tokenizer: a count
+fixes prompt bytes, so a silent fallback would pad differently under the same seed and break
+byte-for-byte regeneration of a replicate from its ``rep_{seed}.yaml`` filename.
 """
 
 import functools
@@ -47,17 +34,15 @@ class Tokenizer(Protocol):
     with a deterministic stub.
     """
 
-    #: Human-readable identity (repo id, encoding name, served model...).
-    #: Free-form: it appears only in logs and errors, so a token-match failure
-    #: names WHICH tokenizer could not reach the target.
+    #: Human-readable identity (repo id, encoding name, served model...). Free-form; used only
+    #: in logs and errors, so a token-match failure can name which tokenizer was in play.
     name: str
 
     def count(self, text: str) -> int:
         """Return the number of tokens `text` encodes to.
 
-        Implementations MUST exclude special/BOS tokens: the chat template wraps
-        both compared prompts identically downstream, so an inconsistent offset
-        becomes an off-by-N in the match.
+        Must exclude special/BOS tokens: both compared prompts get the same chat-template wrap
+        downstream, so an inconsistent offset becomes an off-by-N in the match.
         """
         ...
 
@@ -72,13 +57,9 @@ class HFTokenizer:
     def __init__(self, name: str, tokenizer: Any) -> None:
         """Wrap an already-constructed ``tokenizers.Tokenizer``.
 
-        Prefer `from_repo`; this stays public so a local-checkout or
-        test-fixture tokenizer can be adapted without network.
-
-        Parameters
-        ----------
-        tokenizer : Any
-            Duck-typed on ``encode(text, add_special_tokens=False).ids``.
+        Prefer `from_repo`; this stays public so a local-checkout or test-fixture tokenizer
+        can be adapted without network.
+        tokenizer: duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
@@ -87,22 +68,13 @@ class HFTokenizer:
     def from_repo(cls, repo_id: str) -> "HFTokenizer":
         """Download (once, then cached) and load `repo_id`'s tokenizer.
 
-        Fetches only ``tokenizer.json`` (a few MB, not the weights) into
-        ``~/.cache/huggingface``, so only the first call needs network.
-        Disabling truncation and padding on load is load-bearing: an embedded
-        ``truncation`` stanza is honored on every ``encode``
-        (``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8`` ships
-        ``{"max_length": 512}``, reporting a ~26,000-token prompt as 512), and
-        a padded batch counts tokens the model never sees.
-
-        Raises
-        ------
-        ImportError
-            ``huggingface_hub`` or ``tokenizers`` is not installed.
-        RuntimeError
-            The repo ships no ``tokenizer.json`` (common for quantized
-            redistributions), or the fetch failed; the message names the
-            ``tokenizer_hf_id`` deploy-spec key that overrides the source repo.
+        Fetches only ``tokenizer.json`` into ``~/.cache/huggingface``, not the weights, so only
+        the first call needs network. Disables truncation and padding on load: an embedded
+        ``truncation`` stanza is otherwise honored on every ``encode`` (one Nemotron
+        redistribution ships ``max_length: 512`` and silently reports a ~26,000-token prompt as
+        512), and a padded batch would count tokens the model never sees. Raises RuntimeError,
+        naming the ``tokenizer_hf_id`` deploy-spec override, when the repo ships no
+        ``tokenizer.json`` (common for quantized redistributions) or the fetch fails.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -141,13 +113,7 @@ class TiktokenTokenizer:
     """
 
     def __init__(self, encoding_name: str = "cl100k_base") -> None:
-        """Load a ``tiktoken`` encoding by any name ``get_encoding`` accepts.
-
-        Raises
-        ------
-        ImportError
-            ``tiktoken`` (the ``lean`` extra, not a core dependency) is missing.
-        """
+        """Load a ``tiktoken`` encoding by any name ``get_encoding`` accepts."""
         try:
             import tiktoken
         except ImportError as exc:  # pragma: no cover -- optional extra
@@ -190,11 +156,8 @@ class VLLMTokenizer:
     def count(self, text: str) -> int:
         """Return `text`'s token count as reported by the live server.
 
-        Raises
-        ------
-        requests.HTTPError
-            The endpoint rejected the request; vLLM exposes ``/tokenize`` by
-            default, so a 404 means the server predates it or disabled it.
+        Raises ``requests.HTTPError`` on rejection; vLLM exposes ``/tokenize`` by default, so a
+        404 means the server predates it or disabled it.
         """
         response = requests.post(
             self._url,
@@ -210,20 +173,14 @@ class VLLMTokenizer:
 def for_model(model: str) -> Tokenizer:
     """Return the tokenizer of the checkpoint served under alias `model`.
 
-    `model` is a key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that
-    spec's ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only
-    quantized repos. Memoized per alias for the life of the process.
+    `model` is a key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's
+    ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only quantized repos.
+    Memoized per alias for the life of the process.
 
-    ``ec2`` is imported INSIDE this function: its ``EC2_*`` constants are read
-    from ``os.environ`` at IMPORT time, so an eager import would freeze them for
-    a notebook importing the induction stack before ``load_dotenv(keys.env)``
-    (see ``smolbench.evals.experiment``).
-
-    Raises
-    ------
-    KeyError
-        No deploy spec names `model`; such a caller must build and pass a
-        `Tokenizer` itself.
+    ``ec2`` is imported inside this function, not at module scope: its ``EC2_*`` constants are
+    read from ``os.environ`` at import time, so an eager import would freeze them for a notebook
+    that imports the induction stack before ``load_dotenv(keys.env)`` (see
+    ``smolbench.evals.experiment``).
     """
     from smolbench.evals.providers import ec2
 
@@ -238,78 +195,50 @@ def for_model(model: str) -> Tokenizer:
     return HFTokenizer.from_repo(repo_id)
 
 
-# ---------------------------------------------------------------------------
-# Token-matched whitespace padding: public API. Originally lived in
-# smolbench.induction._common, which imports these names back (never copies
-# them -- see that module's own comment) so existing callers keep resolving.
-# ---------------------------------------------------------------------------
-
-# Whitespace units tried, in order, as the repeating pad atom; a unit must cost
-# ~1 token per repetition under the tokenizer in play. BPE vocabularies carry
-# dedicated tokens for RUNS of a single whitespace character (`" " * 128` is ONE
-# token in cl100k_base), so a pure-space pad cannot reach a large target.
-# Alternating two whitespace characters defeats those run-merges: `" \t"`
-# measures ~1 token/rep in both cl100k_base and o200k_base. The rest are
-# fallbacks for tokenizers that merge `" \t"`. `choose_whitespace_unit` verifies
-# each candidate empirically; it does not trust this order.
+# Whitespace pad atoms tried in order; a unit must cost ~1 token/repetition under the tokenizer
+# in play. BPE vocabularies carry dedicated tokens for runs of a single whitespace character
+# (`" " * 128` is one token in cl100k_base), so a pure-space pad can't reach a large target.
+# Alternating two characters defeats those run-merges (`" \t"` measures ~1 token/rep in
+# cl100k_base and o200k_base); the rest are fallbacks for tokenizers that merge `" \t"`.
+# `choose_whitespace_unit` verifies each candidate empirically rather than trusting this order.
 WHITESPACE_UNITS: Tuple[str, ...] = (
     " \t", " \n\t", "\t ", " \n", "\t\n ",
-    # "\r" and "\x0b" go LAST so every tokenizer that already selected a unit
-    # above keeps selecting it (noise prompts stay byte-identical across
-    # studies). Gemma-4 and EXAONE-4.0 merge EVERY mixed space/tab/newline run
-    # (Gemma ships dedicated multi-whitespace tokens), so none of the units
-    # above cost 1 token/rep there; a bare carriage return does, as neither
-    # vocab has a multi-\r merge.
+    # "\r" and "\x0b" go last so a tokenizer that already selected an earlier unit keeps
+    # selecting it (noise prompts stay byte-identical across studies). Gemma-4 and EXAONE-4.0
+    # merge every mixed space/tab/newline run, so none of the units above cost 1 token/rep
+    # there; a bare carriage return does.
     "\r",
     "\x0b",
 )
 
-# Repetition counts `choose_whitespace_unit` probes. Small and large mixed, so
-# it rejects a unit that merges only once a run gets long (the failure mode that
-# silently saturates a pad below its target). The top probe deliberately goes
-# past 1024: a `tokenizer.json` can embed a `truncation` stanza capping every
-# count (Nemotron-Ultra ships max_length 512), which would make a saturating
-# tokenizer look linear at 256 and then silently refuse to grow. `HFTokenizer`
-# disables truncation on load; this probe backstops tokenizers built elsewhere.
+# Repetition counts `choose_whitespace_unit` probes, small and large mixed so a unit that only
+# merges once a run gets long is rejected (that failure mode silently saturates a pad below its
+# target). The top probe goes past 1024 because a `tokenizer.json` can embed a `truncation`
+# stanza capping every count (one Nemotron redistribution ships max_length 512), which would
+# make a saturating tokenizer look linear at 256; `HFTokenizer` disables truncation on load,
+# so this probe backstops tokenizers built elsewhere.
 _UNIT_PROBES: Tuple[int, ...] = (1, 64, 256, 2048)
 
-# A unit qualifies when its total cost stays within this factor of n tokens
-# at every probe. The bound is multiplicative: at the n=1 probe integer
-# counts force EXACTLY one token (a 2-token first repetition is rejected),
-# while larger probes tolerate up to 2:1 merging -- harmless, since the
-# verified search below supplies exactness and a half-density unit just pads
-# with twice the characters. The gate exists to reject runaway merging
+# Multiplicative cost bound: at the n=1 probe it forces exactly one token, while larger probes
+# tolerate up to 2:1 merging (harmless, since the verified search below supplies exactness and
+# a half-density unit just pads with twice the characters). Exists to reject runaway merging
 # (cost -> 0), which no character length could compensate.
 _UNIT_COST_TOLERANCE: float = 0.5
 
-# Bounds the `token_matched_noise_prompt` search; each pass costs one full
-# re-encode of the prompt. Estimate-and-correct normally converges in 2-3
-# passes, and the bisection fallback needs about log2(pad length), roughly 15,
-# more in the worst case. Reaching this bound means the tokenizer behaves
-# pathologically, and raising is the right outcome.
+# Bounds the `token_matched_noise_prompt` search; each pass re-encodes the whole prompt.
+# Estimate-and-correct normally converges in 2-3 passes; the bisection fallback needs about
+# log2(pad length), roughly 15 more in the worst case. Reaching this bound means the tokenizer
+# behaves pathologically, and raising is the right outcome.
 _MAX_MATCH_ITERATIONS: int = 32
 
 
 def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     """Pick a whitespace pad atom that costs ~1 token per repetition.
 
-    Whether a unit repeats linearly depends on the tokenizer's merge table, and
-    the model under test supplies the tokenizer, so the choice is probed
-    empirically rather than hard-coded.
-
-    Returns
-    -------
-    str
-        First unit in :data:`WHITESPACE_UNITS` whose measured cost stays within
-        :data:`_UNIT_COST_TOLERANCE` of 1 token/repetition at every probe in
-        :data:`_UNIT_PROBES`.
-
-    Raises
-    ------
-    ValueError
-        If no candidate qualifies -- a loud failure beats a pad that silently
-        saturates, leaving the "length control" arm shorter than the arm it
-        controls for.
+    Probed empirically against the given tokenizer's merge table rather than hard-coded, since
+    the model under test supplies the tokenizer. Raises ValueError if no candidate in
+    :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that silently saturates,
+    leaving the length-control arm shorter than the arm it controls for.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -334,59 +263,29 @@ def token_matched_noise_prompt(
 ) -> str:
     """Render `context` padded with whitespace to hit an exact token count.
 
-    The noise-padded ("length control") arm. The pad is APPENDED, keeping the
-    rules where the unpadded intensional arm puts them, and the match is on the
-    whole RENDERED prompt, per query: query text length varies from query to
-    query, so equal-token CONTEXTS would still give unequal-token PROMPTS.
-    Consumes no RNG and takes no seed, so a replicate stays regenerable from its
-    seed alone.
+    The noise-padded ("length control") arm. The pad is appended, keeping the rules where the
+    unpadded intensional arm puts them; matching is on the whole rendered prompt, since per-query
+    text length varies (equal-token contexts would still give unequal-token prompts). Consumes
+    no RNG, so a replicate stays regenerable from its seed alone. Result is verified, never
+    assumed, to be exactly `target_tokens`; every unreachable target raises instead.
 
-    PRECONDITION: ``tokenizer.count(render(context)) < target_tokens``,
-    STRICTLY. An appended pad can only grow a prompt, so a base that already
-    meets or exceeds the target is unreachable and raises (see `Raises`).
+    render: called repeatedly, so it must be cheap and deterministic.
+    tokenizer: must be the model under test's, or the control de-calibrates by however much the
+        two tokenizers disagree.
+    unit: defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
+        padding many prompts with one tokenizer.
 
-    Parameters
-    ----------
-    render : Callable[[str], str]
-        ``context -> prompt``; called repeatedly, so it must be cheap and
-        DETERMINISTIC (a varying render would measure some other prompt).
-    target_tokens : int
-        In practice ``tokenizer.count(extens)`` for the matching extensional
-        prompt.
-    tokenizer : Tokenizer
-        MUST be the model under test's (``tokenization.for_model(model)``), or
-        the control de-calibrates by however much the two disagree.
-    unit : str, optional
-        Pad atom; defaults to :func:`choose_whitespace_unit`'s pick. Pass it to
-        skip the probe when padding many prompts with one tokenizer.
-
-    Returns
-    -------
-    str
-        ``render(context + pad)``, verified (never assumed) EXACTLY
-        `target_tokens` tokens. There is no other return: every unreachable
-        target raises, so a caller never has to check the result to learn
-        whether the length control was actually built.
-
-    Raises
-    ------
-    ValueError
-        If the precondition above fails -- the unpadded prompt already costs
-        ``>= target_tokens`` -- since an appended pad cannot SHRINK a prompt.
-    ValueError
-        If the search cannot land on `target_tokens`; a close-but-inexact prompt
-        would reintroduce the length confound invisibly.
+    Precondition: ``tokenizer.count(render(context)) < target_tokens``, strictly -- an appended
+    pad can only grow a prompt. Raises ValueError if that fails, or if the search can't land on
+    an exact count (a close-but-inexact prompt would reintroduce the length confound invisibly).
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)
     if base_tokens >= target_tokens:
-        # Raise, never warn-and-return the unpadded render: no caller checked
-        # the returned length, so the "length control" arm silently shipped
-        # BYTE-IDENTICAL to the intensional arm it controls for whenever this
-        # branch fired (measured at the periodic config for n <= 2, where the
-        # extensional listing is not strictly longer than the intensional
-        # rules). A confounded arm that looks collected is worse than a run
-        # that stops.
+        # Raise, don't warn-and-return the unpadded render: an unchecked short-circuit here
+        # would ship the "length control" arm byte-identical to the arm it controls for (this
+        # fired at the periodic config for n <= 2, where the extensional listing isn't strictly
+        # longer than the intensional rules).
         raise ValueError(
             f"unpadded prompt is already {base_tokens} tokens, which is not "
             f"below the target of {target_tokens}; an appended pad can only "
@@ -397,19 +296,13 @@ def token_matched_noise_prompt(
 
     pad_unit: str = unit if unit is not None else choose_whitespace_unit(tokenizer)
 
-    # Estimate, then correct, then (only if needed) bisect. The unit costs ~1
-    # token, so the token deficit is a near-exact estimate of the missing
-    # repetitions. Every pass re-measures the WHOLE rendered prompt, absorbing
-    # the merges no estimate can predict: pad against context, and pad against
-    # whatever the template renders after it.
-    #
-    # Correction alone can oscillate (n -> n+3 -> n -> ...) when those merges
-    # make the local token cost jump around, so the probes also maintain a
-    # bracket (`lo` below the target, `hi` above) and replace any estimate that
-    # escapes it with the midpoint -- turning oscillation into a terminating
-    # bisection. A bracket that closes to adjacent values without an exact hit
-    # means the token count JUMPS over the target: no repetition count satisfies
-    # the request, a genuine failure.
+    # Estimate from the token deficit (the unit costs ~1 token, so the deficit approximates the
+    # missing repetitions), then correct by re-measuring the whole rendered prompt each pass,
+    # since merges aren't predictable from an estimate alone. Correction alone can oscillate
+    # when merges shift the local cost, so a bracket (`lo` below target, `hi` above) is kept and
+    # any estimate that escapes it is replaced by the midpoint, turning oscillation into a
+    # terminating bisection. A bracket that closes to adjacent values without an exact hit means
+    # the token count jumps over the target: no repetition count satisfies the request.
     n: int = target_tokens - base_tokens
     lo: int = 0  # f(0) = base_tokens < target_tokens, per the guard above
     hi: Optional[int] = None

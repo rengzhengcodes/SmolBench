@@ -1,10 +1,9 @@
 """Offline contract for scripts/arch/fetch_arch_facts.py; no network.
 
-Every fetch goes through an injected fake, so nothing here reaches the
-Hugging Face hub. The properties pinned are the three the PR #14 reviewer
-found broken: the fetch must use the deploy spec's pinned commit SHA rather
-than the moving ``main`` branch, ``--check`` must compare revisions, and
-``--check`` must run BEFORE either output file is written.
+Every fetch goes through an injected fake, so nothing reaches the Hugging
+Face hub. Pins three properties: fetches use the deploy spec's pinned
+commit SHA, not the moving ``main`` branch; ``--check`` compares revisions;
+and ``--check`` runs before either output file is written.
 """
 
 import json
