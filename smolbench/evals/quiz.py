@@ -10,6 +10,7 @@ import os
 import re
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TypeAlias, Sequence, Optional
 
 Answer: TypeAlias = bool | int | str
@@ -38,7 +39,7 @@ class QnA:
 class ToF(QnA):
     """A true/false question."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.answer, bool):
             raise ValueError(
                 f"self.answer = {self.answer} of type {type(self.answer)} not bool"
@@ -70,7 +71,7 @@ class ToF(QnA):
 class Numeric(QnA):
     """An integer-answer question."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.answer, int):
             raise ValueError(f"self.answer = {self.answer} is not int")
 
@@ -141,14 +142,17 @@ class Marks:
 
     @property
     def correct(self) -> int:
+        """Return the number of correct marks."""
         return sum(1 for m in self.marks if m.score == 1)
 
     @property
     def incorrect(self) -> int:
+        """Return the number of incorrect marks."""
         return sum(1 for m in self.marks if m.score == 0)
 
     @property
     def invalid(self) -> int:
+        """Return the number of invalid marks."""
         return sum(1 for m in self.marks if m.score is None)
 
     @property
@@ -177,7 +181,7 @@ class Marks:
 
         return yaml.safe_dump(asdict(self), default_flow_style=False, indent=4)
 
-    def dump(self, path) -> None:
+    def dump(self, path: Path) -> None:
         """Write `dumps()`'s document to `path` atomically (tmp + ``os.replace``).
 
         Resume-skips gate on bare file presence (``ResultsStore.exists``), so
@@ -207,7 +211,7 @@ class Marks:
         )
 
     @classmethod
-    def load(cls, path) -> "Marks":
+    def load(cls, path: Path) -> "Marks":
         """Read `path`'s full text and delegate to `loads`."""
         with open(path) as file:
             text = file.read()

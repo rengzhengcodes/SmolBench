@@ -197,15 +197,17 @@ def quizzes_from_prompts(
     conditions: Iterable[str],
 ) -> Dict[str, Quiz]:
     """Wrap ``RenderedQuery`` instances into one ``Quiz`` per condition.
-
-    conditions: typed structurally (any string iterable) rather than as
-    ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
-    would be a cycle; passing the mapping directly still works since
-    iterating it yields its keys in the wanted order.
-
     Raises ``ValueError``, naming it, if some ``RenderedQuery`` lacks one of
     `conditions`'s names -- otherwise a missing arm would surface much later
     as a confusing ``KeyError``.
+
+    Parameters
+    ----------
+    conditions : Iterable[str]
+        typed structurally (any string iterable) rather than as
+        ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
+        would be a cycle; passing the mapping directly still works since
+        iterating it yields its keys in the wanted order.
     """
     condition_names = tuple(conditions)
     quizzes: Dict[str, list] = {name: [] for name in condition_names}

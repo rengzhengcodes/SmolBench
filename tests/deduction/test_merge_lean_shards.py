@@ -3,6 +3,8 @@
 import importlib.util
 import json
 import sys
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,7 +26,7 @@ def _cell(theorem: str, rung: str = "stepk:1") -> dict:
             "lean_error": "\u00e9rreur\u2028line two"}
 
 
-def _lines(run_dir) -> list[str]:
+def _lines(run_dir: Path) -> list[str]:
     """Records, split on "\n" only -- `splitlines` also breaks on the U+2028 above."""
     return [x for x in (run_dir / "all_rows.jsonl").read_text().split("\n") if x]
 
@@ -33,7 +35,9 @@ def _sanity(theorem: str) -> dict:
     return {"kind": "sanity", "theorem_id": theorem}
 
 
-def _write_shard(runs, key, i, n, rows):
+def _write_shard(
+    runs: Path, key: str, i: int, n: int, rows: list[dict[str, Any]]
+) -> None:
     name = f"scaling_{key}_shard{i}of{n}"
     d = runs / name
     d.mkdir(parents=True)
@@ -49,7 +53,7 @@ def _write_shard(runs, key, i, n, rows):
     (d / "theorems" / f"Thm{i}" / "meta.json").write_text("{}")
 
 
-def test_merge_combines_rows_sidecars_and_manifests(tmp_path):
+def test_merge_combines_rows_sidecars_and_manifests(tmp_path: Path) -> None:
     """Rows, server configs, theorems/ and manifests union in shard order."""
     runs = tmp_path / "runs"
     _write_shard(runs, "k", 0, 2, [_cell("A"), _sanity("A")])
@@ -73,7 +77,7 @@ def test_merge_combines_rows_sidecars_and_manifests(tmp_path):
     assert [s["shard"] for s in manifest["merged_from_shards"]] == ["0/2", "1/2"]
 
 
-def test_merge_gates_fail_closed(tmp_path):
+def test_merge_gates_fail_closed(tmp_path: Path) -> None:
     """Duplicate cells, wrong totals, missing shards and clobbering all exit."""
     runs = tmp_path / "runs"
     _write_shard(runs, "dup", 0, 2, [_cell("A")])
@@ -100,7 +104,7 @@ def test_merge_gates_fail_closed(tmp_path):
     assert (canonical / "all_rows.jsonl").read_text() == "precious\n"
 
 
-def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path):
+def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path: Path) -> None:
     """A shard's torn final line is dropped; a corrupt row anywhere else exits."""
     runs = tmp_path / "runs"
     _write_shard(runs, "torn", 0, 1, [_cell("A"), _sanity("A")])
@@ -119,12 +123,12 @@ def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path):
     assert not (runs2 / "scaling_bad" / "all_rows.jsonl").exists()
 
 
-def _cell_v(theorem, verdict, rung="stepk:1"):
+def _cell_v(theorem: str, verdict: str, rung: str = "stepk:1") -> dict:
     """A cell row carrying an explicit verdict (the duplicate-collapse rule reads it)."""
     return dict(_cell(theorem, rung), verdict=verdict)
 
 
-def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path):
+def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path: Path) -> None:
     """Ordinary resume produces duplicate keys; merge must not abort on them.
 
     `runner._existing_keys` re-runs a cell whose only row is an
@@ -146,7 +150,7 @@ def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path):
         ["exception", "success"], "both rows must survive the merge"
 
 
-def test_merge_collapses_an_exception_only_cell(tmp_path):
+def test_merge_collapses_an_exception_only_cell(tmp_path: Path) -> None:
     """A cell whose every row is an exception was never measured -- not an abort."""
     runs = tmp_path / "runs"
     _write_shard(runs, "allexc", 0, 1, [
@@ -158,7 +162,7 @@ def test_merge_collapses_an_exception_only_cell(tmp_path):
     assert len(_lines(out)) == 2
 
 
-def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path):
+def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path: Path) -> None:
     """The gate keeps its teeth for the failure it was written for.
 
     Two rows that both reached a real verdict for one cell key is a

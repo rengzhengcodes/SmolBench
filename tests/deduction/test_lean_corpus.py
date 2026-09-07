@@ -2,6 +2,8 @@
 
 import json
 import shutil
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -10,7 +12,7 @@ from tests._paths import LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOF
 
 
 @pytest.fixture
-def lean_data(monkeypatch):
+def lean_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Repoint the dataset root at the fixture and clear memoized loaders."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
     corpus.reset_caches()
@@ -18,7 +20,7 @@ def lean_data(monkeypatch):
     corpus.reset_caches()
 
 
-def test_load_split_parses_fixture(lean_data):
+def test_load_split_parses_fixture(lean_data: Path) -> None:
     """Both fixture theorems parse with provenance, tactics and premises."""
     thms = corpus.load_split("random", "val")
     assert len(thms) == 2
@@ -40,7 +42,7 @@ def test_load_split_parses_fixture(lean_data):
     assert corpus.metadata()["dataset_name"].startswith("LeanDojo Benchmark 4")
 
 
-def test_path_layout(lean_data):
+def test_path_layout(lean_data: Path) -> None:
     """The env override sets data_root(); sidecars land alongside the dataset dir."""
     assert corpus.data_root() == FIXTURE
     p = corpus.replay_passing_path("random", "val")
@@ -48,7 +50,7 @@ def test_path_layout(lean_data):
     assert p.parent == corpus.data_root().parent == FIXTURE.parent
 
 
-def test_data_root_default_is_repo_anchored(monkeypatch):
+def test_data_root_default_is_repo_anchored(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no env override, data_root() is repo-anchored, never cwd-relative."""
     monkeypatch.delenv("SMOLBENCH_LEAN_DATA", raising=False)
     corpus.reset_caches()
@@ -57,7 +59,9 @@ def test_data_root_default_is_repo_anchored(monkeypatch):
     assert root.parts[-4:] == ("notebooks", "deduction", "data", "leandojo_benchmark_4")
 
 
-def test_unbootstrapped_loaders_name_the_remedy(monkeypatch, tmp_path):
+def test_unbootstrapped_loaders_name_the_remedy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Every loader's FileNotFoundError names the missing file and the bootstrap doc."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path))
     corpus.reset_caches()
@@ -75,7 +79,7 @@ OLD_COMMIT = "69c8a067c87c2bb6ba583f03fbf46090564be370"
 
 
 @pytest.fixture
-def postcutoff_data(monkeypatch):
+def postcutoff_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Repoint the dataset root at the POST-CUTOFF fixture and clear loaders."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(POSTCUTOFF))
     corpus.reset_caches()
@@ -83,14 +87,14 @@ def postcutoff_data(monkeypatch):
     corpus.reset_caches()
 
 
-def _copy_fixture(tmp_path, src=None):
+def _copy_fixture(tmp_path: Path, src: Path | None = None) -> Path:
     """Copy a corpus fixture into `tmp_path` so a test can corrupt its metadata."""
     dest = tmp_path / "corpus_copy"
     shutil.copytree(src or POSTCUTOFF, dest)
     return dest
 
 
-def test_postcutoff_metadata_reports_the_whole_block(postcutoff_data):
+def test_postcutoff_metadata_reports_the_whole_block(postcutoff_data: Path) -> None:
     """The block round-trips verbatim and every documented key is present."""
     block = corpus.postcutoff_metadata()
     assert block is not None
@@ -104,21 +108,23 @@ def test_postcutoff_metadata_reports_the_whole_block(postcutoff_data):
     assert corpus.metadata()["from_repo"]["commit"] == NEW_COMMIT
 
 
-def test_postcutoff_flag_is_read_off_every_theorem_row(postcutoff_data):
+def test_postcutoff_flag_is_read_off_every_theorem_row(postcutoff_data: Path) -> None:
     """`BenchmarkTheorem.postcutoff` comes from the row, not from the metadata."""
     thms = corpus.load_split("random", "val")
     assert len(thms) == 2
     assert all(t.postcutoff is True for t in thms)
 
 
-def test_absent_block_is_none_and_rows_default_to_not_postcutoff(lean_data):
+def test_absent_block_is_none_and_rows_default_to_not_postcutoff(lean_data: Path) -> None:
     """The old (2024-03-24) corpus stays legal to load and reports itself honestly."""
     assert corpus.postcutoff_metadata() is None
     assert corpus.is_postcutoff_corpus() is False
     assert all(t.postcutoff is False for t in corpus.load_split("random", "val"))
 
 
-def test_commit_mismatch_between_from_repo_and_block_raises(monkeypatch, tmp_path):
+def test_commit_mismatch_between_from_repo_and_block_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A corpus whose trace commit is not the block's `new_commit` is incoherent."""
     root = _copy_fixture(tmp_path)
     meta = json.loads((root / "metadata.json").read_text())
@@ -132,7 +138,7 @@ def test_commit_mismatch_between_from_repo_and_block_raises(monkeypatch, tmp_pat
     corpus.reset_caches()
 
 
-def _make_cache(home, *commits):
+def _make_cache(home: Path, *commits: str) -> None:
     """Build ``<home>/.cache/lean_dojo/leanprover-community-mathlib4-<c>/mathlib4`` dirs."""
     for commit in commits:
         (home / ".cache" / "lean_dojo" /
@@ -140,8 +146,8 @@ def _make_cache(home, *commits):
 
 
 def test_traced_root_picks_the_cache_dir_matching_the_corpus_commit(
-    postcutoff_data, monkeypatch, tmp_path
-):
+    postcutoff_data: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Two cached traces, and the wrong one sorts first -- name order must not decide."""
     from smolbench.deduction.lean import premises
 
@@ -155,7 +161,9 @@ def test_traced_root_picks_the_cache_dir_matching_the_corpus_commit(
     assert root.parent.name == f"leanprover-community-mathlib4-{NEW_COMMIT}"
 
 
-def test_traced_root_is_none_when_no_cache_dir_matches(postcutoff_data, monkeypatch, tmp_path):
+def test_traced_root_is_none_when_no_cache_dir_matches(
+    postcutoff_data: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The pass-5 contract: None, never an exception, when the trace is absent."""
     from smolbench.deduction.lean import premises
 
@@ -166,7 +174,9 @@ def test_traced_root_is_none_when_no_cache_dir_matches(postcutoff_data, monkeypa
     corpus.reset_caches()
 
 
-def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(monkeypatch, tmp_path):
+def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """No metadata.json means no commit to match on -- still None, still no raise."""
     from smolbench.deduction.lean import premises
 
@@ -184,12 +194,14 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(monkeypatch, tm
 # not from a literal in a deleted SFT-dataset builder.
 
 
-def test_eval_split_specs_reads_the_active_corpus(lean_data):
+def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
     """The committed fixture carries only ``random/val.json``, so that is the spec list."""
     assert corpus.eval_split_specs() == (("random", "val"),)
 
 
-def test_eval_split_specs_is_canonically_ordered_and_call_time(tmp_path, monkeypatch):
+def test_eval_split_specs_is_canonically_ordered_and_call_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Order is train/val/test regardless of creation order, and re-read per call.
 
     Creation order is reversed on purpose: a filesystem-listing implementation
@@ -213,7 +225,9 @@ def test_eval_split_specs_is_canonically_ordered_and_call_time(tmp_path, monkeyp
     assert corpus.eval_split_specs() == (("random", "test"),)
 
 
-def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(tmp_path, monkeypatch):
+def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Never an empty tuple: a holdout built from one would decontaminate nothing."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "missing"))
     with pytest.raises(FileNotFoundError, match="missing"):

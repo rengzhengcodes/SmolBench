@@ -21,7 +21,7 @@ import hashlib
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 #: The committed config, resolved relative to this module's own file so it is
 #: found regardless of the caller's working directory.
@@ -32,10 +32,14 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("decontam_config.toml"
 class MinHashConfig:
     """Parameters of `decontam`'s MinHash + banded-LSH near-duplicate index.
 
-    rows: derived as ``num_perm // bands``, never read from the file --
-    stating it there too would let the two disagree.
-    jaccard_threshold: decision threshold on exact shingle-set Jaccard
-    similarity; the LSH only proposes candidates, this is what decides.
+    Parameters
+    ----------
+    rows : int
+        derived as ``num_perm // bands``, never read from the file --
+        stating it there too would let the two disagree.
+    jaccard_threshold : float
+        decision threshold on exact shingle-set Jaccard similarity; the LSH
+        only proposes candidates, this is what decides.
     """
 
     shingle_n: int
@@ -50,8 +54,11 @@ class MinHashConfig:
 class KeyConfig:
     """Eligibility rules for `decontam`'s statement/state index keys.
 
-    min_goal_key_chars: minimum normalized length for a goal-only state
-    variant to become an index key; ``0`` disables the floor.
+    Parameters
+    ----------
+    min_goal_key_chars : int
+        minimum normalized length for a goal-only state variant to become an
+        index key; ``0`` disables the floor.
     """
 
     min_goal_key_chars: int
@@ -61,12 +68,16 @@ class KeyConfig:
 class DecontamConfig:
     """The whole committed decontamination policy, plus the file's digest.
 
-    lean_noise: a frozenset, not a tuple, since every consumer only asks
-    membership questions and the duplicate check happens at load time,
-    before set-ification could hide one.
-    path: the resolved path :func:`_load_cached` is memoized on, carried here
-    so a manifest stamp can't name a different file than the one `sha256`
-    covers.
+    Parameters
+    ----------
+    lean_noise : frozenset[str]
+        a frozenset, not a tuple, since every consumer only asks membership
+        questions and the duplicate check happens at load time, before
+        set-ification could hide one.
+    path : Path
+        the resolved path :func:`_load_cached` is memoized on, carried here so
+        a manifest stamp can't name a different file than the one `sha256`
+        covers.
     """
 
     minhash: MinHashConfig
@@ -85,7 +96,7 @@ def _require_section(data: dict, section: str) -> dict:
     return data[section]
 
 
-def _require_key(section_data: dict, section: str, key: str):
+def _require_key(section_data: dict, section: str, key: str) -> Any:
     """Return ``section_data[key]``, raising ``ValueError`` naming `section`/`key` if absent."""
     if key not in section_data:
         raise ValueError(
@@ -211,13 +222,15 @@ def _load_cached(resolved_path: Path) -> DecontamConfig:
 
 def load_decontam_config(path: "Optional[Path]" = None) -> DecontamConfig:
     """Load and validate the committed decontamination policy config.
-
-    path: ``None`` (the default) resolves to ``decontam_config.toml`` beside
-    this module; tests pass an explicit path to load a scratch fixture.
-
     Cached: repeated calls that resolve to the same file return the SAME
     object, and every field is an immutable scalar or `frozenset`, so a
     consumer cannot mutate it.
+
+    Parameters
+    ----------
+    path : Optional[Path], optional
+        ``None`` (the default) resolves to ``decontam_config.toml`` beside
+        this module; tests pass an explicit path to load a scratch fixture.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # __file__-anchored, not cwd-relative, so the sibling imports below resolve
@@ -106,7 +107,9 @@ def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     return np.einsum("...d,...de,...e->...", t_vec, sigma_inv, t_vec)
 
 
-def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
+def trend_stat(
+    succ: np.ndarray, n: int, scores: tuple[float, ...] = (1.0, 2.0, 3.0)
+) -> np.ndarray:
     """1-df CMH correlation (linear trend) statistic across the 3 rungs, `n` trials per cell."""
     x = np.asarray(scores)
     n_rungs = succ.shape[-2]
@@ -126,15 +129,8 @@ def trend_stat(succ: np.ndarray, n: int, scores=(1.0, 2.0, 3.0)) -> np.ndarray:
 
 
 def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
-                 rng: np.random.Generator, icc: float = 0.0):
+                 rng: np.random.Generator, icc: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """Simulate matched marks from a latent bivariate normal (tetrachoric `rho`).
-
-    `icc`: share of each arm's latent variance from a per-replicate latent
-    shared by that replicate's `K_HARM` items, modelling a replicate's shared
-    seed (PART 3's "independent" variant). Must be in ``[0.0, 1.0)`` -- 1.0
-    would make every item in a replicate identical, collapsing the `K_HARM`
-    axis.
-
     `z1`/`z2` are drawn in the same order used before `icc` existed, and the
     icc-clustering draw is skipped entirely (not drawn then zero-weighted)
     when `icc == 0.0` -- a zero-weighted draw would still advance `rng` and
@@ -145,6 +141,15 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     paired test's apparent power advantage -- the opposite of what `icc`
     exists to expose. The mix is unit-variance, so it reproduces the same
     marginal rate (`p_a`, `p_b`) as `icc=0`.
+
+    Parameters
+    ----------
+    icc : float, optional
+        share of each arm's latent variance from a per-replicate latent
+        shared by that replicate's `K_HARM` items, modelling a replicate's shared
+        seed (PART 3's "independent" variant). Must be in ``[0.0, 1.0)`` -- 1.0
+        would make every item in a replicate identical, collapsing the `K_HARM`
+        axis.
     """
     if not (0.0 <= icc < 1.0):
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
@@ -162,7 +167,7 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
 
 
 # =============================================================== PART 1: ceiling headroom
-def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025):
+def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -> None:
     """Find the minimum detectable difference (80% power) at each ceiling.
 
     Per baseline rate `p_a`, scans the accuracy gap `d` in `step` increments
@@ -199,7 +204,7 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025):
 
 
 # ======================================================= PART 3: clustering / Type I error
-def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
+def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) -> None:
     """Measure actual Type I error under within-replicate clustering.
 
     Simulates marks with a shared per-replicate latent factor (intraclass
@@ -261,7 +266,7 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000):
 
 
 # ============================================================ PART 5: trend vs pairwise
-def part5(rng: np.random.Generator, n_sims: int = 20000):
+def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     """Compare the 1-df trend test against the 2-df omnibus and 3 pairwise tests.
 
     Six rate scenarios (monotone/non-monotone at small, mid and ceiling
@@ -331,8 +336,10 @@ def part5(rng: np.random.Generator, n_sims: int = 20000):
 
 
 # ================================================================== PART 2: pairing gain
-def _paired_powers(p_a, delta, rho, reps, n_sims, rng, stats: bool = True,
-                   icc: float = 0.0):
+def _paired_powers(
+    p_a: float, delta: float, rho: float, reps: int, n_sims: int,
+    rng: np.random.Generator, stats: bool = True, icc: float = 0.0,
+) -> tuple[float, float, float | None, float | None]:
     """Unpaired-CMH and paired-McNemar power on the SAME simulated marks (arm B = p_a - delta).
 
     `stats=False` skips the two mark-level diagnostics (`phi_binary`,
@@ -398,7 +405,10 @@ def study_design_effect() -> float | None:
     return float(np.median(deffs)) if deffs else None
 
 
-def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
+def part2(
+    rng: np.random.Generator, n_sims: int = 20000, search_sims: int = 8000,
+    cap: int = EQ_R_GRID[-1],
+) -> None:
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
     Over a grid of baseline rates, accuracy gaps and latent correlations,
@@ -507,7 +517,7 @@ def part2(rng, n_sims=20000, search_sims=8000, cap=EQ_R_GRID[-1]):
 
 
 # ============================================================== PART 4: correction cost
-def build_rate_matrix():
+def build_rate_matrix() -> np.ndarray:
     """Build a stylized 7-family x 3-rung x 4-info true-rate matrix for PART 4.
 
     30 true effects near ceiling and mid-range per the brief; the remaining
@@ -590,7 +600,7 @@ def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     return out
 
 
-def part4(rng, n_sims=4000):
+def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     """Measure the cost of multiplicity correction against `build_rate_matrix`'s truth.
 
     Compares the full 210-contrast PRIMARY family (84 ladder + 126 info)
@@ -667,7 +677,10 @@ def part4(rng, n_sims=4000):
             "would then correct the trend test in a family that does not exist."
         )
 
-    def summarize(name, rejmap, nullmask, ladder_flag_fn):
+    def summarize(
+        name: str, rejmap: dict[str, np.ndarray], nullmask: np.ndarray,
+        ladder_flag_fn: Callable[[np.ndarray], np.ndarray],
+    ) -> dict[str, dict]:
         res = {}
         for proc, rej in rejmap.items():
             v = (rej & nullmask).sum(axis=1)
@@ -686,14 +699,14 @@ def part4(rng, n_sims=4000):
 
     lad_pair_ladder = np.array(ladder_of_pair)
 
-    def flag_full(rej):
+    def flag_full(rej: np.ndarray) -> np.ndarray:
         nf = np.where(ladder_nonflat)[0]
         got = np.zeros((rej.shape[0], 28), dtype=bool)
         for t_ in range(84):
             got[:, lad_pair_ladder[t_]] |= rej[:, t_]
         return got[:, nf].sum(axis=1)
 
-    def flag_red(rej):
+    def flag_red(rej: np.ndarray) -> np.ndarray:
         nf = np.where(ladder_nonflat)[0]
         return rej[:, :28][:, nf].sum(axis=1)
 
@@ -713,7 +726,7 @@ def part4(rng, n_sims=4000):
                         rates=rates.tolist())
 
 
-def main():
+def main() -> None:
     """Run PARTs 1, 3, 5, 2, 4 in that order (not PART-number order), checkpointing each.
 
     Each part gets its own generator, seeded `SEED + <part number>` (the

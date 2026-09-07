@@ -106,7 +106,7 @@ class PeriodicConfig:
     # silently generating the wrong quiz.
     expect_seq_len: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.n < 1:
             raise ValueError("n must be positive.")
         if self.periods is not None:

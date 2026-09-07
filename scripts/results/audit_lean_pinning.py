@@ -19,6 +19,7 @@ import random
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from smolbench.evals.study_config import load_study_config, roster_keys
 
@@ -51,13 +52,13 @@ def slug_theorem(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 
-def _client():
+def _client() -> Any:
     import boto3
 
     return boto3.client("s3", region_name=REGION)
 
 
-def _read(s3, key: str) -> str:
+def _read(s3: Any, key: str) -> str:
     return s3.get_object(Bucket=BUCKET, Key=key)["Body"].read().decode()
 
 
@@ -74,14 +75,14 @@ def _default_run_prefix() -> str:
     return spool_prefix()
 
 
-def fetch_manifests(s3, *, run_prefix: str | None = None) -> dict[str, dict]:
+def fetch_manifests(s3: Any, *, run_prefix: str | None = None) -> dict[str, dict]:
     """Per-lane as-run ``manifest.json`` (the config actually launched)."""
     run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
     return {k: json.loads(_read(s3, f"{run_prefix}/scaling_{k}/manifest.json")) for k in LANES}
 
 
 def fetch_spool_index(
-    s3, *, run_prefix: str | None = None
+    s3: Any, *, run_prefix: str | None = None
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
     """List each lane's output-cell keys and prompt ETags in one pass.
 
@@ -126,7 +127,7 @@ def _is_missing_key(exc: Exception) -> bool:
     return code in {"NoSuchKey", "NotFound", "404"} or status == 404
 
 
-def fetch_recovery(s3, *, run_prefix: str | None = None) -> dict[str, set[str]]:
+def fetch_recovery(s3: Any, *, run_prefix: str | None = None) -> dict[str, set[str]]:
     """Cell keys touched by the additive dojoinit recovery, per lane.
 
     A lane with no recovery object contributes ``set()``; every other S3 error
@@ -150,7 +151,7 @@ def fetch_recovery(s3, *, run_prefix: str | None = None) -> dict[str, set[str]]:
     return out
 
 
-def fetch_flip_cells(s3, *, run_prefix: str | None = None) -> dict[str, set[str]]:
+def fetch_flip_cells(s3: Any, *, run_prefix: str | None = None) -> dict[str, set[str]]:
     """Cell keys reached by the flip-rate side-runs, per run name.
 
     These spool in the normal ``theorems/<slug>/outputs/`` layout, not the
@@ -170,7 +171,9 @@ def fetch_flip_cells(s3, *, run_prefix: str | None = None) -> dict[str, set[str]
     return out
 
 
-def divergent_prompt_cells(cell_keys, prompts: dict[str, dict[str, str]]) -> set[str]:
+def divergent_prompt_cells(
+    cell_keys: set[str], prompts: dict[str, dict[str, str]]
+) -> set[str]:
     """Cells whose ``prompts/<rung>.md`` is not one shared ETag across `LANES`.
 
     A missing artifact contributes ``None``, which counts as divergent --
@@ -210,6 +213,7 @@ def reproduce_pin(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the configured S3 pinning audit and optional reproduction."""
     # Lazy import: a key prefix is CONFIGURATION, not audited logic, so this
     # doesn't reintroduce the duplication hazard `slug_theorem`/`LANES` guard against.
     from smolbench.deduction.lean import runner

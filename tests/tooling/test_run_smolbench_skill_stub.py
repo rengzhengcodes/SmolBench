@@ -18,6 +18,8 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -52,7 +54,7 @@ def _post_completion(port: int, model: str, seed: int) -> dict:
 
 
 @pytest.fixture
-def stub_process(tmp_path):
+def stub_process(tmp_path: Path) -> Iterator[tuple[dict[str, int], Path]]:
     """Start `stub_llm.py`, yield ``(ports, reqlog_path)``, then kill it."""
     reqlog = tmp_path / "reqlog.jsonl"
     proc = subprocess.Popen(
@@ -72,7 +74,9 @@ def stub_process(tmp_path):
         proc.wait(timeout=30)
 
 
-def test_the_stub_serves_both_answers_and_both_context_length_shapes(stub_process):
+def test_the_stub_serves_both_answers_and_both_context_length_shapes(
+    stub_process: tuple[dict[str, int], Path],
+) -> None:
     ports, _ = stub_process
     assert set(ports) == {"pi", "or"}
     assert ports["pi"] != ports["or"]
@@ -94,7 +98,9 @@ def test_the_stub_serves_both_answers_and_both_context_length_shapes(stub_proces
     )["context_length"] > 0
 
 
-def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(stub_process):
+def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(
+    stub_process: tuple[dict[str, int], Path],
+) -> None:
     """The log line keys `lean_smoke.sh --e2e` actually reads: `path` and `body`.
 
     The script filters on ``r["path"].endswith("/chat/completions")`` then
@@ -123,7 +129,7 @@ def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(stub_pr
     assert any(r["body"] is None for r in records), records
 
 
-def test_the_skill_does_not_hand_roll_a_second_stub_dialect():
+def test_the_skill_does_not_hand_roll_a_second_stub_dialect() -> None:
     """The response shapes and GET routes come from `tests/conftest.py`, not a copy.
 
     Checked on the AST, not by substring: the file legitimately mentions

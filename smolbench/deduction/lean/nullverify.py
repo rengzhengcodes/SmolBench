@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Any, Iterator
 
 from .corpus import BenchmarkTheorem
 
@@ -100,7 +100,9 @@ class NullVerifier:
         """
         yield None, None
 
-    def try_tail(self, dojo, state_at_k, tail: str, theorem_name: str) -> NullProofResult:
+    def try_tail(
+        self, dojo: Any, state_at_k: Any, tail: str, theorem_name: str
+    ) -> NullProofResult:
         """Report the candidate tail as ``verdict="unverified"``, recording it verbatim."""
         return NullProofResult(theorem=theorem_name, verdict="unverified", tail_tried=tail)
 

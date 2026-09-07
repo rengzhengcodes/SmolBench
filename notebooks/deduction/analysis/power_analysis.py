@@ -35,9 +35,11 @@ import hashlib
 import json
 import sys
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy.stats import binom
@@ -247,7 +249,7 @@ def _warn_unverified(reasons: list[str]) -> None:
 UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 
 
-def reject_unverified_verdicts(rows, field, source) -> None:
+def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, source: str | Path) -> None:
     """Refuse rows that still carry the ungraded ``"unverified"`` sentinel.
 
     A warning isn't enough: the sentinel is deliberately not in `UNMEASURABLE_VERDICTS`,
@@ -288,7 +290,7 @@ def reject_unverified_verdicts(rows, field, source) -> None:
     )
 
 
-def grade_verdicts(verdicts) -> int | None:
+def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
     """Grade ONE cell from its rows' verdicts in file order (chronological).
 
     Earliest surviving attempt wins, since a later retry is an independent draw and
@@ -316,14 +318,17 @@ def load_joint_cells(
     starts writing real replicates (`N_REPLICATES_GRID` only sizes a FUTURE need).
     Prints one stderr warning per call naming the dropped-row count and file(s).
 
-    `models`: restrict pairing to this set (default: every model present); a cell is
-    kept only if graded for EVERY member.
-
     Returns (models, blocks, prompt_rungs): sorted paired spec-keys;
     ``{theorem_id: {(k, prompt_rung): {model: 1 or 0}}}`` restricted to fully-graded
     cells; sorted distinct ``rung`` values present. Prints the `_warn_unverified`
     banner if any input is named ``all_rows.jsonl`` or any loaded cell is still
     ``"unverified"``.
+
+    Parameters
+    ----------
+    models : tuple[str, ...] | None, optional
+        restrict pairing to this set (default: every model present); a cell is
+        kept only if graded for EVERY member.
     """
     reject_superseded(row_files)
     cell_rows: list[dict] = []
@@ -597,11 +602,14 @@ def passn_power(
     model's calibrated solvable-cell mean. `pass_at_n` converts cells to pass@N;
     McNemar's p is computed per simulation on an `n_theorems` x `n_prompt_rungs` grid.
 
-    `frac_solvable`: from `union_solvable_fraction` on just this pair; must be ``> 0``.
-
     Returns the rejection fraction at `alpha`, or ``nan`` if either model's implied
     solvable-cell mean falls outside ``(0, 1]``. Adding replicates re-samples the SAME
     theorem's difficulty, so this saturates: theorems, not replicates, are the lever.
+
+    Parameters
+    ----------
+    frac_solvable : float
+        from `union_solvable_fraction` on just this pair; must be ``> 0``.
     """
     ma = rate_a / frac_solvable
     mb = rate_b / frac_solvable

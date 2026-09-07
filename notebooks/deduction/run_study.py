@@ -97,10 +97,13 @@ def lane_env_defaults(
     ``smolbench.evals.providers.ec2``). Does not validate `key` against
     ``MODELS``: that table is not loaded yet here.
 
-    state_file: ``None`` derives ``repo_root / f".ec2_state_scaling_{key}.json"``;
-    a bare or relative name resolves against `repo_root`, not the process cwd
-    -- anchoring both phases to the same root is how this lane reattaches to
-    induction's box.
+    Parameters
+    ----------
+    state_file : str | None, optional
+        ``None`` derives ``repo_root / f".ec2_state_scaling_{key}.json"``;
+        a bare or relative name resolves against `repo_root`, not the process cwd
+        -- anchoring both phases to the same root is how this lane reattaches to
+        induction's box.
     """
     if state_file is None:
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"

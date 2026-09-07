@@ -24,10 +24,11 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 
 from lean_interact import Command, LeanREPLConfig, LeanServer, LocalProject, ProofStep
 from lean_interact.interface import LeanError
+from smolbench.deduction.lean.corpus import BenchmarkTheorem
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,11 @@ def declaration_text(root: Path, file_path: str, start_line: int, max_lines: int
     return "\n".join(collected).rstrip()
 
 
-def theorem_statement_stub(bt, root: Path | None = None, target_name: str = TARGET_NAME) -> str:
+def theorem_statement_stub(
+    bt: BenchmarkTheorem,
+    root: Path | None = None,
+    target_name: str = TARGET_NAME,
+) -> str:
     """Build the ``:= by sorry`` stub whose ``sorry`` opens `bt`'s proof state.
 
     The REPL has no "give me the goal of declaration X" request; the standard way to obtain
@@ -451,7 +456,7 @@ def theorem_statement_stub(bt, root: Path | None = None, target_name: str = TARG
 # ---------------------------------------------------------------------------
 
 
-def classify_step(response) -> StepOutcome:
+def classify_step(response: Any) -> StepOutcome:
     """Map one `lean_interact` reply onto a `StepOutcome`.
 
     The branch order is the taxonomy: reordering changes what the eval measures, and each
@@ -525,7 +530,7 @@ class ReplSession:
     #: attributable; nothing here reads the corpus row.
     theorem: str
 
-    def run(self, request):
+    def run(self, request: Any) -> Any:
         """Send one request, translating transport failures into `ReplError`.
 
         `lean_interact` raises builtin `TimeoutError` (and kills the server) on a slow
@@ -594,7 +599,7 @@ def _default_server_factory(root: Path) -> LeanServer:
     return LeanServer(LeanREPLConfig(project=LocalProject(directory=str(root))))
 
 
-def _describe(response) -> str:
+def _describe(response: Any) -> str:
     """Render a REPL reply's messages verbatim, for an actionable `ReplError`."""
     if isinstance(response, LeanError):
         return response.message
@@ -602,7 +607,7 @@ def _describe(response) -> str:
 
 
 def open_session(
-    bt,
+    bt: BenchmarkTheorem,
     timeout: int = 600,
     root: str | Path | None = None,
     server_factory: Callable[[Path], object] | None = None,
@@ -667,7 +672,12 @@ def open_session(
     raise last_exc
 
 
-def _open_proof_state(session: ReplSession, bt, module: str, stub: str) -> int:
+def _open_proof_state(
+    session: ReplSession,
+    bt: BenchmarkTheorem,
+    module: str,
+    stub: str,
+) -> int:
     """Import `module`, elaborate `stub` in it, and return the ``sorry``'s state id.
 
     Two REPL round trips: a fresh-environment ``import`` (``env=None`` starts a new session

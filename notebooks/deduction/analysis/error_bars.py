@@ -26,6 +26,7 @@ import functools
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy.stats import norm
@@ -71,12 +72,12 @@ CHUNK = 2_000
 DRIFT_TOL = 0.0005
 
 
-def _cost(c, field):
+def _cost(c: dict[str, Any], field: str) -> float | None:
     """Points the count-as-failure rule removes, or None where the drop rate is undefined."""
     return None if c[field] is None else 100 * (c[field] - c[f"{field[:-5]}_caf"])
 
 
-def _fmt(value, width):
+def _fmt(value: float | None, width: int) -> str:
     return f"{value:{width}.3f}" if value is not None else f"{'n/a':>{width}}"
 
 
@@ -244,10 +245,13 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     Monte-Carlo correction that keeps the test exact-valid at finite B. With one cell
     per theorem this degenerates to cell-level exact McNemar.
 
-    `contrasts`: ``(label, a, b)`` triples, all permuted with the SAME eps draws, at no
-    extra cost, keeping the family's dependence structure intact.
-
     Returns one p-value per contrast, in `contrasts` order.
+
+    Parameters
+    ----------
+    contrasts : list
+        ``(label, a, b)`` triples, all permuted with the SAME eps draws, at no
+        extra cost, keeping the family's dependence structure intact.
     """
     n_thm = succ.shape[0]
     jmap = {m: j for j, m in enumerate(models)}
@@ -338,15 +342,17 @@ def _rate(hits: int, n: int) -> float | None:
 def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
                count_as_failure: bool = True) -> tuple:
     """Build the paired 21-way pool under an explicit denominator rule.
-
-    `count_as_failure`: score a model-dependent no-survivor cell as 0 instead of
-    dropping it (the module docstring's denominator rule); default True.
-
     Returns (models, blocks, prompt_rungs, meta): sorted model names; blocks as
     ``{theorem_id: {(k, prompt_rung): {model: 0 or 1}}}``; sorted distinct prompt
     rungs; and `meta`, recording what the rule actually did (cells added per lane,
     each lane's own-denominator rate) so the report can print its cost rather than
     assert it's negligible.
+
+    Parameters
+    ----------
+    count_as_failure : bool, optional
+        score a model-dependent no-survivor cell as 0 instead of
+        dropping it (the module docstring's denominator rule); default True.
     """
     graded, nosurv = {}, {}
     for model in MODELS:
@@ -442,8 +448,9 @@ def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
           f"drift below\nhalf a thousandth cannot change a printed figure).")
 
 
-def mode_report(succ, size, models, blocks, per_lane, B, out_json,
-                meta=None, sensitivity=None) -> None:
+def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: dict,
+                per_lane: dict[str, float], B: int, out_json: Path | None,
+                meta: dict[str, Any] | None = None, sensitivity: list[tuple] | None = None) -> None:
     """Print the full report and optionally write a JSON summary.
 
     Prints marginal pass@1 rates with BCa intervals; every PRIMARY/SECONDARY contrast
@@ -451,10 +458,15 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
     rejection; the design effect versus a naive binomial; and, if `sensitivity` is
     given, the same PRIMARY test under the other denominator rules.
 
-    `per_lane`: model -> that lane's rate over its OWN measurable denominator
-    (`build_pool`'s ``meta["own_rate"]``). `sensitivity`: ``(label, n_cells, n_blocks,
+    `sensitivity`: ``(label, n_cells, n_blocks,
     n_rejected, max_gap)`` per alternate denominator pool; a row with ``n_cells == 0``
     is a plain message, printed after the table instead of as a row.
+
+    Parameters
+    ----------
+    per_lane : dict[str, float]
+        model -> that lane's rate over its OWN measurable denominator
+        (`build_pool`'s ``meta["own_rate"]``).
     """
     bs = bootstrap_stats(succ, size, B, seed=20260816)
     n_thm = succ.shape[0]
@@ -644,7 +656,7 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
         print(f"\nwrote {out_json}")
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Parse arguments, build the pool, and run the requested mode.
 
     Rows come from `rows_source.resolve_rows_dir`, so ``--s3`` and ``--rows-dir`` are

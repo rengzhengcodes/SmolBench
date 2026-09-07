@@ -4,6 +4,9 @@ import contextlib
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,7 +17,7 @@ from smolbench.evals.results_store import repo_root
 from smolbench.induction.experiment import InductionExperiment
 
 
-def make_quizzes(seed: int, model: str):
+def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
     """One-question-per-info-type stub quiz factory, keyed by seed and model:
     matches the `Callable[[int, str], Dict[str, Quiz]]` contract `make_quizzes` declares."""
     return {
@@ -24,7 +27,7 @@ def make_quizzes(seed: int, model: str):
 
 
 @pytest.fixture
-def exp():
+def exp() -> InductionExperiment:
     """A small (n_replicates=3) periodic-style experiment, no state_file."""
     return InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
@@ -32,7 +35,7 @@ def exp():
     )
 
 
-def test_config_and_harness_passthrough(exp):
+def test_config_and_harness_passthrough(exp: InductionExperiment) -> None:
     """Every config field reaches the harness, for both a default and a custom experiment."""
     assert exp.results_dir == repo_root() / "notebooks" / "periodic" / "results"
     assert exp.shard is None
@@ -57,7 +60,7 @@ def test_config_and_harness_passthrough(exp):
     assert custom.harness.force_seeds == frozenset({100})
 
 
-def test_apply_env(monkeypatch, exp):
+def test_apply_env(monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment) -> None:
     """_apply_env sets the provider and either sets or pops EC2_STATE_FILE."""
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     monkeypatch.delenv("EC2_STATE_FILE", raising=False)
@@ -80,14 +83,19 @@ SOME_KWARGS = {"extra_args": {"max_completion_tokens": 64}, "max_parallel": 8}
 
 @pytest.mark.parametrize("kwargs, expected",
                          [({}, NO_KWARGS), (SOME_KWARGS, {**NO_KWARGS, **SOME_KWARGS})])
-def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp, kwargs, expected):
+def test_run_serves_then_runs_replicates_then_exits(
+    monkeypatch: pytest.MonkeyPatch,
+    exp: InductionExperiment,
+    kwargs: dict[str, Any],
+    expected: dict[str, Any],
+) -> None:
     """run() applies env, serves, forwards only what the caller passed, then exits."""
     monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     events = []
 
     @contextlib.contextmanager
-    def fake_serve_model(model):
+    def fake_serve_model(model: str) -> Iterator[str]:
         events.append(("enter", model))
         yield model
         events.append(("exit", model))
@@ -95,7 +103,7 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp, kwargs, ex
     monkeypatch.setattr(ec2, "serve_model", fake_serve_model)
     captured = {}
 
-    def fake_run(self, model, **kw):
+    def fake_run(self: Any, model: str, **kw: Any) -> None:
         events.append(("run", model))
         captured.update(kw)
 
@@ -109,7 +117,9 @@ def test_run_serves_then_runs_replicates_then_exits(monkeypatch, exp, kwargs, ex
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
 
 
-def test_run_skips_serving_when_nothing_is_outstanding(monkeypatch, exp):
+def test_run_skips_serving_when_nothing_is_outstanding(
+    monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment
+) -> None:
     """No outstanding replicate: never swap the instance's vLLM container."""
     served = []
     monkeypatch.setattr(ec2, "serve_model",
@@ -121,7 +131,11 @@ def test_run_skips_serving_when_nothing_is_outstanding(monkeypatch, exp):
     assert served == []
 
 
-def test_provision_applies_env_prints_summary_and_returns_state(monkeypatch, exp, capsys):
+def test_provision_applies_env_prints_summary_and_returns_state(
+    monkeypatch: pytest.MonkeyPatch,
+    exp: InductionExperiment,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """provision() returns the raw state and prints the notebooks' one-line summary."""
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     fixed_state = {
@@ -138,15 +152,15 @@ def test_provision_applies_env_prints_summary_and_returns_state(monkeypatch, exp
         in capsys.readouterr().out
 
 
-def test_offline_delegates(exp):
+def test_offline_delegates(exp: InductionExperiment) -> None:
     """summarize()/cot_chain_lengths() are pure harness delegates, the latter tagged "cot"."""
     recorded = []
 
     class _Recorder:
-        def summarize(self, model):
+        def summarize(self, model: str) -> None:
             recorded.append(("summarize", model))
 
-        def cot_chain_lengths(self, tag):
+        def cot_chain_lengths(self, tag: str) -> None:
             recorded.append(("cot_chain_lengths", tag))
 
     exp.__dict__["harness"] = _Recorder()
@@ -159,7 +173,13 @@ def test_offline_delegates(exp):
     ("agent_status", "agent_status", {"healthy": True}),
     ("teardown", "shutdown_instance", None),
 ])
-def test_ec2_delegates(monkeypatch, exp, method, ec2_fn, returns):
+def test_ec2_delegates(
+    monkeypatch: pytest.MonkeyPatch,
+    exp: InductionExperiment,
+    method: str,
+    ec2_fn: str,
+    returns: Any,
+) -> None:
     """The EC2 delegates apply the env, then forward to the ec2 module."""
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     calls = []
@@ -169,7 +189,7 @@ def test_ec2_delegates(monkeypatch, exp, method, ec2_fn, returns):
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
 
 
-def test_importing_experiment_does_not_import_ec2():
+def test_importing_experiment_does_not_import_ec2() -> None:
     """A bare import of the facade module must never pull in ``ec2``."""
     result = subprocess.run(
         [sys.executable, "-c",
@@ -180,14 +200,14 @@ def test_importing_experiment_does_not_import_ec2():
     assert result.returncode == 0
 
 
-def _sharded(count, index, n_replicates=30):
+def _sharded(count: int, index: int, n_replicates: int = 30) -> InductionExperiment:
     return InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
         make_quizzes=make_quizzes, n_replicates=n_replicates, shard=(index, count),
     )
 
 
-def test_shard_partition():
+def test_shard_partition() -> None:
     """Shards partition the replicates exactly, stay balanced, and keep seed identity."""
     unsharded = InductionExperiment(
         notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
@@ -207,13 +227,15 @@ def test_shard_partition():
 
 
 @pytest.mark.parametrize("bad", [(0, 0), (3, 3), (-1, 2), (2, 2), (5, 3)])
-def test_invalid_shards_are_rejected(bad):
+def test_invalid_shards_are_rejected(bad: tuple[int, int]) -> None:
     """A malformed shard must fail at construction, not collect a wrong slice."""
     with pytest.raises(ValueError, match="shard"):
         _sharded(bad[1], bad[0])
 
 
-def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp, tmp_path):
+def test_run_replicates_calls_make_quizzes_with_seed_and_model(
+    monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment, tmp_path: Path
+) -> None:
     """Drives the real `run_replicates` against a real `LocalResultsStore` with
     only the provider stubbed, so call arity, per-info split, and stored layout are all exercised."""
     from smolbench.evals import Mark, Marks
@@ -224,7 +246,7 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
     calls: list[tuple[int, str]] = []
     real_make = make_quizzes
 
-    def recording_make(seed, model):
+    def recording_make(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
         calls.append((seed, model))
         return real_make(seed, model)
 
@@ -234,7 +256,7 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
     harness.__dict__["store"] = LocalResultsStore(tmp_path)
     object.__setattr__(harness, "make_quizzes", recording_make)
 
-    def fake_evaluate(quiz, model, seed, **kwargs):
+    def fake_evaluate(quiz: tuple[Numeric, ...], model: str, seed: int, **kwargs: Any) -> Any:
         return Marks(
             model=model,
             marks=tuple(
@@ -259,7 +281,7 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(monkeypatch, exp,
             assert marks.marks[0].query == f"{info[0]}/{seed}/stub-model"
 
 
-def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one():
+def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one() -> None:
     """InductionExperiment only supplies induction's defaults; the lifecycle
     lives in `smolbench.evals.experiment` so other studies share it."""
     from smolbench.evals.experiment import Experiment

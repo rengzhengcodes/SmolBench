@@ -59,7 +59,11 @@ class HFTokenizer:
 
         Prefer `from_repo`; this stays public so a local-checkout or test-fixture tokenizer
         can be adapted without network.
-        tokenizer: duck-typed on ``encode(text, add_special_tokens=False).ids``.
+
+        Parameters
+        ----------
+        tokenizer : Any
+            duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
@@ -269,15 +273,20 @@ def token_matched_noise_prompt(
     no RNG, so a replicate stays regenerable from its seed alone. Result is verified, never
     assumed, to be exactly `target_tokens`; every unreachable target raises instead.
 
-    render: called repeatedly, so it must be cheap and deterministic.
-    tokenizer: must be the model under test's, or the control de-calibrates by however much the
-        two tokenizers disagree.
-    unit: defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
-        padding many prompts with one tokenizer.
-
     Precondition: ``tokenizer.count(render(context)) < target_tokens``, strictly -- an appended
     pad can only grow a prompt. Raises ValueError if that fails, or if the search can't land on
     an exact count (a close-but-inexact prompt would reintroduce the length confound invisibly).
+
+    Parameters
+    ----------
+    render : Callable[[str], str]
+        called repeatedly, so it must be cheap and deterministic.
+    tokenizer : Tokenizer
+        must be the model under test's, or the control de-calibrates by however much the
+        two tokenizers disagree.
+    unit : str | None
+        defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
+        padding many prompts with one tokenizer.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

@@ -181,6 +181,7 @@ def merge_shards(
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Merge a sharded lane and optionally spool its canonical run to S3."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("key", help="spec key of the lane (e.g. ministral-3-14b)")
     parser.add_argument("--n", type=int, required=True, help="number of shards")

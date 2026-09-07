@@ -115,7 +115,7 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     return hi
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Parse arguments, run the per-model hint:3 vs noise:3 comparison, print it.
 
     Rows come from `rows_source.resolve_rows_dir`, so ``--s3`` and
