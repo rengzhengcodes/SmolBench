@@ -36,9 +36,8 @@ class Premise:
     #: Source text as captured by the corpus: signature-only for theorems
     #: (proof omitted), signature plus ``:= body`` for defs.
     code: str
-    #: ``(line, column)`` of the declaration's start in `file_path`. The line is
-    #: 1-indexed, per `slice_full_decl`'s explicit ``start_line - 1`` conversion
-    #: -- the one place the convention is actually exercised.
+    #: ``(line, column)`` of the declaration's start in `file_path`; line is
+    #: 1-indexed (see `slice_full_decl`'s ``start_line - 1``).
     start: tuple[int, int]
     #: ``(line, column)`` of the declaration's end in `file_path`; see `start`.
     end: tuple[int, int]
@@ -46,11 +45,10 @@ class Premise:
     #: ``"instance"``), surfaced alongside the premise's signature/body in
     #: rendered hint-chain prompts (``context._render_hint_parts``).
     kind: str
-    #: Path (relative to the traced repo root) of the source file this premise is
-    #: declared in, used by `_resolve_source` to locate the cached mathlib4
-    #: source for `body_with_proof`'s slicing. Provenance: the *file record*'s
-    #: ``path`` field in ``corpus.jsonl``, not any field of the premise's own
-    #: JSON dict, so every `Premise` from one file record shares this value.
+    #: Path (relative to the traced repo root) of the source file this premise
+    #: is declared in; used by `_resolve_source` to locate the source for
+    #: `body_with_proof`'s slicing. Comes from the file record's `path`, not
+    #: the premise's own JSON dict, so every `Premise` from one file shares it.
     file_path: str
 
 
@@ -81,10 +79,9 @@ def _index() -> dict[str, Premise]:
 def lookup(full_name: str) -> Premise | None:
     """Look up a premise by fully-qualified name; None when absent.
 
-    Absent means declared outside the traced repo, or dropped as a duplicate by
-    `_index`'s collision handling. Every caller here and in `context.py` treats
-    None as "premise unavailable", not an error: ``_render_hint_parts`` renders a
-    placeholder instead of raising.
+    Absent means declared outside the traced repo, or dropped as a duplicate
+    by `_index`. Callers treat None as "premise unavailable", not an error --
+    `_render_hint_parts` renders a placeholder instead of raising.
     """
     return _index().get(full_name)
 
@@ -138,37 +135,22 @@ _TOP_LEVEL_RE = re.compile(
 
 @lru_cache(maxsize=1)
 def _traced_root() -> Path | None:
-    """The cached, traced mathlib4 repo matching the *current corpus's* commit, or None.
+    """The cached, traced mathlib4 repo matching the current corpus's commit, or None.
 
-    A box that has traced mathlib4 twice (e.g. the 2024-03-24 snapshot and a
-    post-cutoff commit) has two directories matching
-    ``leanprover-community-mathlib4-*/mathlib4`` under ``~/.cache/lean_dojo``.
-    Picking the first in sorted order -- the previous behavior -- would slice
-    premise source text out of whichever repo happens to sort first, silently
-    rendering prompts from the wrong mathlib4. Instead this selects the cache
-    directory whose parent name is exactly
-    ``leanprover-community-mathlib4-<commit>``, where ``<commit>`` is
-    `corpus.metadata()`'s ``from_repo.commit``. Like `corpus.load_split`, this
-    function is memoized on no arguments, so it keeps serving the commit that
-    was current when it was first called until `corpus.reset_caches` runs --
-    repointing ``SMOLBENCH_LEAN_DATA`` mid-process does not retarget it on its
-    own.
+    A box that traced mathlib4 twice has multiple
+    ``leanprover-community-mathlib4-*/mathlib4`` dirs under
+    ``~/.cache/lean_dojo``; picking sorted-first would silently slice premise
+    text from the wrong mathlib4, so this matches the dir whose commit equals
+    `corpus.metadata()`'s ``from_repo.commit``. Memoized like
+    `corpus.load_split`, so repointing ``SMOLBENCH_LEAN_DATA`` mid-process
+    needs `corpus.reset_caches` to retarget it.
 
-    ``None``, never an exception, in three cases: the traced repo is an
-    OPTIONAL enrichment -- it upgrades `body_with_proof` from the corpus's
-    stored `Premise.code` to the full source slice -- so a machine without
-    `lean_dojo`'s cache (CI, an analysis box), or without a bootstrapped
-    corpus at all, must still render every rung.
-
-    - No corpus is bootstrapped (`corpus.metadata` raises `FileNotFoundError`):
-      there is no commit to match on.
-    - `metadata()`'s JSON lacks ``from_repo`` or ``from_repo.commit``
-      (`KeyError`): same reason.
-    - No cache directory matches the resolved commit (including when
-      ``~/.cache/lean_dojo`` doesn't exist at all).
-
-    The first two are caught narrowly -- `FileNotFoundError` and `KeyError`
-    only, never a bare ``except`` -- so any other failure still surfaces.
+    Returns None (never raises) when no corpus is bootstrapped, its metadata
+    lacks ``from_repo.commit``, or no cache dir matches: the traced repo is an
+    optional enrichment (upgrades `body_with_proof` from the corpus's stored
+    `Premise.code` to a full source slice), so a machine without it must
+    still render every rung. Only `FileNotFoundError` and `KeyError` are
+    caught, so any other failure still surfaces.
     """
     try:
         commit = metadata()["from_repo"]["commit"]
@@ -227,38 +209,16 @@ def body_with_proof(p: Premise) -> str:
 
 
 def has_full_source(p: Premise) -> bool:
-    """True iff `body_with_proof(p)` returns a real traced-repo slice, not the corpus fallback.
+    """True iff `body_with_proof(p)` returned a real traced-repo slice, not the corpus fallback.
 
-    `body_with_proof` cannot tell its two possible sources apart in its return
-    value alone (a corpus `code` field that happens to already include a proof
-    -- common for `def`s -- looks identical to a genuine slice). This asks the
-    question `context._render_hint_parts`'s `hint:2` needs answered directly,
-    so it can label the section it renders accurately (``"## Premise full
-    source (with proof)"`` vs. a signature-only heading) instead of always
-    claiming "full source".
-
-    Calling `slice_full_decl` a second time here is cheap: it is
-    `lru_cache`d, so this does not re-read the source file when
-    `body_with_proof` already resolved (or failed to resolve) the same
-    ``(file_path, start, end)`` key. Deliberately a new function rather than
-    a change to `body_with_proof`'s signature or fallback behaviour -- several
-    callers (`referenced_premises`, `context._render_hint_parts`'s hint:3+
-    closure rendering) depend on `body_with_proof` always returning usable
-    text, never a bool.
-
-    Parameters
-    ----------
-    p : Premise
-        Premise to check.
-
-    Returns
-    -------
-    bool
-        True if `slice_full_decl(p.file_path, p.start[0], p.end[0])` returned
-        non-empty text (a real slice from the traced repo); False if it
-        returned ``""`` (no traced repo, or the source file/line range was not
-        found), meaning `body_with_proof(p)` fell back to the corpus's stored
-        `Premise.code`.
+    `body_with_proof`'s return value alone can't distinguish the two: a
+    corpus `code` field that already includes a proof (common for `def`s)
+    looks identical to a genuine slice. `context._render_hint_parts` needs
+    this to label its `hint:2` section accurately. A separate function
+    rather than changing `body_with_proof`'s signature, since other callers
+    depend on it always returning usable text, never a bool. Calling
+    `slice_full_decl` again here is cheap: it's `lru_cache`d on
+    ``(file_path, start, end)``.
     """
     return bool(slice_full_decl(p.file_path, p.start[0], p.end[0]))
 
@@ -268,52 +228,23 @@ def has_full_source(p: Premise) -> bool:
 # ---------------------------------------------------------------------------
 
 
-# Lean 4 identifier: letter/underscore start, then alphanumerics, underscore,
-# prime, and dot (namespacing). Deliberately ASCII-leaning, since lookups go
-# against the corpus index, whose full_names are ASCII.
+# Lean 4 identifier: letter/underscore start, then alnum/underscore/prime/dot.
+# ASCII-leaning since lookups go against the corpus index, whose full_names
+# are ASCII.
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
 def _validate_lean_noise(entries: "frozenset[str]") -> "frozenset[str]":
-    """Return `entries` unchanged, refusing any entry that could never match.
+    """Return `entries` unchanged, raising if any could never match a token.
 
-    Two classes of stoplist entry are PROVABLY dead, and this module is where
-    the check belongs because this module owns both of the facts that prove
-    it:
-
-    - **One character or shorter.** `referenced_premises` skips a token on
-      ``tok in _LEAN_NOISE or len(tok) <= 1``. The length arm drops every
-      single-character token whether or not the stoplist lists it, so listing
-      one changes no outcome.
-    - **Not an `_IDENT_RE` token.** Only `_IDENT_RE.findall` output is ever
-      tested for membership, so an entry that `_IDENT_RE` could not have
-      produced cannot equal any tested token.
-
-    Either kind is documentation asserting a filter that never runs -- exactly
-    the dead weight a past cleanup already removed from the hand-written list
-    this config replaced (22 single-character entries plus ``"trivial!"``; the
-    audit trail is the comment beside ``lean_noise`` in
-    ``decontam_config.toml``). Refusing them at import is what keeps that
-    cleanup from silently regressing now that the list is edited as data
-    rather than as code.
-
-    Parameters
-    ----------
-    entries : frozenset of str
-        ``decontam_config.toml``'s ``[premises].lean_noise``, already checked
-        by `decontam_config` for emptiness and for duplicates.
-
-    Returns
-    -------
-    frozenset of str
-        `entries`, unchanged. Returned rather than checked in a bare
-        statement so the binding below cannot name an unvalidated set.
-
-    Raises
-    ------
-    ValueError
-        One or more entries are dead. The message names EVERY offender,
-        sorted, so one edit fixes the whole file instead of one entry per
-        failed import.
+    Two entry classes are provably dead: one-character-or-shorter (the
+    ``len(tok) <= 1`` arm in `referenced_premises` already drops those,
+    regardless of the stoplist), and non-`_IDENT_RE` tokens (only
+    `_IDENT_RE.findall` output is ever tested for membership). Either kind
+    documents a filter that never runs -- exactly the dead weight a past
+    cleanup removed from the hand-written list this config replaced.
+    Refusing them at import keeps that cleanup from regressing now that the
+    list is edited as data rather than as code. Raises `ValueError` naming
+    every offender.
     """
     dead = sorted(e for e in entries if len(e) <= 1 or not _IDENT_RE.fullmatch(e))
     if dead:
@@ -332,19 +263,12 @@ def _validate_lean_noise(entries: "frozenset[str]") -> "frozenset[str]":
     return entries
 
 
-#: Lean keywords, tactic vocabulary, and ubiquitous short identifiers that
-#: would pollute the dep graph if treated as premise references. The entries
-#: and their rationale live in ``decontam_config.toml``'s ``[premises]``
-#: section, which is the reviewable, digest-stamped home for policy like this;
-#: what stays here is the validation above, which needs `_IDENT_RE`.
-#:
-#: Resolved ONCE, at import, rather than per call: `referenced_premises`
-#: consults this set once per identifier token of every premise body it scans,
-#: so resolving it there would put a loader call on a per-token path.
-#: `load_decontam_config` is itself `lru_cache`d, so that would be a cache
-#: lookup rather than a re-parse -- binding the result here states the
-#: once-only intent structurally instead of leaning on that memoization, and
-#: makes a malformed config fail at import rather than mid-scan.
+#: Lean keywords, tactic vocabulary, and short identifiers that would pollute
+#: the dep graph if treated as premise references. Entries and rationale live
+#: in `decontam_config.toml`'s `[premises]` section; validated here since that
+#: needs `_IDENT_RE`. Resolved once at import (not per call, since
+#: `referenced_premises` checks membership per token of every premise body
+#: scanned) so a malformed config fails at import, not mid-scan.
 _LEAN_NOISE: "frozenset[str]" = _validate_lean_noise(load_decontam_config().lean_noise)
 
 
@@ -384,11 +308,8 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     seen: set[str] = {full_name}
     out: list[Premise] = []
     for tok in _IDENT_RE.findall(text):
-        # The `len(tok) <= 1` arm is what makes single-character identifiers
-        # (`a`, `b`, ..., `z`) unreachable as premise references, independently
-        # of `_LEAN_NOISE`: a one-character token is skipped whether or not the
-        # stoplist lists it. That is why `_validate_lean_noise` REFUSES a
-        # one-character stoplist entry -- it could never change an outcome.
+        # `len(tok) <= 1` makes single-char identifiers unreachable regardless
+        # of `_LEAN_NOISE` (see `_validate_lean_noise`).
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
         # Exact full-name match (e.g. `Set.subset_def`).
@@ -408,25 +329,14 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 def premise_dep_closure(
     seeds: list[Premise], depth: int, max_premises: int = 500,
 ) -> list[Premise]:
-    """Run a BFS over per-premise references from `seeds`, to depth `depth`.
+    """BFS over per-premise references from `seeds`, to depth `depth`.
 
-    Parameters
-    ----------
-    seeds : list[Premise]
-        BFS roots (typically a tactic's true premises, resolved via `lookup`),
-        excluded from the result. Empty `seeds`, or ``depth <= 0``,
-        short-circuits to ``[]`` without calling `referenced_premises`.
-    max_premises : int
-        Result cap keeping prompts bounded, checked mid-frontier: the BFS
-        returns the instant it is reached, mid-premise and mid-hop.
-
-    Returns
-    -------
-    list[Premise]
-        Premises reachable from `seeds` in strictly hop-major BFS order (within
-        a hop: frontier order, then per-premise reference order), deduped at
-        their first-discovered hop -- so the `max_premises` cut always drops the
-        deepest, least-relevant tail.
+    `seeds` are excluded from the result. Empty `seeds` or ``depth <= 0``
+    short-circuits to ``[]``. `max_premises` is checked mid-frontier, so the
+    BFS returns the instant it's reached. Result is in strictly hop-major
+    order (within a hop: frontier order, then per-premise reference order),
+    deduped at first-discovered hop, so the `max_premises` cut always drops
+    the deepest, least-relevant tail.
     """
     if depth <= 0 or not seeds:
         return []

@@ -1,14 +1,12 @@
 """Acceptance tests for scripts/deduction/build_postcutoff_corpus.py and the EC2 runbook.
 
-Written from POSTCUTOFF_SPEC_B2 before the builder existed, so every expected
-value here (split assignment, digest recipe, refusal messages, summary schema)
-comes from the spec rather than from the implementation's behaviour.
+Expected values (split assignment, digest recipe, refusal messages, summary schema)
+come from POSTCUTOFF_SPEC_B2, not from the implementation.
 
-The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic
-LeanDojo-v2 export: three theorems, each present once in the ``random`` family
-and once in ``novel_premises`` (in a DIFFERENT split), so the builder's
-union-across-families + dedup path and its own re-splitting are both exercised.
-Only ``Mini.postB`` survives (post-cutoff AND >= 2 traced tactics).
+The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic LeanDojo-v2
+export: three theorems, each present once in ``random`` and once in ``novel_premises``
+(in a DIFFERENT split), exercising the builder's union-across-families + dedup path
+and its own re-splitting. Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
 """
 
 import hashlib
@@ -62,9 +60,7 @@ def built(tmp_path):
     return _build(tmp_path / "out")
 
 
-# ---------------------------------------------------------------------------
 # Happy path
-# ---------------------------------------------------------------------------
 
 
 def test_only_the_postcutoff_multi_tactic_theorem_survives(built):
@@ -75,13 +71,11 @@ def test_only_the_postcutoff_multi_tactic_theorem_survives(built):
     assert row["postcutoff"] is True
     assert row["postcutoff_provenance"] == {
         "introduced_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        # null pr_number/pr_created_at are LEGAL (B1's reason="commit-date"
-        # path): absent KEYS are a refusal, null VALUES are not.
+        # null pr_number/pr_created_at are legal (reason="commit-date"); only a missing key is a refusal.
         "pr_number": None,
         "pr_created_at": None,
         "reason": "commit-date",
     }
-    # Untouched pass-through fields survive the rewrite.
     assert row["commit"] == NEW_COMMIT
     assert row["file_path"] == "Mini/New.lean"
     assert row["theorem_statement"] == "theorem postB (n : ℕ) : G0 n"
@@ -98,12 +92,7 @@ def test_local_url_is_rewritten_to_github(built):
 
 
 def test_split_assignment_is_sha256_deterministic(built):
-    """sha256(full_name)[:8] % 100 -> <80 train, <90 val, else test.
-
-    ``Mini.postB`` hashes to bucket 89 -- val -- even though the export filed
-    it under ``random/test``, so this also proves output splits are re-derived
-    rather than inherited.
-    """
+    """sha256(full_name)[:8] % 100 buckets Mini.postB into val (89) though the fixture files it under random/test, proving splits are re-derived, not inherited."""
     assert int(hashlib.sha256(b"Mini.postB").hexdigest()[:8], 16) % 100 == 89
     for kind in ("random", "novel_premises"):
         assert _json(built / kind / "train.json") == []
@@ -170,10 +159,7 @@ def test_build_summary_records_every_filter_step(tmp_path, built):
         "d3ce8aa996d11342f560ea4afd0c4fc4650313b8187e6e8cd891df526fa99ca6")
 
 
-# ---------------------------------------------------------------------------
-# Digest recipe with more than one name (a 1-name pool cannot distinguish
-# join separators) and a second occupied split
-# ---------------------------------------------------------------------------
+# Digest recipe with >1 name: a 1-name pool can't distinguish join separators.
 
 
 def _synthetic_export(root, names_and_tactics):
@@ -237,10 +223,8 @@ def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path):
         "\n".join(sorted(summary["full_names"])).encode()).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Refusals -- each starts from a REAL, buildable export and breaks exactly one
-# thing, so none of them can pass merely because the input was unreadable.
-# ---------------------------------------------------------------------------
+# Refusals each start from a real, buildable export and break exactly one thing,
+# so none can pass merely because the input was unreadable.
 
 
 def _real_export_copy(tmp_path):
@@ -320,9 +304,7 @@ def test_refuses_when_a_required_export_file_is_missing(tmp_path):
     assert "corpus.jsonl" in str(exc.value)
 
 
-# ---------------------------------------------------------------------------
-# The built corpus loads through the real loader (Package A's API)
-# ---------------------------------------------------------------------------
+# The built corpus loads through the real loader (Package A's API).
 
 
 def test_built_corpus_metadata_reads_through_the_corpus_module(built, monkeypatch):
@@ -350,9 +332,7 @@ def test_built_corpus_satisfies_package_a_postcutoff_api(built, monkeypatch):
         corpus.reset_caches()
 
 
-# ---------------------------------------------------------------------------
-# trace_mathlib_ec2.sh -- runbook; only --dry-run is executable on this box
-# ---------------------------------------------------------------------------
+# trace_mathlib_ec2.sh: only --dry-run is executable on this box.
 
 
 def test_runbook_parses(tmp_path):
@@ -362,8 +342,7 @@ def test_runbook_parses(tmp_path):
 
 
 def _dry_run(tmp_path, extra=()):
-    """Run the runbook's --dry-run under a bare environment: no elan, no lake,
-    no aws, no python3.12, no network, no token, no root."""
+    """Run the runbook's --dry-run under a bare environment (no elan/lake/aws/python3.12/network/token/root)."""
     (tmp_path / "home").mkdir(exist_ok=True)
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path / "home")}
     r = subprocess.run(["bash", str(RUNBOOK), "--dry-run", *extra], cwd=tmp_path,
@@ -390,14 +369,7 @@ def test_runbook_dry_run_prints_the_plan(tmp_path):
 
 
 def test_runbook_dry_run_writes_nothing(tmp_path):
-    """--dry-run creates no file anywhere it would write for real.
-
-    ``--workdir`` is pointed INSIDE tmp_path deliberately: the log, the two
-    ``mkdir -p`` calls, the clone and the venv all live under $WORKDIR, which
-    defaults to /mnt/data. Asserting emptiness of $HOME alone would pass even
-    if every dry-run guard were removed, because the script never writes to
-    $HOME in the first place.
-    """
+    """--dry-run writes nothing; --workdir is pointed inside tmp_path so this can't pass vacuously against $HOME, which the script never touches anyway."""
     workdir = tmp_path / "wd"
     _dry_run(tmp_path, ["--workdir", str(workdir)])
     assert not workdir.exists(), "dry-run created its workdir (log/mkdir not gated)"

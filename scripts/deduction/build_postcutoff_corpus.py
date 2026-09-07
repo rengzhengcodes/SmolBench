@@ -1,42 +1,20 @@
 """Turn a LeanDojo-v2 mathlib4 export into a post-cutoff theorem corpus.
 
-Input is what ``scripts/deduction/trace_mathlib_ec2.sh`` produces -- a
-``generate_benchmark`` export of mathlib4 at a NEW commit -- plus the
-declaration-name JSON that ``scripts/deduction/postcutoff_names.py`` computes as
-a name-set difference against an OLD commit. Output is a corpus in exactly the
-layout ``smolbench.deduction.lean.corpus`` loads, containing only theorems whose
-declaration provably entered mathlib4 after the roster's knowledge cutoff, each
-row carrying ``"postcutoff": true`` and the provenance that justifies it.
+Input is a ``generate_benchmark`` export of mathlib4 at a NEW commit
+(``trace_mathlib_ec2.sh``) plus the declaration-name JSON that
+``postcutoff_names.py`` computes as a name-set difference against an OLD
+commit. Output is a corpus in the layout ``smolbench.deduction.lean.corpus``
+loads, containing only theorems that provably entered mathlib4 after the
+roster's knowledge cutoff -- the 2024-03-24 corpus the original study used
+predates every roster model's cutoff, so a model may have memorised its
+proofs.
 
-The point of the exercise is contamination: the 2024-03-24 corpus the original
-deduction study used predates every roster model's cutoff, so a model may have
-memorised its proofs. This builder keeps only theorems that cannot have been in
-any roster model's training data, at the cost of a much smaller pool.
-
-Design
-------
-* **Stdlib only.** This script must run on the trace box, which has lean-dojo
-  and nothing else installed -- so it never imports ``smolbench``.
-  ``scripts/deduction/merge_lean_shards.py`` and
-  ``split_lean_run_into_shards.py`` are NOT a precedent for that any more:
-  their ``_cell_key`` now delegates to ``runner._row_key``, which they can do
-  because every call path reaching it already imports ``runner``, and this
-  script has no such path. The corpus contract it writes against is mirrored
-  from ``smolbench/deduction/lean/corpus.py``, not imported.
-* **Splits are re-derived, not inherited.** A row's output split is
-  ``sha256(full_name)[:8] % 100``: ``< 80`` train, ``< 90`` val, else test. The
-  export's own splits are discarded because they partition a pool ~4 orders of
-  magnitude larger, so their proportions do not survive the post-cutoff filter;
-  keying on the declaration name alone makes the assignment reproducible across
-  re-traces and independent of which files a row happened to appear in.
-* **Both split families are written.** ``random`` and ``novel_premises`` are two
-  partitions of the same theorem universe upstream; here they hold identical
-  rows (real copies, not symlinks). The study reads ``random``/``val``, but
-  writing all six files means no loader path 404s.
-* **Refusals are loud and total.** Every inconsistency raises ``SystemExit``
-  with a message naming the offending object, and nothing is written until every
-  check has passed. A silently smaller pool is the failure mode this study
-  cannot detect after the fact.
+Design decisions: this script imports only stdlib, since it must run on the
+trace box (lean-dojo only, no ``smolbench``); output splits are re-derived
+from ``sha256(full_name)`` rather than inherited, because the export's own
+splits partition a pool ~4 orders of magnitude larger and don't survive the
+filter; every inconsistency raises ``SystemExit`` before anything is written,
+since a silently smaller pool is undetectable after the fact.
 
 Run from anywhere::
 
@@ -55,15 +33,13 @@ import json
 import shutil
 from pathlib import Path
 
-#: Canonical upstream URL. The export's ``from_repo.url`` is the trace box's
-#: LOCAL checkout path (lean-dojo-v2's local-checkout mode), which is meaningless
-#: anywhere else, so every consumer-visible URL is rewritten to this.
+#: The export's ``from_repo.url`` is the trace box's local checkout path,
+#: meaningless anywhere else, so every consumer-visible URL is rewritten to this.
 DEFAULT_REPO_URL = "https://github.com/leanprover-community/mathlib4"
 DEFAULT_DATASET_NAME = "SmolBench post-cutoff mathlib4 (LeanDojo-v2 trace)"
 
-#: A theorem with fewer traced tactics than this is not a usable eval item: the
-#: progressive-context eval needs at least one prefix step plus one held-out
-#: next tactic.
+#: The progressive-context eval needs at least one prefix step plus one
+#: held-out next tactic, so fewer traced tactics than this isn't a usable item.
 DEFAULT_MIN_TACTICS = 2
 
 #: Non-split files an export must carry. ``corpus.jsonl`` and
@@ -73,9 +49,9 @@ REQUIRED_EXPORT_FILES = ("metadata.json", "corpus.jsonl", "traced_files.jsonl")
 SPLIT_KINDS = ("random", "novel_premises")
 SPLITS = ("train", "val", "test")
 
-#: Fixed read order for the six split files. Load-bearing: dedup keeps the FIRST
-#: occurrence of a ``full_name``, so this order alone decides which of a
-#: theorem's two copies survives, and therefore the built corpus's bytes.
+#: Fixed read order for the six split files. Load-bearing: dedup keeps the
+#: first occurrence of a ``full_name``, so this order decides which of a
+#: theorem's two copies survives.
 SOURCE_ORDER = tuple(f"{kind}/{split}.json" for kind in SPLIT_KINDS for split in SPLITS)
 
 #: Human-readable form of `assign_split`, recorded in BUILD_SUMMARY.json so the
@@ -89,25 +65,9 @@ SPLIT_RULE = (
 def validate_export(export: Path) -> list[str]:
     """Check that ``export`` looks like a LeanDojo-v2 ``generate_benchmark`` output.
 
-    Parameters
-    ----------
-    export : Path
-        The export directory.
-
-    Returns
-    -------
-    list of str
-        The relative names of the split files that exist, in `SOURCE_ORDER`.
-        Never empty.
-
-    Raises
-    ------
-    SystemExit
-        A file in `REQUIRED_EXPORT_FILES` is missing (message names its absolute
-        path), or not one split file exists. An individual missing split file is
-        NOT an error -- v2 exports legitimately omit empty splits -- but an
-        export with no split file at all carries no theorems and can only be a
-        wrong directory or a half-finished trace.
+    Returns the split files that exist, in `SOURCE_ORDER`. An individual
+    missing split file is not an error -- v2 exports legitimately omit empty
+    splits -- but zero split files means no theorems to build from.
     """
     for name in REQUIRED_EXPORT_FILES:
         path = export / name
@@ -125,27 +85,9 @@ def validate_export(export: Path) -> list[str]:
 def load_names(path: Path, export_commit: str) -> dict:
     """Load the post-cutoff name set and check it was computed at ``export_commit``.
 
-    Parameters
-    ----------
-    path : Path
-        ``postcutoff_names.json`` as emitted by ``postcutoff_names.py``.
-    export_commit : str
-        The export metadata's ``from_repo.commit``.
-
-    Returns
-    -------
-    dict
-        The parsed JSON: ``new_commit``, ``old_commit``, ``target_date``,
-        ``method``, ``n_new_decls``, ``n_old_decls``, ``n_postcutoff`` and
-        ``decls``.
-
-    Raises
-    ------
-    SystemExit
-        The file's ``new_commit`` differs from ``export_commit``. A name-set
-        difference computed at one commit says nothing about a tree traced at
-        another: names may have been renamed, moved or deleted in between, so
-        every post-cutoff claim in the output would be unfounded.
+    A name-set difference computed at one commit says nothing about a tree
+    traced at another -- names may have been renamed, moved or deleted in
+    between -- so a mismatch here would make every post-cutoff claim unfounded.
     """
     names = json.loads(path.read_text())
     if export_commit != names["new_commit"]:
@@ -160,20 +102,8 @@ def load_names(path: Path, export_commit: str) -> dict:
 def read_source_rows(export: Path, present: list[str]) -> tuple[list[dict], dict[str, int]]:
     """Read every theorem row from the export's split files, in `SOURCE_ORDER`.
 
-    Parameters
-    ----------
-    export : Path
-        The export directory.
-    present : list of str
-        Relative split-file names known to exist, from `validate_export`.
-
-    Returns
-    -------
-    rows : list of dict
-        All rows, concatenated in read order; the same theorem appears once per
-        split family, so this list double-counts (see `dedup_by_full_name`).
-    rows_per_source_file : dict
-        ``{relative name: row count}`` for the files that exist, in read order.
+    The same theorem appears once per split family, so the returned row list
+    double-counts (see `dedup_by_full_name`).
     """
     rows: list[dict] = []
     rows_per_source_file: dict[str, int] = {}
@@ -187,23 +117,11 @@ def read_source_rows(export: Path, present: list[str]) -> tuple[list[dict], dict
 def dedup_by_full_name(rows: list[dict]) -> tuple[list[dict], int]:
     """Collapse the two split families' overlapping rows, keeping the first seen.
 
-    ``random`` and ``novel_premises`` partition the SAME theorem universe
+    ``random`` and ``novel_premises`` partition the same theorem universe
     differently, so their union contains each theorem twice. First-wins in
-    `SOURCE_ORDER` rather than any merge of the two copies: they are byte-equal
-    upstream, and picking deterministically means a disagreement (a foreign
-    ``commit``, say) is caught by the later gates instead of being averaged away.
-
-    Parameters
-    ----------
-    rows : list of dict
-        Rows in read order.
-
-    Returns
-    -------
-    unique : list of dict
-        One row per ``full_name``, in first-seen order.
-    duplicates_dropped : int
-        ``len(rows) - len(unique)``.
+    `SOURCE_ORDER` rather than merging the two copies: they're byte-equal
+    upstream, and picking deterministically means a disagreement is caught by
+    a later gate instead of being averaged away.
     """
     seen: set[str] = set()
     unique: list[dict] = []
@@ -219,24 +137,8 @@ def dedup_by_full_name(rows: list[dict]) -> tuple[list[dict], int]:
 def assign_split(full_name: str) -> str:
     """Map a declaration name to its output split.
 
-    Deterministic 80/10/10 over ``int(sha256(full_name)[:8], 16) % 100``. Keyed
-    only on the name, so the assignment is stable across re-traces and across
-    machines, and reviewers can recompute it by hand.
-
-    Parameters
-    ----------
-    full_name : str
-        The declaration's fully-qualified Lean name.
-
-    Returns
-    -------
-    str
-        ``"train"``, ``"val"`` or ``"test"``.
-
-    Examples
-    --------
-    >>> assign_split("Mini.postB")
-    'val'
+    Deterministic 80/10/10 over ``int(sha256(full_name)[:8], 16) % 100``, keyed
+    only on the name so the assignment is stable across re-traces and machines.
     """
     bucket = int(hashlib.sha256(full_name.encode("utf-8")).hexdigest()[:8], 16) % 100
     if bucket < 80:
@@ -249,29 +151,12 @@ def assign_split(full_name: str) -> str:
 def build_provenance(full_name: str, decl: dict) -> dict:
     """Extract the four provenance fields that justify a theorem's post-cutoff claim.
 
-    Parameters
-    ----------
-    full_name : str
-        The declaration name, used only in error messages.
-    decl : dict
-        The name JSON's ``decls[full_name]`` entry.
-
-    Returns
-    -------
-    dict
-        ``{"introduced_commit", "pr_number", "pr_created_at", "reason"}``.
-        ``pr_number`` and ``pr_created_at`` default to None when absent, and a
-        null value for either is legal: ``postcutoff_names.py`` emits
-        ``reason="commit-date"`` rows for declarations whose introducing PR it
-        could not find. ``reason`` is free-form and is passed through verbatim,
-        never validated against an enum -- new heuristics add new reasons, and a
-        builder that rejected unknown ones would silently shrink the pool.
-
-    Raises
-    ------
-    SystemExit
-        ``introduced_commit`` or ``reason`` is missing or null. Those two ARE the
-        evidence; without them the row asserts "post-cutoff" on no grounds.
+    ``pr_number``/``pr_created_at`` may be null (``postcutoff_names.py`` emits
+    ``reason="commit-date"`` when it can't find the introducing PR). ``reason``
+    is passed through verbatim, never checked against an enum, since new
+    heuristics add new reasons and rejecting unknown ones would silently shrink
+    the pool. ``introduced_commit``/``reason`` missing or null raises
+    SystemExit: those two ARE the evidence for the post-cutoff claim.
     """
     for key in ("introduced_commit", "reason"):
         if decl.get(key) is None:
@@ -291,31 +176,10 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
     """Rewrite surviving export rows into post-cutoff corpus rows.
 
     Every key of the input row is preserved verbatim (LeanDojo adds fields
-    between versions and the loader tolerates unknown ones), with three changes:
-    ``url`` is rewritten to ``repo_url``, ``postcutoff`` is set True, and
-    ``postcutoff_provenance`` is added.
-
-    Parameters
-    ----------
-    rows : list of dict
-        Deduplicated rows that already passed the name-set and tactic-floor
-        filters.
-    names : dict
-        The loaded names JSON.
-    repo_url : str
-        Canonical repository URL replacing the export's local checkout path.
-
-    Returns
-    -------
-    list of dict
-        Output rows, in the input order.
-
-    Raises
-    ------
-    SystemExit
-        A row's ``commit`` differs from ``names["new_commit"]`` (the row was
-        traced against another tree, so the whole export is mixed), or its decl
-        entry fails `build_provenance`.
+    between versions and the loader tolerates unknown ones); only ``url``,
+    ``postcutoff`` and ``postcutoff_provenance`` are added or changed. Raises
+    SystemExit if a row's ``commit`` differs from ``names["new_commit"]`` --
+    that row was traced against another tree, so the whole export is mixed.
     """
     new_commit = names["new_commit"]
     out: list[dict] = []
@@ -338,27 +202,12 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
 
 
 def build_metadata(export_metadata: dict, names: dict, args: argparse.Namespace) -> dict:
-    """Copy the export's metadata and add the ``postcutoff`` block.
+    """Copy the export's metadata (input not mutated) and add the ``postcutoff`` block.
 
-    ``from_repo.commit`` is deliberately left untouched:
-    ``corpus.postcutoff_metadata`` refuses a corpus whose ``from_repo.commit``
-    disagrees with ``postcutoff.new_commit``, and `load_names` has already proved
-    the two are equal.
-
-    Parameters
-    ----------
-    export_metadata : dict
-        The export's ``metadata.json``, parsed.
-    names : dict
-        The loaded names JSON.
-    args : argparse.Namespace
-        Parsed CLI arguments; supplies ``repo_url``, ``dataset_name`` and the two
-        commit dates.
-
-    Returns
-    -------
-    dict
-        A new metadata dict; the input is not mutated.
+    ``from_repo.commit`` is deliberately left untouched: ``corpus.
+    postcutoff_metadata`` refuses a corpus whose ``from_repo.commit`` disagrees
+    with ``postcutoff.new_commit``, and `load_names` already proved the two
+    are equal.
     """
     # Deep copy: from_repo is nested and is rewritten below.
     meta = copy.deepcopy(export_metadata)
@@ -385,33 +234,12 @@ def write_corpus(
 ) -> dict[str, int]:
     """Write the ``leandojo_benchmark_4`` tree under ``out_root``.
 
-    All six split files are always written, empty ones as ``[]``, so that every
-    ``load_split(kind, split)`` call reaches a file. ``novel_premises`` receives
-    the same rows as ``random``.
-
-    Parameters
-    ----------
-    out_root : Path
-        Output root; ``<out_root>/leandojo_benchmark_4`` is created.
-    export : Path
-        Source export, for the two premise files.
-    rows : list of dict
-        Output rows from `build_rows`.
-    metadata : dict
-        Output metadata from `build_metadata`.
-
-    Returns
-    -------
-    dict
-        ``{"train": n, "val": n, "test": n}`` -- rows written per split. Each
-        count applies to BOTH families, which hold identical rows.
-
-    Notes
-    -----
-    ``corpus.jsonl`` and ``traced_files.jsonl`` are copied with `shutil.copyfile`
-    rather than being read and re-serialised: the real ``corpus.jsonl`` is
-    hundreds of MB, and premise lookup needs the whole library, so there is
-    nothing to filter anyway.
+    All six split files are always written, empty ones as ``[]``, so every
+    ``load_split(kind, split)`` call reaches a file; ``novel_premises``
+    receives the same rows as ``random``. Returns rows written per split
+    (applies to both families). ``corpus.jsonl``/``traced_files.jsonl`` are
+    copied with `shutil.copyfile` rather than re-serialised: the real
+    ``corpus.jsonl`` is hundreds of MB and there is nothing in it to filter.
     """
     dest = out_root / "leandojo_benchmark_4"
     dest.mkdir(parents=True, exist_ok=True)
@@ -444,25 +272,8 @@ def write_corpus(
 def main(argv: list[str] | None = None) -> int:
     """Build a post-cutoff corpus from an export plus a post-cutoff name set.
 
-    Parameters
-    ----------
-    argv : list of str or None
-        Command-line arguments; None reads ``sys.argv[1:]``.
-
-    Returns
-    -------
-    int
-        0 on success. Every failure path raises `SystemExit` with a message
-        rather than returning a code, so the reason survives into the caller's
-        traceback instead of only reaching a terminal.
-
-    Raises
-    ------
-    SystemExit
-        Any failed gate: a malformed export, an export/name-set commit
-        disagreement, a row traced at a foreign commit, an unsupported
-        post-cutoff claim, or an empty surviving pool. Nothing is written unless
-        every gate passes.
+    Every failure path raises `SystemExit` with a message rather than
+    returning a code, and nothing is written until every gate passes.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--export", type=Path, required=True,

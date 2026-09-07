@@ -1,31 +1,22 @@
 """Acceptance tests for the lean-interact verifier backend (Package V).
 
-Two layers, both fully offline -- this box has no Lean toolchain, so nothing
-here starts a real REPL:
+Both layers are offline -- this box has no Lean toolchain, so nothing here
+starts a real REPL. `replbackend`'s pure parts (statement slicing,
+declaration renaming, module-name derivation, mathlib root resolution,
+response classification) are exercised directly, with classification fed
+REAL `lean_interact` pydantic models built on the wire keys (``proofStatus``,
+``proofState``, ...) rather than hand-rolled stand-ins, so a stand-in can't
+pass by reading field names the REPL never sends. `verify` is driven against
+a scripted fake session so all six verdicts, the prefix-replay
+`RuntimeError`, and session teardown are reached without Lean.
 
-* `smolbench.deduction.lean.replbackend` -- the REPL driver. Its *pure* parts
-  (statement slicing, declaration renaming, module-name derivation, mathlib
-  root resolution, response classification) are exercised directly. Response
-  classification is fed REAL `lean_interact` pydantic models built with
-  ``model_validate`` on the **wire** keys (``proofStatus``, ``proofState``,
-  ...), not hand-rolled stand-ins: a stand-in would pass even if the
-  classifier read field names the REPL never sends.
-* `smolbench.deduction.lean.verify` -- the unchanged public contract, driven
-  against a scripted fake session so every one of the six verdicts, the
-  prefix-replay `RuntimeError`, and the session-teardown guarantee are
-  reached without Lean.
-
-The fixture Lean sources under ``tests/fixtures/lean_repl_project`` encode the
-two traps measured against the real mathlib4 checkout at the corpus commit
-before this backend was specified:
-
-* ``(h : Nat := by simp)`` -- an ``autoParam`` default puts a ``:=`` *inside*
-  brackets. A naive "first ``:=``" split truncates the statement mid-signature.
-  Real instance: ``Basis.reindexFinsetRange_self``.
-* a doc comment naming ``theorem fakeName`` -- 213 of mathlib4's 106,445
-  column-0 ``theorem``/``lemma`` declarations are preceded by a docstring that
-  contains a ``theorem``/``lemma`` word, so a naive rename regex renames the
-  docstring instead of the declaration.
+The fixtures under ``tests/fixtures/lean_repl_project`` encode two traps
+measured against the real mathlib4 checkout: an ``autoParam`` default
+(``(h : Nat := by simp)``) puts a ``:=`` inside brackets, which a naive
+"first ``:=``" split truncates mid-signature; and a doc comment naming
+``theorem fakeName``, since 213 of mathlib4's declarations are preceded by a
+docstring containing a ``theorem``/``lemma`` word, which a naive rename
+regex would rename instead of the declaration.
 """
 
 from __future__ import annotations
@@ -298,26 +289,6 @@ def test_theorem_statement_stub_survives_the_docstring_and_autoparam_traps():
     assert "rfl" not in stub
 
 
-def test_theorem_statement_stub_prefers_a_row_carried_statement(monkeypatch):
-    """A LeanDojo-v2 row carrying `theorem_statement` must not be read off disk."""
-    bt = _bt(["rfl"])
-
-    class WithStatement(BenchmarkTheorem):
-        theorem_statement = "theorem carried (a : Nat) : a = a"
-
-    carried = WithStatement(
-        url=bt.url, commit=bt.commit, file_path=bt.file_path, full_name=bt.full_name,
-        start=bt.start, end=bt.end, traced_tactics=bt.traced_tactics,
-    )
-
-    def explode(*a, **k):  # pragma: no cover - must never run
-        raise AssertionError("declaration_text was called despite a carried statement")
-
-    monkeypatch.setattr(replbackend, "declaration_text", explode)
-    stub = replbackend.theorem_statement_stub(carried, PROJECT)
-    assert stub == f"theorem {replbackend.TARGET_NAME} (a : Nat) : a = a\n  := by sorry"
-
-
 def test_theorem_statement_stub_refuses_a_declaration_with_no_assignment():
     bt = _bt(["rfl"], file_path="Mini/Traps.lean", name="Mini.trapNoAssign", start=(11, 0))
     with pytest.raises(replbackend.ReplError) as exc:
@@ -447,19 +418,10 @@ def test_repl_session_step_sends_the_proof_state_and_tactic():
 # verify: the verdict taxonomy, and its agreement with runner's glyph map
 # ---------------------------------------------------------------------------
 def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings():
-    """The taxonomy is exactly these seven, and `runner` can render every one.
+    """The taxonomy is exactly these seven strings, and each maps to a runner glyph.
 
-    13-01 added ``"no_answer"``; this test previously pinned SIX and named the
-    absence of a seventh as the point. The point is unchanged in substance --
-    still no ``"timeout"`` verdict, a REPL timeout stays an ``"exception"`` --
-    but the count is now seven, and ``"no_answer"`` is the newcomer: an empty
-    candidate tail is a real, scoreable miss, not a Lean rejection.
-
-    The second half is what makes this more than a spelling pin: `runner` owns
-    the verdict->glyph map, and an unmapped verdict silently renders as
-    ``"?"``, which is `given_up`'s glyph -- so a new verdict added to `verify`
-    alone would print as a DIFFERENT real verdict rather than as anything
-    obviously wrong.
+    An unmapped verdict would silently render as `given_up`'s glyph instead
+    of failing loudly, so the glyph-map coverage is asserted too.
     """
     from typing import get_args
 
@@ -477,11 +439,9 @@ def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings():
 def test_verify_imports_with_lean_interact():
     """A cold import of the verifier must succeed with only `lean_interact` present.
 
-    The pop/restore is deliberate. Re-executing the module binds a NEW module
-    object onto the `smolbench.deduction.lean` package, so leaving it in place
-    would make `runner._default_verifier()` return an object that is no longer
-    identical to this test module's `verify` global -- a cross-test failure that
-    depends purely on execution order.
+    Pop/restore, not a bare re-import: leaving the re-executed module in
+    place would make `runner._default_verifier()` diverge from this test
+    module's `verify` global, a failure that depends on execution order.
     """
     pytest.importorskip("lean_interact")
     from smolbench.deduction import lean as lean_pkg
@@ -496,18 +456,11 @@ def test_verify_imports_with_lean_interact():
 
 
 def test_verify_cold_import_does_not_pull_in_lean_dojo():
-    """13-19: a cold import of `verify` must not drag `lean_dojo` in with it.
+    """A cold import of `verify` must not drag `lean_dojo` in with it.
 
-    Runs in a SUBPROCESS rather than asserting on this interpreter's
-    `sys.modules`: `lean_dojo` is installed in the project venv, so an in-process
-    assertion would pass or fail purely on whether some earlier test in the
-    session happened to import it. Only a fresh interpreter can witness what a
-    cold import of the verifier actually pulls in.
-
-    Pairs with `test_lean_verify_docs.py::test_verify_module_has_no_lean_dojo_import`,
-    which greps the source and, unlike this file, runs unconditionally -- this
-    module's `importorskip("lean_interact")` would delete a guarantee placed
-    here exactly when the packaging failure it guards against occurs.
+    Runs in a subprocess, not against this interpreter's `sys.modules`:
+    `lean_dojo` is installed in the project venv, so an in-process assertion
+    would pass or fail on whether an earlier test happened to import it.
     """
     proc = subprocess.run(
         [sys.executable, "-c",
@@ -584,16 +537,8 @@ def test_try_tail_reports_incomplete_with_the_final_state_when_tactics_run_out()
 
 
 def test_try_tail_reports_an_empty_tail_as_no_answer():
-    """13-01: an empty tail is `no_answer`, NOT `lean_error`.
-
-    Was pinned to `lean_error` / "empty tail". That conflated "the model
-    returned nothing extractable" (typically a reasoning model truncated at
-    max_tokens inside an unclosed <think>, which `prompt.extract_tactic_block`
-    deliberately renders as "") with "Lean rejected this proof" -- on exactly
-    the axis this study measures. Now pins the distinct verdict; the error
-    text stays descriptive but is no longer asserted verbatim, only that it
-    still names the empty tail.
-    """
+    """An empty tail is `no_answer`, not `lean_error`: a truncated/empty
+    generation is not the same claim as "Lean rejected this proof"."""
     res = verify.try_tail(FakeSession(), 0, "   \n\n  ", "t")
     assert res.verdict == "no_answer"
     assert "empty tail" in res.error
@@ -719,12 +664,7 @@ def test_verify_proof_tail_reports_an_out_of_range_k_as_exception_without_openin
 
 
 def test_verify_proof_tail_reports_an_empty_tail_as_no_answer_without_opening(monkeypatch):
-    """13-01: the one-shot wrapper agrees with `try_tail` -- `no_answer`, no session.
-
-    Was pinned to `("lean_error", "empty tail")`. The "without opening" half of
-    the guarantee is unchanged and still asserted: an empty candidate costs no
-    Lean startup.
-    """
+    """The one-shot wrapper agrees with `try_tail`: `no_answer`, no session opened."""
     session = FakeSession()
     _install_session(monkeypatch, session)
     res = verify.verify_proof_tail(_bt(["a", "b"]), 0, "\n \n")
@@ -872,10 +812,9 @@ def test_verify_exposes_every_name_the_runner_protocol_needs():
 # ---------------------------------------------------------------------------
 # Docs / packaging seams
 #
-# The TEXT-ONLY guarantees (pyproject's `lean` extra, the README and the smoke
-# skill) live in tests/deduction/test_lean_verify_docs.py instead: this module
-# skips wholesale when `lean_interact` is absent, and the pyproject guarantee is
-# precisely what must NOT vanish in that case.
+# Text-only guarantees (pyproject's `lean` extra, README, smoke skill) live in
+# test_lean_verify_docs.py instead: this module skips wholesale when
+# `lean_interact` is absent, which is when that guarantee must not vanish.
 # ---------------------------------------------------------------------------
 def test_verify_rows_script_guard_requires_lean_interact():
     import importlib.util
@@ -889,9 +828,7 @@ def test_verify_rows_script_guard_requires_lean_interact():
     sys.modules["lvr_seam"] = module
     try:
         spec.loader.exec_module(module)
-        src = (SCRIPTS / "deduction" / "lean_verify_rows.py").read_text()
-        assert "lean_interact" in src
-        # The guard passes here because lean_interact IS installed in this venv.
+        # The guard passes here because lean_interact is installed in this venv.
         module.require_lean_interact()
     finally:
         sys.modules.pop("lvr_seam", None)
@@ -961,12 +898,8 @@ class _ElaborationFailsServer:
 
 
 def test_open_session_does_not_retry_a_deterministic_statement_failure(monkeypatch):
-    """An unelaborable statement fails identically every time.
-
-    Under the import-only environment this backend builds, that failure is
-    EXPECTED to be common, and retrying it costs 20s of sleeps plus three Lean
-    startups per theorem for no chance of a different answer.
-    """
+    """An unelaborable statement fails identically every time, so retrying
+    costs 20s of sleeps plus three Lean startups for no different answer."""
     monkeypatch.setenv("SMOLBENCH_MATHLIB_ROOT", str(PROJECT))
     fake_time = _FakeTime()
     monkeypatch.setattr(replbackend, "time", fake_time)

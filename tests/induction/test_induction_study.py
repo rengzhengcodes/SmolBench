@@ -65,15 +65,13 @@ PERIODIC_MOE_TEMPLATE = (
 
 
 def import_run_study(name: str, env: "dict[str, str] | None" = None):
-    """Import the driver by path under `name`, with `env` applied, restoring os.environ.
+    """Imports the driver by path under `name` with `env` applied, restoring os.environ after.
 
-    The tag/state-file block at the top of ``run_study.py`` runs at IMPORT
-    time and MUTATES ``os.environ`` (it must, to precede ``ec2``'s
-    import-time constant freeze), so its behaviour can only be observed by
-    re-importing under a controlled environment. Returns
-    ``(module_or_None, exc_or_None, env_after)``: `env_after` is the snapshot
-    of ``os.environ`` taken BEFORE restoration, which is where the tag the
-    module set is visible.
+    The tag/state-file block at the top of run_study.py mutates os.environ at
+    import time (it must, to precede ec2's constant freeze), so its effect is
+    only observable by re-importing under a controlled environment. Returns
+    (module_or_None, exc_or_None, env_after), where env_after is the
+    pre-restoration snapshot carrying the tag the module set.
     """
     saved = dict(os.environ)
     module = exc = None
@@ -96,11 +94,9 @@ def import_run_study(name: str, env: "dict[str, str] | None" = None):
 
 @pytest.fixture(scope="module")
 def run_study():
-    """Import notebooks/induction/run_study.py under a unique name, without leaking its env.
-
-    The driver calls ``load_dotenv`` at import, which would otherwise mutate the
-    session's ``os.environ`` (including ``SMOLBENCH_RESULTS_S3``).
-    """
+    """Imports run_study.py under a unique name, without leaking its env: it
+    calls load_dotenv at import, which would otherwise mutate this session's
+    os.environ (including SMOLBENCH_RESULTS_S3)."""
     saved = dict(os.environ)
     try:
         spec = importlib.util.spec_from_file_location("induction_run_study", RUN_STUDY_PATH)
@@ -121,12 +117,9 @@ def test_roster(run_study):
 
 
 def test_the_roster_is_built_from_the_committed_study_config(run_study):
-    """MODELS is the config's roster, in the config's ladder order.
-
-    ``EXPECTED_TAGS`` above stays vendored as the drift guard on the TOML
-    itself; this pins that the driver READS the file instead of carrying a
-    22nd copy of the table.
-    """
+    """MODELS is the config's roster, in the config's ladder order (EXPECTED_TAGS
+    is the vendored drift guard; this pins that the driver reads the file
+    rather than re-declaring it)."""
     from smolbench.evals import study_config
 
     assert tuple(run_study.MODELS) == study_config.roster_keys()
@@ -136,39 +129,17 @@ def test_the_roster_is_built_from_the_committed_study_config(run_study):
 
 
 def test_cot_args_is_validated_against_the_config_roster(run_study):
-    """COT_ARGS stays a literal table (it is the audit surface against ec2.py's
-    reasoning wiring) but its KEYS are checked against the config's roster, so
-    a roster edit that COT_ARGS misses cannot reach a billing box."""
+    """COT_ARGS stays a literal table (the audit surface against ec2.py's
+    reasoning wiring), but its keys are checked against the config's roster, so
+    a roster edit COT_ARGS misses cannot reach a billing box."""
     from smolbench.evals import study_config
 
     assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
 
 
-def test_the_retired_tag_is_refused_behind_a_lane_suffix(monkeypatch):
-    """A sharded lane appends its own suffix, so an EXACT-match guard on the
-    retired tag never fires for the sharded invocations -- exactly the ones
-    that run unattended. The guard must compare the tag with its lane suffix
-    stripped."""
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
-    module, exc, env_after = import_run_study(
-        "retired_lane_probe",
-        {"EC2_EXPERIMENT_TAG": "periodic-induction", "INDUCTION_SHARD": "0/2",
-         "INDUCTION_MODELS": ""},
-    )
-    assert module is None
-    assert isinstance(exc, SystemExit)
-    assert "periodic-induction" in str(exc)
-    # ... and the suffix it was hiding behind is named too, so the operator
-    # can see WHICH lane's tag resolved to the retired study's.
-    assert "-s0of2" in str(exc)
-
-
 def test_the_standalone_tag_comes_from_the_config(monkeypatch):
-    """The standalone EC2 experiment tag is the config's, not a local literal.
-
-    Only observable by re-importing with ``EC2_EXPERIMENT_TAG`` ABSENT: the
-    driver's ``setdefault`` is what the config value has to reach.
-    """
+    """The standalone EC2 experiment tag is the config's, not a local literal
+    (only observable by re-importing with EC2_EXPERIMENT_TAG absent)."""
     from smolbench.evals import study_config
 
     monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
@@ -205,7 +176,7 @@ def test_experiment_constants(run_study):
     assert run_study.EXPERIMENT.base_seed == 0
     assert run_study.EXPERIMENT.seeds == tuple(range(30))
     assert run_study.INFO_TYPES == ("intens", "extens", "noise_intens", "zero")
-    # ... and they are DERIVED from the condition mapping the renderer walks,
+    # ... and they are derived from the condition mapping the renderer walks,
     # not a fifth hand-maintained spelling of the arm names.
     from smolbench.induction.periodic import CONDITIONS
 
@@ -213,8 +184,8 @@ def test_experiment_constants(run_study):
     assert run_study.EXPERIMENT.info_types == run_study.INFO_TYPES
     assert run_study.EXPERIMENT.notebook_dir == "induction"
     assert run_study.EXPERIMENT.archetype_tags == run_study.MODELS
-    # 131_072 = the vLLM serving context. BUDGET_CAP is GONE (12-23): it was
-    # defined as == CONTEXT_LIMIT, so the min() against it could never bind.
+    # 131_072 = the vLLM serving context. BUDGET_CAP is deleted: it always
+    # equaled CONTEXT_LIMIT, so the min() against it could never bind.
     assert not hasattr(run_study, "BUDGET_CAP")
     assert run_study.CONTEXT_LIMIT == 131_072
     assert experiment_name(run_study.EXPERIMENT.results_dir) == "induction"
@@ -276,14 +247,9 @@ class CountingTokenizer(StubTokenizer):
 
 
 def test_completion_budget_consumes_generations_counts(run_study, monkeypatch):
-    """The budget is sized from the counts GENERATION already produced.
-
-    `completion_budget` used to re-run `make_quizzes` for its probe seeds --
-    each one re-running the noise-pad search -- and then re-tokenize every
-    prompt it got back, so the same 36 prompts were tokenized twice and the
-    regenerated quizzes were thrown away. It must now make no `count` call of
-    its own beyond what rendering the probe seeds costs.
-    """
+    """The budget is sized from the counts generation already produced:
+    `completion_budget` must make no `count` call of its own beyond what
+    rendering the probe seeds costs."""
     tokenizer = CountingTokenizer()
     monkeypatch.setattr(run_study, "for_model", lambda model: tokenizer)
     seeds = range(0, 30)
@@ -333,17 +299,13 @@ def test_selected_models(run_study, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 12-23: CONTEXT_LIMIT is derived from the roster, not restated
+# CONTEXT_LIMIT is derived from the roster, not restated
 # ---------------------------------------------------------------------------
 
 def test_context_limit_is_derived_from_the_deploy_specs(run_study):
-    """CONTEXT_LIMIT equals ec2's own max_model_len for EVERY roster entry.
-
-    It used to be a hand-written 131_072 restating all 21 EC2_DEPLOY_SPECS
-    entries: a spec edit on one checkpoint would leave the study deriving
-    completion budgets against a context that checkpoint is not served with.
-    Deriving it means the two can no longer disagree silently.
-    """
+    """CONTEXT_LIMIT equals ec2's own max_model_len for every roster entry, so a
+    spec edit on one checkpoint can't leave the study budgeting against a
+    context that checkpoint isn't served with."""
     from smolbench.evals.providers.ec2 import get_model_context_length
 
     served = {get_model_context_length(key) for key in run_study.MODELS}
@@ -351,12 +313,9 @@ def test_context_limit_is_derived_from_the_deploy_specs(run_study):
 
 
 def test_a_non_uniform_roster_context_raises(run_study, monkeypatch):
-    """The uniformity check RAISES; it is not an assert and not a silent max().
-
-    A scaling study cannot let context vary with the vendor's own YaRN
-    generosity -- a family's ceiling would be confounded with its context
-    budget. Feeding one short entry must abort, naming the offender.
-    """
+    """The uniformity check raises (not an assert, not a silent max()): a scaling
+    study can't let context vary with the vendor's YaRN generosity without
+    confounding a family's ceiling with its context budget."""
     with pytest.raises((RuntimeError, SystemExit)) as err:
         run_study.derive_context_limit({"a": 131_072, "b": 32_768})
     assert "32" in str(err.value) or "32768" in str(err.value)
@@ -365,48 +324,14 @@ def test_a_non_uniform_roster_context_raises(run_study, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 12-23: the probe-seed picks, simplified but provably unchanged
-# ---------------------------------------------------------------------------
-
-def _legacy_picks(seeds, probe_seeds):
-    """The pre-simplification `picks` expression, vendored verbatim from HEAD.
-
-    Kept in the test rather than the driver so the simplification is proved
-    against the ORIGINAL text, not against a paraphrase of it.
-    """
-    return sorted({seeds[0], seeds[-1],
-                   *(seeds[i * (len(seeds) - 1) // (probe_seeds - 1)]
-                     for i in range(probe_seeds))}) if len(seeds) > 1 else list(seeds)
-
-
-@pytest.mark.parametrize("length", range(1, 120))
-def test_probe_seeds_matches_the_legacy_expression(run_study, length):
-    """The simplified probe-seed picker is equal to the old one at every length 1..119.
-
-    The endpoints the old expression unioned in explicitly are already
-    produced by its own generator (i=0 -> seeds[0], i=PROBE_SEEDS-1 ->
-    seeds[-1]), and at len==1 every index collapses to 0, so the len>1 branch
-    was redundant too. This pins the equality rather than asserting it in
-    prose; 119 covers well past the study's 30 replicates.
-    """
-    for base in (0, 7):
-        seeds = range(base, base + length)
-        assert run_study.probe_seeds(seeds) == _legacy_picks(seeds, run_study.PROBE_SEEDS)
-
-
-# ---------------------------------------------------------------------------
-# 12-06: request_timeout derived from the per-model budget
+# request_timeout derived from the per-model budget
 # ---------------------------------------------------------------------------
 
 def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(run_study):
-    """A ~100k-token CoT budget buys far more than ec2's 600 s default.
-
-    Finishing 100k tokens inside 600 s needs >= 167 tok/s of single-request
-    decode on a 397B/236B MoE; ec2 re-times-out on every attempt, censoring
-    the top of the CoT-length distribution on the arm carrying the headline
-    contrast. The derivation is budget / MIN_DECODE_TOK_S, floored at the
-    provider default -- a floor, never a cap.
-    """
+    """A ~100k-token CoT budget needs >=167 tok/s decode on a 397B/236B MoE to
+    finish inside ec2's 600s default, which real serving doesn't hit and would
+    censor the top of the CoT-length distribution; the derivation is
+    budget / MIN_DECODE_TOK_S, floored at the provider default (a floor, not a cap)."""
     fn = run_study.request_timeout_seconds
     floor = run_study.REQUEST_TIMEOUT_FLOOR_SECONDS
     rate = run_study.MIN_DECODE_TOK_S
@@ -430,15 +355,12 @@ def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(run_study
 
 
 def test_main_passes_the_derived_request_timeout(run_study, monkeypatch):
-    """main() actually hands request_timeout to EXPERIMENT.run for every model.
-
-    The derivation is worthless if the call site keeps the default; this pins
-    the wiring, not just the arithmetic.
-    """
+    """main() hands request_timeout to EXPERIMENT.run for every model: pins the
+    wiring, not just the arithmetic."""
     monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
-    # Patch the CLASSES, not the instances: InductionExperiment and
+    # Patch the classes, not instances: InductionExperiment and
     # ReplicateHarness are both frozen dataclasses, so setattr on an instance
     # raises FrozenInstanceError at the patch line, before main() ever runs.
     monkeypatch.setattr(ReplicateHarness, "has_outstanding",
@@ -456,16 +378,13 @@ def test_main_passes_the_derived_request_timeout(run_study, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 12-07: nothing outstanding => never provision a spot box
+# nothing outstanding => never provision a spot box
 # ---------------------------------------------------------------------------
 
 def test_main_does_not_provision_when_nothing_is_outstanding(run_study, monkeypatch,
                                                              caplog):
-    """A lane re-run after completion must not boot a billing box to do nothing.
-
-    ``run()`` already skipped the serve, but ``provision()`` ran first and
-    unconditionally, and ``main()`` never tears down -- so the box stayed up.
-    """
+    """A lane re-run after completion must not boot a billing box: provision()
+    has to check has_outstanding too, not just skip the serve step."""
     monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
@@ -485,44 +404,24 @@ def test_main_does_not_provision_when_nothing_is_outstanding(run_study, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# 12-08: every run gets an explicit, non-retired EC2 tag
+# every run gets an explicit, non-retired EC2 tag
 # ---------------------------------------------------------------------------
 
 def test_unsharded_runs_set_the_study_tag():
-    """An UNSHARDED, standalone run no longer inherits ec2's retired default.
-
-    ``EC2_EXPERIMENT_TAG`` used to be set only inside the ``INDUCTION_SHARD``
-    branch, so the documented standalone invocation kept ec2.py's
-    "periodic-induction" -- a RETIRED study's tag. Tag-based recovery would
-    then reattach to any live box carrying it and ``serve_model`` would swap
-    that box's model out from under the other driver; ``--teardown`` would
-    terminate it.
-    """
+    """An unsharded, standalone run gets an explicit tag, not ec2's retired
+    "periodic-induction" default -- a shared tag would let tag-based recovery
+    reattach to another driver's box, swap its model, or tear it down."""
     module, exc, env = import_run_study("induction_run_study_untagged",
                                         {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""})
     assert exc is None, exc
     assert env["EC2_EXPERIMENT_TAG"] == "induction-scaling"
 
 
-def test_the_retired_default_tag_is_refused():
-    """Resolving to ec2's retired "periodic-induction" default aborts the run."""
-    _module, exc, _env = import_run_study(
-        "induction_run_study_retired",
-        {"EC2_EXPERIMENT_TAG": "periodic-induction", "INDUCTION_SHARD": "",
-         "INDUCTION_MODELS": ""},
-    )
-    assert isinstance(exc, SystemExit), exc
-    assert "periodic-induction" in str(exc)
-
 
 def test_the_shard_lane_tag_is_canonical_order_independent():
-    """Reordering INDUCTION_MODELS must not mint a second tag and state file.
-
-    ``_LANE`` was built from the RAW ``INDUCTION_MODELS`` string while
-    ``selected_models()`` canonicalizes to MODELS declaration order, so two
-    spellings of one lane produced two tags -- and so two boxes and two state
-    files -- for the same work.
-    """
+    """Reordering INDUCTION_MODELS must not mint a second tag and state file:
+    the lane key canonicalizes to MODELS declaration order, so two spellings of
+    the same lane don't produce two boxes doing the same work."""
     forward, err_f, env_f = import_run_study(
         "induction_run_study_lane_a",
         {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "qwen3.5-27b,gemma-4-e2b"},

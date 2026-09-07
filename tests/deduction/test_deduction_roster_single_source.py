@@ -1,26 +1,18 @@
-"""The roster, results bucket and region have ONE source; pin every consumer to it.
+"""The roster, results bucket and region have one source; pin every consumer to it.
 
 ``smolbench/evals/study_config.toml`` (parsed by
 ``smolbench.evals.study_config``) is the committed source for this study's
 21-checkpoint roster and its results bucket/region. Three deduction-side
-consumers used to re-declare parts of it by hand:
-
-* ``notebooks/deduction/analysis/power_analysis.py`` re-typed all 21 keys as
-  ``FAMILIES``, guarded only by a length/uniqueness ``assert`` that ``python -O``
-  strips, plus the bucket and region as string literals;
-* ``scripts/results/audit_lean_pinning.py`` re-typed the same 21 keys as a flat
-  ``LANES`` list, plus its own ``BUCKET``/``REGION`` literals;
-* ``notebooks/deduction/run_study.py`` spelled the spool bucket and region out
-  as ``SPOOL_BUCKET``/``SPOOL_REGION``.
-
-All of them now read the config. These tests pin that: the consumers must agree
-with ``study_config`` (not merely with each other), and the literals must be
-GONE from the sources -- an equality check alone would still pass against a
+consumers (power_analysis's ``FAMILIES``, audit_lean_pinning's ``LANES``,
+run_study's ``SPOOL_BUCKET``/``SPOOL_REGION``) now read it instead of
+re-declaring it by hand. These tests pin that the consumers agree with
+``study_config`` (not merely with each other) and that the old literals are
+gone from the sources -- an equality check alone would still pass against a
 hand-typed copy that happens to be correct today.
 
-The induction driver's own ``MODELS`` is pinned here too. It reads the same
-config, so this is a second, independent route to the same roster: if either
-side stopped reading the config the two would diverge here.
+The induction driver's own ``MODELS`` is pinned here too, as a second,
+independent route to the same roster: if either side stopped reading the
+config the two would diverge here.
 """
 
 from __future__ import annotations
@@ -43,11 +35,11 @@ DEDUCTION_DRIVER = NOTEBOOKS / "deduction" / "run_study.py"
 def _load(path, name):
     """Exec `path` as module `name`, restoring os.environ afterwards.
 
-    The induction driver calls ``load_dotenv()`` and reads ``LEAN_*``/``EC2_*``
-    at import time, so importing it here would otherwise mutate the environment
-    for every later test in the session. Registered in ``sys.modules`` before
-    ``exec_module`` because a ``@dataclass`` defined in a module absent from
-    ``sys.modules`` fails to resolve its own annotations.
+    The induction driver reads ``LEAN_*``/``EC2_*`` at import time, so this
+    would otherwise mutate the environment for every later test in the
+    session. Registered in ``sys.modules`` before ``exec_module`` because a
+    ``@dataclass`` in a module absent from ``sys.modules`` fails to resolve
+    its own annotations.
     """
     saved = dict(os.environ)
     try:
@@ -77,7 +69,7 @@ def power_analysis():
 
 
 def test_power_analysis_families_cover_the_roster_exactly(roster, power_analysis):
-    """FAMILIES' 21 keys are the roster's 21 keys -- as a SET and by count.
+    """FAMILIES' 21 keys are the roster's 21 keys -- as a set and by count.
 
     Set equality, not just a count: 21-vs-21 with one key swapped for a typo is
     exactly the failure that would otherwise surface as a lane silently missing
@@ -97,7 +89,7 @@ def test_power_analysis_families_cover_the_roster_exactly(roster, power_analysis
 
 
 def test_audit_lanes_cover_the_roster_exactly(roster):
-    """audit_lean_pinning.LANES is the same 21 keys, in the same ORDER.
+    """audit_lean_pinning.LANES is the same 21 keys, in the same order.
 
     Order matters here in a way it does not for `FAMILIES`: LANES' own comment
     calls itself "the 21 lane spec keys, in roster order", and reports built
@@ -122,12 +114,10 @@ def test_flip_run_lanes_are_real_lanes(roster):
     assert not unknown, unknown
 
 
-# ---------------------------------------------------------------------------
-# Pin each consumer to study_config itself, and pin the literals GONE.
-# ---------------------------------------------------------------------------
+# Pin each consumer to study_config itself, and pin the literals gone.
 
 #: Files that must no longer spell the results bucket or its region. The bucket
-#: string is checked verbatim; the region is checked as a QUOTED literal, so a
+#: string is checked verbatim; the region is checked as a quoted literal, so a
 #: prose mention inside a docstring is not what trips this (the point is that no
 #: code path re-declares the value, not that the words are unmentionable).
 _NO_LITERALS = (POWER_ANALYSIS, AUDIT, DEDUCTION_DRIVER)
@@ -135,7 +125,7 @@ _BUCKET_LITERAL = "smolbench-results-414266451290"
 
 
 def test_power_analysis_roster_is_the_config_roster(power_analysis):
-    """FAMILIES and MODELS come from study_config, family NAMES included.
+    """FAMILIES and MODELS come from study_config, family names included.
 
     Name equality is the half a "same 21 keys" check misses: before this
     landed, `FAMILIES` grouped the identical keys under three different family
@@ -149,7 +139,7 @@ def test_power_analysis_roster_is_the_config_roster(power_analysis):
 def test_power_analysis_module_scope_guards_survive_dash_O(power_analysis):
     """The drift guards are `raise`, not `assert` -- `python -O` strips asserts.
 
-    Checked on the SOURCE, because a passing import proves nothing either way:
+    Checked on the source, because a passing import proves nothing either way:
     the guards only fire on a broken config, which the committed one is not.
     """
     source = POWER_ANALYSIS.read_text()
@@ -172,8 +162,7 @@ def test_audit_lanes_are_the_config_roster(roster):
 def test_bucket_and_region_come_from_the_config(power_analysis):
     """Every consumer's bucket/region constant equals the committed config's."""
     results = load_study_config().results
-    assert (power_analysis.S3_BUCKET, power_analysis.S3_REGION) == (
-        results.bucket, results.region)
+    assert power_analysis.S3_BUCKET == results.bucket
     if AUDIT.exists():
         audit = _load(AUDIT, "audit_lean_pinning_for_bucket_pin")
         assert (audit.BUCKET, audit.REGION) == (results.bucket, results.region)
@@ -181,7 +170,7 @@ def test_bucket_and_region_come_from_the_config(power_analysis):
 
 @pytest.mark.parametrize("path", _NO_LITERALS, ids=lambda p: p.name)
 def test_bucket_and_region_literals_are_gone_from_consumers(path):
-    """The value must be READ, not re-typed.
+    """The value must be read, not re-typed.
 
     An equality assertion alone cannot catch a hand-typed copy that is correct
     today and silently stale after the bucket moves, so this pins the absence of

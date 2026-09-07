@@ -1,14 +1,14 @@
 """Offline end-to-end smoke driver for the smolbench eval harness.
 
-Drives the REAL production path -- quiz generation -> provider dispatch ->
-ChatClient.query/evaluate -> grading -> Marks YAML IO -- against the local
-OpenAI-compatible stub server from tests/conftest.py. Zero credentials, zero
-network, zero AWS spend. Run from the repo root:
+Drives the production path -- quiz generation, provider dispatch,
+ChatClient.query/evaluate, grading, Marks YAML IO -- against the local
+OpenAI-compatible stub server from tests/conftest.py. No credentials,
+network, or AWS spend. Run from the repo root:
 
     timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py
 
-``timeout`` matters: the openrouter ChatClient retries transient failures
-FOREVER with a 60s backoff, so a misbehaving stub would hang the driver.
+The timeout matters: the openrouter ChatClient retries transient failures
+indefinitely with a 60s backoff, so a misbehaving stub would hang the driver.
 
 Exit codes: 0 = PASS, 1 = a stage failed, 2 = environment/import problem.
 """
@@ -39,7 +39,7 @@ def check(cond: bool, msg: str) -> None:
 
 
 def main() -> None:
-    # -- 1. Environment guard ------------------------------------------------
+    # Environment guard.
     check(
         sys.version_info[:2] == (3, 12),
         f"Python {sys.version.split()[0]} is not the project interpreter; smolbench "
@@ -71,7 +71,7 @@ def main() -> None:
         tof_membership_query_gen,
     )
 
-    # -- 2. Periodic quiz generation (offline, deterministic) ----------------
+    # Periodic quiz generation (offline, deterministic).
     periodic_template = string.Template(
         "Context:\n---\n"
         "There is a counting game. Count positions starting from 1. "
@@ -90,7 +90,7 @@ def main() -> None:
     check(tuple(intens) == tuple(intens2), "periodic generation is not seed-deterministic")
     stage("periodic", f"{len(intens)} Numeric questions, answers {[q.answer for q in intens]}, seed-stable")
 
-    # -- 3. Periodic ToF quiz generation (offline, deterministic) ------------
+    # Periodic ToF quiz generation (offline, deterministic).
     tof_template = string.Template(
         "Context:\n---\n"
         "There is a counting game. Count positions starting from 1. "
@@ -109,13 +109,13 @@ def main() -> None:
     check(tuple(tof_intens) == tuple(tof_intens2), "periodic ToF generation is not seed-deterministic")
     stage("periodic-tof", f"{len(tof_intens)} ToF questions ({n_true} True / {n_false} False), seed-stable")
 
-    # -- 4. Stub server + call-time provider dispatch ------------------------
+    # Stub server + call-time provider dispatch.
     server = StubServer()
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:
-        # Dispatch is read at CALL time (smolbench/evals/provider.py), so env
-        # set after import still applies -- exactly how notebooks do it.
+        # Dispatch is read at call time (smolbench/evals/provider.py), so env
+        # set after import still applies, matching how notebooks do it.
         os.environ["INFERENCE_PROVIDER"] = "openrouter"
         os.environ["OPENROUTER_BASE_URL"] = server.base_url
         os.environ["OPENROUTER_API_KEY"] = "smoke-dummy"
@@ -123,7 +123,7 @@ def main() -> None:
         check(ctx == 100000, f"stub context length lookup returned {ctx}")
         stage("dispatch", f"INFERENCE_PROVIDER=openrouter -> stub at {server.base_url}, ctx={ctx}")
 
-        # -- 5. Single seeded query round trip -------------------------------
+        # Single seeded query round trip.
         server.queue_response(chat_completion("6", reasoning_content="thought"))
         content, reasoning = provider.query(
             intens[0].prompt, "smolbench-smoke", seed=42, context_length=ctx
@@ -133,8 +133,8 @@ def main() -> None:
         check(last_post["body"].get("seed") == 42, f"request body lost the seed: {last_post['body']}")
         stage("query", "content+reasoning channels parsed, seed=42 present in request body")
 
-        # -- 6. Sequential graded evaluate (queued right/wrong/invalid) ------
-        # max_parallel=1 is REQUIRED: StubServer.next_response pops the queue
+        # Sequential graded evaluate (queued right/wrong/invalid).
+        # max_parallel=1 is required: StubServer.next_response pops the queue
         # FIFO, so the response<->question mapping is deterministic only when
         # questions are asked one at a time.
         server.queue_response(chat_completion(str(intens[0].answer)))  # correct
@@ -147,9 +147,8 @@ def main() -> None:
         check(tally == (1, 1, 1), f"sequential grading tally {tally} != (1, 1, 1)")
         stage("evaluate-seq", "graded 3 Numeric questions -> 1 correct / 1 incorrect / 1 invalid")
 
-        # -- 7. Parallel evaluate (uniform default response) -----------------
-        # Parallel fan-out is only safe with a uniform default_response
-        # (thread completion order is nondeterministic).
+        # Parallel evaluate (uniform default response): fan-out is only safe
+        # with a uniform response, since thread completion order varies.
         server.default_response = chat_completion("True")
         marks_par = provider.evaluate(
             tof_intens, "smolbench-smoke", seed=42, max_parallel=4, show_progress=False
@@ -165,7 +164,7 @@ def main() -> None:
         server.shutdown()
         server_thread.join(timeout=5)
 
-    # -- 8. Marks YAML round trip (temp dir; smoke artifacts stay out of repo)
+    # Marks YAML round trip; temp dir keeps smoke artifacts out of the repo.
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "smoke_marks.yaml"
         marks_par.dump(out)

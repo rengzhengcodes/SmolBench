@@ -1,11 +1,10 @@
 """Pins for the statistical plumbing under ``notebooks/induction/analysis/``.
 
-Covers the hand-rolled multiplicity corrections replaced by ``statsmodels``
-(12-25), the pre-registration gates that had to survive ``python -O``
-(12-12), the results walkers routed through ``LocalResultsStore`` (12-24),
-the single loader shared by the contrasts and the compliance census
-(12-26), and ``multiplicity_sim``'s constants, alphas, output path and
-cost (12-10, 12-27, 12-28, 12-31).
+Covers the hand-rolled multiplicity corrections replaced by ``statsmodels``,
+the pre-registration gates that had to survive ``python -O``, the results
+walkers routed through ``LocalResultsStore``, the single loader shared by
+the contrasts and the compliance census, and ``multiplicity_sim``'s
+constants, alphas, output path and cost.
 
 See ``tests/analysis/_trees.py`` for the synthetic replicate tree these use
 and for why this directory has no ``conftest.py``.
@@ -20,7 +19,6 @@ import numpy as np
 import pytest
 
 from smolbench.evals import Mark, Marks
-from smolbench.evals.quiz import COMPLIANT
 from tests._paths import REPO_ROOT
 
 from tests.analysis._trees import (  # noqa: F401
@@ -40,7 +38,7 @@ NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 
 @pytest.fixture(scope="session")
 def multiplicity_sim(power_analysis):
-    """The standalone Monte Carlo module (12-27 gives it sibling imports)."""
+    """The standalone Monte Carlo module."""
     return load_analysis("multiplicity_sim")
 
 
@@ -49,12 +47,7 @@ def multiplicity_sim(power_analysis):
 # ===========================================================================
 
 def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
-    """MODELS/FAMILIES are the config's roster rendered into ANALYSIS TAGS.
-
-    They used to be a second hand-maintained copy of the 21-model ladder with
-    nothing pinning them to the driver's; the tags and the family grouping now
-    have one owner (``smolbench/evals/study_config.toml``).
-    """
+    """MODELS/FAMILIES are the config's roster rendered into analysis tags, with one owner (``study_config.toml``)."""
     from smolbench.evals import study_config
 
     assert power_analysis.MODELS == tuple(
@@ -67,11 +60,11 @@ def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
 
 
 # ===========================================================================
-# 12-25 -- Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
+# Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
 # ===========================================================================
 
 def _legacy_holm(pvals, alpha):
-    """The pre-swap ``paired_analysis.holm``, vendored verbatim from f3a13c9a."""
+    """The pre-swap ``paired_analysis.holm``, vendored verbatim."""
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
     reject = np.zeros(m, dtype=bool)
@@ -109,13 +102,13 @@ def _legacy_bh(p, q):
 
 
 def _tie_heavy_vectors(n=200):
-    """Yield `n` p-value vectors dominated by EXACT ties.
+    """Yield `n` p-value vectors dominated by exact ties.
 
-    Ties are pervasive in this study, not incidental: ``signflip_exact_p`` has
-    a hard resolution floor at ``2/2**S`` and lanes sit exactly on it (three
-    did in the 2026-08 data), 1.0 is returned verbatim whenever a contrast has
-    no discordant pairs, and the Bonferroni threshold itself is an attainable
-    value. A correction swap is only safe if it agrees THERE.
+    Ties are pervasive here, not incidental: ``signflip_exact_p`` has a hard
+    resolution floor at ``2/2**S``, 1.0 is returned verbatim when a contrast
+    has no discordant pairs, and the Bonferroni threshold is itself an
+    attainable value. A correction swap is only safe if it agrees at these
+    points.
     """
     rng = np.random.default_rng(20260905)
     pool = np.array([2 / 2**30, 2 / 2**16, 1.0, 0.05, 0.05 / 210, 1e-8, 0.5, 0.02])
@@ -131,12 +124,7 @@ def _tie_heavy_vectors(n=200):
 def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis,
                                                           significance_report,
                                                           alpha):
-    """The statsmodels swap is drop-in on tie-heavy p-vectors, at both alphas.
-
-    Verified BEFORE deleting the hand-rolled loops, which is the only way to
-    know the swap preserved every published rejection set. 0 mismatches over
-    200 vectors.
-    """
+    """The statsmodels swap is drop-in on tie-heavy p-vectors, at both alphas."""
     for pvals in _tie_heavy_vectors():
         assert np.array_equal(paired_analysis.holm(pvals, alpha),
                               _legacy_holm(pvals, alpha)), pvals
@@ -145,12 +133,7 @@ def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis,
 
 
 def test_bh_is_a_module_level_function_matching_the_old_closure(paired_analysis):
-    """BH moves out of ``main``'s body and keeps its rejection set.
-
-    The old nested ``bh()`` sorted with a BARE ``np.argsort`` while its two
-    siblings documented a STABLE sort as load-bearing -- an inconsistency that
-    only did not bite because the per-rank thresholds are monotone.
-    """
+    """BH moves out of ``main``'s body and keeps its rejection set."""
     assert callable(getattr(paired_analysis, "bh", None)), \
         "bh must be importable, not buried in main()"
     for pvals in _tie_heavy_vectors():
@@ -162,17 +145,7 @@ def test_bh_is_a_module_level_function_matching_the_old_closure(paired_analysis)
 def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis,
                                                               significance_report,
                                                               name):
-    """Permuting the inputs permutes the mask exactly -- the property the stable
-    sort protected.
-
-    ``multipletests`` sorts with a bare ``np.argsort``, so the explicit
-    ``kind="stable"`` the hand-rolled versions documented is gone. It is safe
-    because every per-rank threshold here is MONOTONE increasing in rank
-    (``alpha/(m-i)`` for Holm/Hochberg, ``q*i/m`` for BH): if one member of a
-    tie clears its threshold, every later member clears a looser one, so no
-    tie can straddle the boundary and tie order cannot move the decision.
-    This test is that argument, executed.
-    """
+    """Permuting the inputs permutes the mask exactly, because each procedure's per-rank threshold is monotone increasing in rank, so tie order cannot move the decision."""
     fn = getattr(significance_report if name == "hochberg" else paired_analysis, name)
     rng = np.random.default_rng(7)
     for pvals in _tie_heavy_vectors(60):
@@ -182,39 +155,22 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis,
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
-def test_mcnemar_is_defined_once_and_the_vectorized_form_agrees(paired_analysis,
-                                                                multiplicity_sim):
-    """``multiplicity_sim``'s vectorized McNemar equals ``paired_analysis``'s scalar.
-
-    Two independent implementations of one exact test is one implementation
-    too many; the vectorized form now delegates to ``scipy.stats.binom`` on
-    the same conditional-binomial definition.
-    """
-    rng = np.random.default_rng(3)
-    b = rng.integers(0, 40, 300)
-    c = rng.integers(0, 40, 300)
-    vec = multiplicity_sim.mcnemar_exact_p(b, c)
-    for i in range(b.size):
-        assert vec[i] == pytest.approx(
-            paired_analysis.mcnemar_exact_p(int(b[i]), int(c[i])), rel=1e-12
-        ), (int(b[i]), int(c[i]))
-    # The no-discordance convention must survive the swap.
-    assert multiplicity_sim.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
+def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
+                                 multiplicity_sim):
+    """One broadcasting implementation serves the scalar and batched call sites."""
+    assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
+    assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
+    # The no-discordance convention must survive the swap, batched and scalar.
+    assert power_analysis.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
+    assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
 
 
 # ===========================================================================
-# 12-12 -- pre-registration gates were bare asserts, stripped by python -O
+# pre-registration gates were bare asserts, stripped by python -O
 # ===========================================================================
 
 def test_design_invariants_are_checked_at_module_scope_and_raise(power_analysis):
-    """The family-size gates run on IMPORT and raise; they are not asserts in main().
-
-    ``ALPHA_PRIMARY`` is ``0.05 / N_PRIMARY`` and ``ALPHA_SECONDARY`` is
-    ``0.05 / N_SECONDARY``, so a drift between the hand-written counts and
-    ``build_*_contrasts()`` silently invalidates every correction in the
-    study. The only checks of that were asserts inside ``main()``, which no
-    importer calls.
-    """
+    """The family-size gates run on import and raise, not assert in ``main()``, since a drift between the hand-written counts and ``build_*_contrasts()`` would silently invalidate every correction."""
     check = getattr(power_analysis, "check_design_invariants", None)
     assert callable(check), "the gate must be a callable run at module scope"
     assert check() is None
@@ -229,12 +185,7 @@ def test_design_invariants_are_checked_at_module_scope_and_raise(power_analysis)
 
 
 def test_design_invariants_survive_python_dash_o():
-    """Under ``python -O`` the gate still fires -- the whole point of a raise.
-
-    Executed at f3a13c9a: ``python -O`` imported the module with
-    ``len(MODELS)`` disagreeing with ``FAMILIES`` and ``ALPHA_PRIMARY`` still
-    ``0.05/210``.
-    """
+    """Under ``python -O`` the gate still fires -- the whole point of a raise."""
     code = (
         "import sys;"
         f"sys.path.insert(0, {str(ANALYSIS_DIR)!r});"
@@ -242,7 +193,7 @@ def test_design_invariants_survive_python_dash_o():
         "import power_analysis as pa;"
         "assert False, 'asserts are live -- this subprocess is not under -O';"
     )
-    # 1. -O really is in force (the bare assert above must NOT fire).
+    # 1. -O is in force (the bare assert above must not fire).
     ok = subprocess.run([sys.executable, "-O", "-c", code], capture_output=True,
                         text=True, cwd=str(REPO_ROOT))
     assert ok.returncode == 0, ok.stderr
@@ -264,13 +215,7 @@ def test_design_invariants_survive_python_dash_o():
 
 @pytest.mark.parametrize("module", ("power_analysis", "paired_analysis"))
 def test_no_bare_assert_gates_remain(module):
-    """No ``assert`` survives as a GATE in either module.
-
-    A bare assert vanishes under ``python -O``; ``power_analysis`` says so
-    itself at ``load_outcomes`` ("A raise, not an assert: this gate must
-    survive ``python -O``") while four other gates in the same chain were
-    asserts.
-    """
+    """No ``assert`` survives as a gate in either module; a bare assert vanishes under ``python -O``."""
     source = (ANALYSIS_DIR / f"{module}.py").read_text()
     offenders = [ln for ln in source.splitlines()
                  if ln.lstrip().startswith("assert ")]
@@ -278,12 +223,12 @@ def test_no_bare_assert_gates_remain(module):
 
 
 # ===========================================================================
-# 12-24 / 12-26 -- one store-backed loader, consumed by contrasts AND census
+# one store-backed loader, consumed by contrasts and census
 # ===========================================================================
 
 @pytest.fixture
 def small_tree(tmp_path, power_analysis):
-    """A 6-seed tree with one deliberately UNPARSABLE replicate filename."""
+    """A 6-seed tree with one unparsable replicate filename."""
     build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS,
                lambda m, i: ((0.10 if i == "zero" else 0.90), 0.0, "empty",
                              range(SHALLOW_DEPTH)))
@@ -304,13 +249,7 @@ def small_tree(tmp_path, power_analysis):
 def test_walkers_skip_an_unparsable_replicate_filename(repoint, paired_analysis,
                                                         significance_report,
                                                         small_tree):
-    """A non-replicate file in the tree is skipped, by BOTH the loader and the census.
-
-    ``LocalResultsStore.list_seeds`` already owns this rule and documents it;
-    the three scripts each re-implemented the walk without it, so one stray
-    file either raised ``ValueError`` mid-load or silently entered the census
-    denominator as a 100%-non-compliant replicate.
-    """
+    """A non-replicate file in the tree is skipped, by both the loader and the census."""
     root, cell = small_tree
     repoint(root)
     loaded = paired_analysis.load_marks()
@@ -324,13 +263,7 @@ def test_walkers_skip_an_unparsable_replicate_filename(repoint, paired_analysis,
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
         repoint, paired_analysis, significance_report, small_tree, monkeypatch):
-    """Each replicate is opened ONCE for both the contrasts and the census.
-
-    ``compliance_census`` re-walked and re-YAML-parsed every ``rep_*.yaml``
-    that ``load_marks()`` had opened two lines earlier: 504 file opens on a
-    6-seed tree, 2,520 at full depth, and a second, differently-denominated
-    expression of ``Marks.noncompliant``'s rule.
-    """
+    """Each replicate is opened once for both the contrasts and the census."""
     root, _cell = small_tree
     repoint(root)
 
@@ -347,7 +280,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 
     n_cells = len(loaded[0])
     assert n_cells == 84
-    # Exactly one open per (cell, seed) -- and NONE added by the census.
+    # Exactly one open per (cell, seed) -- and none added by the census.
     assert after_load == n_cells * SHALLOW_DEPTH, after_load
     assert len(reads) == after_load, reads[after_load:]
     assert len(census) == n_cells
@@ -355,13 +288,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         repoint, extens_vs_noise, power_analysis, small_tree, monkeypatch):
-    """The 21 focused contrasts read their p-values off the 210-contrast pass.
-
-    ``extens_vs_noise`` computed the full pre-registered family (so the Holm
-    decision is the real one), then recomputed the same 21 sign-flip and
-    McNemar p-values a second time for its own table -- 231 exact
-    randomization tests where 210 were needed.
-    """
+    """The 21 focused contrasts read their p-values off the 210-contrast pass, instead of recomputing them."""
     root, _cell = small_tree
     repoint(root)
     calls = []
@@ -375,23 +302,17 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
             contextlib.redirect_stderr(io.StringIO()):
         extens_vs_noise.main()
 
-    # 210 for the pre-registered family, and NOT 210 + 21.
+    # 210 for the pre-registered family, and not 210 + 21.
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
 
 # ===========================================================================
-# 12-27 / 12-28 / 12-10 / 12-31 -- multiplicity_sim constants, alphas, path, cost
+# multiplicity_sim constants, alphas, path, cost
 # ===========================================================================
 
 def test_design_constants_are_imported_not_re_declared(multiplicity_sim,
                                                        power_analysis):
-    """``multiplicity_sim`` no longer copies four constants it names in comments.
-
-    Value equality alone is vacuous here -- the copies were CORRECT copies, and
-    that is exactly why nothing caught them. The source check is what makes
-    this test bite: a re-declaration that happens to agree today would pass the
-    equality and fail the import.
-    """
+    """``multiplicity_sim`` imports its four design constants instead of copying them."""
     import _power_common
 
     assert multiplicity_sim.ALPHA == _power_common.ALPHA
@@ -407,20 +328,15 @@ def test_design_constants_are_imported_not_re_declared(multiplicity_sim,
 
 
 def test_no_bare_replicate_count_literals_survive(multiplicity_sim):
-    """``part2`` used ``eq_r = 30`` and ``eq_r / 30.0`` beside ``R_DEFAULT``.
-
-    Two spellings of one design constant is how a re-sizing silently applies
-    to half a report.
-    """
+    """``part2`` no longer spells `30` twice beside ``R_DEFAULT``."""
     source = inspect.getsource(multiplicity_sim.part2)
     assert "30" not in source.replace("R_DEFAULT", ""), source
 
-    # The equivalent-R search ladder moved to a module constant so that its
-    # genuine grid point 300 is not mistaken for a spelling of R_DEFAULT. Pin
-    # the relationship that DOES matter where it now lives: the ladder starts
-    # at the study's own R, because eq_R is defined as "the smallest R at which
-    # the UNPAIRED test matches the paired test's power at R_DEFAULT" -- a
-    # ladder starting anywhere else could not express eq_R == R_DEFAULT.
+    # The equivalent-R search ladder moved to a module constant so its grid
+    # point 300 isn't mistaken for a spelling of R_DEFAULT. The ladder must
+    # start at the study's own R, since eq_R is "the smallest R at which the
+    # unpaired test matches the paired test's power at R_DEFAULT" -- starting
+    # elsewhere couldn't express eq_R == R_DEFAULT.
     assert multiplicity_sim.EQ_R_GRID[0] == multiplicity_sim.R_DEFAULT
     assert list(multiplicity_sim.EQ_R_GRID) == sorted(multiplicity_sim.EQ_R_GRID)
     # part2's `cap` default is the ladder's top, so its docstring's "largest
@@ -442,12 +358,7 @@ def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim):
 
 
 def test_monte_carlo_output_lands_in_the_results_dir(multiplicity_sim):
-    """The checkpoint JSON goes under ``results/``, covered by the general rule.
-
-    It was written next to the script and covered by a one-off ``.gitignore``
-    literal, so the numbers justifying the TEST and CORRECTION choice existed
-    only on whichever machine last ran it.
-    """
+    """The checkpoint JSON goes under ``results/``, covered by the general ``.gitignore`` rule instead of a one-off literal."""
     import _power_common
 
     expected = _power_common.results_dir(multiplicity_sim.__file__, up=1)
@@ -462,14 +373,7 @@ def test_monte_carlo_output_lands_in_the_results_dir(multiplicity_sim):
 
 def test_dump_creates_its_own_results_directory(multiplicity_sim, tmp_path,
                                                 monkeypatch, capsys):
-    """Moving OUT_PATH into results/ requires dump() to mkdir -- that dir is not in the tree.
-
-    ``notebooks/induction/results/`` is gitignored and absent from a fresh
-    checkout, while ``dump()`` is a bare ``open(OUT_PATH, "w")``. Relocating
-    the checkpoint without creating the parent turns every part's checkpoint
-    into a ``FileNotFoundError`` after the Monte Carlo has already run -- the
-    most expensive possible place to fail.
-    """
+    """Moving ``OUT_PATH`` into ``results/`` requires ``dump()`` to mkdir, since that directory is gitignored and absent from a fresh checkout."""
     target = tmp_path / "results" / "multiplicity_sim_results.json"
     assert not target.parent.exists()
     monkeypatch.setattr(multiplicity_sim, "OUT_PATH", target)
@@ -483,14 +387,7 @@ def test_dump_creates_its_own_results_directory(multiplicity_sim, tmp_path,
 
 
 def test_part5_prices_the_trend_test_in_the_same_family_as_part4(multiplicity_sim):
-    """One trend test cannot cost ALPHA/28 in PART 5 and ALPHA/154 in PART 4.
-
-    PART 5's head-to-head handed the trend test 0.05/28 against pairwise
-    0.05/210 -- 7.5x looser -- which mechanically favours the "trend wins"
-    conclusion it then draws. Nothing outside this file pre-registers any
-    trend test, so the ALPHA/28 family stays only as a labelled sensitivity
-    row.
-    """
+    """One trend test cannot cost `ALPHA/28` in part 5 and `ALPHA/154` in part 4 of the same family."""
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
     import io
@@ -510,14 +407,7 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(multiplicity_si
 
 
 def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
-    """The fixed-seed sizing scan is re-run per contrast though inputs repeat.
-
-    ``pooled`` admits only 10 distinct rate vectors across 273 contrasts, so
-    the scan was recomputed up to ~27x per distinct input. The cache is keyed
-    on ``(rates_a.tobytes(), rates_b.tobytes(), alpha)``; the ``rng`` is
-    deliberately NOT part of the key because every caller re-seeds
-    ``default_rng(SEED)` immediately before the call.
-    """
+    """The fixed-seed sizing scan is cached on rate values and alpha, since only 10 distinct rate vectors repeat across 273 contrasts."""
     fn = power_analysis.replicates_needed
     assert hasattr(fn, "cache_info") and hasattr(fn, "cache_clear"), \
         "replicates_needed must expose its cache for auditing"
@@ -525,20 +415,16 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
 
     a = np.full(power_analysis.N_HARMONICS, 0.9)
     b = np.full(power_analysis.N_HARMONICS, 0.5)
-    first = fn(a, b, np.random.default_rng(power_analysis.SEED))
-    # Equal VALUES in a distinct array object: the key is the bytes, not the id.
-    second = fn(a.copy(), b.copy(), np.random.default_rng(power_analysis.SEED))
+    first = fn(a, b)
+    # Equal values in a distinct array object: the key is the values, not the id.
+    second = fn(a.copy(), b.copy())
     assert first == second
     info = fn.cache_info()
     assert info.hits == 1 and info.misses == 1, info
 
 
 def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim):
-    """``part2``'s grid search discards 3 of 4 returns yet paid for all of them.
-
-    The discarded ``phi`` upcast both boolean mark arrays to float64 -- 1.55 GB
-    at the top of ``grid_r`` -- for a number the search never reads.
-    """
+    """``part2``'s grid search discards 3 of 4 returns yet paid for all of them (the discarded ``phi`` upcast cost 1.55 GB)."""
     params = inspect.signature(multiplicity_sim._paired_powers).parameters
     assert "stats" in params and params["stats"].default is True
 
@@ -553,11 +439,7 @@ def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim):
 
 
 def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis):
-    """4,000 GLM fits (~380 s per call, called twice) for an explicit non-gate.
-
-    Its own docstring calls it "a design-level diagnostic, not a gate: no
-    contrast family depends on it", so its default cost must match that role.
-    """
+    """4,000 GLM fits (~380 s per call) is too expensive a default for an explicit non-gate."""
     default = inspect.signature(
         power_analysis.omnibus_interaction_power).parameters["n_sims"].default
     assert default < 1000, default
@@ -571,13 +453,7 @@ def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis):
 # ===========================================================================
 
 def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim):
-    """`icc=0.0` must draw exactly what the un-clustered simulation drew.
-
-    Every PART 2 figure already published was produced without clustering, so
-    the new parameter must be inert at 0 -- including in RNG CALL ORDER, which
-    is what makes the icc=0 rows comparable to the old ones rather than merely
-    similar.
-    """
+    """`icc=0.0` must draw exactly what the un-clustered simulation drew, including RNG call order."""
     def draw(**kwargs):
         return multiplicity_sim.paired_marks(
             0.9, 0.8, 0.5, 64, 30, np.random.default_rng(7), **kwargs)
@@ -589,7 +465,7 @@ def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim):
 
 
 def within_replicate_phi(marks) -> float:
-    """Mean correlation between two items of the SAME replicate.
+    """Mean correlation between two items of the same replicate.
 
     The clustering the study's design effect measures: with `K_HARM` items per
     replicate, a positive value means a replicate's items rise and fall
@@ -606,11 +482,7 @@ def within_replicate_phi(marks) -> float:
 
 def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
         multiplicity_sim):
-    """The latent is a within-REPLICATE effect, not a change of difficulty.
-
-    Marginal success rates must stay at `p_a`/`p_b` -- otherwise an icc row
-    would be comparing a different task, not the same task with clustering.
-    """
+    """The latent is a within-replicate effect, not a change of difficulty: marginal rates must stay at `p_a`/`p_b`."""
     args = (0.9, 0.8, 0.5, 400, 30)
     flat_a, flat_b = multiplicity_sim.paired_marks(
         *args, np.random.default_rng(11), icc=0.0)
@@ -625,29 +497,18 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
 
 
 def test_the_replicate_latent_is_arm_specific_not_shared(multiplicity_sim):
-    """Each ARM draws its own per-replicate offset (PART 3's "independent"
-    variant), so at rho=0 the two arms' replicate means stay uncorrelated.
-
-    A single latent shared by both arms would couple them through the back
-    door and quietly inflate the paired test's apparent advantage -- the
-    opposite of the effect this parameter exists to expose.
-    """
+    """Each arm draws its own per-replicate offset, so at rho=0 the two arms' replicate means stay uncorrelated."""
     marks_a, marks_b = multiplicity_sim.paired_marks(
         0.9, 0.9, 0.0, 400, 30, np.random.default_rng(13), icc=0.4)
     per_replicate_a = marks_a.mean(axis=2).ravel()
     per_replicate_b = marks_b.mean(axis=2).ravel()
     assert abs(np.corrcoef(per_replicate_a, per_replicate_b)[0, 1]) < 0.05
-    # ... while each arm on its own really is clustered at this icc.
+    # ... each arm on its own is still clustered at this icc.
     assert within_replicate_phi(marks_a) > 0.10
 
 
 def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_sim):
-    """The finding PART 2's null-calibration row has to be able to show.
-
-    Item-level McNemar treats a replicate's 9 marks as 9 independent pairs, so
-    a per-replicate latent inflates its Type I error above nominal. The row is
-    only informative if the simulation can produce that inflation at all.
-    """
+    """Item-level McNemar treats a replicate's 9 marks as 9 independent pairs, so a per-replicate latent inflates its Type I error above nominal."""
     def type_i(icc):
         _unpaired, mcnemar, _phi, _agree = multiplicity_sim._paired_powers(
             0.90, 0.0, 0.5, multiplicity_sim.R_DEFAULT, 4000,
@@ -659,15 +520,8 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_si
     assert clustered > multiplicity_sim.ALPHA_BONF
 
 
-def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
-        multiplicity_sim):
-    """One table per icc, with the un-clustered results still at the top level.
-
-    Readers of the checkpoint JSON (and the notebook) index
-    ``OUT["part2"]["rows"]``/``["nulls"]``; those keep meaning exactly what
-    they meant -- the icc=0 run -- while the clustered runs arrive under a new
-    ``"icc"`` key rather than by changing the shape underneath a reader.
-    """
+def test_part2_reports_every_icc(multiplicity_sim):
+    """One block and one printed table per icc, each labelled with its icc."""
     import contextlib
     import io
 
@@ -682,10 +536,6 @@ def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
         # Every row records the icc it was simulated at, so a reader of the
         # flattened rows never has to infer it from which block it came from.
         assert {row["icc"] for row in block["rows"]} == {float(icc_key)}
-    # Backward compatibility: the top level IS the icc=0 run.
-    assert out["rows"] == out["icc"]["0.0"]["rows"]
-    assert out["nulls"] == out["icc"]["0.0"]["nulls"]
-    # One printed table per icc, each labelled with the icc it used.
     printed = buf.getvalue()
     for icc in ("0.0", "0.2", "0.4"):
         assert f"icc={icc}" in printed, printed[:400]
@@ -693,12 +543,7 @@ def test_part2_reports_every_icc_and_keeps_its_json_backward_compatible(
 
 def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
         multiplicity_sim):
-    """A reader must be able to tell WHICH icc row describes this study.
-
-    The docstring has to name the study's measured design effect (read from
-    ``paired_analysis.design_effect`` when a results tree exists) or say
-    plainly that it is unknown -- not leave the three icc rows uninterpretable.
-    """
+    """A reader must be able to tell which icc row describes this study, from the module docstring naming the measured design effect (or "unknown")."""
     doc = multiplicity_sim.__doc__
     assert "design effect" in doc.lower()
     assert "icc" in doc.lower()
@@ -710,15 +555,7 @@ def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
 
 
 def test_each_icc_block_reports_the_design_effect_it_produces(multiplicity_sim):
-    """The bridge from a simulated icc to the study's own measured number.
-
-    An icc is a latent-scale knob; ``paired_analysis.design_effect`` measures a
-    variance RATIO on the binary per-seed differences. Relating the two by the
-    textbook ``1 + (k-1)*icc`` would compare the wrong scales, so each block
-    reports the design effect its OWN marks produce, under the same estimator
-    the report uses. That is what lets a reader with a measured design effect
-    pick the row that describes their study.
-    """
+    """Each icc block reports the design effect its own marks produce, since the textbook ``1 + (k-1)*icc`` formula would compare the wrong scales."""
     import contextlib
     import io
 

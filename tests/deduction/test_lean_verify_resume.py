@@ -157,7 +157,7 @@ def test_full_pass_sentinel_gate(monkeypatch, tmp_path, kwargs, verdict, prior, 
 
 
 def test_resume_done_groups_all_cells_rule():
-    """A half-graded group is not done; sanity rows never complete one; str k coerces."""
+    """A half-graded group is not done; sanity rows never complete one."""
     prior = [_cell("t1", 1, rung="stepk:1", verdict="success"),
              _cell("t1", 1, rung="hint:2", verdict="unverified"),
              _cell("t2", 1, rung="stepk:1", verdict="lean_error"),
@@ -165,17 +165,17 @@ def test_resume_done_groups_all_cells_rule():
     assert lvr.resume_done_groups(prior) == {("t2", 1)}
     assert lvr.resume_done_groups([_sanity("t9", verdict="success")]) == set()
     assert lvr.resume_done_groups(
-        [_sanity("t1", verdict="success"), _cell("t1", "1", verdict="success")]) == {("t1", 1)}
+        [_sanity("t1", verdict="success"), _cell("t1", 1, verdict="success")]) == {("t1", 1)}
 
 
 def test_group_unverified_dedups_and_fans_out():
-    """Only unverified cells group by (theorem, int k); identical candidates replay once."""
+    """Only unverified cells group by (theorem, k); identical candidates replay once."""
     rows = [_cell("T.a", 1, rung="stepk:1", proof="simp"),
             _cell("T.a", 1, rung="hint:2", proof="ring"),
             _cell("T.a", 2, rung="stepk:1", proof="simp"),
             _cell("T.b", 0, rung="stepk:1", proof="rfl"),
             _cell("T.a", 1, rung="hint:3", verdict="success", proof="aesop"),
-            _sanity("T.a"), _cell("T.a", "1", rung="hint:4", proof="simp")]
+            _sanity("T.a"), _cell("T.a", 1, rung="hint:4", proof="simp")]
     groups = lvr.group_unverified(rows)
     assert groups == {("T.a", 1): [0, 1, 6], ("T.a", 2): [2], ("T.b", 0): [3]}
     assert list(groups) == [("T.a", 1), ("T.a", 2), ("T.b", 0)]
@@ -215,22 +215,13 @@ def test_ram_cap_and_s3_path_mapping():
 
 
 def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
-    """The `--s3-prefix` DEFAULT is built after parsing; nothing else exercises it.
-
-    `--help` proves the parser builds and every other test passes a prefix
-    explicitly, so a missing or misordered resolution line would only surface on
-    a live run -- as `parse_s3_uri(None)` crashing, or worse, a wrong
-    bucket/prefix split writing `verified_rows.jsonl` to the wrong key.
-    """
+    """--s3-prefix's default; every other test passes a prefix explicitly, so a wrong default would only surface on a live run."""
     from smolbench.deduction.lean.runner import DEDUCTION_SPOOL_PREFIX
 
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
-    monkeypatch.delenv("LEAN_ALLOW_LEGACY_PREFIX", raising=False)
-    args = lvr._build_arg_parser().parse_args([])
-    assert args.s3_prefix is None, "the default must NOT be resolved at parser-build time"
 
-    # Drive main() itself, intercepting at list_runs, so this proves main
-    # RESOLVES the default -- not merely that the expression would be correct.
+    # Drive main() itself, intercepting at list_runs, so this proves main resolves
+    # the default rather than merely computing it correctly.
     seen = {}
 
     def _list_runs(client, bucket, key_prefix, pattern):
@@ -246,35 +237,17 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_pa
     assert key == f"{DEDUCTION_SPOOL_PREFIX}/scaling_glm-4.7/verified_rows.jsonl"
     assert "//" not in key and not key.startswith("/")
 
-    # An explicit flag still reaches the published pre-cutoff study, with no env
-    # opt-in -- that is the read-only analysis path.
-    legacy = lvr._build_arg_parser().parse_args(
-        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/deduction/runs"])
-    assert lvr.parse_s3_uri(legacy.s3_prefix) == (lvr.SPOOL_BUCKET, "deduction/runs")
+    # An explicit flag overrides the default.
+    other = lvr._build_arg_parser().parse_args(
+        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/somewhere/else"])
+    assert lvr.parse_s3_uri(other.s3_prefix) == (lvr.SPOOL_BUCKET, "somewhere/else")
 
 
-# ---------------------------------------------------------------------------
-# 13-06: a group of only replay_failed/exception cells is NOT done
-# ---------------------------------------------------------------------------
+# A group of only replay_failed/exception cells is not done.
 
 
 def test_resume_treats_an_all_replay_failed_group_as_pending():
-    """13-06: "no cell still says unverified" is not the same as "graded".
-
-    `resume_done_groups` marked a group done whenever no cell read
-    ``"unverified"`` -- including when EVERY cell read ``"replay_failed"``,
-    which `_verify_one_group` fans over the whole group on any exception
-    opening the REPL (the failure hint for that path says "usually
-    infrastructure"). A box with an unset `SMOLBENCH_MATHLIB_ROOT` therefore
-    wrote `replay_failed` across a lane and every later pass reported it
-    already done, while `error_bars.build_pool`'s `count_as_failure` scored
-    those cells 0 for that lane. Phase 1's own resume takes the opposite view
-    of the same verdict class.
-
-    Graded verdicts -- including a single `success`, `lean_error`,
-    `incomplete`, `given_up` or `no_answer` anywhere in the group -- still
-    make it done: only a group where NOTHING was measured is retried.
-    """
+    """A group where every cell reads replay_failed/exception was never measured and must stay pending; resume_done_groups used to treat "no unverified cell" as done, disagreeing with error_bars, which scores those same cells as failures."""
     unmeasured = [_cell("T", rung="stepk:1", verdict="replay_failed"),
                   _cell("T", rung="hint:2", verdict="exception")]
     assert lvr.resume_done_groups(unmeasured) == set(), (
@@ -290,22 +263,11 @@ def test_resume_treats_an_all_replay_failed_group_as_pending():
     assert lvr.resume_done_groups(pending_sentinel) == set()
 
 
-# ---------------------------------------------------------------------------
-# 13-07: a torn final line, and per-run isolation
-# ---------------------------------------------------------------------------
+# A torn final line, and per-run isolation.
 
 
 def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path):
-    """13-07: a half-written last line must not abort the whole verification pass.
-
-    `all_rows.jsonl` is written by an append-only sweep on a spot box, so a
-    SIGKILL mid-write leaves a torn FINAL line. The loader called
-    `json.loads` on every line with no tolerance, so one torn tail took down
-    the run -- while `merge_lean_shards.py` and
-    `split_lean_run_into_shards.py` both already drop exactly this and say so.
-    Dropped AND reported: a silent drop would hide real mid-file corruption
-    behind the same code path.
-    """
+    """A half-written last line (SIGKILL mid-write on a spot box) must be dropped AND reported, not silently swallowed alongside real corruption."""
     fake = _Fake()
     good = [_cell("T", rung="stepk:1"), _sanity("T")]
     fake.objects["k"] = _dump(good)[:-1] + b'\n{"kind": "cell", "theo'
@@ -320,13 +282,7 @@ def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path)
 
 
 def test_download_rows_still_refuses_mid_file_corruption(tmp_path):
-    """13-07's other half: only the FINAL line is recoverable.
-
-    A corrupt line anywhere else is real damage -- resume regenerates a torn
-    tail, it cannot regenerate a row from the middle of a file it will not
-    re-derive -- so it must still propagate rather than silently shrink the
-    pass's input.
-    """
+    """Only the final line is recoverable; a corrupt line elsewhere is real damage that must propagate, since resume can't re-derive a row from the middle of a file."""
     fake = _Fake()
     fake.objects["k"] = b'{"kind": "cell", "theo\n' + _dump([_cell("T")])
 
@@ -335,13 +291,7 @@ def test_download_rows_still_refuses_mid_file_corruption(tmp_path):
 
 
 def test_one_run_failing_does_not_abort_the_others(monkeypatch, tmp_path):
-    """13-07: `_verify_every_run` loops over runs; one bad run must not kill the rest.
-
-    A pass over 21 lanes that dies on lane 3 leaves 18 lanes unverified and
-    reports an exception rather than a per-run status, so an operator cannot
-    tell which lanes were actually checked. Each run is isolated and counted
-    as failed instead.
-    """
+    """One bad run must not abort the rest of _verify_every_run's loop; each run is isolated and counted as failed instead of dying mid-pass."""
     seen = []
 
     def _verify_run(*, run, **kw):

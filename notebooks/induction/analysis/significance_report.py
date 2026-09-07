@@ -1,25 +1,15 @@
 """Holm and Hochberg significance report over the PRIMARY contrast family.
 
-Applies step-down Holm (1979) and step-up Hochberg (1988) at FWER = 0.05 to the
-210 pre-registered PRIMARY contrasts: which are significant, in which direction,
-and where the two procedures disagree.
-
-PRIMARY test: the exact seed-level sign-flip randomization test
-(``paired_analysis.signflip_exact_p``). The independent unit is the REPLICATE
-SEED -- one label alphabet and one answer vector shared by its 9 harmonic items
--- so a seed on which an arm collapses contributes up to 9 correlated
-discordances, not 9 pieces of evidence. Item-level McNemar and the unpaired
-harmonic-stratified CMH stay labelled DESCRIPTIVE columns; the gap to the
-cluster p is the design effect.
-
-Holm holds under ARBITRARY dependence and is the headline; Hochberg needs
-Simes-type positive dependence (MTP2, Sarkar 1998), NOT verified for 210
-statistics sharing models, seeds and harmonics, so it is a sensitivity check
-only. Nothing is excluded: every contrast lands in FINDINGS (126 informative-arm
-pairs) or ZERO-ARM CONTROLS (63 arm-vs-floor positive controls, significant by
-construction -- their FAILURE is the signal -- plus 21 null-by-construction
-zero-vs-zero ladder contrasts). Cells at or above COLLAPSE_THRESHOLD
-non-compliance are annotated by ONE symmetric criterion, never removed.
+Applies step-down Holm (1979) at FWER = 0.05 to the 210 pre-registered
+PRIMARY contrasts, using the exact seed-level sign-flip test
+(``paired_analysis.signflip_exact_p``) as PRIMARY: the independent unit is
+the replicate seed, not the mark, so a collapsed arm's 9 correlated harmonic
+items count as one piece of evidence, not nine. Item-level McNemar and
+unpaired CMH stay descriptive columns; their gap to the cluster p is the
+design effect. Hochberg (1988) is a sensitivity check only, since its
+positive-dependence requirement (MTP2, Sarkar 1998) is unverified for 210
+statistics sharing models, seeds and harmonics. Nothing is excluded: cells
+at or above COLLAPSE_THRESHOLD non-compliance are annotated, never removed.
 
 Run:
     .venv/bin/python notebooks/induction/analysis/significance_report.py
@@ -34,15 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from statsmodels.stats.multitest import multipletests
 
-from smolbench.evals.quiz import COMPLIANT, NOT_ASSESSED
-# The violation-label set is owned by parsing.py; EMPTY is imported rather than
-# spelled "empty" here, because a literal would keep parsing cleanly and
-# silently read 0 if that module ever renamed the label -- turning a padding
-# collapse into an apparently empty-free arm.
+from smolbench.evals.quiz import COMPLIANT
+# EMPTY is imported rather than spelled "empty" here, because a literal would
+# keep parsing cleanly and silently read 0 if parsing.py ever renamed the
+# label -- turning a padding collapse into an apparently empty-free arm.
 from smolbench.evals.parsing import EMPTY
 
-# ALPHA and build_primary_contrasts come from the module that OWNS them
-# (power_analysis; _power_common behind it) -- one source of truth each.
 from power_analysis import (  # noqa: E402
     ALPHA,
     MODELS,
@@ -59,8 +46,7 @@ from paired_analysis import (  # noqa: E402
 )
 
 #: A cell at or above this share of non-compliant completions gets a mechanism
-#: annotation on every contrast it touches -- ONE number, applied symmetrically
-#: to all four arms of all 21 lanes.
+#: annotation on every contrast it touches, applied symmetrically to all arms.
 COLLAPSE_THRESHOLD = 0.25
 
 #: Above this share the arm has stopped emitting parseable answers at all,
@@ -72,41 +58,11 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Hochberg (1988) step-up rejections at familywise level `alpha`.
 
     Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
-    ``method="simes-hochberg"``: the same critical values as Holm but stepping
-    UP from the largest p, rejecting the k smallest for
-    ``k = max{i : p_(i) <= alpha / (m - i + 1)}`` over 1-based ranks. Uniformly
-    at least as powerful as Holm, but valid only under SIMES-TYPE POSITIVE
-    DEPENDENCE (MTP2; Sarkar 1998), which is NOT verified for 210 statistics
-    sharing models, seeds and harmonics. It is therefore a SENSITIVITY CHECK
-    only -- ``paired_analysis.holm`` carries the headline, because Holm holds
-    under arbitrary dependence and needs no such condition.
-
-    Parameters
-    ----------
-    pvals : ndarray
-        One p-value per contrast in the family, in any order.
-    alpha : float, optional
-        Familywise error rate. Defaults to `ALPHA` (0.05).
-
-    Returns
-    -------
-    ndarray of bool
-        Rejection mask, in `pvals` order.
+    ``method="simes-hochberg"``, uniformly at least as powerful as Holm
+    where its positive-dependence condition holds (see module docstring).
     """
-    # WHY THE LOST STABLE SORT IS SAFE (the same argument `paired_analysis.holm`
-    # makes for its own thresholds, restated here because the procedure differs).
-    # Ties are pervasive: the cluster test's hard 2/2^S resolution floor puts
-    # several contrasts at an exactly equal p (three lanes sat on it in the
-    # 2026-08 study data), so the predecessor sorted with kind="stable" to keep
-    # the rejection set independent of contrast build order. `multipletests`
-    # sorts with a bare `np.argsort`, and that is fine: Hochberg's per-rank
-    # threshold alpha / (m - i) is MONOTONE INCREASING in rank, so if one member
-    # of a tied group clears its own threshold, every later member of that group
-    # clears a looser one. A tie can never straddle the accept/reject boundary,
-    # so tie ORDER cannot move the rejection SET. (Stepping up then rejects the
-    # whole tied group below the largest passing rank in any case.) The argument
-    # is executed, not asserted, by tests/analysis/test_analysis_statistics.py
-    # (``test_rejection_sets_do_not_depend_on_contrast_build_order``).
+    # Unstable sort is safe here for the same tie-monotonicity reason as
+    # paired_analysis.holm.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=alpha, method="simes-hochberg"
     )
@@ -114,119 +70,47 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
 
 def compliance_census(compliance: dict) -> dict:
-    """Measure non-compliance per ``(model, info)`` cell, from an ALREADY-PARSED tree.
+    """Measure non-compliance per ``(model, info)`` cell, from an already-parsed tree.
 
-    `COMPLIANT` marks a completion that obeyed the output contract; any other
-    value names HOW it failed (the violation label set is owned by
-    ``smolbench/evals/parsing.py``, plus ``openai_compat``'s ``parser-error``
-    and the pre-field ``not-assessed`` default). A row from before `COMPLIANT`
-    was spelled out as its own string instead spells this ``compliance: null``
-    -- `Marks.loads`'s read-compat shim maps that back to `COMPLIANT` at load
-    time, so this function never sees the old spelling. Counting the modes,
-    not just the rate, lets the census name a mechanism.
-
-    Touches the FILESYSTEM NOT AT ALL. It consumes `paired_analysis.load_marks`'s
-    third return value, so the census and the contrasts read one and the same
-    parse of one and the same set of replicates. The predecessor re-walked and
-    re-YAML-parsed every ``rep_*.yaml`` that `load_marks` had just opened -- 504
-    redundant opens on a 6-seed tree, 2,520 at full depth -- and, walking
-    independently, could disagree with the contrasts about which replicates a
-    cell even contains.
-
-    Parameters
-    ----------
-    compliance : dict
-        ``(model, info)`` -> ``{seed: tuple of per-mark compliance values}``,
-        exactly as `load_marks` returns it.
+    Consumes `paired_analysis.load_marks`'s third return value rather than
+    re-walking and re-parsing the tree, so the census and the contrasts can
+    never disagree about which replicates a cell contains.
 
     Returns
     -------
     dict
-        Cell key -> a dict with
-
-        ``rate``
-            Non-compliant share over ASSESSED marks, whole cell.
-        ``n``
-            Assessed mark count over the whole cell. Because `load_marks` keeps
-            only full-length replicates, this is ``n_seeds * N_HARMONICS``
-            whenever the cell carries no `NOT_ASSESSED` marks; in general it
-            equals the sum of `per_seed`'s second components.
-        ``modes``
-            `collections.Counter` of violation labels among assessed marks.
-        ``per_seed``
-            ``{seed: (noncompliant_count, assessed_count)}`` for EVERY seed the
-            cell has, so a caller can re-take the rate over any seed subset --
-            which is what the padding table does, since a delta between two
-            arms is only attributable to the arm difference on the seeds both
-            arms cover.
-
-        Cells with no assessed marks are OMITTED -- an unmeasured cell must
-        never read as either compliant or collapsed.
-
-    Notes
-    -----
-    Non-compliance is `Marks.noncompliant`'s rule (neither `COMPLIANT` nor
-    `NOT_ASSESSED`) over `Marks.assessed`'s denominator, applied here to the
-    same values those properties read.
+        Cell key -> ``rate``, ``n``, ``modes`` (Counter of violation labels),
+        and ``per_seed`` (so a caller can re-take the rate over any seed
+        subset, as the padding table does). Cells with no marks at all are
+        omitted -- an unmeasured cell must never read as compliant or
+        collapsed.
     """
     out = {}
-    # Iterates the loader's own mapping, so cell order (and therefore the order
-    # of the NOTEs below) follows MODELS x INFOS exactly as before.
+    # Iterates the loader's own mapping, so cell order follows MODELS x INFOS.
     for key, by_seed in compliance.items():
         vals = [v for seed_vals in by_seed.values() for v in seed_vals]
-        # NOT_ASSESSED marks predate the compliance field: unknown, not
-        # violations. Excluding them keeps a legacy lane from publishing
-        # as a collapse; the exclusion is surfaced below, not silent.
-        assessed = [v for v in vals if v != NOT_ASSESSED]
-        if len(assessed) < len(vals):
-            print(
-                f"  NOTE: {key[0]}/{key[1]}: {len(vals) - len(assessed)} of "
-                f"{len(vals)} marks pre-date compliance assessment; the "
-                "census rate covers the assessed remainder only.",
-                file=sys.stderr,
-            )
-        if not assessed:
+        if not vals:
             continue
-        modes = Counter(v for v in assessed if v != COMPLIANT)
-        # Every seed of the cell appears, including one whose marks are all
-        # NOT_ASSESSED: it contributes (0, 0), which a subset rate must count
-        # as "nothing measured here" rather than silently skip.
         per_seed = {
-            seed: (
-                sum(1 for v in seed_vals if v not in (COMPLIANT, NOT_ASSESSED)),
-                sum(1 for v in seed_vals if v != NOT_ASSESSED),
-            )
+            seed: (sum(1 for v in seed_vals if v != COMPLIANT), len(seed_vals))
             for seed, seed_vals in by_seed.items()
         }
         out[key] = dict(
-            rate=sum(v != COMPLIANT for v in assessed) / len(assessed),
-            n=len(assessed), modes=modes, per_seed=per_seed,
+            rate=sum(v != COMPLIANT for v in vals) / len(vals),
+            n=len(vals), modes=Counter(v for v in vals if v != COMPLIANT),
+            per_seed=per_seed,
         )
     return out
 
 
 def common_seed_rate(cell: dict, seeds) -> float | None:
-    """Non-compliance rate of one census `cell`, restricted to `seeds`.
+    """Non-compliance rate of one census `cell` (from `compliance_census`), restricted to `seeds`.
 
     Pools the counts before dividing -- ``sum(noncompliant) / sum(assessed)``
-    over the subset -- rather than averaging per-seed rates, so the result is
-    the same quantity as the cell's whole-cell ``rate``, merely taken over
-    fewer replicates. A mean of per-seed rates would weight a seed with 2
-    assessed marks like one with 9.
-
-    Parameters
-    ----------
-    cell : dict
-        One value of `compliance_census`'s output; only ``per_seed`` is read.
-    seeds : iterable
-        Seeds to restrict to. Seeds absent from the cell contribute nothing.
-
-    Returns
-    -------
-    float or None
-        The restricted rate, or ``None`` when the subset has NO assessed marks
-        at all -- there is no rate to report, and returning 0.0 would publish
-        an unmeasured subset as perfectly compliant.
+    -- rather than averaging per-seed rates, so a seed with 2 assessed marks
+    does not weigh the same as one with 9. Returns `None`, not 0.0, when the
+    subset has no assessed marks at all, so an unmeasured subset cannot
+    publish as perfectly compliant.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     assessed = sum(a for _nc, a in counts)
@@ -238,10 +122,9 @@ def common_seed_rate(cell: dict, seeds) -> float | None:
 def collapse_note(key, census: dict) -> str:
     """One-line mechanism annotation for a cell; ``""`` below `COLLAPSE_THRESHOLD`.
 
-    Carries the measured rate AND the dominant failure mode: "99.6%
-    multiple-values" and "28.5% empty" are different results, which a bare
-    COLLAPSE label would erase. Also ``""`` for a cell missing from `census`
-    (`compliance_census`'s output).
+    Carries the measured rate and dominant failure mode -- "99.6%
+    multiple-values" vs "28.5% empty" are different results a bare COLLAPSE
+    label would erase. Also ``""`` for a cell missing from `census`.
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -251,16 +134,13 @@ def collapse_note(key, census: dict) -> str:
     return f"{key[0]}/{key[1]} {cell['rate']:.1%} non-compliant{mode}"
 
 
-def classify(label: str, key_a, key_b) -> str:
-    """Bucket a contrast from its two ``(model, info)`` keys (`label` is unused).
+def classify(key_a, key_b) -> str:
+    """Bucket a contrast from its two ``(model, info)`` keys.
 
-    Returns
-    -------
-    str
-        ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
-        informative arm against the chance baseline: a positive control), or
-        ``"zero-vs-zero"`` (ladder contrast between two baseline arms, null by
-        construction). The last two are jointly the zero-arm controls.
+    ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
+    informative arm against the chance baseline, a positive control), or
+    ``"zero-vs-zero"`` (two baseline arms, null by construction). The last
+    two are jointly the zero-arm controls.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -268,6 +148,13 @@ def classify(label: str, key_a, key_b) -> str:
     if za or zb:
         return "arm-vs-floor"
     return "finding"
+
+
+def _print_signed(rows: list, sign: str, key: str) -> None:
+    """Print one correction-cost block, sorted on `key` and marked with `sign`."""
+    for r in sorted(rows, key=lambda r: r[key]):
+        print(f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
+              f"cluster {r['p_cluster']:.3e}")
 
 
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
@@ -289,32 +176,9 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
 def main() -> None:
     """Run the significance report and print it.
 
-    Sections, in print order: the INCOMPLETE SYNC depth guard (printed ONLY
-    when the family is below the sign-flip resolution floor), family size and
-    PRIMARY test statement, rejection counts, the cluster-vs-item and
-    Holm-vs-Hochberg disagreements, the Holm step-down boundary, the collapse
-    census, the significant findings, the zero-arm controls, and what is NOT
-    significant. Methodology is in the module docstring.
-
-    The depth guard is arithmetic, not a heuristic. `signflip_exact_p`
-    enumerates ``2**S`` sign assignments exactly, so its smallest ATTAINABLE
-    value is ``2 / 2**S``; Holm rejects nothing at all unless the family's
-    smallest p clears its first-step threshold ``ALPHA / m``. When even the
-    DEEPEST contrast's floor exceeds that threshold, every count below is a
-    statement about replicate depth rather than about the models, and the
-    banner says so. The flag also suppresses two conclusions that would
-    otherwise be drawn from floor artifacts: the padding exoneration in
-    ZERO-ARM CONTROLS (at a floor-bound depth the positive controls fail
-    arithmetically and carry no evidence about padding either way), and the
-    cost-of-correction verdict (where Holm rejects nothing, the "losses"
-    against the item-level p are not a clustering result).
-
-    Every narrative conclusion in the printed report is conditional on the
-    counts beside it and has a data-phrased branch for each outcome, never a
-    silently dropped sentence: the cost-of-correction verdict is three-way
-    (floor-bound / ladder-dominated / info-arm), and the TWO-MECHANISM,
-    padding-exoneration and CEILING-tie readings each print only where their
-    own count earns them.
+    Every narrative conclusion below is conditional on the counts beside it
+    (see the depth guard and its floor_bound branches), rather than a
+    sentence printed unconditionally regardless of what the data shows.
     """
     # ONE walk of the tree: the census reads the same parse as the contrasts.
     correct, valid, compliance = load_marks()
@@ -338,7 +202,7 @@ def main() -> None:
             p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
             p_item=mcnemar_exact_p(nb, nc),
             p_unpaired=cmh_unpaired_p(a, b, sidx),
-            kind=classify(label, key_a, key_b),
+            kind=classify(key_a, key_b),
             kind_is_ladder="ladder" in label,
         ))
 
@@ -349,23 +213,29 @@ def main() -> None:
 
     hp = holm(p_cl, ALPHA)
     hb = hochberg(p_cl, ALPHA)
+    # Every correction pass this report needs, taken ONCE: each is O(m log m)
+    # and the summary table below would otherwise re-run three of them.
+    h_item = holm(p_item, ALPHA)
+    rej_by_test = {
+        "seed sign-flip (PRIMARY)": (p_cl, {"Holm": hp, "Hochberg": hb}),
+        "item McNemar (descript.)": (p_item, {"Holm": h_item,
+                                              "Hochberg": hochberg(p_item, ALPHA)}),
+        "unpaired CMH (descript.)": (p_unp, {"Holm": holm(p_unp, ALPHA),
+                                             "Hochberg": hochberg(p_unp, ALPHA)}),
+    }
 
     # ---- DEPTH GUARD: is any rejection arithmetically reachable at all? -----
-    # Depths come from `rows`, not from the census or the loader: a contrast is
-    # sign-flipped over the seeds its TWO arms share, so its own `n_seeds` is
+    # Depths come from `rows`, not the census or the loader: a contrast is
+    # sign-flipped over the seeds its two arms share, so its own `n_seeds` is
     # the only depth that bounds its p.
     #
-    # WHY THE DEEPEST CONTRAST AND NOT THE SHALLOWEST. `signflip_exact_p` is
-    # exact over 2**S sign assignments, so the smallest value it can return at
-    # depth S is 2/2**S, and the smallest p ANY contrast in the family can
-    # attain is therefore the floor of the DEEPEST one. Holm rejects nothing
-    # unless that smallest p clears its first-step threshold ALPHA/m. So the
-    # family is wholly unrejectable exactly when 2/2**depth_max > ALPHA/m --
-    # gating on the shallowest contrast instead would fire the banner (and its
-    # "NO contrast is rejectable" claim) on a family where every other contrast
-    # is perfectly resolvable, which is the same class of unearned conclusion
-    # the rest of this report was corrected for. The shallowest depth is still
-    # printed, because it bounds the contrasts that touch it.
+    # Gates on the DEEPEST contrast, not the shallowest: the smallest p any
+    # contrast in the family can attain is the floor of the deepest one
+    # (2/2**S at depth S), and Holm rejects nothing unless that smallest p
+    # clears ALPHA/m. Gating on the shallowest instead would fire the banner
+    # on a family where every other contrast is perfectly resolvable -- an
+    # unearned conclusion. The shallowest depth is still printed, since it
+    # bounds the contrasts that touch it.
     depth_min = min(r["n_seeds"] for r in rows)
     depth_max = max(r["n_seeds"] for r in rows)
     holm_first_step = ALPHA / m
@@ -415,17 +285,9 @@ def main() -> None:
     print(f"{'test':26s} {'procedure':10s} {'rejected':>9s}  "
           f"{'uncorrected p<0.05':>19s}")
     print("-" * 70)
-    for name, pv, procs in (
-        ("seed sign-flip (PRIMARY)", p_cl, ("Holm", "Hochberg", "Bonferroni")),
-        ("item McNemar (descript.)", p_item, ("Holm", "Hochberg", "Bonferroni")),
-        ("unpaired CMH (descript.)", p_unp, ("Holm", "Hochberg", "Bonferroni")),
-    ):
-        # One dict per test, not per procedure: each entry is a full
-        # O(m log m) correction pass.
-        rej_by = {"Holm": holm(pv, ALPHA), "Hochberg": hochberg(pv, ALPHA),
-                  "Bonferroni": pv <= ALPHA / m}
-        for proc in procs:
-            print(f"{name:26s} {proc:10s} {int(rej_by[proc].sum()):9d}  "
+    for name, (pv, rej_by) in rej_by_test.items():
+        for proc, rej in (*rej_by.items(), ("Bonferroni", pv <= ALPHA / m)):
+            print(f"{name:26s} {proc:10s} {int(rej.sum()):9d}  "
                   f"{int((pv < ALPHA).sum()):19d}")
 
     n_lad_all = sum(1 for r in rows if r["kind_is_ladder"])
@@ -436,32 +298,19 @@ def main() -> None:
           f"{m - n_lad_all} INFO-ARM contrasts\n  (both counts include the "
           f"zero-arm controls; the findings-only split is further down).")
 
-    h_item = holm(p_item)  # hoisted: one correction pass, not one per row
     lost = [rows[i] for i in range(m) if h_item[i] and not hp[i]]
     gained = [rows[i] for i in range(m) if hp[i] and not h_item[i]]
     print(f"\nCost of the correction: Holm loses {len(lost)} and gains "
           f"{len(gained)} against the item-level p.")
-    for r in sorted(lost, key=lambda r: r["p_item"]):
-        print(f"   -{r['label']:52s} item {r['p_item']:.3e} -> "
-              f"cluster {r['p_cluster']:.3e}")
-    for r in sorted(gained, key=lambda r: r["p_cluster"]):
-        print(f"   +{r['label']:52s} item {r['p_item']:.3e} -> "
-              f"cluster {r['p_cluster']:.3e}")
+    _print_signed(lost, "-", "p_item")
+    _print_signed(gained, "+", "p_cluster")
     n_lad = sum(1 for r in lost if r["kind_is_ladder"])
-    # The conclusion is conditional on the counts that precede it, in three
-    # cases, because there are three things this loss set can mean.
-    #
-    # (1) FLOOR-BOUND. When the family is below the resolution floor Holm
-    #     rejects nothing at all, so `lost` is just "everything the item-level
-    #     p rejected" and carries no information about clustering whatsoever.
-    #     No story is bitten by the correction here, and none is claimed.
-    # (2) LADDER-DOMINATED. The original sentence, EARNED: ladder contrasts are
-    #     genuinely among the contrasts the correction costs.
-    # (3) NO LADDER LOSS. Printed unconditionally, the sentence in (2) asserted
-    #     the exact INVERSE of the data whenever n_lad was 0 (observed at 0 of
-    #     63, where every single loss was an info-arm contrast). The mechanism
-    #     is stated two-sidedly and the data picks the side, so the reader gets
-    #     the counts AND a conclusion rather than a silently dropped sentence.
+    # Three cases, because the loss set means different things in each: (1)
+    # floor-bound, where Holm rejects nothing so `lost` carries no clustering
+    # information at all; (2) ladder-dominated, where ladder contrasts are
+    # genuinely among the ones the correction costs; (3) no ladder loss,
+    # stated as its own branch rather than printed unconditionally, since (2)
+    # would otherwise assert the inverse of the data whenever n_lad is 0.
     if lost and floor_bound:
         print(f"   Both counts are artifacts of the resolution floor: Holm "
               f"rejects nothing at\n   this depth, so all {len(lost)} \"losses\" "
@@ -496,43 +345,33 @@ def main() -> None:
     print(f"\n{'=' * 78}\nCOLLAPSE CENSUS -- padding robustness, stated as a "
           f"result\n{'=' * 78}")
 
-    # Built BEFORE the prose, because every count printed in this section is
-    # taken from the rows actually built -- including the intro sentence's
-    # denominator. A lane can be ABSENT from this table: it needs a census cell
-    # for BOTH arms, and a wholly pre-compliance-field arm has none (its marks
-    # are all NOT_ASSESSED, so `compliance_census` omits the cell). The roster
-    # size `len(MODELS)` is therefore the wrong denominator -- it counts lanes
-    # this comparison was never able to make.
+    # Built before the prose below, since the intro sentence's denominator is
+    # taken from these rows: a lane needs a census cell for BOTH arms, so
+    # `len(MODELS)` would count lanes this comparison cannot make.
     pad_rows = []
     for model in MODELS:
         ci = census.get((model, "intens"))
         cn = census.get((model, "noise_intens"))
         if ci is None or cn is None:
             continue
-        # Both rates over the seeds the two arms SHARE. The delta is a
-        # within-lane difference attributed to the pad, but the two cells are
-        # censused independently and can cover different seed sets, so a
-        # whole-cell subtraction can difference two disjoint samples. Every
-        # contrast elsewhere in this chain uses the per-contrast seed
-        # INTERSECTION (`paired_analysis.aligned`); this now matches.
+        # Rates over the seeds the two arms SHARE, matching how every other
+        # contrast in this chain is aligned (`paired_analysis.aligned`) --
+        # the two cells are censused independently and can otherwise cover
+        # different seed sets, differencing two disjoint samples.
         common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
         rate_i = common_seed_rate(ci, common)
         rate_n = common_seed_rate(cn, common)
         if rate_i is None or rate_n is None:
-            # No assessed marks on the shared seeds: there is no rate to
-            # report, so the lane is skipped exactly as a missing census cell
-            # already is -- never published as 0% with a 0-seed basis.
+            # No marks on the shared seeds: never published as 0% on a 0-seed
+            # basis, so the lane is skipped as a missing census cell is.
             continue
         pad_rows.append(dict(model=model, delta=rate_n - rate_i, rate_i=rate_i,
                              rate_n=rate_n, n_common=len(common), cn=cn))
 
-    # MIXED BASIS, stated so the sentence is not misread as a claim about the
-    # table below it: the numerator `len(noise_over)` counts noise cells over
-    # the criterion on their WHOLE-CELL census rate, while the denominator is
-    # the matched-arm row count. The two can disagree -- a lane whose whole-cell
-    # noise rate clears the criterion but whose COMMON-SEED rate does not is in
-    # this numerator and carries no COLLAPSE verdict in the table. Only the
-    # denominator was in scope here; the numerator stays the census's own count.
+    # Mixed basis: `len(noise_over)` counts noise cells over the criterion on
+    # their whole-cell census rate, while the denominator is the matched-arm
+    # row count -- the two can disagree, so this is not a claim about the
+    # table below it.
     print("The `noise_intens` arm is the compact rule form padded with "
           "WHITESPACE to exactly\nthe extensional arm's token count under the "
           "model's own tokenizer. It adds no\ninformation and no content -- so a "
@@ -555,15 +394,10 @@ def main() -> None:
     # delta descending, ties broken by lane name so the order is deterministic.
     for row in sorted(pad_rows, key=lambda r: (-r["delta"], r["model"])):
         cn, delta = row["cn"], row["delta"]
-        # Mixed basis, deliberately: the two rates are common-seed (above),
-        # while this mode share stays WHOLE-CELL -- `modes` is a Counter over
-        # the cell, not decomposed per seed. It is a descriptive "what broke"
-        # column, not an input to the delta or the verdict, so it is left on
-        # the broader basis rather than given a per-seed breakdown it would
-        # need a second pass to build.
+        # Mixed basis: the two rates above are common-seed, but this mode
+        # share stays whole-cell -- a descriptive "what broke" column, not an
+        # input to the delta or verdict, so it is left un-decomposed.
         empty = cn["modes"].get(EMPTY, 0) / cn["n"]
-        # Verdict logic and thresholds unchanged; only the rates feeding it
-        # are now taken over the matched seeds.
         if row["rate_n"] >= COLLAPSE_THRESHOLD:
             verdict = "COLLAPSE" if delta >= COLLAPSE_THRESHOLD else \
                       "collapsed, but not padding-specific"
@@ -632,14 +466,11 @@ def main() -> None:
                   f"{r['acc_b']:.3f}   p={r['p_cluster']:.2e} "
                   f"(item {r['p_item']:.2e}){tag(r)}")
     n_flag = sum(1 for r in sel if tag(r))
-    # TWO-MECHANISM is a claim about findings that TOUCH a collapsed cell, so it
-    # needs at least one. Printed unconditionally it appeared verbatim under
-    # "0 of 0 findings" -- a two-mechanism conclusion drawn from no findings and
-    # no collapses. The else branch reports the counts and separates the two
-    # ways they can both be zero, which are different results: no significant
-    # finding AT ALL (the report is silent on mechanism because it found
-    # nothing) versus significant findings none of which is collapse-adjacent
-    # (positive evidence AGAINST a second mechanism among them).
+    # TWO-MECHANISM needs at least one finding that touches a collapsed cell;
+    # printed unconditionally it would read as a conclusion drawn from zero
+    # findings and zero collapses. The branches below separate that case from
+    # significant findings none of which is collapse-adjacent (evidence
+    # against a second mechanism, not merely absence of data).
     print(f"\n  [COLLAPSE] {n_flag} of {len(sel)} findings touch a cell at or "
           f"above {COLLAPSE_THRESHOLD:.0%}\n      non-compliance.", end="")
     if n_flag:
@@ -674,11 +505,10 @@ def main() -> None:
         print(f"  FAILS  {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}"
               f"   p={r['p_cluster']:.2e}{note}")
     if fails and floor_bound:
-        # At a floor-bound depth EVERY positive control fails arithmetically,
-        # whatever its effect size and whatever its compliance, so the failures
-        # carry no information about padding at all. Attributing them to the pad
-        # here would be exactly the unearned conclusion the partition below
-        # exists to prevent, merely with a computed count attached.
+        # At a floor-bound depth every positive control fails arithmetically
+        # regardless of effect size or compliance, so these failures carry no
+        # information about padding -- attributing them to the pad would be
+        # the same unearned conclusion the partition below exists to prevent.
         print(f"\n  All {len(fails)} of these failures are forced by the "
               f"resolution floor (see the\n  INCOMPLETE SYNC banner at the top "
               f"of this report): at {depth_max} replicate seeds no\n  positive "
@@ -686,24 +516,19 @@ def main() -> None:
               f"are\n  evidence about the sync, not about padding and not about "
               f"the models.")
     elif fails:
-        # Partition, rather than one blanket paragraph. The predecessor printed
-        # a FIXED exoneration ("each is a noise arm the whitespace padding drove
-        # to near-total non-compliance") over whatever happened to be in `fails`,
-        # without looking at a single one of them -- and so printed it over a
-        # fully COMPLIANT `intens` arm that the pad cannot explain.
+        # Partitioned rather than one blanket paragraph: a fixed exoneration
+        # would misdescribe whichever failures do not actually qualify (e.g.
+        # a fully compliant `intens` arm the pad cannot explain).
         qualifying, unexplained = [], []
         for r in fails:
-            # An arm-vs-floor contrast pairs ONE informative arm against the
-            # `zero` baseline, but `build_primary_contrasts` does not guarantee
-            # which SIDE the baseline lands on, so the informative arm is
-            # identified by its own info label rather than by position.
+            # An arm-vs-floor contrast pairs one informative arm against the
+            # `zero` baseline, but `build_primary_contrasts` does not
+            # guarantee which side the baseline lands on, so the informative
+            # arm is identified by its own info label rather than position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
             cell = census.get(info_key)
-            # `cell is None` means UNMEASURED (a wholly pre-compliance-field
-            # arm), which is not the same as measured-and-collapsed and cannot
-            # support the padding explanation -- so it does not qualify. Written
-            # as an explicit None test rather than a `.get(...)["rate"]` chain,
-            # which would raise on exactly that lane.
+            # An unmeasured arm cannot support the padding explanation, so an
+            # explicit None test rather than a `.get(...)["rate"]` chain.
             if (info_key[1] == "noise_intens" and cell is not None
                     and cell["rate"] >= COLLAPSE_THRESHOLD):
                 qualifying.append(r)
@@ -717,9 +542,8 @@ def main() -> None:
                   f"prompt. Reported\n  plainly, as part of the "
                   f"padding-robustness finding.")
         if unexplained:
-            # The labels are listed AFTER this sentence, never woven into it: a
-            # reader (and the pin in tests/analysis) has to be able to split the
-            # section on the claim and find the rows it applies to below it.
+            # Labels are listed after this sentence, not woven into it, so the
+            # section can be split on the claim and the rows found below it.
             print(f"\n  {len(unexplained)} of {len(fails)} failures are NOT "
                   f"explained by padding: the informative arm\n  is either not a "
                   f"noise arm, or is a noise arm measured BELOW the "
@@ -735,11 +559,9 @@ def main() -> None:
     # ---- what is NOT significant, which is half the story -------------------
     ns = [r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"]
     ceiling = [r for r in ns if min(r["acc_a"], r["acc_b"]) >= 0.95]
-    # MEASURED, not asserted. The predecessor said "many have ZERO discordant
-    # items" while discarding the very counts that would decide it; `b` and `c`
-    # are now carried on every row, so the claim is a number taken from the same
-    # rows the line above counts. The count and the phrase are kept on ONE
-    # output line so the two can never drift apart across a wrap.
+    # Measured, not asserted: `b`/`c` are carried on every row, so this count
+    # and the ceiling count above are kept on one output line and cannot
+    # drift apart across a wrap.
     n_zero_disc = sum(1 for r in ceiling if r["b"] + r["c"] == 0)
     print(f"\n{'=' * 78}\nNOT significant: {len(ns)} of {tot} findings")
     if ceiling:

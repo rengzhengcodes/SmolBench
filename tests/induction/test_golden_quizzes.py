@@ -1,10 +1,10 @@
 """SHA-256 golden pins of the induction generation pipelines.
 
-Hashes in tests/fixtures/golden_quizzes.json are recorded at the studies'
-production configs, against conftest.StubTokenizer (offline, byte-stable). Two
-sets: the LIBRARY generators at the 1776 seed epoch, and the family-ladder
-STUDY's own four-arm bytes through run_study.make_quizzes at seeds 0 and 1.
-Any drift in generation, prompting, or noise padding trips these.
+Hashes in tests/fixtures/golden_quizzes.json are recorded against
+conftest.StubTokenizer (offline, byte-stable): the library generators at the
+1776 seed epoch, and the family-ladder study's own four-arm bytes through
+run_study.make_quizzes at seeds 0 and 1. Any drift in generation, prompting,
+or noise padding trips these.
 """
 
 import hashlib
@@ -47,10 +47,8 @@ def assert_matches(key: str, quizzes: dict) -> None:
     assert got == GOLDEN[key], f"generation drifted from golden {key}"
 
 
-#: The three information arms these library pins cover. The fourth condition
-#: (``zero``) renders from a range-free template a caller supplies, and the
-#: minimal templates below carry none -- the production pins further down
-#: cover all four through the study's own prompter.
+#: Excludes ``zero``: it needs a range-free template these minimal fixtures
+#: don't carry. The production pins below cover all four via the study's own prompter.
 POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 
@@ -60,15 +58,11 @@ TOKENIZER = StubTokenizer()
 
 @pytest.mark.parametrize("seed", (1776, 1777))
 def test_periodic_golden(seed):
-    """Hash-pin regression: numeric and ToF quiz generation must reproduce the
-    SHA-256es recorded in golden_quizzes.json, so any drift in prompt text or
-    answers is caught before it silently invalidates resumed or archived runs.
-    Seeds 1776/1777 are the first two of the default seed epoch
-    (InductionExperiment.base_seed)."""
-    # NOT the study's production config: a test-local template and the 1776 seed
-    # epoch. The family-ladder study's own bytes (BASE_SEED=0, run_study's
-    # template, four arms) are pinned by test_production_golden below.
-    # This config exercises the LIBRARY generators at n=9.
+    """Numeric and ToF generation reproduce golden_quizzes.json at seeds
+    1776/1777, the default seed epoch's (InductionExperiment.base_seed) first two."""
+    # Test-local template + 1776 epoch, not the study's production config
+    # (BASE_SEED=0, run_study's own template, four arms) -- that's pinned by
+    # test_production_golden below. Exercises the library generators at n=9.
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     numeric = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
     tof = PeriodicPrompter(PERIODIC_TOF_TMPL, tof_membership_query_gen)
@@ -80,17 +74,11 @@ def test_periodic_golden(seed):
                                      conditions=POSITIVE_ARMS))
 
 
-# ---------------------------------------------------------------------------
-# 12-19: the production path, at the seeds the study actually runs
-# ---------------------------------------------------------------------------
-# The pins above cover the LIBRARY generators at test-local templates and the
-# 1776 seed epoch (`InductionExperiment.base_seed`'s default). They do not
-# cover what the family-ladder study collects: `run_study.py` locks
-# `BASE_SEED = 0`, ships its OWN byte-pinned template, and adds a FOURTH arm
-# (`zero`) that no hash above touches. Those are the bytes a resumed or
-# archived run is compared against, so they get their own pins, generated
-# through `run_study.make_quizzes` -- the exact function `ReplicateHarness`
-# calls -- rather than through a re-assembled equivalent.
+# --- The production path: the seeds the study actually runs ---
+# The pins above cover the library generators at test-local templates and the
+# 1776 epoch. The study locks BASE_SEED=0, uses its own template, and adds a
+# fourth arm (`zero`); those bytes are pinned here via `run_study.make_quizzes`,
+# the exact call `ReplicateHarness` makes, not a re-assembled equivalent.
 
 #: The four arms `run_study.INFO_TYPES` declares, in that order.
 PRODUCTION_ARMS = ("intens", "extens", "noise_intens", "zero")
@@ -102,13 +90,9 @@ PRODUCTION_MODEL = "gemma-4-e2b"
 
 @pytest.fixture(scope="module")
 def run_study():
-    """Import `notebooks/induction/run_study.py` without leaking its environment.
-
-    The driver calls `load_dotenv` and mutates `EC2_EXPERIMENT_TAG` at import
-    (both deliberately, before `ec2` freezes its constants), so the import is
-    wrapped in an `os.environ` snapshot/restore -- otherwise it would rewrite
-    this pytest session's environment, including `SMOLBENCH_RESULTS_S3`.
-    """
+    """Imports run_study.py under an os.environ snapshot/restore: the module
+    mutates EC2_EXPERIMENT_TAG and calls load_dotenv at import time, which would
+    otherwise leak into this pytest session (e.g. SMOLBENCH_RESULTS_S3)."""
     import importlib.util
     import os
     import sys
@@ -138,38 +122,23 @@ def production_hashes(run_study, seed: int) -> "dict[str, str]":
 
 @pytest.fixture
 def stub_tokenizer(run_study, monkeypatch):
-    """Point `run_study.make_quizzes` at the offline, byte-stable stub tokenizer.
-
-    Only the `noise_intens` arm consults it (it is padded to an exact token
-    count); `intens`, `extens` and `zero` are tokenizer-independent, which
-    `test_production_arms_that_ignore_the_tokenizer` pins separately.
-    """
+    """Points `run_study.make_quizzes` at the offline, byte-stable stub tokenizer
+    (only `noise_intens` consults it; the other three arms are tokenizer-independent)."""
     monkeypatch.setattr(run_study, "for_model", lambda model: TOKENIZER)
 
 
 @pytest.mark.parametrize("seed", (0, 1))
 def test_production_golden(run_study, stub_tokenizer, seed):
-    """Hash-pin the STUDY's own quiz bytes: seeds 0 and 1, all four arms.
-
-    Generated through `run_study.make_quizzes(seed, model)`, the same call
-    `ReplicateHarness.run_replicates` makes, so the pin covers the production
-    template, the `n=9` config, the noise padding AND the zero-information arm
-    together -- not a re-assembly of them. Seeds 0 and 1 are the first two of
-    `BASE_SEED = 0`'s range (0..29), which is the study's, and deliberately
-    NOT the 1776 epoch the pins above use.
-    """
+    """Hash-pins the study's own quiz bytes (seeds 0/1, all four arms) via
+    `run_study.make_quizzes`, the same call `ReplicateHarness` makes."""
     assert run_study.BASE_SEED == 0
     assert run_study.INFO_TYPES == PRODUCTION_ARMS
     assert production_hashes(run_study, seed) == GOLDEN[f"production_seed_{seed}"]
 
 
 def test_the_production_pins_are_seed_sensitive(run_study, stub_tokenizer):
-    """The seed really threads through, so these are 2 pins and not 1 twice.
-
-    Two seeds hashing identically would mean the pin caught template drift but
-    was blind to a broken seed path -- the failure mode of pinning a
-    generator whose seed argument is ignored.
-    """
+    """The seed threads through: two pins, not one pin duplicated (a generator
+    that ignored its seed argument would hash identically for both)."""
     zero, one = production_hashes(run_study, 0), production_hashes(run_study, 1)
     for arm in PRODUCTION_ARMS:
         assert zero[arm] != one[arm], arm
@@ -181,12 +150,8 @@ def test_the_production_pins_are_seed_sensitive(run_study, stub_tokenizer):
 def test_the_production_pins_catch_a_one_byte_template_change(run_study,
                                                               stub_tokenizer,
                                                               monkeypatch):
-    """A single byte changed in the study template moves every affected hash.
-
-    Proves the pins are load-bearing rather than incidentally stable. `zero`
-    renders from the same template, so it moves too; only arms whose text the
-    edit does not reach may stay put.
-    """
+    """A single byte changed in the study template moves every hash it reaches
+    (including `zero`, which shares the template)."""
     baseline = production_hashes(run_study, 0)
     perturbed = string.Template(run_study.template.template.replace(
         "You are a precise integer counter.", "You are a precise integer counter!"
@@ -199,12 +164,8 @@ def test_the_production_pins_catch_a_one_byte_template_change(run_study,
 
 
 def test_production_arms_that_ignore_the_tokenizer(run_study, monkeypatch):
-    """Only `noise_intens` varies with the tokenizer; the other three must not.
-
-    This is what makes three of the four pins meaningful across every one of
-    the study's 21 checkpoints, and it is the invariant that lets the offline
-    stub stand in for a served model's tokenizer here at all.
-    """
+    """Only `noise_intens` varies with the tokenizer; the other three must not --
+    the invariant that lets the offline stub stand in for a served tokenizer."""
     from smolbench.evals.tokenization import TiktokenTokenizer
 
     try:

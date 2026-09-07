@@ -11,8 +11,8 @@ evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zer
 credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
 `notebooks/deduction/`): a Lean 4 theorem-proving eval whose VERIFICATION path
 needs `lean-interact`, elan, and a BUILT mathlib4 checkout named by
-`SMOLBENCH_MATHLIB_ROOT`; generation/analysis need none of those. Both run on the same `.venv`. All paths below are relative
-to the repo root; all commands were verified in a headless Linux container.
+`SMOLBENCH_MATHLIB_ROOT`; generation/analysis need none of those. Both run
+on the same `.venv`. All paths below are relative to the repo root.
 
 ## Prerequisites
 
@@ -103,16 +103,14 @@ OpenAI-compatible stubs (`stub_llm.py` beside this file: one answers with
 the theorem's ground-truth tail in a ```` ```lean ```` fence, one with a
 bogus tactic), points the `primeintellect` + `openrouter` providers at them
 via `*_BASE_URL`/`*_API_KEY` env, and drives `run-sweep` on
-`Lagrange.eval_nodal_at_node` (2 tactics, ~7 s warm replay). It asserts:
+`Lagrange.eval_nodal_at_node` (2 tactics). It asserts:
 sanity gate passes, real Lean returns `success` for the true tail and
 `lean_error` for the bogus one, rows AND wire requests carry `seed`,
 per-model provider dispatch holds, and an identical rerun resume-skips both
 cells. Results/reqlog go to a mktemp dir via `SMOLBENCH_LEAN_RESULTS` —
 keep stub runs out of the committed results tree if you adapt it. Like
 `--replay` it needs elan plus `SMOLBENCH_MATHLIB_ROOT` pointing at a BUILT
-mathlib4 checkout; there is no traced-corpus download any more. The timings
-quoted above were measured under the retired LeanDojo backend and have not
-been re-measured against the REPL backend — treat them as stale.
+mathlib4 checkout.
 Real-model `run-cell`/`run-sweep` need a provider key
 (`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
 user-opt-in only; `filter` (~70 min/split) produces the
@@ -158,9 +156,8 @@ last live-verified 2026-07-02. Everything in this skill runs without them.
 - `GITHUB_ACCESS_TOKEN` is not needed by `replay` under the REPL backend,
   which reads a local checkout and fetches nothing. It remains relevant to
   LeanDojo corpus TRACING and premise slicing, which can still hit anonymous
-  GitHub rate limits. (The old "corpus comes from S3 anonymously — verified"
-  rationale described the retired traced-corpus pull and no longer applies.)
-- elan alone is NOT enough any more. Install it with
+  GitHub rate limits.
+- elan alone is not enough. Install it with
   `curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`,
   then also clone and BUILD mathlib4 (`lake exe cache get && lake build`) and
   point `SMOLBENCH_MATHLIB_ROOT` at that checkout. `lean-interact` starts the

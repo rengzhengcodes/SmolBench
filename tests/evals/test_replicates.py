@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from smolbench.evals import Mark, Marks, Numeric, provider
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals.replicates import ReplicateHarness
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
@@ -37,7 +38,8 @@ def fake_evaluate(monkeypatch):
     def _evaluate(quiz, model, seed, **kwargs):
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
         marks = tuple(
-            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1) for q in quiz
+            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1,
+                 compliance=COMPLIANT) for q in quiz
         )
         return Marks(model=model, marks=marks)
 
@@ -118,7 +120,8 @@ def test_cot_chain_lengths(harness, capsys):
     """Word-count stats pool over seeds, skipping falsy reasoning."""
     for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
         marks = tuple(
-            Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r)
+            Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r,
+                 compliance=COMPLIANT)
             for i, r in enumerate(texts)
         )
         addr = ReplicateAddress(tag="cot", info="intens", seed=seed, model=None)
@@ -144,15 +147,9 @@ def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
 
 def test_forcing_a_seed_supersedes_its_stored_run_first(harness, fake_evaluate,
                                                        tmp_path, monkeypatch):
-    """A forced re-collection must be what a reader RETURNS, on either backend.
-
-    ``force_seeds`` used to spend real GPU time appending a run that
-    earliest-wins reads never returned (S3) while silently overwriting the
-    previous one with no history (local). Both now go through
-    ``ResultsStore.supersede_all`` BEFORE the replacement is collected, so the
-    re-run is the surviving run and the retired bytes stay on disk under the
-    ``SUPERSEDED-<ts>`` name.
-    """
+    """A forced re-collection is what a reader returns, on either backend:
+    `ResultsStore.supersede_all` runs before the replacement is collected, and
+    the retired bytes stay on disk under `SUPERSEDED-<ts>`."""
     harness.run_replicates("stub-model")
     intens = tmp_path / "decode_intens"
     original = (intens / "rep_1.yaml").read_bytes()
@@ -161,11 +158,12 @@ def test_forcing_a_seed_supersedes_its_stored_run_first(harness, fake_evaluate,
     # has an observable answer.
     monkeypatch.setattr(provider, "evaluate", lambda quiz, model, seed, **kw: Marks(
         model=model,
-        marks=tuple(Mark(query=q.prompt, answer=q.answer, response="0", score=0)
+        marks=tuple(Mark(query=q.prompt, answer=q.answer, response="0", score=0,
+                         compliance=COMPLIANT)
                     for q in quiz)))
     dataclasses.replace(harness, force_seeds=frozenset({1})).run_replicates("stub-model")
 
-    # The live file is the RE-RUN, and the retired one is still on disk.
+    # The live file is the re-run, and the retired one is still on disk.
     assert Marks.load(intens / "rep_1.yaml").marks[0].score == 0
     retired = list(intens.glob("rep_1.SUPERSEDED-*.yaml"))
     assert len(retired) == 1 and retired[0].read_bytes() == original
