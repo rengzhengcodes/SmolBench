@@ -760,12 +760,27 @@ def _compute_sizing_results(
     `rates` is the shrunk-toward-mean assumption behind the headline
     R(80%)/R(90%); `pooled` is the condition-mean-only sensitivity check;
     `alpha` is the tier's per-test threshold (ALPHA_PRIMARY or
-    ALPHA_SECONDARY) for both runs. Returns one `_SizingResult` per contrast,
-    input order.
+    ALPHA_SECONDARY) for both runs.
 
     Side-effect-free and separate from printing because `main` derives the
     recommended R from the PRIMARY results before the omnibus section that
     precedes their table.
+
+    Parameters
+    ----------
+    contrasts : list[tuple[str, tuple[str, str], tuple[str, str]]]
+        Contrasts to size, in output order.
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for the headline sizing results.
+    pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
+    alpha : float
+        Per-test threshold for both sizing runs.
+
+    Returns
+    -------
+    list[_SizingResult]
+        One `_SizingResult` per contrast, input order.
     """
     results: list[_SizingResult] = []
     for name, key_a, key_b in contrasts:
@@ -793,6 +808,15 @@ def _print_sizing_rows(
     Columns match `_sizing_header`: observed rates; R(80%) and R(90%) under the
     shrunk-rate assumption; R(80%) pooled; and the extra quiz questions R(80%)
     implies beyond the pilot run.
+
+    Parameters
+    ----------
+    results : list[_SizingResult]
+        Sizing results to render.
+    outcomes : dict[tuple[str, str], np.ndarray]
+        Pilot marks used to compute observed rates.
+    label_w : int
+        Shared width of the contrast-label column.
     """
     for name, key_a, key_b, needed, needed_pooled in results:
         r80, r90 = needed[0.80], needed[0.90]
@@ -897,9 +921,16 @@ def observed_accuracy(
 ) -> list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]:
     """Compute observed per-(family, model, info) accuracy from the pilot marks.
 
-    `outcomes` is keyed like `load_outcomes`'s return value. Returns
-    ``[(family, [(model, [(info, mean_accuracy), ...]), ...]), ...]``, in
-    `FAMILIES` and `INFOS` order.
+    Parameters
+    ----------
+    outcomes : dict[tuple[str, str], np.ndarray]
+        Keyed like `load_outcomes`'s return value.
+
+    Returns
+    -------
+    list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+        ``[(family, [(model, [(info, mean_accuracy), ...]), ...]), ...]``, in
+        `FAMILIES` and `INFOS` order.
     """
     return [
         (
@@ -998,14 +1029,27 @@ def primary_contrasts_table(
     cannot drag the recommendation to MAX_REPLICATES) and `n_censored`
     (PRIMARY contrasts whose R(80%) was never reached), read from this same
     sizing pass by both the Tier-1 omnibus-gate section and the recommended-R
-    section rather than recomputed there. Returns a dict with keys `results`,
-    `r_star`, `n_censored`, `label_w` (max contrast-name length, for column
-    alignment), and `n_ladder` (row index separating the 84 ladder contrasts
-    from the 126 info-arm contrasts).
+    section rather than recomputed there.
 
-    Raises ``SystemExit`` if no PRIMARY contrast reaches 80% power within
-    MAX_REPLICATES: the pilot cannot size R at all, so nothing downstream can
-    be recommended.
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for PRIMARY sizing.
+    pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
+
+    Returns
+    -------
+    dict
+        With keys `results`, `r_star`, `n_censored`, `label_w` (max
+        contrast-name length, for column alignment), and `n_ladder` (row index
+        separating the 84 ladder contrasts from the 126 info-arm contrasts).
+
+    Raises
+    ------
+    SystemExit
+        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES: the
+        pilot cannot size R at all, so nothing downstream can be recommended.
     """
     contrasts = build_primary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
@@ -1047,8 +1091,20 @@ def omnibus_gates(
     """Compute Tier 1 family omnibus-gate power at R=`r_star` and at R=1.
 
     `rates` is shrunk-toward-mean, keyed like `load_outcomes`'s return value;
-    `r_star` is the recommended replicate count. Returns
-    ``(family, power_at_r_star, power_at_1)`` per family, in `FAMILIES` order.
+    `r_star` is the recommended replicate count.
+
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk rates keyed by model and information type.
+    r_star : int
+        Recommended replicate count.
+
+    Returns
+    -------
+    list[tuple[str, float, float]]
+        ``(family, power_at_r_star, power_at_1)`` per family, in `FAMILIES`
+        order.
     """
     rows = []
     for family in FAMILIES:
@@ -1086,8 +1142,19 @@ def secondary_contrasts_table(
 
     `rates` is shrunk-toward-mean, `pooled` the condition-mean-only
     sensitivity assumption, both keyed like `load_outcomes`'s return value.
-    Returns a dict with ``results`` (`build_secondary_contrasts` order) and
-    ``label_w`` (max contrast-name length, for alignment).
+
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for SECONDARY sizing.
+    pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
+
+    Returns
+    -------
+    dict
+        With ``results`` (`build_secondary_contrasts` order) and ``label_w``
+        (max contrast-name length, for alignment).
     """
     contrasts = build_secondary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_SECONDARY)
@@ -1114,9 +1181,21 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
     """Derive the recommended-R section's figures from PRIMARY sizing.
 
     `r_star` and `n_censored` come from `primary_contrasts_table` and are not
-    recomputed here. Returns a dict with ``r_star``, ``n_censored``,
-    ``extra_runs`` (additional quiz runs beyond the pilot's single run), and
-    ``extra_questions`` (``extra_runs * N_HARMONICS``).
+    recomputed here.
+
+    Parameters
+    ----------
+    r_star : int
+        Recommended replicate count from PRIMARY sizing.
+    n_censored : int
+        Number of PRIMARY contrasts that never reached 80% power.
+
+    Returns
+    -------
+    dict
+        With ``r_star``, ``n_censored``, ``extra_runs`` (additional quiz runs
+        beyond the pilot's single run), and ``extra_questions``
+        (``extra_runs * N_HARMONICS``).
     """
     return dict(
         r_star=r_star,
@@ -1163,18 +1242,32 @@ def equivalence_checks(
 
     `primary_results` is `primary_contrasts_table`'s ``results`` (input
     order); `rates` is shrunk-toward-mean, keyed like `load_outcomes`'s
-    return value. Returns a dict with:
-    fisher : list of (name, fisher_power), for every PRIMARY contrast whose
-        R(80%) was reached, input order.
-    near_ties : list of (name, key_a, key_b), for contrasts whose R(80%) was
-        censored or exceeded 20 -- this report's "near-tie" grouping cut.
-    deltas : the TOST equivalence margins probed.
-    alpha_eq : Bonferroni-corrected one-sided alpha over `near_ties`, or
-        `None` when `near_ties` is empty (dividing by zero near-ties would
-        raise).
-    table : list of (name, [r_eq for each delta]), `near_ties` order; an
-        entry is `None` where equivalence was never reached within
-        MAX_REPLICATES. Empty when `near_ties` is empty.
+    return value.
+
+    Parameters
+    ----------
+    primary_results : list[_SizingResult]
+        PRIMARY sizing results in input order.
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk rates keyed by model and information type.
+    r_star : int
+        Replicate count for the Fisher cross-check.
+
+    Returns
+    -------
+    dict
+        With:
+        fisher : list of (name, fisher_power), for every PRIMARY contrast whose
+            R(80%) was reached, input order.
+        near_ties : list of (name, key_a, key_b), for contrasts whose R(80%) was
+            censored or exceeded 20 -- this report's "near-tie" grouping cut.
+        deltas : the TOST equivalence margins probed.
+        alpha_eq : Bonferroni-corrected one-sided alpha over `near_ties`, or
+            `None` when `near_ties` is empty (dividing by zero near-ties would
+            raise).
+        table : list of (name, [r_eq for each delta]), `near_ties` order; an
+            entry is `None` where equivalence was never reached within
+            MAX_REPLICATES. Empty when `near_ties` is empty.
     """
     fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
@@ -1266,8 +1359,17 @@ def interaction_diagnostic(
 ) -> tuple[float, float]:
     """Compute the model x info-type interaction diagnostic's power at `r_star` and R=1.
 
-    `rates` is shrunk-toward-mean, keyed like `load_outcomes`'s return value.
-    Returns ``(power_at_r_star, power_at_1)``.
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-toward-mean, keyed like `load_outcomes`'s return value.
+    r_star : int
+        Recommended replicate count.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(power_at_r_star, power_at_1)``.
     """
     return omnibus_interaction_power(rates, r_star), omnibus_interaction_power(rates, 1)
 

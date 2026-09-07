@@ -77,6 +77,11 @@ def dump(tag: str) -> None:
     writes nothing -- ``results/`` is gitignored and absent from a fresh
     checkout, and creating it only when a checkpoint is taken avoids a
     `FileNotFoundError` after an expensive Monte Carlo has already run.
+
+    Parameters
+    ----------
+    tag : str
+        checkpoint label written to the log.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as fh:
@@ -88,9 +93,19 @@ def dump(tag: str) -> None:
 def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     """Generalized CMH "general association" statistic across 3 rungs (chi2, df=2).
 
-    `n` must be identical across every rung and stratum -- the equal-n
-    precondition behind the covariance collapse used in
-    ``power_analysis.gcmh_reject``.
+    Parameters
+    ----------
+    succ : np.ndarray
+        success counts across rungs and strata.
+    n : int
+        Must be identical across every rung and stratum -- the equal-n
+        precondition behind the covariance collapse used in
+        ``power_analysis.gcmh_reject``.
+
+    Returns
+    -------
+    np.ndarray
+        generalized CMH statistics.
     """
     n_rungs = succ.shape[-2]
     total_n = float(n_rungs * n)
@@ -173,6 +188,15 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     Per baseline rate `p_a`, scans the accuracy gap `d` in `step` increments
     for the smallest `d` reaching 80% power under both ALPHA_BONF and the naive
     alpha=0.05. Writes ``OUT["part1"]``.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        random-number generator for simulated counts.
+    n_sims : int, optional
+        number of simulations per baseline rate and gap.
+    step : float, optional
+        accuracy-gap increment to scan.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -211,7 +235,16 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     correlation `icc`) over a grid of baseline rates, iccs and an "independent"
     vs "shared" latent-draw variant, reporting the realized binary (phi)
     within-replicate correlation and the actual Type I error at alpha=0.05 and
-    at ALPHA_BONF. `chunk` bounds peak memory. Writes ``OUT["part3"]``.
+    at ALPHA_BONF. Writes ``OUT["part3"]``.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        random-number generator for simulated marks.
+    n_sims : int, optional
+        total simulations per grid configuration.
+    chunk : int, optional
+        bounds peak memory.
     """
     print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
     from scipy.stats import norm
@@ -280,6 +313,13 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     narrower ``ALPHA / 28``, correcting only among the trend tests
     themselves, reported as a labelled sensitivity figure since that
     narrower family is not pre-registered anywhere.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        random-number generator for simulated counts.
+    n_sims : int, optional
+        simulations per rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     # The same 28 trend tests as PART 4's reduced family, corrected over that
@@ -347,6 +387,25 @@ def _paired_powers(
     identical either way; skip them for cost. Computing `phi` upcasts both
     boolean mark arrays to float64, ~1.55 GB at the top of `EQ_R_GRID`, for
     numbers `part2`'s equivalent-R search then discards.
+
+    Parameters
+    ----------
+    p_a : float
+        baseline success rate for arm A.
+    delta : float
+        success-rate gap subtracted from `p_a` for arm B.
+    rho : float
+        latent correlation between matched arm marks.
+    reps : int
+        replicates in each simulation.
+    n_sims : int
+        number of simulated datasets.
+    rng : np.random.Generator
+        random-number generator for matched marks.
+    stats : bool, optional
+        Whether to compute the mark-level diagnostics.
+    icc : float, optional
+        within-replicate latent correlation.
 
     Returns
     -------
@@ -424,6 +483,17 @@ def part2(
     `design_effect_simulated`, the median `design_effect` its own
     null-configuration marks produce, comparable against
     `study_design_effect` (printed once up front). Writes ``OUT["part2"]``.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        random-number generator for simulated marks.
+    n_sims : int, optional
+        number of simulations for the main power calculations.
+    search_sims : int, optional
+        number of simulations at each equivalent-R search rung.
+    cap : int, optional
+        upper replicate-count bound recorded with each result.
     """
     # Imported here, not at module scope, for the same reason as
     # study_design_effect: the simulation must not gain a results-reading
@@ -553,6 +623,20 @@ def _stepup(
     ``ok[:, ::-1].argmax(axis=1)`` finds the last True per row by reversing
     and taking the first True from the end. Rows with no True get sentinel
     index -1, so nothing is rejected for that row without a separate branch.
+
+    Parameters
+    ----------
+    sortedp : np.ndarray
+        p-values sorted in ascending order per row.
+    order : np.ndarray
+        indices that map sorted p-values to input order.
+    thresholds : np.ndarray
+        per-rank rejection thresholds.
+
+    Returns
+    -------
+    np.ndarray
+        rejection mask in input order.
     """
     m = sortedp.shape[1]
     ok = sortedp <= thresholds
@@ -566,14 +650,23 @@ def _stepup(
 def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     """Apply Bonferroni, Holm, Hochberg, and BH(q=0.05) to a batch of p-value families.
 
-    Returns one rejection mask per procedure, in `pv`'s original column
-    order. `m` is read from `pv.shape[1]` rather than taken as a parameter,
+    `m` is read from `pv.shape[1]` rather than taken as a parameter,
     so a caller cannot pass a mismatched `m` and get every threshold
     silently computed from the wrong family size.
 
     Holm (step-down) keeps its own loop: it walks from the smallest p-value
     and stops at the first violation, the opposite traversal and stopping
     rule from Hochberg and BH (step-up), which share `_stepup`.
+
+    Parameters
+    ----------
+    pv : np.ndarray
+        Batch of p-value families, one family per row.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        One rejection mask per procedure, in `pv`'s original column order.
     """
     m = pv.shape[1]
     out = {}
@@ -610,6 +703,13 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     flagged. A third "test-swap only" arm holds the family size at 210 while
     swapping in the trend test, isolating test choice from correction.
     Writes ``OUT["part4"]``.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        random-number generator for simulated counts.
+    n_sims : int, optional
+        number of simulated p-value families.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()

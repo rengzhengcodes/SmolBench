@@ -29,6 +29,19 @@ def results_dir(file: str, up: int = 0) -> Path:
 
 
 def fmt_r(r: int | None, max_replicates: int) -> str:
-    """Format a replicate count. ``None`` means the scan cap was reached without
-    hitting the target; renders as ``">max_replicates"``."""
+    """Format a replicate count.
+
+    Parameters
+    ----------
+    r : int | None
+        ``None`` means the scan cap was reached without hitting the target; renders as
+        ``">max_replicates"``.
+    max_replicates : int
+        scan cap displayed when the target was not reached.
+
+    Returns
+    -------
+    str
+        formatted replicate count.
+    """
     return f">{max_replicates}" if r is None else str(r)

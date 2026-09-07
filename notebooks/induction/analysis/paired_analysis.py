@@ -99,6 +99,20 @@ def load_marks() -> tuple[dict, dict, dict]:
 
                 `_m`/`_i` are default-bound rather than closed over, so the
                 function cannot capture a later iteration's cell.
+
+                Parameters
+                ----------
+                seed : int
+                    Replicate seed.
+                _m : str, optional
+                    Model for the current cell.
+                _i : str, optional
+                    Info value for the current cell.
+
+                Returns
+                -------
+                ReplicateAddress
+                    Address for the replicate.
                 """
                 return ReplicateAddress(tag=_m, info=_i, seed=seed)
 
@@ -155,9 +169,26 @@ def aligned(
 
     Intersects `key_a`'s and `key_b`'s seeds (a still-collecting lane is
     compared only on the seeds it has), then flattens seed x harmonic into
-    one item axis, preserving the pairing. `drop_invalid` drops item-pairs
-    where either arm's mark is invalid (``score: null``). `seed_index`
-    records each item's replicate, needed to resample whole replicates.
+    one item axis, preserving the pairing.
+
+    Parameters
+    ----------
+    correct : dict
+        Per-cell correct-mark mappings.
+    valid : dict
+        Per-cell valid-mark mappings.
+    key_a : tuple[str, str]
+        First cell key.
+    key_b : tuple[str, str]
+        Second cell key.
+    drop_invalid : bool
+        Drops item-pairs where either arm's mark is invalid (``score: null``).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Matched marks for both arms; `seed_index` records each item's
+        replicate, needed to resample whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
@@ -185,6 +216,20 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     The per-cluster summary `signflip_exact_p` permutes. ``sum(d_s) == b - c``
     exactly (the McNemar discordance margin), so both tests read the same
     signal and differ only in what they treat as exchangeable.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    seed_idx : np.ndarray
+        Replicate index for each matched mark.
+
+    Returns
+    -------
+    list[int]
+        Arm differences, one per unique seed.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -203,8 +248,17 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
     (S dict passes, not 2^S draws), so it is deterministic and needs no seed.
 
     The resolution floor is ``2 / 2^S``; contrasts that saturate it are
-    reported at the floor, not at a fabricated smaller number. Returns 1.0
-    for empty `diffs`.
+    reported at the floor, not at a fabricated smaller number.
+
+    Parameters
+    ----------
+    diffs : Iterable[int]
+        Per-seed arm differences.
+
+    Returns
+    -------
+    float
+        Exact two-sided sign-flip p-value. 1.0 for empty `diffs`.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -227,8 +281,22 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
     Mirrors ``power_analysis.py::cmh_reject`` (same continuity correction,
     same hypergeometric variance), so the paired-vs-unpaired comparison
     isolates the pairing. Rebuilt from `aligned`'s flat item arrays, the
-    harmonic index recovered as position-within-seed. Returns 1.0 if no
-    stratum has enough items to contribute variance.
+    harmonic index recovered as position-within-seed.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    seed_idx : np.ndarray
+        Replicate index for each matched mark.
+
+    Returns
+    -------
+    float
+        p-value of the repo's continuity-corrected 2x2xK CMH. 1.0 if no
+        stratum has enough items to contribute variance.
     """
     # An item's offset inside its own seed block is its harmonic, since items
     # stay in ascending harmonic order within a replicate. Under drop_invalid
@@ -265,6 +333,18 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     models, seeds and harmonics, so no positive-dependence assumption is
     available to buy the extra power of a step-up procedure
     (`significance_report.hochberg` is a labelled sensitivity check only).
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    alpha : float, optional
+        Familywise error-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
     """
     # multipletests sorts with a bare np.argsort rather than a stable sort,
     # which is safe despite pervasive ties (the sign-flip test's hard
@@ -293,6 +373,18 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     owns the SECONDARY tier's level) rather than re-spelled as a literal, so
     a re-registration of the tier cannot move `ALPHA_SECONDARY` while
     leaving this default behind.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    q : float, optional
+        False discovery-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
     """
     # Same tie argument as `holm`: q*i/m is monotone increasing in rank, so a
     # tied group cannot straddle the accept/reject boundary and the unstable
@@ -311,6 +403,21 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     uniformly means "no measurable ratio" (fewer than 3 seeds, identical
     arms, or a stratum too thin for ddof=1), so a NaN never slips past an
     ``is not None`` filter.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    seed_idx : np.ndarray
+        Replicate index for each matched mark.
+
+    Returns
+    -------
+    float | None
+        Observed / independence-assumed variance ratio, or ``None`` when no
+        measurable ratio exists.
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)

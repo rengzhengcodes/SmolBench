@@ -85,6 +85,16 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
 
     HTTP 429 and 5xx are transient, as is any non-HTTP failure (connection
     reset, timeout, DNS); other 4xx are permanent auth/validation errors.
+
+    Parameters
+    ----------
+    err : requests.exceptions.RequestException
+        Request failure to classify.
+
+    Returns
+    -------
+    bool
+        whether the request should be retried.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -281,6 +291,17 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
 
     Driven by joblib's as-completed generator, so the bar advances as responses
     land, not as tasks dispatch. Emits a trailing newline once ``done >= total``.
+
+    Parameters
+    ----------
+    done : int
+        Number of completed prompts.
+    total : int
+        Total prompts being evaluated.
+    model : str
+        Model name shown in the bar.
+    width : int, optional
+        Bar width in characters.
     """
     filled: int = width if total == 0 else int(width * done / total)
     bar: str = "#" * filled + "-" * (width - filled)
@@ -389,6 +410,16 @@ class ChatClient:
 
         Accepts the common boolean spellings; anything else raises naming the
         variable, instead of a bare ``int()`` ValueError deep in the hot path.
+
+        Parameters
+        ----------
+        suffix : str
+            Suffix appended to ``env_prefix`` to form the environment-variable name.
+
+        Returns
+        -------
+        bool
+        the parsed flag value.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()
@@ -666,6 +697,30 @@ class ChatClient:
 
         A thin wrapper over ``complete()`` -- see it for the parameter docs and
         the ``ChatResult`` fields this discards.
+
+        Parameters
+        ----------
+        prompt : str
+            User prompt sent to the model.
+        model : str
+            Model to query.
+        seed : int
+            Decoding seed.
+        context_length : int, optional
+            Token-budget guard passed to ``complete()``.
+        extra_args : Optional[Dict[str, Any]], optional
+            Extra request-body arguments passed to ``complete()``.
+        request_timeout : Optional[int], optional
+            Per-request read timeout passed to ``complete()``.
+        system : Optional[str], optional
+            Extra system message passed to ``complete()``.
+        max_retries : Optional[int], optional
+            Retry cap passed to ``complete()``.
+
+        Returns
+        -------
+        Tuple[str, Optional[str]]
+            content and reasoning.
         """
         result = self.complete(
             prompt,
@@ -684,6 +739,20 @@ class ChatClient:
 
         Results stream back out of order (``return_as="generator_unordered"``);
         the index lets ``evaluate`` restore quiz order before grading.
+
+        Parameters
+        ----------
+        index : int
+            Question's quiz position.
+        *args : Any
+            Positional arguments forwarded to ``query()``.
+        **kwargs : Any
+            Keyword arguments forwarded to ``query()``.
+
+        Returns
+        -------
+        Tuple[int, Tuple[str, Optional[str]]]
+            the quiz position and ``query()`` result.
         """
         return index, self.query(*args, **kwargs)
 

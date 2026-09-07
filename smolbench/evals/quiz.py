@@ -91,6 +91,16 @@ class Numeric(QnA):
 
         First-match scores an operand when the model shows its working;
         ``smolbench.evals.parsing.parse_numeric`` is the robust path.
+
+        Parameters
+        ----------
+        ans : str
+            Raw model response.
+
+        Returns
+        -------
+        int
+            First integer in the response.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:

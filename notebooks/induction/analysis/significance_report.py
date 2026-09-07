@@ -61,6 +61,18 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
     ``method="simes-hochberg"``, uniformly at least as powerful as Holm
     where its positive-dependence condition holds (see module docstring).
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    alpha : float, optional
+        Familywise error-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
     """
     # Unstable sort is safe here for the same tie-monotonicity reason as
     # paired_analysis.holm.
@@ -76,6 +88,11 @@ def compliance_census(compliance: dict) -> dict:
     Consumes `paired_analysis.load_marks`'s third return value rather than
     re-walking and re-parsing the tree, so the census and the contrasts can
     never disagree about which replicates a cell contains.
+
+    Parameters
+    ----------
+    compliance : dict
+        Per-cell compliance mappings from `paired_analysis.load_marks`.
 
     Returns
     -------
@@ -109,9 +126,20 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
 
     Pools the counts before dividing -- ``sum(noncompliant) / sum(marks)`` --
     rather than averaging per-seed rates, so a seed with 2 marks does not
-    weigh the same as one with 9. Returns `None`, not 0.0, when the subset
-    has no marks at all, so an unmeasured subset cannot publish as perfectly
-    compliant.
+    weigh the same as one with 9.
+
+    Parameters
+    ----------
+    cell : dict
+        Census entry for one cell.
+    seeds : Iterable[int]
+        Replicate seeds to include.
+
+    Returns
+    -------
+    float | None
+        `None`, not 0.0, when the subset has no marks at all, so an unmeasured
+        subset cannot publish as perfectly compliant.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     total = sum(t for _nc, t in counts)
@@ -126,6 +154,18 @@ def collapse_note(key: tuple[str, str], census: dict) -> str:
     Carries the measured rate and dominant failure mode -- "99.6%
     multiple-values" vs "28.5% empty" are different results a bare COLLAPSE
     label would erase. Also ``""`` for a cell missing from `census`.
+
+    Parameters
+    ----------
+    key : tuple[str, str]
+        Cell key.
+    census : dict
+        Compliance census by cell.
+
+    Returns
+    -------
+    str
+        Mechanism annotation, or ``""`` below `COLLAPSE_THRESHOLD`.
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -142,6 +182,18 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     informative arm against the chance baseline, a positive control), or
     ``"zero-vs-zero"`` (two baseline arms, null by construction). The last
     two are jointly the zero-arm controls.
+
+    Parameters
+    ----------
+    key_a : tuple[str, str]
+        First cell key.
+    key_b : tuple[str, str]
+        Second cell key.
+
+    Returns
+    -------
+    str
+        Contrast bucket.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -164,6 +216,17 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
     A count alone hides how close the decision was; the two ranks either side of
     the boundary show whether the family is comfortably separated or resting on
     one contrast. `pvals` is in `rows` order, `n_rej` the Holm rejection count.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in `rows` order.
+    rows : list
+        Contrast rows.
+    m : int
+        Number of hypotheses.
+    n_rej : int
+        Holm rejection count.
     """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")

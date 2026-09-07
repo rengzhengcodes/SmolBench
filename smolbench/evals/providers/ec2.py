@@ -603,6 +603,13 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
     Runs BEFORE the container swap, so a mismatched box never generates a
     single row. No-ops when the pin is unset (the default).
 
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Saved instance state.
+    model : str
+        Model being served.
+
     Raises
     ------
     RuntimeError
@@ -661,6 +668,18 @@ def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
     ``block_size``, and stay deliberately UNPARSED: the label set drifts across
     vLLM builds, so the raw line survives where a parsed dict would not. None
     on no match or any request failure.
+
+    Parameters
+    ----------
+    ip : str
+        vLLM server IP address.
+    vllm_api_key : str
+        Bearer token for vLLM requests.
+
+    Returns
+    -------
+    Optional[List[str]]
+        Raw matching Prometheus lines, or None.
     """
     try:
         r = requests.get(
@@ -689,6 +708,16 @@ def _fetch_agent_fingerprint(
     loop. The backend lines are mined from ``/status``'s ``log_tail`` (the
     container's last ~300 lines; they appear in no metrics endpoint), a moving
     window -- call ``server_config`` right after serve or they may have gone.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Saved instance state for the control-agent request.
+
+    Returns
+    -------
+    Tuple[Optional[Dict[str, Any]], Optional[List[str]]]
+        Agent fingerprint and attention-backend log lines, each possibly None.
     """
     try:
         status = _agent(
@@ -715,6 +744,11 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     ``ReplicateHarness.run_replicates``) and written as a deduction run's
     ``server_config.yaml`` sidecar. Reads the state file at call time, so call
     it INSIDE the ``serve_model`` block.
+
+    Parameters
+    ----------
+    model : str
+        Model whose serving configuration is captured.
 
     Returns
     -------
@@ -876,6 +910,11 @@ def _save_state(state: Dict[str, Any]) -> None:
     ``os.open`` rather than a write-then-``chmod``, which would leave the
     secrets readable at the process umask for the window in between. The
     ``fchmod`` re-asserts it on a file some earlier version left looser.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Instance identity and secrets to persist.
     """
     path = _state_path()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -954,6 +993,16 @@ def get_model_context_length(model: str) -> int:
 
     That is exactly what vLLM was launched with, so it doubles as the soft
     post-hoc token guard. Specless models fall back to ``EC2_CONTEXT_LENGTH``.
+
+    Parameters
+    ----------
+    model : str
+        Model whose deployment spec is consulted.
+
+    Returns
+    -------
+    int
+        Served context window.
     """
     spec = EC2_DEPLOY_SPECS.get(model)
     if spec and "max_model_len" in spec:
@@ -985,6 +1034,16 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
     instance was interrupted/terminated, or the caller's public IP changed so
     the security group blocks them. It must also work with no AWS credentials,
     so every boto3 problem degrades to the generic message.
+
+    Parameters
+    ----------
+    err : Exception
+        Last connection failure.
+
+    Returns
+    -------
+    NoReturn
+        Does not return.
     """
     state = _load_state()
     detail = "no state file; EC2_INFERENCE_BASE_URL override in use?"
@@ -1025,6 +1084,16 @@ def _connection(model: str) -> Tuple[str, str]:
     ``ChatClient.connection`` calls this once per request attempt, so a spot
     instance re-provisioned mid-retry-loop is picked up on the next attempt,
     and the URL and token can never come from two different state versions.
+
+    Parameters
+    ----------
+    model : str
+        Model requested by the client.
+
+    Returns
+    -------
+    Tuple[str, str]
+        Chat-completions URL and vLLM bearer token.
     """
     base = os.getenv("EC2_INFERENCE_BASE_URL")
     key = os.getenv("EC2_VLLM_API_KEY")
@@ -1042,6 +1111,16 @@ def _system_prompt(model: str) -> Optional[str]:
 
     Injecting it at the provider layer keeps the notebook's user prompts
     byte-identical across archetypes.
+
+    Parameters
+    ----------
+    model : str
+        Model whose deployment spec is consulted.
+
+    Returns
+    -------
+    Optional[str]
+        Spec-level system prompt, or None.
     """
     return EC2_DEPLOY_SPECS.get(model, {}).get("system_prompt")
 
@@ -1114,6 +1193,16 @@ def _ec2_client(region: str) -> Any:
     Every EC2 call site in this module goes through this local name, never
     ``_aws.fresh_client`` directly, so ``tests/evals/test_ec2_provision.py``'s
     ``monkeypatch.setattr(ec2, "_ec2_client", ...)`` intercepts all of them.
+
+    Parameters
+    ----------
+    region : str
+        AWS region for the client.
+
+    Returns
+    -------
+    Any
+        Fresh EC2 client.
     """
     return _aws.fresh_client("ec2", region)
 
@@ -1253,6 +1342,16 @@ def _ensure_instance_profile(bucket: str) -> str:
     ``EC2_INSTANCE_ROLE_NAME`` / ``_IAM_PROPAGATION_SLEEP_S``. The role grants
     read/write scoped to the cache bucket plus SSM core, which doubles as the
     break-glass shell for a box with no SSH key.
+
+    Parameters
+    ----------
+    bucket : str
+        Model-cache bucket name.
+
+    Returns
+    -------
+    str
+        Instance-profile name.
     """
     return _aws.ensure_instance_profile(EC2_INSTANCE_ROLE_NAME, bucket, _IAM_PROPAGATION_SLEEP_S)
 
@@ -1280,6 +1379,16 @@ def _decode_user_data(raw: bytes) -> str:
     code change that provisioned it. Both exceptions below land in
     ``_recover_state_from_instance``'s best-effort ``except Exception``.
 
+    Parameters
+    ----------
+    raw : bytes
+        Already-base64-decoded instance user data.
+
+    Returns
+    -------
+    str
+        Rendered user-data script.
+
     Raises
     ------
     UnicodeDecodeError
@@ -1304,6 +1413,18 @@ def _recover_state_from_instance(
     -- the in-account visibility the security model already accepts. Returns
     None when the user-data will not parse (a foreign or older-format
     instance), leaving the caller to refuse reuse.
+
+    Parameters
+    ----------
+    region : str
+        AWS region containing the instance.
+    instance : Dict[str, Any]
+        Live EC2 instance record.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        Rebuilt state dict, or None when its user data cannot be parsed.
     """
     import base64
 
@@ -1353,6 +1474,18 @@ def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]
     (``InvalidInstanceID.NotFound``, raised once a terminated instance's record
     expires, typically ~an hour after termination). Callers needing only the
     state Name should use ``_instance_state``.
+
+    Parameters
+    ----------
+    region : str
+        AWS region containing the instance.
+    instance_id : str
+        EC2 instance ID.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        DescribeInstances record, or None.
     """
     from botocore.exceptions import ClientError
 
@@ -1383,6 +1516,18 @@ def _instance_state(region: str, instance_id: str) -> str:
     this helper to avoid a second DescribeInstances call;
     ``_raise_endpoint_unreachable`` skips it because it wants the raw
     ClientError, not "absent".
+
+    Parameters
+    ----------
+    region : str
+        AWS region containing the instance.
+    instance_id : str
+        EC2 instance ID.
+
+    Returns
+    -------
+    str
+        EC2 state name, or "absent".
     """
     instance = _describe_instance(region, instance_id)
     return (instance or {}).get("State", {}).get("Name", "absent")
@@ -1394,6 +1539,18 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
     One-time spot instances terminate on OS shutdown regardless, so asking for
     InstanceInitiatedShutdownBehavior=terminate is belt-and-braces; some API
     paths reject the combination, and this then retries without it.
+
+    Parameters
+    ----------
+    region : str
+        AWS region for the launch.
+    kwargs : Dict[str, Any]
+        Arguments passed to EC2 RunInstances.
+
+    Returns
+    -------
+    str
+        Launched EC2 instance ID.
     """
     from botocore.exceptions import ClientError
 
@@ -1416,6 +1573,20 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
 
 def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIMEOUT_S) -> str:
     """Poll DescribeInstances (via ``_aws.poll_until``) for a public IPv4.
+
+    Parameters
+    ----------
+    region : str
+        AWS region containing the instance.
+    instance_id : str
+        EC2 instance ID.
+    timeout_s : int, optional
+        Polling timeout in seconds.
+
+    Returns
+    -------
+    str
+        Public IPv4 address.
 
     Raises
     ------
@@ -1566,6 +1737,22 @@ def _attach(
     until the agent answers, log. One implementation so the attach protocol
     cannot drift between the state-file and tag-recovery paths (which path
     runs depends only on whether the local state file survived).
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        State rebuilt or loaded for the instance.
+    instance : Dict[str, Any]
+        EC2 instance record.
+    my_ip : str
+        Caller's public IP address.
+    how : str
+        Attach-path label for logging.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Refreshed and persisted state dict.
     """
     region = state["region"]
     _authorize_ingress(region, state["security_group_id"], my_ip)
@@ -1589,6 +1776,11 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     re-authorizes the security group for `my_ip`, refreshes and persists
     ``public_ip``, and blocks until the agent answers; a dead recorded
     instance clears the stale state file so the next strategy starts clean.
+
+    Parameters
+    ----------
+    my_ip : str
+        Caller's public IP address.
 
     Returns
     -------
@@ -1620,6 +1812,11 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     secrets in its user-data (see ``_recover_state_from_instance``), so state
     is rebuilt from the instance rather than stranding a $30-45/h box. Same
     side effects as ``_reattach_existing_instance``.
+
+    Parameters
+    ----------
+    my_ip : str
+        Caller's public IP address.
 
     Returns
     -------
@@ -1663,6 +1860,18 @@ def _spot_price_map(region: str, instance_types: List[str]) -> Dict[Tuple[str, s
     newest-first). STRICTLY best-effort: any API failure returns ``{}`` and the
     capacity hunt degrades to price-blind, because pricing must never cost a
     lane its box.
+
+    Parameters
+    ----------
+    region : str
+        AWS region to query.
+    instance_types : List[str]
+        Instance types whose prices are requested.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], float]
+        Mapping of instance type and availability zone to hourly price.
     """
     try:
         resp = _ec2_client(region).describe_spot_price_history(
@@ -2091,6 +2300,19 @@ def provision_spot_instance(
     a live instance OUTSIDE that block is TERMINATED rather than reused, since
     reuse would bill Spot on top of the already-paid block.
 
+    Parameters
+    ----------
+    instance_types : Optional[Tuple[str, ...]], optional
+        Instance types to try.
+    regions : Optional[Tuple[str, ...]], optional
+        AWS regions to try.
+    volume_gb : Optional[int], optional
+        Root-volume size in GiB.
+    idle_timeout_min : Optional[int], optional
+        Idle watchdog timeout in minutes.
+    max_lifetime_min : Optional[int], optional
+        Maximum instance lifetime in minutes.
+
     Returns
     -------
     Dict[str, Any]
@@ -2138,6 +2360,15 @@ def _wait_model_ready(
     First-time serves are dominated by the checkpoint download (hundreds of
     GB); cached swaps take minutes. On timeout the error reports the LAST
     polled ``container`` state and ``log_tail``.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Saved instance state for control-agent polling.
+    model : str
+        Model expected to become healthy.
+    timeout_min : int, optional
+        Readiness timeout in minutes.
     """
     last_status: Dict[str, Any] = {}
     consec_failures = 0

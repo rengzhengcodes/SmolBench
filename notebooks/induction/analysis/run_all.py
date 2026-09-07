@@ -41,7 +41,15 @@ def _banner(name: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the analysis chain in dependency order, printing a banner per script.
 
-    Always returns 0: each script's own `main()` raises rather than returning a failure code.
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        always 0: each script's own `main()` raises rather than returning a failure code.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",

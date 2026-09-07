@@ -43,6 +43,16 @@ class Tokenizer(Protocol):
 
         Must exclude special/BOS tokens: both compared prompts get the same chat-template wrap
         downstream, so an inconsistent offset becomes an off-by-N in the match.
+
+        Parameters
+        ----------
+        text : str
+            Text to tokenize.
+
+        Returns
+        -------
+        int
+            Token count of `text`.
         """
         ...
 
@@ -76,9 +86,23 @@ class HFTokenizer:
         the first call needs network. Disables truncation and padding on load: an embedded
         ``truncation`` stanza is otherwise honored on every ``encode`` (one Nemotron
         redistribution ships ``max_length: 512`` and silently reports a ~26,000-token prompt as
-        512), and a padded batch would count tokens the model never sees. Raises RuntimeError,
-        naming the ``tokenizer_hf_id`` deploy-spec override, when the repo ships no
-        ``tokenizer.json`` (common for quantized redistributions) or the fetch fails.
+        512), and a padded batch would count tokens the model never sees.
+
+        Parameters
+        ----------
+        repo_id : str
+            HuggingFace repository containing ``tokenizer.json``.
+
+        Returns
+        -------
+        HFTokenizer
+            the loaded tokenizer.
+
+        Raises
+        ------
+        RuntimeError
+            naming the ``tokenizer_hf_id`` deploy-spec override, when the repo ships no
+            ``tokenizer.json`` (common for quantized redistributions) or the fetch fails.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -148,6 +172,15 @@ class VLLMTokenizer:
         `base_url` is the OpenAI-compatible base URL (``ec2._base_url()``); vLLM
         serves ``/tokenize`` at the SERVER root, not under ``/v1``, so a trailing
         ``/v1`` is stripped here.
+
+        Parameters
+        ----------
+        base_url : str
+            OpenAI-compatible base URL.
+        model : str
+            Served model name.
+        api_key : str
+            Bearer token for the server.
         """
         root = base_url.rstrip("/")
         if root.endswith("/v1"):
@@ -160,8 +193,23 @@ class VLLMTokenizer:
     def count(self, text: str) -> int:
         """Return `text`'s token count as reported by the live server.
 
-        Raises ``requests.HTTPError`` on rejection; vLLM exposes ``/tokenize`` by default, so a
-        404 means the server predates it or disabled it.
+        vLLM exposes ``/tokenize`` by default, so a 404 means the server predates it or disabled
+        it.
+
+        Parameters
+        ----------
+        text : str
+            Prompt text to tokenize.
+
+        Returns
+        -------
+        int
+            the server-reported token count.
+
+        Raises
+        ------
+        requests.HTTPError
+            on rejection.
         """
         response = requests.post(
             self._url,
@@ -177,14 +225,23 @@ class VLLMTokenizer:
 def for_model(model: str) -> Tokenizer:
     """Return the tokenizer of the checkpoint served under alias `model`.
 
-    `model` is a key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's
-    ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only quantized repos.
     Memoized per alias for the life of the process.
 
     ``ec2`` is imported inside this function, not at module scope: its ``EC2_*`` constants are
     read from ``os.environ`` at import time, so an eager import would freeze them for a notebook
     that imports the induction stack before ``load_dotenv(keys.env)`` (see
     ``smolbench.evals.experiment``).
+
+    Parameters
+    ----------
+    model : str
+        A key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's
+        ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only quantized repos.
+
+    Returns
+    -------
+    Tokenizer
+        the tokenizer for the served checkpoint.
     """
     from smolbench.evals.providers import ec2
 
@@ -240,9 +297,23 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     """Pick a whitespace pad atom that costs ~1 token per repetition.
 
     Probed empirically against the given tokenizer's merge table rather than hard-coded, since
-    the model under test supplies the tokenizer. Raises ValueError if no candidate in
-    :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that silently saturates,
-    leaving the length-control arm shorter than the arm it controls for.
+    the model under test supplies the tokenizer.
+
+    Parameters
+    ----------
+    tokenizer : Tokenizer
+        Tokenizer whose merge table is probed.
+
+    Returns
+    -------
+    str
+        the qualifying whitespace pad atom.
+
+        Raises
+        ------
+        ValueError
+        if no candidate in :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that
+        silently saturates, leaving the length-control arm shorter than the arm it controls for.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -338,4 +409,3 @@ def token_matched_noise_prompt(
         f"{lo}..{hi} repetitions). The unit's token cost is not fine-grained "
         "enough to hit an exact target; add a better one to WHITESPACE_UNITS."
     )
-

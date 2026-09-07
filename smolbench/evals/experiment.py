@@ -219,8 +219,17 @@ class Experiment:
         """Print per-info-type totals for ``model`` over every stored replicate.
 
         A pure ``ReplicateHarness.summarize`` delegate: no environment applied,
-        no EC2/inference cost, but S3 reads under an S3-backed store. ``model``
-        must be a key of ``archetype_tags``; ``KeyError`` otherwise.
+        no EC2/inference cost, but S3 reads under an S3-backed store.
+
+        Parameters
+        ----------
+        model : str
+            must be a key of ``archetype_tags``.
+
+        Raises
+        ------
+        KeyError
+            otherwise.
         """
         self.harness.summarize(model)
 

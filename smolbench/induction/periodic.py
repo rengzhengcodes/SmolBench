@@ -558,6 +558,22 @@ def get_periodic_quiz(
     A ``dict``, not a positional tuple: a caller reads a specific arm by name
     (``quizzes["extens"]``), so reordering `conditions` can never silently
     relabel an existing caller's arms.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        configuration for the periodic prompt sequence.
+    prompter : Prompter
+        prompter that generates the periodic prompts.
+    tokenizer : Tokenizer
+        tokenizer for rendering prompts.
+    conditions : Mapping[str, Condition], optional
+        named experimental conditions.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -577,6 +593,22 @@ def get_periodic_numeric_quiz(
 
     See :func:`get_periodic_quiz`'s docstring for the return shape rationale;
     this is the same wrapper over ``Numeric`` instead of ``ToF``.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        configuration for the periodic prompt sequence.
+    prompter : Prompter
+        prompter that generates the periodic prompts.
+    tokenizer : Tokenizer
+        tokenizer for rendering prompts.
+    conditions : Mapping[str, Condition], optional
+        named experimental conditions.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -602,11 +634,24 @@ def tof_membership_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], bool]]:
     """Yield True/False queries of the form "Does label appear at position pos?"
 
-    Yields ``({"pos": ..., "label": ...}, answer)`` pairs: at most
-    ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
-    if the pattern admits fewer of either polarity), sampled without replacement
-    under ``seed``; period-1 labels are excluded as trivially True. Both mappings
-    come from :func:`generate_sequence`.
+    Both mappings come from :func:`generate_sequence`.
+
+    Parameters
+    ----------
+    period_to_label : PeriodToLabel
+        mapping from each period to its label.
+    pos_to_compound : PosToCompound
+        mapping from positions to generated compounds.
+    seed : int
+        random seed for sampling queries.
+
+    Yields
+    ------
+    Tuple[Dict[str, str], bool]
+        ``({"pos": ..., "label": ...}, answer)`` pairs: at most
+        ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
+        if the pattern admits fewer of either polarity), sampled without replacement
+        under ``seed``; period-1 labels are excluded as trivially True.
     """
     rng = np.random.default_rng(seed)
 
@@ -643,14 +688,26 @@ def numeric_count_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], int]]:
     """Yield count queries of the form "How many positions 1..seq_len contain label?"
 
-    Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label,
-    the answer being floor(seq_len / period) -- always exact, since seq_len
-    is the lcm of the harmonic periods on every pathway.
-
     Deterministic and ignores `seed`: the parameter stays so this generator
     stays substitutable for the sibling :func:`tof_membership_query_gen`
     under ``Prompter.query_gen``'s one shared protocol. A seed still reaches
     the output indirectly, since ``PeriodicConfig`` draws the labels with it.
+
+    Parameters
+    ----------
+    period_to_label : PeriodToLabel
+        mapping from each period to its label.
+    pos_to_compound : PosToCompound
+        mapping from positions to generated compounds.
+    seed : int
+        seed accepted by the shared query-generator protocol.
+
+    Yields
+    ------
+    Tuple[Dict[str, str], int]
+        one ``({"label": ..., "seq_len": ...}, answer)`` pair per label,
+        the answer being floor(seq_len / period) -- always exact, since seq_len
+        is the lcm of the harmonic periods on every pathway.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
