@@ -11,6 +11,8 @@ instead of leaving it null.
 import io
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
@@ -46,7 +48,7 @@ TAG = tag_for(MODEL)
 SEED = 1776
 
 
-def _marks(model=MODEL, date=COLLECTED_AT) -> Marks:
+def _marks(model: str = MODEL, date: datetime = COLLECTED_AT) -> Marks:
     """Two marks the old parser refused, so a regrade genuinely changes them."""
     return Marks(
         model=model,
@@ -60,7 +62,7 @@ def _marks(model=MODEL, date=COLLECTED_AT) -> Marks:
 
 
 @pytest.fixture
-def local_study(tmp_path, monkeypatch):
+def local_study(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point regrade at a local, one-condition results tree and return its rep path.
 
     Redirects both module-level anchors (``REPO``, ``STUDIES``) so the real
@@ -78,7 +80,9 @@ def local_study(tmp_path, monkeypatch):
     return tmp_path / "results" / f"{TAG}_intens" / f"rep_{SEED}.yaml"
 
 
-def test_write_preserves_server_config_and_date(local_study, capsys):
+def test_write_preserves_server_config_and_date(
+    local_study: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """--write re-grades the scores and leaves every other field alone."""
     before = Marks.load(local_study)
     assert before.server_config == SERVER_CONFIG  # fixture sanity
@@ -101,7 +105,7 @@ def test_write_preserves_server_config_and_date(local_study, capsys):
     assert "recovered" not in capsys.readouterr().err  # no stderr noise
 
 
-def test_a_local_regrade_retires_the_file_it_replaces(local_study):
+def test_a_local_regrade_retires_the_file_it_replaces(local_study: Path) -> None:
     """The replaced file survives under the SUPERSEDED name (rename, not overwrite), and the new one names it via ``regraded_from``."""
     original = local_study.read_bytes()
 
@@ -117,7 +121,7 @@ def test_a_local_regrade_retires_the_file_it_replaces(local_study):
         None, TAG, "intens") == [SEED]
 
 
-def test_dry_run_writes_nothing(local_study):
+def test_dry_run_writes_nothing(local_study: Path) -> None:
     """Without --write the tree is byte-identical afterwards."""
     original = local_study.read_bytes()
     assert regrade.main([]) == 0
@@ -137,30 +141,34 @@ class FakeS3Client:
     writes nothing.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.objects: dict = {}
         self.puts: list = []  # (Key, Body) of every put_object, in order
 
-    def fresh_client(self, service, region=None):
+    def fresh_client(self, service: str, region: str | None = None) -> "FakeS3Client":
         return self
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket: str, Key: str, Body: bytes) -> None:
         self.puts.append((Key, Body))
         self.objects[Key] = Body
 
-    def get_object(self, Bucket, Key):
+    def get_object(self, Bucket: str, Key: str) -> dict[str, io.BytesIO]:
         if Key not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def list_objects_v2(self, Bucket, Prefix="", MaxKeys=None):
+    def list_objects_v2(
+        self, Bucket: str, Prefix: str = "", MaxKeys: int | None = None
+    ) -> dict[str, list[dict[str, str | int]]]:
         keys = sorted(k for k in self.objects if k.startswith(Prefix))[:MaxKeys]
         return {"Contents": [{"Key": k, "Size": len(self.objects[k])} for k in keys]}
 
-    def get_paginator(self, operation_name):
+    def get_paginator(self, operation_name: str) -> "FakeS3Client":
         return self
 
-    def paginate(self, Bucket=None, Prefix="", **kwargs):
+    def paginate(
+        self, Bucket: str | None = None, Prefix: str = "", **kwargs: Any
+    ) -> Any:
         for key in sorted(k for k in self.objects if k.startswith(Prefix)):
             yield {"Contents": [{"Key": key, "Size": len(self.objects[key])}]}
         yield {}
@@ -173,7 +181,7 @@ LOGGED_KEY = f"induction/{MODEL}/seed={SEED}/intens--{LOGGED_TS}.yaml"
 
 
 @pytest.fixture
-def s3_study(tmp_path, monkeypatch):
+def s3_study(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeS3Client:
     """Point regrade at an S3-backed tree served by a `FakeS3Client`.
 
     ``repo_root`` redirects to ``tmp_path`` so ``resolve_store``'s hermeticity
@@ -192,7 +200,9 @@ def s3_study(tmp_path, monkeypatch):
     return client
 
 
-def test_an_s3_backed_tree_is_regraded_through_the_store(s3_study, capsys):
+def test_an_s3_backed_tree_is_regraded_through_the_store(
+    s3_study: FakeS3Client, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The refusal is gone: a regrade is two writes to the append-only log, with the old object left untouched."""
     original = s3_study.objects[LOGGED_KEY]
 
@@ -224,18 +234,19 @@ def test_an_s3_backed_tree_is_regraded_through_the_store(s3_study, capsys):
     assert f"{TAG}_intens" in out, "the per-condition table still names the arm"
 
 
-def test_an_s3_dry_run_writes_nothing(s3_study, capsys):
+def test_an_s3_dry_run_writes_nothing(
+    s3_study: FakeS3Client, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The dry run reports the same tallies without a single write."""
     assert regrade.main([]) == 0
     assert s3_study.puts == []
     assert "Dry run only" in capsys.readouterr().out
 
 
-def test_the_arm_filter_still_selects_on_s3(s3_study):
+def test_the_arm_filter_still_selects_on_s3(s3_study: FakeS3Client) -> None:
     """--arm is a condition filter, so an unselected arm is never written."""
     assert regrade.main(["--write", "--arm", "extens"]) == 0
     assert s3_study.puts == []
     assert regrade.main(["--write", "--arm", "intens"]) == 0
     assert len(s3_study.puts) == 2
-
 

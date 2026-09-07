@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Callable, Optional, Sequence
 
 from smolbench.evals.results_store import ReplicateAddress, resolve_store
@@ -42,7 +43,7 @@ from smolbench.evals.results_store import ReplicateAddress, resolve_store
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
-def _load_fleet_config():
+def _load_fleet_config() -> ModuleType:
     # By hand, and only for `_config` itself: `load_module_by_path` is a
     # function ON that module, and `scripts/fleet` is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
@@ -256,7 +257,7 @@ def fleet_image_digest() -> Optional[str]:
 # `--dry-run` plan also calls.
 
 
-def _deduction_driver():
+def _deduction_driver() -> ModuleType:
     """Load ``notebooks/deduction/run_study.py``, lazily -- never at module scope.
 
     That module pulls `tiktoken` and, at module scope, runs env-dependent

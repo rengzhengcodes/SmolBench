@@ -15,10 +15,11 @@ import argparse
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Optional
 
 
-def _fleet_status():
+def _fleet_status() -> ModuleType:
     """Load the sibling ``fleet_status.py`` lazily, through `_config`'s loader.
 
     `_config` is bootstrapped by hand here, same as every fleet module: it
@@ -37,10 +38,14 @@ def _fleet_status():
 def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -> list[dict]:
     """Terminate every instance in `rows`, region by region; returns the rows actually terminated.
 
-    rows: skips any row whose `experiment_tag` lacks the study's `scaling-`
-    prefix, the safety re-check against terminating another experiment's box.
-    client_factory: `None` builds a boto3 client lazily per region, keeping
-    boto3 out of the import chain.
+    Parameters
+    ----------
+    rows : list[dict]
+        skips any row whose `experiment_tag` lacks the study's `scaling-`
+        prefix, the safety re-check against terminating another experiment's box.
+    client_factory : Optional[Any], optional
+        `None` builds a boto3 client lazily per region, keeping boto3 out of
+        the import chain.
     """
     fleet_status = _fleet_status()
     factory = client_factory or fleet_status._default_client_factory

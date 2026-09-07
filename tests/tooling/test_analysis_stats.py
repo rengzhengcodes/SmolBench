@@ -4,14 +4,17 @@ import argparse
 import itertools
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from types import ModuleType
 
 import numpy as np
 import pytest
 
 from tests._paths import NOTEBOOKS, load_by_path
 
-def _load(name: str, rel: str):
+def _load(name: str, rel: str) -> ModuleType:
     mod = load_by_path(name, NOTEBOOKS / rel)
     sys.modules[Path(rel).stem] = mod  # siblings import each other by bare name
     return mod
@@ -31,7 +34,7 @@ for _bare in ("power_analysis", "error_bars", "hint_vs_noise", "paired_analysis"
 
 import _power_common as pc  # noqa: E402
 
-def test_shared_scaffolding_wiring():
+def test_shared_scaffolding_wiring() -> None:
     assert (ind_pa.RESULTS_DIR, ded_pa.RESULTS_DIR) == (
         NOTEBOOKS / "induction" / "results", NOTEBOOKS / "deduction" / "results")
     # None means "not reached within the cap"; a number prints bare, even at/past it
@@ -59,7 +62,9 @@ FLOOR_P = 2 / 2 ** 30  # the seed sign-flip test's resolution floor at S = 30
     [FLOOR_P, FLOOR_P, FLOOR_P, 0.02, 0.02, 0.9],
     [0.05 / 6, 0.05 / 6, 0.05 / 4, 0.05 / 4, 0.3, 0.3]],
     ids=["floor-ties", "threshold-ties"])
-def test_tie_order_invariance_and_stepping(procedure, stepped, pvals):
+def test_tie_order_invariance_and_stepping(
+    procedure: Callable[[np.ndarray], np.ndarray], stepped: list[bool], pvals: list[float]
+) -> None:
     base = np.array(pvals, dtype=float)
     reject = procedure(base)
     for perm in map(list, itertools.permutations(range(base.size))):
@@ -74,7 +79,7 @@ def test_tie_order_invariance_and_stepping(procedure, stepped, pvals):
     ([2, -1, 1], 6 / 8),                   # |T| >= 2 in 6 of 8
     ([2, 1, 0], 2 / 4),                    # a zero cluster doubles tail and denominator
     ([0, 0, 0], 1.0), ([], 1.0)])          # |T_obs| = 0 matches all; empty family guarded
-def test_signflip_exact_p_matches_hand_enumeration(diffs, expected):
+def test_signflip_exact_p_matches_hand_enumeration(diffs: list[int], expected: float) -> None:
     p = paired.signflip_exact_p(diffs)
     assert p == pytest.approx(expected)
     assert p == pytest.approx(paired.signflip_exact_p([-d for d in diffs]))
@@ -83,7 +88,7 @@ def test_signflip_exact_p_matches_hand_enumeration(diffs, expected):
         assert p >= 2 / 2 ** len(diffs)
 
 @pytest.mark.parametrize("nb, nc", [(0, 0), (1, 0), (2, 3), (3, 1), (5, 1), (4, 4), (7, 2)])
-def test_signflip_equals_mcnemar_for_every_singleton_split(nb, nc):
+def test_signflip_equals_mcnemar_for_every_singleton_split(nb: int, nc: int) -> None:
     # with one item per cluster the cluster test is exact McNemar
     a = np.array([1] * nb + [0] * nc + [1, 0, 1, 0], dtype=bool)
     b = np.array([0] * nb + [1] * nc + [1, 0, 1, 0], dtype=bool)
@@ -93,7 +98,7 @@ def test_signflip_equals_mcnemar_for_every_singleton_split(nb, nc):
         # hand anchor: 6 concordant cancel; |T| >= 2 for 1+4+4+1 = 10 of 16
         assert p == pytest.approx(0.625)
 
-def test_paired_signal_reductions():
+def test_paired_signal_reductions() -> None:
     # ``sum_s d_s == b - c``, and one cell per block reduces to exact McNemar
     a = np.array([1, 1, 0, 1, 0, 0, 1, 1, 1], dtype=bool)  # 3 seeds of 3 items
     b = np.array([0, 1, 1, 1, 0, 1, 0, 1, 0], dtype=bool)
@@ -113,17 +118,24 @@ def test_paired_signal_reductions():
     null = np.array([[1, 1], [0, 0], [1, 1], [0, 0]], dtype=np.int32)
     assert error_bars.block_signflip_p(null, models, contrasts, B=1_000, seed=1)[0] == 1.0
 
-def _cell(model, theorem, verdict, k=1, rung="stepk:1", replicate_idx=0):
+def _cell(
+    model: str, theorem: str, verdict: str | None, k: int = 1,
+    rung: str = "stepk:1", replicate_idx: int = 0
+) -> dict[str, Any]:
     return {"kind": "cell", "model": model, "theorem_id": theorem, "k": k,
             "rung": rung, "replicate_idx": replicate_idx, "verdict": verdict}
 
-def _write_rows(path: Path, *cells, model="m1", extra=()):
+def _write_rows(
+    path: Path, *cells: tuple[str, ...], model: str = "m1", extra: tuple[Any, ...] | list[Any] = ()
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = [_cell(model, c[0], c[-1], rung=c[1] if len(c) == 3 else "stepk:1") for c in cells]
     path.write_text("".join(json.dumps(r) + "\n" for r in rows + list(extra)))
     return path
 
-def _lane(root: Path, model: str, *cells, extra=()):
+def _lane(
+    root: Path, model: str, *cells: tuple[str, ...], extra: tuple[Any, ...] | list[Any] = ()
+) -> Path:
     return _write_rows(root / model / "verified_rows.jsonl", *cells, model=model, extra=extra)
 
 @pytest.mark.parametrize("verdicts, expected", [
@@ -131,10 +143,12 @@ def _lane(root: Path, model: str, *cells, extra=()):
     (["replay_failed", "failure"], 0),
     (["success", "failure"], 1), (["failure", "success"], 0),  # earliest wins, both ways
     (["exception", "replay_failed"], None), ([], None)])       # unmeasurable is None, not 0
-def test_grade_verdicts_is_the_row_rule(verdicts, expected):
+def test_grade_verdicts_is_the_row_rule(verdicts: list[str], expected: int | None) -> None:
     assert ded_pa.grade_verdicts(verdicts) == expected
 
-def test_all_loaders_share_the_one_row_rule(tmp_path, monkeypatch):
+def test_all_loaders_share_the_one_row_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # thm_a graded in both lanes, thm_b only in m2, thm_c nowhere, plus rows to ignore
     _lane(tmp_path, "m1", ("thm_a", "exception"), ("thm_a", "success"), ("thm_a", "failure"),
           ("thm_b", "exception"), ("thm_b", "replay_failed"), ("thm_c", "replay_failed"),
@@ -157,7 +171,9 @@ def test_all_loaders_share_the_one_row_rule(tmp_path, monkeypatch):
     assert meta["n_unresolved"] == {"m1": 1, "m2": 1}
     assert set(meta["own_denominator"].values()) == {2}
 
-def test_rule_cost_is_measured_per_lane_not_per_added_cell(tmp_path, monkeypatch):
+def test_rule_cost_is_measured_per_lane_not_per_added_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A lane gaining two cells reports the cost of removing both; 0/0 stays None."""
     _lane(tmp_path, "m1", ("t1", "stepk:1", "success"), ("t2", "stepk:1", "success"),
           ("t3", "stepk:1", "exception"), ("t4", "hint:2", "exception"))
@@ -175,7 +191,7 @@ def test_rule_cost_is_measured_per_lane_not_per_added_cell(tmp_path, monkeypatch
     # hint:2 held exactly one cell and it was added: the drop rate is undefined
     assert by_rung["hint:2"]["rung_drop"] is None
 
-def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
+def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path: Path) -> None:
     path = _write_rows(tmp_path / "verified_rows.jsonl",
                       ("t1", "hint:3", "exception"), ("t1", "hint:3", "success"),
                       ("t1", "noise:3", "success"), ("t1", "noise:3", "failure"),
@@ -193,7 +209,9 @@ def test_hint_vs_noise_loader_applies_the_same_rule(tmp_path):
     (0.00, 0.00, "information"), (0.10, 0.24, "information"),  # under the 25% criterion
     (0.10, 0.25, "COLLAPSE"), (0.90, 0.99, "COLLAPSE"),  # inclusive; noise broken wins
     (0.30, 0.10, "extens degraded")])  # otherwise the extens arm's own rate labels it
-def test_extens_vs_noise_mechanism_labels(nc_extens, nc_noise, expected):
+def test_extens_vs_noise_mechanism_labels(
+    nc_extens: float, nc_noise: float, expected: str
+) -> None:
     assert extens_vs_noise.mechanism(nc_extens, nc_noise) == expected
 
 SUPERSEDED_NAME = "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
@@ -205,7 +223,7 @@ SUPERSEDED_NAME = "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
     ("stale_check_rows.jsonl", False), ("unBROKEN.jsonl", False), ("rows_STALEMATE.jsonl", False),
     # matched on the BASENAME, not on any parent directory
     ("SUPERSEDED_audit/verified_rows.jsonl", False)])
-def test_retired_artifact_markers(tmp_path, name, refused):
+def test_retired_artifact_markers(tmp_path: Path, name: str, refused: bool) -> None:
     from smolbench.deduction.lean import runner
     paths = [tmp_path / "verified_rows.jsonl", tmp_path / name]
     if not refused:
@@ -226,7 +244,7 @@ def _theorem_dir_with(root: Path, filename: str) -> Path:
          "ground_truth_remaining_from_k": "exact rfl", "true_premises_at_k": []}))
     return theorem_dir
 
-def test_retired_artifacts_are_refused_by_every_scanner(tmp_path):
+def test_retired_artifacts_are_refused_by_every_scanner(tmp_path: Path) -> None:
     from smolbench.deduction.lean import cli, runner
     rows = _write_rows(tmp_path / SUPERSEDED_NAME, ("t1", "success"))
     with pytest.raises(SystemExit, match="SUPERSEDED"):
@@ -245,7 +263,7 @@ def test_retired_artifacts_are_refused_by_every_scanner(tmp_path):
     runner.write_theorem_summary(clean)                # subject of this test
     assert (clean / "summary.md").exists()
 
-def test_lane_outcomes_refuses_ungraded_rows(tmp_path):
+def test_lane_outcomes_refuses_ungraded_rows(tmp_path: Path) -> None:
     _lane(tmp_path / "rows", "m1", ("t1", "success"), ("t2", "unverified"))
     with pytest.raises(SystemExit, match="unverified"):
         error_bars.lane_outcomes(tmp_path / "rows", "m1")

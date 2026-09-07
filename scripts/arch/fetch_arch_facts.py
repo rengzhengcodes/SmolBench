@@ -284,8 +284,11 @@ _FetchFn = Callable[[str, str, str], Tuple[Optional[Any], Optional[str], Optiona
 def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
     """Fetch every roster rung and build both the raw and normalised records.
 
-    fetch: injectable in place of `_fetch` so offline tests can pass a fake
-        with no network access, without monkeypatching module globals.
+    Parameters
+    ----------
+    fetch : Optional[_FetchFn], optional
+        injectable in place of `_fetch` so offline tests can pass a fake with
+        no network access, without monkeypatching module globals.
     """
     fetch = fetch or _fetch
     roster = {
@@ -405,6 +408,7 @@ def cross_check(facts: Dict[str, Any]) -> List[str]:
 
 
 def main() -> int:
+    """Fetch architecture facts and optionally cross-check their pinned revisions."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true",
                         help="cross-check against tests/fixtures/roster_configs.json "

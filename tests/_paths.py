@@ -13,6 +13,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -27,7 +28,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 NOTEBOOKS = REPO_ROOT / "notebooks"
 
 
-def load_by_path(name: str, path: Path, *, snapshot_env: bool = False):
+def load_by_path(name: str, path: Path, *, snapshot_env: bool = False) -> ModuleType:
     """Execute `path` as a module registered under `name`.
 
     Registered in ``sys.modules`` BEFORE exec, because a PEP 563 dataclass in

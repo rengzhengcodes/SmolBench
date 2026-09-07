@@ -8,6 +8,9 @@ and ``--check`` runs before either output file is written.
 
 import json
 import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,17 +34,22 @@ CONFIG = {
 }
 
 
-def _fake_fetch(calls, *, resolved=None, payload=CONFIG):
+def _fake_fetch(
+    calls: list[tuple[str, str, str]],
+    *,
+    resolved: str | None = None,
+    payload: dict[str, Any] = CONFIG,
+) -> Callable[[str, str, str], tuple[dict[str, Any], str, str | None]]:
     """Build a recording fetch stub. `resolved` None means "the pin held"."""
 
-    def fetch(repo, filename, revision):
+    def fetch(repo: str, filename: str, revision: str) -> tuple[dict[str, Any], str, str | None]:
         calls.append((repo, filename, revision))
         return dict(payload), (resolved or revision), None
 
     return fetch
 
 
-def test_every_fetch_uses_the_spec_pinned_sha_not_main():
+def test_every_fetch_uses_the_spec_pinned_sha_not_main() -> None:
     """The URL used to be resolve/main, so a force-push re-based every figure."""
     calls = []
     bundle = faf.collect(fetch=_fake_fetch(calls))
@@ -63,7 +71,7 @@ def test_every_fetch_uses_the_spec_pinned_sha_not_main():
         assert bundle["facts"][key]["revision"] == pinned  # the fake resolved the pin
 
 
-def test_spec_revision_refuses_an_unpinned_spec():
+def test_spec_revision_refuses_an_unpinned_spec() -> None:
     """No fallback to a moving branch: an unpinned rung cannot be audited."""
     assert faf.spec_revision({"hf_model_id": "r", "vllm_args": ["--revision", "abc123"]}) == "abc123"
     with pytest.raises(ValueError):
@@ -75,7 +83,7 @@ def test_spec_revision_refuses_an_unpinned_spec():
         assert len(faf.spec_revision(spec)) == 40
 
 
-def test_cross_check_reports_a_moved_pin():
+def test_cross_check_reports_a_moved_pin() -> None:
     """pinned != resolved is the vendor-force-push signal the old check missed."""
     moved = faf.collect(fetch=_fake_fetch([], resolved="f" * 40))
     problems = faf.cross_check(moved["facts"])
@@ -90,7 +98,11 @@ def test_cross_check_reports_a_moved_pin():
     assert any("missing revision" in p for p in faf.cross_check(held["facts"]))
 
 
-def test_check_runs_before_the_outputs_are_written(tmp_path, monkeypatch, capsys):
+def test_check_runs_before_the_outputs_are_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """A failed cross-check must leave the previous audit trail untouched."""
     raw, facts = tmp_path / "arch_configs_raw.json", tmp_path / "arch_facts.json"
     monkeypatch.setattr(faf, "_RAW_PATH", raw)

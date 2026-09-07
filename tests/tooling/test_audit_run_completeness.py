@@ -9,6 +9,7 @@ as ``-1``.
 
 import os
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -27,13 +28,16 @@ FAKE_DRIVER = SimpleNamespace(
 class FakeStore:
     """``list_seeds`` only, the one method `audit_induction` uses."""
 
-    def __init__(self, seeds_by_cell=None, default=(), raises=None):
+    def __init__(
+        self, seeds_by_cell: dict[tuple[str, str], tuple[int, ...]] | None = None,
+        default: tuple[int, ...] | range = (), raises: Exception | None = None
+    ) -> None:
         self.seeds_by_cell = seeds_by_cell or {}
         self.default = default
         self.raises = raises
         self.calls = []
 
-    def list_seeds(self, model, tag, info):
+    def list_seeds(self, model: str, tag: str, info: str) -> list[int]:
         self.calls.append((model, tag, info))
         if self.raises is not None:
             raise self.raises
@@ -41,7 +45,7 @@ class FakeStore:
 
 
 @pytest.fixture
-def fake_driver(monkeypatch):
+def fake_driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Stand in for notebooks/induction/run_study.py.
 
     Injected rather than loaded, so this never runs the driver's
@@ -53,7 +57,9 @@ def fake_driver(monkeypatch):
     return FAKE_DRIVER
 
 
-def test_a_cell_with_nothing_landed_is_examined_and_reported(fake_driver):
+def test_a_cell_with_nothing_landed_is_examined_and_reported(
+    fake_driver: SimpleNamespace
+) -> None:
     """An empty store used to yield {} and read as 'ok'."""
     store = FakeStore()  # every cell empty
     gaps, examined = audit.audit_induction(store=store)
@@ -72,43 +78,43 @@ def test_a_cell_with_nothing_landed_is_examined_and_reported(fake_driver):
     ]
 
 
-def test_a_complete_grid_reports_nothing(fake_driver):
+def test_a_complete_grid_reports_nothing(fake_driver: SimpleNamespace) -> None:
     gaps, examined = audit.audit_induction(store=FakeStore(default=(0, 1, 2)))
     assert (gaps, examined) == ({}, 4)
 
 
-def test_an_extra_seed_is_named_not_counted_negative(fake_driver):
+def test_an_extra_seed_is_named_not_counted_negative(fake_driver: SimpleNamespace) -> None:
     """`EXPECTED_SEEDS - len(seeds)` turned a 4th seed into missing = -1."""
     store = FakeStore(seeds_by_cell={("model-a", "zero"): (0, 1, 2, 3)}, default=(0, 1, 2))
     gaps, _examined = audit.audit_induction(store=store)
     assert gaps == {"model-a": {"zero": {"missing": [], "unexpected": [3]}}}
 
 
-def test_a_short_cell_names_the_missing_seed(fake_driver):
+def test_a_short_cell_names_the_missing_seed(fake_driver: SimpleNamespace) -> None:
     store = FakeStore(seeds_by_cell={("model-b", "intens"): (0, 2)}, default=(0, 1, 2))
     gaps, _examined = audit.audit_induction(store=store)
     assert gaps == {"model-b": {"intens": {"missing": [1], "unexpected": []}}}
 
 
-def test_an_unknown_model_is_refused(fake_driver):
+def test_an_unknown_model_is_refused(fake_driver: SimpleNamespace) -> None:
     """A typo'd selection must fail loudly, not audit nothing and pass."""
     with pytest.raises(SystemExit) as excinfo:
         audit.audit_induction(models=["model-a", "typo"], store=FakeStore())
     assert "typo" in str(excinfo.value)
 
 
-def test_an_empty_selection_examines_nothing(fake_driver):
+def test_an_empty_selection_examines_nothing(fake_driver: SimpleNamespace) -> None:
     """The zero-cell case main() refuses as 'AUDITED NOTHING'."""
     assert audit.audit_induction(models=[], store=FakeStore()) == ({}, 0)
 
 
-def test_a_store_failure_propagates(fake_driver):
+def test_a_store_failure_propagates(fake_driver: SimpleNamespace) -> None:
     """A credentials/throttling error must never read as 'no seeds landed'."""
     with pytest.raises(RuntimeError):
         audit.audit_induction(store=FakeStore(raises=RuntimeError("AccessDenied")))
 
 
-def test_the_real_roster_is_the_grid():
+def test_the_real_roster_is_the_grid() -> None:
     """os.environ is restored after, since the driver's import-time load_dotenv would otherwise leak into later tests."""
     saved = dict(os.environ)
     try:
@@ -128,17 +134,17 @@ def test_the_real_roster_is_the_grid():
 # ---------------------------------------------------------------------------
 # both S3 seams resolve the bucket from one place
 # ---------------------------------------------------------------------------
-def test_both_audits_follow_smolbench_results_s3(monkeypatch):
+def test_both_audits_follow_smolbench_results_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     """A redirected results store must reach both the induction and deduction halves."""
     from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET
 
     listed = []
 
     class FakeS3:
-        def get_paginator(self, name):
+        def get_paginator(self, name: str) -> "FakeS3":
             return self
 
-        def paginate(self, Bucket, Prefix, Delimiter):
+        def paginate(self, Bucket: str, Prefix: str, Delimiter: str) -> Any:
             listed.append(Bucket)
             return iter(())
 

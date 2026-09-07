@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Verdict: reclaim or crash
@@ -122,20 +123,12 @@ class Decision:
     reason: str
 
 
-def decide_relaunch(verdict: str, *, attempt: int, rc) -> Decision:
+def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     """Decide whether to relaunch after a `verdict` exit, and after how long.
 
     The ONE place either supervisor's relaunch cap is enforced: both call it
     with their own per-lane/per-shard counter, so a cap raised here applies
     to both, and neither can quietly carry a second, laxer rule.
-
-    attempt: the POST-increment count of relaunches of this verdict's kind
-    for this lane/shard (the caller bumps its counter first, then asks), so
-    the cap is exceeded once `attempt` exceeds the relevant maximum.
-    rc: the child's exit status, interpolated into `Decision.reason` for the
-    operator. Deliberately untyped and never compared against: callers
-    differ in what they can supply (`subprocess.Popen.poll()`, or an inferred
-    0/1 for an adopted process with no waitable handle).
 
     A crash relaunches immediately (``delay_seconds == 0.0``) rather than
     backing off: it isn't a capacity shortage, so waiting buys nothing, and
@@ -147,6 +140,18 @@ def decide_relaunch(verdict: str, *, attempt: int, rc) -> Decision:
     a `verdict` outside ``"reclaim"``/``"crash"``: silently treating an
     unrecognised verdict as one of the two would apply the wrong cap to a
     real failure.
+
+    Parameters
+    ----------
+    attempt : int
+        the POST-increment count of relaunches of this verdict's kind
+        for this lane/shard (the caller bumps its counter first, then asks), so
+        the cap is exceeded once `attempt` exceeds the relevant maximum.
+    rc : int | None
+        the child's exit status, interpolated into `Decision.reason` for the
+        operator. never compared against: callers differ in what they can
+        supply (`subprocess.Popen.poll()`, or an inferred 0/1 for an adopted
+        process with no waitable handle).
     """
     if verdict == "reclaim":
         if attempt > MAX_RECLAIM_RELAUNCHES:
@@ -191,7 +196,9 @@ def decide_relaunch(verdict: str, *, attempt: int, rc) -> Decision:
     )
 
 
-def count_and_decide(counters, log_tail: str, instance_present: bool, rc) -> Decision:
+def count_and_decide(
+    counters: Any, log_tail: str, instance_present: bool, rc: int | None
+) -> Decision:
     """Classify a dead child's exit, bump the matching counter, and decide.
 
     The sequence both supervisors share; only the scheduling of

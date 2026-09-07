@@ -8,6 +8,8 @@ assertion fail. `test_unknown_calls_are_recorded` is its positive control.
 """
 
 import json
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
@@ -24,13 +26,13 @@ class FakeAwsClient:
     ``create_bucket`` behind the first.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list = []
 
-    def _record(self, op, **kwargs):
+    def _record(self, op: str, **kwargs: Any) -> None:
         self.calls.append((op, kwargs))
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """Record any operation this fake doesn't implement, and return ``{}``.
 
         Dunder lookups are refused, so copy, pickle and pytest introspection
@@ -39,39 +41,39 @@ class FakeAwsClient:
         if name.startswith("__"):
             raise AttributeError(name)
 
-        def _unknown(**kwargs):
+        def _unknown(**kwargs: Any) -> dict[Any, Any]:
             self._record(name, **kwargs)
             return {}
 
         return _unknown
 
-    def create_bucket(self, **kwargs):
+    def create_bucket(self, **kwargs: Any) -> None:
         self._record("create_bucket", **kwargs)
 
-    def put_public_access_block(self, **kwargs):
+    def put_public_access_block(self, **kwargs: Any) -> None:
         self._record("put_public_access_block", **kwargs)
 
-    def put_bucket_versioning(self, **kwargs):
+    def put_bucket_versioning(self, **kwargs: Any) -> None:
         self._record("put_bucket_versioning", **kwargs)
 
-    def create_policy(self, **kwargs):
+    def create_policy(self, **kwargs: Any) -> dict[str, dict[str, str]]:
         self._record("create_policy", **kwargs)
         return {"Policy": {"Arn": f"arn:aws:iam::414266451290:policy/{kwargs['PolicyName']}"}}
 
-    def attach_group_policy(self, **kwargs):
+    def attach_group_policy(self, **kwargs: Any) -> None:
         self._record("attach_group_policy", **kwargs)
 
-    def list_policies(self, **kwargs):
+    def list_policies(self, **kwargs: Any) -> dict[str, list[Any]]:
         self._record("list_policies", **kwargs)
         return {"Policies": []}
 
-    def get_caller_identity(self, **kwargs):
+    def get_caller_identity(self, **kwargs: Any) -> dict[str, str]:
         self._record("get_caller_identity", **kwargs)
         return {"Account": "414266451290"}
 
 
 @pytest.fixture
-def fake_aws(monkeypatch):
+def fake_aws(monkeypatch: pytest.MonkeyPatch) -> FakeAwsClient:
     """Routes every client construction to one FakeAwsClient.
 
     Clears ``SMOLBENCH_RESULTS_S3`` so the default-bucket tests below do not
@@ -80,7 +82,7 @@ def fake_aws(monkeypatch):
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
     client = FakeAwsClient()
 
-    def _fresh_client(service, region=None):
+    def _fresh_client(service: str, region: str | None = None) -> FakeAwsClient:
         client.calls.append(("fresh_client", {"service": service, "region": region}))
         return client
 
@@ -88,19 +90,19 @@ def fake_aws(monkeypatch):
     return client
 
 
-def _kwargs_for(calls, op):
+def _kwargs_for(calls: list[tuple[str, dict[str, Any]]], op: str) -> list[dict[str, Any]]:
     """Return every recorded kwargs mapping for `op`, in call order."""
     return [kwargs for name, kwargs in calls if name == op]
 
 
-def _raiser(code, operation):
-    def _fail(**kwargs):
+def _raiser(code: str, operation: str) -> Callable[..., None]:
+    def _fail(**kwargs: Any) -> None:
         raise ClientError({"Error": {"Code": code, "Message": code}}, operation)
 
     return _fail
 
 
-def test_policy_document_grants_list_on_bucket_and_rw_on_contents():
+def test_policy_document_grants_list_on_bucket_and_rw_on_contents() -> None:
     doc = p.policy_document("some-bucket")
     assert doc["Version"] == "2012-10-17"
     assert doc["Statement"] == [
@@ -111,14 +113,14 @@ def test_policy_document_grants_list_on_bucket_and_rw_on_contents():
     ]
 
 
-def test_unknown_calls_are_recorded(fake_aws):
+def test_unknown_calls_are_recorded(fake_aws: FakeAwsClient) -> None:
     """Positive control for `FakeAwsClient.__getattr__` (see the module docstring)."""
     assert fake_aws.create_policy_version(PolicyArn="arn:x", PolicyDocument="{}") == {}
     assert ("create_policy_version",
             {"PolicyArn": "arn:x", "PolicyDocument": "{}"}) in fake_aws.calls
 
 
-def test_main_provisions_bucket_policy_and_group_attachment(fake_aws):
+def test_main_provisions_bucket_policy_and_group_attachment(fake_aws: FakeAwsClient) -> None:
     assert p.main([]) == 0
     calls = fake_aws.calls
 
@@ -150,7 +152,9 @@ def test_main_provisions_bucket_policy_and_group_attachment(fake_aws):
     assert attach["PolicyArn"].endswith("policy/SmolbenchResultsBucketRW")
 
 
-def test_main_provisions_the_bucket_smolbench_results_s3_names(fake_aws, monkeypatch):
+def test_main_provisions_the_bucket_smolbench_results_s3_names(
+    fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The provisioner targets the configured store, not a stale literal."""
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/analysis/2026-08-16")
     assert p.main([]) == 0
@@ -160,14 +164,18 @@ def test_main_provisions_the_bucket_smolbench_results_s3_names(fake_aws, monkeyp
     ) == p.policy_document("redirected-bucket")
 
 
-def test_ensure_bucket_tolerates_already_owned(fake_aws, monkeypatch):
+def test_ensure_bucket_tolerates_already_owned(
+    fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A re-run must not fail on the bucket it already owns."""
     monkeypatch.setattr(fake_aws, "create_bucket",
                         _raiser("BucketAlreadyOwnedByYou", "CreateBucket"))
     p.ensure_bucket(fake_aws, "any-bucket")
 
 
-def test_ensure_policy_reuses_an_existing_policy_without_new_versions(fake_aws, monkeypatch):
+def test_ensure_policy_reuses_an_existing_policy_without_new_versions(
+    fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Create-or-reuse, never create a new version (the 5-version cap)."""
     existing = "arn:aws:iam::414266451290:policy/SmolbenchResultsBucketRW"
     monkeypatch.setattr(fake_aws, "create_policy",
@@ -178,7 +186,10 @@ def test_ensure_policy_reuses_an_existing_policy_without_new_versions(fake_aws, 
     assert not any(c[0] == "create_policy_version" for c in fake_aws.calls)
 
 
-def test_main_returns_nonzero_and_explains_on_access_denied(fake_aws, monkeypatch, capsys):
+def test_main_returns_nonzero_and_explains_on_access_denied(
+    fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
     """A scoped EC2-only key must produce the actionable message, not a traceback."""
     monkeypatch.setattr(fake_aws, "create_bucket", _raiser("AccessDenied", "CreateBucket"))
     code = p.main([])

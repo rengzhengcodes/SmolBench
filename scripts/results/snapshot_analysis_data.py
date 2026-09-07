@@ -23,7 +23,7 @@ import concurrent.futures
 import json
 import logging
 import pathlib
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from smolbench.evals.results_store import resolve_results_location
 
@@ -46,14 +46,14 @@ PROVENANCE_DOCS = (
 )
 
 
-def _s3():
+def _s3() -> Any:
     import boto3
 
     return boto3.client("s3")
 
 
 def iter_source_keys(
-    client, *, bucket: str, deduction_prefix: Optional[str] = None
+    client: Any, *, bucket: str, deduction_prefix: Optional[str] = None
 ) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
@@ -85,7 +85,7 @@ def iter_source_keys(
     return out
 
 
-def copy_one(client, bucket: str, src_key: str, dest_key: str, size: int) -> str:
+def copy_one(client: Any, bucket: str, src_key: str, dest_key: str, size: int) -> str:
     """Copy one object server-side within `bucket`, and verify its size.
 
     A within-bucket copy: source and destination are the same resolved bucket.
@@ -113,6 +113,7 @@ def copy_one(client, bucket: str, src_key: str, dest_key: str, size: int) -> str
 
 
 def main() -> int:
+    """Copy the analysis snapshot and write its computed manifest."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dest", default="analysis/2026-08-16",
                     help="destination prefix inside the study bucket")
@@ -163,7 +164,7 @@ def main() -> int:
     counts = collections.Counter()
     done = 0
 
-    def _one(item):
+    def _one(item: Tuple[str, str, str, int]) -> str:
         leg, model, key, size = item
         prefix = "induction/" if leg == "induction" else deduction_prefix
         tail = key[len(prefix):].split("/", 1)[1]

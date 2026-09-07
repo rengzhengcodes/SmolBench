@@ -7,6 +7,8 @@ next to the data instead.
 
 import json
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -20,37 +22,39 @@ DATASET_LITERALS = ("74 cells", "232", "712", "68/30/50", "5.9", "24.6")
 class FakeS3:
     """Records every call; serves one tiny listing per prefix."""
 
-    def __init__(self, listings):
+    def __init__(self, listings: dict[str, list[dict[str, Any]]]) -> None:
         self.listings = listings
         self.puts: list = []
         self.copies: list = []
         self.listed: list = []
 
     # -- paginator ------------------------------------------------------
-    def get_paginator(self, name):
+    def get_paginator(self, name: str) -> "FakeS3":
         assert name == "list_objects_v2"
         return self
 
-    def paginate(self, Bucket, Prefix, **kwargs):
+    def paginate(self, Bucket: str, Prefix: str, **kwargs: Any) -> list[dict[str, Any]]:
         self.listed.append((Bucket, Prefix))
         return [{"Contents": self.listings.get(Prefix, [])}]
 
     # -- object ops -----------------------------------------------------
-    def head_object(self, Bucket, Key):
+    def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:
         raise RuntimeError("absent")  # nothing is already present at the destination
 
-    def copy_object(self, **kwargs):
+    def copy_object(self, **kwargs: Any) -> None:
         self.copies.append(kwargs)
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket: str, Key: str, Body: bytes) -> None:
         self.puts.append((Bucket, Key, Body))
 
 
 @pytest.fixture
-def run_snapshot(monkeypatch):
+def run_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[..., tuple[FakeS3, dict[str, Any]]]:
     """Drive `main` against a fake S3 and return (fake, manifest)."""
 
-    def _run(*argv, bucket_env=None):
+    def _run(*argv: str, bucket_env: str | None = None) -> tuple[FakeS3, dict[str, Any]]:
         if bucket_env is None:
             monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
         else:
@@ -65,7 +69,7 @@ def run_snapshot(monkeypatch):
                  "analysis/t/deduction/glm-4.7/all_rows.jsonl": 20}
         seen: set = set()
 
-        def head_object(Bucket, Key):
+        def head_object(Bucket: str, Key: str) -> dict[str, int]:
             if Key in seen:
                 return {"ContentLength": sizes[Key]}
             seen.add(Key)
@@ -84,7 +88,9 @@ def run_snapshot(monkeypatch):
     return _run
 
 
-def test_manifest_carries_only_computed_fields(run_snapshot):
+def test_manifest_carries_only_computed_fields(
+    run_snapshot: Callable[..., tuple[FakeS3, dict[str, Any]]],
+) -> None:
     """No prose notes; the provenance pointer is built from what was written."""
     fake, manifest = run_snapshot()
     assert "notes" not in manifest
@@ -106,7 +112,7 @@ def test_manifest_carries_only_computed_fields(run_snapshot):
     assert "analysis/t/provenance/SNAPSHOT_NOTES.md" in put_provenance
 
 
-def test_the_reading_rules_ship_as_a_dated_document():
+def test_the_reading_rules_ship_as_a_dated_document() -> None:
     """The counts moved into git, where they can be dated and reviewed."""
     doc = REPO_ROOT / "notebooks" / "deduction" / "analysis" / "SNAPSHOT_NOTES.md"
     assert "notebooks/deduction/analysis/SNAPSHOT_NOTES.md" in snap.PROVENANCE_DOCS
@@ -120,7 +126,9 @@ def test_the_reading_rules_ship_as_a_dated_document():
         assert literal not in source, literal
 
 
-def test_the_bucket_follows_smolbench_results_s3(run_snapshot):
+def test_the_bucket_follows_smolbench_results_s3(
+    run_snapshot: Callable[..., tuple[FakeS3, dict[str, Any]]],
+) -> None:
     """A redirected results store must not silently miss this script."""
     fake, manifest = run_snapshot(bucket_env="s3://redirected-bucket/base")
     assert manifest["source_bucket"] == "redirected-bucket"
