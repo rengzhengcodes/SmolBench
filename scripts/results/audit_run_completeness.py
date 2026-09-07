@@ -214,7 +214,7 @@ def audit_induction(
     -------
     Tuple[Dict[str, Dict[str, Dict[str, List[int]]]], int]
         ``({model: {arm: {"missing": [...], "unexpected": [...]}}}, examined)``,
-        omitting a ``(model, arm)`` whose seed set exactly matches the expected range.
+        omitting a ``(model, arm)`` whose seed set exactly matches the expected range
         ``examined`` is the grid cells walked, so a caller can refuse to call a
         zero-cell grid a pass (see `main`'s ``--induction`` block).
     """

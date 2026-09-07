@@ -350,7 +350,7 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        Raw fetch results and normalised architecture facts.
+        Fetch timestamp, raw fetch results and normalised architecture facts.
     """
     fetch = fetch or _fetch
     roster = {
