@@ -59,7 +59,7 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     api_key : str
         Bearer token for the request.
     check_status : bool
-        True raises before parsing (``list_models``: AWS, EC2); False parses
+        True raises before parsing (``list_models``: AWS, EC2); False parses.
         regardless of status (``get_model_context_length``: OpenRouter, Prime
         Intellect, where an error body instead raises in the caller's own
         indexing). Keyword-only with NO default, so the split can never be
@@ -105,7 +105,7 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
     Returns
     -------
     bool
-        whether the request should be retried.
+        Whether the request should be retried.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -133,7 +133,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Returns
     -------
     dict
-        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":
+        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":.
         {...}, "model": ...}``. ``reasoning_content`` is present only if the
         server sent reasoning deltas; ``usage`` only if the request sent
         ``stream_options: {"include_usage": true}``, else empty (tolerated
@@ -142,7 +142,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
-        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or
+        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or.
         any ``finish_reason`` (truncated body) -- retryable, like the
         non-streamed transport's parse failure on a truncated body.
     """
@@ -441,7 +441,7 @@ class ChatClient:
         Returns
         -------
         bool
-        the parsed flag value.
+            The parsed flag value.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()

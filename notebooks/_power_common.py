@@ -24,7 +24,7 @@ def results_dir(file: str, up: int = 0) -> Path:
     file : str
         Caller file path anchoring the results directory.
     up : int
-        levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
+        Levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a.
         caller in a role subdirectory like ``notebooks/induction/analysis/``.
 
     Returns
@@ -41,14 +41,14 @@ def fmt_r(r: int | None, max_replicates: int) -> str:
     Parameters
     ----------
     r : int | None
-        ``None`` means the scan cap was reached without hitting the target; renders as
+        ``None`` means the scan cap was reached without hitting the target; renders as.
         ``">max_replicates"``.
     max_replicates : int
-        scan cap displayed when the target was not reached.
+        Scan cap displayed when the target was not reached.
 
     Returns
     -------
     str
-        formatted replicate count.
+        Formatted replicate count.
     """
     return f">{max_replicates}" if r is None else str(r)

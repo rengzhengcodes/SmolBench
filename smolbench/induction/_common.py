@@ -269,7 +269,7 @@ def quizzes_from_prompts(
     qna_cls : type[QnA]
         Question-and-answer class for each rendered prompt.
     conditions : Iterable[str]
-        Typed structurally (any string iterable) rather than as
+        Typed structurally (any string iterable) rather than as.
         ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
         would be a cycle; passing the mapping directly still works since
         iterating it yields its keys in the wanted order.

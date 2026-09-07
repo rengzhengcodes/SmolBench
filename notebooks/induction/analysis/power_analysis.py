@@ -442,7 +442,7 @@ def replicates_needed(
     Returns
     -------
     _SizingScan
-        ``(needed, curve)``: `needed` maps power target -> smallest R reaching it
+        ``(needed, curve)``: `needed` maps power target -> smallest R reaching it.
         (`None` if no R within `MAX_REPLICATES` does); `curve` maps each scanned R ->
         its simulated power, freshly copied per call so a caller mutating it cannot
         corrupt the memo.
@@ -546,7 +546,7 @@ def equivalence_replicates(
     Returns
     -------
     int | None
-        The smallest R in ``range(1, MAX_REPLICATES + 1)`` reaching 80% equivalence
+        The smallest R in ``range(1, MAX_REPLICATES + 1)`` reaching 80% equivalence.
         power, else `None`.
     """
     from scipy.stats import norm
@@ -814,7 +814,7 @@ def _print_sizing_rows(
     results : list[_SizingResult]
         Sizing results to render.
     outcomes : dict[tuple[str, str], np.ndarray]
-        Pilot marks used to compute observed rates.
+        Pilot marks for the observed-rate columns.
     label_w : int
         Shared width of the contrast-label column.
     """
@@ -929,7 +929,7 @@ def observed_accuracy(
     Returns
     -------
     list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
-        ``[(family, [(model, [(info, mean_accuracy), ...]), ...]), ...]``, in
+        ``[(family, [(model, [(info, mean_accuracy), ...]), ...]), ...]``, in.
         `FAMILIES` and `INFOS` order.
     """
     return [
@@ -1041,14 +1041,14 @@ def primary_contrasts_table(
     Returns
     -------
     dict
-        With keys `results`, `r_star`, `n_censored`, `label_w` (max
+        With keys `results`, `r_star`, `n_censored`, `label_w` (max.
         contrast-name length, for column alignment), and `n_ladder` (row index
         separating the 84 ladder contrasts from the 126 info-arm contrasts).
 
     Raises
     ------
     SystemExit
-        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES: the
+        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES: the.
         pilot cannot size R at all, so nothing downstream can be recommended.
     """
     contrasts = build_primary_contrasts()
@@ -1103,7 +1103,7 @@ def omnibus_gates(
     Returns
     -------
     list[tuple[str, float, float]]
-        ``(family, power_at_r_star, power_at_1)`` per family, in `FAMILIES`
+        ``(family, power_at_r_star, power_at_1)`` per family, in `FAMILIES`.
         order.
     """
     rows = []
@@ -1153,7 +1153,7 @@ def secondary_contrasts_table(
     Returns
     -------
     dict
-        With ``results`` (`build_secondary_contrasts` order) and ``label_w``
+        With ``results`` (`build_secondary_contrasts` order) and ``label_w``.
         (max contrast-name length, for alignment).
     """
     contrasts = build_secondary_contrasts()
@@ -1193,7 +1193,7 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
     Returns
     -------
     dict
-        With ``r_star``, ``n_censored``, ``extra_runs`` (additional quiz runs
+        With ``r_star``, ``n_censored``, ``extra_runs`` (additional quiz runs.
         beyond the pilot's single run), and ``extra_questions``
         (``extra_runs * N_HARMONICS``).
     """
@@ -1256,7 +1256,7 @@ def equivalence_checks(
     Returns
     -------
     dict
-        With:
+        With:.
         fisher : list of (name, fisher_power), for every PRIMARY contrast whose
             R(80%) was reached, input order.
         near_ties : list of (name, key_a, key_b), for contrasts whose R(80%) was

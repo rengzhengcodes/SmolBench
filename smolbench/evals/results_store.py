@@ -79,12 +79,12 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Returns
     -------
     tuple[str, str]
-        bucket and base prefix.
+        Bucket and base prefix.
 
     Raises
     ------
     ValueError
-        on a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment -- a name S3
+        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment -- a name S3.
         never accepts, which would give a store that can never find what it writes.
     """
     if not uri.startswith("s3://"):
@@ -147,7 +147,7 @@ def format_run_ts(when: datetime) -> str:
     Returns
     -------
     str
-        formatted UTC timestamp.
+        Formatted UTC timestamp.
     """
     return when.strftime("%Y%m%dT%H%M%SZ")
 
@@ -164,16 +164,15 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     Parameters
     ----------
     results_dir : Path
-        must resolve under ``repo_root()`` (`resolve_store`, the only production caller, has
-        already confirmed that).
+        Results directory under ``repo_root()``.
     prefix : str, optional
-        folds in as a sub-level with exactly one trailing ``"_"`` stripped:
+        Non-empty `prefix` folds in as a sub-level with exactly one trailing ``"_"`` stripped:.
         ``"induction/one_hop"``.
 
     Returns
     -------
     str
-        experiment segment for an S3 log key.
+        Experiment segment for an S3 log key.
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -548,12 +547,12 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     Parameters
     ----------
     rel : str
-        key remainder with its leading log prefix removed.
+        Key remainder with its leading log prefix removed.
 
     Returns
     -------
     Optional[tuple[int, str, str]]
-        parsed seed, info, and run timestamp, or None.
+        Parsed seed, info, and run timestamp, or None.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -862,7 +861,7 @@ class S3ResultsStore(ResultsStore):
         model : Optional[str]
             S3 model key dimension; None returns an empty list.
         tag : str
-            ignored S3-incompatible tag dimension.
+            Unused on this backend.
         info : str
             condition information dimension.
 
@@ -912,10 +911,10 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
-        need not exist -- resolved non-strictly, since an S3-first run may never create
+        Need not exist -- resolved non-strictly, since an S3-first run may never create.
         its local results directory.
     prefix : str, optional
-        becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+        Becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
 
     Returns
     -------
@@ -968,7 +967,7 @@ def _etag_md5(etag: Optional[str]) -> Optional[str]:
     Returns
     -------
     Optional[str]
-        unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None for
+        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None for.
         missing/falsy or multipart (``<hex>-<partcount>``, never an MD5 of the bytes), which a
         caller must treat as "assume different" (download).
     """
@@ -989,21 +988,21 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     Parameters
     ----------
     resolved_dir : Path
-        resolved local results directory.
+        Resolved local results directory.
     rel : str
-        destination path relative to `resolved_dir`.
+        Destination path relative to `resolved_dir`.
     key : str
         S3 key being downloaded.
 
     Returns
     -------
     Path
-        validated destination path.
+        Validated destination path.
 
     Raises
     ------
     ValueError
-        naming `key` when the destination equals or lies outside `resolved_dir`, before the
+        Naming `key` when the destination equals or lies outside `resolved_dir`, before the.
         caller mkdirs or writes, so a refused key leaves no trace.
     """
     candidate = (resolved_dir / rel).resolve()
@@ -1042,10 +1041,10 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     results_dir : Path
         Local directory receiving downloaded logs.
     tags : Mapping[str, str]
-        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
+        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't.
         supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
     prefix : str, optional
-        forwarded to :func:`experiment_name`, and used in each local directory name.
+        Forwarded to :func:`experiment_name`, and used in each local directory name.
 
     Returns
     -------
@@ -1161,7 +1160,7 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None, optional
-        command-line arguments passed to the parser.
+        Command-line arguments passed to the parser.
 
     Returns
     -------

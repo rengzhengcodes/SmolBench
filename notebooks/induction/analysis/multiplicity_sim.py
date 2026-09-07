@@ -81,7 +81,7 @@ def dump(tag: str) -> None:
     Parameters
     ----------
     tag : str
-        checkpoint label written to the log.
+        Checkpoint label written to the log.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as fh:
@@ -96,16 +96,16 @@ def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     Parameters
     ----------
     succ : np.ndarray
-        success counts across rungs and strata.
+        Success counts across rungs and strata.
     n : int
-        Must be identical across every rung and stratum -- the equal-n
+        Must be identical across every rung and stratum -- the equal-n.
         precondition behind the covariance collapse used in
         ``power_analysis.gcmh_reject``.
 
     Returns
     -------
     np.ndarray
-        generalized CMH statistics.
+        Generalized CMH statistics.
     """
     n_rungs = succ.shape[-2]
     total_n = float(n_rungs * n)
@@ -172,7 +172,7 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     rng : np.random.Generator
         Random generator for latent draws.
     icc : float, optional
-        share of each arm's latent variance from a per-replicate latent
+        Share of each arm's latent variance from a per-replicate latent.
         shared by that replicate's `K_HARM` items, modelling a replicate's shared
         seed (PART 3's "independent" variant). Must be in ``[0.0, 1.0)`` -- 1.0
         would make every item in a replicate identical, collapsing the `K_HARM`
@@ -209,11 +209,11 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     Parameters
     ----------
     rng : np.random.Generator
-        random-number generator for simulated counts.
+        Random-number generator for simulated counts.
     n_sims : int, optional
-        number of simulations per baseline rate and gap.
+        Number of simulations per baseline rate and gap.
     step : float, optional
-        accuracy-gap increment to scan.
+        Accuracy-gap increment to scan.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -257,11 +257,11 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     Parameters
     ----------
     rng : np.random.Generator
-        random-number generator for simulated marks.
+        Random-number generator for simulated marks.
     n_sims : int, optional
-        total simulations per grid configuration.
+        Total simulations per grid configuration.
     chunk : int, optional
-        bounds peak memory.
+        Bounds peak memory.
     """
     print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
     from scipy.stats import norm
@@ -334,9 +334,9 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
-        random-number generator for simulated counts.
+        Random-number generator for simulated counts.
     n_sims : int, optional
-        simulations per rate scenario.
+        Simulations per rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     # The same 28 trend tests as PART 4's reduced family, corrected over that
@@ -408,26 +408,26 @@ def _paired_powers(
     Parameters
     ----------
     p_a : float
-        baseline success rate for arm A.
+        Baseline success rate for arm A.
     delta : float
-        success-rate gap subtracted from `p_a` for arm B.
+        Success-rate gap subtracted from `p_a` for arm B.
     rho : float
-        latent correlation between matched arm marks.
+        Latent correlation between matched arm marks.
     reps : int
-        replicates in each simulation.
+        Replicates in each simulation.
     n_sims : int
-        number of simulated datasets.
+        Number of simulated datasets.
     rng : np.random.Generator
-        random-number generator for matched marks.
+        Random-number generator for matched marks.
     stats : bool, optional
         Whether to compute the mark-level diagnostics.
     icc : float, optional
-        within-replicate latent correlation.
+        Within-replicate latent correlation.
 
     Returns
     -------
     tuple
-        ``(power_unpaired, power_paired, phi_binary, agreement)``; the last
+        ``(power_unpaired, power_paired, phi_binary, agreement)``; the last.
         two are `None` when ``stats=False``.
     """
     p_b = p_a - delta
@@ -504,13 +504,13 @@ def part2(
     Parameters
     ----------
     rng : np.random.Generator
-        random-number generator for simulated marks.
+        Random-number generator for simulated marks.
     n_sims : int, optional
-        number of simulations for the main power calculations.
+        Number of simulations for the main power calculations.
     search_sims : int, optional
-        number of simulations at each equivalent-R search rung.
+        Number of simulations at each equivalent-R search rung.
     cap : int, optional
-        upper replicate-count bound recorded with each result.
+        Upper replicate-count bound recorded with each result.
     """
     # Imported here, not at module scope, for the same reason as
     # study_design_effect: the simulation must not gain a results-reading
@@ -644,16 +644,16 @@ def _stepup(
     Parameters
     ----------
     sortedp : np.ndarray
-        p-values sorted in ascending order per row.
+        P-values sorted in ascending order per row.
     order : np.ndarray
-        indices that map sorted p-values to input order.
+        Indices that map sorted p-values to input order.
     thresholds : np.ndarray
-        per-rank rejection thresholds.
+        Per-rank rejection thresholds.
 
     Returns
     -------
     np.ndarray
-        rejection mask in input order.
+        Rejection mask in input order.
     """
     m = sortedp.shape[1]
     ok = sortedp <= thresholds
@@ -724,9 +724,9 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
-        random-number generator for simulated counts.
+        Random-number generator for simulated counts.
     n_sims : int, optional
-        number of simulated p-value families.
+        Number of simulated p-value families.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()

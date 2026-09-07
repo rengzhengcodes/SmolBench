@@ -371,7 +371,7 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     Raises
     ------
     ValueError
-        If `condition` is ``omit_range=True`` and ``prompter.range_free_template`` is
+        If `condition` is ``omit_range=True`` and ``prompter.range_free_template`` is.
         ``None``.
     """
     if not condition.omit_range:
@@ -437,7 +437,7 @@ def get_periodic_prompts(
     prompter : Prompter
         Prompt templates and query generator.
     tokenizer : Tokenizer
-        Must be the model under test's own, since it defines every padded arm's token
+        Must be the model under test's own, since it defines every padded arm's token.
         target.
     conditions : Mapping[str, Condition], optional
         Information conditions to render.
@@ -450,7 +450,7 @@ def get_periodic_prompts(
     Raises
     ------
     ValueError
-        Once, before any query is rendered, if some condition's ``match_tokens_to`` names a
+        Once, before any query is rendered, if some condition's ``match_tokens_to`` names a.
         condition absent from `conditions` or one that is itself padded (a padded arm's own
         count isn't available yet to pad against); propagated from
         :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the noise arm's
@@ -562,18 +562,18 @@ def get_periodic_quiz(
     Parameters
     ----------
     config : PeriodicConfig
-        configuration for the periodic prompt sequence.
+        Configuration for the periodic prompt sequence.
     prompter : Prompter
-        prompter that generates the periodic prompts.
+        Prompter that generates the periodic prompts.
     tokenizer : Tokenizer
-        tokenizer for rendering prompts.
+        Tokenizer for rendering prompts.
     conditions : Mapping[str, Condition], optional
-        named experimental conditions.
+        Named experimental conditions.
 
     Returns
     -------
     Dict[str, Quiz]
-        quizzes keyed by condition name.
+        Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -597,18 +597,18 @@ def get_periodic_numeric_quiz(
     Parameters
     ----------
     config : PeriodicConfig
-        configuration for the periodic prompt sequence.
+        Configuration for the periodic prompt sequence.
     prompter : Prompter
-        prompter that generates the periodic prompts.
+        Prompter that generates the periodic prompts.
     tokenizer : Tokenizer
-        tokenizer for rendering prompts.
+        Tokenizer for rendering prompts.
     conditions : Mapping[str, Condition], optional
-        named experimental conditions.
+        Named experimental conditions.
 
     Returns
     -------
     Dict[str, Quiz]
-        quizzes keyed by condition name.
+        Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -639,16 +639,16 @@ def tof_membership_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
-        mapping from each period to its label.
+        Mapping from each period to its label.
     pos_to_compound : PosToCompound
-        mapping from positions to generated compounds.
+        Mapping from positions to generated compounds.
     seed : int
-        random seed for sampling queries.
+        Random seed for sampling queries.
 
     Yields
     ------
     Tuple[Dict[str, str], bool]
-        ``({"pos": ..., "label": ...}, answer)`` pairs: at most
+        ``({"pos": ..., "label": ...}, answer)`` pairs: at most.
         ``MAX_QUERIES_PER_POLARITY`` True queries and equally many False ones (fewer
         if the pattern admits fewer of either polarity), sampled without replacement
         under ``seed``; period-1 labels are excluded as trivially True.
@@ -696,16 +696,16 @@ def numeric_count_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
-        mapping from each period to its label.
+        Mapping from each period to its label.
     pos_to_compound : PosToCompound
-        mapping from positions to generated compounds.
+        Mapping from positions to generated compounds.
     seed : int
-        seed accepted by the shared query-generator protocol.
+        Seed accepted by the shared query-generator protocol.
 
     Yields
     ------
     Tuple[Dict[str, str], int]
-        one ``({"label": ..., "seq_len": ...}, answer)`` pair per label,
+        One ``({"label": ..., "seq_len": ...}, answer)`` pair per label,.
         the answer being floor(seq_len / period) -- always exact, since seq_len
         is the lcm of the harmonic periods on every pathway.
     """

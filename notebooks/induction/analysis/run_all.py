@@ -44,12 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        command-line arguments to parse.
+        Command-line arguments to parse.
 
     Returns
     -------
     int
-        always 0: each script's own `main()` raises rather than returning a failure code.
+        Always 0: each script's own `main()` raises rather than returning a failure code.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",

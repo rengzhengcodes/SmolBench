@@ -237,13 +237,13 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
-        A key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's
+        A key of ``ec2.EC2_DEPLOY_SPECS``; the tokenizer comes from that spec's.
         ``hf_model_id``, or its ``tokenizer_hf_id`` override for weights-only quantized repos.
 
     Returns
     -------
     Tokenizer
-        the tokenizer for the served checkpoint.
+        The tokenizer for the served checkpoint.
     """
     from smolbench.evals.providers import ec2
 
@@ -309,12 +309,12 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Returns
     -------
     str
-        the qualifying whitespace pad atom.
+        The qualifying whitespace pad atom.
 
-        Raises
-        ------
-        ValueError
-        if no candidate in :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that
+    Raises
+    ------
+    ValueError
+        If no candidate in :data:`WHITESPACE_UNITS` qualifies: a loud failure beats a pad that.
         silently saturates, leaving the length-control arm shorter than the arm it controls for.
     """
     for unit in WHITESPACE_UNITS:
@@ -329,6 +329,8 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
         "whitespace pad cannot be sized against it. Add a unit this "
         "tokenizer does not merge to WHITESPACE_UNITS."
     )
+
+
 
 
 def token_matched_noise_prompt(
@@ -353,16 +355,16 @@ def token_matched_noise_prompt(
     Parameters
     ----------
     render : Callable[[str], str]
-        called repeatedly, so it must be cheap and deterministic.
+        Called repeatedly, so it must be cheap and deterministic.
     context : str
         Context to pad with whitespace.
     target_tokens : int
         Exact token count for the rendered prompt.
     tokenizer : Tokenizer
-        must be the model under test's, or the control de-calibrates by however much the
+        Must be the model under test's, or the control de-calibrates by however much the.
         two tokenizers disagree.
     unit : str | None
-        defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
+        Defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when.
         padding many prompts with one tokenizer.
 
     Returns
@@ -420,3 +422,4 @@ def token_matched_noise_prompt(
         f"{lo}..{hi} repetitions). The unit's token cost is not fine-grained "
         "enough to hit an exact target; add a better one to WHITESPACE_UNITS."
     )
+

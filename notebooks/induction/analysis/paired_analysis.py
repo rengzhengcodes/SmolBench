@@ -81,7 +81,7 @@ def load_marks() -> tuple[dict, dict, dict]:
     Raises
     ------
     SystemExit
-        If a condition yields no replicate seeds at all (call
+        If a condition yields no replicate seeds at all (call.
         ``InductionExperiment.harness.sync_down()`` first).
     """
     correct: dict = {}
@@ -187,7 +187,7 @@ def aligned(
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray]
-        Matched marks for both arms; `seed_index` records each item's
+        Matched marks for both arms; `seed_index` records each item's.
         replicate, needed to resample whole replicates.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
@@ -295,7 +295,7 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
     Returns
     -------
     float
-        p-value of the repo's continuity-corrected 2x2xK CMH. 1.0 if no
+        P-value of the repo's continuity-corrected 2x2xK CMH. 1.0 if no.
         stratum has enough items to contribute variance.
     """
     # An item's offset inside its own seed block is its harmonic, since items
@@ -416,7 +416,7 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     Returns
     -------
     float | None
-        Observed / independence-assumed variance ratio, or ``None`` when no
+        Observed / independence-assumed variance ratio, or ``None`` when no.
         measurable ratio exists.
     """
     d = a.astype(float) - b.astype(float)
