@@ -107,7 +107,8 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
     Parameters
     ----------
     text : str
-        The whole text, since a binder's arrow or comma may fall on the next line.
+        The whole text, since a binder's arrow or comma may fall on the next
+        line.
     start : int
         Position just past `fun` or `λ`.
 
@@ -379,7 +380,8 @@ def _apply_trailing(text: str, rng: random.Random) -> tuple[str, list[Relic]] | 
     Returns
     -------
     tuple[str, list[Relic]] | None
-        Corrupted text and injected trailing-comma relics, or `None` when no line applies.
+        Corrupted text and injected trailing-comma relics, or `None` when no
+        line applies.
     """
     eligible = _trailing_eligible_lines(text)
     if not eligible:
@@ -547,8 +549,7 @@ _REPAIR_INSTRUCTIONS = (
 def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     """Append a previous-attempt repair block to a user turn.
 
-    The layout's exact bytes are a coordination
-    contract, so no parameters vary it.
+    The layout's exact bytes are a coordination contract, so no parameters vary it.
 
     Parameters
     ----------
@@ -557,7 +558,8 @@ def build_repair_user(user: str, attempt: str, error: str | None = None) -> str:
     attempt : str
         Previous Lean tactic attempt.
     error : str | None, optional
-        `synth_error`'s output or a real replay error; its block is omitted when `None`.
+        Typically `synth_error`'s output or a real replay error; its block is omitted when
+        `None`.
 
     Returns
     -------

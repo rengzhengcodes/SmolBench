@@ -162,19 +162,19 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     Parameters
     ----------
     manifest_dir : Path
-        directory containing the manifest and referenced artifacts
+        Directory containing the manifest and referenced artifacts.
     relpath : str
-        manifest reference to hash
+        Manifest reference to hash.
 
     Returns
     -------
     str
-        sha256 as 64 lowercase hex chars
+        Sha256 as 64 lowercase hex chars.
 
     Raises
     ------
     ResolutionError
-        if the reference does not resolve.
+        If the reference does not resolve.
     """
     digest = hashlib.sha256()
     with _open_reference(manifest_dir, relpath) as stream:

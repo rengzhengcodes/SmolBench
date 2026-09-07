@@ -152,7 +152,8 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     Returns
     -------
     dict[str, list[int]]
-        Candidate text mapped to row indices; a missing or ``None`` candidate groups under ``""``.
+        Candidate text mapped to row indices; a missing or ``None`` candidate groups under
+        ``""``.
     """
     groups: dict[str, list[int]] = {}
     for index in indices:
@@ -316,10 +317,10 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     Returns
     -------
     tuple[list[dict], int]
-        ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the matching PRIOR row at
-        that identity's next unclaimed occurrence, else the current row; then every unmatched prior
-        row ("orphan") appended in its original order. This keeps the output's row order identical
-        to ``all_rows.jsonl`` regardless of a prior pass's own order or length.
+        ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the matching PRIOR row
+        at that identity's next unclaimed occurrence, else the current row; then every unmatched
+        prior row ("orphan") appended in its original order. This keeps the output's row order
+        identical to ``all_rows.jsonl`` regardless of a prior pass's own order or length.
     """
     prior_by_identity: dict[tuple, collections.deque[tuple[int, dict]]] = (
         collections.defaultdict(collections.deque)
@@ -780,19 +781,19 @@ def verify_run(
     no_resume : bool, optional
         Whether to discard prior verification rows.
     verifier : Any, optional
-        Verifier instance; `verifier=None` resolves :func:`_default_verifier`, but only once a group
-        is pending -- an empty pending set or `dry_run` never imports it.
+        Verifier instance; `verifier=None` resolves :func:`_default_verifier`, but only once a
+        group is pending -- an empty pending set or `dry_run` never imports it.
 
     Returns
     -------
     int
-        ``0`` on success, including "nothing to do", partial passes (``--limit``, ``--theorem``,
-        ``--dry-run``), and a full pass whose only unresolved groups ended entirely on
-        :data:`_NEVER_MEASURED_VERDICTS` (that's a separate diagnostic, not folded into ``2`` -- see
-        the gate comment in the body for why a corpus-stable population must not flip the return
-        code); ``1`` if the run has no ``all_rows.jsonl``; ``2`` if a full pass left a cell on the
-        ``"unverified"`` sentinel after its final upload (the output is still uploaded -- the gate
-        reports, never withholds).
+        ``0`` on success, including "nothing to do", partial passes (``--limit``,
+        ``--theorem``, ``--dry-run``), and a full pass whose only unresolved groups ended
+        entirely on :data:`_NEVER_MEASURED_VERDICTS` (that's a separate diagnostic, not folded
+        into ``2`` -- see the gate comment in the body for why a corpus-stable population must
+        not flip the return code); ``1`` if the run has no ``all_rows.jsonl``; ``2`` if a full
+        pass left a cell on the ``"unverified"`` sentinel after its final upload (the output is
+        still uploaded -- the gate reports, never withholds).
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)

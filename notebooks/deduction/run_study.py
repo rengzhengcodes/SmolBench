@@ -818,7 +818,7 @@ def main(argv: list[str] | None = None) -> None:
     Parameters
     ----------
     argv : list[str] | None, optional
-        A parameter so tests can call this without a subprocess.
+        Command-line arguments, so tests can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description=(

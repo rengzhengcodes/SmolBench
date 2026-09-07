@@ -465,25 +465,25 @@ def declaration_text(root: Path, file_path: str, start_line: int, max_lines: int
     Parameters
     ----------
     root : Path
-        mathlib4 checkout root.
+        Mathlib4 checkout root.
     file_path : str
-        corpus-side Lean source path.
+        Corpus-side Lean source path.
     start_line : int
         1-indexed line at which to begin the slice.
     max_lines : int, optional
-        caps the return so a missing stop keyword can't drag a whole file in.
+        Caps the return (default 400) so a missing stop keyword can't drag a whole file in.
 
     Returns
     -------
     str
-        declaration source slice.
+        Declaration source slice.
 
     Raises
     ------
     FileNotFoundError
-        (naming `file_path`, the corpus-side value) if the source is missing.
+        (Naming `file_path`, the corpus-side value) if the source is missing.
     ValueError
-        if `start_line` is below 1 or past the end of the file.
+        If `start_line` is below 1 or past the end of the file.
     """
     source = Path(root) / file_path
     if not source.is_file():
@@ -800,8 +800,8 @@ def open_session(
     Returns
     -------
     tuple[ReplSession, int]
-    The live session and the proof-state id of the stub's ``sorry`` (the state tactic 0 of the
-    proof should apply to).
+        The live session and the proof-state id of the stub's ``sorry`` (the state tactic 0 of
+        the proof should apply to).
 
     Raises
     ------
@@ -810,7 +810,8 @@ def open_session(
         import (never a bare `RuntimeError`: `verify.verify_proof_tail` reads that as
         ``"replay_failed"``, a claim about the corpus -- see the translation comment below).
     StatementError
-        If the declaration has no statement/proof boundary, or its stub didn't elaborate.
+        If the declaration has no statement/proof boundary, or its stub didn't elaborate (a
+        non-retried `ReplError` subclass).
     """
     # `mathlib_root` signals misconfiguration with a plain `RuntimeError` -- right for a
     # direct caller, pinned by its own tests, but wrong once it travels toward
@@ -878,7 +879,7 @@ def _open_proof_state(
     Returns
     -------
     int
-    State id of the elaborated stub's ``sorry``.
+        State id of the elaborated stub's ``sorry``.
 
     Raises
     ------

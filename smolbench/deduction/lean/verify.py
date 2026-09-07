@@ -270,8 +270,8 @@ def try_tail(
     tail : str
         Candidate proof-tail text.
     theorem_name : str
-        Caller-supplied (neither `session` nor `state_at_k` identifies a theorem) and recorded
-        verbatim.
+        Caller-supplied (neither `session` nor `state_at_k` identifies a theorem) and
+        recorded verbatim.
 
     Returns
     -------
@@ -326,7 +326,7 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     same checkpoint. The session always closes, whether the `with`-block
     completes, raises, or the prefix replay raises first.
 
-    A ground-truth problem, distinct from a tail-verification failure, which is
+    That is a ground-truth problem, distinct from a tail-verification failure, which is
     reported as a `ProofResult` verdict, never raised.
 
     Parameters
@@ -349,7 +349,8 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
         If `k` is outside ``[0, len(bt.traced_tactics))``, before any session
         opens.
     RuntimeError
-        If a prefix tactic doesn't leave an open goal state.
+        If a prefix tactic doesn't leave an open goal state; a plain `RuntimeError`, not
+        `replbackend.ReplError`.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         raise ValueError(f"k={k} out of range [0, {len(bt.traced_tactics)})")

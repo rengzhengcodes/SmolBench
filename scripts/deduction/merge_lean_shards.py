@@ -72,7 +72,8 @@ def merge_shards(
     Raises
     ------
     SystemExit
-        On any failed gate (see module docstring); may leave the canonical dir absent or partial.
+        On any failed gate (see module docstring); may leave the canonical dir absent or
+        partial.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]

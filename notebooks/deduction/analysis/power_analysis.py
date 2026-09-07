@@ -160,7 +160,7 @@ def _seed_of(name: str) -> int:
     Returns
     -------
     int
-        deterministic 32-bit seed
+        Deterministic 32-bit seed.
     """
     return int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "little")
 
@@ -184,7 +184,7 @@ def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     Returns
     -------
     np.ndarray | float
-        probability that at least one replicate succeeds
+        Probability that at least one replicate succeeds.
     """
     return 1.0 - (1.0 - np.asarray(p, dtype=float)) ** n
 
@@ -206,7 +206,7 @@ def mcnemar_exact_p(b: int, c: int) -> float:
     Returns
     -------
     float
-        1.0 when ``b + c == 0``; otherwise the two-sided p-value
+        1.0 when ``b + c == 0``; otherwise the two-sided p-value.
     """
     n = b + c
     if n == 0:
@@ -233,7 +233,7 @@ def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        boolean mask in `pvalues`' input order, not sorted order
+        Boolean mask in `pvalues`' input order, not sorted order.
     """
     pvalues = np.asarray(pvalues, dtype=float)
     if pvalues.ndim != 1:
@@ -321,7 +321,7 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
     Raises
     ------
     SystemExit
-        if any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
+        If any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
     """
     count = sum(
         1 for row in rows
@@ -370,7 +370,7 @@ def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
     Returns
     -------
     int | None
-        1 (success), 0 (failure), or None (no surviving attempt)
+        1 (success), 0 (failure), or None (no surviving attempt).
     """
     for verdict in verdicts:
         if verdict in UNMEASURABLE_VERDICTS:
@@ -526,7 +526,7 @@ def marginal_rates(models: list[str], blocks: dict) -> dict[str, float]:
     Returns
     -------
     dict[str, float]
-        pass@1 rate for each model
+        Pass@1 rate for each model.
     """
     succ = {m: 0 for m in models}
     tot = 0
@@ -555,7 +555,7 @@ def union_solvable_fraction(models: list[str], blocks: dict) -> float:
     Returns
     -------
     float
-        fraction of paired cells solved by at least one model
+        Fraction of paired cells solved by at least one model.
     """
     solved = tot = 0
     for cmap in blocks.values():
@@ -583,7 +583,7 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
     Returns
     -------
     tuple
-        (b, c): `model_a` succeeds and `model_b` fails, and the reverse
+        (b, c): `model_a` succeeds and `model_b` fails, and the reverse.
     """
     disc_b = disc_c = 0
     for cmap in blocks.values():
@@ -686,7 +686,7 @@ def bootstrap_power(
     Returns
     -------
     tuple
-        (power, gap_lo, gap_hi): rejection fraction at `alpha`, and the
+        (Power, gap_lo, gap_hi): rejection fraction at `alpha`, and the
         5th/95th-percentile bootstrap CI of ``rate_a - rate_b`` (for the near-tie
         verdict)
     """
@@ -765,8 +765,8 @@ def passn_power(
     Returns
     -------
     float
-        rejection fraction at `alpha`, or ``nan`` if either model's implied
-        solvable-cell mean falls outside ``(0, 1]``
+        Rejection fraction at `alpha`, or ``nan`` if either model's implied
+        solvable-cell mean falls outside ``(0, 1]``.
     """
     ma = rate_a / frac_solvable
     mb = rate_b / frac_solvable
@@ -838,7 +838,7 @@ def needed_replicates(
     Returns
     -------
     int | None
-        first sufficient `grid` value, or ``None``
+        First sufficient `grid` value, or ``None``.
     """
     for n_rep in sorted(grid):
         power = passn_power(
@@ -926,7 +926,7 @@ def compute_contrast_sizing(
     -------
     ContrastSizing | None
         None if either model is absent from `rates`, so a pre-registered contrast the
-        current data doesn't cover is skipped, not raised on
+        current data doesn't cover is skipped, not raised on.
     """
     if model_a not in rates or model_b not in rates:
         return None
@@ -1194,7 +1194,7 @@ def main(argv: list[str] | None = None) -> int:
     -------
     int
         0 on a normal report, 1 if no row files or no fully-paired cells for the
-        requested model set were found
+        requested model set were found.
     """
     args = parse_args(argv)
     models_filter = (

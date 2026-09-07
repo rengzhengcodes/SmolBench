@@ -47,7 +47,7 @@ def split_state(state_pp: str) -> tuple[str, str]:
     Returns
     -------
     tuple[str, str]
-        ``(context, goals)`` split of the state.
+        ``(hypotheses, goals)`` split of the state.
     """
     lines = state_pp.splitlines()
     for i, line in enumerate(lines):
@@ -490,9 +490,11 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 
     Raises
     ------
-    ValueError, ImportError
-        ``noise`` can still raise these from `_render_noise_parts` even after
-        that check passes (e.g. ``noise:0``, which `validate` allows through).
+    ValueError
+        If `k` is outside the theorem's traced tactics, or `chain`/`level` is invalid.
+    ImportError
+        ``noise`` can still raise this from `_render_noise_parts` even after
+        validation passes (e.g. ``noise:0``, which `validate` allows through).
     """
     if not 0 <= k < len(theorem.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(theorem.traced_tactics)})")

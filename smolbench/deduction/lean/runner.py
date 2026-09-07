@@ -862,10 +862,9 @@ def spool_prefix() -> str:
 def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     """Reject any path whose FILE NAME carries a `retired_markers.RETIRED_MARKERS` marker.
 
-    Also logs, since
-    `write_theorem_summary` runs inside a per-theorem worker that -- under
-    `theorem_workers > 1` -- swallows exceptions into one THEOREM-WORKER-FAIL
-    line (serial runs propagate).
+    It also logs, since `write_theorem_summary` runs inside a per-theorem worker that -- under
+    `theorem_workers > 1` -- swallows exceptions into one THEOREM-WORKER-FAIL line (serial runs
+    propagate).
 
     Parameters
     ----------
@@ -1498,7 +1497,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     run_dir : Path
         Directory for per-theorem outputs and run artifacts.
     resume : bool, optional
-        Skips cells already recorded in `all_rows.jsonl` (`_existing_keys`).
+        ``True`` skips cells already recorded in `all_rows.jsonl` (`_existing_keys`).
     verifier : Any, optional
         Verifier for sanity replays and generated proof tails.
 

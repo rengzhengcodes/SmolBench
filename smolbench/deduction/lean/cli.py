@@ -35,7 +35,7 @@ def cmd_metadata(_: argparse.Namespace) -> int:
     Returns
     -------
     int
-        0.
+        0 if the sweep completes, else 1.
 
     Raises
     ------

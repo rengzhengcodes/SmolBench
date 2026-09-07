@@ -131,9 +131,9 @@ def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarra
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        ``(succ, size)``: successes, shape ``(n_theorems, n_models)``, in `models`/sorted-theorem
-        order, and per-block cell counts resampled together with `succ` so a theorem is always
-        drawn whole.
+        ``(succ, size)``: successes, shape ``(n_theorems, n_models)``, in
+        `models`/sorted-theorem order, and per-block cell counts resampled together with `succ`
+        so a theorem is always drawn whole.
     """
     thms = sorted(blocks)
     succ = np.zeros((len(thms), len(models)), dtype=np.int32)
