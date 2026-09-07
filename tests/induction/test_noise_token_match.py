@@ -11,7 +11,7 @@ import pytest
 from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
 
 from smolbench.evals.tokenization import (
-    WHITESPACE_UNITS, choose_whitespace_unit, token_matched_noise_prompt)
+    WHITESPACE_UNITS, TiktokenTokenizer, choose_whitespace_unit, token_matched_noise_prompt)
 from smolbench.induction._common import context_renderer
 from smolbench.induction.periodic import (
     CONDITIONS, PeriodicConfig, get_periodic_numeric_quiz)
@@ -26,9 +26,8 @@ CONTEXT = "Every 3 positions write gerbil.\n"
 #: range-free template these minimal fixtures do not carry.
 POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
-def tiktoken_tokenizer(encoding_name: str) -> "TiktokenTokenizer":
+def tiktoken_tokenizer(encoding_name: str) -> TiktokenTokenizer:
     """Return a `TiktokenTokenizer`, or skip if it cannot be built offline."""
-    from smolbench.evals.tokenization import TiktokenTokenizer
 
     try:
         return TiktokenTokenizer(encoding_name)
