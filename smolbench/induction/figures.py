@@ -21,6 +21,16 @@ def accuracy(marks: Marks) -> float:
     Invalids count against the model: an unparseable response stays in the
     denominator and scores as a miss.
 
+    Parameters
+    ----------
+    marks : Marks
+        Graded quiz marks.
+
+    Returns
+    -------
+    float
+        fraction of marks that are correct.
+
     Raises
     ------
     ValueError
@@ -54,6 +64,18 @@ def load_condition_accuracies(
     measurement", printed to stdout under a distinct prefix for a missing
     file vs. one that graded nothing, so an operator can tell them apart;
     :func:`plot_archetype_accuracy` renders both as "n/a".
+
+    Parameters
+    ----------
+    results_dir : Path
+        Directory containing result YAMLs.
+    files : Mapping[Tuple[str, str], str]
+        Mapping from model-condition keys to relative filenames.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], Optional[float]]
+        model-condition accuracy table.
     """
     data: Dict[Tuple[str, str], Optional[float]] = {}
     for (model_key, cond_key), fname in files.items():

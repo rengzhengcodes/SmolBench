@@ -201,6 +201,16 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
 
     The only point where the default 1..n and explicit-``periods`` pathways
     differ; everything downstream is shared verbatim.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration specifying the harmonic periods.
+
+    Returns
+    -------
+    Tuple[int, ...]
+        Harmonic periods in ascending order.
     """
     if config.periods is None:
         return tuple(range(1, config.n + 1))
@@ -218,6 +228,16 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     Covers positions 1..lcm(periods), each mapped to the sep-joined labels whose
     periods divide it, in ascending period order (``labels[i]`` belonging to the
     i-th smallest period).
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration supplying the periods, labels, and separator.
+
+    Returns
+    -------
+    Tuple[PeriodToLabel, PosToCompound]
+        Period-to-label and position-to-compound mappings.
     """
     periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
@@ -330,11 +350,29 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` conditions render from ``prompter.range_free_template``;
-    every other condition renders from ``prompter.template``. Raises
-    ``ValueError`` if `condition` is ``omit_range=True`` and
-    ``prompter.range_free_template`` is ``None``: no silent fallback to
+    every other condition renders from ``prompter.template``. No silent fallback to
     ``prompter.template``, since that fallback is exactly the leak an
     ``omit_range`` condition exists to avoid.
+
+    Parameters
+    ----------
+    name : str
+        Name of the information condition.
+    condition : Condition
+        Information condition being rendered.
+    prompter : Prompter
+        Prompt templates and query generator.
+
+    Returns
+    -------
+    string.Template
+        Template selected for the condition.
+
+    Raises
+    ------
+    ValueError
+        If `condition` is ``omit_range=True`` and ``prompter.range_free_template`` is
+        ``None``.
     """
     if not condition.omit_range:
         return prompter.template
@@ -355,6 +393,15 @@ def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> No
 
     Checked against the rendered prompt, not the template used to build it
     (see ``RANGE_KEYS``). Naming the offending key and its value on failure.
+
+    Parameters
+    ----------
+    name : str
+        Name of the information condition.
+    query : Dict[str, str]
+        Query substitutions whose range values must remain hidden.
+    rendered : str
+        Rendered prompt to inspect.
     """
     for key in RANGE_KEYS:
         if key in query and str(query[key]) in rendered:
@@ -398,6 +445,35 @@ def get_periodic_prompts(
     silently shipping a control identical to the arm it controls for); or
     from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
     ``omit_range`` condition missing its template or leaking a range key.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration for the periodic sequence.
+    prompter : Prompter
+        Prompt templates and query generator.
+    tokenizer : Tokenizer
+        Model under test's tokenizer, defining every padded arm's token target.
+    conditions : Mapping[str, Condition], optional
+        Information conditions to render.
+
+    Yields
+    ------
+    RenderedQuery
+        One rendered query containing prompts and token counts for every condition.
+
+    Raises
+    ------
+    ValueError
+        Once, before any query is rendered, if some condition's ``match_tokens_to`` names a
+        condition absent from `conditions` or one that is itself padded (a padded arm's own
+        count isn't available yet to pad against); propagated from
+        :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the noise arm's
+        precondition fails for some query (its extensional prompt is not strictly longer, in
+        tokens, than its intensional one -- deliberately not caught here, so the confound stays
+        out of collected data rather than silently shipping a control identical to the arm it
+        controls for); or from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
+        ``omit_range`` condition missing its template or leaking a range key.
     """
     # Validated once, before any query is rendered: a bad `match_tokens_to`
     # is a construction-time mistake in `conditions`, not something that

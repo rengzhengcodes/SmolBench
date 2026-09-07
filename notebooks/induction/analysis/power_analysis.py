@@ -197,6 +197,18 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     ``min(1, 2 * P[Bin(b + c, 1/2) <= min(b, c)])``, 1.0 where ``b + c == 0``
     (no discordant pairs). Broadcasts, so the same implementation serves the
     scalar call sites and the batched simulations.
+
+    Parameters
+    ----------
+    b : int | np.ndarray
+        First discordant count.
+    c : int | np.ndarray
+        Second discordant count.
+
+    Returns
+    -------
+    float | np.ndarray
+        Exact two-sided conditional p-values.
     """
     nd = b + c
     # `np.maximum(nd, 1)`: numpy evaluates `binom.cdf` over the WHOLE array
@@ -219,6 +231,20 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
     `succ_a`/`succ_b` are success counts out of `n` trials per stratum, shape
     (..., K), the same trial count for both conditions; returns one statistic
     per leading batch index.
+
+    Parameters
+    ----------
+    succ_a : np.ndarray
+        Success counts for the first condition, shaped ``(..., K)``.
+    succ_b : np.ndarray
+        Success counts for the second condition, shaped ``(..., K)``.
+    n : int
+        Trial count per condition and stratum.
+
+    Returns
+    -------
+    np.ndarray
+        One statistic per leading batch index.
     """
     big_n = 2 * n  # total per stratum
     m1 = succ_a + succ_b  # successes per stratum
@@ -265,6 +291,25 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     ``numpy.linalg.solve``, hence the `LinAlgError` pseudo-inverse fallback:
     Sigma == 0 also forces T == 0, so the fallback's Q = 0 is the correct
     "no evidence against the null," not an artifact.
+
+    Parameters
+    ----------
+    succ : np.ndarray
+        Success counts with shape ``(n_sims, 3, K)``.
+    n_per_stratum : int
+        Trials per rung per stratum.
+    alpha : float
+        Test significance threshold.
+
+    Returns
+    -------
+    np.ndarray
+        Whether each simulation rejects.
+
+    Raises
+    ------
+    ValueError
+        If the rung axis is not length 3, or `n_per_stratum` < 1.
     """
     _, n_rungs, _ = succ.shape
     if n_rungs != 3:
@@ -318,6 +363,26 @@ def simulated_power(
     rates. The ALPHA_PRIMARY default is for standalone/REPL use only: the two
     pairwise tiers have different per-test alphas, so `main` always passes
     `alpha`.
+
+    Parameters
+    ----------
+    rates_a : np.ndarray
+        Assumed true per-harmonic rates for the first condition.
+    rates_b : np.ndarray
+        Assumed true per-harmonic rates for the second condition.
+    n_reps : int
+        Replicates per harmonic.
+    rng : np.random.Generator
+        Random-number generator for simulations.
+    alpha : float, optional
+        Per-test significance threshold.
+    n_sims : int, optional
+        Number of simulated experiments.
+
+    Returns
+    -------
+    float
+        Estimated CMH rejection fraction.
     """
     succ_a = rng.binomial(n_reps, rates_a, size=(n_sims, rates_a.size))
     succ_b = rng.binomial(n_reps, rates_b, size=(n_sims, rates_b.size))
@@ -369,6 +434,25 @@ def replicates_needed(
     assumption admits only ~10 distinct rate vectors across the 273 primary +
     secondary contrasts, so an uncached scan would recompute up to ~27x per
     distinct input for a bit-identical answer.
+
+    Parameters
+    ----------
+    rates_a : np.ndarray
+        Per-harmonic rates for the first condition.
+    rates_b : np.ndarray
+        Per-harmonic rates for the second condition.
+    alpha : float, optional
+        Per-test significance threshold.
+
+    Returns
+    -------
+    _SizingScan
+        ``(needed, curve)`` mapping targets and scanned counts to power.
+
+    Raises
+    ------
+    ValueError
+        If `rates_a` and `rates_b` differ in shape.
     """
     if rates_a.shape != rates_b.shape:
         raise ValueError(
@@ -395,6 +479,24 @@ def fisher_check(
     Returns the fraction of `N_SIMS` simulations rejecting at `alpha`.
     Memoizes on the discrete success counts, so the scipy call count stays
     small despite `N_SIMS` simulations.
+
+    Parameters
+    ----------
+    rates_a : np.ndarray
+        Per-harmonic rates for the first condition.
+    rates_b : np.ndarray
+        Per-harmonic rates for the second condition.
+    n_reps : int
+        Replicates per harmonic.
+    rng : np.random.Generator
+        Random-number generator for simulations.
+    alpha : float, optional
+        Test significance threshold.
+
+    Returns
+    -------
+    float
+        Fraction of simulations rejecting at `alpha`.
     """
     from scipy.stats import fisher_exact
 
@@ -430,6 +532,26 @@ def equivalence_replicates(
     differences coincide. Returns the smallest R in
     ``range(1, MAX_REPLICATES + 1)`` reaching 80% equivalence power, else
     `None`.
+
+    Parameters
+    ----------
+    rates_a : np.ndarray
+        Assumed per-harmonic rates for the first condition.
+    rates_b : np.ndarray
+        Assumed per-harmonic rates for the second condition.
+    delta : float
+        Equivalence margin.
+    rng : np.random.Generator
+        Random-number generator for simulations.
+    alpha : float, optional
+        One-sided test significance threshold.
+    n_sims : int, optional
+        Number of simulated experiments.
+
+    Returns
+    -------
+    int | None
+        Smallest replicate count reaching 80% equivalence power, if any.
     """
     from scipy.stats import norm
 
@@ -463,6 +585,26 @@ def omnibus_power(
     and stratum, as `gcmh_reject` requires. `rates` is keyed like
     `load_outcomes`'s return value (shrunk-toward-mean); `rng` should be
     freshly seeded by the caller so repeated calls reproduce.
+
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-toward-mean rates keyed like `load_outcomes`'s return value.
+    family : str
+        Family whose rungs form the omnibus test.
+    n_reps : int
+        Replicates per rung and stratum.
+    rng : np.random.Generator
+        Random-number generator for simulations.
+    alpha : float, optional
+        Test significance threshold.
+    n_sims : int, optional
+        Number of simulated experiments.
+
+    Returns
+    -------
+    float
+        Estimated omnibus-gate rejection fraction.
     """
     rungs = FAMILIES[family]
     strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]  # K = 36
@@ -502,6 +644,20 @@ def omnibus_interaction_power(
     larger value for a one-off precise read. Returns the rejection fraction
     over `n_sims`; fits that fail (perfect separation at a tiny `n_reps`)
     count as non-rejections, so power can be understated there.
+
+    Parameters
+    ----------
+    rates : dict[tuple[str, str], np.ndarray]
+        Rates keyed by model and info type.
+    n_reps : int
+        Replicates per cell.
+    n_sims : int, optional
+        Number of simulated experiments.
+
+    Returns
+    -------
+    float
+        Rejection fraction over `n_sims`.
     """
     import statsmodels.api as sm
     from scipy.stats import chi2 as chi2_dist

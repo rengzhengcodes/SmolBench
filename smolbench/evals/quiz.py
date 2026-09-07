@@ -27,7 +27,18 @@ class QnA:
 
     @staticmethod
     def condition(ans: str) -> Answer:
-        """Convert a raw model response to this question's answer type; subclasses parse and validate."""
+        """Convert a raw model response to this question's answer type; subclasses parse and validate.
+
+        Parameters
+        ----------
+        ans : str
+            Raw model response.
+
+        Returns
+        -------
+        Answer
+            unmodified response.
+        """
         return ans
 
     def score(self, ans: Answer) -> bool:
@@ -53,6 +64,16 @@ class ToF(QnA):
         if the remainder is not exactly "true"/"false" (so ``"Answer: False"``
         raises). The lenient recovery path is
         ``smolbench.evals.parsing.parse_tof``.
+
+        Parameters
+        ----------
+        ans : str
+            Raw model response.
+
+        Returns
+        -------
+        bool
+            parsed true/false answer.
         """
         # Strips punctuation/markup (e.g. "**True**") rather than a regex sub:
         # measured equal at answer-sized inputs, and str.isalpha keeps the
@@ -187,6 +208,11 @@ class Marks:
         Resume-skips gate on bare file presence (``ResultsStore.exists``), so
         a file that exists must never be a torn write: an interrupted dump
         would otherwise be skipped as already-collected forever.
+
+        Parameters
+        ----------
+        path : Path
+            Destination path for the YAML document.
         """
         tmp = f"{path}.tmp"
         with open(tmp, "w") as file:

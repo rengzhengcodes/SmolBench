@@ -106,10 +106,23 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     """Parse environment variable `var` as ``"index/count"``; ``None`` if unset/empty.
 
     Sharding splits one model's replicates across N processes/instances,
-    orthogonal to this study's one-model-per-box fan-out. Raises
-    ``SystemExit`` on an unparseable value or a violated
-    ``count >= 1`` / ``0 <= index < count``, rather than silently running
-    unsharded.
+    orthogonal to this study's one-model-per-box fan-out.
+
+    Parameters
+    ----------
+    var : str
+        Environment variable name to parse.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        Shard index and process count, or ``None`` when unset or empty.
+
+    Raises
+    ------
+    SystemExit
+        on an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``,
+        rather than silently running unsharded.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -127,8 +140,24 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
     """Parse ``INDUCTION_FORCE_RERUN`` into the set of seeds to re-collect.
 
     `raw` is ``""`` (off -> ``None``), ``"1"`` (every seed in `full_range`), or
-    ``"a-b"`` (that inclusive subrange). Raises ``SystemExit`` on an
-    unparseable value or an out-of-range subrange, never a silent no-op.
+    ``"a-b"`` (that inclusive subrange).
+
+    Parameters
+    ----------
+    raw : str
+        Raw ``INDUCTION_FORCE_RERUN`` value.
+    full_range : range
+        Full range of valid seeds.
+
+    Returns
+    -------
+    frozenset[int] | None
+        Seeds to re-collect, or ``None`` when reruns are disabled.
+
+    Raises
+    ------
+    SystemExit
+        on an unparseable value or an out-of-range subrange, never a silent no-op.
     """
     raw = raw.strip()
     if not raw:
@@ -246,11 +275,25 @@ from smolbench.induction.periodic import (  # noqa: E402
 def derive_context_limit(lengths: "dict[str, int]") -> int:
     """Return the single context window that every model in `lengths` shares.
 
-    Raises ``SystemExit`` if `lengths` is empty or holds more than one
-    distinct value (message names the offending keys), rather than papering
-    over non-uniformity with a ``min()``/``max()``: a scaling study cannot let
-    context vary with the vendor's own YaRN generosity, or a family's ceiling
-    is confounded with its context budget rather than its parameter count.
+    
+    Parameters
+    ----------
+    lengths : dict[str, int]
+        Mapping of model keys to served context-window lengths.
+
+    Returns
+    -------
+    int
+        The shared context-window length.
+
+    Raises
+    ------
+    SystemExit
+        if `lengths` is empty or holds more than one distinct value (message names the
+        offending keys), rather than papering over non-uniformity with a
+        ``min()``/``max()``: a scaling study cannot let context vary with the vendor's
+        own YaRN generosity, or a family's ceiling is confounded with its context budget
+        rather than its parameter count.
     """
     if not lengths:
         raise SystemExit(
@@ -387,6 +430,16 @@ def _zero_template(base: string.Template) -> string.Template:
     whichever `string.Template` is currently bound to `template` -- see
     `rendered_queries`, which calls this on every invocation instead of
     reusing the frozen `zero_template` below.
+
+    Parameters
+    ----------
+    base : string.Template
+        Template whose range clause is removed.
+
+    Returns
+    -------
+    string.Template
+        The range-free question template.
     """
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
@@ -458,10 +511,8 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     """Render one replicate's queries, all four ``CONDITIONS`` arms of each.
 
     Uses the plain ``periodic_moe`` baseline config unmodified (the study's
-    independent variable is the model, not the quiz). `model` is needed
-    because ``noise_intens`` is padded under this model's tokenizer; the
-    other three arms stay byte-identical across checkpoints. ``for_model`` is
-    looked up as a plain module global so
+    independent variable is the model, not the quiz). ``for_model`` is looked
+    up as a plain module global so
     ``tests/induction/test_induction_study.py`` can monkeypatch it (and
     ``make_quizzes``/``completion_budget``, which call this) to keep the
     offline suite from downloading a tokenizer.
@@ -469,6 +520,19 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     Single generation call both ``make_quizzes`` and ``completion_budget``
     build on, so a replicate's prompts are generated once per call site
     instead of once for collection and again for budget-sizing.
+
+    Parameters
+    ----------
+    seed : int
+        Replicate seed.
+    model : str
+        Model whose tokenizer pads ``noise_intens``; the other three arms stay
+        byte-identical across checkpoints.
+
+    Returns
+    -------
+    list[RenderedQuery]
+        Queries for all four ``CONDITIONS`` arms of the replicate.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     # `_zero_template(template)`, not the frozen `zero_template` global: see
@@ -488,6 +552,18 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     Thin wrapper over :func:`rendered_queries`, turning its per-query
     ``RenderedQuery`` list into one ``Quiz`` (a tuple of ``Numeric`` QnAs) per
     condition.
+
+    Parameters
+    ----------
+    seed : int
+        Replicate seed.
+    model : str
+        Model for query rendering.
+
+    Returns
+    -------
+    dict[str, tuple]
+        Four quizzes keyed by ``INFO_TYPES`` in that order.
     """
     return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
@@ -499,6 +575,16 @@ def probe_seeds(seeds: range) -> "list[int]":
     few as one; always contains both ``seeds[0]`` and ``seeds[-1]``. `seeds`
     must be non-empty; ``PROBE_SEEDS >= 2`` is required since the derivation
     divides by ``PROBE_SEEDS - 1``.
+
+    Parameters
+    ----------
+    seeds : range
+        Non-empty range from which evenly spaced seeds are selected.
+
+    Returns
+    -------
+    list[int]
+        Evenly spaced seeds in ascending order without duplicates.
     """
     return sorted(
         {seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)] for i in range(PROBE_SEEDS)}
@@ -508,8 +594,6 @@ def probe_seeds(seeds: range) -> "list[int]":
 def completion_budget(model: str, seeds: range) -> int:
     """Derive the largest completion budget that cannot overflow this model's context.
 
-    Returns ``CONTEXT_LIMIT - worst - TEMPLATE_RESERVE``, where ``worst`` is
-    the largest prompt token count over every info type of every probed seed.
     Only ``PROBE_SEEDS`` of `seeds` are probed (see ``probe_seeds``): every
     structural driver of prompt length is identical across seeds, only the
     sampled labels vary, and ``TEMPLATE_RESERVE`` covers far more than that
@@ -525,8 +609,23 @@ def completion_budget(model: str, seeds: range) -> int:
     family would make its accuracy gap inseparable from "it had less room to
     reason," the confound a scaling study exists to avoid.
 
-    Raises ``SystemExit`` below ``MIN_VIABLE_BUDGET``, which would truncate
-    CoT and collect empties.
+    Parameters
+    ----------
+    model : str
+        Model whose completion budget is derived.
+    seeds : range
+        Seed range from which prompt-length probes are selected.
+
+    Returns
+    -------
+    int
+        ``CONTEXT_LIMIT - worst - TEMPLATE_RESERVE``, where ``worst`` is the largest
+        prompt token count over every info type of every probed seed.
+
+    Raises
+    ------
+    SystemExit
+        below ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
     """
     worst = 0
     for seed in probe_seeds(seeds):
@@ -564,6 +663,16 @@ def request_timeout_seconds(budget: int) -> int:
     timeout costs only wall-clock, on a request that was going to fail
     anyway. No upper clamp is applied: a ceiling that binds reintroduces that
     same censoring. This is a floor, never a cap.
+
+    Parameters
+    ----------
+    budget : int
+        Completion-token budget for the request.
+
+    Returns
+    -------
+    int
+        Per-request read timeout in seconds.
     """
     return max(REQUEST_TIMEOUT_FLOOR_SECONDS, ceil(budget / MIN_DECODE_TOK_S))
 
@@ -627,8 +736,12 @@ def main(argv: "list[str] | None" = None) -> None:
     Makes live AWS calls on every path except ``--teardown``, a failed
     argument parse, and a roster with no outstanding replicates, and never
     tears the instance down otherwise (see the module docstring's "Lifecycle
-    and cost" section). `argv` is a parameter so a test or notebook cell can
-    call this without a subprocess.
+    and cost" section).
+
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Argument vector so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."
