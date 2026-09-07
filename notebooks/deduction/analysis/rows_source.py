@@ -125,6 +125,8 @@ def download_scaling_rows(
         basenames tried in preference order; the chosen name is also
         the landed basename, so `power_analysis`'s unverified-input banner
         still fires on its ``all_rows.jsonl`` fallback.
+    run_marker : str, optional
+        Run-directory name prefix under `prefix`; ``""`` accepts every run directory.
     client : Any
         optional S3 client, for tests; only
         ``get_paginator("list_objects_v2")`` and ``download_file`` are called
@@ -218,6 +220,8 @@ def resolve_rows_dir(
         silently list the whole bucket.
     candidates : tuple[str, ...], optional
         Row-file basenames tried in preference order.
+    run_marker : str, optional
+        Run-directory name prefix under `prefix`; ``""`` accepts every run directory.
     client : Any, optional
         S3 client for downloads.
 
