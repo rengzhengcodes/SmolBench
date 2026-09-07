@@ -140,12 +140,12 @@ def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
 
 
 def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
-    """Pinned key scheme; a re-run ADDS a key; reads and list_seeds take the earliest."""
+    """Pinned key scheme; a re-run adds a key; reads and list_seeds take the earliest."""
     store = S3ResultsStore(BUCKET, "", "periodic_moe", "us-west-2")  # bucket/base/exp/region
     with pytest.raises(FileNotFoundError):
         store.load_marks(addr())
     moe = ReplicateAddress(tag="moe", info="extens", seed=1776, model="gpt-oss-120b")
-    store.dump_marks(sample_marks(score=1), moe, TS1)  # the directive's worked example
+    store.dump_marks(sample_marks(score=1), moe, TS1)
     store.dump_marks(sample_marks(score=0), moe, TS2)  # a re-run adds, never overwrites
     assert sorted(fake_s3.objects) == [
         "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml",
@@ -171,7 +171,7 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     store.dump_marks(sample_marks(), addr(info="noise_intens"), TS1)
     assert store.exists(addr(info="noise_intens"))
     assert not store.exists(addr(info="int"))  # "--" stops a prefix-of-info match
-    # A model-less address is a READ shape: a ``None/`` key would be permanent.
+    # A model-less address is a read shape: a ``None/`` key would be permanent.
     logged = len(fake_s3.objects)
     with pytest.raises(ValueError):
         store.dump_marks(sample_marks(), addr(model=None), TS1)
@@ -205,10 +205,9 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
         assert store.describe() == f"s3://{BUCKET}/" + "/".join(p for p in (base, exp) if p)
     results = fake_repo / "notebooks/periodic/results"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
-    # With no region in the environment, the PROJECT bucket falls back to
-    # the region study_config records for it -- but only for that bucket. A URI
-    # naming somebody else's bucket keeps resolving through boto3's own chain
-    # (None), because the config's region describes the config's bucket.
+    # With no region in the environment, only the project bucket falls back
+    # to the region study_config records for it; a URI naming a different
+    # bucket keeps resolving through boto3's own chain (None).
     from smolbench.evals import study_config
 
     assert resolve_store(results).region == study_config.load_study_config().results.region
@@ -224,14 +223,14 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
     for bad in ("bucket", "https://bucket/x", "s3://", "s3://buck//archive", "s3://bu ck"):
         with pytest.raises(ValueError):
             parse_s3_uri(bad)
-    # Validation happens BEFORE the repo-anchor check, so a typo always fails loudly.
+    # Validation happens before the repo-anchor check, so a typo always fails loudly.
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://")
     with pytest.raises(ValueError):
         resolve_store(tmp_path / "somewhere-else")
 
 
 def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3, tmp_path):
-    """model -> TAG, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, earliest run only."""
+    """model -> tag, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, earliest run only."""
     results = fake_repo / "notebooks/periodic/results"
     body = sample_marks(score=1).dumps().encode()
     rerun = sample_marks(score=0).dumps().encode()
@@ -274,7 +273,7 @@ def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3
     with pytest.raises(RuntimeError):
         sync_down(tmp_path / "elsewhere", TAGS)
     # repo_root() itself + no base prefix = an empty log prefix: the whole
-    # bucket. Refused when the store is CONSTRUCTED, so sync_down never lists.
+    # bucket. Refused when the store is constructed, so sync_down never lists.
     with pytest.raises(ValueError):
         sync_down(fake_repo, TAGS)
     with pytest.raises(ValueError):
@@ -368,12 +367,7 @@ def marker_key(seed=1776, info="intens", ts=TS1, model="stub-model"):
 
 
 def test_supersede_writes_a_json_marker_beside_the_run(fake_s3):
-    """The marker is a SIBLING key, so the run itself is never mutated or deleted.
-
-    The log is append-only -- a written object cannot be rewritten -- so
-    retiring a run has to be expressed by adding something, not by changing
-    what is there.
-    """
+    """The marker is a sibling key, so the run itself is never mutated or deleted."""
     import json
 
     store = s3_store()
@@ -392,7 +386,7 @@ def test_supersede_writes_a_json_marker_beside_the_run(fake_s3):
 
 
 def test_reads_skip_a_superseded_run_and_take_the_earliest_survivor(fake_s3):
-    """Earliest-wins applies over the SURVIVORS, not over every logged run."""
+    """Earliest-wins applies over the survivors, not over every logged run."""
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)   # the run to retire
     store.dump_marks(sample_marks(score=0), addr(), TS2)   # its replacement
@@ -409,9 +403,9 @@ def test_a_marker_is_not_itself_a_run(fake_s3):
     store.dump_marks(sample_marks(), addr(), TS1)
     store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
     assert store.list_runs(addr()) == []
-    # exists()/list_seeds() stay marker-BLIND on purpose: they are the
-    # resume-skip's cheap presence probes, and superseding is only ever done
-    # paired with writing a replacement run (see supersede's docstring).
+    # exists()/list_seeds() stay marker-blind: they are the resume-skip's
+    # cheap presence probes, paired only with writing a replacement run
+    # (see supersede's docstring).
     assert store.exists(addr())
     assert store.list_seeds("stub-model", "decode", "intens") == [1776]
     # ... but a read that has nothing left to return says so, loudly, naming
@@ -444,13 +438,7 @@ def test_supersede_all_retires_every_surviving_run(fake_s3):
 
 
 def test_sync_down_skips_superseded_runs(fake_repo, s3_env, fake_s3):
-    """The synced local tree must agree with load_marks, superseding included.
-
-    ``sync_down`` lists a whole model prefix rather than one ``<info>--``
-    prefix, so it has to collect the markers in their own pass; missing that,
-    it would land the retired run's bytes locally while ``load_marks``
-    returned the replacement.
-    """
+    """The synced local tree must agree with ``load_marks``, superseding included, since ``sync_down`` collects markers in their own pass over the whole model prefix."""
     results = fake_repo / "notebooks/periodic_moe/results"
     _log(fake_s3, 1, "intens", TS1, sample_marks(score=1).dumps().encode())
     _log(fake_s3, 1, "intens", TS2, sample_marks(score=0).dumps().encode())
@@ -491,7 +479,7 @@ def test_local_supersede_renames_and_every_reader_ignores_the_file(tmp_path, mon
 
 
 def test_regrade_writes_a_self_describing_run_and_retires_the_old_one(fake_s3):
-    """A regrade is a NEW run that names the run it replaces, plus a marker."""
+    """A regrade is a new run that names the run it replaces, plus a marker."""
     store = s3_store()
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     regraded = dataclasses.replace(

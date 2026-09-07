@@ -87,7 +87,7 @@ def test_from_repo_disables_truncation_and_padding(monkeypatch, tmp_path):
 
 
 def test_vllm_tokenizer_calls_the_server_root_endpoint(stub_server):
-    """`/tokenize` lives at the SERVER root, not under `/v1`, and asks for no special tokens."""
+    """`/tokenize` lives at the server root, not under `/v1`, and asks for no special tokens."""
     stub_server.queue_response({"count": 17})
     tokenizer = tokenization.VLLMTokenizer(stub_server.base_url, "stub-model", "key")
 

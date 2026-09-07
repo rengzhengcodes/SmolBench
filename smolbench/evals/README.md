@@ -42,12 +42,10 @@ backend deliberately stays at the `evals/` level:
   bytes to LF and `pyproject.toml`'s `package-data` anchor names
   `smolbench.evals.payloads` literally), so its path does not move.
 - `study_config.py`/`study_config.toml` are the single committed source for
-  the induction family-ladder study's results bucket/region, fleet
-  regions/tag vocabulary, and 21-checkpoint roster — read by `providers/ec2.py`,
-  `results_store.py`, `notebooks/induction/run_study.py` and
-  `notebooks/induction/analysis/power_analysis.py` instead of each carrying
-  its own copy. `study_config.toml` needs its own `pyproject.toml`
-  `package-data` entry for the same reason `payloads/` does (see above).
+  the induction family-ladder study's config (see the toml's own header
+  comment for what it holds and who reads it). `study_config.toml` needs its
+  own `pyproject.toml` `package-data` entry for the same reason `payloads/`
+  does (see above).
 
 Below this section, bare `aws.py` and `ec2.py` mean `providers/aws.py` and
 `providers/ec2.py`; the shorter names are kept because the lifecycle and
@@ -290,10 +288,9 @@ log layout, not bulk-uploaded).
 
 `scripts/results/provision_results_bucket.py` is the one-time (idempotent, safe to
 re-run) runbook that provisions the bucket itself, named and located as
-recorded in `study_config.py`'s committed `study_config.toml`
-(`smolbench-results-414266451290` in `us-west-2`, at the time of writing),
-with public access blocked (all four block-public-access flags on) and
-versioning enabled. It also creates the managed IAM policy
+recorded in `study_config.py`'s committed `study_config.toml`, with public
+access blocked (all four block-public-access flags on) and versioning
+enabled. It also creates the managed IAM policy
 `SmolbenchResultsBucketRW` — `s3:ListBucket` on the bucket,
 `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on its contents — and
 attaches it to the `smolbench-ec2-operators` group.

@@ -1,9 +1,8 @@
-"""The study-NEUTRAL experiment lifecycle facade and the experiment-tag guard.
+"""Experiment lifecycle facade (study-neutral) and the experiment-tag guard.
 
-``smolbench.evals.experiment.Experiment`` carries the whole
-provision/run/agent_status/teardown lifecycle that used to live in
-``smolbench.induction.experiment``, so a second study's driver inherits it
-instead of re-implementing it inline. Offline: nothing here touches AWS.
+`Experiment` carries the whole provision/run/agent_status/teardown lifecycle,
+so a second study's driver inherits it instead of re-implementing it inline.
+Offline: nothing here touches AWS.
 """
 
 import dataclasses
@@ -44,12 +43,8 @@ def test_the_base_carries_the_whole_lifecycle():
 
 
 def test_the_base_declares_no_study_default_for_the_info_arms():
-    """`info_types` is REQUIRED on the neutral class: there is no study-neutral
-    set of information conditions, so the base must not carry one study's.
-
-    A default here is how the induction arm names ended up spelled into a
-    shared module in the first place.
-    """
+    """`info_types` is required on the neutral class: a default here is how one
+    study's arm names would end up spelled into a shared module."""
     with pytest.raises(TypeError):
         Experiment(notebook_dir="somewhere", archetype_tags={},
                    make_quizzes=make_quizzes)
@@ -59,11 +54,8 @@ def test_the_base_declares_no_study_default_for_the_info_arms():
 
 
 def test_the_induction_subclass_only_supplies_defaults():
-    """`InductionExperiment` adds induction's two defaults and no new fields.
-
-    The lifecycle it used to own now lives on the base; anything else it
-    declared would be study prose back in a place a second study inherits.
-    """
+    """`InductionExperiment` adds induction's two defaults and no new fields:
+    anything else would be study-specific prose leaking into shared inheritance."""
     assert issubclass(InductionExperiment, Experiment)
     assert [f.name for f in dataclasses.fields(InductionExperiment)] == [
         f.name for f in dataclasses.fields(Experiment)
@@ -95,7 +87,7 @@ def test_a_lane_tag_and_the_standalone_tag_are_accepted():
 
 
 @pytest.mark.parametrize("tag, lane", [
-    # A BARE shared fleet prefix names every lane at once: fleet_teardown
+    # A bare shared fleet prefix names every lane at once: fleet_teardown
     # terminates by tag, so this would take the whole fleet down.
     ("scaling-", None),
     ("scaling", None),

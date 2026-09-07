@@ -2,68 +2,21 @@
 
 A sequence of ``n`` overlapping periodic "harmonics": the k-th fires at every
 multiple of its period, and each position's label is the sep-joined
-concatenation of every label whose period divides it (:func:`generate_sequence`),
-over exactly one full period, positions 1..lcm(periods). Queries ask whether a
-label appears at a position (:func:`tof_membership_query_gen`) or how many
-positions contain it (:func:`numeric_count_query_gen`). :class:`PeriodicConfig`
-plus a ``_common.Prompter`` determine a run; the canonical eval configs live in
-``notebooks/induction/run_study.py``.
-
-Information conditions, all built from one sequence in ONE render loop by
-:func:`get_periodic_prompts`, and declared in exactly one place, the
-``CONDITIONS`` mapping below: **intens** = the compact rules ("Every 3
-positions write gerbil."); **extens** = the enumerated position ->
-compound-label table ("Position 6: fizz|buzz|gerbil."); **noise_intens** = the
-intensional text plus whitespace until the RENDERED PROMPT hits ``extens``'s
-token count, isolating length as a confound; **zero** = empty context, the
-chance floor -- rendered from a RANGE-FREE question ("How many of the
-positions include 'vw'?", no ``$seq_len``) via ``prompter.range_free_template``,
-because on the default 1..n pathway the period-1 harmonic's answer IS
-``seq_len``, and the range-stating question the other three arms use ("...
-positions 1 through $seq_len...") would print that answer directly into the
-prompt of the very arm meant to measure the floor a model reaches with NO
-positive information at all (a model echoing the only large number in its own
-prompt scored 11.1 pp on it). See ``CONDITIONS`` for the mapping that drives
-the loop and ``RANGE_KEYS`` for how the zero arm's promise is verified rather
-than trusted.
-
-Noise-arm PRECONDITION -- a requirement on the config, not a property the
-benchmark guarantees: for every query, the extensional prompt must be STRICTLY
-longer in tokens than the intensional one. The pad is appended, so it can only
-GROW a prompt; a config that violates this raises out of
-:func:`get_periodic_prompts` rather than emitting a "control" arm identical to
-the arm it controls for. The enumeration is NOT always at least as long.
-Measured with cl100k_base under the production template: at n=1 the intensional
-prompt costs 105 tokens against the extensional 104 (extens strictly SHORTER),
-and at n=2 every query ties exactly (113 against 113, 114 against 114 -- EQUAL
-also fails a strict inequality). On the DEFAULT 1..n pathway the rule list is
-overtaken from n=3 on (120 against 150), and the production configs (n=9, lcm
-2,520) clear the precondition by a wide margin. n alone does not settle it,
-though: the divisor pathway below deliberately adds rules while pinning the
-listing, so an explicit small-lcm ``periods`` set can violate the precondition
-at any n. Hence a precondition CHECKED at generation time, not a property the
-config shape guarantees.
-
-Period sets: the default 1..n makes sequence length the step function lcm(1..n)
--- lcm(1..10) == lcm(1..9) == 2520, then n=11 leaps to 27,720 positions (~341k
-tokens, past every context window). ``PeriodicConfig`` therefore accepts an
-explicit ``periods`` set in two dual modes, documented and validated on that
-field: pairwise coprime lengthens the EXTENSIONAL listing, factor-sharing
-lengthens the INTENSIONAL rule list at a near-fixed listing (against 2,520, 9
-harmonics -> 26 grows it 2.5%, but all 48 divisors would grow it 31%). The
-pathways diverge only in :func:`_periods_of`.
-
-Tokenizer discipline: the noise arm's tokenizer is REQUIRED, not defaulted -- a
-plausible-but-wrong default would silently de-calibrate the very length control
-this arm provides -- so quizzes are per-(seed, model), with only
-``noise_intens`` varying across models.
+concatenation of every label whose period divides it
+(:func:`generate_sequence`), over one full period, positions 1..lcm(periods).
+Queries ask whether a label appears at a position
+(:func:`tof_membership_query_gen`) or how many positions contain it
+(:func:`numeric_count_query_gen`). Information conditions are declared in
+exactly one place, the ``CONDITIONS`` mapping below, and rendered together in
+one loop by :func:`get_periodic_prompts`; see ``CONDITIONS`` for what each
+arm shows and why the ``zero`` arm needs a range-free question.
 
 Every generator takes an explicit ``seed`` and builds a fresh
-``np.random.default_rng(seed)``, never global RNG state; the noise pad consumes
-no RNG. Generation is byte-pinned by ``tests/induction/test_golden_quizzes.py``
-at the notebooks' production configs, so any change to RNG call order or count,
-or to the noise-padding scheme, breaks that pin -- fix the change, never
-re-baseline the fixture. The ``__main__`` demo uses seed 42.
+``np.random.default_rng(seed)``, never global RNG state. Generation is
+byte-pinned by ``tests/induction/test_golden_quizzes.py`` at the notebooks'
+production configs: any change to RNG call order/count, or to the
+noise-padding scheme, breaks that pin -- fix the change, never re-baseline
+the fixture.
 """
 
 import string
@@ -128,32 +81,27 @@ class PeriodicConfig:
     """Configure the generation of one periodic pattern."""
 
     # Number of harmonics. With the default periods (None), the k-th harmonic
-    # fires at positions k, 2k, 3k, … for k in 1..n; with an explicit `periods`
-    # set, n is how many periods that set holds.
+    # fires at k, 2k, 3k, … for k in 1..n; with explicit `periods`, n is how
+    # many periods that set holds.
     n: int
-    # Labels for each harmonic: n strings, or int n to auto-generate n random
-    # labels. Assigned in ascending-period order, so labels[i] belongs to the
-    # i-th smallest period.
+    # n strings, or int n to auto-generate n random labels. Assigned in
+    # ascending-period order: labels[i] belongs to the i-th smallest period.
     labels: Collection[Label] | int
-    # RNG seed for reproducibility.
     seed: int
-    # Separator placed between active labels in compound output. Must not
-    # appear in any label.
+    # Separator between active labels in compound output; must not appear in
+    # any label.
     sep: str = "|"
     # Explicit harmonic periods, replacing the default 1..n. None selects the
     # consecutive-integer pathway, whose generated bytes are pinned by
     # tests/induction/test_golden_quizzes.py.
     periods: Tuple[int, ...] | None = None
     # The sequence length `periods` is expected to produce. Omit it and the
-    # periods must be PAIRWISE COPRIME, so lcm == product and the caller dials
-    # the length by multiplying out -- the pathway for a longer EXTENSIONAL
-    # listing. Supply it and coprimality is NOT required; lcm(periods) must
-    # equal it exactly instead, letting a DIVISOR set add harmonics while
-    # pinning the length -- the pathway for a longer INTENSIONAL rule list at a
-    # fixed extensional listing. Either way construction fails when the periods
-    # disagree with the declared length, because that failure is otherwise
-    # invisible: a wrong-length set still generates a self-consistent quiz, just
-    # not the one that was asked for.
+    # periods must be pairwise coprime (lcm == product, a longer EXTENSIONAL
+    # listing). Supply it and coprimality is not required -- lcm(periods)
+    # must equal it exactly, letting a divisor set add harmonics while
+    # pinning the length (a longer INTENSIONAL rule list, fixed listing).
+    # Either way, a periods/length mismatch fails construction rather than
+    # silently generating the wrong quiz.
     expect_seq_len: int | None = None
 
     def __post_init__(self):
@@ -170,9 +118,8 @@ class PeriodicConfig:
             if any(p < 1 for p in periods):
                 raise ValueError(f"Periods must be positive, got {periods}.")
             if self.expect_seq_len is None:
-                # Pairwise coprimality makes lcm(periods) == prod(periods), so
-                # sequence length is a product the caller dials directly
-                # instead of the step function lcm(1..n).
+                # Pairwise coprimality makes lcm(periods) == prod(periods),
+                # so length is a product the caller dials directly.
                 for i, a in enumerate(periods):
                     for b in periods[i + 1:]:
                         if gcd(a, b) != 1:
@@ -184,10 +131,8 @@ class PeriodicConfig:
                                 "purpose (the divisor pathway)."
                             )
             else:
-                # Divisor pathway: the periods deliberately SHARE factors so
-                # lcm stays put. Each period d contributes seq_len/d
-                # occurrences to the extensional listing, so adding large
-                # divisors grows the rule list and leaves the listing ~fixed.
+                # Divisor pathway: periods deliberately share factors so lcm
+                # stays put while adding harmonics grows the rule list.
                 actual = lcm(*periods)
                 if actual != self.expect_seq_len:
                     raise ValueError(
@@ -208,9 +153,9 @@ class PeriodicConfig:
                 raise ValueError(
                     f"When labels is int it must equal n ({self.n}), got {self.labels}."
                 )
-            # min_length=2: periodic labels are always multi-character, even at
-            # small n where the information-theoretic minimum would allow
-            # single letters -- see random_labels' docstring.
+            # min_length=2: labels are always multi-character, even at small
+            # n where the information-theoretic minimum would allow single
+            # letters.
             object.__setattr__(
                 self,
                 "labels",
@@ -225,9 +170,8 @@ class PeriodicConfig:
                 f"Number of labels ({len(self.labels)}) must equal n ({self.n})."
             )
         if len(set(self.labels)) != len(self.labels):
-            # A duplicate label states two rules for one string, giving a
-            # single prompt two contradictory ground truths. Auto-generated
-            # labels are unique by construction; this guards explicit lists.
+            # A duplicate label gives a single prompt two contradictory
+            # ground truths; this guards explicit label lists.
             raise ValueError(f"Labels must be distinct, got {tuple(self.labels)}.")
         for lbl in self.labels:
             if self.sep in lbl:
@@ -236,30 +180,13 @@ class PeriodicConfig:
                 )
 
 
-# Design: lowercase letters only (26), not letters + digits (62). The choice is
-# free in PROMPT LENGTH at every count this benchmark uses. `random_labels`
-# sizes a label at max(min_length, 1, ceil(log_base(count)) *
-# LABEL_LENGTH_SAFETY_FACTOR); for any count <= 26 that ceiling is 1 under BOTH
-# bases, so both charsets yield the same length-2 label (the min_length=2 floor
-# `PeriodicConfig` passes coincides with that computed value here, rather than
-# overriding it). The two only diverge
-# from count=27 up, where base 26 needs a second digit and the safety factor
-# doubles it to 4 against the alphanumeric 2 -- past every in-repo harmonic set
-# (production is n=9; the largest set the module docstring contemplates is 26
-# divisors, still length 2 either way).
-#
-# What the restriction actually buys is READABILITY of the rendered rules.
-# Labels are drawn for exact-string distinctness, which is NOT case-folded, so a
-# mixed-case charset could legitimately draw "aQ" and "Aq" as two different
-# labels -- visually confusable, and ambiguous to a reader or model matching a
-# query's label against the rule list case-insensitively. Excluding digits keeps
-# a label from reading as a position number in "Every 3 positions write 3x." or
-# "Position 6: ...". Uniform lowercase makes every label the same shape.
-#
-# Separately: the charset must contain no separator character, since a label
-# holding `sep` would split into two on render. That is enforced, not assumed --
-# `PeriodicConfig.__post_init__` rejects any label containing `sep`, covering
-# explicit label lists as well as these auto-generated ones.
+# Lowercase letters only, not letters+digits: free in prompt length at every
+# count this benchmark uses, but buys READABILITY. Exact-string distinctness
+# is not case-folded, so a mixed-case charset could draw visually confusable
+# labels like "aQ"/"Aq"; excluding digits keeps a label from reading as a
+# position number ("Every 3 positions write 3x."). The charset must also
+# contain no separator character, or a label holding `sep` would split into
+# two on render -- enforced in `PeriodicConfig.__post_init__`, not assumed.
 _LABEL_CHARSET: str = string.ascii_lowercase
 
 
@@ -348,26 +275,12 @@ class Contexts:
 class Condition:
     """One information condition: which context it shows, and how.
 
-    Parameters
-    ----------
-    context : Callable[[Contexts], str]
-        Selects this arm's ``positive_info`` body from the query's
-        :class:`Contexts` (e.g. ``lambda c: c.intensional``, or ``lambda c:
-        ""`` for the zero arm).
-    match_tokens_to : Optional[str]
-        The name of another condition whose RENDERED prompt's token count
-        this arm's rendering must exactly match, via whitespace padding (see
-        :func:`~smolbench.evals.tokenization.token_matched_noise_prompt`).
-        ``None`` (the default) renders this arm plainly, with no padding.
-        Must name another entry of the same ``conditions`` mapping that does
-        NOT itself carry a ``match_tokens_to`` -- see
-        :func:`get_periodic_prompts`'s validation for why a padded arm's own
-        count is not a usable pad target.
-    omit_range : bool
-        If ``True``, this arm renders from ``prompter.range_free_template``
-        instead of ``prompter.template``, and the rendered text is verified
-        to contain none of ``RANGE_KEYS``'s values. ``False`` (the default)
-        renders from ``prompter.template`` like every other arm.
+    match_tokens_to: name of another condition (without its own
+    ``match_tokens_to``) whose rendered token count this arm must exactly
+    match via whitespace padding; ``None`` renders plainly.
+    omit_range: if ``True``, renders from ``prompter.range_free_template``
+    instead of ``prompter.template``, and the rendered text is verified to
+    contain none of ``RANGE_KEYS``'s values.
     """
 
     context: Callable[[Contexts], str]
@@ -376,44 +289,34 @@ class Condition:
 
 
 # The single declaration of this benchmark's information conditions -- every
-# consumer (get_periodic_prompts's default, InductionExperiment.info_types,
-# run_study.INFO_TYPES) derives from THIS mapping rather than restating the
-# arm names, so the four names and their order live in exactly one place.
-# MappingProxyType, not a plain dict: the mapping is a shared, module-level
-# default (get_periodic_prompts's own default argument, plus every importer
-# that reads it directly), and a caller mutating a plain dict in place would
-# silently change every other caller's default underneath it.
+# consumer derives from THIS mapping rather than restating the arm names.
+# MappingProxyType, not a plain dict: it is a shared module-level default, and
+# a caller mutating a plain dict in place would change every other caller's
+# default underneath it.
 CONDITIONS: Mapping[str, Condition] = MappingProxyType({
-    # The compact rule list. Fewer tokens than extens at any n this benchmark
-    # exercises past the tiny configs the noise-arm precondition excludes
-    # (see the module docstring's "Noise-arm PRECONDITION").
+    # The compact rule list.
     "intens": Condition(context=lambda c: c.intensional),
-    # The full position-by-position enumeration. Usually more tokens than
-    # intens; the pairing the noise arm isolates length from.
+    # The full position-by-position enumeration; usually more tokens than
+    # intens, the pairing the noise arm isolates length from.
     "extens": Condition(context=lambda c: c.extensional),
-    # intens's text, whitespace-padded until the RENDERED prompt hits
+    # intens's text, whitespace-padded until the rendered prompt hits
     # extens's token count -- a length-matched control arm, so a gap between
     # this and intens cannot be explained by prompt length alone.
     "noise_intens": Condition(context=lambda c: c.intensional, match_tokens_to="extens"),
-    # No context at all, and a range-free question: the chance floor with no
-    # positive information AND no leaked seq_len (see the module docstring's
-    # "Information conditions" section for why the range must be omitted
-    # here specifically).
+    # No context, and a range-free question: on the default 1..n pathway the
+    # period-1 harmonic's answer IS seq_len, so the range-stating question
+    # the other arms use would print that answer directly into the one arm
+    # meant to measure the floor with no positive information.
     "zero": Condition(context=lambda c: "", omit_range=True),
 })
 
 
-# The query-substitution keys that name the position range ("1 through
-# $seq_len", "positions 1..$seq_len"). An ``omit_range`` condition's RENDERED
-# prompt is verified, at generation time, to contain none of these keys'
-# VALUES -- not merely to have been built from a template that lacks the
-# placeholder -- because a template that still names the key elsewhere (or a
-# caller's mistake) would otherwise ship the same leak this benchmark's
-# ``zero`` condition exists to remove. A query generator that never emits any
-# of these keys in the first place (``tof_membership_query_gen``, whose
-# questions state a POSITION, not a range) is already range-free by
-# construction, and the check is vacuously satisfied for it -- there is
-# nothing to strip, and nothing to verify against.
+# The query-substitution keys naming the position range ("1 through
+# $seq_len"). An ``omit_range`` condition's RENDERED prompt is verified to
+# contain none of these keys' values -- checking the rendered text, not just
+# the template, so a template that names the key elsewhere still gets caught.
+# A generator that never emits these keys (``tof_membership_query_gen``,
+# which states a position, not a range) is vacuously range-free.
 RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
 
 
@@ -425,15 +328,11 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` conditions render from ``prompter.range_free_template``;
-    every other condition renders from ``prompter.template``.
-
-    Raises
-    ------
-    ValueError
-        If `condition` is ``omit_range=True`` and ``prompter.range_free_template``
-        is ``None``. No silent fallback to ``prompter.template`` here: that
-        fallback IS the leak an ``omit_range`` condition exists to avoid (see
-        the module docstring's "Information conditions" section).
+    every other condition renders from ``prompter.template``. Raises
+    ``ValueError`` if `condition` is ``omit_range=True`` and
+    ``prompter.range_free_template`` is ``None``: no silent fallback to
+    ``prompter.template``, since that fallback is exactly the leak an
+    ``omit_range`` condition exists to avoid.
     """
     if not condition.omit_range:
         return prompter.template
@@ -452,17 +351,8 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
 def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> None:
     """Raise if `rendered` reveals any of ``RANGE_KEYS``'s values from `query`.
 
-    Checked against the RENDERED prompt, not the template used to build it:
-    see ``RANGE_KEYS``'s own docstring for why a promise about the template
-    is not enough. A query lacking some ``RANGE_KEYS`` entry entirely (e.g.
-    ``tof_membership_query_gen``'s queries, which carry no ``seq_len``) makes
-    that key's check vacuously true -- there is nothing to leak.
-
-    Raises
-    ------
-    ValueError
-        Naming the offending key and its value, and `name`, when that value's
-        string form appears in `rendered`.
+    Checked against the rendered prompt, not the template used to build it
+    (see ``RANGE_KEYS``). Naming the offending key and its value on failure.
     """
     for key in RANGE_KEYS:
         if key in query and str(query[key]) in rendered:
@@ -484,54 +374,32 @@ def get_periodic_prompts(
     """Render every information condition of every query, in one loop.
 
     For each query :func:`generate_sequence` (via ``prompter.query_gen``)
-    produces, renders every entry of `conditions` against that query's
-    :class:`Contexts` and yields one :class:`~smolbench.induction._common.RenderedQuery`
-    carrying all of them, keyed by condition name in `conditions`'s iteration
-    order. `tokenizer` defines every padded arm's token target and must be
-    the model's own -- see the module docstring's tokenizer discipline.
+    produces, renders every entry of `conditions` and yields one
+    :class:`~smolbench.induction._common.RenderedQuery` carrying all of them.
+    `tokenizer` must be the model under test's own, since it defines every
+    padded arm's token target.
 
-    Rendering happens in two stages per query: first every condition WITHOUT
-    ``match_tokens_to`` (recording its rendered prompt and
-    ``tokenizer.count(...)`` of it), then every condition WITH one, via
-    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` against
-    the ALREADY-RECORDED target condition's count. A padded condition's own
-    count is its target by construction -- the pad search verifies it hits
-    the target exactly -- so it is not re-tokenized after padding.
+    Rendering happens in two stages per query: first every condition without
+    ``match_tokens_to`` (recording its rendered prompt and token count), then
+    every condition with one, padded against the already-recorded target
+    condition's count.
 
-    Raises
-    ------
-    ValueError
-        Raised once, before any query is rendered, if some condition's
-        ``match_tokens_to`` names a condition absent from `conditions` (names
-        the missing condition), or names a condition that is ITSELF padded
-        (names it): a padded arm's own count is not available to pad
-        against, since it depends on the pad search that has not run yet,
-        and a chain of padded arms has no count to bottom out on.
-    ValueError
-        Propagated from :func:`~smolbench.evals.tokenization.token_matched_noise_prompt`
-        when the noise arm's precondition fails for some query -- that query's
-        extensional prompt is not STRICTLY longer, in tokens, than its
-        intensional one, so no appended pad can reach the target (see the module
-        docstring's "Noise-arm PRECONDITION"; measured to happen at n <= 2).
-        Deliberately NOT caught here: a fallback to the unpadded render would
-        ship a length control byte-identical to the arm it controls for, and no
-        caller checked for that. Failing at quiz-construction time keeps the
-        confound out of collected data.
-    ValueError
-        Also propagated from ``token_matched_noise_prompt`` (or
-        :func:`~smolbench.evals.tokenization.choose_whitespace_unit`) when no
-        whitespace pad can hit the target exactly under `tokenizer`.
-    ValueError
-        From :func:`_resolve_arm_template` when an ``omit_range`` condition's
-        ``prompter.range_free_template`` is ``None`` (naming the condition and
-        ``range_free_template``), or from :func:`_verify_no_range_leak` when
-        an ``omit_range`` condition's rendered prompt still reveals a
-        ``RANGE_KEYS`` value (naming the condition and the leaked key).
+    Raises ``ValueError``:
+    once, before any query is rendered, if some condition's
+    ``match_tokens_to`` names a condition absent from `conditions` or one
+    that is itself padded (a padded arm's own count isn't available yet to
+    pad against); propagated from
+    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the
+    noise arm's precondition fails for some query (its extensional prompt is
+    not strictly longer, in tokens, than its intensional one -- deliberately
+    not caught here, so the confound stays out of collected data rather than
+    silently shipping a control identical to the arm it controls for); or
+    from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
+    ``omit_range`` condition missing its template or leaking a range key.
     """
-    # Validate the mapping ONCE, before any query is rendered: a bad
-    # `match_tokens_to` is a construction-time mistake in `conditions` itself,
-    # not something that should only surface after partial work on the first
-    # query.
+    # Validated once, before any query is rendered: a bad `match_tokens_to`
+    # is a construction-time mistake in `conditions`, not something that
+    # should surface only after partial work on the first query.
     for name, condition in conditions.items():
         target = condition.match_tokens_to
         if target is None:
@@ -560,9 +428,8 @@ def get_periodic_prompts(
     # Probe the pad atom once, not per query: it depends only on the tokenizer.
     unit: str = choose_whitespace_unit(tokenizer)
 
-    # Split once: order-independent of `conditions`'s own iteration order,
-    # since stage membership only depends on `match_tokens_to`, not on where
-    # an entry sits in the mapping.
+    # Split once: stage membership depends only on `match_tokens_to`, not on
+    # where an entry sits in `conditions`.
     unpadded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is None]
     padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
 
@@ -625,12 +492,9 @@ def get_periodic_quiz(
 ) -> Dict[str, Quiz]:
     """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes, keyed by condition name.
 
-    Returns a ``dict`` in `conditions`'s iteration order (``CONDITIONS``'s
-    default order: ``intens``, ``extens``, ``noise_intens``, ``zero``), not a
-    positional tuple: a caller reads a specific arm by NAME
-    (``quizzes["extens"]``) rather than by position, so adding, removing or
-    reordering conditions can never silently relabel an existing caller's
-    arms.
+    A ``dict``, not a positional tuple: a caller reads a specific arm by name
+    (``quizzes["extens"]``), so reordering `conditions` can never silently
+    relabel an existing caller's arms.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -663,12 +527,8 @@ def get_periodic_numeric_quiz(
 # ---------------------------------------------------------------------------
 
 # tof_membership_query_gen samples at most this many queries of EACH polarity
-# per quiz, so quiz size stays fixed as n grows. n changes task difficulty and
-# the lcm(1..n) context length; it must never silently change sample size,
-# because a replication design is powered around fixed question counts. (This
-# ToF generator is pinned by the golden hashes and used by sibling studies;
-# the family-ladder driver runs numeric_count_query_gen, whose count is n by
-# construction.)
+# per quiz, so quiz size stays fixed as n grows: a replication design is
+# powered around fixed question counts and must never silently change it.
 MAX_QUERIES_PER_POLARITY: int = 10
 
 
@@ -720,22 +580,14 @@ def numeric_count_query_gen(
 ) -> Iterable[Tuple[Dict[str, str], int]]:
     """Yield count queries of the form "How many positions 1..seq_len contain label?"
 
-    Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label, the
-    answer being floor(seq_len / period) -- always exact, since seq_len is the
-    lcm of the harmonic periods on every pathway. Reads only ``pos_to_compound``'s
-    KEYS (to find ``seq_len``).
+    Yields one ``({"label": ..., "seq_len": ...}, answer)`` pair per label,
+    the answer being floor(seq_len / period) -- always exact, since seq_len
+    is the lcm of the harmonic periods on every pathway.
 
-    The query SET is deterministic: one query per label, in ascending-period
-    order, so this generator consumes no randomness and IGNORES `seed`. The
-    parameter stays because ``Prompter.query_gen`` is one interchangeable
-    protocol -- ``(period_to_label, pos_to_compound, seed)`` -- that
-    :func:`get_periodic_prompts` calls without knowing which generator it holds,
-    and the sibling :func:`tof_membership_query_gen` genuinely samples under it.
-    Dropping the argument here would make the two generators non-substitutable
-    and push a hasattr/try-except call shim into the shared caller for no gain.
-    A seed still reaches this generator's OUTPUT indirectly, through the labels:
-    ``PeriodicConfig`` draws them with the same seed, so across replicates the
-    label strings change while the query structure does not.
+    Deterministic and ignores `seed`: the parameter stays so this generator
+    stays substitutable for the sibling :func:`tof_membership_query_gen`
+    under ``Prompter.query_gen``'s one shared protocol. A seed still reaches
+    the output indirectly, since ``PeriodicConfig`` draws the labels with it.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
@@ -758,12 +610,9 @@ if __name__ == "__main__":
         "Answer with a single integer."
     )
 
-    # The `zero` condition's range-free counterpart of `template` above: the
-    # same question with its position-range clause removed, exactly as a real
-    # driver supplies one (see `notebooks/induction/run_study.py`'s
-    # `zero_template`/`RANGE_CLAUSE`). See the module docstring's
-    # "Information conditions" section for why `zero` needs this rather than
-    # `template` itself.
+    # The `zero` condition's range-free counterpart of `template` above (see
+    # `CONDITIONS`'s "zero" entry for why it needs this rather than `template`
+    # itself).
     range_free_template = string.Template(
         template.template.replace(" 1 through $seq_len", "")
     )
@@ -774,14 +623,10 @@ if __name__ == "__main__":
         seed=42,
     )
 
-    # No served model here, so measure with a fixed tiktoken encoding. A real
-    # run passes the model under test's; see the module docstring's tokenizer
-    # discipline.
+    # No served model here, so measure with a fixed tiktoken encoding; a real
+    # run passes the model under test's own tokenizer.
     demo_tokenizer = TiktokenTokenizer("cl100k_base")
 
-    # A real caller supplies BOTH templates (see `Prompter.range_free_template`'s
-    # docstring in `_common.py`), so this demo does too, and renders every
-    # entry of `CONDITIONS` (the default) -- `zero` included.
     for rendered in get_periodic_prompts(
         cfg,
         Prompter(template, numeric_count_query_gen, range_free_template=range_free_template),

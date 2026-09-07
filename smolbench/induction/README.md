@@ -22,9 +22,7 @@ omitted there specifically: on the default 1..n harmonic set the
 period-1 harmonic's answer IS `seq_len`, so a `zero` prompt stating
 "positions 1 through $seq_len" would hand that one answer away for
 free, in the very arm meant to measure the floor a model reaches with
-NO positive information at all. `zero`-arm rows collected before this
-question changed must be re-collected, not compared against new ones
--- they measured a leakier floor.
+NO positive information at all.
 
 All four conditions (`intens`, `extens`, `noise_intens`, `zero`) are
 declared once, as `periodic.CONDITIONS`, and rendered by

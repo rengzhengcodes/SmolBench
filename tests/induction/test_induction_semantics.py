@@ -23,11 +23,10 @@ from smolbench.induction.periodic import (
     tof_membership_query_gen,
 )
 
-#: The conditions whose question text STATES the position range. The zero arm
-#: is excluded here because it renders from a range-free template the caller
-#: must supply (see `Prompter.range_free_template`); these tests use the
-#: minimal templates below, which have none. Passing this restricted mapping
-#: is also what pins that ``conditions`` is a real parameter.
+#: Conditions whose question text states the position range. Zero is excluded:
+#: it needs a range-free template (`Prompter.range_free_template`) these
+#: minimal test templates don't supply; passing this subset also pins that
+#: `conditions` is a real parameter.
 POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 NUM_TMPL = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")
@@ -162,9 +161,8 @@ def numeric_prompter(**kwargs):
 
 
 def test_the_quiz_is_keyed_by_condition_in_mapping_order():
-    """`get_periodic_numeric_quiz` returns a dict keyed by the condition names,
-    in the mapping's order -- not a positional 3-tuple with a fourth arm
-    bolted on beside it."""
+    """`get_periodic_numeric_quiz` returns a dict keyed by condition name in the
+    mapping's order, not a positional 3-tuple with a fourth arm bolted on."""
     quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=4, labels=4, seed=3),
         numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
@@ -176,11 +174,8 @@ def test_the_quiz_is_keyed_by_condition_in_mapping_order():
 
 
 def test_a_single_condition_mapping_renders_exactly_that_arm():
-    """`conditions` is a real parameter, not decoration.
-
-    A one-entry mapping is a shape the render loop cannot produce by ignoring
-    the argument, so this fails if the four defaults are hard-wired.
-    """
+    """`conditions` is a real parameter: a one-entry mapping is a shape the
+    render loop can't produce by ignoring it."""
     quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=4, labels=4, seed=3), numeric_prompter(),
         tokenizer=StubTokenizer(), conditions={"intens": CONDITIONS["intens"]},
@@ -189,14 +184,9 @@ def test_a_single_condition_mapping_renders_exactly_that_arm():
 
 
 def test_the_zero_arm_states_no_range_and_leaks_no_answer():
-    """The chance-floor arm must not print any answer in its own prompt.
-
-    On the default 1..n pathway the period-1 harmonic's answer IS ``seq_len``,
-    so a question rendering the range ("positions 1 through 2520") handed the
-    zero-information arm 1 of 9 answers for free -- and a model that echoes the
-    only large number scored 11.1 pp on the very floor every information gap
-    is measured against.
-    """
+    """The zero arm must not print any answer in its prompt: the period-1
+    harmonic's answer is seq_len, so a range-stating question would leak it and
+    inflate the information-gap floor by the resulting free hit (11.1 pp)."""
     cfg = PeriodicConfig(n=6, labels=6, seed=5)
     _p2l, p2c = generate_sequence(cfg)
     seq_len = max(p2c)
@@ -213,17 +203,13 @@ def test_the_zero_arm_states_no_range_and_leaks_no_answer():
     # Same questions and answers as the informative arms: only the context
     # (and the range clause) differ.
     assert [q.answer for q in zero] == [q.answer for q in quizzes["intens"]]
-    # And the answer the leak used to hand over is genuinely in play here.
+    # Confirms seq_len is a real possible answer, so the checks above aren't vacuous.
     assert seq_len in [q.answer for q in zero]
 
 
 def test_a_range_free_template_that_still_states_the_range_is_refused():
-    """The leak gate has teeth: it checks the RENDERED prompt, not the promise.
-
-    A caller can hand any template to the zero condition, so generation
-    verifies that no range substitution's value survives into the rendered
-    text, and raises naming the key rather than shipping a leaking arm.
-    """
+    """The leak gate checks the rendered prompt, not the promised template: any
+    range substitution surviving into the text raises, naming the key."""
     leaky = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")
     with pytest.raises(ValueError) as exc:
         get_periodic_numeric_quiz(
@@ -250,9 +236,8 @@ def test_an_omit_range_condition_without_its_template_is_refused():
     ("noise_intens", "noise_intens"),  # names a condition that is itself padded
 ])
 def test_a_bad_token_target_is_refused(target, match):
-    """`match_tokens_to` must name a condition that exists and is not itself
-    padded -- otherwise the render loop has no count to pad against (or would
-    have to pad against a not-yet-built arm)."""
+    """`match_tokens_to` must name a condition that exists and isn't itself
+    padded, or the render loop has no valid count to pad against."""
     from smolbench.induction.periodic import Condition
 
     conditions = dict(CONDITIONS)
@@ -268,9 +253,8 @@ def test_a_bad_token_target_is_refused(target, match):
 
 
 def test_rendered_queries_carry_the_token_count_of_every_arm():
-    """Generation already tokenizes each prompt; it now REPORTS those counts,
-    so a caller sizing a completion budget need not regenerate and re-tokenize
-    the whole quiz to learn them."""
+    """Generation already tokenizes each prompt; reporting those counts lets a
+    caller size a completion budget without re-tokenizing the whole quiz."""
     from smolbench.induction.periodic import get_periodic_prompts
 
     tokenizer = StubTokenizer()
@@ -284,5 +268,5 @@ def test_rendered_queries_carry_the_token_count_of_every_arm():
         assert set(query.prompts) == set(query.token_counts) == set(CONDITIONS)
         for arm, prompt in query.prompts.items():
             assert query.token_counts[arm] == tokenizer.count(prompt), arm
-        # The noise arm is a LENGTH control: its count is the extens count.
+        # The noise arm is a length control: its count equals the extens count.
         assert query.token_counts["noise_intens"] == query.token_counts["extens"]

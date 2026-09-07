@@ -5,11 +5,6 @@ quizzes). See `smolbench/induction/README.md` for the task design
 and the shared experiment API these scripts drive, and `notebooks/README.md`
 for what is anchored where across both studies.
 
-This repo lands as a five-slice PR stack; this commit is slice 2, so it
-ships the induction side only. Paths marked `(slice 4)` (`scripts/fleet/*`),
-`(slice 3)` (`notebooks/deduction/*`) or `(slice 4)`
-(`tests/tooling/test_analysis_stats.py`) below don't exist in the tree yet.
-
 ```
 induction/
   run_study.py            the driver          <- pinned here; see "Layout" below

@@ -32,33 +32,20 @@ def _marks(scores) -> Marks:
     [([1, 1, 1], 1.0), ([1, 1, 0, None], 0.5), ([0, 0, None], 0.0)],
 )
 def test_accuracy(scores, expected):
-    """accuracy() counts invalids against the model: a ``None`` (unparseable)
-    mark STAYS in the denominator and scores as a miss, so [1, 1, 0, None] is
-    2/4. (Corrects this docstring's former claim that None marks leave the
-    denominator -- figures.accuracy has always kept them in it.)"""
+    """A None (unparseable) mark counts as a miss but stays in the denominator,
+    so [1, 1, 0, None] is 2/4."""
     assert accuracy(_marks(scores)) == expected
 
 
 def test_accuracy_refuses_an_empty_marks():
-    """An empty ``Marks`` RAISES rather than scoring 0.0 (12-14).
-
-    A genuine 0% and "this replicate graded nothing" are different results,
-    and ``tof_membership_query_gen`` produces empty quizzes by design at tiny
-    configs. Returning 0.0 stored the second as the first and made
-    ``plot_archetype_accuracy``'s ``None -> "n/a"`` branch unreachable from
-    disk."""
+    """Empty Marks raises rather than scoring 0.0, so a replicate that graded
+    nothing (tiny configs can produce empty quizzes) isn't confused with a genuine zero."""
     with pytest.raises(ValueError):
         accuracy(_marks([]))
 
 
 def test_load_condition_accuracies_present_missing_and_empty(tmp_path, capsys):
-    """A present YAML maps to its accuracy; a missing file AND an existing-but-empty
-    replicate both map to None (12-14).
-
-    The empty case is the one that regressed: it used to load as a genuine
-    0.0, indistinguishable in the plotted table from a lane that really scored
-    zero. ``accuracy`` now raises on it and the loader maps that raise to
-    ``None``, the same value the plotter renders as "n/a"."""
+    """A present YAML maps to its accuracy; a missing or empty-replicate file maps to None."""
     _marks([1, 1, 0, None]).dump(tmp_path / "present.yaml")
     _marks([]).dump(tmp_path / "empty.yaml")
     files = {("modelA", "intens"): "present.yaml",
@@ -72,9 +59,8 @@ def test_load_condition_accuracies_present_missing_and_empty(tmp_path, capsys):
 
 
 def test_plot_archetype_accuracy_smoke(tmp_path):
-    """plot_archetype_accuracy renders a grouped bar chart to disk: one bar
-    container per condition, one x tick per model, and a None accuracy drawn as
-    a zero-height bar instead of crashing."""
+    """Renders a grouped bar chart: one bar container per condition, one x tick
+    per model, None drawn as a zero-height bar."""
     data = {  # ("cot", "extens") is missing -> 0-height bar, no label
         ("decode", "intens"): 0.9, ("decode", "extens"): 0.4,
         ("cot", "intens"): 0.7, ("cot", "extens"): None,

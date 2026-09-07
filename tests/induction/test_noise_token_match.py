@@ -49,12 +49,7 @@ def tokenizer(request):
     return tiktoken_tokenizer(request.param)
 
 def test_noise_prompt_matches_extens_token_count(tokenizer):
-    """Every noise prompt has EXACTLY its extens prompt's token count.
-
-    The former ``extens_template`` parametrization is gone with the field
-    itself (12-32): all three arms now render from the ONE ``template``, so
-    there is a single build to pin.
-    """
+    """Every noise prompt has exactly its extens prompt's token count."""
     quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=6, labels=6, seed=1776),
         PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
@@ -119,14 +114,7 @@ def test_token_matched_noise_prompt_hits_arbitrary_targets(tokenizer, target):
     assert tokenizer.count(prompt) == target
 
 def test_unmatched_targets_raise(tokenizer):
-    """BOTH unreachable targets raise; neither returns a silently unpadded prompt.
-
-    Pins the 12-09 fix. An already-over-long base used to log a warning and
-    return the UNPADDED intensional render, which no caller checked: the
-    "length control" arm then shipped byte-identical to the arm it controls
-    for. The over-long case and the un-hittable-target case are now the same
-    loud ``ValueError``.
-    """
+    """Both unreachable targets raise; neither returns a silently unpadded prompt."""
     render = _render()
     with pytest.raises(ValueError) as over_long:
         token_matched_noise_prompt(render, CONTEXT, 1, tokenizer)
@@ -141,15 +129,8 @@ def test_unmatched_targets_raise(tokenizer):
 
 @pytest.mark.parametrize("n", (1, 2))
 def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(tokenizer, n):
-    """At n<=2 quiz generation RAISES instead of emitting noise == intens.
-
-    Measured at HEAD under all three tokenizers: at n=1 and n=2 the
-    extensional listing is no longer than the intensional rules, so no
-    appended pad can reach the target and every noise prompt came back
-    unpadded. ``get_periodic_prompts`` now lets the ``ValueError``
-    propagate (12-09), so the precondition failure is visible at the quiz
-    boundary rather than inside a study's collected data. n=3 is unaffected.
-    """
+    """At n<=2, quiz generation raises instead of emitting noise == intens:
+    the extensional listing isn't long enough to pad against (n=3 is unaffected)."""
     with pytest.raises(ValueError):
         get_periodic_numeric_quiz(
             PeriodicConfig(n=n, labels=n, seed=0),
@@ -159,21 +140,13 @@ def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(tokenizer, n)
 
 
 def test_prompter_has_no_legacy_chromatic_hooks():
-    """``Prompter`` carries neither ``substitution`` nor ``extens_template`` (12-32).
-
-    Both served the deleted chromatic ``query_years`` mechanism: the first was
-    ``{}`` at all 11 construction sites, the second had no production caller.
-    Their removal is pinned by field name, so a re-introduction (or a revived
-    ``resolved_extens_template`` property) fails here rather than growing a
-    second, silently-unused render path.
-    """
+    """`Prompter` carries neither `substitution` nor `extens_template`: both were
+    dead fields from the removed chromatic mechanism, pinned by name so neither can reappear."""
     prompter = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
     assert not hasattr(prompter, "substitution")
     assert not hasattr(prompter, "extens_template")
     assert not hasattr(prompter, "resolved_extens_template")
-    # `range_free_template` is the ONE field that came back, and unlike the two
-    # above it is LIVE: the zero condition renders from it, and the production
-    # study supplies it (see run_study.zero_template). The field list stays an
-    # exact pin so a fourth, unused hook cannot appear unnoticed.
+    # `range_free_template` is LIVE (the zero condition renders from it; run_study
+    # supplies it), unlike the two fields above, so it stays in this exact-list pin.
     assert [f.name for f in dataclasses.fields(prompter)] == [
         "template", "query_gen", "range_free_template"]
